@@ -1,0 +1,12 @@
+# Vendor documents are not ours to redistribute. The .json beside each one keeps
+# the URL and sha256, and `python3 scripts/sources.py restore` fetches them back.
+shared/datasheets/*
+!shared/datasheets/*.json
+
+# Working state: a project holds someone's real conversation and decisions.
+projects/*
+!projects/.gitkeep
+
+__pycache__/
+*.pyc
+.DS_Store

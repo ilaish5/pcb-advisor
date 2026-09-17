@@ -1,0 +1,313 @@
+"""
+The engine.  cascade (authored knowledge) + state (what happened) -> design model.
+
+Deterministic: same inputs, same output, every time.  An agent APPENDS to the
+state files; it never writes the model.  Everything the UI shows is derived here.
+"""
+import json
+import pathlib
+import re
+import sys
+
+import yaml
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+PROVENANCE = {
+    "computed":   {"icon": "📐", "label": "computed",  "rank": 0},
+    "standard":   {"icon": "📘", "label": "standard",  "rank": 1},
+    "datasheet":  {"icon": "📄", "label": "datasheet", "rank": 2},
+    "convention": {"icon": "⚠",  "label": "convention", "rank": 3},
+}
+
+
+# ---------------------------------------------------------------- loading
+
+def load_cascades():
+    """All domains, keyed by domain name."""
+    out = {}
+    for path in sorted((ROOT / "cascade").glob("*.yaml")):
+        cas = yaml.safe_load(path.read_text(encoding="utf-8"))
+        out[cas["domain"]] = cas
+    return out
+
+
+def load_jsonl(path):
+    if not path.exists():
+        return []
+    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+def project_dir(name):
+    return ROOT / "projects" / name
+
+
+# ---------------------------------------------------------------- building
+
+def build(project="demo"):
+    cascades = load_cascades()
+    pdir = project_dir(project)
+    events = load_jsonl(pdir / "decisions.jsonl")
+    messages = load_jsonl(pdir / "threads.jsonl")
+    chat = load_jsonl(pdir / "chat.jsonl")
+    sketch = load_sketch(pdir)
+
+    # which domains are in play, decided by the AGREED block sketch.
+    # Nothing loads until the student confirms it - otherwise they get asked
+    # cascade questions about a diagram they have not accepted yet.
+    active, unmapped = [], []
+    for blk in (sketch.get("blocks", []) if sketch.get("confirmed") else []):
+        hit = [d for d, c in cascades.items() if blk.get("kind") in (c.get("blocks") or [])]
+        if hit:
+            active.extend(hit)
+        else:
+            unmapped.append(blk)
+    active = sorted(set(active))
+
+    nodes = []
+    for dom in active:
+        for n in cascades[dom]["nodes"]:
+            nodes.append({**n, "domain": dom})
+    index = {n["id"]: n for n in nodes}
+
+    answers = {}
+    for ev in events:
+        if ev.get("node") in index:
+            answers[ev["node"]] = ev            # last write wins
+
+    def available(node):
+        """A node is reachable only if its deps are answered AND its guard matches."""
+        for dep in node.get("depends_on", []) or []:
+            if dep not in answers:
+                return False, f"waiting on {dep}"
+        for guard_node, guard_val in (node.get("requires") or {}).items():
+            got = answers.get(guard_node, {}).get("value")
+            if got != guard_val:
+                return False, f"only if {guard_node} = {guard_val}"
+        return True, None
+
+    open_nodes, blocked, answered, irrelevant = [], [], [], []
+    for node in nodes:
+        ok, reason = available(node)
+        entry = dict(node)
+        if node["id"] in answers:
+            entry["chosen"] = answers[node["id"]]["value"]
+            entry["chosen_by"] = answers[node["id"]].get("by", "?")
+            answered.append(entry)
+        elif ok:
+            open_nodes.append(entry)
+        elif reason and reason.startswith("only if"):
+            entry["reason"] = reason
+            irrelevant.append(entry)            # a guard excluded it - not blocked, just N/A
+        else:
+            entry["reason"] = reason
+            blocked.append(entry)
+
+    constraints, conflicts = [], []
+    for node in answered:
+        opt = next((o for o in node.get("options", []) if o["id"] == node["chosen"]), None)
+        if not opt:
+            continue
+        for lock in opt.get("locks", []) or []:
+            prov = lock.get("provenance", "convention")
+            src = lock.get("source") or {}
+            constraints.append({
+                "id": lock["id"],
+                "text": lock["text"],
+                "provenance": prov,
+                "icon": PROVENANCE.get(prov, PROVENANCE["convention"])["icon"],
+                "verified": bool(lock.get("verified", prov == "computed")),
+                "source": src,
+                "element": node["domain"],
+                "from_node": node["id"],
+                "from_option": node["chosen"],
+                "from_label": opt.get("label", node["chosen"]),
+            })
+        for cf in opt.get("conflicts", []) or []:
+            conflicts.append({
+                "a": node["id"], "a_label": opt.get("label", ""),
+                "b": cf["with"], "note": cf["note"],
+            })
+
+    # only report a conflict once BOTH sides are actually live
+    live = {c["id"] for c in constraints} | set(answers)
+    conflicts = [c for c in conflicts if c["b"] in live]
+
+    blocks = []
+    for dom in active:
+        blocks.extend(cascades[dom].get("base_blocks", []) or [])
+    for node in answered:
+        opt = next((o for o in node.get("options", []) if o["id"] == node["chosen"]), None)
+        if opt:
+            blocks.extend(opt.get("blocks", []) or [])
+    seen, uniq = set(), []
+    for b in blocks:
+        if b["id"] not in seen:
+            seen.add(b["id"])
+            uniq.append(b)
+    uniq.sort(key=lambda b: b.get("order", 50))
+
+    threads = {}
+    for m in messages:
+        threads.setdefault(m["anchor"], []).append(m)
+    for v in threads.values():
+        v.sort(key=lambda m: m.get("ts", ""))
+
+    return {
+        "project": project,
+        "stage": "sketch" if not sketch.get("confirmed") else "cascade",
+        "sketch": sketch,
+        "unmapped_blocks": unmapped,
+        "domains": active,
+        "open": open_nodes,
+        "blocked": blocked,
+        "irrelevant": irrelevant,
+        "answered": answered,
+        "constraints": constraints,
+        "conflicts": conflicts,
+        "blocks": uniq,
+        "threads": threads,
+        "chat": chat,
+        "sources": list_sources(project),
+        "graph": graph(answered, open_nodes, blocked, constraints, conflicts),
+        "progress": {
+            "answered": len(answered),
+            "total": len(answered) + len(open_nodes) + len(blocked),
+            "constraints": len(constraints),
+            "unverified": sum(1 for c in constraints if not c["verified"]),
+            "conflicts": len(conflicts),
+            "open_questions": sum(1 for v in threads.values() if v and v[-1].get("role") == "agent"),
+        },
+    }
+
+
+def graph(answered, open_nodes, blocked, constraints, conflicts):
+    """Only what the student has actually reached: the graph GROWS, it does not unfurl."""
+    gn, ge = [], []
+    shown = set()
+    for n in answered:
+        gn.append({"id": n["id"], "label": n["id"].split(".")[-1], "kind": n["type"],
+                   "state": "answered", "detail": n["question"]})
+        shown.add(n["id"])
+    for n in open_nodes:
+        gn.append({"id": n["id"], "label": n["id"].split(".")[-1], "kind": n["type"],
+                   "state": "open", "detail": n["question"]})
+        shown.add(n["id"])
+    # one ring of lookahead so the student sees where the path continues
+    for n in blocked:
+        if any(d in shown for d in (n.get("depends_on") or [])):
+            gn.append({"id": n["id"], "label": n["id"].split(".")[-1], "kind": n["type"],
+                       "state": "next", "detail": n["question"]})
+            shown.add(n["id"])
+    for n in answered + open_nodes + blocked:
+        if n["id"] not in shown:
+            continue
+        for dep in n.get("depends_on", []) or []:
+            if dep in shown:
+                ge.append({"source": dep, "target": n["id"], "kind": "unlocks"})
+    for c in constraints:
+        gn.append({"id": c["id"], "label": c["id"].split(".")[-1], "kind": "constraint",
+                   "state": "locked", "detail": c["text"], "icon": c["icon"],
+                   "verified": c["verified"]})
+        shown.add(c["id"])
+        ge.append({"source": c["from_node"], "target": c["id"], "kind": "locks"})
+    for cf in conflicts:
+        if cf["a"] in shown and cf["b"] in shown:
+            ge.append({"source": cf["a"], "target": cf["b"], "kind": "conflict"})
+    return {"nodes": gn, "edges": ge}
+
+
+# ---------------------------------------------------------------- sketch
+
+def load_sketch(pdir):
+    path = pdir / "sketch.json"
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {"brief": "", "blocks": [], "links": [], "confirmed": False}
+
+
+def save_sketch(project, sketch):
+    pdir = project_dir(project)
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "sketch.json").write_text(
+        json.dumps(sketch, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- sources
+
+def list_sources(project):
+    out = []
+    for scope, d in (("project", project_dir(project) / "sources"),
+                     ("shared", ROOT / "shared" / "datasheets")):
+        if not d.exists():
+            continue
+        for f in sorted(d.iterdir()):
+            if f.name.startswith(".") or f.suffix in (".json", ".txt"):
+                continue
+            meta_path = f.with_suffix(f.suffix + ".json")
+            meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+            out.append({"name": f.name, "scope": scope, "size": f.stat().st_size, **meta})
+    return out
+
+
+def list_projects():
+    """Every project in the workspace, newest activity first."""
+    root = ROOT / "projects"
+    root.mkdir(parents=True, exist_ok=True)
+    out = []
+    for d in root.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        sketch = load_sketch(d)
+        decisions = load_jsonl(d / "decisions.jsonl")
+        chat = load_jsonl(d / "chat.jsonl")
+        stamps = [e.get("ts", "") for e in decisions + chat if e.get("ts")]
+        out.append({
+            "name": d.name,
+            "brief": sketch.get("brief") or (chat[0]["text"][:80] if chat else ""),
+            "blocks": len(sketch.get("blocks", [])),
+            "decisions": len({e["node"] for e in decisions if e.get("node")}),
+            "messages": len(chat),
+            "confirmed": bool(sketch.get("confirmed")),
+            "updated": max(stamps) if stamps else "",
+        })
+    out.sort(key=lambda p: p["updated"], reverse=True)
+    return out
+
+
+def create_project(name):
+    safe = re.sub(r"[^A-Za-z0-9._-]", "-", name).strip("-")[:60] or "untitled"
+    d = ROOT / "projects" / safe
+    if d.exists():
+        n = 2
+        while (ROOT / "projects" / f"{safe}-{n}").exists():
+            n += 1
+        safe = f"{safe}-{n}"
+        d = ROOT / "projects" / safe
+    (d / "sources").mkdir(parents=True, exist_ok=True)
+    for f in ("decisions.jsonl", "threads.jsonl", "chat.jsonl"):
+        (d / f).touch()
+    save_sketch(safe, {"brief": "", "blocks": [], "links": [], "confirmed": False})
+    return safe
+
+
+def write(project="demo"):
+    m = build(project)
+    pdir = project_dir(project)
+    pdir.mkdir(parents=True, exist_ok=True)
+    (pdir / "design-model.json").write_text(
+        json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
+    return m
+
+
+if __name__ == "__main__":
+    proj = sys.argv[1] if len(sys.argv) > 1 else "demo"
+    m = write(proj)
+    p = m["progress"]
+    print(f"{proj}: stage={m['stage']} domains={m['domains'] or '-'}")
+    print(f"  {p['answered']}/{p['total']} answered · {p['constraints']} constraints "
+          f"({p['unverified']} unverified) · {p['conflicts']} conflicts")
+    for n in m["open"]:
+        print(f"  OPEN   {n['id']}  {n['question']}")
+    for n in m["blocked"]:
+        print(f"  next   {n['id']}  ({n['reason']})")

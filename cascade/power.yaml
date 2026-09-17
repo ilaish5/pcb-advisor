@@ -1,0 +1,301 @@
+version: 2
+domain: power
+title: "Power supply"
+blocks: [power_in, regulation]     # which sketch blocks pull this cascade in
+
+# ---------------------------------------------------------------------------
+# provenance is now a first-class field, and validate_cascade.py enforces it:
+#   computed    a script produced it. no trust required.
+#   datasheet   a specific document says it. needs url + verbatim quote.
+#   standard    a published standard says it. needs doc + locator.
+#   convention  craft. no citable source. must be declared, never disguised.
+#
+# `verified: false` means the citation is CLAIMED but the quote has not been
+# pulled from the real document yet.  The UI shows these differently on purpose.
+# ---------------------------------------------------------------------------
+
+nodes:
+
+  - id: req.source
+    type: requirement
+    question: "Where does the board get its power?"
+    why: "Sets the input voltage range, whether quiescent current matters at all, and what input protection you need."
+    options:
+      - id: wall
+        label: "Wall adapter, 9-12 V"
+        locks:
+          - id: pwr.in.range
+            text: "Unregulated wall adapters overshoot 20-30% at light load. Rate input parts for 20 V, not 12 V."
+            provenance: convention
+      - id: battery
+        label: "Battery"
+        locks:
+          - id: pwr.iq
+            text: "The regulator's quiescent current comes out of the battery budget. 1 mA of Iq burns 8.7 Ah per year."
+            provenance: computed
+            source: {doc: "1 mA x 8760 h", locator: "arithmetic"}
+          - id: pwr.in.falling
+            text: "Input voltage falls through the discharge. Check the regulator still works at the low end of the cell's range, including its dropout voltage."
+            provenance: datasheet
+            source: {doc: "regulator datasheet", locator: "Electrical Characteristics - Dropout Voltage"}
+            verified: false
+      - id: usb
+        label: "USB 5 V"
+        locks:
+          - id: pwr.usb.budget
+            text: "USB 2.0 gives 500 mA without negotiation. Total board current must stay under it."
+            provenance: standard
+            source: {doc: "USB 2.0 specification", locator: "section 7.2.1"}
+            verified: false
+      - id: upstream
+        label: "Rail from another board"
+        locks:
+          - id: pwr.upstream.noise
+            text: "You do not control the noise arriving on that rail. Add an LC or ferrite filter at the entry point."
+            provenance: convention
+
+  - id: req.vout
+    type: requirement
+    question: "What rail does the circuit need?"
+    why: "Sets the conversion ratio, and with it how much a linear regulator would waste."
+    options:
+      - id: v3v3
+        label: "3.3 V"
+      - id: v5
+        label: "5 V"
+      - id: dual
+        label: "More than one rail"
+        locks:
+          - id: pwr.multi.seq
+            text: "Multiple rails raise a sequencing question. Check whether any part requires one rail up before another."
+            provenance: datasheet
+            source: {doc: "device datasheet", locator: "Power Supply Sequencing"}
+            verified: false
+
+  - id: req.iload
+    type: requirement
+    question: "What is the maximum load current?"
+    why: "This is the main fork between linear and switching, and it sets trace widths."
+    options:
+      - id: i_low
+        label: "Under 100 mA"
+      - id: i_mid
+        label: "100 mA - 1 A"
+        locks:
+          - id: pwr.trace.width
+            text: "Power traces need a real width calculation. Run scripts/trace_width.py rather than guessing."
+            provenance: standard
+            source: {doc: "IPC-2221", locator: "section 6.2"}
+            verified: false
+      - id: i_high
+        label: "Over 1 A"
+        locks:
+          - id: pwr.trace.width.high
+            text: "Power traces need IPC-2221 sizing, and above roughly 2 A consider a copper pour instead of a trace."
+            provenance: standard
+            source: {doc: "IPC-2221", locator: "section 6.2"}
+            verified: false
+
+  - id: req.env
+    type: requirement
+    question: "Where does the board live?"
+    why: "Sets the ambient temperature that goes into every thermal calculation."
+    options:
+      - id: bench
+        label: "Bench or room"
+      - id: enclosed
+        label: "Sealed enclosure"
+        locks:
+          - id: pwr.thermal.ambient
+            text: "Inside a sealed enclosure assume 50-60 C ambient, not 25 C. This roughly halves your thermal budget."
+            provenance: convention
+
+  # ---------------------------------------------------------------- decisions
+
+  - id: power.protection
+    type: decision
+    question: "How is reverse polarity handled?"
+    why: "Plugging the supply in backwards is the most common and most destructive prototype mistake."
+    depends_on: [req.source, req.iload]
+    options:
+      - id: series_schottky
+        label: "Series Schottky diode"
+        costs: ["drops ~0.4 V", "dissipates I x Vf"]
+        locks:
+          - id: prot.diode.drop
+            text: "Subtract the diode's forward drop from the input voltage before you check the regulator's dropout."
+            provenance: datasheet
+            source: {doc: "SS34 datasheet", locator: "Forward Voltage"}
+            verified: false
+        blocks: [{id: D_PROT, label: "D1\nreverse-polarity\nSchottky", order: 20}]
+      - id: pfet
+        label: "Series P-FET"
+        costs: ["more expensive", "gate needs clamping"]
+        locks:
+          - id: prot.pfet.vgs
+            text: "The gate needs a zener or divider if the input can exceed the FET's maximum Vgs."
+            provenance: datasheet
+            source: {doc: "P-FET datasheet", locator: "Absolute Maximum Ratings - Vgs"}
+            verified: false
+        blocks: [{id: Q_PROT, label: "Q1\nreverse-polarity\nP-FET", order: 20}]
+      - id: none
+        label: "No protection"
+        costs: ["one reversed connection kills the board"]
+
+  - id: power.topology
+    type: decision
+    question: "Linear or switching?"
+    why: "This locks in more layout constraints than any other choice in the power design. After parts are ordered, reversing it means a new schematic and a new board."
+    depends_on: [req.source, req.vout, req.iload]
+    options:
+      - id: linear
+        label: "Linear regulator / LDO"
+        costs: ["burns (Vin-Vout) x I as heat", "poor efficiency at large ratios"]
+        locks:
+          - id: lin.thermal
+            text: "Compute P = (Vin - Vout) x I, then Tj = Tambient + P x theta-JA. Stay under 70% of the rated maximum junction temperature."
+            provenance: datasheet
+            source: {doc: "regulator datasheet", locator: "Thermal Information - theta-JA"}
+            verified: false
+          - id: lin.copper
+            text: "Copper pour under the thermal pad, with thermal vias through to the far side."
+            provenance: datasheet
+            source: {doc: "regulator datasheet", locator: "Layout - Thermal Considerations"}
+            verified: false
+          - id: lin.esr
+            text: "Many LDOs are only stable inside a specific output-capacitor ESR window. Check the stability section, not just the capacitance value."
+            provenance: datasheet
+            source: {doc: "LDO datasheet", locator: "Output Capacitor Requirements"}
+            verified: false
+        blocks: [{id: U_REG, label: "U1\nLDO", order: 30}]
+        opens: [power.linear.package]
+      - id: switching
+        label: "Switching buck converter"
+        costs: ["noisy", "tight loop is mandatory", "more parts", "needs an inductor"]
+        locks:
+          - id: sw.hotloop
+            text: "Minimise the AREA of the loop Vin -> SW -> L -> Cout -> GND. Its enclosed area, not its length, sets how much the board radiates."
+            provenance: datasheet
+            source: {doc: "TI SLYT614", locator: "Layout considerations for switching regulators", url: "https://www.ti.com/lit/an/slyt614/slyt614.pdf"}
+            verified: false
+          - id: sw.keepaway
+            text: "The SW node is the aggressor. Keep its copper just large enough to carry the current, and route nothing under or beside it on any layer."
+            provenance: datasheet
+            verified: true
+            source:
+              doc: "TI SLYT614"
+              locator: "Step #2 - place and route the inductor"
+              url: "https://www.ti.com/lit/an/slyt614/slyt614.pdf"
+              cached: "slyt614.pdf"
+              quote: "To reduce radiated EMI, place the inductor as close as possible to the IC with the area of the SW-node copper kept to a minimum"
+          - id: sw.feedback
+            text: "The feedback trace connects at the output capacitor and routes away from the inductor and the SW node."
+            provenance: datasheet
+            source: {doc: "TPS562201 datasheet", locator: "Layout Guidelines"}
+            verified: false
+          - id: sw.cin
+            text: "The input capacitor sits as close to the VIN and GND pins as physically possible. This is the single highest-leverage placement on the board."
+            provenance: datasheet
+            verified: true
+            source:
+              doc: "TI SLYT614"
+              locator: "Step #1 - place and route the input capacitor"
+              url: "https://www.ti.com/lit/an/slyt614/slyt614.pdf"
+              cached: "slyt614.pdf"
+              quote: "The input capacitor is the single-most important component for reliable operation of any step-down converter"
+        blocks:
+          - {id: U_REG, label: "U1\nbuck", order: 30}
+          - {id: L_OUT, label: "L1\ninductor", order: 31}
+        opens: [power.switching.freq]
+
+  # ------- chained decisions: these only exist because of an earlier choice ---
+
+  - id: power.switching.freq
+    type: decision
+    question: "Switching frequency?"
+    why: "Trades inductor size against efficiency and against where the noise lands in the spectrum."
+    depends_on: [power.topology]
+    requires: {power.topology: switching}
+    options:
+      - id: f_low
+        label: "Around 500 kHz"
+        costs: ["larger inductor"]
+        locks:
+          - id: sw.freq.inductor_size
+            text: "A lower switching frequency needs more inductance for the same ripple, so a physically larger inductor. Budget the board area before placement."
+            provenance: convention
+      - id: f_high
+        label: "1 MHz or above"
+        costs: ["more switching loss", "layout gets less forgiving"]
+        locks:
+          - id: sw.freq.harmonics
+            text: "Harmonics reach further up the spectrum. If the board also carries a radio, check the switching harmonics do not land in its band."
+            provenance: convention
+          - id: sw.freq.layout_margin
+            text: "At high frequency, parasitic inductance in the hot loop matters proportionally more. The loop-area rule stops being advice and becomes a requirement."
+            provenance: convention
+        opens: [power.inductor]
+
+  - id: power.inductor
+    type: decision
+    question: "Shielded or unshielded inductor?"
+    why: "Only worth asking once you are switching fast: an unshielded part sprays its field into whatever is nearby."
+    depends_on: [power.switching.freq]
+    requires: {power.topology: switching}
+    options:
+      - id: shielded
+        label: "Shielded"
+        costs: ["costs more", "usually taller"]
+      - id: unshielded
+        label: "Unshielded"
+        costs: ["radiates into neighbours"]
+        locks:
+          - id: sw.ind.keepout
+            text: "An unshielded inductor needs physical clearance from any sensitive analog or RF node. This is a placement constraint, not a routing one."
+            provenance: convention
+        conflicts:
+          - with: analog.sense.quiet
+            note: "An unshielded inductor wants clearance; a sensitive analog input wants to be near its source. If both are on a small board, one of them has to give."
+
+  - id: power.linear.package
+    type: decision
+    question: "Package for the linear regulator?"
+    why: "For a linear part, the package IS the heatsink."
+    depends_on: [power.topology]
+    requires: {power.topology: linear}
+    options:
+      - id: sot23
+        label: "SOT-23"
+        costs: ["theta-JA around 200 C/W - only good for small dissipation"]
+        locks:
+          - id: lin.sot23.limit
+            text: "At roughly 200 C/W, even 0.25 W puts the junction 50 C above ambient. Recompute before committing."
+            provenance: computed
+            source: {doc: "0.25 W x 200 C/W", locator: "arithmetic"}
+      - id: sot223
+        label: "SOT-223 or DPAK"
+        costs: ["larger footprint"]
+        locks:
+          - id: lin.pad.area
+            text: "The thermal tab only works with copper attached to it. Reserve the pour area at placement time, not after routing."
+            provenance: convention
+
+  - id: power.testpoint
+    type: decision
+    question: "Add a test point on the rail?"
+    why: "A board with no test point on its supply is very hard to diagnose when it does not come up."
+    depends_on: [power.topology]
+    options:
+      - id: yes_tp
+        label: "Yes, TP on the rail"
+        locks:
+          - id: tp.place
+            text: "Put it reachable from the component side with a ground point right next to it. Without nearby ground you cannot measure noise, only DC."
+            provenance: convention
+        blocks: [{id: TP1, label: "TP1\nrail", order: 40}]
+      - id: no_tp
+        label: "No"
+
+base_blocks:
+  - {id: J_IN, label: "J1\nDC in", order: 10}
+  - {id: LOAD, label: "LOAD", order: 90}

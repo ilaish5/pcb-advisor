@@ -1,0 +1,48 @@
+version: 2
+domain: analog
+title: "Analog sensing"
+blocks: [sensor, analog, adc]
+
+nodes:
+  - id: analog.reference
+    type: decision
+    question: "What sets the ADC reference?"
+    why: "Your measurement is only ever as good as the thing you compare against."
+    options:
+      - id: supply
+        label: "The supply rail"
+        costs: ["every wobble on the rail becomes measurement error"]
+        conflicts:
+          - with: sw.hotloop
+            note: "Using the switching rail as your ADC reference means the converter's own ripple lands directly in your readings. Pick a separate reference, or accept the error and document it."
+      - id: dedicated
+        label: "Dedicated voltage reference"
+        locks:
+          - id: analog.ref.filter
+            text: "Filter the reference pin and keep its trace short and away from digital switching."
+            provenance: datasheet
+            source: {doc: "ADC datasheet", locator: "Reference Input"}
+            verified: false
+        blocks: [{id: U_REF, label: "U3\nVref", order: 62}]
+
+  - id: analog.ground
+    type: decision
+    question: "How is analog ground handled?"
+    why: "Return current takes the path of least impedance, not the path you drew."
+    options:
+      - id: split_star
+        label: "Separate analog region, joined at one point"
+        locks:
+          - id: analog.sense.quiet
+            text: "The sensing input needs a quiet region: no switching node, no high-current return, no unshielded magnetics nearby."
+            provenance: convention
+          - id: analog.star.single
+            text: "Exactly one connection between analog and power ground, at the regulator's output capacitor. Two connections make a loop."
+            provenance: convention
+      - id: single_plane
+        label: "One solid ground plane"
+        costs: ["simpler and often correct, but you must control where the return current flows"]
+        locks:
+          - id: analog.plane.partition
+            text: "With a single plane, partition by placement instead: keep noisy and quiet sections physically apart so their return currents never overlap."
+            provenance: convention

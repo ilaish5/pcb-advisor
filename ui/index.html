@@ -1,0 +1,547 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>PCB Advisor</title>
+<style>
+:root{
+  --bg:#0f1117; --card:#191d29; --line:#282e3d; --ink:#e9ebf1; --dim:#8d95a8;
+  --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);
+     font:14px/1.6 -apple-system,"Segoe UI",Inter,Arial,sans-serif;
+     display:flex;flex-direction:column}
+
+/* ---------- top bar: one line, one control ---------- */
+.top{display:flex;align-items:center;gap:12px;padding:10px 18px;
+     border-bottom:1px solid var(--line)}
+.top .name{font-weight:600}
+select,button{background:var(--card);border:1px solid var(--line);border-radius:8px;
+  color:var(--ink);padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
+button:hover,select:hover{border-color:var(--accent)}
+.top .sp{flex:1}
+.top .stat{color:var(--dim);font-size:12.5px}
+
+/* ---------- the diagram: real DOM, so it is legible and editable ---------- */
+.diagram{flex:none;border-bottom:1px solid var(--line);background:#12151e;
+  display:flex;flex-direction:column;height:380px;min-height:120px;position:relative}
+.grip{height:11px;cursor:ns-resize;flex:none;border-top:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center}
+.grip::after{content:"";width:44px;height:3px;border-radius:2px;background:#333c52}
+.grip:hover::after,.grip.on::after{background:var(--accent)}
+/* dragging must not select the text underneath */
+body.nosel{user-select:none;-webkit-user-select:none}
+.zoom{display:flex;align-items:center;gap:2px;margin-inline-start:6px}
+.zoom button{padding:4px 9px;font-size:13px;line-height:1}
+.zoom .pct{color:var(--dim);font-size:11.5px;width:42px;text-align:center}
+.dbar{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:12px;color:var(--dim)}
+.dbar .sp{flex:1}
+.dbar button{padding:5px 10px;font-size:12px}
+.dbar button.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.canvas{flex:1;overflow:hidden;position:relative;cursor:grab;touch-action:none}
+.canvas.drag{cursor:grabbing}
+.stage{position:absolute;left:0;top:0;transform-origin:0 0}
+.blk{position:absolute;width:158px;min-height:64px;background:var(--card);
+  border:1.5px solid #39435c;border-radius:10px;padding:9px 11px;cursor:pointer;
+  display:flex;flex-direction:column;justify-content:center;gap:3px;
+  font-size:13px;line-height:1.35;z-index:2}
+.blk:hover{border-color:var(--accent)}
+.blk.sel{border-color:var(--accent);box-shadow:0 0 0 3px #3b82f633}
+.blk.linking{border-color:var(--ok);border-style:dashed}
+.blk .kind{font-size:10px;color:var(--dim)}
+.wires{position:absolute;inset:0;z-index:1;overflow:visible}
+.wires path{stroke:#5a6480;fill:none}
+.wires path.hit{stroke:transparent;stroke-width:14;cursor:pointer;fill:none}
+.wires path.hit:hover{stroke:#ef444455}
+.pop{position:absolute;z-index:20;background:#1b2030;border:1px solid #3d4a68;
+  border-radius:10px;padding:12px;width:250px;display:flex;flex-direction:column;gap:8px;
+  box-shadow:0 12px 32px #0009}
+.pop input,.pop select{width:100%;background:var(--card);border:1px solid var(--line);
+  border-radius:7px;padding:7px 9px;color:var(--ink);font:inherit;font-size:13px}
+.pop .row{display:flex;gap:7px}
+.pop .row button{flex:1;font-size:12px}
+.danger{color:#fca5a5}
+.hintbar{font-size:11.5px;color:var(--dim);padding:0 14px 8px}
+
+/* ---------- the conversation ---------- */
+.log{flex:1;overflow-y:auto;padding:22px 0}
+.wrap{max-width:720px;margin:0 auto;padding:0 20px;
+      display:flex;flex-direction:column;gap:16px}
+.msg{display:flex;flex-direction:column;gap:5px}
+.who{font-size:11px;color:var(--dim)}
+.bubble{border-radius:12px;padding:12px 15px;font-size:14px}
+.you .bubble{background:#1b2a3d;border:1px solid #24405c;align-self:flex-end;max-width:80%}
+.you{align-items:flex-end}
+.advisor .bubble{background:var(--card);border:1px solid var(--line)}
+
+/* a decision, shown inline in the timeline */
+.dec{border-left:2px solid var(--ok);padding:2px 0 2px 14px}
+.dec .head{font-size:13.5px}
+.dec .head b{color:var(--ok);font-weight:600}
+.locked{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.lk{background:#1a1d28;border:1px solid var(--line);border-radius:9px;
+    padding:9px 12px;font-size:13px;color:#cfd4e0}
+.lk .tag{color:var(--dim);font-size:11px;margin-right:6px}
+
+/* the live question, with its answers right there */
+.ask{background:var(--card);border:1px solid #33405c;border-radius:12px;padding:16px}
+.ask .q{font-size:15.5px;font-weight:600;margin-bottom:5px}
+.ask .why{color:var(--dim);font-size:13px;margin-bottom:13px}
+.opts{display:flex;flex-direction:column;gap:8px}
+.opt{text-align:left;padding:11px 13px;font-size:14px;width:100%}
+.opt .cost{color:#e59a9a;font-size:12px;margin-top:3px}
+.empty{color:var(--dim);text-align:center;padding:50px 20px;font-size:14px;line-height:1.8}
+
+/* ---------- input ---------- */
+.compose{border-top:1px solid var(--line);padding:14px 0}
+.compose .wrap{flex-direction:row;gap:10px;align-items:flex-end}
+textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:11px 13px;color:var(--ink);font:inherit;resize:none;height:48px}
+.send{background:var(--accent);border-color:var(--accent);color:#fff;padding:11px 20px}
+
+/* ---------- drawer: closed unless asked for ---------- */
+.drawer{position:fixed;top:0;right:0;bottom:0;width:520px;background:#12151e;
+  border-left:1px solid var(--line);transform:translateX(100%);
+  transition:transform .18s ease;display:flex;flex-direction:column;z-index:9}
+.drawer.on{transform:none}
+.dtabs{display:flex;gap:4px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.dtabs button.on{background:#22293a;border-color:#3d4a68}
+.dtabs .x{margin-left:auto}
+.dbody{flex:1;overflow-y:auto;padding:14px 16px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.07em;
+   text-transform:uppercase;padding:5px 8px;border-bottom:1px solid var(--line)}
+td{padding:9px 8px;border-bottom:1px solid #1e2331;vertical-align:top}
+.quote{color:var(--dim);font-size:12px;margin-top:5px;font-style:italic}
+.meta{color:#6b7488;font-size:11px;margin-top:4px}
+.pill{font-size:10.5px;border:1px solid var(--line);border-radius:99px;
+      padding:1px 7px;color:var(--dim);white-space:nowrap}
+.pill.u{color:var(--warn);border-color:#4a3a12}
+a{color:var(--accent);text-decoration:none}
+.conflict{background:#2a1518;border-left:3px solid var(--bad);border-radius:8px;
+          padding:11px 13px;margin-bottom:12px;font-size:13px}
+.conflict b{color:#fca5a5}
+.srcrow{display:flex;gap:10px;align-items:center;background:var(--card);
+  border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin-bottom:7px;font-size:13px}
+.srcrow .g{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tools{display:flex;gap:8px;margin-top:10px}
+input[type=text]{flex:1;background:var(--card);border:1px solid var(--line);
+  border-radius:8px;padding:8px 11px;color:var(--ink);font:inherit;font-size:13px}
+</style>
+
+<div class="top">
+  <span class="name">PCB Advisor</span>
+  <select id="projsel" onchange="switchTo(this.value)"></select>
+  <button onclick="newProject()">+ New</button>
+  <span class="sp"></span>
+  <span class="stat" id="stat"></span>
+  <button onclick="openDrawer('decisions')">Details</button>
+</div>
+
+<div class="diagram" id="diagram">
+  <div class="dbar">
+    <span id="dtitle">Diagram</span>
+    <span class="sp"></span>
+    <button onclick="addBlock()">+ Block</button>
+    <span class="zoom">
+      <button onclick="zoomBy(1/1.2)" title="zoom out">−</button>
+      <span class="pct" id="zpct">100%</span>
+      <button onclick="zoomBy(1.2)" title="zoom in">+</button>
+      <button onclick="fit(true)" title="fit and centre">Fit</button>
+    </span>
+    <button class="go" id="sendsketch" style="display:none" onclick="sendSketch()">
+      Send changes to advisor</button>
+  </div>
+  <div class="canvas" id="canvas"><div class="stage" id="stage"></div></div>
+  <div class="hintbar" id="dhint"></div>
+  <div class="grip" id="grip" title="drag to resize"></div>
+</div>
+
+<div class="log" id="log"><div class="wrap" id="wrap"></div></div>
+
+<div class="compose"><div class="wrap">
+  <textarea id="say" dir="auto" placeholder="Describe what you want to design…"
+    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+  <button class="send" id="sendbtn" onclick="send()">Send</button>
+</div></div>
+
+<div class="drawer" id="drawer">
+  <div class="dtabs">
+    <button id="t-decisions" onclick="openDrawer('decisions')">Decisions</button>
+    <button id="t-constraints" onclick="openDrawer('constraints')">Constraints</button>
+    <button id="t-sources" onclick="openDrawer('sources')">Sources</button>
+    <button class="x" onclick="document.getElementById('drawer').classList.remove('on')">✕</button>
+  </div>
+  <div class="dbody" id="dbody"></div>
+</div>
+
+<script>
+let S=null, busy=false, TAB='decisions';
+let PROJ=new URLSearchParams(location.search).get('project')||'demo';
+const $=id=>document.getElementById(id);
+const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const HEB=/[\u0590-\u05FF]/;
+// A flow arrow between two Hebrew words has to point the other way. Only flip
+// when Hebrew sits on BOTH sides, so "Vin -> SW -> L" is left alone.
+const flow=s=>(s||'')
+  .replace(/([\u0590-\u05FF][^\S\n]*)→([^\S\n]*[\u0590-\u05FF])/g,'$1←$2')
+  .replace(/([\u0590-\u05FF][^\S\n]*)->([^\S\n]*[\u0590-\u05FF])/g,'$1<-$2');
+// dir=auto lets the browser pick paragraph direction from the first strong character
+const bi=s=>HEB.test(s)?'rtl':'auto';
+const txt=s=>esc(flow(s)).replace(/\n/g,'<br>');
+const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ);
+
+async function loadProjects(){
+  const r=await (await fetch('/api/projects')).json();
+  $('projsel').innerHTML=r.projects.map(p=>
+    `<option value="${esc(p.name)}" ${p.name===PROJ?'selected':''}>${esc(p.name)}</option>`).join('');
+}
+const switchTo=n=>{if(n!==PROJ) location.search='?project='+encodeURIComponent(n);};
+async function newProject(){
+  const name=prompt('Name the new project:'); if(!name) return;
+  const r=await (await fetch('/api/projects/new',{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
+  location.search='?project='+encodeURIComponent(r.created);
+}
+
+async function load(){
+  S=await (await fetch(q('/api/state'))).json();
+  if(!dirty) sketch=JSON.parse(JSON.stringify(S.sketch||{blocks:[],links:[],confirmed:false}));
+  paint(); drawDiagram();
+}
+
+/* ===================== the diagram ===================== */
+const KINDS=['power_in','regulation','mcu','digital','sensor','analog','adc','other'];
+const BW=158, BH=76, GX=74, GY=26;
+let sketch={blocks:[],links:[],confirmed:false}, dirty=false, linkFrom=null, popFor=null;
+let zoom=1, panX=0, panY=0, moved=false, bbox={w:0,h:0}, lastShape='';
+
+function isRTL(s){return HEB.test(s||'');}
+
+function layerOf(blocks,links){
+  const ids=blocks.map(b=>b.id), pre={}; ids.forEach(i=>pre[i]=[]);
+  links.forEach(([a,b])=>{ if(pre[b]&&a!==b&&ids.includes(a)) pre[b].push(a); });
+  const L={}; ids.forEach(i=>L[i]=0);
+  for(let k=0;k<=ids.length;k++){ let ch=false;
+    ids.forEach(i=>{ const w=Math.max(0,...pre[i].map(p=>L[p]+1)); if(w>L[i]){L[i]=w;ch=true;} });
+    if(!ch) break; }
+  return L;
+}
+
+function applyView(){
+  $('stage').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
+  $('zpct').textContent=Math.round(zoom*100)+'%';
+  if(popFor) placePop();
+}
+function clamp(v,a,b){ if(b<a) b=a; return Math.min(b,Math.max(a,v)); }
+
+function fit(manual){
+  const c=$('canvas');
+  if(!bbox.w){zoom=1;panX=panY=0;return applyView();}
+  const pad=34;
+  const k=clamp(Math.min((c.clientWidth-pad*2)/bbox.w,(c.clientHeight-pad*2)/bbox.h),0.3,1.25);
+  zoom=k;
+  panX=(c.clientWidth-bbox.w*k)/2;          // centred, always
+  panY=(c.clientHeight-bbox.h*k)/2;
+  if(manual) moved=false;
+  applyView();
+}
+function zoomBy(k){
+  const c=$('canvas'), cx=c.clientWidth/2, cy=c.clientHeight/2;
+  const nz=clamp(zoom*k,0.3,2.5);
+  panX=cx-(cx-panX)*(nz/zoom); panY=cy-(cy-panY)*(nz/zoom);
+  zoom=nz; moved=true; applyView();
+}
+
+/* wheel zooms about the cursor; dragging empty canvas pans */
+(function(){
+  const c=$('canvas');
+  c.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const r=c.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top;
+    const nz=clamp(zoom*(e.deltaY<0?1.12:1/1.12),0.3,2.5);
+    panX=cx-(cx-panX)*(nz/zoom); panY=cy-(cy-panY)*(nz/zoom);
+    zoom=nz; moved=true; applyView();
+  },{passive:false});
+
+  let sx=0,sy=0,ox=0,oy=0,down=false,shifted=false;
+  c.addEventListener('pointerdown',e=>{
+    if(e.target.closest('.blk')||e.target.closest('.pop')) return;
+    down=true; shifted=false; sx=e.clientX; sy=e.clientY; ox=panX; oy=panY;
+    c.setPointerCapture(e.pointerId); c.classList.add('drag');
+    document.body.classList.add('nosel');
+  });
+  c.addEventListener('pointermove',e=>{
+    if(!down) return;
+    const dx=e.clientX-sx, dy=e.clientY-sy;
+    if(Math.abs(dx)+Math.abs(dy)>3) shifted=true;
+    panX=ox+dx; panY=oy+dy; moved=true; applyView();
+  });
+  const up=()=>{ if(down&&!shifted&&popFor){popFor=null;drawDiagram();} down=false;
+                 c.classList.remove('drag'); document.body.classList.remove('nosel'); };
+  c.addEventListener('pointerup',up); c.addEventListener('pointercancel',up);
+})();
+
+/* drag the grip to resize the whole diagram area */
+(function(){
+  const grip=$('grip'), d=$('diagram');
+  const saved=parseInt(localStorage.getItem('pcbadv.h')||'0',10);
+  if(saved>120) d.style.height=saved+'px';
+  let down=false,sy=0,h0=0;
+  grip.addEventListener('pointerdown',e=>{
+    down=true; sy=e.clientY; h0=d.getBoundingClientRect().height;
+    grip.setPointerCapture(e.pointerId); grip.classList.add('on');
+    document.body.classList.add('nosel');
+  });
+  grip.addEventListener('pointermove',e=>{
+    if(!down) return;
+    const vh=document.documentElement.clientHeight||window.innerHeight||800;
+    const h=clamp(h0+(e.clientY-sy),120,Math.max(200,vh-200));
+    d.style.height=h+'px'; applyView();
+  });
+  const up=()=>{ if(down) localStorage.setItem('pcbadv.h',
+                   Math.round(d.getBoundingClientRect().height));
+                 down=false; grip.classList.remove('on');
+                 document.body.classList.remove('nosel'); };
+  grip.addEventListener('pointerup',up); grip.addEventListener('pointercancel',up);
+})();
+
+function drawDiagram(){
+  const stage=$('stage'), canvas=$('canvas');
+  const inSketch = S.stage==='sketch';
+  const blocks = inSketch ? (sketch.blocks||[])
+                          : (S.blocks||[]).map(b=>({id:b.id,label:b.label,kind:'built'}));
+  const links  = inSketch ? (sketch.links||[])
+                          : (S.blocks||[]).slice(1).map((b,i)=>[S.blocks[i].id,b.id]);
+  $('dtitle').textContent = inSketch
+    ? (sketch.confirmed?'Block diagram — confirmed':'Block diagram — click a block to correct it')
+    : `Signal path — ${S.progress.answered} decisions`;
+  $('dhint').textContent = inSketch
+    ? (linkFrom ? 'Now click the block it feeds into. Esc to cancel.'
+                : 'Click a block to rename it, change its kind, link it or delete it. Click an arrow to remove it.')
+    : 'This follows from your decisions. Go back to the sketch to change the structure.';
+  $('sendsketch').style.display = (inSketch&&dirty)?'':'none';
+
+  if(!blocks.length){
+    stage.innerHTML=`<div style="color:var(--dim);width:420px;font-size:13.5px">
+      Nothing sketched yet. Describe what you want to build, or press <b>+ Block</b>.</div>`;
+    stage.style.width='420px'; stage.style.height='60px';
+    bbox={w:420,h:60}; if(!moved) fit(); applyView(); return;
+  }
+
+  const rtl = blocks.some(b=>isRTL(b.label));
+  const L=layerOf(blocks,links), cols={};
+  blocks.forEach(b=>{ (cols[L[b.id]] ||= []).push(b); });
+  const nc=Math.max(...Object.keys(cols).map(Number))+1;
+  const maxRows=Math.max(...Object.values(cols).map(a=>a.length));
+  const pos={};
+  Object.entries(cols).forEach(([c,items])=>{
+    const col=rtl ? (nc-1-Number(c)) : Number(c);
+    const x=col*(BW+GX);
+    const span=(items.length-1)*(BH+GY);
+    items.forEach((b,i)=>{ pos[b.id]={x, y:(maxRows-1)*(BH+GY)/2 - span/2 + i*(BH+GY)}; });
+  });
+
+  const wDiag=(nc-1)*(BW+GX)+BW, hDiag=(maxRows-1)*(BH+GY)+BH;
+  const skips=links.filter(([a,b])=>pos[a]&&pos[b]&&Math.abs(L[b]-L[a])>1).length;
+  const laneH=skips*22+(skips?18:0);
+
+  let wires='', hits='';
+  let lane=hDiag+14;
+  links.forEach(([a,b],i)=>{
+    if(!pos[a]||!pos[b]) return;
+    const p=pos[a], r=pos[b], right=r.x>p.x;
+    const sx=p.x+(right?BW:0), sy=p.y+BH/2;
+    const ex=r.x+(right?0:BW), ey=r.y+BH/2;
+    let d;
+    if(Math.abs(L[b]-L[a])>1){
+      const cx1=p.x+BW/2, cx2=r.x+BW/2;
+      d=`M ${cx1} ${p.y+BH} L ${cx1} ${lane} L ${cx2} ${lane} L ${cx2} ${r.y+BH}`;
+      lane+=22;
+    } else if(Math.abs(sy-ey)<1){ d=`M ${sx} ${sy} L ${ex} ${ey}`; }
+    else { const mx=(sx+ex)/2; d=`M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ey} L ${ex} ${ey}`; }
+    wires+=`<path d="${d}" stroke-width="1.6" marker-end="url(#ah)"/>`;
+    hits +=`<path class="hit" d="${d}" onclick="dropLink(${i})"><title>click to remove</title></path>`;
+  });
+
+  stage.style.width=wDiag+'px'; stage.style.height=(hDiag+laneH)+'px';
+  bbox={w:wDiag,h:hDiag+laneH};
+  stage.innerHTML=
+    `<svg class="wires" width="${wDiag}" height="${hDiag+laneH}">
+       <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3"
+         orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#5a6480"/></marker></defs>
+       ${wires}${hits}</svg>` +
+    blocks.map(b=>{const pt=pos[b.id];
+      return `<div class="blk ${popFor===b.id?'sel':''} ${linkFrom===b.id?'linking':''}"
+        style="left:${pt.x}px;top:${pt.y}px" onclick="clickBlock(event,'${b.id}')">
+        <div dir="auto">${esc(b.label||b.id)}</div>
+        <div class="kind">${esc(b.id)} · ${esc(b.kind||'?')}</div></div>`;}).join('');
+
+  // re-fit when the diagram's shape changes, but never fight a manual zoom
+  const shapeKey=blocks.map(b=>b.id).join(',')+'|'+links.length+'|'+S.stage;
+  if(shapeKey!==lastShape){ lastShape=shapeKey; if(!moved) fit(); }
+  applyView();
+  if(popFor) openPop(popFor,pos);
+}
+
+function clickBlock(ev,id){
+  ev.stopPropagation();
+  if(linkFrom && linkFrom!==id){
+    sketch.links.push([linkFrom,id]); linkFrom=null; dirty=true; drawDiagram(); return;
+  }
+  linkFrom=null; popFor=(popFor===id?null:id); drawDiagram();
+}
+function dropLink(i){ sketch.links.splice(i,1); dirty=true; drawDiagram(); }
+
+let popAt={x:0,y:0};
+function placePop(){
+  const el=document.querySelector('.pop'); if(!el) return;
+  el.style.left=(panX+popAt.x*zoom)+'px';
+  el.style.top =(panY+(popAt.y+BH)*zoom+10)+'px';
+}
+function openPop(id,pos){
+  const b=sketch.blocks.find(x=>x.id===id); if(!b) return;
+  popAt=pos[id];
+  const el=document.createElement('div');
+  el.className='pop';
+  el.onclick=e=>e.stopPropagation();
+  el.innerHTML=`<input id="pl" dir="auto" value="${esc(b.label||'')}" placeholder="label">
+    <select id="pk">${KINDS.map(k=>`<option ${k===b.kind?'selected':''}>${k}</option>`).join('')}</select>
+    <div class="row"><button onclick="startLink('${id}')">Link →</button>
+      <button class="danger" onclick="delBlock('${id}')">Delete</button></div>`;
+  $('canvas').appendChild(el); placePop();
+  const l=el.querySelector('#pl'), k=el.querySelector('#pk');
+  l.oninput=()=>{b.label=l.value;dirty=true;};
+  l.onblur=()=>drawDiagram();
+  k.onchange=()=>{b.kind=k.value;dirty=true;drawDiagram();};
+}
+function startLink(id){ linkFrom=id; popFor=null; drawDiagram(); }
+function delBlock(id){
+  sketch.blocks=sketch.blocks.filter(b=>b.id!==id);
+  sketch.links=sketch.links.filter(([a,b])=>a!==id&&b!==id);
+  popFor=null; dirty=true; drawDiagram();
+}
+function addBlock(){
+  let n=1; while(sketch.blocks.some(b=>b.id==='B'+n)) n++;
+  sketch.blocks.push({id:'B'+n,kind:'other',label:'new block'});
+  dirty=true; popFor='B'+n; drawDiagram();
+}
+async function sendSketch(){
+  $('sendsketch').textContent='…';
+  await fetch(q('/api/sketch'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({blocks:sketch.blocks,links:sketch.links,confirmed:sketch.confirmed,
+      tell_agent:true,
+      note:'I edited the block diagram directly — here is the corrected version.'})});
+  dirty=false; popFor=null; $('sendsketch').textContent='Send changes to advisor';
+  load();
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){linkFrom=null;popFor=null;drawDiagram();}});
+document.addEventListener('click',()=>{if(popFor){popFor=null;drawDiagram();}});
+window.addEventListener('resize',()=>{if(!moved)fit();else applyView();});
+
+function paint(){
+  const p=S.progress, atBottom = $('log').scrollHeight - $('log').scrollTop - $('log').clientHeight < 120;
+  $('stat').textContent = S.stage==='sketch'
+    ? 'sketching — confirm the blocks'
+    : `${p.answered} decisions · ${p.constraints} constraints` +
+      (p.conflicts?` · ${p.conflicts} conflict`:'');
+
+  let h='';
+  for(const m of (S.chat||[])){
+    if(m.role==='decision'){
+      h+=`<div class="msg"><div class="dec" dir="${bi(m.text)}">
+        <div class="head">✓ <b>${txt(m.text)}</b></div>
+        ${(m.locked||[]).length?`<div class="locked">${m.locked.map(l=>
+          `<div class="lk" dir="${bi(l.text)}"><span class="tag">${l.icon}${l.verified?'':' unverified'}</span>${txt(l.text)}</div>`
+        ).join('')}</div>`:''}
+      </div></div>`;
+    } else {
+      h+=`<div class="msg ${m.role==='agent'?'advisor':'you'}">
+        <div class="who">${m.role==='agent'?'advisor':'you'}</div>
+        <div class="bubble" dir="${bi(m.text)}">${txt(m.text)}</div></div>`;
+    }
+  }
+  // the live question sits at the end of the conversation, with its answers attached
+  if(S.open && S.open.length){
+    const n=S.open[0];
+    h+=`<div class="ask" dir="${bi(n.question)}"><div class="q">${txt(n.question)}</div>
+      <div class="why">${txt(n.why||'')}</div><div class="opts">` +
+      (n.options||[]).map(o=>`<button class="opt" dir="${bi(o.label)}" onclick="answer('${n.id}','${o.id}')">
+        ${txt(o.label)}${(o.costs||[]).length?`<div class="cost">${o.costs.map(txt).join(' · ')}</div>`:''}
+      </button>`).join('') + `</div></div>`;
+  }
+  if(!h) h=`<div class="empty">Describe what you want to build.<br>
+    The advisor will sketch it back to you, then walk you through the decisions.</div>`;
+  $('wrap').innerHTML=h;
+  if(atBottom) $('log').scrollTop=$('log').scrollHeight;
+
+  if($('drawer').classList.contains('on')) drawer();
+}
+
+function openDrawer(tab){ TAB=tab; $('drawer').classList.add('on'); drawer(); }
+
+function drawer(){
+  for(const t of ['decisions','constraints','sources'])
+    $('t-'+t).classList.toggle('on', t===TAB);
+  let h='';
+  if(TAB==='decisions'){
+    h = S.answered.length ? `<table><tr><th>Element</th><th>Decision</th><th>Choice</th></tr>`+
+      S.answered.map(n=>{const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
+        return `<tr><td style="color:var(--dim)">${esc(n.domain)}</td>
+          <td dir="auto">${txt(n.question)}</td><td dir="auto"><b>${txt(o.label||n.chosen)}</b></td></tr>`;}).join('')+`</table>`
+      : `<div class="empty">Nothing decided yet.</div>`;
+  }
+  if(TAB==='constraints'){
+    h = (S.conflicts||[]).map(c=>`<div class="conflict"><b>Conflict</b> — ${esc(c.note)}</div>`).join('');
+    h += S.constraints.length ? `<table><tr><th>Constraint</th><th>How we know</th></tr>`+
+      S.constraints.map(c=>{const s=c.source||{};
+        return `<tr><td dir="auto">${txt(c.text)}
+          ${s.quote?`<div class="quote">“${esc(s.quote)}”</div>`:''}
+          <div class="meta">from ${esc(c.from_label)}</div></td>
+          <td><span class="pill ${c.verified?'':'u'}">${c.icon} ${esc(c.provenance)}</span>
+          <div class="meta">${s.url?`<a href="${esc(s.url)}" target="_blank">${esc(s.doc||'source')}</a>`:esc(s.doc||'')}
+          ${esc(s.locator||'')}</div></td></tr>`;}).join('')+`</table>`
+      : `<div class="empty">Constraints appear as you decide.</div>`;
+  }
+  if(TAB==='sources'){
+    h = (S.sources||[]).map(f=>`<div class="srcrow"><span>${f.name.endsWith('.pdf')?'📄':'📘'}</span>
+      <span class="g">${esc(f.name)}</span><span class="pill">${esc(f.scope)}</span>
+      <a href="${q('/api/source/'+encodeURIComponent(f.name))}" target="_blank">open</a></div>`).join('')
+      || `<div class="empty">No documents yet.</div>`;
+    h += `<div class="tools"><input type="text" id="srcurl" placeholder="https://…/datasheet.pdf">
+      <button onclick="fetchSrc()">Fetch</button>
+      <button onclick="document.getElementById('up').click()">Upload</button>
+      <input type="file" id="up" style="display:none" onchange="upload(this)"></div>`;
+  }
+  $('dbody').innerHTML=h;
+}
+
+async function answer(node,value){
+  await fetch(q('/api/answer'),{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({node,value,by:'user'})});
+  load();
+}
+async function send(){
+  const el=$('say'), text=el.value.trim(); if(!text||busy) return;
+  busy=true; $('sendbtn').textContent='…'; el.value='';
+  try{ await fetch(q('/api/chat'),{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({text})}); }
+  finally{ busy=false; $('sendbtn').textContent='Send'; load(); }
+}
+async function fetchSrc(){
+  const u=$('srcurl').value.trim(); if(!u) return; $('srcurl').value='';
+  const r=await (await fetch(q('/api/fetch_source'),{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})})).json();
+  if(r.error) alert(r.error); load();
+}
+function upload(input){
+  const f=input.files[0]; if(!f) return;
+  const rd=new FileReader();
+  rd.onload=async()=>{ await fetch(q('/api/upload'),{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:f.name,data_b64:rd.result.split(',')[1]})});
+    input.value=''; load(); };
+  rd.readAsDataURL(f);
+}
+loadProjects(); load(); setInterval(()=>{if(!busy)load();},3000);
+</script>
