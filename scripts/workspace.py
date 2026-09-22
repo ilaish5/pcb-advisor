@@ -197,9 +197,17 @@ def default_project():
     return get("server.default_project", "demo")
 
 
+# Everything a path must not contain: separators, the Windows-reserved set, and
+# control characters. A denylist, not an allowlist - an allowlist of ASCII turns
+# every Hebrew project name into "untitled".
+_UNSAFE = re.compile(r'[/\\<>:"|?*\x00-\x1f]')
+
+
 def safe_name(name):
-    """A project name is a folder name. Never let it escape the projects dir."""
-    safe = re.sub(r"[^A-Za-z0-9._-]", "-", str(name or "")).strip("-.")[:60]
+    """A project name is a folder name. Non-Latin names are kept as they are;
+    what must never survive is anything that could escape the projects dir."""
+    safe = _UNSAFE.sub("-", str(name or ""))
+    safe = re.sub(r"[-\s]+", "-", safe).strip("-. ")[:60].strip("-. ")
     return safe or "untitled"
 
 
