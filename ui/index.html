@@ -2,13 +2,81 @@
 <meta charset="utf-8">
 <title>PCB Advisor</title>
 <link rel="icon" href="data:,">
+
+<script>
+/* Runs before the first paint, so the page never flashes the wrong theme while
+   /api/config is still in flight. The server's answer is the truth; this is the
+   last answer it gave, cached. Private windows throw on localStorage - a theme
+   is not worth a blank page, so failure just means "auto". */
+(function(){
+  try{
+    var t=localStorage.getItem('pcbadv.theme');
+    if(t==='light'||t==='dark') document.documentElement.setAttribute('data-theme',t);
+  }catch(e){}
+})();
+</script>
+
 <style>
+/* ---------- colour, in one place ----------
+   Three modes. `auto` sets no data-theme at all and lets the media query below
+   decide, so the OS is followed even with JS disabled; `light` and `dark` pin
+   the attribute. Every colour in this file is a token - a literal here is a
+   colour that cannot follow the theme. */
 :root{
   /* tells the browser to render its own bits - spinners, scrollbars, the caret -
      in dark, instead of dropping a white control into a dark page */
   color-scheme: dark;
-  --bg:#0f1117; --card:#191d29; --line:#282e3d; --ink:#e9ebf1; --dim:#8d95a8;
+  --bg:#0f1117; --panel:#12151e; --card:#191d29; --menu:#161b28; --pop:#1b2030;
+  --field:#0f1320; --lk:#1a1d28;
+  --line:#282e3d; --line2:#1e2331; --edge:#33405c; --edge2:#3d4a68; --rule:#2b3550;
+  --ink:#e9ebf1; --ink2:#cfd4e0; --dim:#8d95a8; --mute:#6b7488;
+  --hover:#1a2030; --hover2:#222a3b; --sel:#22293a;
   --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
+  --on-accent:#fff; --ring:#3b82f633;
+  --you:#1b2a3d; --you-line:#24405c;
+  --blk-line:#39435c; --wire:#5a6480; --wire-hot:#ef444455;
+  --conflict-bg:#2a1518; --danger-ink:#fca5a5; --cost:#e59a9a;
+  --warn-bg:#4a3a12; --warn-line:#4a3a12; --warn-edge:#6a5a2a; --warn-ink:#e0c169;
+  --shadow:#0009; --shadow-menu:rgba(0,0,0,.55);
+}
+
+/* The light palette is written twice on purpose: once for an explicit choice and
+   once for the media query. A shared class would need JS to attach it, and the
+   whole point of the media query is to work before any JS has run. */
+:root[data-theme="light"]{
+  color-scheme: light;
+  --bg:#f4f6fa; --panel:#e9ecf3; --card:#fff; --menu:#fff; --pop:#fff;
+  --field:#fff; --lk:#f3f5fa;
+  --line:#c8cfdd; --line2:#e5e9f0; --edge:#b0bacd; --edge2:#9aa5be; --rule:#c3cbdb;
+  --ink:#151922; --ink2:#333b4b; --dim:#556074; --mute:#5f6a7e;
+  --hover:#e4e8f2; --hover2:#eaeef8; --sel:#dbe4f8;
+  --accent:#1d4ed8; --ok:#15803d; --warn:#8a5a00; --bad:#c62828;
+  --on-accent:#fff; --ring:#1d4ed833;
+  --you:#dbeafe; --you-line:#8fbaf5;
+  --blk-line:#8e9ab4; --wire:#68738c; --wire-hot:#ef444488;
+  --conflict-bg:#fdeaea; --danger-ink:#9b1c1c; --cost:#9b2c2c;
+  --warn-bg:#f7e7bd; --warn-line:#c99f42; --warn-edge:#c39b3e; --warn-ink:#6b4e0a;
+  --shadow:#0f172a26; --shadow-menu:rgba(15,23,42,.16);
+}
+
+/* `auto`: no data-theme attribute, so this only ever applies to someone who has
+   not chosen. An explicit choice sets the attribute and wins by not matching. */
+@media (prefers-color-scheme: light){
+  :root:not([data-theme]){
+    color-scheme: light;
+    --bg:#f4f6fa; --panel:#e9ecf3; --card:#fff; --menu:#fff; --pop:#fff;
+    --field:#fff; --lk:#f3f5fa;
+    --line:#c8cfdd; --line2:#e5e9f0; --edge:#b0bacd; --edge2:#9aa5be; --rule:#c3cbdb;
+    --ink:#151922; --ink2:#333b4b; --dim:#556074; --mute:#5f6a7e;
+    --hover:#e4e8f2; --hover2:#eaeef8; --sel:#dbe4f8;
+    --accent:#1d4ed8; --ok:#15803d; --warn:#8a5a00; --bad:#c62828;
+    --on-accent:#fff; --ring:#1d4ed833;
+    --you:#dbeafe; --you-line:#8fbaf5;
+    --blk-line:#8e9ab4; --wire:#68738c; --wire-hot:#ef444488;
+    --conflict-bg:#fdeaea; --danger-ink:#9b1c1c; --cost:#9b2c2c;
+    --warn-bg:#f7e7bd; --warn-line:#c99f42; --warn-edge:#c39b3e; --warn-ink:#6b4e0a;
+    --shadow:#0f172a26; --shadow-menu:rgba(15,23,42,.16);
+  }
 }
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
@@ -31,7 +99,7 @@ input[type=checkbox]{width:17px;height:17px;border-radius:5px;cursor:pointer;
   position:relative;flex:none;padding:0}
 input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
 input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1px;
-  width:4px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(43deg)}
+  width:4px;height:9px;border:solid var(--on-accent);border-width:0 2px 2px 0;transform:rotate(43deg)}
 
 /* ---------- dropdowns: ours, so the popup matches the app ---------- */
 .dd{position:relative;flex:1;min-width:0}
@@ -40,25 +108,25 @@ input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1p
 .dd-t i{font-style:normal;color:var(--dim);font-size:10px;transform:translateY(1px)}
 .dd.open .dd-t{border-color:var(--accent)}
 .dd-m{display:none;position:absolute;z-index:40;top:calc(100% + 5px);left:0;min-width:100%;
-  width:max-content;max-width:300px;max-height:290px;overflow-y:auto;background:#161b28;border:1px solid #33405c;
-  border-radius:10px;padding:5px;box-shadow:0 14px 34px rgba(0,0,0,.55)}
+  width:max-content;max-width:300px;max-height:290px;overflow-y:auto;background:var(--menu);border:1px solid var(--edge);
+  border-radius:10px;padding:5px;box-shadow:0 14px 34px var(--shadow-menu)}
 .dd.open .dd-m{display:block}
 .dd-m.right{left:auto;right:0}
 .dd-i{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;
   background:transparent;border-radius:7px;padding:7px 9px;font-size:13px;white-space:nowrap}
-.dd-i:hover{background:#222a3b}
-.dd-i.on{background:#22293a;color:var(--ink)}
+.dd-i:hover{background:var(--hover2)}
+.dd-i.on{background:var(--sel);color:var(--ink)}
 .dd-i b{flex:none;font-weight:400}
-.dd-i em{font-style:normal;color:#6b7488;font-size:11px;margin-left:auto;
+.dd-i em{font-style:normal;color:var(--mute);font-size:11px;margin-left:auto;
   overflow:hidden;text-overflow:ellipsis}
 .dd-i .tick{color:var(--accent);font-size:11px;visibility:hidden}
 .dd-i.on .tick{visibility:visible}
 
 /* ---------- three columns: nav | design | conversation ---------- */
-.side{width:300px;min-width:210px;flex:none;background:#12151e;
+.side{width:300px;min-width:210px;flex:none;background:var(--panel);
   border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
 .mid{flex:1;min-width:280px;display:flex;flex-direction:column;overflow:hidden;
-  background:#12151e}
+  background:var(--panel)}
 .chat{width:430px;min-width:300px;flex:none;border-left:1px solid var(--line);
   display:flex;flex-direction:column;overflow:hidden}
 .split{width:5px;flex:none;cursor:col-resize;background:transparent}
@@ -69,23 +137,23 @@ input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1p
 .brand .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
 .picker{padding:10px 12px;border-bottom:1px solid var(--line);
   display:flex;flex-direction:column;gap:7px}
-.picker .lab{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6b7488}
+.picker .lab{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
 .picker .row{display:flex;gap:6px}
 
 .picker button{padding:6px 9px;font-size:12px}
 .snav{display:flex;flex-wrap:wrap;gap:4px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .snav button{padding:5px 10px;font-size:12.5px;border-color:transparent;background:transparent;
   color:var(--dim)}
-.snav button:hover{color:var(--ink);background:#1a2030;border-color:transparent}
-.snav button.on{background:#22293a;border-color:#3d4a68;color:var(--ink)}
-.snav .badge{background:#4a3a12;color:var(--warn);border-radius:99px;
+.snav button:hover{color:var(--ink);background:var(--hover);border-color:transparent}
+.snav button.on{background:var(--sel);border-color:var(--edge2);color:var(--ink)}
+.snav .badge{background:var(--warn-bg);color:var(--warn);border-radius:99px;
   font-size:10px;padding:0 5px;margin-left:5px}
 .sbody{flex:1;overflow-y:auto;padding:12px 13px}
-.sfoot{border-top:1px solid var(--line);padding:8px 13px;font-size:11.5px;color:#6b7488;
+.sfoot{border-top:1px solid var(--line);padding:8px 13px;font-size:11.5px;color:var(--mute);
   display:flex;gap:8px;align-items:center}
 
 /* ---------- the diagram: real DOM, so it is legible and editable ---------- */
-.diagram{flex:1;background:#12151e;display:flex;flex-direction:column;
+.diagram{flex:1;background:var(--panel);display:flex;flex-direction:column;
   min-height:0;position:relative}
 /* dragging must not select the text underneath */
 body.nosel{user-select:none;-webkit-user-select:none}
@@ -95,31 +163,31 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .dbar{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:12px;color:var(--dim)}
 .dbar .sp{flex:1}
 .dbar button{padding:5px 10px;font-size:12px}
-.dbar button.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.dbar button.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
 .canvas{flex:1;overflow:hidden;position:relative;cursor:grab;touch-action:none}
 .canvas.drag{cursor:grabbing}
 .stage{position:absolute;left:0;top:0;transform-origin:0 0}
 .blk{position:absolute;width:158px;min-height:64px;background:var(--card);
-  border:1.5px solid #39435c;border-radius:10px;padding:9px 11px;cursor:pointer;
+  border:1.5px solid var(--blk-line);border-radius:10px;padding:9px 11px;cursor:pointer;
   display:flex;flex-direction:column;justify-content:center;gap:3px;
   font-size:13px;line-height:1.35;z-index:2}
 .blk:hover{border-color:var(--accent)}
-.blk.sel{border-color:var(--accent);box-shadow:0 0 0 3px #3b82f633}
+.blk.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
 .blk.linking{border-color:var(--ok);border-style:dashed}
 .blk .kind{font-size:10px;color:var(--dim)}
 .wires{position:absolute;inset:0;z-index:1;overflow:visible}
-.wires path{stroke:#5a6480;fill:none}
+.wires path{stroke:var(--wire);fill:none}
 .wires path.hit{stroke:transparent;stroke-width:14;cursor:pointer;fill:none}
-.wires path.hit:hover{stroke:#ef444455}
-.pop{position:absolute;z-index:20;background:#1b2030;border:1px solid #3d4a68;
+.wires path.hit:hover{stroke:var(--wire-hot)}
+.pop{position:absolute;z-index:20;background:var(--pop);border:1px solid var(--edge2);
   border-radius:10px;padding:12px;width:250px;display:flex;flex-direction:column;gap:8px;
-  box-shadow:0 12px 32px #0009}
+  box-shadow:0 12px 32px var(--shadow)}
 .pop input,.pop select{width:100%;background:var(--card);border:1px solid var(--line);
   border-radius:7px;padding:7px 9px;color:var(--ink);font:inherit;font-size:13px}
 .pop .row{display:flex;gap:7px}
 .pop .dd{width:100%}
 .pop .row button{flex:1;font-size:12px}
-.danger{color:#fca5a5}
+.danger{color:var(--danger-ink)}
 .hintbar{font-size:11.5px;color:var(--dim);padding:0 14px 8px}
 
 /* ---------- the conversation ---------- */
@@ -132,7 +200,7 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .msg{display:flex;flex-direction:column;gap:5px}
 .who{font-size:11px;color:var(--dim)}
 .bubble{border-radius:12px;padding:12px 15px;font-size:14px}
-.you .bubble{background:#1b2a3d;border:1px solid #24405c;align-self:flex-end;max-width:80%}
+.you .bubble{background:var(--you);border:1px solid var(--you-line);align-self:flex-end;max-width:80%}
 .you{align-items:flex-end}
 .advisor .bubble{background:var(--card);border:1px solid var(--line)}
 
@@ -141,17 +209,17 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .dec .head{font-size:13.5px}
 .dec .head b{color:var(--ok);font-weight:600}
 .locked{margin-top:8px;display:flex;flex-direction:column;gap:6px}
-.lk{background:#1a1d28;border:1px solid var(--line);border-radius:9px;
-    padding:9px 12px;font-size:13px;color:#cfd4e0}
+.lk{background:var(--lk);border:1px solid var(--line);border-radius:9px;
+    padding:9px 12px;font-size:13px;color:var(--ink2)}
 .lk .tag{color:var(--dim);font-size:11px;margin-right:6px}
 
 /* the live question, with its answers right there */
-.ask{background:var(--card);border:1px solid #33405c;border-radius:12px;padding:16px}
+.ask{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:16px}
 .ask .q{font-size:15.5px;font-weight:600;margin-bottom:5px}
 .ask .why{color:var(--dim);font-size:13px;margin-bottom:13px}
 .opts{display:flex;flex-direction:column;gap:8px}
 .opt{text-align:left;padding:11px 13px;font-size:14px;width:100%}
-.opt .cost{color:#e59a9a;font-size:12px;margin-top:3px}
+.opt .cost{color:var(--cost);font-size:12px;margin-top:3px}
 .empty{color:var(--dim);text-align:center;padding:36px 14px;font-size:13px;line-height:1.7}
 
 /* ---------- input ---------- */
@@ -159,11 +227,11 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .compose .wrap{flex-direction:row;gap:9px;align-items:flex-end}
 textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;
   padding:11px 13px;color:var(--ink);font:inherit;resize:none;height:48px}
-.send{background:var(--accent);border-color:var(--accent);color:#fff;padding:11px 20px}
+.send{background:var(--accent);border-color:var(--accent);color:var(--on-accent);padding:11px 20px}
 
 /* ---------- settings, in the left rail like an IDE ---------- */
 .set h4{margin:16px 0 7px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
-  color:#6b7488;font-weight:600}
+  color:var(--mute);font-weight:600}
 .set h4:first-child{margin-top:0}
 .set label{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:12.5px}
 .set label span{flex:1;color:var(--dim)}
@@ -171,16 +239,16 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 .set label .dd{width:116px;flex:none}
 .set label .dd-t{font-size:12.5px;padding:5px 8px}
 .set label input[type=checkbox]{width:17px}
-.set .note{color:#6b7488;font-size:11px;line-height:1.5;margin:5px 0 0}
-.thr{margin-top:8px;border-left:2px solid #2b3550;padding-left:9px}
+.set .note{color:var(--mute);font-size:11px;line-height:1.5;margin:5px 0 0}
+.thr{margin-top:8px;border-left:2px solid var(--rule);padding-left:9px}
 .thr .m{margin:5px 0;font-size:12.5px;line-height:1.5}
 .thr .m b{color:var(--dim);font-weight:600;margin-right:5px}
 .thr .row{display:flex;gap:6px;margin-top:7px}
-.thr input{flex:1;background:#0f1320;color:var(--fg);border:1px solid var(--line);
+.thr input{flex:1;background:var(--field);color:var(--ink);border:1px solid var(--line);
   border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
-.ask-badge{cursor:pointer;border:1px solid var(--line);background:#1a2030;border-radius:999px;
+.ask-badge{cursor:pointer;border:1px solid var(--line);background:var(--hover);border-radius:999px;
   padding:1px 8px;font-size:11.5px;color:var(--dim);white-space:nowrap}
-.ask-badge.wait{border-color:#6a5a2a;color:#e0c169}
+.ask-badge.wait{border-color:var(--warn-edge);color:var(--warn-ink)}
 .ask-badge.done{opacity:.55}
 
 /* cards, not tables: the rail is narrow and a two-column table clips */
@@ -192,16 +260,16 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{text-align:left;color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.07em;
    text-transform:uppercase;padding:5px 8px;border-bottom:1px solid var(--line)}
-td{padding:9px 8px;border-bottom:1px solid #1e2331;vertical-align:top}
+td{padding:9px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
 .quote{color:var(--dim);font-size:12px;margin-top:5px;font-style:italic}
-.meta{color:#6b7488;font-size:11px;margin-top:4px}
+.meta{color:var(--mute);font-size:11px;margin-top:4px}
 .pill{font-size:10.5px;border:1px solid var(--line);border-radius:99px;
       padding:1px 7px;color:var(--dim);white-space:nowrap}
-.pill.u{color:var(--warn);border-color:#4a3a12}
+.pill.u{color:var(--warn);border-color:var(--warn-line)}
 a{color:var(--accent);text-decoration:none}
-.conflict{background:#2a1518;border-left:3px solid var(--bad);border-radius:8px;
+.conflict{background:var(--conflict-bg);border-left:3px solid var(--bad);border-radius:8px;
           padding:11px 13px;margin-bottom:12px;font-size:13px}
-.conflict b{color:#fca5a5}
+.conflict b{color:var(--danger-ink)}
 .srcrow{display:flex;gap:10px;align-items:center;background:var(--card);
   border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin-bottom:7px;font-size:13px}
 .srcrow .g{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -295,6 +363,12 @@ const txt=s=>esc(flow(s)).replace(/\n/g,'<br>');
 const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ)
   +(SESS?'&session='+encodeURIComponent(SESS):'');
 
+/* localStorage is not merely empty in a private window - reading it throws, and
+   an uncaught throw up here takes the whole script with it. Nothing kept in it
+   (a tab, two pane widths, the theme) is worth a blank page. */
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+
 /* Our own dropdown. A native <select> renders its popup with the OS chrome,
    which cannot be styled and does not match anything else on the page. */
 const DD={};
@@ -335,6 +409,46 @@ function ddPick(id,i,ev){
 const ddValue=id=>DD[id]?DD[id].value:undefined;
 addEventListener('click', ddClose);
 addEventListener('keydown', e=>{ if(e.key==='Escape') ddClose(); });
+
+/* ===================== theme =====================
+   Three modes. `light` and `dark` pin data-theme on <html>; `auto` removes it
+   and lets the stylesheet's prefers-color-scheme block decide, which is also
+   what renders correctly before any of this has run. */
+const THEMES=['auto','light','dark'];
+const THEME_MQ = window.matchMedia ? matchMedia('(prefers-color-scheme: light)') : null;
+
+// what the pre-paint script already applied, so THEME never disagrees with the DOM
+let THEME=(()=>{ const t=lsGet('pcbadv.theme'); return THEMES.includes(t)?t:'auto'; })();
+
+// no matchMedia at all (very old browsers) means we cannot tell: assume dark,
+// which is what the stylesheet renders when the media query never matches.
+const systemTheme = () => (THEME_MQ && THEME_MQ.matches) ? 'light' : 'dark';
+
+function applyTheme(mode){
+  THEME = THEMES.includes(mode) ? mode : 'auto';
+  if(THEME==='auto') document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme', THEME);
+  // cached so the next load paints the right colours before /api/config answers
+  lsSet('pcbadv.theme', THEME);
+}
+
+/* In `auto` the colours follow the OS through the media query, with no JS in the
+   path. What JS still owes the student is the label: the Theme menu says which
+   way auto currently resolves, and that has to keep up. Patching the one text
+   node rather than re-rendering keeps an open menu open and keeps focus put. */
+function refreshThemeMenu(){
+  const d=DD['s-theme']; if(!d) return;
+  const auto=d.items.find(x=>x.v==='auto'); if(!auto) return;
+  auto.sub='system · now '+systemTheme();
+  const em=document.querySelector('#s-theme .dd-i em');
+  if(em) em.textContent=auto.sub;
+}
+
+if(THEME_MQ){
+  const onScheme=()=>{ if(THEME==='auto') refreshThemeMenu(); };
+  if(THEME_MQ.addEventListener) THEME_MQ.addEventListener('change', onScheme);
+  else if(THEME_MQ.addListener) THEME_MQ.addListener(onScheme);   // older Safari
+}
 
 async function loadProjects(){
   const r=await (await fetch('/api/projects')).json();
@@ -455,7 +569,7 @@ function zoomBy(k){
   for(const [id, el, key, dir] of [['splitL', 'side', 'pcbadv.wL', 1],
                                    ['splitR', 'chat', 'pcbadv.wR', -1]]){
     const grip=$(id), pane=document.querySelector('.'+ (el==='side'?'side':'chat'));
-    const saved=parseInt(localStorage.getItem(key)||'0',10);
+    const saved=parseInt(lsGet(key)||'0',10);
     if(saved>180) pane.style.width=saved+'px';
     let down=false,sx=0,w0=0;
     grip.addEventListener('pointerdown',e=>{
@@ -469,7 +583,7 @@ function zoomBy(k){
       pane.style.width=clamp(w0+dir*(e.clientX-sx),200,Math.max(260,vw-480))+'px';
       applyView();
     });
-    const up=()=>{ if(down) localStorage.setItem(key,
+    const up=()=>{ if(down) lsSet(key,
                      Math.round(pane.getBoundingClientRect().width));
                    down=false; grip.classList.remove('on');
                    document.body.classList.remove('nosel'); };
@@ -541,7 +655,7 @@ function drawDiagram(){
   stage.innerHTML=
     `<svg class="wires" width="${wDiag}" height="${hDiag+laneH}">
        <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3"
-         orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#5a6480"/></marker></defs>
+         orient="auto"><path d="M0,0 L0,6 L8,3 z"/></marker></defs>
        ${wires}${hits}</svg>` +
     blocks.map(b=>{const pt=pos[b.id];
       return `<div class="blk ${popFor===b.id?'sel':''} ${linkFrom===b.id?'linking':''}"
@@ -654,7 +768,7 @@ function paint(){
   renderPanel();
 }
 
-function showPanel(tab){ TAB=tab; localStorage.setItem('pcbadv.tab',tab); renderPanel(); }
+function showPanel(tab){ TAB=tab; lsSet('pcbadv.tab',tab); renderPanel(); }
 
 let PANEL_SHOWN=null;
 
@@ -713,8 +827,8 @@ function renderPanel(){
     h = `<div class="empty" style="text-align:left">This conversation's memory. The advisor
       rewrites it every few messages, and it is sent with every turn. Decisions are not
       repeated here — they are already sent in full. You can edit it.</div>
-      <textarea id="mem" dir="auto" style="width:100%;min-height:280px;background:#0f1320;
-        color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px;
+      <textarea id="mem" dir="auto" style="width:100%;min-height:280px;background:var(--field);
+        color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;
         font:13px/1.55 ui-monospace,monospace">${esc(S.memory||'')}</textarea>
       <div class="tools"><button onclick="saveMemory()">Save</button>
       <button onclick="rewriteMemory()">Rewrite now</button>
@@ -793,6 +907,7 @@ function settingsHTML(){
     <h4>Preferences</h4>
     <label><span>Language</span><span id="s-language"></span></label>
     <label><span>Units</span><span id="s-units"></span></label>
+    <label><span>Theme</span><span id="s-theme"></span></label>
     <label><span>Show unverified</span>
       <input type="checkbox" id="s-show_unverified" ${u.show_unverified?'checked':''}></label>
 
@@ -812,6 +927,11 @@ function settingsDropdowns(){
                        {v:'en',label:'English'},{v:'he',label:'עברית'}],
         u.language||'auto', null, {right:true});
   ddSet('s-units', [{v:'mm',label:'mm'},{v:'mil',label:'mil'}], u.units||'mm', null, {right:true});
+  // applied on the pick, not on Save: a theme you have to commit to before you
+  // can see it is not a theme you can choose. Save settings still persists it.
+  ddSet('s-theme', [{v:'auto',label:'auto',sub:'system · now '+systemTheme()},
+                    {v:'light',label:'light'},{v:'dark',label:'dark'}],
+        THEME, applyTheme, {right:true});
   ddSet('s-provider', (CFG.engines||[]).filter(e=>e.status==='implemented')
         .map(e=>({v:e.id,label:e.title,sub:e.available?'ready':e.reason})),
         a.provider||CFG.engine, null, {right:true});
@@ -837,12 +957,15 @@ async function savePrefs(){
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({set:{
       'user.language':val('s-language'), 'user.units':val('s-units'),
+      'user.theme':val('s-theme')||THEME,
       'user.show_unverified':val('s-show_unverified'),
       'agent.provider':val('s-provider'),
       'agent.memory_every':+val('s-memory_every'),
       'agent.memory_max_chars':+val('s-memory_max_chars')}})})).json();
   if(r.error){ alert(r.error); return; }
-  CFG=r.config; renderPanel(); load();
+  CFG=r.config;
+  if(CFG.user) applyTheme(CFG.user.theme);
+  renderPanel(); load();
 }
 
 function memlen(){
@@ -896,8 +1019,10 @@ function upload(input){
   rd.readAsDataURL(f);
 }
 async function boot(){
-  TAB=localStorage.getItem('pcbadv.tab')||'decisions';
+  TAB=lsGet('pcbadv.tab')||'decisions';
   try{ CFG=await (await fetch('/api/config')).json(); }catch(e){ CFG=null; }
+  // the server owns the setting; the cached one only covered the round trip
+  if(CFG && CFG.user) applyTheme(CFG.user.theme);
   await loadProjects();          // settles PROJ before the first state fetch
   await load();
   setInterval(()=>{if(!busy)load();},3000);

@@ -64,6 +64,10 @@ PCB_ADVISOR_HOME=~/Documents/boards python3 pcb.py serve
 `name` (stamped as a project's owner), `language` (`auto` follows what you type),
 `units` (`mm` / `mil`), `show_unverified`, `theme`.
 
+`theme` is `auto` (default), `light` or `dark`. `auto` follows the operating
+system's light/dark setting and changes with it while the page is open. The
+Settings panel in the UI writes this key, and applies the choice as you pick it.
+
 ### `agent`
 
 Which LLM engine answers, and how. See [gateway.md](gateway.md).

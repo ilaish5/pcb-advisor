@@ -19,7 +19,7 @@
     "language": "auto",
     "units": "mm",
     "show_unverified": true,
-    "theme": "light"
+    "theme": "auto"
   },
   "agent": {
     "provider": "claude_code",
