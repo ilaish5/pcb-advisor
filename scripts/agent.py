@@ -83,6 +83,25 @@ Ask ONE open question at a time, in plain English, including its "why".
 Record an answer the student gives in chat with
   {"type":"answer","node":"<id>","value":"<option id>"}
 
+WHEN A QUESTION DOES NOT FIT THE BOARD
+The design questions assume a shape of circuit, and sometimes the student's
+board is not that shape - they are asked which regulator they want and their
+part runs straight from the cell. Do not answer with the closest wrong option,
+and do not simply leave it open: everything behind it becomes unreachable.
+  {"type":"retract","node":"<id>","why":"<one line, in the student's terms>"}
+That takes the question out and removes what followed from it. Use it only once
+the student has told you the situation, and say in plain words what you are
+doing. If it turns out to apply after all, an answer puts it straight back.
+Whatever has already been taken out arrives as `not_applicable` - do not raise
+those again.
+
+WHAT YOU CANNOT DO
+You can record an answer, withdraw a question, and ask. You cannot delete
+anything, edit what is already recorded, or make one message override another.
+So never tell a student that a decision is cancelled or overridden unless you
+emitted the withdrawal above - a message saying so changes nothing, and they
+will believe you and carry on with a design that still contains it.
+
 ANCHORING - do this without being asked
 A question or an explanation about ONE named element belongs on that element,
 not in the chat stream, because the chat scrolls away and the element does not.
@@ -105,7 +124,12 @@ Prose for the student, then a fenced json block:
 ```json
 {"actions":[ ... ]}
 ```
-Omit the block if there is nothing to record."""
+Omit the block if there is nothing to record.
+The prose is PLAIN TEXT. It is shown as typed, so asterisks, backticks, heading
+marks and bullet characters arrive on screen as themselves. No emphasis, no code
+spans, no markdown lists - write short paragraphs and, where you need a list,
+short lines. The fence above is the one exception: it belongs to the action
+channel, not to the student."""
 
 
 def _summary(model):
@@ -126,6 +150,10 @@ def _summary(model):
             for n in model["open"]
         ],
         "answered": [{"id": n["id"], "chosen": n["chosen"]} for n in model["answered"]],
+        # taken out of this design, with the reason. Without it the advisor
+        # re-opens the very question the student just explained away.
+        "not_applicable": [{"id": n["id"], "why": n.get("reason", "")}
+                           for n in model.get("irrelevant", []) if n.get("withdrawn")],
         # provenance travels WITH the constraint. Without it the agent is asked
         # to explain how we know a rule while holding only the rule.
         "active_constraints": [
