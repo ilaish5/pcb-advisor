@@ -34,11 +34,13 @@ nodes:
             text: "The regulator's quiescent current comes out of the battery budget. 1 mA of Iq burns 8.7 Ah per year."
             provenance: computed
             source: {doc: "1 mA x 8760 h", locator: "arithmetic"}
+            needs_block: U_REG
           - id: pwr.in.falling
             text: "Input voltage falls through the discharge. Check the regulator still works at the low end of the cell's range, including its dropout voltage."
             provenance: datasheet
             source: {doc: "regulator datasheet", locator: "Electrical Characteristics - Dropout Voltage"}
             verified: false
+            needs_block: U_REG
       - id: usb
         label: "USB 5 V"
         locks:
@@ -127,6 +129,7 @@ nodes:
             provenance: datasheet
             source: {doc: "SS34 datasheet", locator: "Forward Voltage"}
             verified: false
+            needs_block: U_REG
         blocks: [{id: D_PROT, label: "D1\nreverse-polarity\nSchottky", order: 20}]
       - id: pfet
         label: "Series P-FET"
@@ -207,6 +210,24 @@ nodes:
           - {id: U_REG, label: "U1\nbuck", order: 30}
           - {id: L_OUT, label: "L1\ninductor", order: 31}
         opens: [power.switching.freq]
+
+      # The absence of a part is a design decision, not a missing answer. Without
+      # this option a cell driving an MCU directly - an ordinary battery design -
+      # had nothing true to choose here, and everything behind this question was
+      # unreachable. It adds no block, and that is the point: what it records is
+      # that nothing sits between the source and the load.
+      - id: direct
+        label: "No regulator - the load runs straight from the source"
+        costs:
+          - "the load sees the source's whole range, from fresh to flat"
+          - "no protection from a source that sags or spikes"
+        locks:
+          - id: direct.range
+            text: "The load must tolerate the source's full range. Take the maximum from a fresh cell and the minimum from its end-of-life voltage, and check every part on the rail against both ends."
+            provenance: convention
+          - id: direct.brownout
+            text: "Set the brown-out threshold above the load's minimum operating voltage, not at the bottom of the source's range. Below it the part does not stop cleanly, it misbehaves."
+            provenance: convention
 
   # ------- chained decisions: these only exist because of an earlier choice ---
 
@@ -295,6 +316,16 @@ nodes:
         blocks: [{id: TP1, label: "TP1\nrail", order: 40}]
       - id: no_tp
         label: "No"
+
+# What to call a part when we have to name one to the student. A constraint
+# says `needs_block: U_REG`; the student hears "a voltage regulator".
+block_names:
+  U_REG: "a voltage regulator"
+  L_OUT: "an inductor"
+  D_PROT: "a reverse-polarity diode"
+  Q_PROT: "a reverse-polarity FET"
+  TP1: "a test point"
+  J_IN: "a power input connector"
 
 base_blocks:
   - {id: J_IN, label: "J1\nDC in", order: 10}

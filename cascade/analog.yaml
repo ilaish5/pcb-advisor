@@ -39,6 +39,7 @@ nodes:
           - id: analog.star.single
             text: "Exactly one connection between analog and power ground, at the regulator's output capacitor. Two connections make a loop."
             provenance: convention
+            needs_block: U_REG
       - id: single_plane
         label: "One solid ground plane"
         note: "simpler and often correct, but you must control where the return current flows"

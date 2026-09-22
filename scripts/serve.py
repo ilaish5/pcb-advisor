@@ -107,6 +107,10 @@ def _public_config():
     agent_cfg = cfg.get("agent", {})
     return {
         "user": cfg.get("user", {}),
+        # whether the knowledge this tool is answering from has been authored or
+        # is still the shipped demonstration. Not settable from the browser: a
+        # student must not be able to dismiss it, and it is not theirs to change
+        "corpus": cfg.get("corpus", {}),
         "engineering_defaults": cfg.get("engineering_defaults", {}),
         "agent": {k: v for k, v in agent_cfg.items() if k != "providers"},
         "server": {"default_project": DEFAULT_PROJECT or workspace.default_project()},
@@ -261,12 +265,18 @@ class Handler(BaseHTTPRequestHandler):
             gained = [c for c in after["constraints"] if c["id"] not in before]
             node = next((n for n in after["answered"] if n["id"] == data["node"]), {})
             opt = next((o for o in node.get("options", []) if o["id"] == data["value"]), {})
+            # an answer that records nothing because the board lacks a part is
+            # not the same as one the corpus has nothing to say about, and the
+            # student should not have to guess which of the two just happened
+            held = [w for w in after["withheld"] if w["from_node"] == data["node"]]
             say(proj, sess, {
                 "ts": now(), "role": "decision",
                 "text": f"{node.get('question', data['node'])}  ->  {opt.get('label', data['value'])}",
                 "node": data["node"],
                 "locked": [{"id": c["id"], "text": c["text"], "icon": c["icon"],
                             "verified": c["verified"]} for c in gained],
+                "waiting": [{"id": w["id"], "text": w["text"],
+                             "needs": w["needs"]} for w in held],
             })
             redraw(proj)
             return self._send(200, model.build(project=proj, session=sess))

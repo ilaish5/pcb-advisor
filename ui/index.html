@@ -189,6 +189,9 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .pop .row button{flex:1;font-size:12px}
 .danger{color:var(--danger-ink)}
 .hintbar{font-size:11.5px;color:var(--dim);padding:0 14px 8px}
+.demobar{background:var(--warn-bg);color:var(--warn-ink);border-bottom:1px solid var(--warn-line);
+  padding:8px 14px;font-size:12px;line-height:1.5}
+.demobar b{font-weight:600}
 
 /* ---------- the conversation ---------- */
 .chead{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;
@@ -349,6 +352,10 @@ input[type=text]{flex:1;padding:8px 11px}
 <div class="split" id="splitL" title="drag to resize"></div>
 
 <main class="mid">
+  <!-- Filled from the config when the shipped knowledge has not been authored.
+       Not dismissible on purpose: the point is that nothing here should be
+       relied on for a real board, and a strip you can close is one you close. -->
+  <div class="demobar" id="demobar" style="display:none"></div>
   <div class="diagram" id="diagram">
     <div class="dbar">
       <span id="dtitle">Diagram</span>
@@ -870,12 +877,16 @@ function paint(){
       // a withdrawal reuses this card, and must not be mistaken for a decision:
       // the same green tick over a list of rules that were REMOVED reads as if
       // they had just been added
-      const gone=!!m.withdrawn, rules=(m.locked||[]);
+      const gone=!!m.withdrawn, rules=(m.locked||[]), held=(m.waiting||[]);
       h+=`<div class="msg"><div class="dec${gone?' gone':''}" dir="${bi(m.text)}">
         <div class="head">${gone?'–':'✓'} <b>${txt(m.text)}</b></div>
-        ${!gone&&!rules.length?`<div class="nothing">Nothing follows from this in the
+        ${!gone&&!rules.length&&!held.length?`<div class="nothing">Nothing follows from this in the
           design questions I have — if your case is unusual, say so and I will tell you
           what I cannot cover.</div>`:''}
+        ${!gone&&held.length?`<div class="nothing">${held.length===1?'One rule follows':
+          held.length+' rules follow'} from this, but only once your board has
+          ${esc(held.map(w=>w.needs||w.needs_block).filter((v,i,a)=>a.indexOf(v)===i).join(' and '))}.
+          Nothing is hidden from you — ask and I will read them out.</div>`:''}
         ${gone&&rules.length?`<div class="lost">These no longer apply to your board:</div>`:''}
         ${rules.length?`<div class="locked">${rules.map(l=>
           `<div class="lk" dir="${bi(l.text)}"><span class="tag">${l.icon}${l.verified?'':' unverified'}</span>${txt(l.text)}</div>`
@@ -1285,6 +1296,11 @@ async function boot(){
   try{ CFG=await (await fetch('/api/config')).json(); }catch(e){ CFG=null; }
   // the server owns the setting; the cached one only covered the round trip
   if(CFG && CFG.user) applyTheme(CFG.user.theme);
+  const c=(CFG&&CFG.corpus)||{};
+  if(c.status && c.status!=='authored' && c.note){
+    $('demobar').innerHTML=`<b>Demonstration content.</b> ${esc(c.note)}`;
+    $('demobar').style.display='';
+  }
   await loadProjects();          // settles PROJ before the first state fetch
   await load();
   setInterval(()=>{if(!busy)load();},3000);

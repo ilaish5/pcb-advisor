@@ -176,36 +176,6 @@ def build(project=None, session=None):
                 dead.add(entry["id"])
                 moved = True
 
-    constraints, conflicts = [], []
-    for node in answered:
-        opt = next((o for o in node.get("options", []) if o["id"] == node["chosen"]), None)
-        if not opt:
-            continue
-        for lock in opt.get("locks", []) or []:
-            prov = lock.get("provenance", "convention")
-            src = lock.get("source") or {}
-            constraints.append({
-                "id": lock["id"],
-                "text": lock["text"],
-                "provenance": prov,
-                "icon": PROVENANCE.get(prov, PROVENANCE["convention"])["icon"],
-                "verified": bool(lock.get("verified", prov == "computed")),
-                "source": src,
-                "element": node["domain"],
-                "from_node": node["id"],
-                "from_option": node["chosen"],
-                "from_label": opt.get("label", node["chosen"]),
-            })
-        for cf in opt.get("conflicts", []) or []:
-            conflicts.append({
-                "a": node["id"], "a_label": opt.get("label", ""),
-                "b": cf["with"], "note": cf["note"],
-            })
-
-    # only report a conflict once BOTH sides are actually live
-    live = {c["id"] for c in constraints} | set(answers)
-    conflicts = [c for c in conflicts if c["b"] in live]
-
     # The student's agreed sketch is the SPINE of the diagram. The cascade adds
     # parts to it; it does not replace it. Seeding base_blocks first would show
     # someone their LiPo and STM32 turning into "J1 DC in -> LOAD" the moment
@@ -231,6 +201,60 @@ def build(project=None, session=None):
         seen[b["id"]] = dict(b)
         uniq.append(seen[b["id"]])
     uniq.sort(key=lambda b: b.get("order", 50))
+
+    # What is actually on this board. A constraint may depend on a part being
+    # present, so this has to be settled before the constraints are collected.
+    # Both vocabularies count: the corpus names blocks by id (U_REG), the
+    # student's sketch names them by kind (regulation).
+    on_board = {b["id"] for b in uniq} | {b.get("kind") for b in uniq if b.get("kind")}
+    # and what to call a part we have to name. Every cascade is read, not only
+    # the active ones: a rule in one domain can need a part from another.
+    block_names = {}
+    for cas in cascades.values():
+        block_names.update(cas.get("block_names") or {})
+
+    constraints, conflicts, withheld = [], [], []
+    for node in answered:
+        opt = next((o for o in node.get("options", []) if o["id"] == node["chosen"]), None)
+        if not opt:
+            continue
+        for lock in opt.get("locks", []) or []:
+            # A rule can presuppose a part. "One connection between analog and
+            # power ground, at the regulator's output capacitor" is advice about
+            # a component, and on a board that has no regulator it is not merely
+            # unhelpful - it instructs the student to go and find something that
+            # is not there. Say what you need, and the model withholds you.
+            need = lock.get("needs_block")
+            if need and need not in on_board:
+                withheld.append({"id": lock["id"], "text": lock["text"],
+                                 "needs_block": need,
+                                 # never show the id to the student
+                                 "needs": block_names.get(need, need),
+                                 "from_node": node["id"]})
+                continue
+            prov = lock.get("provenance", "convention")
+            src = lock.get("source") or {}
+            constraints.append({
+                "id": lock["id"],
+                "text": lock["text"],
+                "provenance": prov,
+                "icon": PROVENANCE.get(prov, PROVENANCE["convention"])["icon"],
+                "verified": bool(lock.get("verified", prov == "computed")),
+                "source": src,
+                "element": node["domain"],
+                "from_node": node["id"],
+                "from_option": node["chosen"],
+                "from_label": opt.get("label", node["chosen"]),
+            })
+        for cf in opt.get("conflicts", []) or []:
+            conflicts.append({
+                "a": node["id"], "a_label": opt.get("label", ""),
+                "b": cf["with"], "note": cf["note"],
+            })
+
+    # only report a conflict once BOTH sides are actually live
+    live = {c["id"] for c in constraints} | set(answers)
+    conflicts = [c for c in conflicts if c["b"] in live]
 
     # A thread is the SPATIAL axis: everything ever said about one element,
     # whichever conversation it was said in. The chat is the timeline.
@@ -283,6 +307,10 @@ def build(project=None, session=None):
         "irrelevant": irrelevant,
         "answered": answered,
         "constraints": constraints,
+        # rules the corpus holds for parts this board does not have. Reported,
+        # not hidden: an advisor that cannot see them re-derives them from
+        # memory, which is exactly what it must not do.
+        "withheld": withheld,
         "conflicts": conflicts,
         "blocks": uniq,
         # the sketch's topology survives too; the UI merges it with what the
@@ -308,6 +336,7 @@ def build(project=None, session=None):
             "threads": len(threads),
             "orphan_threads": sum(1 for t in threads.values() if t["kind"] == "unknown"),
             "withdrawn": sum(1 for n in irrelevant if n.get("withdrawn")),
+            "withheld": len(withheld),
             "acknowledged_threads": sum(1 for t in threads.values() if t.get("still_live")),
         },
     }

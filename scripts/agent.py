@@ -168,6 +168,12 @@ def _summary(model):
              {"name": d.get("name"), "scope": d.get("scope"), "url": d.get("url")}.items()
              if v} for d in model.get("sources", [])
         ],
+        # rules the corpus holds back because this board lacks the part they are
+        # about. The advisor must know they exist and why, or it invents them.
+        "withheld_constraints": [
+            {"id": w["id"], "text": w["text"], "applies_once_the_board_has": w["needs"]}
+            for w in model.get("withheld", [])
+        ],
         "board": model.get("board", {}),
         # threads waiting on the agent go in full - they are what the student
         # asked and nobody answered. The rest are a count; the engine can read
@@ -329,6 +335,19 @@ def respond(model, message, history, backend=None, timeout=None):
                      + memory)
     if gateway.provider(name).has_workspace():
         parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project")))
+    # A banner in the corner is not enough: the student asks the advisor, not the
+    # screen. This is injected rather than written into RULES so that it stops
+    # being said the moment someone authors a corpus and flips the config.
+    corpus = workspace.get("corpus", {}) or {}
+    if corpus.get("status") and corpus["status"] != "authored":
+        parts.append(
+            "--- ABOUT THE KNOWLEDGE YOU ARE USING ---\n"
+            f"{corpus.get('note', '')}\n"
+            "Do not pretend otherwise. If the student says they are building "
+            "this for real, ordering parts, or submitting it, tell them once, "
+            "plainly, that the rules you are quoting are demonstration material "
+            "and have not been reviewed - then carry on helping. Do not repeat "
+            "it every turn, and never use it as a reason to refuse an answer.")
     parts.append("--- CURRENT STATE ---\n" + _summary(model))
     parts.append("--- CONVERSATION SO FAR ---\n" + convo)
     parts.append("--- STUDENT SAYS ---\n" + message + "\n")

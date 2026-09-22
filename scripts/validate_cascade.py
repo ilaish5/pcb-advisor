@@ -25,7 +25,7 @@ import workspace  # noqa: E402
 VALID = {"computed", "standard", "datasheet", "convention"}
 
 
-def check(path):
+def check(path, producible=frozenset()):
     cas = yaml.safe_load(path.read_text(encoding="utf-8"))
     errors, warnings, stats = [], [], {k: 0 for k in VALID}
     node_ids, lock_ids = set(), set()
@@ -98,6 +98,14 @@ def check(path):
                         errors.append(f"{lid}: provenance={prov} needs source.doc")
                     if prov != "computed" and not src.get("locator"):
                         errors.append(f"{lid}: provenance={prov} needs source.locator")
+                # a constraint may declare that it only applies when a part is
+                # on the board. The part has to be one the corpus can actually
+                # put there, or the rule is unreachable and nobody would notice
+                need = lock.get("needs_block")
+                if need and producible and need not in producible:
+                    errors.append(f"{lid}: needs_block {need!r} is a part no cascade "
+                                  f"can put on a board")
+
                 if prov == "datasheet":
                     if lock.get("verified"):
                         if not src.get("url"):
@@ -131,11 +139,29 @@ def check(path):
     return errors, warnings, len(node_ids), stats
 
 
+def producible_blocks():
+    """Every part the whole corpus can put on a board, plus the sketch kinds it
+    keys on. Cross-file on purpose: a rule in the analog cascade may depend on a
+    regulator that only the power cascade contributes."""
+    out = set()
+    for path in sorted(workspace.cascade_dir().glob("*.yaml")):
+        cas = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        out.update(cas.get("blocks") or [])                    # the sketch kinds
+        for b in cas.get("base_blocks") or []:
+            out.add(b["id"])
+        for node in cas.get("nodes", []) or []:
+            for opt in node.get("options", []) or []:
+                for b in opt.get("blocks") or []:
+                    out.add(b["id"])
+    return out
+
+
 def main():
     failed = False
     totals = {k: 0 for k in VALID}
+    producible = producible_blocks()
     for path in sorted(workspace.cascade_dir().glob("*.yaml")):
-        errors, warnings, n_nodes, stats = check(path)
+        errors, warnings, n_nodes, stats = check(path, producible)
         for k, v in stats.items():
             totals[k] += v
         breakdown = "  ".join(f"{k}={v}" for k, v in stats.items() if v)
