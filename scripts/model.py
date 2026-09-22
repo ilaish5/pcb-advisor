@@ -93,20 +93,47 @@ def build(project=None, session=None):
             nodes.append({**n, "domain": dom})
     index = {n["id"]: n for n in nodes}
 
-    answers = {}
+    # Both kinds of event fold in file order, last write wins. A withdrawal is
+    # not a deletion: decisions.jsonl still shows the answer was once given and
+    # why it stopped applying, and answering again simply overrides it back.
+    answers, withdrawn = {}, {}
     for ev in events:
-        if ev.get("node") in index:
-            answers[ev["node"]] = ev            # last write wins
+        if ev.get("node") not in index:
+            continue
+        if ev.get("retract"):
+            answers.pop(ev["node"], None)
+            withdrawn[ev["node"]] = ev
+        elif ev.get("reopen"):
+            # back to being an open question: neither answered nor ruled out
+            answers.pop(ev["node"], None)
+            withdrawn.pop(ev["node"], None)
+        else:
+            answers[ev["node"]] = ev
+            withdrawn.pop(ev["node"], None)
 
     def available(node):
-        """A node is reachable only if its deps are answered AND its guard matches."""
+        """A node is reachable only if its guard matches AND its deps are answered.
+
+        The guard goes first on purpose. It settles whether this question applies
+        at all, and a node ruled out by its own guard is inapplicable whatever its
+        dependencies are doing. Checking deps first reported "waiting on X" for an
+        X that was itself guarded off and could never be answered - a question
+        that could neither be completed nor dismissed.
+
+        But an unmet guard is only a refusal once the guard has actually been
+        SETTLED. Until then the honest answer is that we are waiting for it, and
+        keeping that distinction is what still lets the student see one step
+        ahead instead of watching half the path turn grey.
+        """
+        for guard_node, guard_val in (node.get("requires") or {}).items():
+            if answers.get(guard_node, {}).get("value") == guard_val:
+                continue
+            settled = guard_node in answers or guard_node in withdrawn
+            return False, (f"only if {guard_node} = {guard_val}" if settled
+                           else f"waiting on {guard_node}")
         for dep in node.get("depends_on", []) or []:
             if dep not in answers:
                 return False, f"waiting on {dep}"
-        for guard_node, guard_val in (node.get("requires") or {}).items():
-            got = answers.get(guard_node, {}).get("value")
-            if got != guard_val:
-                return False, f"only if {guard_node} = {guard_val}"
         return True, None
 
     open_nodes, blocked, answered, irrelevant = [], [], [], []
@@ -117,6 +144,13 @@ def build(project=None, session=None):
             entry["chosen"] = answers[node["id"]]["value"]
             entry["chosen_by"] = answers[node["id"]].get("by", "?")
             answered.append(entry)
+        elif node["id"] in withdrawn:
+            # the student said this does not apply to their board. Not blocked,
+            # not open - and not silently gone either: the reason travels with it
+            entry["reason"] = withdrawn[node["id"]].get("why") or "does not apply here"
+            entry["withdrawn"] = True
+            entry["withdrawn_by"] = withdrawn[node["id"]].get("by", "?")
+            irrelevant.append(entry)
         elif ok:
             open_nodes.append(entry)
         elif reason and reason.startswith("only if"):
@@ -125,6 +159,22 @@ def build(project=None, session=None):
         else:
             entry["reason"] = reason
             blocked.append(entry)
+
+    # Inapplicability is contagious. A question waiting on one that does not
+    # apply will wait forever, so it does not apply either. Repeat until nothing
+    # moves: the chain can be several deep.
+    dead = {n["id"] for n in irrelevant}
+    moved = True
+    while moved:
+        moved = False
+        for entry in list(blocked):
+            gone = [d for d in (entry.get("depends_on") or []) if d in dead]
+            if gone:
+                entry["reason"] = f"not needed once {gone[0]} does not apply"
+                blocked.remove(entry)
+                irrelevant.append(entry)
+                dead.add(entry["id"])
+                moved = True
 
     constraints, conflicts = [], []
     for node in answered:
@@ -189,9 +239,13 @@ def build(project=None, session=None):
     for m in sorted(messages, key=lambda m: m.get("ts", "")):
         threads.setdefault(m["anchor"], []).append(m)
 
+    # what this thread was about, if it is still part of the design
+    live_now = set(answers) | {c["id"] for c in constraints}
+
     for anchor, msgs in threads.items():
         meta_a = known.get(anchor, {"kind": "unknown", "label": anchor})
-        resolved = any(m.get("role") == "resolved" for m in msgs)
+        closing = [m for m in msgs if m.get("role") == "resolved"]
+        resolved = bool(closing)
         said = [m for m in msgs if m.get("role") in ("user", "agent")]
         last = said[-1].get("role") if said else None
         threads[anchor] = {
@@ -200,6 +254,15 @@ def build(project=None, session=None):
             "label": meta_a["label"],
             "messages": msgs,
             "resolved": resolved,
+            # why it was closed. Closing used to record nothing at all, so a
+            # thread documenting a contradiction could be dismissed in one click
+            # and leave no trace of what was decided about it.
+            "resolution": (closing[-1].get("text") or "").strip() if closing else "",
+            # and closing it does not make the thing it was about go away: a
+            # settled thread whose decision is still live is acknowledged, not
+            # done. The distinction is the difference between "we fixed it" and
+            # "we stopped talking about it".
+            "still_live": resolved and anchor in live_now,
             # both directions matter. A question the STUDENT asked and nobody
             # answered is the one that actually gets lost.
             "waiting_on": None if resolved else
@@ -244,6 +307,8 @@ def build(project=None, session=None):
                                       if t["waiting_on"] == "student"),
             "threads": len(threads),
             "orphan_threads": sum(1 for t in threads.values() if t["kind"] == "unknown"),
+            "withdrawn": sum(1 for n in irrelevant if n.get("withdrawn")),
+            "acknowledged_threads": sum(1 for t in threads.values() if t.get("still_live")),
         },
     }
 
@@ -347,3 +412,6 @@ if __name__ == "__main__":
         print(f"  OPEN   {n['id']}  {n['question']}")
     for n in m["blocked"]:
         print(f"  next   {n['id']}  ({n['reason']})")
+    for n in m["irrelevant"]:
+        mark = "gone" if n.get("withdrawn") else "n/a "
+        print(f"  {mark}   {n['id']}  ({n['reason']})")

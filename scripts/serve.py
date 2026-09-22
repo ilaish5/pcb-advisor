@@ -149,6 +149,20 @@ def apply_actions(project, actions):
             append(project, "decisions.jsonl", {"ts": now(), "node": a["node"],
                                                 "value": a["value"], "by": "agent"})
             applied.append(f"answer:{a['node']}")
+        elif kind == "retract" and a.get("node"):
+            # the one action that can take something OUT of the design. It is
+            # still an append: the log keeps the answer and adds why it stopped
+            # applying. A node that does not exist is a typo, not a withdrawal.
+            if a["node"] not in model.anchors(project):
+                print(f"(retract dropped: no such question {a['node']})")
+                continue
+            if not (a.get("why") or "").strip():
+                print(f"(retract dropped: no reason given for {a['node']})")
+                continue
+            append(project, "decisions.jsonl", {"ts": now(), "node": a["node"],
+                                                "retract": True, "why": a["why"],
+                                                "by": "agent"})
+            applied.append(f"retract:{a['node']}")
         elif kind == "ask" and a.get("anchor") and a.get("text"):
             if a["anchor"] not in model.anchors(project):
                 print(f"(ask dropped: no such anchor {a['anchor']})")
@@ -257,6 +271,47 @@ class Handler(BaseHTTPRequestHandler):
             redraw(proj)
             return self._send(200, model.build(project=proj, session=sess))
 
+        if path == "/api/retract":
+            # "this does not apply to my board". The design questions assume a
+            # shape of circuit, and when the student's board is not that shape
+            # the honest move is to take the question out - not to answer it
+            # wrongly and not to leave it open forever.
+            if not data.get("node"):
+                return self._send(400, {"error": "node required"})
+            why = (data.get("why") or "").strip()
+            if not why:
+                return self._send(400, {"error": "say why it does not apply"})
+            if data["node"] not in model.anchors(proj):
+                return self._send(400, {"error": f"no such question: {data['node']}"})
+            before = model.build(project=proj, session=sess)
+            node = next((n for n in before["answered"] if n["id"] == data["node"]), {})
+            lost = [c for c in before["constraints"] if c["from_node"] == data["node"]]
+            append(proj, "decisions.jsonl", {"ts": now(), "node": data["node"],
+                                             "retract": True, "why": why,
+                                             "by": data.get("by", "user")})
+            say(proj, sess, {
+                "ts": now(), "role": "decision", "withdrawn": True,
+                "text": f"{node.get('question', data['node'])}  —  no longer relevant: {why}",
+                "node": data["node"],
+                "locked": [{"id": c["id"], "text": c["text"], "icon": c["icon"],
+                            "verified": c["verified"]} for c in lost],
+            })
+            redraw(proj)
+            return self._send(200, model.build(project=proj, session=sess))
+
+        if path == "/api/reopen":
+            # the undo for the above. Without it, taking a question out is a
+            # one-way door and nobody uses it - which is how the deadlock it
+            # exists to clear survives.
+            if not data.get("node"):
+                return self._send(400, {"error": "node required"})
+            if data["node"] not in model.anchors(proj):
+                return self._send(400, {"error": f"no such question: {data['node']}"})
+            append(proj, "decisions.jsonl", {"ts": now(), "node": data["node"],
+                                             "reopen": True, "by": data.get("by", "user")})
+            redraw(proj)
+            return self._send(200, model.build(project=proj, session=sess))
+
         if path == "/api/message":
             if not data.get("anchor") or not data.get("text"):
                 return self._send(400, {"error": "anchor and text required"})
@@ -282,10 +337,15 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/thread/resolve":
             if not data.get("anchor"):
                 return self._send(400, {"error": "anchor required"})
-            # append-only, like everything else: closing is another line
+            # A reason is required. Closing used to write an empty line, so a
+            # thread recording a real contradiction could be dismissed in one
+            # click, permanently, with no record of what was concluded - the
+            # exact loss anchoring exists to prevent.
+            why = (data.get("text") or "").strip()
+            if not why:
+                return self._send(400, {"error": "say what settled it"})
             append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
-                                           "role": "resolved",
-                                           "text": data.get("text", "")})
+                                           "role": "resolved", "text": why})
             return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/chat":
