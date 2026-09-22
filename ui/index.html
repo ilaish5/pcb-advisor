@@ -208,6 +208,11 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .dec{border-left:2px solid var(--ok);padding:2px 0 2px 14px}
 .dec .head{font-size:13.5px}
 .dec .head b{color:var(--ok);font-weight:600}
+/* taking something out is not an achievement: it must not read like one */
+.dec.gone{border-left-color:var(--line)}
+.dec.gone .head b{color:var(--dim);font-weight:500}
+.dec.gone .locked{opacity:.6}
+.dec .lost{margin-top:8px;font-size:12px;color:var(--dim)}
 .locked{margin-top:8px;display:flex;flex-direction:column;gap:6px}
 .lk{background:var(--lk);border:1px solid var(--line);border-radius:9px;
     padding:9px 12px;font-size:13px;color:var(--ink2)}
@@ -265,10 +270,27 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 .thr .row{display:flex;gap:6px;margin-top:7px}
 .thr input{flex:1;background:var(--field);color:var(--ink);border:1px solid var(--line);
   border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
+.thr .settled{margin-top:7px;color:var(--dim);font-size:12px;line-height:1.5}
+.thr .settled .still{color:var(--warn-ink);margin-top:3px}
+.thr-err{margin-top:7px;color:var(--warn-ink);font-size:12px;line-height:1.5}
 .ask-badge{cursor:pointer;border:1px solid var(--line);background:var(--hover);border-radius:999px;
   padding:1px 8px;font-size:11.5px;color:var(--dim);white-space:nowrap}
 .ask-badge.wait{border-color:var(--warn-edge);color:var(--warn-ink)}
 .ask-badge.done{opacity:.55}
+/* settled, but what it was about is still in the design: not the same as done */
+.ask-badge.ack{border-color:var(--warn-edge);color:var(--dim)}
+/* Taking a question out is a real edit, so it does not get a button competing
+   with the answers. It is a quiet link that opens one field asking why. */
+.drop{cursor:pointer;color:var(--mute);font-size:11px;border-bottom:1px dotted var(--line);
+      margin-left:auto;white-space:nowrap}
+.drop:hover{color:var(--warn-ink)}
+.droprow{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.droprow input{flex:1;min-width:150px;background:var(--field);color:var(--ink);
+  border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
+.card.gone{opacity:.72;border-style:dashed}
+.card.gone .a{font-weight:400;color:var(--dim)}
+.gone-head{color:var(--mute);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
+  margin:14px 0 7px}
 
 /* cards, not tables: the rail is narrow and a two-column table clips */
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
@@ -383,6 +405,36 @@ const bi=s=>HEB.test(s)?'rtl':'auto';
 const txt=s=>esc(flow(s)).replace(/\n/g,'<br>');
 const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ)
   +(SESS?'&session='+encodeURIComponent(SESS):'');
+
+/* Every write to the server goes through here.
+
+   The old pattern was `S = await (await fetch(...)).json()`, which has three
+   ways to fail silently. A rejected request returns a JSON error body, and
+   assigning it to S replaced the entire design state with {error:"..."} - the
+   next render then read S.constraints off an object that has none and threw,
+   killing the panel with nothing on screen to say why. A hung request never
+   resolved, leaving whatever control was disabled disabled forever. And a
+   thrown fetch was an unhandled rejection nobody saw.
+
+   So: never return the server's error as state, always answer, always in
+   bounded time. The caller gets {ok:true,data} or {ok:false,error} and decides
+   what to show; S is only ever replaced on a success. */
+async function post(path, body, ms){
+  const ctl = ('AbortController' in window) ? new AbortController() : null;
+  const timer = ctl ? setTimeout(()=>ctl.abort(), ms||30000) : null;
+  try{
+    const r = await fetch(q(path), {method:'POST',
+      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
+      signal: ctl?ctl.signal:undefined});
+    let data=null;
+    try{ data = await r.json(); }catch(e){ data=null; }
+    if(!r.ok) return {ok:false, error:(data&&data.error) || ('the server said '+r.status)};
+    return {ok:true, data};
+  }catch(e){
+    return {ok:false, error: (e&&e.name==='AbortError')
+      ? 'the server did not answer in time' : 'could not reach the server'};
+  }finally{ if(timer) clearTimeout(timer); }
+}
 
 /* localStorage is not merely empty in a private window - reading it throws, and
    an uncaught throw up here takes the whole script with it. Nothing kept in it
@@ -520,7 +572,16 @@ async function newProject(){
 }
 
 async function load(){
-  S=await (await fetch(q('/api/state'))).json();
+  // this also runs on a three-second timer. A failed poll must leave the last
+  // good state on screen - blanking the whole design because a laptop slept or
+  // the server restarted is worse than showing something slightly stale.
+  let next=null;
+  try{
+    const r=await fetch(q('/api/state'));
+    if(r.ok) next=await r.json();
+  }catch(e){ next=null; }
+  if(!next || !next.progress) return;
+  S=next;
   if(!dirty) sketch=JSON.parse(JSON.stringify(S.sketch||{blocks:[],links:[],confirmed:false}));
   paintSessions(); paint(); drawDiagram();
   $('engine').textContent = S.engine || '';
@@ -806,12 +867,17 @@ function paint(){
   let h='';
   for(const m of (S.chat||[])){
     if(m.role==='decision'){
-      h+=`<div class="msg"><div class="dec" dir="${bi(m.text)}">
-        <div class="head">✓ <b>${txt(m.text)}</b></div>
-        ${!(m.locked||[]).length?`<div class="nothing">Nothing follows from this in the
+      // a withdrawal reuses this card, and must not be mistaken for a decision:
+      // the same green tick over a list of rules that were REMOVED reads as if
+      // they had just been added
+      const gone=!!m.withdrawn, rules=(m.locked||[]);
+      h+=`<div class="msg"><div class="dec${gone?' gone':''}" dir="${bi(m.text)}">
+        <div class="head">${gone?'–':'✓'} <b>${txt(m.text)}</b></div>
+        ${!gone&&!rules.length?`<div class="nothing">Nothing follows from this in the
           design questions I have — if your case is unusual, say so and I will tell you
           what I cannot cover.</div>`:''}
-        ${(m.locked||[]).length?`<div class="locked">${m.locked.map(l=>
+        ${gone&&rules.length?`<div class="lost">These no longer apply to your board:</div>`:''}
+        ${rules.length?`<div class="locked">${rules.map(l=>
           `<div class="lk" dir="${bi(l.text)}"><span class="tag">${l.icon}${l.verified?'':' unverified'}</span>${txt(l.text)}</div>`
         ).join('')}</div>`:''}
       </div></div>`;
@@ -840,18 +906,27 @@ function paint(){
   renderPanel();
 }
 
-function showPanel(tab){ TAB=tab; lsSet('pcbadv.tab',tab); renderPanel(); }
+function showPanel(tab){ TAB=tab; lsSet('pcbadv.tab',tab); renderPanel(true); }
 
 let PANEL_SHOWN=null;
 
-function renderPanel(){
+function renderPanel(force){
   if(!S) return;
   // The state polls every few seconds. Re-rendering under someone's hands would
   // shut an open menu and wipe half-typed text, so while they are working in
   // the panel, leave it alone.
-  const working = $('sbody').contains(document.activeElement)
-                || document.querySelector('.dd.open');
-  if(working && PANEL_SHOWN===TAB) return;
+  //
+  // `force` is for the panel's own buttons. The guard is against the POLL, not
+  // against the student: without it a Cancel clicked from inside the field it
+  // cancels did nothing, and an error about the field you are typing in could
+  // never be drawn - the one moment it most needs to be.
+  // and it is TYPING that must be protected, not focus. A clicked button keeps
+  // focus inside the panel, so testing for focus alone froze the whole rail
+  // after every button press until the student happened to click elsewhere.
+  const el = document.activeElement;
+  const typing = el && $('sbody').contains(el)
+              && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !el.disabled;
+  if(!force && (typing || document.querySelector('.dd.open')) && PANEL_SHOWN===TAB) return;
 
   for(const t of ['decisions','constraints','sources','memory','settings'])
     $('t-'+t).classList.toggle('on', t===TAB);
@@ -865,9 +940,21 @@ function renderPanel(){
         return `<div class="card">
           <div class="q" dir="auto">${txt(n.question)}</div>
           <div class="a" dir="auto">${txt(o.label||n.chosen)}</div>
-          <div class="foot"><span class="pill">${esc(n.domain)}</span>${badge(n.id)}</div>
-          ${thread(n.id)}</div>`;}).join('')
+          <div class="foot"><span class="pill">${esc(n.domain)}</span>${badge(n.id)}
+            ${DROPPING===n.id?''
+              :`<span class="drop" onclick="askDrop('${esc(n.id)}')">no longer relevant</span>`}</div>
+          ${dropRow(n.id)}${thread(n.id)}</div>`;}).join('')
       : `<div class="empty">Nothing decided yet.</div>`;
+    // what the student took out. Visible, with the reason, and reversible -
+    // an edit you cannot see or undo is one nobody dares make.
+    const gone=(S.irrelevant||[]).filter(n=>n.withdrawn);
+    if(gone.length) h += `<div class="gone-head">Not part of this board</div>` +
+      gone.map(n=>`<div class="card gone">
+        <div class="q" dir="auto">${txt(n.question)}</div>
+        <div class="a" dir="auto">${txt(n.reason||'')}</div>
+        <div class="foot"><span class="pill">${esc(n.domain)}</span>${badge(n.id)}
+          <span class="drop" onclick="reinstate('${esc(n.id)}')">it does apply after all</span></div>
+        ${thread(n.id)}</div>`).join('');
   }
   if(TAB==='constraints'){
     h = (S.conflicts||[]).map(c=>`<div class="conflict"><b>Conflict</b> — ${esc(c.note)}</div>`).join('');
@@ -915,13 +1002,14 @@ function renderPanel(){
 
 /* A thread hangs on a design element, not on a conversation: it is everything
    ever said about THIS constraint, in any session. */
-let OPEN_THREAD=null;
+let OPEN_THREAD=null, CLOSING=null, THREAD_ERR=null;
 
 function badge(id){
   const t=(S.threads||{})[id];
   const said=t?(t.messages||[]).filter(m=>m.role!=='resolved').length:0;
-  const cls=t&&t.waiting_on?'wait':(t&&t.resolved?'done':'');
-  const label=said?`💬 ${said}${t.waiting_on?' · waiting on '+t.waiting_on:''}`:'ask';
+  const cls=t&&t.waiting_on?'wait':(t&&t.still_live?'ack':(t&&t.resolved?'done':''));
+  const label=said?`💬 ${said}`+(t.waiting_on?' · waiting on '+t.waiting_on
+                                :(t.still_live?' · noted':'')):'ask';
   return `<span class="ask-badge ${cls}" onclick="toggleThread('${esc(id)}')">${label}</span>`;
 }
 
@@ -931,30 +1019,91 @@ function thread(id){
   const body=(t.messages||[]).filter(m=>m.role!=='resolved')
     .map(m=>`<div class="m" dir="${bi(m.text)}"><b>${esc(m.role)}</b>${txt(m.text)}</div>`).join('')
     || `<div class="m" style="color:var(--dim)">Nothing asked about this yet.</div>`;
-  return `<div class="thr">${body}
-    <div class="row"><input id="thr-in" dir="auto" placeholder="Ask about this…"
-      onkeydown="if(event.key==='Enter')postThread('${esc(id)}')">
+  const mine = THREAD_ERR && THREAD_ERR.anchor===id;
+  const err = mine ? `<div class="thr-err" dir="auto">${esc(THREAD_ERR.text)}</div>` : '';
+  const draft = mine ? (THREAD_ERR.draft||'') : '';
+  // Closing a discussion says what settled it, and says so plainly when the
+  // thing discussed is still in the design - "we talked about it" is not
+  // "we fixed it", and the old one-click close could not tell them apart.
+  const settled = t.resolved
+    ? `<div class="settled" dir="auto">Settled — ${txt(t.resolution||'')}
+       ${t.still_live?`<div class="still">This is still part of your design; closing
+         the discussion did not change it.</div>`:''}</div>` : '';
+
+  if(CLOSING===id) return `<div class="thr">${body}${settled}${err}
+    <div class="row"><input id="thr-why" dir="auto" value="${esc(draft)}"
+      placeholder="What settled it?" onkeydown="if(event.key==='Enter')resolveThread('${esc(id)}')">
+      <button onclick="resolveThread('${esc(id)}')">Done</button>
+      <button onclick="closeReason(null)">Cancel</button></div></div>`;
+
+  return `<div class="thr">${body}${settled}${err}
+    <div class="row"><input id="thr-in" dir="auto" value="${esc(draft)}"
+      placeholder="Ask about this…" onkeydown="if(event.key==='Enter')postThread('${esc(id)}')">
       <button onclick="postThread('${esc(id)}')">Ask</button>
       ${t.messages&&t.messages.length&&!t.resolved
-        ? `<button onclick="resolveThread('${esc(id)}')">Resolve</button>`:''}</div></div>`;
+        ? `<button onclick="closeReason('${esc(id)}')">Resolve</button>`:''}</div></div>`;
 }
 
-function toggleThread(id){ OPEN_THREAD = OPEN_THREAD===id ? null : id; renderPanel(); }
+function toggleThread(id){
+  OPEN_THREAD = OPEN_THREAD===id ? null : id;
+  CLOSING=null; THREAD_ERR=null; renderPanel(true);
+}
+
+function closeReason(id){ CLOSING=id; THREAD_ERR=null; renderPanel(true);
+  const el=$('thr-why'); if(el) el.focus(); }
 
 async function postThread(id){
   const el=$('thr-in'); const text=(el?el.value:'').trim(); if(!text) return;
-  el.disabled=true; el.value='thinking…';
-  try{
-    S=await (await fetch(q('/api/message'),{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({anchor:id,text,role:'user'})})).json();
-  } finally { renderPanel(); }
+  el.disabled=true; el.blur(); THREAD_ERR=null; renderPanel(true);
+  const r=await post('/api/message',{anchor:id,text,role:'user'});
+  // a rejected request used to be assigned straight into S, replacing the whole
+  // design with {error:"..."}. The question stays in the box instead.
+  if(r.ok){ await load(); renderPanel(true); }
+  else { THREAD_ERR={anchor:id, draft:text,
+           text:'Not sent — '+r.error+'. Nothing was saved; try again.'}; renderPanel(true); }
 }
 
 async function resolveThread(id){
-  S=await (await fetch(q('/api/thread/resolve'),{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({anchor:id})})).json();
-  OPEN_THREAD=null; renderPanel();
+  const el=$('thr-why'); const why=(el?el.value:'').trim();
+  if(!why){ THREAD_ERR={anchor:id, draft:'', text:'Say what settled it, in a few words.'};
+            return renderPanel(true); }
+  el.disabled=true; el.blur(); THREAD_ERR=null;
+  const r=await post('/api/thread/resolve',{anchor:id, text:why});
+  if(r.ok){ CLOSING=null; OPEN_THREAD=null; await load(); renderPanel(true); }
+  else { THREAD_ERR={anchor:id, draft:why, text:'Not saved — '+r.error}; renderPanel(true); }
+}
+
+/* Taking a question out of the design, and putting it back. Both are appends:
+   decisions.jsonl still shows the answer was given and why it stopped applying,
+   so this is an edit the student can make without destroying the record. */
+let DROPPING=null, DROP_ERR=null;
+
+function askDrop(id){ DROPPING=id; DROP_ERR=null; renderPanel(true);
+  const el=$('drop-why'); if(el) el.focus(); }
+
+function dropRow(id){
+  if(DROPPING!==id) return '';
+  return `<div class="droprow">
+    <input id="drop-why" dir="auto" placeholder="Why doesn't it apply to your board?"
+      onkeydown="if(event.key==='Enter')doDrop('${esc(id)}')">
+    <button onclick="doDrop('${esc(id)}')">Remove</button>
+    <button onclick="askDrop(null)">Cancel</button>
+    ${DROP_ERR?`<div class="thr-err" dir="auto">${esc(DROP_ERR)}</div>`:''}</div>`;
+}
+
+async function doDrop(id){
+  const el=$('drop-why'); const why=(el?el.value:'').trim();
+  if(!why){ DROP_ERR='Say why, so this is still readable in a month.'; return renderPanel(true); }
+  el.disabled=true; el.blur(); DROP_ERR=null;
+  const r=await post('/api/retract',{node:id, why, by:'user'});
+  if(r.ok){ DROPPING=null; await load(); renderPanel(true); }
+  else { DROP_ERR='Not saved — '+r.error; renderPanel(true); }
+}
+
+async function reinstate(id){
+  const r=await post('/api/reopen',{node:id, by:'user'});
+  if(r.ok){ await load(); renderPanel(true); }
+  else { DROP_ERR='Not saved — '+r.error; renderPanel(true); }
 }
 
 /* ---------- settings, where the student expected to find them ---------- */
@@ -1084,9 +1233,11 @@ async function rewriteMemory(){
 }
 
 async function answer(node,value){
-  await fetch(q('/api/answer'),{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({node,value,by:'user'})});
-  load();
+  const r=await post('/api/answer',{node,value,by:'user'});
+  if(r.ok) return load();
+  if(S){ S.chat=[...(S.chat||[]), {role:'agent',
+    text:'That answer did not reach the server — '+r.error+'. Nothing was recorded, so pick it again.'}];
+    paint(); }
 }
 async function send(){
   const el=$('say'), text=el.value.trim(); if(!text||busy) return;
