@@ -43,10 +43,23 @@ Anchor on a constraint id when the user challenges a rule or wants the reasoning
 ## What is derived — never hand-edit
 
 `design-model.json`, `constraints.md`, `artifacts/*` are all regenerated from
-`decisions.jsonl` + the cascade. Writable state is the three `.jsonl` logs
-(append-only: to change an answer, append a new one), `sketch.json`, and
-`project.json` — the last holds the project's title and its board settings
-(layers, copper weight, temperature rise) which seed the calculation scripts.
+`decisions.jsonl` + the cascade. Writable state is the append-only logs (to
+change an answer, append a new one), `sketch.json`, and `project.json` — the
+last holds the project's title and its board settings (layers, copper weight,
+temperature rise) which seed the calculation scripts.
+
+## Conversations
+
+A project is a board; a session is one conversation about it, in
+`chats/<id>.jsonl`. **Sessions split, the design does not**: `decisions.jsonl`
+and `threads.jsonl` are shared, so a decision taken in one conversation is
+visible in all of them.
+
+Each session has `chats/<id>.memory.md` — bounded, rewritten by a separate call
+every `agent.memory_every` messages, and sent with every turn. It holds what the
+transcript loses: the student's situation, what was ruled out and why, open
+promises, how they work. It never holds a design constraint; those come only
+from the cascade.
 
 ## Scripts, not guesses
 

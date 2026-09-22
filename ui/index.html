@@ -133,6 +133,8 @@ input[type=text]{flex:1;background:var(--card);border:1px solid var(--line);
   <span class="name">PCB Advisor</span>
   <select id="projsel" onchange="switchTo(this.value)"></select>
   <button onclick="newProject()">+ New</button>
+  <select id="sesssel" onchange="switchSession(this.value)" title="conversation"></select>
+  <button onclick="newSession()" title="a clean conversation about the same board">+ Chat</button>
   <span class="sp"></span>
   <span class="stat" id="stat"></span>
   <button onclick="openDrawer('decisions')">Details</button>
@@ -170,6 +172,7 @@ input[type=text]{flex:1;background:var(--card);border:1px solid var(--line);
     <button id="t-decisions" onclick="openDrawer('decisions')">Decisions</button>
     <button id="t-constraints" onclick="openDrawer('constraints')">Constraints</button>
     <button id="t-sources" onclick="openDrawer('sources')">Sources</button>
+    <button id="t-memory" onclick="openDrawer('memory')">Memory</button>
     <button class="x" onclick="document.getElementById('drawer').classList.remove('on')">✕</button>
   </div>
   <div class="dbody" id="dbody"></div>
@@ -180,6 +183,7 @@ let S=null, busy=false, TAB='decisions';
 let CFG=null;
 // no project in the URL means "whatever config calls the default" - boot() fills it in
 let PROJ=new URLSearchParams(location.search).get('project')||'';
+let SESS=new URLSearchParams(location.search).get('session')||'';
 const $=id=>document.getElementById(id);
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const HEB=/[\u0590-\u05FF]/;
@@ -191,7 +195,8 @@ const flow=s=>(s||'')
 // dir=auto lets the browser pick paragraph direction from the first strong character
 const bi=s=>HEB.test(s)?'rtl':'auto';
 const txt=s=>esc(flow(s)).replace(/\n/g,'<br>');
-const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ);
+const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ)
+  +(SESS?'&session='+encodeURIComponent(SESS):'');
 
 async function loadProjects(){
   const r=await (await fetch('/api/projects')).json();
@@ -200,6 +205,21 @@ async function loadProjects(){
     `<option value="${esc(p.name)}" ${p.name===PROJ?'selected':''}>${esc(p.name)}</option>`).join('');
 }
 const switchTo=n=>{if(n!==PROJ) location.search='?project='+encodeURIComponent(n);};
+const switchSession=n=>{if(n!==SESS)
+  location.search='?project='+encodeURIComponent(PROJ)+'&session='+encodeURIComponent(n);};
+
+function paintSessions(){
+  if(!S) return;
+  SESS = S.session;
+  $('sesssel').innerHTML=(S.sessions||[]).map(x=>
+    `<option value="${esc(x.id)}" ${x.id===S.session?'selected':''}>${esc(x.title)} · ${x.messages}</option>`).join('');
+}
+
+async function newSession(){
+  const r=await (await fetch(q('/api/sessions/new'),{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({})})).json();
+  location.search='?project='+encodeURIComponent(PROJ)+'&session='+encodeURIComponent(r.created);
+}
 async function newProject(){
   const name=prompt('Name the new project:'); if(!name) return;
   const r=await (await fetch('/api/projects/new',{method:'POST',
@@ -210,7 +230,7 @@ async function newProject(){
 async function load(){
   S=await (await fetch(q('/api/state'))).json();
   if(!dirty) sketch=JSON.parse(JSON.stringify(S.sketch||{blocks:[],links:[],confirmed:false}));
-  paint(); drawDiagram();
+  paintSessions(); paint(); drawDiagram();
 }
 
 /* ===================== the diagram ===================== */
@@ -484,7 +504,7 @@ function paint(){
 function openDrawer(tab){ TAB=tab; $('drawer').classList.add('on'); drawer(); }
 
 function drawer(){
-  for(const t of ['decisions','constraints','sources'])
+  for(const t of ['decisions','constraints','sources','memory'])
     $('t-'+t).classList.toggle('on', t===TAB);
   let h='';
   if(TAB==='decisions'){
@@ -516,7 +536,43 @@ function drawer(){
       <button onclick="document.getElementById('up').click()">Upload</button>
       <input type="file" id="up" style="display:none" onchange="upload(this)"></div>`;
   }
+  if(TAB==='memory'){
+    // what this conversation would otherwise forget. The student owns it.
+    h = `<div class="empty" style="text-align:left">This conversation's memory. The advisor
+      rewrites it every few messages, and it is sent with every turn. Decisions are not
+      repeated here — they are already sent in full. You can edit it.</div>
+      <textarea id="mem" dir="auto" style="width:100%;min-height:280px;background:#0f1320;
+        color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:10px;
+        font:13px/1.55 ui-monospace,monospace">${esc(S.memory||'')}</textarea>
+      <div class="tools"><button onclick="saveMemory()">Save</button>
+      <button onclick="rewriteMemory()">Rewrite now</button>
+      <span class="meta" id="memlen"></span></div>`;
+  }
   $('dbody').innerHTML=h;
+  if(TAB==='memory') memlen();
+}
+
+function memlen(){
+  const el=$('mem'); if(!el) return;
+  $('memlen').textContent = el.value.length + ' characters';
+  el.oninput = () => $('memlen').textContent = el.value.length + ' characters';
+}
+
+async function saveMemory(){
+  const r=await (await fetch(q('/api/memory'),{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:$('mem').value})})).json();
+  if(r.trimmed) alert('Saved, but it was over the limit and was trimmed.');
+  load();
+}
+
+async function rewriteMemory(){
+  const b=event.target; b.disabled=true; b.textContent='Rewriting…';
+  try{
+    const r=await (await fetch(q('/api/memory'),{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({})})).json();
+    if(r.rewritten && !r.rewritten.ok) alert(r.rewritten.reason||'could not rewrite');
+  } finally { b.disabled=false; b.textContent='Rewrite now'; await load(); drawer(); }
 }
 
 async function answer(node,value){

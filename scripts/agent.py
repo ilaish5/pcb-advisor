@@ -22,6 +22,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import gateway     # noqa: E402
+import session     # noqa: E402
 import workspace   # noqa: E402
 
 RULES = """You are the PCB design advisor. You walk a student down a decision cascade.
@@ -126,6 +127,95 @@ def _workspace_section(project):
     return "\n".join(lines)
 
 
+COMPACT_RULES = """You are maintaining the memory file for one conversation with a
+student designing a circuit board. Rewrite it, and return ONLY the file.
+
+WHAT THIS FILE IS FOR
+The student's decisions are recorded elsewhere and are given to the advisor in
+full on every turn. Do NOT restate them here - that is wasted space. This file
+holds only what the transcript would otherwise lose:
+
+  The student's situation   constraints that are not design decisions: enclosure
+                            size, budget, deadline, parts they already own, what
+                            the assignment requires.
+  Ruled out, and why        options considered and rejected, with the reason. This
+                            is what stops the advisor proposing them again.
+  Open promises             anything either side said they would come back to.
+  How they work             language, level, how much detail they want.
+
+HARD RULES
+- Never put a design constraint here. Those come only from the authored cascade.
+  A layout or electrical rule in this file is a bug.
+- Only what the student actually said or agreed to. If you are unsure, leave it out.
+- Keep the four headings exactly as they are, even if a section is empty.
+- Every line is a short bullet. No prose paragraphs.
+
+REWRITING
+You are given the current memory and the messages since it was last written.
+Merge them: add what is new, drop what is no longer true, merge duplicates,
+and remove anything a later message overturned. Superseded entries go - this
+file is the current picture, not a history.
+
+THE LIMIT IS HARD
+The result must be UNDER {limit} characters. Do not get there by cutting a line
+in half: compress. Shorten wording, merge related bullets, drop the least useful
+entry entirely. A shorter honest file beats a truncated one."""
+
+
+def compact(model, project, sess, backend=None):
+    """Rewrite one session's memory. A separate, focused call - folding this
+    into the conversational turn makes it compete with answering the student,
+    and it loses."""
+    name = gateway.resolve(backend)
+    if name == "external":
+        return {"ok": False, "reason": "external engine does not write memory"}
+
+    limit = int(workspace.get("agent.memory_max_chars", 2000))
+    new = session.messages_since_compaction(project, sess)
+    if not new:
+        return {"ok": False, "reason": "nothing new since the last rewrite"}
+
+    current = session.read_memory(project, sess)
+    convo = "\n".join(f"{m.get('role')}: {m.get('text', '')}" for m in new)
+    prompt = (COMPACT_RULES.format(limit=limit) +
+              f"\n\n--- CURRENT MEMORY ({len(current)} chars) ---\n{current}\n\n"
+              f"--- MESSAGES SINCE ({len(new)}) ---\n{convo}\n\n"
+              f"--- RETURN THE NEW MEMORY FILE ---\n")
+
+    text, attempts = "", 0
+    for attempts in (1, 2):
+        res = gateway.route(gateway.Request(
+            prompt=prompt,
+            timeout=int(workspace.get("agent.timeout_seconds", 180)),
+        ), name=name)
+        if not res.ok:
+            return {"ok": False, "reason": res.error, "attempts": attempts}
+        text = session.normalize(_strip_fence(res.text), title=_title(project, sess))
+        if len(text) <= limit:
+            break
+        # tell it exactly what it did, rather than cutting the text ourselves
+        prompt += (f"\nYour previous attempt was {len(text)} characters, over the "
+                   f"{limit} limit. Compress it further and return it again.\n")
+
+    text, trimmed = session.fit(text, limit)
+    session.write_memory(project, sess, text)
+    session.mark_compacted(project, sess)
+    return {"ok": True, "chars": len(text), "messages": len(new),
+            "attempts": attempts, "sections_dropped": trimmed}
+
+
+def _title(project, sess):
+    row = next((r for r in session.load_index(project) if r["id"] == sess), {})
+    return row.get("title") or sess
+
+
+def _strip_fence(text):
+    """Some engines wrap the file in a markdown fence. Take what is inside."""
+    body = (text or "").strip()
+    fenced = re.match(r"^```(?:markdown|md)?\s*\n(.*?)\n?```\s*$", body, re.S)
+    return (fenced.group(1) if fenced else body).strip()
+
+
 def _parse(text):
     """Pull the actions block out; tolerate a model that forgets it."""
     blocks = re.findall(r"```json\s*(.*?)```", text, re.S)
@@ -151,6 +241,10 @@ def respond(model, message, history, backend=None, timeout=None):
     convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-keep:])
 
     parts = [RULES]
+    memory = (model.get("memory") or "").strip()
+    if memory:
+        parts.append("--- MEMORY (this conversation, kept small on purpose) ---\n"
+                     + memory)
     if gateway.provider(name).has_workspace():
         parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project")))
     parts.append("--- CURRENT STATE ---\n" + _summary(model))

@@ -72,7 +72,9 @@ Which LLM engine answers, and how. See [gateway.md](gateway.md).
 |---|---|
 | `provider` | `claude_code` |
 | `timeout_seconds` | `180` |
-| `history_messages` | `8` — how much conversation goes with each turn |
+| `history_messages` | `8` — how many recent messages go with each turn |
+| `memory_every` | `10` — rewrite a conversation's memory every N messages |
+| `memory_max_chars` | `2000` — hard ceiling; the engine is asked to compress to fit |
 | `providers.<id>` | per-engine settings (command, model, enabled, tool permissions) |
 
 `providers.claude_code.tools` decides what the CLI may touch on your machine

@@ -211,8 +211,6 @@ def safe_name(name):
     return safe or "untitled"
 
 
-# ---------------------------------------------------------------- setup
-
 # ---------------------------------------------------------------- the map
 #
 # What an engine with hands needs to know to find its way around. Generated,
@@ -258,8 +256,13 @@ def describe(project=None):
                      "when you emit an answer action"},
             {"path": rel(pdir / "threads.jsonl"), "write": False,
              "what": "append-only, anchored discussions. The server appends on an ask action"},
-            {"path": rel(pdir / "chat.jsonl"), "write": False,
-             "what": "append-only conversation"},
+            {"path": rel(pdir / "chats") + "/<id>.jsonl", "write": False,
+             "what": "append-only conversations, one file per session. index.json "
+                     "lists them; decisions and threads are shared across all of them"},
+            {"path": rel(pdir / "chats") + "/<id>.memory.md", "write": False,
+             "what": "what a conversation would otherwise forget: the student's "
+                     "situation, what was ruled out and why, open promises. Bounded, "
+                     "and rewritten by a separate call - do not edit it mid-turn"},
             {"path": rel(pdir / "notes.md"), "write": True,
              "what": "the student's own notes. Nothing derives from it"},
             {"path": rel(pdir / "design-model.json"), "write": False,
@@ -279,6 +282,8 @@ def describe(project=None):
         ],
     }
 
+
+# ---------------------------------------------------------------- setup
 
 def init(force=False):
     """Create the workspace folders and a config.json. Safe to re-run."""

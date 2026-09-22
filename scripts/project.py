@@ -13,10 +13,12 @@ import shutil
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import session  # noqa: E402
 import workspace  # noqa: E402
 
 SCHEMA_VERSION = 1
-STATE_FILES = ("decisions.jsonl", "threads.jsonl", "chat.jsonl")
+# the design log. The conversation lives in chats/<id>.jsonl, one per session.
+STATE_FILES = ("decisions.jsonl", "threads.jsonl")
 DERIVED = ("design-model.json", "constraints.md", "artifacts")
 
 
@@ -52,6 +54,7 @@ def create(name, title=None, brief=""):
 
     shutil.copytree(src, dest)
     (dest / "sources").mkdir(exist_ok=True)
+    (dest / "chats").mkdir(exist_ok=True)
 
     fills = {
         "__NAME__": safe,
@@ -66,6 +69,8 @@ def create(name, title=None, brief=""):
             for token, value in fills.items():
                 text = text.replace(token, _escape(value, path.suffix))
             path.write_text(text, encoding="utf-8")
+
+    session.create(safe, title="First conversation")
 
     meta = load_meta(safe)
     meta["schema_version"] = SCHEMA_VERSION
@@ -93,8 +98,11 @@ def ensure(name):
     d = dir_of(name)
     d.mkdir(parents=True, exist_ok=True)
     (d / "sources").mkdir(exist_ok=True)
+    (d / "chats").mkdir(exist_ok=True)
     for f in STATE_FILES:
         (d / f).touch()
+    if not session.list_all(name):
+        session.create(name, title="First conversation")
     if not (d / "sketch.json").exists():
         (d / "sketch.json").write_text(json.dumps(
             {"brief": "", "blocks": [], "links": [], "confirmed": False},
@@ -174,7 +182,8 @@ def list_all():
             except json.JSONDecodeError:
                 sketch = {}
         decisions = _lines(d / "decisions.jsonl")
-        chat = _lines(d / "chat.jsonl")
+        sessions = session.list_all(d.name)
+        chat = _lines(session.chat_path(d.name, sessions[0]["id"])) if sessions else []
         stamps = [e.get("ts", "") for e in decisions + chat if e.get("ts")]
         out.append({
             "name": d.name,
@@ -184,7 +193,8 @@ def list_all():
             "status": meta.get("status", "draft"),
             "blocks": len(sketch.get("blocks", [])),
             "decisions": len({e["node"] for e in decisions if e.get("node")}),
-            "messages": len(chat),
+            "sessions": len(sessions),
+            "messages": sum(x.get("messages", 0) for x in sessions),
             "confirmed": bool(sketch.get("confirmed")),
             "updated": max(stamps) if stamps else meta.get("updated", ""),
         })
@@ -199,10 +209,10 @@ def reset(name):
     d = dir_of(name)
     if not d.exists():
         raise SystemExit(f"no such project: {name}")
-    for f in ("decisions.jsonl", "threads.jsonl", "chat.jsonl",
-              "design-model.json", "constraints.md"):
+    for f in ("decisions.jsonl", "threads.jsonl", "design-model.json", "constraints.md"):
         (d / f).unlink(missing_ok=True)
     shutil.rmtree(d / "artifacts", ignore_errors=True)
+    shutil.rmtree(d / "chats", ignore_errors=True)
     (d / "sketch.json").write_text(json.dumps(
         {"brief": "", "blocks": [], "links": [], "confirmed": False},
         ensure_ascii=False, indent=2), encoding="utf-8")

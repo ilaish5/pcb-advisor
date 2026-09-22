@@ -1,6 +1,5 @@
 {
   "schema_version": 1,
-
   "workspace": {
     "projects_dir": "projects",
     "shared_dir": "shared",
@@ -9,14 +8,12 @@
     "templates_dir": "templates",
     "ui_dir": "ui"
   },
-
   "server": {
     "host": "127.0.0.1",
     "port": 8931,
     "default_project": "demo",
     "open_browser": true
   },
-
   "user": {
     "name": "",
     "language": "auto",
@@ -24,16 +21,21 @@
     "show_unverified": true,
     "theme": "light"
   },
-
   "agent": {
     "provider": "claude_code",
     "timeout_seconds": 180,
     "history_messages": 8,
+    "memory_every": 10,
+    "memory_max_chars": 2000,
     "providers": {
       "claude_code": {
         "enabled": true,
         "command": "claude",
-        "args": ["-p", "--output-format", "text"],
+        "args": [
+          "-p",
+          "--output-format",
+          "text"
+        ],
         "model": "",
         "tools": {
           "available": null,
@@ -65,7 +67,6 @@
       }
     }
   },
-
   "engineering_defaults": {
     "layers": 2,
     "copper_oz": 1.0,

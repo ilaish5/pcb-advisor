@@ -20,6 +20,7 @@ python3 pcb.py show usb-sensor-board    # where it stands
 python3 pcb.py engines                  # which LLM engine is wired up
 python3 pcb.py tools                    # what that engine may touch on your machine
 python3 pcb.py config user.language he  # read or set any setting
+python3 pcb.py chats                    # conversations and their memory
 python3 pcb.py check                    # validate the corpus and its citations
 python3 pcb.py trace 1.5                # IPC-2221 trace width
 ```
@@ -64,10 +65,10 @@ the real quote.
 ## The one rule
 
 ```
-decisions.jsonl ─┐
-threads.jsonl    ├─► design-model.json ─┬─► blocks.svg
-chat.jsonl       │                      ├─► the graph
-sketch.json     ─┘                      └─► the decisions table
+decisions.jsonl   ─┐
+threads.jsonl      ├─► design-model.json ─┬─► blocks.svg
+chats/<id>.jsonl   │                      ├─► the graph
+sketch.json       ─┘                      └─► the decisions table
 ```
 
 Only those four feed the model, and three of them are append-only. `project.json`
@@ -106,9 +107,12 @@ two designs at once.
 projects/<name>/
   project.json      title, status, and THIS board's settings (layers, copper, dT)
   sketch.json       the agreed block diagram
-  decisions.jsonl   {ts, node, value, by}
-  threads.jsonl     {ts, anchor, role, text}   anchored on a node OR a constraint
-  chat.jsonl        the conversation
+  decisions.jsonl   {ts, node, value, by}       shared by every conversation
+  threads.jsonl     {ts, anchor, role, text}    anchored on a node OR a constraint
+  chats/
+    index.json      the conversations
+    <id>.jsonl      one conversation
+    <id>.memory.md  what that conversation would otherwise forget
   notes.md          yours; nothing reads it
   sources/          copies of the documents this project actually cited
   design-model.json derived
@@ -122,6 +126,37 @@ later never rewrites a board you already started.
 
 Any agent can drive this. A human can too — open the folder, read the questions,
 write answers. That is why the corpus is YAML and Markdown, not prompts.
+
+## Conversations split, the design does not
+
+A project is a board; a session is one conversation about it. `decisions.jsonl`
+and `threads.jsonl` stay at project level, so you can open a clean conversation
+about the layout without dragging 200 messages about the power supply behind
+you — and without losing a single decision. That is the opposite of a chat app,
+and it is the point.
+
+Each conversation keeps a **memory** file, bounded at 2000 characters and
+rewritten by a separate call every ten messages. It deliberately does not
+summarise the decisions — those are sent in full on every turn anyway. It holds
+what the transcript loses:
+
+```markdown
+## The student's situation
+- Enclosure fixed at 40x30 mm. Budget ~$15. Due in 5 weeks.
+- Owns 0805 resistors; the lab requires through-hole where possible.
+## Ruled out, and why
+- LDO (5V→3.3V @600mA): ~1 W dissipated, too much for the enclosure.
+## Open promises
+- Check the connector's current rating once the part is chosen.
+## How they work
+- Second-year student — keep explanations short.
+```
+
+When it outgrows the limit the engine is asked to **compress** it — merge
+duplicates, drop what a later message overturned — not to have it cut off. The
+server rebuilds the file from the four headings, so any narration around the
+document is dropped rather than counted against the limit. It is a plain `.md`
+the student can edit, and a tab in the UI.
 
 ## The agent is a pure function
 

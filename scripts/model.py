@@ -12,6 +12,7 @@ import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import project as project_mod  # noqa: E402
+import session as session_mod  # noqa: E402
 import workspace  # noqa: E402
 
 PROVENANCE = {
@@ -45,14 +46,17 @@ def project_dir(name=None):
 
 # ---------------------------------------------------------------- building
 
-def build(project=None):
+def build(project=None, session=None):
     project = workspace.safe_name(project or workspace.default_project())
     cascades = load_cascades()
     pdir = project_dir(project)
     meta = project_mod.load_meta(project)
+    # decisions and threads are the DESIGN: shared by every conversation.
+    # only the chat and its memory belong to one session.
     events = load_jsonl(pdir / "decisions.jsonl")
     messages = load_jsonl(pdir / "threads.jsonl")
-    chat = load_jsonl(pdir / "chat.jsonl")
+    sess = session_mod.current(project, session)
+    chat = session_mod.load_chat(project, sess)
     sketch = load_sketch(pdir)
 
     # which domains are in play, decided by the AGREED block sketch.
@@ -174,6 +178,9 @@ def build(project=None):
         "blocks": uniq,
         "threads": threads,
         "chat": chat,
+        "session": sess,
+        "sessions": session_mod.list_all(project),
+        "memory": session_mod.read_memory(project, sess),
         "sources": list_sources(project),
         "graph": graph(answered, open_nodes, blocked, constraints, conflicts),
         "progress": {
@@ -266,8 +273,8 @@ def create_project(name):
     return project_mod.create(name)
 
 
-def write(project=None):
-    m = build(project)
+def write(project=None, session=None):
+    m = build(project, session)
     pdir = project_dir(m["project"])
     pdir.mkdir(parents=True, exist_ok=True)
     (pdir / "design-model.json").write_text(

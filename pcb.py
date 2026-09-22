@@ -9,6 +9,7 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py show [project]       where the design stands
     python3 pcb.py engines              which LLM engines are wired up
     python3 pcb.py tools [--apply]      what the engine may touch on your machine
+    python3 pcb.py chats [project]      conversations, and when memory was rewritten
     python3 pcb.py config [key] [value] read or set a setting
     python3 pcb.py check                validate the corpus and the citations
     python3 pcb.py reset [project]      wipe a project's state
@@ -137,6 +138,21 @@ def cmd_tools(args):
         print("  python3 pcb.py tools --clear      to undo")
 
 
+def cmd_chats(args):
+    import session
+    proj = args[0] if args else workspace.default_project()
+    rows = session.list_all(proj)
+    if not rows:
+        print("no conversations yet")
+        return
+    for r in rows:
+        due, since = session.due_for_compaction(proj, r["id"])
+        mem = len(session.read_memory(proj, r["id"]))
+        state = "memory due" if due else f"{since} since rewrite"
+        print(f"{r['id']:18} {r['messages']:>4} msgs  {state:18} "
+              f"memory {mem:>4}c  {r['title']}")
+
+
 def cmd_config(args):
     if not args:
         print(json.dumps(workspace.load(), ensure_ascii=False, indent=2))
@@ -190,6 +206,7 @@ def cmd_trace(args):
 COMMANDS = {
     "init": cmd_init, "serve": cmd_serve, "new": cmd_new, "list": cmd_list,
     "show": cmd_show, "engines": cmd_engines, "tools": cmd_tools,
+    "chats": cmd_chats,
     "config": cmd_config,
     "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
 }

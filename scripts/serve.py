@@ -26,6 +26,7 @@ import agent             # noqa: E402
 import gateway           # noqa: E402
 import model             # noqa: E402
 import project as project_mod  # noqa: E402
+import session as session_mod  # noqa: E402
 import sources           # noqa: E402
 import workspace         # noqa: E402
 
@@ -38,11 +39,31 @@ def now():
 
 
 def append(project, filename, record):
+    """decisions.jsonl and threads.jsonl - the design, shared by every session."""
     path = model.project_dir(project) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     project_mod.touch(project)          # so the project list sorts by real activity
+
+
+def say(project, sess, record):
+    """One conversation's log."""
+    session_mod.append(project, sess, record)
+    project_mod.touch(project)
+
+
+def compact_if_due(project, sess):
+    """Rewrite this session's memory when enough has happened. A separate call,
+    so it never competes with answering the student."""
+    due, _ = session_mod.due_for_compaction(project, sess)
+    if not due:
+        return None
+    res = agent.compact(model.build(project=project, session=sess), project, sess,
+                        backend=BACKEND)
+    if not res.get("ok"):
+        print(f"(memory not rewritten: {res.get('reason')})")
+    return res
 
 
 def redraw(project):
@@ -94,6 +115,10 @@ class Handler(BaseHTTPRequestHandler):
         name = (q.get("project") or [DEFAULT_PROJECT or workspace.default_project()])[0]
         return workspace.safe_name(name)
 
+    def session(self, project):
+        q = parse_qs(urlparse(self.path).query)
+        return session_mod.current(project, (q.get("session") or [None])[0])
+
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False)
@@ -116,10 +141,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"projects": model.list_projects(),
                                     "default": DEFAULT_PROJECT or workspace.default_project()})
         if path == "/api/state":
-            m = model.build(project=self.project())
+            proj = self.project()
+            m = model.build(project=proj, session=self.session(proj))
             m["backend"] = gateway.resolve(BACKEND)
             m["engine"] = gateway.resolve(BACKEND)
             return self._send(200, m)
+        if path == "/api/sessions":
+            proj = self.project()
+            return self._send(200, {"sessions": session_mod.list_all(proj),
+                                    "current": self.session(proj)})
         if path == "/api/config":
             cfg = workspace.load()
             return self._send(200, {
@@ -152,6 +182,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = self.path.split("?")[0]
         proj = self.project()
+        sess = self.session(proj)
 
         n = int(self.headers.get("Content-Length", 0))
         try:
@@ -162,14 +193,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/answer":
             if not data.get("node") or not data.get("value"):
                 return self._send(400, {"error": "node and value required"})
-            before = {c["id"] for c in model.build(project=proj)["constraints"]}
+            before = {c["id"] for c in model.build(project=proj, session=sess)["constraints"]}
             append(proj, "decisions.jsonl", {"ts": now(), "node": data["node"],
                                              "value": data["value"], "by": data.get("by", "user")})
-            after = model.build(project=proj)
+            after = model.build(project=proj, session=sess)
             gained = [c for c in after["constraints"] if c["id"] not in before]
             node = next((n for n in after["answered"] if n["id"] == data["node"]), {})
             opt = next((o for o in node.get("options", []) if o["id"] == data["value"]), {})
-            append(proj, "chat.jsonl", {
+            say(proj, sess, {
                 "ts": now(), "role": "decision",
                 "text": f"{node.get('question', data['node'])}  ->  {opt.get('label', data['value'])}",
                 "node": data["node"],
@@ -177,29 +208,58 @@ class Handler(BaseHTTPRequestHandler):
                             "verified": c["verified"]} for c in gained],
             })
             redraw(proj)
-            return self._send(200, model.build(project=proj))
+            return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/message":
             if not data.get("anchor") or not data.get("text"):
                 return self._send(400, {"error": "anchor and text required"})
             append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
                                            "role": data.get("role", "user"), "text": data["text"]})
-            return self._send(200, model.build(project=proj))
+            return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/chat":
             text = (data.get("text") or "").strip()
             if not text:
                 return self._send(400, {"error": "text required"})
-            append(proj, "chat.jsonl", {"ts": now(), "role": "user", "text": text})
-            m = model.build(project=proj)
+            say(proj, sess, {"ts": now(), "role": "user", "text": text})
+            m = model.build(project=proj, session=sess)
             res = agent.respond(m, text, m["chat"], backend=BACKEND)
             applied = apply_actions(proj, res.get("actions"))
             if res.get("reply"):
-                append(proj, "chat.jsonl", {"ts": now(), "role": "agent", "text": res["reply"],
-                                            "applied": applied})
-            out = model.build(project=proj)
+                say(proj, sess, {"ts": now(), "role": "agent", "text": res["reply"],
+                                 "applied": applied})
+            compact_if_due(proj, sess)
+            out = model.build(project=proj, session=sess)
             out["last_actions"] = applied
             return self._send(200, out)
+
+        if path == "/api/sessions/new":
+            created = session_mod.create(proj, title=data.get("title"))
+            return self._send(200, {"created": created,
+                                    "sessions": session_mod.list_all(proj)})
+
+        if path == "/api/sessions/rename":
+            if not data.get("title"):
+                return self._send(400, {"error": "title required"})
+            session_mod.rename(proj, sess, data["title"])
+            return self._send(200, {"sessions": session_mod.list_all(proj)})
+
+        if path == "/api/sessions/delete":
+            # the design survives; only this conversation goes
+            session_mod.delete(proj, data.get("session") or sess)
+            return self._send(200, {"sessions": session_mod.list_all(proj),
+                                    "current": session_mod.current(proj)})
+
+        if path == "/api/memory":
+            # the student may correct their own memory file by hand
+            if data.get("text") is None:
+                res = agent.compact(model.build(project=proj, session=sess), proj, sess,
+                                    backend=BACKEND)
+                return self._send(200, {"rewritten": res,
+                                        "memory": session_mod.read_memory(proj, sess)})
+            text, trimmed = session_mod.fit(data["text"])
+            session_mod.write_memory(proj, sess, text)
+            return self._send(200, {"memory": text, "trimmed": trimmed})
 
         if path == "/api/projects/new":
             name = (data.get("name") or "").strip() or "untitled"
@@ -235,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
             target.with_suffix(target.suffix + ".json").write_text(json.dumps(
                 {"name": name, "url": None, "uploaded_at": now(),
                  "origin": "uploaded by the student"}, indent=2), encoding="utf-8")
-            return self._send(200, model.build(project=proj))
+            return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/sketch":
             # the student edited the diagram. Server is still the only writer.
@@ -247,18 +307,17 @@ class Handler(BaseHTTPRequestHandler):
                 "confirmed": bool(data.get("confirmed", cur.get("confirmed", False))),
             })
             if data.get("note"):
-                append(proj, "chat.jsonl", {"ts": now(), "role": "user",
-                                            "text": data["note"]})
+                say(proj, sess, {"ts": now(), "role": "user", "text": data["note"]})
             redraw(proj)
             if data.get("tell_agent"):
-                m = model.build(project=proj)
+                m = model.build(project=proj, session=sess)
                 res = agent.respond(m, data.get("note") or "I edited the sketch.",
                                     m["chat"], backend=BACKEND)
                 applied = apply_actions(proj, res.get("actions"))
                 if res.get("reply"):
-                    append(proj, "chat.jsonl", {"ts": now(), "role": "agent",
-                                                "text": res["reply"], "applied": applied})
-            return self._send(200, model.build(project=proj))
+                    say(proj, sess, {"ts": now(), "role": "agent",
+                                     "text": res["reply"], "applied": applied})
+            return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/fetch_source":
             url = data.get("url")
@@ -269,7 +328,7 @@ class Handler(BaseHTTPRequestHandler):
                 sources.use(proj, meta["name"])
             except Exception as exc:
                 return self._send(200, {"error": f"could not fetch: {exc}"})
-            return self._send(200, model.build(project=proj))
+            return self._send(200, model.build(project=proj, session=sess))
 
         return self._send(404, {"error": "not found"})
 
