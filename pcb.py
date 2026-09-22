@@ -8,7 +8,7 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py list                 what is in the workspace
     python3 pcb.py show [project]       where the design stands
     python3 pcb.py engines              which LLM engines are wired up
-    python3 pcb.py tools [--apply]      what the engine may touch on your machine
+    python3 pcb.py tools [--clear]      what the engine may touch on your machine
     python3 pcb.py chats [project]      conversations, and when memory was rewritten
     python3 pcb.py config [key] [value] read or set a setting
     python3 pcb.py check                validate the corpus and the citations
@@ -91,9 +91,10 @@ def cmd_engines(args):
     print("\n* = active. Change with: python3 pcb.py config agent.provider <id>")
 
 
-# Read the workspace and run the scripts; never edit a file directly. Tested
-# against the real CLI: without an allow-list it asks for approval, and in
-# print mode there is nobody to approve, so the scripts silently never run.
+# THIS SHIPS AS THE DEFAULT, in config/defaults.json. Read the workspace and run
+# the scripts; never edit a file directly. It has to be the default: without an
+# allow-list the CLI asks for approval, and print mode has nobody to approve, so
+# the scripts never run and the engine reports that it could not compute.
 RECOMMENDED_TOOLS = {
     "allowed": [
         "Read", "Grep", "Glob",
@@ -106,36 +107,32 @@ RECOMMENDED_TOOLS = {
 
 
 def cmd_tools(args):
-    """Show what the engine may touch, and offer the policy that makes the
-    scripts actually reachable. Nothing is changed unless --apply is passed."""
-    current = workspace.get("agent.providers.claude_code.tools") or {}
-    set_keys = {k: v for k, v in current.items() if v is not None}
-
+    """What the engine may touch. The working policy is the shipped default;
+    --clear hands control back to the CLI's own settings, --apply restores it."""
+    if "--clear" in args:
+        for key in ("available", "allowed", "disallowed", "permission_mode"):
+            workspace.set_value(f"agent.providers.claude_code.tools.{key}", None)
+        print("cleared - the CLI's own settings decide now.")
+        print("The engine will ask for approval before running scripts/trace_width.py,")
+        print("and print mode has nobody to approve, so it will report that it could")
+        print("not compute. Restore with: python3 pcb.py tools --apply")
+        return
     if "--apply" in args:
         for key, value in RECOMMENDED_TOOLS.items():
             workspace.set_value(f"agent.providers.claude_code.tools.{key}", value)
-        print(f"applied to {workspace.config_path()}")
-        set_keys = RECOMMENDED_TOOLS
-    elif "--clear" in args:
-        for key in ("available", "allowed", "disallowed", "permission_mode"):
-            workspace.set_value(f"agent.providers.claude_code.tools.{key}", None)
-        print("cleared - back to the CLI's own settings")
-        return
+        print(f"restored the default policy in {workspace.config_path()}")
 
-    print("claude_code, in force now:")
+    current = workspace.get("agent.providers.claude_code.tools") or {}
+    set_keys = {k: v for k, v in current.items() if v is not None}
+    print("claude_code may touch:")
     if set_keys:
         for key, value in set_keys.items():
             print(f"  {key:16} {json.dumps(value, ensure_ascii=False)}")
+        if set_keys == RECOMMENDED_TOOLS:
+            print("\n  (the shipped default: read and compute, never write)")
     else:
-        print("  nothing set - the CLI's own settings decide.")
-        print("  The engine will TRY to run scripts/trace_width.py and be asked")
-        print("  for approval, which nobody can give in print mode, so it will")
-        print("  report that it could not compute rather than computing.")
-        print("\nRecommended (read and compute, never write):")
-        for key, value in RECOMMENDED_TOOLS.items():
-            print(f"  {key:16} {json.dumps(value, ensure_ascii=False)}")
-        print("\n  python3 pcb.py tools --apply      to set it")
-        print("  python3 pcb.py tools --clear      to undo")
+        print("  nothing set - the CLI's own settings decide, and the scripts")
+        print("  will not run. python3 pcb.py tools --apply restores the default.")
 
 
 def cmd_chats(args):
@@ -225,4 +222,9 @@ def main():
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BrokenPipeError:
+        # piping into `head` closes the pipe early; that is not an error
+        sys.stderr.close()
+        raise SystemExit(0)

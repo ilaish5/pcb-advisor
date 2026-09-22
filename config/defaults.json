@@ -39,8 +39,19 @@
         "model": "",
         "tools": {
           "available": null,
-          "allowed": null,
-          "disallowed": null,
+          "allowed": [
+            "Read",
+            "Grep",
+            "Glob",
+            "Bash(python3 scripts/trace_width.py *)",
+            "Bash(python3 scripts/sources.py *)",
+            "Bash(python3 scripts/model.py *)"
+          ],
+          "disallowed": [
+            "Write",
+            "Edit",
+            "NotebookEdit"
+          ],
           "permission_mode": null
         }
       },

@@ -200,7 +200,9 @@ An engine that lives in the workspace — any CLI agent — also gets a map of t
 folders and the scripts, so it can open the datasheet it needs and run
 `trace_width.py` instead of estimating. An engine without hands does not get
 that map, because telling it to go and read a file makes it invent. Each
-provider declares which it is; `pcb.py tools` sets what it may touch.
+provider declares which it is. What it may touch is a setting that ships
+working — reads and the calculation scripts allowed, Write and Edit refused —
+and `pcb.py tools --clear` hands control back to the CLI's own permissions.
 
 Claude Code routes today. The rest are **registered but not implemented**: they
 appear in the table and fail with a message naming the file to write, which is

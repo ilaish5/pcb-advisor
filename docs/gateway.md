@@ -89,11 +89,11 @@ your own engine does not have to be upstreamed to be configured.
 ## Tool permissions
 
 The Claude Code CLI is an agent in its own right — it can read files, grep, run
-commands. pcb-advisor neither takes that away nor hands it out: every key under
-`agent.providers.claude_code.tools` defaults to `null`, and **a null key means
-the flag is never passed**, so the CLI's own settings decide exactly as if this
-tool did not exist. Set a key and you are deliberately overriding those settings
-for the turns pcb-advisor drives.
+commands. `agent.providers.claude_code.tools` decides how much of that it may
+use while answering. A `null` key passes no flag at all, leaving the CLI's own
+settings to decide; a key with a value overrides them for the turns pcb-advisor
+drives. The shipped default sets `allowed` and `disallowed` (see below) and
+leaves the other two null.
 
 | key | CLI flag | what it does |
 |---|---|---|
@@ -143,20 +143,18 @@ come from the cascade automatically once a decision is recorded.
 
 ## A recommended tool policy
 
-The default passes no flags, which leaves the CLI's own settings alone — and
-that means the engine will **try** to run `trace_width.py`, be asked to approve
-the command, and get no answer, because print mode has nobody to ask. It then
-reports honestly that it could not compute. Verified against the real CLI.
-
-One command fixes it:
+This policy **ships as the default**, and it has to: with no allow-list the CLI
+asks to approve each command, print mode has nobody to approve, and the engine
+ends up reporting that it could not compute instead of computing. Verified
+against the real CLI.
 
 ```bash
-python3 pcb.py tools            # what is in force, and what is recommended
-python3 pcb.py tools --apply    # read and compute, never write
-python3 pcb.py tools --clear    # back to the CLI's own settings
+python3 pcb.py tools            # what is in force
+python3 pcb.py tools --clear    # hand control back to the CLI's own settings
+python3 pcb.py tools --apply    # restore the default
 ```
 
-What that sets:
+What ships:
 
 ```json
 "allowed":    ["Read", "Grep", "Glob",

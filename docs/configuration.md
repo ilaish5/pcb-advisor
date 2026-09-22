@@ -78,8 +78,9 @@ Which LLM engine answers, and how. See [gateway.md](gateway.md).
 | `providers.<id>` | per-engine settings (command, model, enabled, tool permissions) |
 
 `providers.claude_code.tools` decides what the CLI may touch on your machine
-while it answers. Every key defaults to `null`, which passes no flag at all and
-leaves the CLI's own settings alone. See [gateway.md](gateway.md).
+while it answers. It ships allowing reads and the calculation scripts, and
+refusing Write and Edit — `pcb.py tools` shows it, `--clear` hands control back
+to the CLI's own settings. See [gateway.md](gateway.md).
 
 ### `engineering_defaults`
 
