@@ -44,10 +44,11 @@ def check(path):
         if not node.get("why"):
             warnings.append(f"{nid}: no 'why'")
 
-        # An option whose price is only in locks/blocks used to render bare next
-        # to one with a hand-written cost, so it read as the free choice. The
-        # renderer derives weight from locks and blocks now, but a node where
-        # only some options were given costs still reads lopsided.
+        # `costs` is the nuance the structural fields cannot express - NOT a
+        # verdict on which option to avoid. Authored on one option only, it
+        # reads as one, which is why the renderer now weighs options by locks
+        # and blocks instead. An uneven node is still worth flagging to whoever
+        # writes the corpus: the missing prose is the part only a human can add.
         opts = node.get("options") or []
         with_costs = [o for o in opts if o.get("costs")]
         silent = [o for o in opts
@@ -55,8 +56,9 @@ def check(path):
                   and (o.get("locks") or o.get("blocks"))]
         if with_costs and silent:
             warnings.append(
-                f"{nid}: {', '.join(o.get('id', '?') for o in silent)} carry consequences "
-                f"but no costs, while others do - the card will read lopsided")
+                f"{nid}: {', '.join(o.get('id', '?') for o in silent)} add parts or rules "
+                f"but have no 'costs' prose while a sibling does - write theirs too, "
+                f"or costs reads as a verdict on the options that have it")
         if not node.get("options"):
             errors.append(f"{nid}: no options")
 

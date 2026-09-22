@@ -35,7 +35,7 @@
   --on-accent:#fff; --ring:#3b82f633;
   --you:#1b2a3d; --you-line:#24405c;
   --blk-line:#39435c; --wire:#5a6480; --wire-hot:#ef444455;
-  --conflict-bg:#2a1518; --danger-ink:#fca5a5; --cost:#e59a9a;
+  --conflict-bg:#2a1518; --danger-ink:#fca5a5;
   --warn-bg:#4a3a12; --warn-line:#4a3a12; --warn-edge:#6a5a2a; --warn-ink:#e0c169;
   --shadow:#0009; --shadow-menu:rgba(0,0,0,.55);
 }
@@ -54,7 +54,7 @@
   --on-accent:#fff; --ring:#1d4ed833;
   --you:#dbeafe; --you-line:#8fbaf5;
   --blk-line:#8e9ab4; --wire:#68738c; --wire-hot:#ef444488;
-  --conflict-bg:#fdeaea; --danger-ink:#9b1c1c; --cost:#9b2c2c;
+  --conflict-bg:#fdeaea; --danger-ink:#9b1c1c;
   --warn-bg:#f7e7bd; --warn-line:#c99f42; --warn-edge:#c39b3e; --warn-ink:#6b4e0a;
   --shadow:#0f172a26; --shadow-menu:rgba(15,23,42,.16);
 }
@@ -73,7 +73,7 @@
     --on-accent:#fff; --ring:#1d4ed833;
     --you:#dbeafe; --you-line:#8fbaf5;
     --blk-line:#8e9ab4; --wire:#68738c; --wire-hot:#ef444488;
-    --conflict-bg:#fdeaea; --danger-ink:#9b1c1c; --cost:#9b2c2c;
+    --conflict-bg:#fdeaea; --danger-ink:#9b1c1c;
     --warn-bg:#f7e7bd; --warn-line:#c99f42; --warn-edge:#c39b3e; --warn-ink:#6b4e0a;
     --shadow:#0f172a26; --shadow-menu:rgba(15,23,42,.16);
   }
@@ -219,9 +219,11 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .ask .why{color:var(--dim);font-size:13px;margin-bottom:13px}
 .opts{display:flex;flex-direction:column;gap:8px}
 .opt{text-align:left;padding:11px 13px;font-size:14px;width:100%}
-.opt .cost{color:var(--cost);font-size:12px;margin-top:3px}
-.opt .note-opt{color:var(--dim);font-size:12px;margin-top:3px}
-.opt .adds{color:var(--mute);font-size:11.5px;margin-top:4px}
+/* Both lines are neutral on purpose. Red is a hazard signal; an option is not a
+   hazard, and colouring one option's consequence red turns a consideration into
+   a verdict - which is the one thing the advisor is forbidden to hand out. */
+.opt .weigh{color:var(--mute);font-size:11.5px;margin-top:4px}
+.opt .nuance{color:var(--dim);font-size:12px;margin-top:3px}
 .empty{color:var(--dim);text-align:center;padding:36px 14px;font-size:13px;line-height:1.7}
 
 /* ---------- input ---------- */
@@ -1036,16 +1038,19 @@ async function savePrefs(){
    free next to one with a red line under it. Every option now carries its weight,
    and `note` is neutral: reassurance should not wear the same alarm red as a hazard. */
 function optWeight(o){
+  // Weight comes from the structural fields first, because an author cannot
+  // forget to add a part or a rule - they CAN forget to write a cost, and in
+  // this corpus they usually did on whichever option they preferred. `costs`
+  // and `note` are the nuance the counts cannot express, not a verdict.
   const parts=(o.blocks||[]).map(b=>(b.label||b.id).replace(/\n/g,' '));
   const locks=(o.locks||[]).length;
-  let h='';
-  if((o.costs||[]).length) h+=`<div class="cost">${o.costs.map(txt).join(' · ')}</div>`;
-  if(o.note) h+=`<div class="note-opt">${txt(o.note)}</div>`;
-  const adds=[];
-  if(parts.length) adds.push(`adds ${parts.map(esc).join(', ')}`);
-  if(locks)        adds.push(`${locks} rule${locks>1?'s':''} follow${locks>1?'':'s'}`);
-  if(adds.length)  h+=`<div class="adds">${adds.join(' · ')}</div>`;
-  return h;
+  const weigh=[];
+  if(parts.length) weigh.push(`adds ${parts.map(esc).join(', ')}`);
+  if(locks)        weigh.push(`${locks} rule${locks>1?'s':''} follow${locks>1?'':'s'}`);
+  if(!weigh.length) weigh.push('adds nothing');
+  const nuance=[...(o.costs||[]), ...(o.note?[o.note]:[])];
+  return `<div class="weigh">${weigh.join(' · ')}</div>` +
+         (nuance.length?`<div class="nuance">${nuance.map(txt).join(' · ')}</div>`:'');
 }
 
 function memlen(){
