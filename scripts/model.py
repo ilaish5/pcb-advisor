@@ -226,6 +226,17 @@ def build(project=None, session=None):
                 dead.add(entry["id"])
                 moved = True
 
+    # A decision already taken is NOT withdrawn along with the question it rested
+    # on. Cascading would delete work the student did and never asked to undo, so
+    # an answer stays answered - but it was given on a premise that has since
+    # gone, and saying nothing about that is how a board ends up carrying rules
+    # nobody would choose again. Flag it and let them decide.
+    gone_ids = {n["id"] for n in irrelevant}
+    for entry in answered:
+        stale = [d for d in (entry.get("depends_on") or []) if d in gone_ids]
+        if stale:
+            entry["rests_on"] = stale
+
     # The student's agreed sketch is the SPINE of the diagram. The cascade adds
     # parts to it; it does not replace it. Seeding base_blocks first would show
     # someone their LiPo and STM32 turning into "J1 DC in -> LOAD" the moment
@@ -400,6 +411,7 @@ def build(project=None, session=None):
             "orphan_threads": sum(1 for t in threads.values() if t["kind"] == "unknown"),
             "withdrawn": sum(1 for n in irrelevant if n.get("withdrawn")),
             "withheld": len(withheld),
+            "resting_on_withdrawn": sum(1 for n in answered if n.get("rests_on")),
             "acknowledged_threads": sum(1 for t in threads.values() if t.get("still_live")),
         },
     }

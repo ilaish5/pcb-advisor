@@ -150,7 +150,12 @@ def _summary(model):
                          for o in n.get("options", [])]}
             for n in model["open"]
         ],
-        "answered": [{"id": n["id"], "chosen": n["chosen"]} for n in model["answered"]],
+        "answered": [{"id": n["id"], "chosen": n["chosen"],
+                      # decided on a premise that has since been taken out. Not
+                      # withdrawn automatically - that would delete their work -
+                      # so RAISE it with them rather than quietly carrying on.
+                      **({"was_decided_when": n["rests_on"]} if n.get("rests_on") else {})}
+                     for n in model["answered"]],
         # taken out of this design, with the reason. Without it the advisor
         # re-opens the very question the student just explained away.
         "not_applicable": [{"id": n["id"], "why": n.get("reason", "")}

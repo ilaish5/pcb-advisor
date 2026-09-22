@@ -201,3 +201,35 @@ def _thread(home, project, record):
     path = home / "projects" / project / "threads.jsonl"
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps({"ts": "2026-01-01T00:00:02", **record}) + "\n")
+
+
+# ---------------------------------------------------------------- stale premise
+
+def test_a_decision_is_not_withdrawn_along_with_what_it_rested_on(battery_mcu):
+    """Cascading would delete work the student did and never asked to undo."""
+    p = battery_mcu
+    _append(p, {"node": "power.topology", "value": "linear"})
+    _append(p, {"node": "req.vout", "retract": True, "why": "no regulated rail"})
+    m = model.build(project=p)
+    assert "power.topology" in ids(m["answered"])
+
+
+def test_but_it_says_the_premise_is_gone(battery_mcu):
+    """Silence here is how a board keeps carrying rules nobody would choose
+    again - the decision stands, the reason for it does not."""
+    p = battery_mcu
+    _append(p, {"node": "power.topology", "value": "linear"})
+    _append(p, {"node": "req.vout", "retract": True, "why": "no regulated rail"})
+    m = model.build(project=p)
+    node = next(n for n in m["answered"] if n["id"] == "power.topology")
+    assert node["rests_on"] == ["req.vout"]
+    assert m["progress"]["resting_on_withdrawn"] == 1
+
+
+def test_putting_the_question_back_clears_the_flag(battery_mcu):
+    p = battery_mcu
+    _append(p, {"node": "power.topology", "value": "linear"})
+    _append(p, {"node": "req.vout", "retract": True, "why": "no regulated rail"})
+    _append(p, {"node": "req.vout", "value": "v3v3"})
+    m = model.build(project=p)
+    assert not [n for n in m["answered"] if n.get("rests_on")]
