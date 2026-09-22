@@ -45,11 +45,36 @@ def resolve(name=None):
     return ALIASES.get(name, name)
 
 
+class UnknownProvider(Provider):
+    """A name nothing is registered under.
+
+    This is a typo in a config file, and the tool already has a way to carry
+    "this engine cannot run and here is why" all the way to the screen. Raising
+    instead took the server down at startup with a traceback, and took a chat
+    turn down mid-answer - two crashes for a misspelt word.
+    """
+    id = "unknown"
+    title = "unknown engine"
+    status = "planned"
+    workspace_access = False
+
+    def __init__(self, config=None, name=""):
+        super().__init__(config or {})
+        self.id = name or "unknown"
+
+    def available(self):
+        return False, (f"no engine called '{self.id}'. Known: "
+                       f"{', '.join(sorted(REGISTRY))}")
+
+    def complete(self, request):
+        return Result(provider=self.id, error=self.available()[1])
+
+
 def provider(name=None):
     pid = resolve(name)
     cls = REGISTRY.get(pid)
     if cls is None:
-        raise KeyError(f"unknown engine '{pid}'. Known: {', '.join(sorted(REGISTRY))}")
+        return UnknownProvider(name=pid)
     return cls(workspace.get(f"agent.providers.{pid}", {}) or {})
 
 

@@ -293,10 +293,24 @@ def fit(text, limit=None):
         chunks.pop()                      # the least costly section goes first
 
     out = "".join([head] + [c for _, c in chunks]).rstrip() + "\n"
-    while len(out) > limit and "\n" in out.strip():
-        out = out.rstrip().rsplit("\n", 1)[0].rstrip() + "\n"   # one bullet at a time
+
+    # Drop whole BULLETS off the end, never a heading. Taking the last line
+    # blindly ate the heading too, so a file that overflowed by a little came
+    # back as a header and nothing else - the next rewrite then had no structure
+    # to merge into and the section was simply gone.
+    while len(out) > limit:
+        lines = out.rstrip().split("\n")
+        bullets = [i for i, l in enumerate(lines) if l.lstrip().startswith("- ")]
+        if not bullets:
+            break
+        del lines[bullets[-1]]
+        out = "\n".join(lines).rstrip() + "\n"
+
     if len(out) > limit:
-        out = out[:limit]
+        # One bullet longer than the entire budget. Nothing is left to drop in
+        # whole units, so this is the single place a sentence is cut - and it is
+        # marked, so whoever reads it next can see that it was.
+        out = out[:max(limit - 2, 1)].rstrip() + "…\n"
     return out, True
 
 

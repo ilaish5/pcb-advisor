@@ -26,7 +26,14 @@ def home(tmp_path, monkeypatch):
     workspace.load(reload=True)
     (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
     yield tmp_path
-    workspace.load(reload=True)
+    # A test may have left a deliberately broken config behind, and reloading it
+    # raises. Teardown must still put the module back to a usable state or every
+    # test after it fails for a reason that has nothing to do with it.
+    monkeypatch.undo()
+    try:
+        workspace.load(reload=True)
+    except SystemExit:
+        workspace._cache = None
 
 
 @pytest.fixture
