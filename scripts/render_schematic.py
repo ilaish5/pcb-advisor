@@ -249,11 +249,17 @@ def _legend(d, m, x, y):
     """What J, U and Q mean. A teaching tool that prints reference designators
     and never expands them is withholding the one convention the student has
     not met yet."""
-    rows = m.get("designators") or []
-    if not rows:
+    text = legend_text(m)
+    if not text:
         return
-    text = " · ".join(f"{r['prefix']} = {r['means']}" for r in rows)
     d.add(elm.Label().at((x, y)).label(shape(text, 100), fontsize=9, color="#666666"))
+
+
+def legend_text(m):
+    """Separate so it can be tested: matplotlib draws SVG text as paths, so
+    nothing in the output file can be searched for a phrase."""
+    rows = m.get("designators") or []
+    return " · ".join(f"{r['prefix']} = {r['means']}" for r in rows)
 
 
 if __name__ == "__main__":
