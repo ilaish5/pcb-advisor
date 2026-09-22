@@ -156,18 +156,30 @@ def build(project=None, session=None):
     live = {c["id"] for c in constraints} | set(answers)
     conflicts = [c for c in conflicts if c["b"] in live]
 
+    # The student's agreed sketch is the SPINE of the diagram. The cascade adds
+    # parts to it; it does not replace it. Seeding base_blocks first would show
+    # someone their LiPo and STM32 turning into "J1 DC in -> LOAD" the moment
+    # they confirmed - the design they agreed to, thrown away.
     blocks = []
+    for b in (sketch.get("blocks", []) if sketch.get("confirmed") else []):
+        blocks.append({"id": b["id"], "label": b.get("label") or b["id"],
+                       "kind": b.get("kind"), "from": "sketch", "order": 10})
     for dom in active:
-        blocks.extend(cascades[dom].get("base_blocks", []) or [])
+        blocks.extend({**b, "from": "cascade"}
+                      for b in (cascades[dom].get("base_blocks", []) or []))
     for node in answered:
         opt = next((o for o in node.get("options", []) if o["id"] == node["chosen"]), None)
         if opt:
-            blocks.extend(opt.get("blocks", []) or [])
-    seen, uniq = set(), []
+            blocks.extend({**b, "from": "decision", "by": node["id"]}
+                          for b in (opt.get("blocks", []) or []))
+    # first writer of an id wins, so a sketched block keeps the student's label
+    seen, uniq = {}, []
     for b in blocks:
-        if b["id"] not in seen:
-            seen.add(b["id"])
-            uniq.append(b)
+        if b["id"] in seen:
+            seen[b["id"]].update({k: v for k, v in b.items() if k not in seen[b["id"]]})
+            continue
+        seen[b["id"]] = dict(b)
+        uniq.append(seen[b["id"]])
     uniq.sort(key=lambda b: b.get("order", 50))
 
     # A thread is the SPATIAL axis: everything ever said about one element,
@@ -210,6 +222,9 @@ def build(project=None, session=None):
         "constraints": constraints,
         "conflicts": conflicts,
         "blocks": uniq,
+        # the sketch's topology survives too; the UI merges it with what the
+        # cascade added rather than synthesising a straight chain
+        "links": (sketch.get("links", []) if sketch.get("confirmed") else []),
         "threads": threads,
         "chat": chat,
         "session": sess,

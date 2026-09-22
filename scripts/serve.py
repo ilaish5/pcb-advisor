@@ -53,6 +53,32 @@ def say(project, sess, record):
     project_mod.touch(project)
 
 
+def block_context(m, block_id):
+    """Everything we know about one block, for a question asked about it.
+    Built here rather than in the browser, so any agent driving the folder gets
+    the same context."""
+    b = next((x for x in m.get("blocks", []) if x["id"] == block_id), None)
+    if not b:
+        return None
+    links = m.get("links") or []
+    ctx = {
+        "id": b["id"], "label": b.get("label"), "kind": b.get("kind"),
+        "came_from": b.get("from"),
+        "fed_by": [s for s, t in links if t == block_id],
+        "feeds": [t for s, t in links if s == block_id],
+    }
+    if b.get("by"):
+        ctx["added_by_decision"] = b["by"]
+    # which domain this kind pulls in, and what is already locked because of it
+    ctx["loads_domains"] = sorted(
+        {d for d, c in model.load_cascades().items()
+         if b.get("kind") in (c.get("blocks") or [])})
+    ctx["constraints_from_those"] = [
+        {"id": c["id"], "text": c["text"]} for c in m.get("constraints", [])
+        if c.get("element") in ctx["loads_domains"]][:6]
+    return ctx
+
+
 def compact_if_due(project, sess):
     """Rewrite this session's memory when enough has happened. A separate call,
     so it never competes with answering the student."""
@@ -266,9 +292,17 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()
             if not text:
                 return self._send(400, {"error": "text required"})
-            say(proj, sess, {"ts": now(), "role": "user", "text": text})
+            block = data.get("block")
+            say(proj, sess, {"ts": now(), "role": "user", "text": text,
+                             **({"block": block} if block else {})})
             m = model.build(project=proj, session=sess)
-            res = agent.respond(m, text, m["chat"], backend=BACKEND)
+            ask = text
+            if block:
+                ctx = block_context(m, block)
+                if ctx:
+                    ask = (f"[the student is asking about one block of their diagram]\n"
+                           f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
+            res = agent.respond(m, ask, m["chat"], backend=BACKEND)
             applied = apply_actions(proj, res.get("actions"))
             if res.get("reply"):
                 say(proj, sess, {"ts": now(), "role": "agent", "text": res["reply"],
