@@ -43,6 +43,20 @@ def check(path):
                 errors.append(f"{nid}: missing {field}")
         if not node.get("why"):
             warnings.append(f"{nid}: no 'why'")
+
+        # An option whose price is only in locks/blocks used to render bare next
+        # to one with a hand-written cost, so it read as the free choice. The
+        # renderer derives weight from locks and blocks now, but a node where
+        # only some options were given costs still reads lopsided.
+        opts = node.get("options") or []
+        with_costs = [o for o in opts if o.get("costs")]
+        silent = [o for o in opts
+                  if not o.get("costs") and not o.get("note")
+                  and (o.get("locks") or o.get("blocks"))]
+        if with_costs and silent:
+            warnings.append(
+                f"{nid}: {', '.join(o.get('id', '?') for o in silent)} carry consequences "
+                f"but no costs, while others do - the card will read lopsided")
         if not node.get("options"):
             errors.append(f"{nid}: no options")
 
