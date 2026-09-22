@@ -39,28 +39,47 @@ clicking. Constraints accumulate; the graph grows; the schematic sharpens.
 
 | badge | meaning | what it must carry |
 |---|---|---|
-| 📐 computed | a script produced it | the calculation |
+| 📐 computed | a script produced it | the `calculation` itself |
 | 📘 standard | a published standard says it | document + locator |
-| 📄 datasheet | a specific document says it | document + locator; **url + verbatim quote** to count as verified |
+| 📄 datasheet | a **specific, fetchable** document says it | document + locator + url; cached file + verbatim quote to count as verified |
+| 🔎 check your part | depends on the part you chose | where in that datasheet to look |
 | ⚠ convention | craft, no citable source | must say so out loud |
 
-Two scripts enforce this, and both belong in CI:
+`check your part` exists because most of what looked like citations here were
+not. Eleven rules cited "regulator datasheet", "ADC datasheet", "P-FET
+datasheet" — documents that cannot exist, that no student can fetch and no
+script can check, passing validation as silently as a real reference. They were
+never citations. They are instructions to go and read whichever part you
+actually chose, which is a good thing for a rule to say and a bad thing to
+disguise. Naming the class made the real debt visible: **three** datasheet
+citations, not thirteen.
 
-- `validate_cascade.py` — a constraint must declare its provenance and carry what
-  that class requires. A bare `source: practice` string no longer passes as a citation.
+Two scripts enforce this, and both run in CI:
+
+- `validate_cascade.py` — a rule must declare its provenance and carry what that
+  class requires. A `datasheet` rule with no url is rejected; so is a `computed`
+  rule with no arithmetic, and a `check your part` rule that cites a document.
 - `verify_sources.py` — every quote marked verified must be findable, **verbatim**,
   in the cached document. Fabricate a quote and it fails.
 
+A fresh clone prints this, because the vendor PDFs are not redistributed here:
+
 ```
 $ python3 scripts/verify_sources.py
-  ok    sw.keepaway  <- slyt614.pdf
-  ok    sw.cin       <- slyt614.pdf
-  2 verified, 0 failed, 31 unverified (citation claimed, quote not pulled yet)
+  todo  sw.hotloop: cites 'TI SLYT614', no quote pulled yet
+  FAIL  sw.keepaway: slyt614.pdf is not in the cache
+  FAIL  sw.cin: slyt614.pdf is not in the cache
+
+0 quotes verified, 2 failed, 1 citation still to check
+nothing to verify in: check_your_part=10  computed=2  convention=17  standard=3
+
+The cited documents are not in git - they are vendor PDFs.
+Run:  python3 scripts/sources.py restore
 ```
 
-That last number is the corpus being honest about its own state. Those 31 were
-written from memory and are shown in the UI as `unverified` until someone pulls
-the real quote.
+Do that once and the two FAILs become `ok`. The `todo` stays until someone opens
+the document and pulls the quote — that line is the corpus being honest about
+its own state, and it is meant to be visible.
 
 ## The one rule
 
@@ -229,11 +248,12 @@ line in the registry — see [docs/gateway.md](docs/gateway.md).
 | `scripts/serve.py` | renderer and the only writer |
 | `scripts/reset.py` | wipe a project's state |
 | `ui/index.html` | the five surfaces |
+| `tests/` | the defects that reached a student once |
 
 ## Not built
 
 - `stock-check`
 - RF cascade (mcu and analog are thin — power is the worked one)
 - schematic detail past block level
-- pulling the remaining 31 quotes
+- pulling the one remaining quote, and authoring a corpus worth citing
 - gateway providers other than Claude Code (the slots are registered and documented)

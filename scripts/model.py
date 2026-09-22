@@ -38,11 +38,20 @@ DESIGNATORS = {
 
 _DESIGNATOR = re.compile(r"^([A-Z]{1,2})(\d+)$")
 
+# How a rule is known. The ranking is how much trust it asks for: a number a
+# script produced asks for none, craft knowledge asks for a lot.
+#
+# `check_your_part` exists because eleven of thirteen "datasheet" citations in
+# this corpus named documents that cannot exist - "regulator datasheet", "ADC
+# datasheet". They were never citations. They are instructions to go and read
+# whichever part the student actually chose, which is a perfectly good thing for
+# a rule to say and a very bad thing to disguise as a reference.
 PROVENANCE = {
-    "computed":   {"icon": "📐", "label": "computed",  "rank": 0},
-    "standard":   {"icon": "📘", "label": "standard",  "rank": 1},
-    "datasheet":  {"icon": "📄", "label": "datasheet", "rank": 2},
-    "convention": {"icon": "⚠",  "label": "convention", "rank": 3},
+    "computed":        {"icon": "📐", "label": "computed",       "rank": 0},
+    "standard":        {"icon": "📘", "label": "standard",       "rank": 1},
+    "datasheet":       {"icon": "📄", "label": "datasheet",      "rank": 2},
+    "check_your_part": {"icon": "🔎", "label": "check your part", "rank": 3},
+    "convention":      {"icon": "⚠",  "label": "convention",     "rank": 4},
 }
 
 
@@ -280,7 +289,17 @@ def build(project=None, session=None):
                 "text": lock["text"],
                 "provenance": prov,
                 "icon": PROVENANCE.get(prov, PROVENANCE["convention"])["icon"],
-                "verified": bool(lock.get("verified", prov == "computed")),
+                # "check_your_part" is an id; "check your part" is what a
+                # student reads. Never show them the id.
+                "provenance_label": PROVENANCE.get(
+                    prov, PROVENANCE["convention"])["label"],
+                # Only a datasheet rule claims a quote, so only a datasheet rule
+                # can be missing one. A convention has nothing to verify and a
+                # computed rule carries its own arithmetic; marking either
+                # "unverified" made the real citation debt look four times its
+                # size and hid which entries were actually citations.
+                "verified": bool(lock.get("verified", prov != "datasheet")),
+                "calculation": lock.get("calculation", ""),
                 "source": src,
                 "element": node["domain"],
                 "from_node": node["id"],

@@ -18,9 +18,8 @@ nodes:
         locks:
           - id: mcu.xtal.place
             text: "Crystal and its load capacitors go within a few millimetres of the pins, with a local ground under them and no other traces crossing."
-            provenance: datasheet
+            provenance: check_your_part
             source: {doc: "MCU hardware design guide", locator: "Oscillator layout"}
-            verified: false
           - id: mcu.xtal.guard
             text: "Guard the oscillator area with ground and keep switching nodes away from it. It is a high-impedance analog circuit wearing a digital costume."
             provenance: convention

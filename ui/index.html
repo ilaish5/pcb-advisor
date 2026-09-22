@@ -1007,8 +1007,9 @@ function renderPanel(force){
         return `<div class="card">
           <div dir="auto">${txt(c.text)}</div>
           ${s.quote?`<div class="quote">“${esc(s.quote)}”</div>`:''}
+          ${c.calculation?`<div class="quote">${esc(c.calculation)}</div>`:''}
           <div class="foot">
-            <span class="pill ${c.verified?'':'u'}">${c.icon} ${esc(c.provenance)}${c.verified?'':' · unverified'}</span>
+            <span class="pill ${c.verified?'':'u'}">${c.icon} ${esc(c.provenance_label||c.provenance)}${c.verified?'':' · unverified'}</span>
             ${badge(c.id)}</div>
           <div class="meta">from ${esc(c.from_label)}${s.doc?' · ':''}
             ${s.url?`<a href="${esc(s.url)}" target="_blank">${esc(s.doc)}</a>`:esc(s.doc||'')}

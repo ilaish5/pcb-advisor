@@ -22,7 +22,7 @@ import yaml
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import workspace  # noqa: E402
 
-VALID = {"computed", "standard", "datasheet", "convention"}
+VALID = {"computed", "standard", "datasheet", "check_your_part", "convention"}
 
 
 def check(path, producible=frozenset()):
@@ -93,11 +93,25 @@ def check(path, producible=frozenset()):
                 stats[prov] += 1
                 src = lock.get("source") or {}
 
-                if prov in ("computed", "standard", "datasheet"):
+                # Each class carries what makes it checkable, and the checks
+                # differ because they are not the same kind of claim.
+                if prov == "computed" and not lock.get("calculation"):
+                    # the arithmetic itself, not a `doc` field holding a sum
+                    errors.append(f"{lid}: provenance=computed needs a `calculation`")
+                if prov == "standard":
                     if not src.get("doc"):
-                        errors.append(f"{lid}: provenance={prov} needs source.doc")
-                    if prov != "computed" and not src.get("locator"):
-                        errors.append(f"{lid}: provenance={prov} needs source.locator")
+                        errors.append(f"{lid}: provenance=standard needs source.doc")
+                    if not src.get("locator"):
+                        errors.append(f"{lid}: provenance=standard needs source.locator")
+                if prov == "check_your_part":
+                    # not a citation: an instruction to go and read whichever
+                    # part the student chose. It must say WHERE to look.
+                    if not src.get("locator"):
+                        errors.append(f"{lid}: provenance=check_your_part needs source."
+                                      f"locator - say where in the datasheet to look")
+                    if src.get("url") or src.get("cached"):
+                        errors.append(f"{lid}: provenance=check_your_part must not cite a "
+                                      f"document - if you have one, this is a datasheet rule")
                 # a constraint may declare that it only applies when a part is
                 # on the board. The part has to be one the corpus can actually
                 # put there, or the rule is unreachable and nobody would notice
@@ -106,15 +120,31 @@ def check(path, producible=frozenset()):
                     errors.append(f"{lid}: needs_block {need!r} is a part no cascade "
                                   f"can put on a board")
 
+                if prov != "datasheet" and "verified" in lock:
+                    warnings.append(f"{lid}: `verified` means nothing on a "
+                                    f"{prov} rule - only a datasheet claims a quote")
                 if prov == "datasheet":
+                    # A datasheet rule names a REAL document. A role noun like
+                    # "regulator datasheet" is not one - no student can fetch it
+                    # and no validator can check it - yet eleven of these passed
+                    # silently as though they were citations.
+                    if not src.get("doc"):
+                        errors.append(f"{lid}: provenance=datasheet needs source.doc")
+                    if not src.get("locator"):
+                        errors.append(f"{lid}: provenance=datasheet needs source.locator")
+                    if not src.get("url"):
+                        errors.append(f"{lid}: provenance=datasheet needs source.url - a "
+                                      f"document nobody can fetch is not a citation. If it "
+                                      f"depends on the student's own part, this is "
+                                      f"check_your_part")
                     if lock.get("verified"):
-                        if not src.get("url"):
-                            errors.append(f"{lid}: marked verified but has no source.url")
+                        if not src.get("cached"):
+                            errors.append(f"{lid}: marked verified but names no cached file")
                         if not src.get("quote"):
                             errors.append(f"{lid}: marked verified but has no verbatim quote")
                     else:
-                        warnings.append(f"{lid}: citation claimed but unverified "
-                                        f"- no quote pulled from the real document yet")
+                        warnings.append(f"{lid}: cites {src.get('doc')!r} but no quote has "
+                                        f"been pulled from it yet - scripts/sources.py verify")
 
     for node in cas.get("nodes", []):
         for dep in node.get("depends_on", []) or []:
