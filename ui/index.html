@@ -212,6 +212,10 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .lk{background:var(--lk);border:1px solid var(--line);border-radius:9px;
     padding:9px 12px;font-size:13px;color:var(--ink2)}
 .lk .tag{color:var(--dim);font-size:11px;margin-right:6px}
+/* An answer that locks nothing used to pass in silence, which reads as "nothing
+   applies" when it often means "the question could not express your case". */
+.nothing{margin-top:7px;font-size:12.5px;color:var(--dim);line-height:1.5;
+  border-left:2px solid var(--warn-line);padding-left:10px}
 
 /* the live question, with its answers right there */
 .ask{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:16px}
@@ -804,6 +808,9 @@ function paint(){
     if(m.role==='decision'){
       h+=`<div class="msg"><div class="dec" dir="${bi(m.text)}">
         <div class="head">✓ <b>${txt(m.text)}</b></div>
+        ${!(m.locked||[]).length?`<div class="nothing">Nothing follows from this in the
+          design questions I have — if your case is unusual, say so and I will tell you
+          what I cannot cover.</div>`:''}
         ${(m.locked||[]).length?`<div class="locked">${m.locked.map(l=>
           `<div class="lk" dir="${bi(l.text)}"><span class="tag">${l.icon}${l.verified?'':' unverified'}</span>${txt(l.text)}</div>`
         ).join('')}</div>`:''}

@@ -29,6 +29,7 @@ def check(path):
     cas = yaml.safe_load(path.read_text(encoding="utf-8"))
     errors, warnings, stats = [], [], {k: 0 for k in VALID}
     node_ids, lock_ids = set(), set()
+    dead_ends = []
 
     for node in cas.get("nodes", []):
         nid = node.get("id")
@@ -54,6 +55,16 @@ def check(path):
         silent = [o for o in opts
                   if not o.get("costs") and not o.get("note")
                   and (o.get("locks") or o.get("blocks"))]
+        # An option that records nothing and gates nothing closes its topic
+        # having learned nothing. Sometimes that is honest - sometimes, as with
+        # "Bench or room" for a board whose sensor hangs in a freezer, it means
+        # the question could not express the case and the design goes silently
+        # under-constrained. Either way the author should see it.
+        for o in opts:
+            if o.get("locks") or o.get("blocks") or o.get("opens"):
+                continue
+            dead_ends.append((nid, o.get("id", "?"), o.get("label", "")))
+
         if with_costs and silent:
             warnings.append(
                 f"{nid}: {', '.join(o.get('id', '?') for o in silent)} add parts or rules "
@@ -108,6 +119,14 @@ def check(path):
             for nxt in opt.get("opens", []) or []:
                 if nxt not in node_ids:
                     errors.append(f"{node['id']}.{opt.get('id')}: opens unknown node {nxt!r}")
+
+    gated = {(k, v) for node in cas.get("nodes", [])
+             for k, v in (node.get("requires") or {}).items()}
+    for nid, oid, label in dead_ends:
+        if (nid, oid) in gated:
+            continue
+        warnings.append(f"{nid}: '{label}' records nothing and opens nothing - "
+                        f"choosing it closes the topic having learned nothing")
 
     return errors, warnings, len(node_ids), stats
 
