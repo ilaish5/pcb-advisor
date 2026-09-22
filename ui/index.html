@@ -107,6 +107,16 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 .dtabs{display:flex;gap:4px;padding:12px 14px;border-bottom:1px solid var(--line)}
 .dtabs button.on{background:#22293a;border-color:#3d4a68}
 .dtabs .x{margin-left:auto}
+.thr{margin-top:8px;border-left:2px solid #2b3550;padding-left:9px}
+.thr .m{margin:5px 0;font-size:12.5px;line-height:1.5}
+.thr .m b{color:var(--dim);font-weight:600;margin-right:5px}
+.thr .row{display:flex;gap:6px;margin-top:7px}
+.thr input{flex:1;background:#0f1320;color:var(--fg);border:1px solid var(--line);
+  border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
+.ask-badge{cursor:pointer;border:1px solid var(--line);background:#1a2030;border-radius:999px;
+  padding:1px 8px;font-size:11.5px;color:var(--dim);margin-left:6px;white-space:nowrap}
+.ask-badge.wait{border-color:#6a5a2a;color:#e0c169}
+.ask-badge.done{opacity:.55}
 .dbody{flex:1;overflow-y:auto;padding:14px 16px}
 table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.07em;
@@ -463,11 +473,13 @@ document.addEventListener('click',()=>{if(popFor){popFor=null;drawDiagram();}});
 window.addEventListener('resize',()=>{if(!moved)fit();else applyView();});
 
 function paint(){
+  const waiting=(S.progress.waiting_on_agent||0)+(S.progress.waiting_on_student||0);
   const p=S.progress, atBottom = $('log').scrollHeight - $('log').scrollTop - $('log').clientHeight < 120;
   $('stat').textContent = S.stage==='sketch'
     ? 'sketching — confirm the blocks'
     : `${p.answered} decisions · ${p.constraints} constraints` +
-      (p.conflicts?` · ${p.conflicts} conflict`:'');
+      (p.conflicts?` · ${p.conflicts} conflict`:'') +
+      (waiting?` · ${waiting} question${waiting>1?'s':''} open`:'');
 
   let h='';
   for(const m of (S.chat||[])){
@@ -511,7 +523,8 @@ function drawer(){
     h = S.answered.length ? `<table><tr><th>Element</th><th>Decision</th><th>Choice</th></tr>`+
       S.answered.map(n=>{const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
         return `<tr><td style="color:var(--dim)">${esc(n.domain)}</td>
-          <td dir="auto">${txt(n.question)}</td><td dir="auto"><b>${txt(o.label||n.chosen)}</b></td></tr>`;}).join('')+`</table>`
+          <td dir="auto">${txt(n.question)}${badge(n.id)}${thread(n.id)}</td>
+          <td dir="auto"><b>${txt(o.label||n.chosen)}</b></td></tr>`;}).join('')+`</table>`
       : `<div class="empty">Nothing decided yet.</div>`;
   }
   if(TAB==='constraints'){
@@ -520,7 +533,8 @@ function drawer(){
       S.constraints.map(c=>{const s=c.source||{};
         return `<tr><td dir="auto">${txt(c.text)}
           ${s.quote?`<div class="quote">“${esc(s.quote)}”</div>`:''}
-          <div class="meta">from ${esc(c.from_label)}</div></td>
+          <div class="meta">from ${esc(c.from_label)}</div>
+          ${badge(c.id)}${thread(c.id)}</td>
           <td><span class="pill ${c.verified?'':'u'}">${c.icon} ${esc(c.provenance)}</span>
           <div class="meta">${s.url?`<a href="${esc(s.url)}" target="_blank">${esc(s.doc||'source')}</a>`:esc(s.doc||'')}
           ${esc(s.locator||'')}</div></td></tr>`;}).join('')+`</table>`
@@ -550,6 +564,50 @@ function drawer(){
   }
   $('dbody').innerHTML=h;
   if(TAB==='memory') memlen();
+}
+
+/* A thread hangs on a design element, not on a conversation: it is everything
+   ever said about THIS constraint, in any session. */
+let OPEN_THREAD=null;
+
+function badge(id){
+  const t=(S.threads||{})[id];
+  const said=t?(t.messages||[]).filter(m=>m.role!=='resolved').length:0;
+  const cls=t&&t.waiting_on?'wait':(t&&t.resolved?'done':'');
+  const label=said?`💬 ${said}${t.waiting_on?' · waiting on '+t.waiting_on:''}`:'ask';
+  return `<span class="ask-badge ${cls}" onclick="toggleThread('${esc(id)}')">${label}</span>`;
+}
+
+function thread(id){
+  if(OPEN_THREAD!==id) return '';
+  const t=(S.threads||{})[id]||{messages:[]};
+  const body=(t.messages||[]).filter(m=>m.role!=='resolved')
+    .map(m=>`<div class="m" dir="${bi(m.text)}"><b>${esc(m.role)}</b>${txt(m.text)}</div>`).join('')
+    || `<div class="m" style="color:var(--dim)">Nothing asked about this yet.</div>`;
+  return `<div class="thr">${body}
+    <div class="row"><input id="thr-in" dir="auto" placeholder="Ask about this…"
+      onkeydown="if(event.key==='Enter')postThread('${esc(id)}')">
+      <button onclick="postThread('${esc(id)}')">Ask</button>
+      ${t.messages&&t.messages.length&&!t.resolved
+        ? `<button onclick="resolveThread('${esc(id)}')">Resolve</button>`:''}</div></div>`;
+}
+
+function toggleThread(id){ OPEN_THREAD = OPEN_THREAD===id ? null : id; drawer(); }
+
+async function postThread(id){
+  const el=$('thr-in'); const text=(el?el.value:'').trim(); if(!text) return;
+  el.disabled=true; el.value='thinking…';
+  try{
+    S=await (await fetch(q('/api/message'),{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({anchor:id,text,role:'user'})})).json();
+  } finally { drawer(); }
+}
+
+async function resolveThread(id){
+  S=await (await fetch(q('/api/thread/resolve'),{method:'POST',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({anchor:id})})).json();
+  OPEN_THREAD=null; drawer();
 }
 
 function memlen(){

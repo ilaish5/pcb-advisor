@@ -40,6 +40,22 @@ def load_jsonl(path):
     return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
+def anchors(project=None):
+    """Every id a thread may hang on: cascade nodes, and every constraint the
+    corpus can ever produce - not just the active ones, so a thread survives
+    the student changing a decision and the constraint going quiet."""
+    out = {}
+    for dom, cas in load_cascades().items():
+        for node in cas.get("nodes", []):
+            out[node["id"]] = {"kind": "node", "domain": dom,
+                               "label": node.get("question", node["id"])}
+            for opt in node.get("options", []) or []:
+                for lock in opt.get("locks", []) or []:
+                    out[lock["id"]] = {"kind": "constraint", "domain": dom,
+                                       "label": lock.get("text", lock["id"])[:80]}
+    return out
+
+
 def project_dir(name=None):
     return workspace.project_dir(name)
 
@@ -154,11 +170,29 @@ def build(project=None, session=None):
             uniq.append(b)
     uniq.sort(key=lambda b: b.get("order", 50))
 
+    # A thread is the SPATIAL axis: everything ever said about one element,
+    # whichever conversation it was said in. The chat is the timeline.
+    known = anchors(project)
     threads = {}
-    for m in messages:
+    for m in sorted(messages, key=lambda m: m.get("ts", "")):
         threads.setdefault(m["anchor"], []).append(m)
-    for v in threads.values():
-        v.sort(key=lambda m: m.get("ts", ""))
+
+    for anchor, msgs in threads.items():
+        meta_a = known.get(anchor, {"kind": "unknown", "label": anchor})
+        resolved = any(m.get("role") == "resolved" for m in msgs)
+        said = [m for m in msgs if m.get("role") in ("user", "agent")]
+        last = said[-1].get("role") if said else None
+        threads[anchor] = {
+            "anchor": anchor,
+            "kind": meta_a["kind"],
+            "label": meta_a["label"],
+            "messages": msgs,
+            "resolved": resolved,
+            # both directions matter. A question the STUDENT asked and nobody
+            # answered is the one that actually gets lost.
+            "waiting_on": None if resolved else
+                          {"user": "agent", "agent": "student"}.get(last),
+        }
 
     return {
         "project": project,
@@ -189,7 +223,12 @@ def build(project=None, session=None):
             "constraints": len(constraints),
             "unverified": sum(1 for c in constraints if not c["verified"]),
             "conflicts": len(conflicts),
-            "open_questions": sum(1 for v in threads.values() if v and v[-1].get("role") == "agent"),
+            "waiting_on_agent": sum(1 for t in threads.values()
+                                    if t["waiting_on"] == "agent"),
+            "waiting_on_student": sum(1 for t in threads.values()
+                                      if t["waiting_on"] == "student"),
+            "threads": len(threads),
+            "orphan_threads": sum(1 for t in threads.values() if t["kind"] == "unknown"),
         },
     }
 

@@ -53,8 +53,17 @@ STAGE 2 - CASCADE
 Ask ONE open question at a time, in plain English, including its "why".
 Record an answer the student gives in chat with
   {"type":"answer","node":"<id>","value":"<option id>"}
-Anchor a question on a node or a constraint with
-  {"type":"ask","anchor":"<id>","text":"..."}
+
+ANCHORING - do this without being asked
+A question or an explanation about ONE named element belongs on that element,
+not in the chat stream, because the chat scrolls away and the element does not.
+Whenever you explain why a constraint holds, challenge one, or ask something
+about a specific decision, also anchor it:
+  {"type":"ask","anchor":"<node or constraint id>","text":"..."}
+The anchor must be an id that exists - a node id from open_questions/answered,
+or a constraint id from active_constraints. An invented id is dropped.
+Anything waiting on you appears under OPEN THREADS below; answer those first,
+anchored on the same id.
 
 LANGUAGE
 Answer in whatever language the student writes in. Two rules if that is Hebrew:
@@ -97,6 +106,16 @@ def _summary(model):
              if v} for d in model.get("sources", [])
         ],
         "board": model.get("board", {}),
+        # threads waiting on the agent go in full - they are what the student
+        # asked and nobody answered. The rest are a count; the engine can read
+        # threads.jsonl if it wants them.
+        "open_threads": [
+            {"anchor": t["anchor"], "about": t["label"],
+             "messages": [{"role": m["role"], "text": m["text"]}
+                          for m in t["messages"] if m.get("role") in ("user", "agent")]}
+            for t in (model.get("threads") or {}).values() if t.get("waiting_on") == "agent"
+        ],
+        "threads_waiting_on_student": model.get("progress", {}).get("waiting_on_student", 0),
         "conflicts": model["conflicts"],
     }
     return json.dumps(s, ensure_ascii=False, indent=2)

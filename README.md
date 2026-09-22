@@ -127,6 +127,22 @@ later never rewrites a board you already started.
 Any agent can drive this. A human can too — open the folder, read the questions,
 write answers. That is why the corpus is YAML and Markdown, not prompts.
 
+## Two axes: the timeline and the element
+
+A conversation is chronological. A **thread** is spatial: everything ever said
+about one constraint or one decision, hanging on that element, in any session.
+Ask "why must the hot loop be small?" and the answer lives on `sw.hotloop` — so
+it is still there next month when that constraint comes up again, instead of
+buried forty messages back.
+
+The agent anchors on its own whenever it explains or challenges a specific
+element, and the student can ask from the badge beside any constraint. Anchors
+are validated against the corpus: a mistyped id is refused rather than becoming
+an orphan nobody ever sees. Both directions of "open" are tracked — a question
+*the student* asked and nobody answered is the one that actually gets lost, and
+it is sent back to the agent until it is dealt with. Only the student resolves
+a thread.
+
 ## Conversations split, the design does not
 
 A project is a board; a session is one conversation about it. `decisions.jsonl`

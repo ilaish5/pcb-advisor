@@ -35,10 +35,23 @@ A confident wrong layout rule is worse than no tool.
    Tell the user **what their choice just locked in**, and cite it.
 5. Repeat. The drawing sharpens on its own as blocks accumulate.
 
-## Anchors
+## Anchors — the second axis
 
-Every decision **and every constraint** is a question. Both can carry a thread.
-Anchor on a constraint id when the user challenges a rule or wants the reasoning.
+A conversation is the **timeline**; a thread is the **element**. Everything ever
+said about `sw.hotloop` hangs on `sw.hotloop`, in any session, and is still there
+next month when the student sees that constraint again. The chat scrolls away;
+the element does not.
+
+Anchor **without being asked**: whenever you explain why a constraint holds,
+challenge one, or ask about a specific decision, emit
+`{"type":"ask","anchor":"<id>","text":"..."}` alongside your reply.
+
+- The anchor must be a real id — a cascade node or a constraint. The server
+  rejects anything else rather than creating an invisible orphan.
+- Threads are shared by every conversation, like decisions.
+- `open_threads` in CURRENT STATE is what the student asked and nobody answered.
+  **Answer those first**, anchored on the same id.
+- A thread closes when the student resolves it, never when you do.
 
 ## What is derived — never hand-edit
 

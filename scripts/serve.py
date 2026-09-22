@@ -98,6 +98,9 @@ def apply_actions(project, actions):
                                                 "value": a["value"], "by": "agent"})
             applied.append(f"answer:{a['node']}")
         elif kind == "ask" and a.get("anchor") and a.get("text"):
+            if a["anchor"] not in model.anchors(project):
+                print(f"(ask dropped: no such anchor {a['anchor']})")
+                continue
             append(project, "threads.jsonl", {"ts": now(), "anchor": a["anchor"],
                                               "role": "agent", "text": a["text"]})
             applied.append(f"ask:{a['anchor']}")
@@ -213,8 +216,32 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/message":
             if not data.get("anchor") or not data.get("text"):
                 return self._send(400, {"error": "anchor and text required"})
+            # an unchecked anchor is an invisible orphan forever: one typo and
+            # the thread never appears beside anything again
+            if data["anchor"] not in model.anchors(proj):
+                return self._send(400, {"error": f"no such anchor: {data['anchor']}"})
             append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
                                            "role": data.get("role", "user"), "text": data["text"]})
+            out = model.build(project=proj, session=sess)
+            # a question from the student is answered by the agent, in the same turn
+            if data.get("role", "user") == "user" and data.get("ask_agent", True):
+                res = agent.respond(out, f"[question about {data['anchor']}] {data['text']}",
+                                    out["chat"], backend=BACKEND)
+                applied = apply_actions(proj, res.get("actions"))
+                if res.get("reply"):
+                    append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
+                                                   "role": "agent", "text": res["reply"]})
+                out = model.build(project=proj, session=sess)
+                out["last_actions"] = applied
+            return self._send(200, out)
+
+        if path == "/api/thread/resolve":
+            if not data.get("anchor"):
+                return self._send(400, {"error": "anchor required"})
+            # append-only, like everything else: closing is another line
+            append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
+                                           "role": "resolved",
+                                           "text": data.get("text", "")})
             return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/chat":
