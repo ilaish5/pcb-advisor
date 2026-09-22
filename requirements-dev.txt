@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest          # tests/
+pillow          # measuring the exported PNG
