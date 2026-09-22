@@ -15,6 +15,7 @@ import sys
 
 import matplotlib
 matplotlib.use("Agg")          # must precede schemdraw: the server renders off-thread
+import matplotlib.pyplot as plt
 
 import schemdraw
 import schemdraw.elements as elm
@@ -110,13 +111,22 @@ def render(project=None):
     (pdir / "artifacts").mkdir(parents=True, exist_ok=True)
     svg = pdir / "artifacts" / "blocks.svg"
 
-    with schemdraw.Drawing(file=str(svg), show=False) as d:
-        d.config(unit=2.0, fontsize=11)
-        (_sketch if m["stage"] == "sketch" else _chain)(d, m)
+    try:
+        with schemdraw.Drawing(file=str(svg), show=False) as d:
+            d.config(unit=2.0, fontsize=11)
+            _board(d, m)
+    finally:
+        # schemdraw's matplotlib backend opens a pyplot figure per drawing and
+        # never closes it. redraw() runs after every applied action, so a long
+        # session leaked one figure per decision until matplotlib complained.
+        plt.close("all")
 
     png = svg.with_suffix(".png")
     try:
         import cairosvg
+        # this preserves the aspect ratio, so it was never what made the old
+        # export a 1600x142 strip - the single-row layout was. Bounding the
+        # width here just keeps the file a sane size.
         cairosvg.svg2png(url=str(svg), write_to=str(png), output_width=1600)
     except Exception as exc:                                 # pragma: no cover
         print(f"(png skipped: {exc})")
@@ -129,9 +139,31 @@ def _title(d, x, y, main, sub=None):
         d.add(elm.Label().at((x, y - 1.2)).label(shape(sub, 110), fontsize=9, color="#8a8a8a"))
 
 
-def _sketch(d, m):
-    blocks = m["sketch"].get("blocks", [])
-    links = [tuple(l) for l in m["sketch"].get("links", []) if len(l) == 2]
+# A column taller than this wraps into the next one. Any cap will do; what
+# matters is that there IS one, in both directions, so the picture stays near
+# enough to square to be read at the size a browser or a page gives it.
+MAXROWS = 4
+
+
+def _board(d, m):
+    """One renderer for both stages.
+
+    There used to be a second one for the cascade stage that drew the blocks in
+    a single row and joined them with arrows taken from their order in the list.
+    Those arrows were fiction - it asserted that a test point sits in series
+    between a crystal and a debug header - and the row grew one block longer
+    with every decision until the image was an unreadable strip. Both faults had
+    the same cause: it had no link data and drew edges anyway.
+
+    So: one layered placement, and NO edge unless the student drew it. Parts the
+    design questions added are placed below, under a heading that says plainly
+    that we do not know how they connect.
+    """
+    sketching = m["stage"] == "sketch"
+    blocks = (m["sketch"].get("blocks", []) if sketching else m["blocks"]) or []
+    links = [tuple(l) for l in
+             ((m["sketch"].get("links") if sketching else m.get("links")) or [])
+             if len(l) == 2]
 
     if not blocks:
         d.add(elm.Rect(corner1=(-16, -5), corner2=(16, 5)).color("#ffffff"))
@@ -139,24 +171,55 @@ def _sketch(d, m):
                "A block diagram will appear here for you to confirm or correct.")
         return
 
-    flip = any(rtl(b.get("label", "")) for b in blocks)
-    lay = layers(blocks, links)
-    cols = {}
-    for b in blocks:
-        cols.setdefault(lay[b["id"]], []).append(b)
+    have = {b["id"] for b in blocks}
+    joined = {i for l in links for i in l if i in have}
+    wired = [b for b in blocks if b["id"] in joined]
+    loose = [b for b in blocks if b["id"] not in joined]
 
-    pos, ncols = {}, max(cols) + 1
-    for c, items in sorted(cols.items()):
-        x = c * (W + GAPX)
-        if flip:                                  # right-to-left reading order
-            x = (ncols - 1 - c) * (W + GAPX)
+    flip = any(rtl(b.get("label", "")) for b in blocks)
+    pos = {}
+    lay = layers(wired, links)
+
+    # ---- what the student drew, laid out by dependency
+    cols = {}
+    for b in wired:
+        cols.setdefault(lay[b["id"]], []).append(b)
+    # a layer deeper than MAXROWS spills into a column of its own rather than
+    # growing the picture downwards without limit
+    spread, col = [], 0
+    for c in sorted(cols):
+        for start in range(0, len(cols[c]), MAXROWS):
+            spread.append(cols[c][start:start + MAXROWS])
+            col += 1
+    ncols = max(col, 1)
+    for c, items in enumerate(spread):
+        x = ((ncols - 1 - c) if flip else c) * (W + GAPX)
         span = (len(items) - 1) * (H + GAPY)
         for i, b in enumerate(items):
             y = span / 2 - i * (H + GAPY)
             pos[b["id"]] = (x, y)
-            _box(d, x, y, b.get("label", b["id"]), f'{b["id"]}  ·  {b.get("kind","?")}')
+            _box(d, x, y, b.get("label", b["id"]), _ident(b, sketching))
 
-    lane = min(p[1] for p in pos.values()) - H / 2 - 2.0
+    # ---- what the decisions added, wrapped, with no edges invented for it
+    wired_ys = [y for _, y in pos.values()]
+    if loose:
+        top = (min(wired_ys) - H - GAPY - 3.0) if pos else 0.0
+        width = min(MAXROWS, len(loose))
+        left = min((x for x, _ in pos.values()), default=0.0)
+        for i, b in enumerate(loose):
+            c, r = i % width, i // width
+            x = left + ((width - 1 - c) if flip else c) * (W + GAPX)
+            y = top - r * (H + GAPY)
+            pos[b["id"]] = (x, y)
+            _box(d, x, y, b.get("label", b["id"]), _ident(b, sketching), color="#555555")
+        if not sketching:
+            _title(d, left + (width - 1) * (W + GAPX) / 2, top + H / 2 + 1.6,
+                   "added by your decisions — how these connect is not decided yet")
+
+    # Arrows last. schemdraw places a Rect at the drawing's CURRENT position, so
+    # anything drawn after an arrow inherits wherever that arrow ended: boxes
+    # and their labels drifted apart by two columns.
+    lane = (min(wired_ys) - H / 2 - 2.0) if wired_ys else -6.0
     for a, b in links:
         if a in pos and b in pos:
             skip = abs(lay[b] - lay[a]) > 1
@@ -166,25 +229,31 @@ def _sketch(d, m):
 
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
-    state = "confirmed" if m["sketch"].get("confirmed") else "proposed — confirm or correct it"
-    _title(d, (min(xs) + max(xs)) / 2, max(ys) + H / 2 + 2.4, f"BLOCK SKETCH — {state}")
+    if sketching:
+        state = "confirmed" if m["sketch"].get("confirmed") else "proposed — confirm or correct it"
+        head, sub = f"BLOCK DIAGRAM — {state}", None
+    else:
+        p = m["progress"]
+        head = (f"YOUR BOARD — {p['answered']}/{p['total']} questions answered · "
+                f"{p['constraints']} rules")
+        sub = "only the connections you drew are shown"
+    _title(d, (min(xs) + max(xs)) / 2, max(ys) + H / 2 + 2.4, head, sub)
+    _legend(d, m, (min(xs) + max(xs)) / 2, min(ys) - H / 2 - 2.8)
 
 
-def _chain(d, m):
-    blocks = m["blocks"]
-    flip = any(rtl(b.get("label", "")) for b in blocks)
-    order = list(reversed(blocks)) if flip else blocks
-    xs = []
-    for i, b in enumerate(order):
-        x = i * (W + GAPX)
-        xs.append(x)
-        _box(d, x, 0, b["label"], b["id"])
-    for a, b in zip(xs, xs[1:]):
-        d.add(elm.Arrow().at((a + W / 2, 0)).to((b - W / 2, 0)))
-    p = m["progress"]
-    _title(d, (xs[-1] / 2) if xs else 0, H / 2 + 2.5,
-           f"SIGNAL PATH — {p['answered']}/{p['total']} decisions · {p['constraints']} constraints",
-           "detail sharpens as decisions accumulate")
+def _ident(b, sketching):
+    return f'{b["id"]}  ·  {b.get("kind", "?")}' if sketching else b["id"]
+
+
+def _legend(d, m, x, y):
+    """What J, U and Q mean. A teaching tool that prints reference designators
+    and never expands them is withholding the one convention the student has
+    not met yet."""
+    rows = m.get("designators") or []
+    if not rows:
+        return
+    text = " · ".join(f"{r['prefix']} = {r['means']}" for r in rows)
+    d.add(elm.Label().at((x, y)).label(shape(text, 100), fontsize=9, color="#666666"))
 
 
 if __name__ == "__main__":

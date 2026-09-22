@@ -6,6 +6,7 @@ state files; it never writes the model.  Everything the UI shows is derived here
 """
 import json
 import pathlib
+import re
 import sys
 
 import yaml
@@ -14,6 +15,28 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import project as project_mod  # noqa: E402
 import session as session_mod  # noqa: E402
 import workspace  # noqa: E402
+
+# What the letter in front of a part number means. A board is covered in J1, U3,
+# Q1, TP1 - the one convention every schematic assumes you already know, and the
+# one a student meeting it for the first time has no way to look up from inside
+# a diagram. Convention, deliberately: this is common practice, not a standard
+# this tool holds a citable copy of.
+DESIGNATORS = {
+    "C": "capacitor",
+    "D": "diode or LED",
+    "F": "fuse",
+    "J": "connector",
+    "K": "relay",
+    "L": "inductor",
+    "Q": "transistor",
+    "R": "resistor",
+    "SW": "switch",
+    "TP": "test point",
+    "U": "integrated circuit",
+    "Y": "crystal or oscillator",
+}
+
+_DESIGNATOR = re.compile(r"^([A-Z]{1,2})(\d+)$")
 
 PROVENANCE = {
     "computed":   {"icon": "📐", "label": "computed",  "rank": 0},
@@ -53,6 +76,24 @@ def anchors(project=None):
                 for lock in opt.get("locks", []) or []:
                     out[lock["id"]] = {"kind": "constraint", "domain": dom,
                                        "label": lock.get("text", lock["id"])[:80]}
+    return out
+
+
+def designators(blocks):
+    """The designator classes actually on this board, first appearance first.
+
+    Only what is present: a legend listing twelve letters for a board that uses
+    three teaches nothing and is ignored."""
+    out, seen = [], set()
+    for b in blocks or []:
+        first = str(b.get("label") or b.get("id") or "").split("\n")[0].strip()
+        hit = _DESIGNATOR.match(first)
+        if not hit:
+            continue
+        prefix = hit.group(1)
+        if prefix in DESIGNATORS and prefix not in seen:
+            seen.add(prefix)
+            out.append({"prefix": prefix, "means": DESIGNATORS[prefix], "example": first})
     return out
 
 
@@ -313,6 +354,9 @@ def build(project=None, session=None):
         "withheld": withheld,
         "conflicts": conflicts,
         "blocks": uniq,
+        # what J, U, Q mean on THIS board, so neither the picture nor the panel
+        # has to assume the student already knows
+        "designators": designators(uniq),
         # the sketch's topology survives too; the UI merges it with what the
         # cascade added rather than synthesising a straight chain
         "links": (sketch.get("links", []) if sketch.get("confirmed") else []),

@@ -171,6 +171,10 @@ body.nosel{user-select:none;-webkit-user-select:none}
   border:1.5px solid var(--blk-line);border-radius:10px;padding:9px 11px;cursor:pointer;
   display:flex;flex-direction:column;justify-content:center;gap:3px;
   font-size:13px;line-height:1.35;z-index:2}
+/* a part the design questions added: on the board, but nothing says where */
+.blk.loose{border-style:dashed;opacity:.85}
+.loosecap{position:absolute;left:0;text-align:center;color:var(--dim);font-size:12px;
+  z-index:1;pointer-events:none}
 .blk:hover{border-color:var(--accent)}
 .blk.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
 .blk.linking{border-color:var(--ok);border-style:dashed}
@@ -694,27 +698,35 @@ function zoomBy(k){
   addEventListener('resize', ()=>applyView());
 })();
 
+/* What J, U and Q mean on THIS board. A teaching tool that prints reference
+   designators and never expands them withholds the one convention the student
+   has not met yet - and the diagram is exactly where they first meet it. */
+function designHint(){
+  const rows=(S.designators||[]);
+  if(!rows.length) return '';
+  return '  ·  ' + rows.map(r=>`${r.prefix} = ${r.means}`).join(', ');
+}
+
 function drawDiagram(){
   const stage=$('stage'), canvas=$('canvas');
   const inSketch = S.stage==='sketch';
-  // In cascade stage the sketch is still the spine: keep the student's blocks
-  // with their real kind, keep the topology they drew, and chain only what the
-  // cascade added on top - otherwise their design vanishes the moment they
-  // confirm it.
-  const built = (S.blocks||[]).filter(b=>b.from!=='sketch');
+  // In cascade stage the sketch is still the spine: the student's blocks with
+  // their real kind, and the topology THEY drew. Parts the design questions
+  // added are shown, but not wired: we have no idea how they connect, and the
+  // list's order is not a circuit. Chaining them here claimed a test point sat
+  // in series between a crystal and a debug header.
   const blocks = inSketch ? (sketch.blocks||[])
                           : (S.blocks||[]).map(b=>({id:b.id, label:b.label,
                               kind:b.kind||'built', from:b.from}));
-  const links  = inSketch ? (sketch.links||[])
-                          : [...(S.links||[]),
-                             ...built.slice(1).map((b,i)=>[built[i].id, b.id])];
+  const links  = inSketch ? (sketch.links||[]) : (S.links||[]);
   $('dtitle').textContent = inSketch
     ? (sketch.confirmed?'Block diagram — confirmed':'Block diagram — click a block to correct it')
-    : `Signal path — ${S.progress.answered} decisions`;
+    : `Your board — ${S.progress.answered} decisions`;
   $('dhint').textContent = inSketch
     ? (linkFrom ? 'Now click the block it feeds into. Esc to cancel.'
                 : 'Click a block to rename it, change its kind, link it or delete it. Click an arrow to remove it.')
-    : 'This follows from your decisions. Go back to the sketch to change the structure.';
+    : 'Only the connections you drew are shown. Go back to the sketch to change the structure.'
+      + designHint();
   $('sendsketch').style.display = (inSketch&&dirty)?'':'none';
 
   if(!blocks.length){
@@ -725,10 +737,18 @@ function drawDiagram(){
   }
 
   const rtl = blocks.some(b=>isRTL(b.label));
-  const L=layerOf(blocks,links), cols={};
-  blocks.forEach(b=>{ (cols[L[b.id]] ||= []).push(b); });
-  const nc=Math.max(...Object.keys(cols).map(Number))+1;
-  const maxRows=Math.max(...Object.values(cols).map(a=>a.length));
+  // Blocks nothing connects to would all land in layer 0 and stack into one
+  // very tall column. They are laid out separately, wrapped, under a caption
+  // that says why they have no arrows.
+  const joined=new Set(); links.forEach(([a,b])=>{joined.add(a);joined.add(b);});
+  const wired=blocks.filter(b=>joined.has(b.id));
+  const loose=blocks.filter(b=>!joined.has(b.id));
+
+  const L=layerOf(wired,links), cols={};
+  wired.forEach(b=>{ (cols[L[b.id]] ||= []).push(b); });
+  const keys=Object.keys(cols).map(Number);
+  const nc=keys.length?Math.max(...keys)+1:0;
+  const maxRows=keys.length?Math.max(...Object.values(cols).map(a=>a.length)):0;
   const pos={};
   Object.entries(cols).forEach(([c,items])=>{
     const col=rtl ? (nc-1-Number(c)) : Number(c);
@@ -737,7 +757,18 @@ function drawDiagram(){
     items.forEach((b,i)=>{ pos[b.id]={x, y:(maxRows-1)*(BH+GY)/2 - span/2 + i*(BH+GY)}; });
   });
 
-  const wDiag=(nc-1)*(BW+GX)+BW, hDiag=(maxRows-1)*(BH+GY)+BH;
+  let wDiag=Math.max(nc-1,0)*(BW+GX)+(nc?BW:0);
+  let hDiag=Math.max(maxRows-1,0)*(BH+GY)+(maxRows?BH:0);
+  const LOOSE_COLS=4, looseTop=hDiag+(hDiag?54:0);
+  if(loose.length){
+    const w=Math.min(LOOSE_COLS, loose.length);
+    loose.forEach((b,i)=>{
+      const c=i%w, r=Math.floor(i/w);
+      pos[b.id]={x:(rtl?(w-1-c):c)*(BW+GX), y:looseTop+r*(BH+GY), loose:true};
+    });
+    wDiag=Math.max(wDiag, (w-1)*(BW+GX)+BW);
+    hDiag=looseTop+(Math.ceil(loose.length/w)-1)*(BH+GY)+BH;
+  }
   const skips=links.filter(([a,b])=>pos[a]&&pos[b]&&Math.abs(L[b]-L[a])>1).length;
   const laneH=skips*22+(skips?18:0);
 
@@ -766,8 +797,11 @@ function drawDiagram(){
        <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3"
          orient="auto"><path d="M0,0 L0,6 L8,3 z"/></marker></defs>
        ${wires}${hits}</svg>` +
+    (loose.length&&!inSketch
+      ? `<div class="loosecap" style="top:${looseTop-30}px;width:${wDiag}px">added by your
+         decisions — how these connect is not decided yet</div>` : '') +
     blocks.map(b=>{const pt=pos[b.id];
-      return `<div class="blk ${popFor===b.id?'sel':''} ${linkFrom===b.id?'linking':''}"
+      return `<div class="blk ${pt.loose?'loose':''} ${popFor===b.id?'sel':''} ${linkFrom===b.id?'linking':''}"
         style="left:${pt.x}px;top:${pt.y}px" onclick="clickBlock(event,'${b.id}')">
         <div dir="auto">${esc(b.label||b.id)}</div>
         <div class="kind">${esc(b.id)} · ${esc(b.kind||'?')}</div></div>`;}).join('');
