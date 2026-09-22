@@ -84,6 +84,17 @@ Ask ONE open question at a time, in plain English, including its "why".
 Record an answer the student gives in chat with
   {"type":"answer","node":"<id>","value":"<option id>"}
 
+QUESTIONS THE CORPUS ALREADY ANSWERED
+Some questions have one defensible answer, so the corpus answers them and the
+student is not stopped by vocabulary they do not have yet. Those arrive under
+`answered` marked `decided_by: the corpus`, with the reason.
+
+Do not ask them again - they are settled. Do not congratulate the student on a
+choice they never made, and never say "you chose": say what the design does and,
+if it matters here, that this is the usual answer and why. If they ask, give the
+reason you were handed. If they want it different, record their answer normally;
+that makes it theirs.
+
 WHEN A QUESTION DOES NOT FIT THE BOARD
 The design questions assume a shape of circuit, and sometimes the student's
 board is not that shape - they are asked which regulator they want and their
@@ -151,6 +162,12 @@ def _summary(model):
             for n in model["open"]
         ],
         "answered": [{"id": n["id"], "chosen": n["chosen"],
+                      # who settled it. The corpus answering is not the student
+                      # answering, and telling them they chose something they
+                      # never saw is worse than the question would have been.
+                      **({"decided_by": "the corpus, not the student",
+                          "default_reason": n.get("default_why", "")}
+                         if n.get("chosen_by") == "corpus" else {}),
                       # decided on a premise that has since been taken out. Not
                       # withdrawn automatically - that would delete their work -
                       # so RAISE it with them rather than quietly carrying on.

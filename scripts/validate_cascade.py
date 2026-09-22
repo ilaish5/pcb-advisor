@@ -29,6 +29,7 @@ def check(path, producible=frozenset()):
     cas = yaml.safe_load(path.read_text(encoding="utf-8"))
     errors, warnings, stats = [], [], {k: 0 for k in VALID}
     node_ids, lock_ids = set(), set()
+    deferred = []
     dead_ends = []
 
     for node in cas.get("nodes", []):
@@ -70,6 +71,35 @@ def check(path, producible=frozenset()):
                 f"{nid}: {', '.join(o.get('id', '?') for o in silent)} add parts or rules "
                 f"but have no 'costs' prose while a sibling does - write theirs too, "
                 f"or costs reads as a verdict on the options that have it")
+        # A default decides for the student, so it answers to the same contract
+        # as a constraint. A wrong default is worse than a question, because
+        # nobody examines it - which is the whole reason it must be authored,
+        # justified and badged rather than inferred.
+        spec = node.get("default")
+        if spec is not None:
+            rules = spec if isinstance(spec, list) else [spec]
+            opt_ids = {o.get("id") for o in (node.get("options") or [])}
+            for i, rule in enumerate(rules):
+                if not isinstance(rule, dict):
+                    errors.append(f"{nid}: a default must be a mapping")
+                    continue
+                if rule.get("option") not in opt_ids:
+                    errors.append(f"{nid}: default picks {rule.get('option')!r}, "
+                                  f"which is not one of its options")
+                if not rule.get("why"):
+                    errors.append(f"{nid}: a default must say why - that sentence is "
+                                  f"the only thing the student will read about it")
+                if rule.get("provenance") not in VALID:
+                    errors.append(f"{nid}: default needs a provenance from "
+                                  f"{sorted(VALID)}, got {rule.get('provenance')!r}")
+                for key in (rule.get("when") or {}):
+                    deferred.append((nid, key))
+                # the last rule is the fallback and may be unconditional; an
+                # unconditional rule anywhere earlier makes the rest dead code
+                if not rule.get("when") and i < len(rules) - 1:
+                    errors.append(f"{nid}: default rule {i + 1} has no `when`, so no "
+                                  f"rule after it can ever match")
+
         if not node.get("options"):
             errors.append(f"{nid}: no options")
 
@@ -145,6 +175,11 @@ def check(path, producible=frozenset()):
                     else:
                         warnings.append(f"{lid}: cites {src.get('doc')!r} but no quote has "
                                         f"been pulled from it yet - scripts/sources.py verify")
+
+    for nid, key in deferred:
+        if key not in node_ids:
+            errors.append(f"{nid}: default keys on {key!r}, which is not a question "
+                          f"in this domain")
 
     for node in cas.get("nodes", []):
         for dep in node.get("depends_on", []) or []:

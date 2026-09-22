@@ -29,6 +29,10 @@ nodes:
     type: decision
     question: "Decoupling strategy?"
     why: "The most commonly skipped step, and the one that produces the most mysterious faults."
+    default:
+      option: per_pin
+      why: "One 100 nF capacitor at every supply pin. There is no digital board where this is the wrong answer, and skipping it is the most common cause of faults that look random."
+      provenance: convention
     options:
       - id: per_pin
         label: "100 nF at every VDD pin"
@@ -44,6 +48,10 @@ nodes:
     type: decision
     question: "How do you program and debug it?"
     why: "A board you cannot reflash is a paperweight. This is decided at placement, not after."
+    default:
+      option: header
+      why: "A debug header costs four pads and is how you get a program onto the board and see why it is not running. Drop it only when the board is too small to hold one."
+      provenance: convention
     options:
       - id: header
         label: "Dedicated debug header"

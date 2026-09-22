@@ -175,9 +175,17 @@ def test_a_thread_about_something_withdrawn_is_done(battery_mcu, home):
 def test_the_legend_covers_only_what_is_on_this_board(battery_mcu):
     p = battery_mcu
     _append(p, {"node": "power.topology", "value": "linear"})
-    d = model.build(project=p)["designators"]
-    assert {r["prefix"] for r in d} == {"J", "U"}
+    m = model.build(project=p)
+    d = m["designators"]
+    on_board = {b["id"] for b in m["blocks"]}
+    # every class listed is one this board actually prints, and nothing more
+    assert {r["prefix"] for r in d} == {
+        pre for pre in model.DESIGNATORS
+        if any(str(b.get("label") or b["id"]).split("\n")[0].startswith(pre)
+               and str(b.get("label") or b["id"]).split("\n")[0][len(pre):].isdigit()
+               for b in m["blocks"])}
     assert dict((r["prefix"], r["means"]) for r in d)["U"] == "integrated circuit"
+    assert "U_REG" in on_board
 
 
 def test_a_board_with_no_designators_gets_no_legend(board):
@@ -233,3 +241,78 @@ def test_putting_the_question_back_clears_the_flag(battery_mcu):
     _append(p, {"node": "req.vout", "value": "v3v3"})
     m = model.build(project=p)
     assert not [n for n in m["answered"] if n.get("rests_on")]
+
+
+# ---------------------------------------------------------------- defaults
+
+def test_the_corpus_answers_what_has_one_defensible_answer(battery_mcu):
+    """Fourteen rows of equal weight is what a student called a mess. A question
+    nobody would argue about should not cost them a decision."""
+    m = model.build(project=battery_mcu)
+    theirs = {n["id"] for n in m["answered"] if n["chosen_by"] != "corpus"}
+    corpus = {n["id"]: n["chosen"] for n in m["answered"] if n["chosen_by"] == "corpus"}
+    assert corpus.get("mcu.decoupling") == "per_pin"
+    assert corpus.get("mcu.program") == "header"
+    assert not (theirs & set(corpus))
+
+
+def test_a_default_carries_the_sentence_the_student_will_read(battery_mcu):
+    n = next(x for x in model.build(project=battery_mcu)["answered"]
+             if x["id"] == "mcu.decoupling")
+    assert n["default_why"] and n["default_provenance"] in model.PROVENANCE
+    assert n["default_icon"]
+
+
+def test_a_conditional_default_reads_an_earlier_answer(battery_mcu):
+    """A cell's voltage is low enough that a diode's drop is a real cost, so the
+    same question defaults differently on a battery than on a wall adapter."""
+    p = battery_mcu
+    _append(p, {"node": "req.iload", "value": "i_low"})   # unblocks protection
+    m = model.build(project=p)
+    assert next(x for x in m["answered"] if x["id"] == "power.protection")["chosen"] == "pfet"
+
+
+def test_the_fallback_applies_when_no_condition_matches(board):
+    p = board(blocks=(("J1", "power_in"), ("MCU", "mcu")), links=(("J1", "MCU"),),
+              decisions=({"node": "req.source", "value": "wall"},
+                         {"node": "req.iload", "value": "i_low"}))
+    m = model.build(project=p)
+    got = next(x for x in m["answered"] if x["id"] == "power.protection")
+    assert got["chosen"] == "series_schottky" and got["chosen_by"] == "corpus"
+
+
+def test_a_default_never_overrides_the_student(battery_mcu):
+    p = battery_mcu
+    _append(p, {"node": "mcu.decoupling", "value": "bulk_only"})
+    n = next(x for x in model.build(project=p)["answered"] if x["id"] == "mcu.decoupling")
+    assert n["chosen"] == "bulk_only" and n["chosen_by"] == "user"
+
+
+def test_a_default_is_never_written_to_the_log(battery_mcu, home):
+    """A persisted default goes stale the moment the answer it keys on changes -
+    the same bug class as a decision nobody can retract."""
+    model.build(project=battery_mcu)
+    lines = (home / "projects" / battery_mcu / "decisions.jsonl").read_text().splitlines()
+    assert not any("mcu.decoupling" in l for l in lines)
+    assert not any('"corpus"' in l for l in lines)
+
+
+def test_a_default_still_locks_the_rules_that_follow_from_it(battery_mcu):
+    m = model.build(project=battery_mcu)
+    assert "mcu.decap.place" in ids(m["constraints"])
+
+
+def test_who_decided_what_is_counted_apart(battery_mcu):
+    """A tool that says twelve decisions when the student made three is lying
+    about their work."""
+    p = model.build(project=battery_mcu)["progress"]
+    assert p["by_user"] == 3 and p["by_corpus"] >= 2
+    assert p["by_user"] + p["by_corpus"] == p["answered"]
+
+
+def test_withdrawing_a_question_stops_its_default_too(battery_mcu):
+    p = battery_mcu
+    _append(p, {"node": "mcu.decoupling", "retract": True, "why": "no ICs on this board"})
+    m = model.build(project=p)
+    assert "mcu.decoupling" not in ids(m["answered"])
+    assert "mcu.decap.place" not in ids(m["constraints"])

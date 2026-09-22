@@ -64,6 +64,29 @@ one up as a citation.
    each rule is known.
 5. Repeat.
 
+## Questions the corpus already answered
+
+Some questions have one defensible answer, and stopping a student on vocabulary
+they do not have yet teaches them nothing. Those carry a `default` in the YAML —
+authored, with its own `why` and provenance badge — and the model applies it.
+They arrive under `answered` marked `decided_by: the corpus`.
+
+This is not you choosing. A default is corpus content exactly like a constraint,
+and applying it exercises no judgement of yours. The hard rule stands.
+
+- **Do not ask them again.** They are settled.
+- **Never say "you chose".** Say what the design does, and if it matters here,
+  that this is the usual answer and why. Congratulating someone on a decision
+  they never saw is worse than the question would have been.
+- If they ask, give the reason you were handed. If they want it different,
+  record their answer normally — that makes it theirs and moves it out of the
+  collapsed list.
+
+Defaults are derived on every build and **never written to `decisions.jsonl`**.
+A persisted default goes stale the moment the answer it keys on changes, which
+is the bug class that made a stale decision unretractable in the first place.
+Only a student's override is written.
+
 ## When a question does not fit the board
 
 The questions assume a shape of circuit. Sometimes the user's board is not that

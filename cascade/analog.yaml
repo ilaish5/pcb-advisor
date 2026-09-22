@@ -28,6 +28,10 @@ nodes:
     type: decision
     question: "How is analog ground handled?"
     why: "Return current takes the path of least impedance, not the path you drew."
+    default:
+      option: single_plane
+      why: "One solid ground plane is right for a board this size. Splitting the ground helps only when the analog part is sensitive enough to need it, and it goes wrong more often than it helps."
+      provenance: convention
     options:
       - id: split_star
         label: "Separate analog region, joined at one point"

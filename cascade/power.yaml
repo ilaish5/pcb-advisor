@@ -114,6 +114,14 @@ nodes:
     question: "How is reverse polarity handled?"
     why: "Plugging the supply in backwards is the most common and most destructive prototype mistake."
     depends_on: [req.source, req.iload]
+    default:
+      - when:   {req.source: battery}
+        option: pfet
+        why:    "A cell's voltage is low to begin with, and a diode would spend 0.4 V of it as heat. A FET drops almost nothing."
+        provenance: convention
+      - option: series_schottky
+        why:    "With margin on the input, one diode is the simpler part and the easier thing to get right."
+        provenance: convention
     options:
       - id: series_schottky
         label: "Series Schottky diode"
@@ -295,6 +303,10 @@ nodes:
     question: "Add a test point on the rail?"
     why: "A board with no test point on its supply is very hard to diagnose when it does not come up."
     depends_on: [power.topology]
+    default:
+      option: yes_tp
+      why: "One pad on the rail is how you check the supply with a meter without a probe slipping across two pins. On a battery board the rail is also the battery state."
+      provenance: convention
     options:
       - id: yes_tp
         label: "Yes, TP on the rail"

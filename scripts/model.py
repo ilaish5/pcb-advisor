@@ -186,11 +186,64 @@ def build(project=None, session=None):
                 return False, f"waiting on {dep}"
         return True, None
 
+    def pick_default(node):
+        """The corpus's own answer to a question, when it has one that applies.
+
+        This is not the model choosing. A default is authored in the YAML with
+        its own `why` and provenance - it is corpus content, exactly like a
+        constraint, and the agent applying it exercises no judgement. What it
+        buys is that a student is not stopped by a question whose vocabulary
+        they do not have yet, for an answer nobody would argue with.
+        """
+        spec = node.get("default")
+        if not spec:
+            return None
+        for rule in (spec if isinstance(spec, list) else [spec]):
+            when = rule.get("when") or {}
+            if all(answers.get(k, {}).get("value") == v for k, v in when.items()):
+                return rule
+        return None
+
+    # Derived on every build, never written to decisions.jsonl. A default that
+    # was persisted would go stale the moment the answer it keys on changed -
+    # the same bug class as a decision nobody can retract - and ten machine
+    # lines per project would blur the one thing that log is for: who decided
+    # what. Repeat until nothing more matches: a default can unblock a node
+    # that has a default of its own.
+    defaulted = {}
+    for _ in range(len(nodes) + 1):
+        added = False
+        for node in nodes:
+            nid = node["id"]
+            if nid in answers or nid in withdrawn or nid in defaulted:
+                continue
+            if not available(node)[0]:
+                continue
+            rule = pick_default(node)
+            if not rule:
+                continue
+            defaulted[nid] = rule
+            answers[nid] = {"value": rule["option"], "by": "corpus"}
+            added = True
+        if not added:
+            break
+
     open_nodes, blocked, answered, irrelevant = [], [], [], []
     for node in nodes:
         ok, reason = available(node)
         entry = dict(node)
-        if node["id"] in answers:
+        if node["id"] in defaulted:
+            rule = defaulted[node["id"]]
+            entry["chosen"] = rule["option"]
+            entry["chosen_by"] = "corpus"
+            # what makes it browsable rather than invisible: the reason travels
+            # with it, and carries the same provenance badge as a constraint
+            entry["default_why"] = rule.get("why", "")
+            entry["default_provenance"] = rule.get("provenance", "convention")
+            entry["default_icon"] = PROVENANCE.get(
+                entry["default_provenance"], PROVENANCE["convention"])["icon"]
+            answered.append(entry)
+        elif node["id"] in answers:
             entry["chosen"] = answers[node["id"]]["value"]
             entry["chosen_by"] = answers[node["id"]].get("by", "?")
             answered.append(entry)
@@ -410,6 +463,10 @@ def build(project=None, session=None):
             "threads": len(threads),
             "orphan_threads": sum(1 for t in threads.values() if t["kind"] == "unknown"),
             "withdrawn": sum(1 for n in irrelevant if n.get("withdrawn")),
+            # who decided what, kept apart on purpose: a tool that says "12
+            # decisions" when the student made three is lying about their work
+            "by_user": sum(1 for n in answered if n.get("chosen_by") != "corpus"),
+            "by_corpus": sum(1 for n in answered if n.get("chosen_by") == "corpus"),
             "withheld": len(withheld),
             "resting_on_withdrawn": sum(1 for n in answered if n.get("rests_on")),
             "acknowledged_threads": sum(1 for t in threads.values() if t.get("still_live")),

@@ -298,6 +298,11 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 .card.gone .a{font-weight:400;color:var(--dim)}
 .gone-head{color:var(--mute);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
   margin:14px 0 7px}
+.gone-head.foryou{cursor:pointer;user-select:none}
+.gone-head.foryou:hover{color:var(--dim)}
+.card.corpus{border-style:dashed}
+.card.corpus .a{font-weight:500}
+.card .why{margin-top:5px;font-size:12px;line-height:1.5;color:var(--dim)}
 
 /* cards, not tables: the rail is narrow and a two-column table clips */
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
@@ -981,7 +986,12 @@ function renderPanel(force){
   let h='';
   if(TAB==='decisions'){
     // a 300px rail is too narrow for a table; one card per row reads better
-    h = S.answered.length ? S.answered.map(n=>{
+    // Two kinds, kept apart. A student who cannot tell an architecture choice
+    // from a ten-second yes is looking at fourteen rows of equal weight, and
+    // the ones that taught them something are lost in the ones that did not.
+    const mine=(S.answered||[]).filter(n=>n.chosen_by!=='corpus');
+    const forYou=(S.answered||[]).filter(n=>n.chosen_by==='corpus');
+    h = mine.length ? mine.map(n=>{
         const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
         return `<div class="card">
           <div class="q" dir="auto">${txt(n.question)}</div>
@@ -992,6 +1002,7 @@ function renderPanel(force){
               :`<span class="drop" onclick="askDrop('${esc(n.id)}')">no longer relevant</span>`}</div>
           ${dropRow(n.id)}${thread(n.id)}</div>`;}).join('')
       : `<div class="empty">Nothing decided yet.</div>`;
+    if(forYou.length) h += forYouHTML(forYou);
     // what the student took out. Visible, with the reason, and reversible -
     // an edit you cannot see or undo is one nobody dares make.
     const gone=(S.irrelevant||[]).filter(n=>n.withdrawn);
@@ -1091,6 +1102,41 @@ function thread(id){
       ${t.messages&&t.messages.length&&!t.resolved
         ? `<button onclick="closeReason('${esc(id)}')">Resolve</button>`:''}</div></div>`;
 }
+
+/* Questions the corpus answered, because they have one defensible answer and a
+   student stopped by them learns nothing. Collapsed, not hidden: the whole
+   design is that this is browsable rather than blocking. Someone who wants to
+   know what decoupling is opens it and reads one line, instead of being held up
+   by a question whose vocabulary they do not have yet.
+
+   Which makes each `why` load-bearing. Those sentences are the teaching surface
+   now, not a footnote. A default whose reason is not worth reading should have
+   stayed a question. */
+let SHOW_FOR_YOU=false, CHANGING=null;
+
+function forYouHTML(rows){
+  const body = SHOW_FOR_YOU ? rows.map(n=>{
+    const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
+    return `<div class="card corpus">
+      <div class="q" dir="auto">${txt(n.question)}</div>
+      <div class="a" dir="auto">${txt(o.label||n.chosen)}</div>
+      <div class="why" dir="auto">${esc(n.default_icon||'')} ${txt(n.default_why||'')}</div>
+      <div class="foot"><span class="pill">${esc(n.default_provenance||'convention')}</span>
+        ${badge(n.id)}
+        ${CHANGING===n.id?''
+          :`<span class="drop" onclick="changeThis('${esc(n.id)}')">change this</span>`}</div>
+      ${CHANGING===n.id?`<div class="droprow">${(n.options||[])
+        .filter(x=>x.id!==n.chosen)     // the one it already is, is not a choice
+        .map(x=>`<button onclick="answer('${esc(n.id)}','${esc(x.id)}')"
+          >${esc(x.label)}</button>`).join('')}
+        <button onclick="changeThis(null)">Cancel</button></div>`:''}
+      ${thread(n.id)}</div>`;}).join('') : '';
+  return `<div class="gone-head foryou" onclick="toggleForYou()">
+      ${SHOW_FOR_YOU?'▾':'▸'} Decided for you (${rows.length})</div>${body}`;
+}
+
+function toggleForYou(){ SHOW_FOR_YOU=!SHOW_FOR_YOU; CHANGING=null; renderPanel(true); }
+function changeThis(id){ CHANGING=id; renderPanel(true); }
 
 /* A decision is not withdrawn along with the question it was built on - that
    would delete work nobody asked to undo. But it was decided on a premise that
