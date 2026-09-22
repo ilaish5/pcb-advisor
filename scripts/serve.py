@@ -179,9 +179,27 @@ def apply_actions(project, actions):
     return applied
 
 
+QUIET = False
+
+
 class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *a):
-        pass
+    def log_message(self, fmt, *args):
+        """One line per request, unless --quiet.
+
+        This used to be a bare `pass`. A rejected write then produced no trace
+        anywhere: not in the browser, which swallowed it, and not in the
+        terminal, which said nothing. There was no way to tell whether a request
+        had been sent, refused, or dropped - which is a long way to go to keep a
+        terminal tidy.
+        """
+        if QUIET:
+            return
+        line = (fmt % args) if args else str(fmt)
+        # the UI polls /api/state every three seconds; logging that would bury
+        # everything else within a minute
+        if "/api/state" in line and " 200 " in line:
+            return
+        sys.stderr.write(f"  {dt.datetime.now().strftime('%H:%M:%S')}  {line}\n")
 
     def project(self):
         q = parse_qs(urlparse(self.path).query)
@@ -336,7 +354,14 @@ class Handler(BaseHTTPRequestHandler):
             if data.get("role", "user") == "user" and data.get("ask_agent", True):
                 res = agent.respond(out, f"[question about {data['anchor']}] {data['text']}",
                                     out["chat"], backend=BACKEND)
-                applied = apply_actions(proj, res.get("actions"))
+                # An `ask` anchored to the thread being answered lands on the
+                # same anchor as the reply, so one question produced two agent
+                # lines with the same timestamp, answering it in contradictory
+                # terms. The reply IS the answer here; the anchor is redundant.
+                actions = [a for a in (res.get("actions") or [])
+                           if not (a.get("type") == "ask"
+                                   and a.get("anchor") == data["anchor"])]
+                applied = apply_actions(proj, actions)
                 if res.get("reply"):
                     append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
                                                    "role": "agent", "text": res["reply"]})
@@ -492,7 +517,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv=None):
-    global BACKEND, DEFAULT_PROJECT
+    global BACKEND, DEFAULT_PROJECT, QUIET
 
     cfg = workspace.load()
     ap = argparse.ArgumentParser(prog="serve", description="pcb-advisor server")
@@ -504,7 +529,10 @@ def main(argv=None):
     ap.add_argument("--engine", "--backend", dest="engine_opt")
     ap.add_argument("--host", dest="host_opt")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--quiet", action="store_true",
+                    help="do not log requests (the old behaviour)")
     a = ap.parse_args(argv)
+    QUIET = a.quiet
 
     DEFAULT_PROJECT = workspace.safe_name(
         a.project_opt or a.project or cfg["server"]["default_project"])
@@ -523,6 +551,8 @@ def main(argv=None):
     print(f"pcb-advisor  home={workspace.home()}  project={DEFAULT_PROJECT}")
     print(f"             engine={BACKEND}" + ("" if ok else f"  (unavailable: {why})"))
     print(f"             {url}")
+    if not QUIET:
+        print("             logging requests; --quiet turns this off")
 
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
