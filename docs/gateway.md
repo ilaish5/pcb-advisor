@@ -63,6 +63,61 @@ misconfigured engine says why instead of failing mid-conversation. Provider
 blocks in the config are open — an id the defaults never declared is allowed, so
 your own engine does not have to be upstreamed to be configured.
 
+## Tool permissions
+
+The Claude Code CLI is an agent in its own right — it can read files, grep, run
+commands. pcb-advisor neither takes that away nor hands it out: every key under
+`agent.providers.claude_code.tools` defaults to `null`, and **a null key means
+the flag is never passed**, so the CLI's own settings decide exactly as if this
+tool did not exist. Set a key and you are deliberately overriding those settings
+for the turns pcb-advisor drives.
+
+| key | CLI flag | what it does |
+|---|---|---|
+| `available` | `--tools` | the built-in set it may draw from. `""` disables every tool, `"default"` is all of them |
+| `allowed` | `--allowedTools` | pre-approved, no prompt. Patterns work: `["Read", "Bash(git status)"]` |
+| `disallowed` | `--disallowedTools` | refused outright; wins over `allowed` |
+| `permission_mode` | `--permission-mode` | `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` |
+
+A list is joined with commas, a string is passed through. `""` is a real value —
+it is how `--tools` disables everything — which is why "do not pass this" is
+`null` and not the empty string.
+
+```bash
+# let it read the workspace but never write
+python3 pcb.py config agent.providers.claude_code.tools.allowed '["Read","Grep","Glob"]'
+python3 pcb.py config agent.providers.claude_code.tools.disallowed '["Write","Edit","Bash"]'
+
+# no tools at all - the engine only answers
+python3 pcb.py config agent.providers.claude_code.tools.available '""'
+
+# back to the CLI's own settings
+python3 pcb.py config agent.providers.claude_code.tools.allowed null
+```
+
+`pcb.py engines` prints the policy in force, and a bad value (an unknown
+permission mode, a mistyped key) makes the engine report unavailable with the
+reason instead of failing mid-conversation.
+
+Note what this does and does not bound. The **protocol** is bounded whatever you
+set here: only the three actions below ever change the design, and they go
+through the server. Tool permissions bound something else — what the engine may
+touch on your machine while it composes a reply.
+
+## The three actions
+
+Whatever tools the engine has, only three things it emits ever change the
+design, and the server is what applies them:
+
+| action | effect |
+|---|---|
+| `{"type":"sketch", "blocks":[...], "links":[...], "confirmed":false}` | writes `sketch.json` |
+| `{"type":"answer", "node":"...", "value":"..."}` | appends to `decisions.jsonl` |
+| `{"type":"ask", "anchor":"...", "text":"..."}` | appends to `threads.jsonl` |
+
+Any other action type is dropped. The engine cannot create a constraint: those
+come from the cascade automatically once a decision is recorded.
+
 ## Errors
 
 A provider returns `Result(error=...)`; it does not raise. The server turns that

@@ -34,7 +34,13 @@
         "enabled": true,
         "command": "claude",
         "args": ["-p", "--output-format", "text"],
-        "model": ""
+        "model": "",
+        "tools": {
+          "available": null,
+          "allowed": null,
+          "disallowed": null,
+          "permission_mode": null
+        }
       },
       "external": {
         "enabled": true

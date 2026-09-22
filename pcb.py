@@ -84,6 +84,8 @@ def cmd_engines(args):
         mark = "*" if d["active"] else " "
         state = "ready" if d["available"] else d["reason"]
         print(f"{mark} {d['id']:14} {d['status']:12} {state}")
+        if d.get("tools"):
+            print(f"{'':17}tools: {d['tools']}")
     print("\n* = active. Change with: python3 pcb.py config agent.provider <id>")
 
 

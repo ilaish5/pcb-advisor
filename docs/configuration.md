@@ -73,7 +73,11 @@ Which LLM engine answers, and how. See [gateway.md](gateway.md).
 | `provider` | `claude_code` |
 | `timeout_seconds` | `180` |
 | `history_messages` | `8` — how much conversation goes with each turn |
-| `providers.<id>` | per-engine settings (command, model, enabled) |
+| `providers.<id>` | per-engine settings (command, model, enabled, tool permissions) |
+
+`providers.claude_code.tools` decides what the CLI may touch on your machine
+while it answers. Every key defaults to `null`, which passes no flag at all and
+leaves the CLI's own settings alone. See [gateway.md](gateway.md).
 
 ### `engineering_defaults`
 
