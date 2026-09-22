@@ -66,6 +66,32 @@ def compact_if_due(project, sess):
     return res
 
 
+# What the browser may see and set. The rest of the config belongs to whoever
+# runs the tool, not to the student sitting in front of it.
+SETTABLE = (
+    "user.language", "user.units", "user.show_unverified", "user.name",
+    "user.theme", "agent.provider", "agent.memory_every",
+    "agent.memory_max_chars", "agent.history_messages",
+    "server.default_project",
+)
+
+
+def _public_config():
+    cfg = workspace.load(reload=True)
+    agent_cfg = cfg.get("agent", {})
+    return {
+        "user": cfg.get("user", {}),
+        "engineering_defaults": cfg.get("engineering_defaults", {}),
+        "agent": {k: v for k, v in agent_cfg.items() if k != "providers"},
+        "server": {"default_project": DEFAULT_PROJECT or workspace.default_project()},
+        "engine": gateway.resolve(BACKEND),
+        "engines": gateway.describe_all(),
+        "home": str(workspace.home()),
+        "config_file": str(workspace.config_path()),
+        "settable": list(SETTABLE),
+    }
+
+
 def redraw(project):
     """The drawing stack is optional. A decision must never be lost to a bad
     picture - or to schemdraw not being installed."""
@@ -154,15 +180,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"sessions": session_mod.list_all(proj),
                                     "current": self.session(proj)})
         if path == "/api/config":
-            cfg = workspace.load()
-            return self._send(200, {
-                "user": cfg.get("user", {}),
-                "engineering_defaults": cfg.get("engineering_defaults", {}),
-                "server": {"default_project": DEFAULT_PROJECT or workspace.default_project()},
-                "engine": gateway.resolve(BACKEND),
-                "engines": gateway.describe_all(),
-                "home": str(workspace.home()),
-            })
+            return self._send(200, _public_config())
         if path == "/api/schematic.svg":
             proj = self.project()
             svg = model.project_dir(proj) / "artifacts" / "blocks.svg"
@@ -259,6 +277,15 @@ class Handler(BaseHTTPRequestHandler):
             out = model.build(project=proj, session=sess)
             out["last_actions"] = applied
             return self._send(200, out)
+
+        if path == "/api/config":
+            changes = data.get("set") or {}
+            bad = [k for k in changes if k not in SETTABLE]
+            if bad:
+                return self._send(400, {"error": f"not settable from here: {', '.join(bad)}"})
+            for key, value in changes.items():
+                workspace.set_value(key, value)
+            return self._send(200, {"config": _public_config()})
 
         if path == "/api/sessions/new":
             created = session_mod.create(proj, title=data.get("title"))

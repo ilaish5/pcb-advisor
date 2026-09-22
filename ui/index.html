@@ -1,8 +1,12 @@
 <!doctype html>
 <meta charset="utf-8">
 <title>PCB Advisor</title>
+<link rel="icon" href="data:,">
 <style>
 :root{
+  /* tells the browser to render its own bits - spinners, scrollbars, the caret -
+     in dark, instead of dropping a white control into a dark page */
+  color-scheme: dark;
   --bg:#0f1117; --card:#191d29; --line:#282e3d; --ink:#e9ebf1; --dim:#8d95a8;
   --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
 }
@@ -10,25 +14,79 @@
 html,body{height:100%;margin:0}
 body{background:var(--bg);color:var(--ink);
      font:14px/1.6 -apple-system,"Segoe UI",Inter,Arial,sans-serif;
-     display:flex;flex-direction:column}
-
-/* ---------- top bar: one line, one control ---------- */
-.top{display:flex;align-items:center;gap:12px;padding:10px 18px;
-     border-bottom:1px solid var(--line)}
-.top .name{font-weight:600}
-select,button{background:var(--card);border:1px solid var(--line);border-radius:8px;
+     display:flex;overflow:hidden}
+button{background:var(--card);border:1px solid var(--line);border-radius:8px;
   color:var(--ink);padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
-button:hover,select:hover{border-color:var(--accent)}
-.top .sp{flex:1}
-.top .stat{color:var(--dim);font-size:12.5px}
+button:hover{border-color:var(--accent)}
+input,textarea{background:var(--card);border:1px solid var(--line);border-radius:8px;
+  color:var(--ink);font:inherit;font-size:13px;padding:6px 9px;
+  -webkit-appearance:none;appearance:none}
+input:focus,textarea:focus{outline:none;border-color:var(--accent)}
+input[type=number]{-moz-appearance:textfield}
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+
+/* a checkbox we control, instead of the OS one */
+input[type=checkbox]{width:17px;height:17px;border-radius:5px;cursor:pointer;
+  position:relative;flex:none;padding:0}
+input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
+input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1px;
+  width:4px;height:9px;border:solid #fff;border-width:0 2px 2px 0;transform:rotate(43deg)}
+
+/* ---------- dropdowns: ours, so the popup matches the app ---------- */
+.dd{position:relative;flex:1;min-width:0}
+.dd-t{width:100%;display:flex;align-items:center;gap:7px;text-align:left}
+.dd-t span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dd-t i{font-style:normal;color:var(--dim);font-size:10px;transform:translateY(1px)}
+.dd.open .dd-t{border-color:var(--accent)}
+.dd-m{display:none;position:absolute;z-index:40;top:calc(100% + 5px);left:0;min-width:100%;
+  width:max-content;max-width:300px;max-height:290px;overflow-y:auto;background:#161b28;border:1px solid #33405c;
+  border-radius:10px;padding:5px;box-shadow:0 14px 34px rgba(0,0,0,.55)}
+.dd.open .dd-m{display:block}
+.dd-m.right{left:auto;right:0}
+.dd-i{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;
+  background:transparent;border-radius:7px;padding:7px 9px;font-size:13px;white-space:nowrap}
+.dd-i:hover{background:#222a3b}
+.dd-i.on{background:#22293a;color:var(--ink)}
+.dd-i b{flex:none;font-weight:400}
+.dd-i em{font-style:normal;color:#6b7488;font-size:11px;margin-left:auto;
+  overflow:hidden;text-overflow:ellipsis}
+.dd-i .tick{color:var(--accent);font-size:11px;visibility:hidden}
+.dd-i.on .tick{visibility:visible}
+
+/* ---------- three columns: nav | design | conversation ---------- */
+.side{width:300px;min-width:210px;flex:none;background:#12151e;
+  border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+.mid{flex:1;min-width:280px;display:flex;flex-direction:column;overflow:hidden;
+  background:#12151e}
+.chat{width:430px;min-width:300px;flex:none;border-left:1px solid var(--line);
+  display:flex;flex-direction:column;overflow:hidden}
+.split{width:5px;flex:none;cursor:col-resize;background:transparent}
+.split:hover,.split.on{background:var(--accent)}
+
+.brand{font-weight:600;padding:13px 16px 11px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:8px;font-size:14.5px}
+.brand .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.picker{padding:10px 12px;border-bottom:1px solid var(--line);
+  display:flex;flex-direction:column;gap:7px}
+.picker .lab{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#6b7488}
+.picker .row{display:flex;gap:6px}
+
+.picker button{padding:6px 9px;font-size:12px}
+.snav{display:flex;flex-wrap:wrap;gap:4px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.snav button{padding:5px 10px;font-size:12.5px;border-color:transparent;background:transparent;
+  color:var(--dim)}
+.snav button:hover{color:var(--ink);background:#1a2030;border-color:transparent}
+.snav button.on{background:#22293a;border-color:#3d4a68;color:var(--ink)}
+.snav .badge{background:#4a3a12;color:var(--warn);border-radius:99px;
+  font-size:10px;padding:0 5px;margin-left:5px}
+.sbody{flex:1;overflow-y:auto;padding:12px 13px}
+.sfoot{border-top:1px solid var(--line);padding:8px 13px;font-size:11.5px;color:#6b7488;
+  display:flex;gap:8px;align-items:center}
 
 /* ---------- the diagram: real DOM, so it is legible and editable ---------- */
-.diagram{flex:none;border-bottom:1px solid var(--line);background:#12151e;
-  display:flex;flex-direction:column;height:380px;min-height:120px;position:relative}
-.grip{height:11px;cursor:ns-resize;flex:none;border-top:1px solid var(--line);
-  display:flex;align-items:center;justify-content:center}
-.grip::after{content:"";width:44px;height:3px;border-radius:2px;background:#333c52}
-.grip:hover::after,.grip.on::after{background:var(--accent)}
+.diagram{flex:1;background:#12151e;display:flex;flex-direction:column;
+  min-height:0;position:relative}
 /* dragging must not select the text underneath */
 body.nosel{user-select:none;-webkit-user-select:none}
 .zoom{display:flex;align-items:center;gap:2px;margin-inline-start:6px}
@@ -59,14 +117,18 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .pop input,.pop select{width:100%;background:var(--card);border:1px solid var(--line);
   border-radius:7px;padding:7px 9px;color:var(--ink);font:inherit;font-size:13px}
 .pop .row{display:flex;gap:7px}
+.pop .dd{width:100%}
 .pop .row button{flex:1;font-size:12px}
 .danger{color:#fca5a5}
 .hintbar{font-size:11.5px;color:var(--dim);padding:0 14px 8px}
 
 /* ---------- the conversation ---------- */
-.log{flex:1;overflow-y:auto;padding:22px 0}
-.wrap{max-width:720px;margin:0 auto;padding:0 20px;
-      display:flex;flex-direction:column;gap:16px}
+.chead{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;
+  align-items:center;gap:9px;font-size:12.5px;color:var(--dim)}
+.chead .sp{flex:1}
+.log{flex:1;overflow-y:auto;padding:18px 0}
+.wrap{max-width:100%;margin:0 auto;padding:0 16px;
+      display:flex;flex-direction:column;gap:15px}
 .msg{display:flex;flex-direction:column;gap:5px}
 .who{font-size:11px;color:var(--dim)}
 .bubble{border-radius:12px;padding:12px 15px;font-size:14px}
@@ -90,23 +152,26 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .opts{display:flex;flex-direction:column;gap:8px}
 .opt{text-align:left;padding:11px 13px;font-size:14px;width:100%}
 .opt .cost{color:#e59a9a;font-size:12px;margin-top:3px}
-.empty{color:var(--dim);text-align:center;padding:50px 20px;font-size:14px;line-height:1.8}
+.empty{color:var(--dim);text-align:center;padding:36px 14px;font-size:13px;line-height:1.7}
 
 /* ---------- input ---------- */
-.compose{border-top:1px solid var(--line);padding:14px 0}
-.compose .wrap{flex-direction:row;gap:10px;align-items:flex-end}
+.compose{border-top:1px solid var(--line);padding:12px 0}
+.compose .wrap{flex-direction:row;gap:9px;align-items:flex-end}
 textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;
   padding:11px 13px;color:var(--ink);font:inherit;resize:none;height:48px}
 .send{background:var(--accent);border-color:var(--accent);color:#fff;padding:11px 20px}
 
-/* ---------- drawer: closed unless asked for ---------- */
-.drawer{position:fixed;top:0;right:0;bottom:0;width:520px;background:#12151e;
-  border-left:1px solid var(--line);transform:translateX(100%);
-  transition:transform .18s ease;display:flex;flex-direction:column;z-index:9}
-.drawer.on{transform:none}
-.dtabs{display:flex;gap:4px;padding:12px 14px;border-bottom:1px solid var(--line)}
-.dtabs button.on{background:#22293a;border-color:#3d4a68}
-.dtabs .x{margin-left:auto}
+/* ---------- settings, in the left rail like an IDE ---------- */
+.set h4{margin:16px 0 7px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:#6b7488;font-weight:600}
+.set h4:first-child{margin-top:0}
+.set label{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:12.5px}
+.set label span{flex:1;color:var(--dim)}
+.set label input{width:116px;flex:none;font-size:12.5px;padding:5px 8px}
+.set label .dd{width:116px;flex:none}
+.set label .dd-t{font-size:12.5px;padding:5px 8px}
+.set label input[type=checkbox]{width:17px}
+.set .note{color:#6b7488;font-size:11px;line-height:1.5;margin:5px 0 0}
 .thr{margin-top:8px;border-left:2px solid #2b3550;padding-left:9px}
 .thr .m{margin:5px 0;font-size:12.5px;line-height:1.5}
 .thr .m b{color:var(--dim);font-weight:600;margin-right:5px}
@@ -114,11 +179,17 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 .thr input{flex:1;background:#0f1320;color:var(--fg);border:1px solid var(--line);
   border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
 .ask-badge{cursor:pointer;border:1px solid var(--line);background:#1a2030;border-radius:999px;
-  padding:1px 8px;font-size:11.5px;color:var(--dim);margin-left:6px;white-space:nowrap}
+  padding:1px 8px;font-size:11.5px;color:var(--dim);white-space:nowrap}
 .ask-badge.wait{border-color:#6a5a2a;color:#e0c169}
 .ask-badge.done{opacity:.55}
-.dbody{flex:1;overflow-y:auto;padding:14px 16px}
-table{width:100%;border-collapse:collapse;font-size:13px}
+
+/* cards, not tables: the rail is narrow and a two-column table clips */
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+  padding:11px 12px;margin-bottom:9px;font-size:12.5px;line-height:1.55}
+.card .q{color:var(--dim);font-size:12px;margin-bottom:3px}
+.card .a{font-weight:600;font-size:13px}
+.card .foot{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{text-align:left;color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.07em;
    text-transform:uppercase;padding:5px 8px;border-bottom:1px solid var(--line)}
 td{padding:9px 8px;border-bottom:1px solid #1e2331;vertical-align:top}
@@ -135,58 +206,74 @@ a{color:var(--accent);text-decoration:none}
   border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin-bottom:7px;font-size:13px}
 .srcrow .g{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tools{display:flex;gap:8px;margin-top:10px}
-input[type=text]{flex:1;background:var(--card);border:1px solid var(--line);
-  border-radius:8px;padding:8px 11px;color:var(--ink);font:inherit;font-size:13px}
+input[type=text]{flex:1;padding:8px 11px}
 </style>
 
-<div class="top">
-  <span class="name">PCB Advisor</span>
-  <select id="projsel" onchange="switchTo(this.value)"></select>
-  <button onclick="newProject()">+ New</button>
-  <select id="sesssel" onchange="switchSession(this.value)" title="conversation"></select>
-  <button onclick="newSession()" title="a clean conversation about the same board">+ Chat</button>
-  <span class="sp"></span>
-  <span class="stat" id="stat"></span>
-  <button onclick="openDrawer('decisions')">Details</button>
-</div>
+<aside class="side" id="side">
+  <div class="brand"><span class="dot"></span>PCB Advisor</div>
 
-<div class="diagram" id="diagram">
-  <div class="dbar">
-    <span id="dtitle">Diagram</span>
+  <div class="picker">
+    <span class="lab">Board</span>
+    <div class="row">
+      <span id="projsel"></span>
+      <button onclick="newProject()" title="a new board">+</button>
+    </div>
+    <span class="lab" id="sesslab">Conversation</span>
+    <div class="row" id="sessrow">
+      <span id="sesssel"></span>
+      <button onclick="newSession()" title="a clean conversation about this board">+</button>
+    </div>
+  </div>
+
+  <nav class="snav">
+    <button id="t-decisions" onclick="showPanel('decisions')">Decisions</button>
+    <button id="t-constraints" onclick="showPanel('constraints')">Constraints</button>
+    <button id="t-sources" onclick="showPanel('sources')">Sources</button>
+    <button id="t-memory" onclick="showPanel('memory')">Memory</button>
+    <button id="t-settings" onclick="showPanel('settings')">Settings</button>
+  </nav>
+
+  <div class="sbody" id="sbody"></div>
+  <div class="sfoot"><span id="foot"></span></div>
+</aside>
+
+<div class="split" id="splitL" title="drag to resize"></div>
+
+<main class="mid">
+  <div class="diagram" id="diagram">
+    <div class="dbar">
+      <span id="dtitle">Diagram</span>
+      <span class="sp"></span>
+      <button onclick="addBlock()">+ Block</button>
+      <span class="zoom">
+        <button onclick="zoomBy(1/1.2)" title="zoom out">−</button>
+        <span class="pct" id="zpct">100%</span>
+        <button onclick="zoomBy(1.2)" title="zoom in">+</button>
+        <button onclick="fit(true)" title="fit and centre">Fit</button>
+      </span>
+      <button class="go" id="sendsketch" style="display:none" onclick="sendSketch()">
+        Send changes to advisor</button>
+    </div>
+    <div class="canvas" id="canvas"><div class="stage" id="stage"></div></div>
+    <div class="hintbar" id="dhint"></div>
+  </div>
+</main>
+
+<div class="split" id="splitR" title="drag to resize"></div>
+
+<section class="chat">
+  <div class="chead">
+    <span id="stat"></span>
     <span class="sp"></span>
-    <button onclick="addBlock()">+ Block</button>
-    <span class="zoom">
-      <button onclick="zoomBy(1/1.2)" title="zoom out">−</button>
-      <span class="pct" id="zpct">100%</span>
-      <button onclick="zoomBy(1.2)" title="zoom in">+</button>
-      <button onclick="fit(true)" title="fit and centre">Fit</button>
-    </span>
-    <button class="go" id="sendsketch" style="display:none" onclick="sendSketch()">
-      Send changes to advisor</button>
+    <span id="engine"></span>
   </div>
-  <div class="canvas" id="canvas"><div class="stage" id="stage"></div></div>
-  <div class="hintbar" id="dhint"></div>
-  <div class="grip" id="grip" title="drag to resize"></div>
-</div>
-
-<div class="log" id="log"><div class="wrap" id="wrap"></div></div>
-
-<div class="compose"><div class="wrap">
-  <textarea id="say" dir="auto" placeholder="Describe what you want to design…"
-    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
-  <button class="send" id="sendbtn" onclick="send()">Send</button>
-</div></div>
-
-<div class="drawer" id="drawer">
-  <div class="dtabs">
-    <button id="t-decisions" onclick="openDrawer('decisions')">Decisions</button>
-    <button id="t-constraints" onclick="openDrawer('constraints')">Constraints</button>
-    <button id="t-sources" onclick="openDrawer('sources')">Sources</button>
-    <button id="t-memory" onclick="openDrawer('memory')">Memory</button>
-    <button class="x" onclick="document.getElementById('drawer').classList.remove('on')">✕</button>
-  </div>
-  <div class="dbody" id="dbody"></div>
-</div>
+  <div class="log" id="log"><div class="wrap" id="wrap"></div></div>
+  <div class="compose"><div class="wrap">
+    <textarea id="say" dir="auto" placeholder="Describe what you want to design…"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+    <button class="send" id="sendbtn" onclick="send()">Send</button>
+  </div></div>
+</section>
 
 <script>
 let S=null, busy=false, TAB='decisions';
@@ -208,11 +295,52 @@ const txt=s=>esc(flow(s)).replace(/\n/g,'<br>');
 const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ)
   +(SESS?'&session='+encodeURIComponent(SESS):'');
 
+/* Our own dropdown. A native <select> renders its popup with the OS chrome,
+   which cannot be styled and does not match anything else on the page. */
+const DD={};
+
+function ddSet(id, items, value, pick, opts){
+  DD[id]={items, value, pick, ...(opts||{})};
+  const host=$(id); if(host) host.innerHTML=ddHTML(id);
+}
+
+function ddHTML(id){
+  const d=DD[id]||{items:[]};
+  const cur=d.items.find(x=>String(x.v)===String(d.value));
+  return `<div class="dd" id="dd-${id}">
+    <button class="dd-t" onclick="ddToggle('${id}',event)">
+      <span>${esc(cur?cur.label:(d.placeholder||'—'))}</span><i>▾</i></button>
+    <div class="dd-m ${d.right?'right':''}">${d.items.map((x,i)=>
+      `<button class="dd-i ${String(x.v)===String(d.value)?'on':''}"
+         onclick="ddPick('${id}',${i},event)"><b>${esc(x.label)}</b>${
+         x.sub?`<em>${esc(x.sub)}</em>`:''}<span class="tick">✓</span></button>`).join('')}</div></div>`;
+}
+
+function ddClose(){ document.querySelectorAll('.dd.open').forEach(e=>e.classList.remove('open')); }
+
+function ddToggle(id,ev){
+  ev.stopPropagation();
+  const el=$('dd-'+id), was=el.classList.contains('open');
+  ddClose(); if(!was) el.classList.add('open');
+}
+
+function ddPick(id,i,ev){
+  ev.stopPropagation(); ddClose();
+  const d=DD[id], item=d.items[i]; if(!item) return;
+  d.value=item.v;
+  const host=$(id); if(host) host.innerHTML=ddHTML(id);
+  if(d.pick) d.pick(item.v);
+}
+
+const ddValue=id=>DD[id]?DD[id].value:undefined;
+addEventListener('click', ddClose);
+addEventListener('keydown', e=>{ if(e.key==='Escape') ddClose(); });
+
 async function loadProjects(){
   const r=await (await fetch('/api/projects')).json();
   if(!PROJ) PROJ=r.default;
-  $('projsel').innerHTML=r.projects.map(p=>
-    `<option value="${esc(p.name)}" ${p.name===PROJ?'selected':''}>${esc(p.name)}</option>`).join('');
+  ddSet('projsel', r.projects.map(p=>({v:p.name, label:p.title||p.name,
+    sub:`${p.decisions} decisions`})), PROJ, switchTo);
 }
 const switchTo=n=>{if(n!==PROJ) location.search='?project='+encodeURIComponent(n);};
 const switchSession=n=>{if(n!==SESS)
@@ -221,8 +349,14 @@ const switchSession=n=>{if(n!==SESS)
 function paintSessions(){
   if(!S) return;
   SESS = S.session;
-  $('sesssel').innerHTML=(S.sessions||[]).map(x=>
-    `<option value="${esc(x.id)}" ${x.id===S.session?'selected':''}>${esc(x.title)} · ${x.messages}</option>`).join('');
+  const rows=S.sessions||[];
+  ddSet('sesssel', rows.map(x=>({v:x.id, label:x.title,
+    sub:`${x.messages} message${x.messages===1?'':'s'}`})), S.session, switchSession);
+  // one conversation is the normal case; do not make it look like a thing to manage
+  const many=rows.length>1;
+  $('sesslab').style.display=many?'':'none';
+  $('sessrow').style.display=many?'':'none';
+  $('foot').textContent=`${rows.length} conversation${rows.length>1?'s':''}`;
 }
 
 async function newSession(){
@@ -241,6 +375,7 @@ async function load(){
   S=await (await fetch(q('/api/state'))).json();
   if(!dirty) sketch=JSON.parse(JSON.stringify(S.sketch||{blocks:[],links:[],confirmed:false}));
   paintSessions(); paint(); drawDiagram();
+  $('engine').textContent = S.engine || '';
 }
 
 /* ===================== the diagram ===================== */
@@ -315,28 +450,32 @@ function zoomBy(k){
   c.addEventListener('pointerup',up); c.addEventListener('pointercancel',up);
 })();
 
-/* drag the grip to resize the whole diagram area */
+/* drag either splitter, IDE style. Widths persist per browser. */
 (function(){
-  const grip=$('grip'), d=$('diagram');
-  const saved=parseInt(localStorage.getItem('pcbadv.h')||'0',10);
-  if(saved>120) d.style.height=saved+'px';
-  let down=false,sy=0,h0=0;
-  grip.addEventListener('pointerdown',e=>{
-    down=true; sy=e.clientY; h0=d.getBoundingClientRect().height;
-    grip.setPointerCapture(e.pointerId); grip.classList.add('on');
-    document.body.classList.add('nosel');
-  });
-  grip.addEventListener('pointermove',e=>{
-    if(!down) return;
-    const vh=document.documentElement.clientHeight||window.innerHeight||800;
-    const h=clamp(h0+(e.clientY-sy),120,Math.max(200,vh-200));
-    d.style.height=h+'px'; applyView();
-  });
-  const up=()=>{ if(down) localStorage.setItem('pcbadv.h',
-                   Math.round(d.getBoundingClientRect().height));
-                 down=false; grip.classList.remove('on');
-                 document.body.classList.remove('nosel'); };
-  grip.addEventListener('pointerup',up); grip.addEventListener('pointercancel',up);
+  for(const [id, el, key, dir] of [['splitL', 'side', 'pcbadv.wL', 1],
+                                   ['splitR', 'chat', 'pcbadv.wR', -1]]){
+    const grip=$(id), pane=document.querySelector('.'+ (el==='side'?'side':'chat'));
+    const saved=parseInt(localStorage.getItem(key)||'0',10);
+    if(saved>180) pane.style.width=saved+'px';
+    let down=false,sx=0,w0=0;
+    grip.addEventListener('pointerdown',e=>{
+      down=true; sx=e.clientX; w0=pane.getBoundingClientRect().width;
+      grip.setPointerCapture(e.pointerId); grip.classList.add('on');
+      document.body.classList.add('nosel');
+    });
+    grip.addEventListener('pointermove',e=>{
+      if(!down) return;
+      const vw=document.documentElement.clientWidth||1200;
+      pane.style.width=clamp(w0+dir*(e.clientX-sx),200,Math.max(260,vw-480))+'px';
+      applyView();
+    });
+    const up=()=>{ if(down) localStorage.setItem(key,
+                     Math.round(pane.getBoundingClientRect().width));
+                   down=false; grip.classList.remove('on');
+                   document.body.classList.remove('nosel'); };
+    grip.addEventListener('pointerup',up); grip.addEventListener('pointercancel',up);
+  }
+  addEventListener('resize', ()=>applyView());
 })();
 
 function drawDiagram(){
@@ -439,14 +578,16 @@ function openPop(id,pos){
   el.className='pop';
   el.onclick=e=>e.stopPropagation();
   el.innerHTML=`<input id="pl" dir="auto" value="${esc(b.label||'')}" placeholder="label">
-    <select id="pk">${KINDS.map(k=>`<option ${k===b.kind?'selected':''}>${k}</option>`).join('')}</select>
+    <span id="pk"></span>
     <div class="row"><button onclick="startLink('${id}')">Link →</button>
       <button class="danger" onclick="delBlock('${id}')">Delete</button></div>`;
   $('canvas').appendChild(el); placePop();
-  const l=el.querySelector('#pl'), k=el.querySelector('#pk');
+  // the block kind is what selects which cascade loads, so it is worth a real menu
+  ddSet('pk', KINDS.map(k=>({v:k, label:k})), b.kind,
+        v=>{ b.kind=v; dirty=true; drawDiagram(); });
+  const l=el.querySelector('#pl');
   l.oninput=()=>{b.label=l.value;dirty=true;};
   l.onblur=()=>drawDiagram();
-  k.onchange=()=>{b.kind=k.value;dirty=true;drawDiagram();};
 }
 function startLink(id){ linkFrom=id; popFor=null; drawDiagram(); }
 function delBlock(id){
@@ -510,34 +651,51 @@ function paint(){
   $('wrap').innerHTML=h;
   if(atBottom) $('log').scrollTop=$('log').scrollHeight;
 
-  if($('drawer').classList.contains('on')) drawer();
+  renderPanel();
 }
 
-function openDrawer(tab){ TAB=tab; $('drawer').classList.add('on'); drawer(); }
+function showPanel(tab){ TAB=tab; localStorage.setItem('pcbadv.tab',tab); renderPanel(); }
 
-function drawer(){
-  for(const t of ['decisions','constraints','sources','memory'])
+let PANEL_SHOWN=null;
+
+function renderPanel(){
+  if(!S) return;
+  // The state polls every few seconds. Re-rendering under someone's hands would
+  // shut an open menu and wipe half-typed text, so while they are working in
+  // the panel, leave it alone.
+  const working = $('sbody').contains(document.activeElement)
+                || document.querySelector('.dd.open');
+  if(working && PANEL_SHOWN===TAB) return;
+
+  for(const t of ['decisions','constraints','sources','memory','settings'])
     $('t-'+t).classList.toggle('on', t===TAB);
+  const w=(S.progress.waiting_on_agent||0)+(S.progress.waiting_on_student||0);
+  $('t-constraints').innerHTML='Constraints'+(w?`<span class="badge">${w}</span>`:'');
   let h='';
   if(TAB==='decisions'){
-    h = S.answered.length ? `<table><tr><th>Element</th><th>Decision</th><th>Choice</th></tr>`+
-      S.answered.map(n=>{const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
-        return `<tr><td style="color:var(--dim)">${esc(n.domain)}</td>
-          <td dir="auto">${txt(n.question)}${badge(n.id)}${thread(n.id)}</td>
-          <td dir="auto"><b>${txt(o.label||n.chosen)}</b></td></tr>`;}).join('')+`</table>`
+    // a 300px rail is too narrow for a table; one card per row reads better
+    h = S.answered.length ? S.answered.map(n=>{
+        const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
+        return `<div class="card">
+          <div class="q" dir="auto">${txt(n.question)}</div>
+          <div class="a" dir="auto">${txt(o.label||n.chosen)}</div>
+          <div class="foot"><span class="pill">${esc(n.domain)}</span>${badge(n.id)}</div>
+          ${thread(n.id)}</div>`;}).join('')
       : `<div class="empty">Nothing decided yet.</div>`;
   }
   if(TAB==='constraints'){
     h = (S.conflicts||[]).map(c=>`<div class="conflict"><b>Conflict</b> — ${esc(c.note)}</div>`).join('');
-    h += S.constraints.length ? `<table><tr><th>Constraint</th><th>How we know</th></tr>`+
-      S.constraints.map(c=>{const s=c.source||{};
-        return `<tr><td dir="auto">${txt(c.text)}
+    h += S.constraints.length ? S.constraints.map(c=>{const s=c.source||{};
+        return `<div class="card">
+          <div dir="auto">${txt(c.text)}</div>
           ${s.quote?`<div class="quote">“${esc(s.quote)}”</div>`:''}
-          <div class="meta">from ${esc(c.from_label)}</div>
-          ${badge(c.id)}${thread(c.id)}</td>
-          <td><span class="pill ${c.verified?'':'u'}">${c.icon} ${esc(c.provenance)}</span>
-          <div class="meta">${s.url?`<a href="${esc(s.url)}" target="_blank">${esc(s.doc||'source')}</a>`:esc(s.doc||'')}
-          ${esc(s.locator||'')}</div></td></tr>`;}).join('')+`</table>`
+          <div class="foot">
+            <span class="pill ${c.verified?'':'u'}">${c.icon} ${esc(c.provenance)}${c.verified?'':' · unverified'}</span>
+            ${badge(c.id)}</div>
+          <div class="meta">from ${esc(c.from_label)}${s.doc?' · ':''}
+            ${s.url?`<a href="${esc(s.url)}" target="_blank">${esc(s.doc)}</a>`:esc(s.doc||'')}
+            ${esc(s.locator||'')}</div>
+          ${thread(c.id)}</div>`;}).join('')
       : `<div class="empty">Constraints appear as you decide.</div>`;
   }
   if(TAB==='sources'){
@@ -562,8 +720,11 @@ function drawer(){
       <button onclick="rewriteMemory()">Rewrite now</button>
       <span class="meta" id="memlen"></span></div>`;
   }
-  $('dbody').innerHTML=h;
+  if(TAB==='settings') h=settingsHTML();
+  $('sbody').innerHTML=h;
+  if(TAB==='settings') settingsDropdowns();
   if(TAB==='memory') memlen();
+  PANEL_SHOWN=TAB;
 }
 
 /* A thread hangs on a design element, not on a conversation: it is everything
@@ -592,7 +753,7 @@ function thread(id){
         ? `<button onclick="resolveThread('${esc(id)}')">Resolve</button>`:''}</div></div>`;
 }
 
-function toggleThread(id){ OPEN_THREAD = OPEN_THREAD===id ? null : id; drawer(); }
+function toggleThread(id){ OPEN_THREAD = OPEN_THREAD===id ? null : id; renderPanel(); }
 
 async function postThread(id){
   const el=$('thr-in'); const text=(el?el.value:'').trim(); if(!text) return;
@@ -601,13 +762,87 @@ async function postThread(id){
     S=await (await fetch(q('/api/message'),{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({anchor:id,text,role:'user'})})).json();
-  } finally { drawer(); }
+  } finally { renderPanel(); }
 }
 
 async function resolveThread(id){
   S=await (await fetch(q('/api/thread/resolve'),{method:'POST',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({anchor:id})})).json();
-  OPEN_THREAD=null; drawer();
+  OPEN_THREAD=null; renderPanel();
+}
+
+/* ---------- settings, where the student expected to find them ---------- */
+function settingsHTML(){
+  if(!CFG) return `<div class="empty">Loading…</div>`;
+  const b=S.board||{}, u=CFG.user||{};
+  const num=(k,label,v,step)=>`<label><span>${label}</span>
+    <input type="number" step="${step||1}" id="s-${k}" value="${v}"></label>`;
+  const engines=(CFG.engines||[]).filter(e=>e.status==='implemented')
+    .map(e=>({v:e.id, label:e.title, sub:e.available?'ready':e.reason}));
+  return `<div class="set">
+    <h4>This board</h4>
+    <label><span>Title</span><input type="text" id="s-title" value="${esc(S.title||'')}"></label>
+    ${num('layers','Layers',b.layers)}
+    ${num('copper_oz','Copper, oz',b.copper_oz,0.5)}
+    ${num('max_temp_rise_c','Max rise, °C',b.max_temp_rise_c)}
+    ${num('min_track_mm','Min track, mm',b.min_track_mm,0.05)}
+    <p class="note">Copied from the defaults when the board was created. The
+      calculation scripts use these numbers.</p>
+    <div class="tools"><button onclick="saveBoard()">Save board</button></div>
+
+    <h4>Preferences</h4>
+    <label><span>Language</span><span id="s-language"></span></label>
+    <label><span>Units</span><span id="s-units"></span></label>
+    <label><span>Show unverified</span>
+      <input type="checkbox" id="s-show_unverified" ${u.show_unverified?'checked':''}></label>
+
+    <h4>Engine</h4>
+    <label><span>Provider</span><span id="s-provider"></span></label>
+    ${num('memory_every','Memory every',CFG.agent?CFG.agent.memory_every:10)}
+    ${num('memory_max_chars','Memory chars',CFG.agent?CFG.agent.memory_max_chars:2000,100)}
+    <div class="tools"><button onclick="savePrefs()">Save settings</button></div>
+    <p class="note">Everything else lives in <code>config.json</code>.
+      See docs/configuration.md.</p>
+  </div>`;
+}
+
+function settingsDropdowns(){
+  const u=CFG.user||{}, a=CFG.agent||{};
+  ddSet('s-language', [{v:'auto',label:'auto',sub:'follow what you type'},
+                       {v:'en',label:'English'},{v:'he',label:'עברית'}],
+        u.language||'auto', null, {right:true});
+  ddSet('s-units', [{v:'mm',label:'mm'},{v:'mil',label:'mil'}], u.units||'mm', null, {right:true});
+  ddSet('s-provider', (CFG.engines||[]).filter(e=>e.status==='implemented')
+        .map(e=>({v:e.id,label:e.title,sub:e.available?'ready':e.reason})),
+        a.provider||CFG.engine, null, {right:true});
+}
+
+const val=id=>{
+  const e=$(id);
+  if(DD[id]) return ddValue(id);
+  return e ? (e.type==='checkbox'?e.checked:e.value) : undefined;
+};
+
+async function saveBoard(){
+  await fetch(q('/api/project/meta'),{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({title:val('s-title'), board:{
+      layers:+val('s-layers'), copper_oz:+val('s-copper_oz'),
+      max_temp_rise_c:+val('s-max_temp_rise_c'), min_track_mm:+val('s-min_track_mm')}})});
+  await load(); renderPanel();
+}
+
+async function savePrefs(){
+  const r=await (await fetch('/api/config',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({set:{
+      'user.language':val('s-language'), 'user.units':val('s-units'),
+      'user.show_unverified':val('s-show_unverified'),
+      'agent.provider':val('s-provider'),
+      'agent.memory_every':+val('s-memory_every'),
+      'agent.memory_max_chars':+val('s-memory_max_chars')}})})).json();
+  if(r.error){ alert(r.error); return; }
+  CFG=r.config; renderPanel(); load();
 }
 
 function memlen(){
@@ -630,7 +865,7 @@ async function rewriteMemory(){
     const r=await (await fetch(q('/api/memory'),{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify({})})).json();
     if(r.rewritten && !r.rewritten.ok) alert(r.rewritten.reason||'could not rewrite');
-  } finally { b.disabled=false; b.textContent='Rewrite now'; await load(); drawer(); }
+  } finally { b.disabled=false; b.textContent='Rewrite now'; await load(); renderPanel(); }
 }
 
 async function answer(node,value){
@@ -661,6 +896,7 @@ function upload(input){
   rd.readAsDataURL(f);
 }
 async function boot(){
+  TAB=localStorage.getItem('pcbadv.tab')||'decisions';
   try{ CFG=await (await fetch('/api/config')).json(); }catch(e){ CFG=null; }
   await loadProjects();          // settles PROJ before the first state fetch
   await load();
