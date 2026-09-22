@@ -81,6 +81,46 @@ Do that once and the two FAILs become `ok`. The `todo` stays until someone opens
 the document and pulls the quote — that line is the corpus being honest about
 its own state, and it is meant to be visible.
 
+## A question is a choice or a measurement
+
+Most questions offer a shortlist. Some ask for a number, because some answers
+have no shortlist:
+
+```yaml
+- id: req.runtime
+  question: "How long must it run on one set of cells?"
+  requires: {req.source: battery}
+  answer: {kind: quantity, unit: "hours", min: 1, max: 100000}
+  locks:
+    - id: pwr.budget
+      text: "Everything on this board shares one budget: your cell's capacity
+              divided by {value} hours..."
+```
+
+The number is checked against the unit and the range before it reaches the
+append-only log, and `{value}` puts it back into the rules that follow from it.
+
+This is here because the tool once walked a complete battery design, asked
+fourteen questions, and never asked how long the battery had to last — the most
+consequential number on the board. It had nowhere to live: every answer the
+schema could hold was one of a fixed list.
+
+## Some questions answer themselves
+
+A question with one defensible answer carries a `default` — an option, a `why`
+and a provenance badge, authored in the YAML. The model applies it, and the
+panel shows those separately under **Decided for you**, collapsed, each with
+its one-line reason and a click to change it.
+
+That is not the model choosing: a default is corpus content like a constraint,
+written down and badged. It is there because a student who walked the whole
+cascade said it was "just a mess — dozens of decisions I don't really
+understand, a list that never ends". Collapsed is the point. Browsable rather
+than blocking.
+
+Defaults are derived on every build and never written to `decisions.jsonl`;
+only a student's override is.
+
 ## The one rule
 
 ```

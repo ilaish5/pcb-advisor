@@ -81,8 +81,9 @@ def anchors(project=None):
         for node in cas.get("nodes", []):
             out[node["id"]] = {"kind": "node", "domain": dom,
                                "label": node.get("question", node["id"])}
-            for opt in node.get("options", []) or []:
-                for lock in opt.get("locks", []) or []:
+            holders = (node.get("options") or []) + ([node] if node.get("answer") else [])
+            for holder in holders:
+                for lock in holder.get("locks", []) or []:
                     out[lock["id"]] = {"kind": "constraint", "domain": dom,
                                        "label": lock.get("text", lock["id"])[:80]}
     return out
@@ -104,6 +105,47 @@ def designators(blocks):
             seen.add(prefix)
             out.append({"prefix": prefix, "means": DESIGNATORS[prefix], "example": first})
     return out
+
+
+def quantity_spec(node):
+    """The `answer` block if this node asks for a number rather than a choice."""
+    spec = (node or {}).get("answer") or {}
+    return spec if spec.get("kind") == "quantity" else None
+
+
+def coerce_quantity(spec, raw):
+    """A student's typed number, or a reason it is not one.
+
+    Returns (value, error). The range is part of the question, not decoration:
+    "how long must it run" answered with 0 is not a runtime, and answered with
+    a typo of 87600000 is a number nothing downstream can use."""
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return None, f"give a number in {spec.get('unit', 'the right unit')}"
+    if value != value or value in (float("inf"), float("-inf")):
+        return None, "give a real number"
+    lo, hi = spec.get("min"), spec.get("max")
+    if (lo is not None and value < lo) or (hi is not None and value > hi):
+        # give them the range rather than the bound they crossed: it is more
+        # use, and it dodges "that is below 1 hours"
+        unit = spec.get("unit", "")
+        if lo is not None and hi is not None:
+            return None, f"this takes {_num(lo)} to {_num(hi)} {unit}".strip()
+        edge = f"at least {_num(lo)}" if hi is None else f"at most {_num(hi)}"
+        return None, f"this takes {edge} {unit}".strip()
+    return value, None
+
+
+def _num(v):
+    """Numbers a student typed, printed the way they typed them."""
+    f = float(v)
+    return str(int(f)) if f == int(f) else f"{f:g}"
+
+
+def format_quantity(node):
+    spec = quantity_spec(node) or {}
+    return f"{_num(node.get('chosen', 0))} {spec.get('unit', '')}".strip()
 
 
 def project_dir(name=None):
@@ -246,6 +288,10 @@ def build(project=None, session=None):
         elif node["id"] in answers:
             entry["chosen"] = answers[node["id"]]["value"]
             entry["chosen_by"] = answers[node["id"]].get("by", "?")
+            spec = quantity_spec(node)
+            if spec:
+                entry["unit"] = spec.get("unit", "")
+                entry["chosen_label"] = format_quantity(entry)
             answered.append(entry)
         elif node["id"] in withdrawn:
             # the student said this does not apply to their board. Not blocked,
@@ -287,8 +333,18 @@ def build(project=None, session=None):
     gone_ids = {n["id"] for n in irrelevant}
     for entry in answered:
         stale = [d for d in (entry.get("depends_on") or []) if d in gone_ids]
+        # A guard is the stronger relationship: `requires` says this question
+        # only applies when something holds. Answer it, then change that
+        # something, and the answer stays - a runtime recorded for a board that
+        # has since moved to a wall adapter, a 3.3 V rail on a board with no
+        # regulator. The answer is theirs to keep or withdraw; what must not
+        # stay is the rules, which now describe a board that does not exist.
+        for guard, want in (entry.get("requires") or {}).items():
+            if answers.get(guard, {}).get("value") != want:
+                stale.append(guard)
+                entry["guard_failed"] = True
         if stale:
-            entry["rests_on"] = stale
+            entry["rests_on"] = sorted(set(stale))
 
     # The student's agreed sketch is the SPINE of the diagram. The cascade adds
     # parts to it; it does not replace it. Seeding base_blocks first would show
@@ -329,10 +385,23 @@ def build(project=None, session=None):
 
     constraints, conflicts, withheld = [], [], []
     for node in answered:
-        opt = next((o for o in node.get("options", []) if o["id"] == node["chosen"]), None)
+        # A quantity node has no options to hang rules on, so its rules hang on
+        # the node. The number the student gave is substituted into the text:
+        # a rule about a quantity that cannot mention the quantity is a leaflet.
+        if node.get("answer"):
+            opt = {"locks": node.get("locks") or [], "label": format_quantity(node)}
+        else:
+            opt = next((o for o in node.get("options", []) if o["id"] == node["chosen"]), None)
         if not opt:
             continue
         for lock in opt.get("locks", []) or []:
+            # the answer survives a guard going false; its rules do not
+            if node.get("guard_failed"):
+                withheld.append({"id": lock["id"], "text": lock["text"],
+                                 "needs_block": None,
+                                 "needs": "this question to apply to your board again",
+                                 "from_node": node["id"]})
+                continue
             # A rule can presuppose a part. "One connection between analog and
             # power ground, at the regulator's output capacitor" is advice about
             # a component, and on a board that has no regulator it is not merely
@@ -348,9 +417,13 @@ def build(project=None, session=None):
                 continue
             prov = lock.get("provenance", "convention")
             src = lock.get("source") or {}
+            text = lock["text"]
+            if node.get("answer"):
+                text = text.replace("{value}", _num(node["chosen"])) \
+                           .replace("{unit}", quantity_spec(node).get("unit", ""))
             constraints.append({
                 "id": lock["id"],
-                "text": lock["text"],
+                "text": text,
                 "provenance": prov,
                 "icon": PROVENANCE.get(prov, PROVENANCE["convention"])["icon"],
                 # "check_your_part" is an id; "check your part" is what a

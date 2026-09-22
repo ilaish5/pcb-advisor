@@ -64,6 +64,29 @@ one up as a citation.
    each rule is known.
 5. Repeat.
 
+## Questions that want a number
+
+Most questions offer a shortlist. Some want a measurement, and those carry an
+`answer` block naming the unit and the range instead of `options`. "How long
+must it run on one set of cells" has no shortlist of right answers — which is
+why the tool walked a whole battery design and never asked it, the single most
+consequential number on that board.
+
+Record one with the number alone as the value:
+
+```json
+{"type":"answer","node":"req.runtime","value":8760}
+```
+
+Not `"8760 hours"`, not `"a year"`. The unit is part of the question, and a
+value the server cannot read as a number is refused — so the answer is lost and
+the student has to give it again. If they say "a year", convert it and tell
+them what you recorded.
+
+A rule that follows from a number quotes it back: `{value}` in the rule text is
+substituted with what they gave. A rule about a quantity that cannot mention
+the quantity is a leaflet.
+
 ## Questions the corpus already answered
 
 Some questions have one defensible answer, and stopping a student on vocabulary
@@ -111,8 +134,11 @@ withdrawal — a message saying so changes nothing, and they will believe you an
 carry on with a design that still contains it.
 
 Watch for `was_decided_when` on an answered question: it was decided on a premise
-that has since been taken out. It is not withdrawn automatically, because that
-would delete work nobody asked to undo. Raise it.
+that has since been taken out, or its `requires` guard no longer holds — they
+told you it runs on a battery, answered how long it must last, then moved to a
+wall adapter. The answer is not withdrawn automatically, because that would
+delete work nobody asked to undo, but the rules that followed from it go quiet,
+because they now describe a board that does not exist. Raise it.
 
 ## Rules the board is not ready for
 

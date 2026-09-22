@@ -316,3 +316,72 @@ def test_withdrawing_a_question_stops_its_default_too(battery_mcu):
     m = model.build(project=p)
     assert "mcu.decoupling" not in ids(m["answered"])
     assert "mcu.decap.place" not in ids(m["constraints"])
+
+
+# ---------------------------------------------------------------- quantities
+
+def test_a_question_can_ask_for_a_number(battery_mcu):
+    """The tool walked a whole battery design and never asked how long it had to
+    last - the most consequential number on the board - because every answer it
+    could hold was one of a fixed list."""
+    n = next(x for x in model.build(project=battery_mcu)["open"] if x["id"] == "req.runtime")
+    assert n["answer"]["kind"] == "quantity" and n["answer"]["unit"] == "hours"
+    assert not n.get("options")
+
+
+def test_the_number_is_stored_as_a_number_and_shown_with_its_unit(battery_mcu):
+    p = battery_mcu
+    _append(p, {"node": "req.runtime", "value": 8760})
+    n = next(x for x in model.build(project=p)["answered"] if x["id"] == "req.runtime")
+    assert n["chosen"] == 8760 and n["unit"] == "hours"
+    assert n["chosen_label"] == "8760 hours"
+
+
+def test_the_rules_that_follow_quote_the_number_back(battery_mcu):
+    """A rule about a quantity that cannot mention the quantity is a leaflet."""
+    p = battery_mcu
+    _append(p, {"node": "req.runtime", "value": 8760})
+    live = [c for c in model.build(project=p)["constraints"] if c["from_node"] == "req.runtime"]
+    assert live and all("8760" in c["text"] for c in live)
+    assert not any("{value}" in c["text"] for c in live)
+
+
+def test_a_value_outside_the_range_is_refused_with_the_range():
+    spec = {"kind": "quantity", "unit": "hours", "min": 1, "max": 100000}
+    for bad in (0, -5, 1e9):
+        value, why = model.coerce_quantity(spec, bad)
+        assert value is None and "1 to 100000 hours" in why
+
+
+def test_a_value_that_is_not_a_number_is_refused():
+    spec = {"kind": "quantity", "unit": "hours", "min": 1}
+    for bad in ("a year", "", None, "8760 hours"):
+        assert model.coerce_quantity(spec, bad)[0] is None
+
+
+def test_a_number_written_as_text_is_still_a_number():
+    """The browser sends the field as a string; the log should hold a number."""
+    assert model.coerce_quantity({"kind": "quantity", "unit": "h"}, " 8760 ")[0] == 8760.0
+
+
+def test_a_guard_going_false_takes_the_rules_but_leaves_the_answer(battery_mcu):
+    """req.runtime only applies to a battery. Answer it, move to a wall adapter,
+    and the answer used to stay with two cell-budget rules live on a board that
+    has no cells - the same shape as a 3.3 V rail on a board with no regulator."""
+    p = battery_mcu
+    _append(p, {"node": "req.runtime", "value": 8760})
+    assert [c for c in model.build(project=p)["constraints"] if c["from_node"] == "req.runtime"]
+
+    _append(p, {"node": "req.source", "value": "wall"})
+    m = model.build(project=p)
+    n = next(x for x in m["answered"] if x["id"] == "req.runtime")
+    assert n["chosen"] == 8760                      # their answer is not deleted
+    assert n["rests_on"] == ["req.source"]          # but it is flagged
+    assert not [c for c in m["constraints"] if c["from_node"] == "req.runtime"]
+    assert {w["id"] for w in m["withheld"]} >= {"pwr.budget", "pwr.budget.sleep"}
+
+
+def test_a_number_question_is_not_asked_when_its_guard_does_not_hold(board):
+    p = board(blocks=(("J1", "power_in"), ("MCU", "mcu")), links=(("J1", "MCU"),),
+              decisions=({"node": "req.source", "value": "wall"},))
+    assert "req.runtime" not in ids(model.build(project=p)["open"])

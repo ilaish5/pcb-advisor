@@ -100,10 +100,42 @@ def check(path, producible=frozenset()):
                     errors.append(f"{nid}: default rule {i + 1} has no `when`, so no "
                                   f"rule after it can ever match")
 
-        if not node.get("options"):
+        # A node asks for a CHOICE or for a NUMBER, never both and never neither.
+        # The two carry their rules in different places - an options node on the
+        # option, a quantity node on the node - and a node with both would have
+        # two answers for one question.
+        spec = node.get("answer") or None
+        if spec and node.get("options"):
+            errors.append(f"{nid}: has both `options` and `answer` - a question "
+                          f"asks for a choice or for a number, not both")
+        elif spec:
+            if spec.get("kind") != "quantity":
+                errors.append(f"{nid}: answer.kind must be 'quantity', "
+                              f"got {spec.get('kind')!r}")
+            if not spec.get("unit"):
+                errors.append(f"{nid}: a number without a unit cannot be compared "
+                              f"with anything - answer.unit is required")
+            lo, hi = spec.get("min"), spec.get("max")
+            if lo is not None and hi is not None and lo >= hi:
+                errors.append(f"{nid}: answer.min {lo} is not below answer.max {hi}")
+            if not node.get("locks"):
+                warnings.append(f"{nid}: asks for a number and records nothing - "
+                                f"the student types it and nothing follows")
+            for lock in node.get("locks") or []:
+                if "{value}" not in (lock.get("text") or ""):
+                    warnings.append(f"{lock.get('id', nid)}: follows from a number "
+                                    f"but never mentions it - use {{value}}")
+        elif node.get("locks"):
+            errors.append(f"{nid}: has `locks` but asks for a choice - rules belong "
+                          f"on the option that locks them")
+        elif not node.get("options"):
             errors.append(f"{nid}: no options")
 
-        for opt in node.get("options", []) or []:
+        if spec and node.get("default"):
+            errors.append(f"{nid}: a number cannot have a default option - if the "
+                          f"corpus knows the value, this is not a question")
+
+        for opt in (node.get("options") or []) + ([node] if spec else []):
             oid = opt.get("id", "?")
             for lock in opt.get("locks", []) or []:
                 lid = lock.get("id")

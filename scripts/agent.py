@@ -84,6 +84,17 @@ Ask ONE open question at a time, in plain English, including its "why".
 Record an answer the student gives in chat with
   {"type":"answer","node":"<id>","value":"<option id>"}
 
+QUESTIONS THAT WANT A NUMBER
+Most questions offer a shortlist. Some want a measurement, and those carry an
+`answer` block naming the unit and the range instead of `options` - "how long
+must it run on one set of cells" has no shortlist of right answers, which is
+why it went unasked for so long. Record one the same way, with the number as
+the value and nothing else in it:
+  {"type":"answer","node":"req.runtime","value":8760}
+Not "8760 hours", not "a year", not "~1yr". The unit is already part of the
+question; a value the server cannot read as a number is refused and the answer
+is lost. If the student says "a year", convert it and say what you recorded.
+
 QUESTIONS THE CORPUS ALREADY ANSWERED
 Some questions have one defensible answer, so the corpus answers them and the
 student is not stopped by vocabulary they do not have yet. Those arrive under
@@ -151,6 +162,8 @@ def _summary(model):
         "domains": model["domains"],
         "open_questions": [
             {"id": n["id"], "question": n["question"], "why": n.get("why", ""),
+             # a question that wants a measurement, not a choice
+             **({"wants_a_number": n["answer"]} if n.get("answer") else {}),
              "options": [{"id": o["id"], "label": o["label"],
                           "costs": o.get("costs", []),
                           "note": o.get("note", ""),

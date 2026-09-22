@@ -136,6 +136,16 @@ def redraw(project):
         print(f"render failed: {exc}")
 
 
+def _checked_value(project, node_id, raw, m=None):
+    """(value, error). A question that asks for a number gets one checked here,
+    because decisions.jsonl is append-only and nothing edits it afterwards."""
+    m = m or model.build(project=project)
+    node = next((n for n in m["open"] + m["answered"] + m["blocked"]
+                 if n["id"] == node_id), None)
+    spec = model.quantity_spec(node) if node else None
+    return model.coerce_quantity(spec, raw) if spec else (raw, None)
+
+
 def apply_actions(project, actions):
     """The server is the only writer. Agents propose; this applies."""
     applied = []
@@ -149,9 +159,15 @@ def apply_actions(project, actions):
                 "confirmed": bool(a.get("confirmed", False)),
             })
             applied.append("sketch")
-        elif kind == "answer" and a.get("node") and a.get("value"):
+        elif kind == "answer" and a.get("node") and a.get("value") not in (None, ""):
+            value, why = _checked_value(project, a["node"], a["value"])
+            if why:
+                # a number the model wrote as prose is not an answer, and the
+                # log is append-only: there is no cleaning it up afterwards
+                print(f"(answer dropped: {a['node']} - {why})")
+                continue
             append(project, "decisions.jsonl", {"ts": now(), "node": a["node"],
-                                                "value": a["value"], "by": "agent"})
+                                                "value": value, "by": "agent"})
             applied.append(f"answer:{a['node']}")
         elif kind == "retract" and a.get("node"):
             # the one action that can take something OUT of the design. It is
@@ -274,22 +290,27 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "bad json"})
 
         if path == "/api/answer":
-            if not data.get("node") or not data.get("value"):
+            if not data.get("node") or data.get("value") in (None, ""):
                 return self._send(400, {"error": "node and value required"})
-            before = {c["id"] for c in model.build(project=proj, session=sess)["constraints"]}
+            before_m = model.build(project=proj, session=sess)
+            value, why = _checked_value(proj, data["node"], data["value"], before_m)
+            if why:
+                return self._send(400, {"error": why})
+            before = {c["id"] for c in before_m["constraints"]}
             append(proj, "decisions.jsonl", {"ts": now(), "node": data["node"],
-                                             "value": data["value"], "by": data.get("by", "user")})
+                                             "value": value, "by": data.get("by", "user")})
             after = model.build(project=proj, session=sess)
             gained = [c for c in after["constraints"] if c["id"] not in before]
             node = next((n for n in after["answered"] if n["id"] == data["node"]), {})
-            opt = next((o for o in node.get("options", []) if o["id"] == data["value"]), {})
+            opt = next((o for o in node.get("options", []) if o["id"] == value), {})
+            shown = node.get("chosen_label") or opt.get("label", value)
             # an answer that records nothing because the board lacks a part is
             # not the same as one the corpus has nothing to say about, and the
             # student should not have to guess which of the two just happened
             held = [w for w in after["withheld"] if w["from_node"] == data["node"]]
             say(proj, sess, {
                 "ts": now(), "role": "decision",
-                "text": f"{node.get('question', data['node'])}  ->  {opt.get('label', data['value'])}",
+                "text": f"{node.get('question', data['node'])}  ->  {shown}",
                 "node": data["node"],
                 "locked": [{"id": c["id"], "text": c["text"], "icon": c["icon"],
                             "verified": c["verified"]} for c in gained],

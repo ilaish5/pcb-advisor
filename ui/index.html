@@ -303,6 +303,11 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 .card.corpus{border-style:dashed}
 .card.corpus .a{font-weight:500}
 .card .why{margin-top:5px;font-size:12px;line-height:1.5;color:var(--dim)}
+.qty{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
+.qty input{width:140px;background:var(--field);color:var(--ink);border:1px solid var(--line);
+  border-radius:8px;padding:8px 10px;font:inherit;font-size:14px}
+.qty .unit{color:var(--dim);font-size:13px}
+.qty .thr-err{flex-basis:100%}
 
 /* cards, not tables: the rail is narrow and a two-column table clips */
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
@@ -942,11 +947,23 @@ function paint(){
   // the live question sits at the end of the conversation, with its answers attached
   if(S.open && S.open.length){
     const n=S.open[0];
+    // A question can want a number rather than a choice. "How long must it run"
+    // has no shortlist of right answers, which is why it was never asked.
+    const q=n.answer;
     h+=`<div class="ask" dir="${bi(n.question)}"><div class="q">${txt(n.question)}</div>
-      <div class="why">${txt(n.why||'')}</div><div class="opts">` +
-      (n.options||[]).map(o=>`<button class="opt" dir="${bi(o.label)}" onclick="answer('${n.id}','${o.id}')">
-        ${txt(o.label)}${optWeight(o)}
-      </button>`).join('') + `</div></div>`;
+      <div class="why">${txt(n.why||'')}</div>` + (q
+      ? `<div class="qty">
+           <input id="qty-in" type="number" inputmode="decimal" step="any"
+             ${q.min!=null?`min="${q.min}"`:''} ${q.max!=null?`max="${q.max}"`:''}
+             placeholder="${esc(q.hint||'')}"
+             onkeydown="if(event.key==='Enter')answerQty('${esc(n.id)}')">
+           <span class="unit">${esc(q.unit||'')}</span>
+           <button onclick="answerQty('${esc(n.id)}')">Record</button>
+           ${QTY_ERR?`<div class="thr-err" dir="auto">${esc(QTY_ERR)}</div>`:''}</div>`
+      : `<div class="opts">` +
+        (n.options||[]).map(o=>`<button class="opt" dir="${bi(o.label)}" onclick="answer('${n.id}','${o.id}')">
+          ${txt(o.label)}${optWeight(o)}
+        </button>`).join('') + `</div>`) + `</div>`;
   }
   if(busy) h+=`<div class="msg advisor"><div class="thinking"><i></i>the advisor is working…</div></div>`;
   if(!h) h=`<div class="empty">Describe what you want to build.<br>
@@ -995,7 +1012,7 @@ function renderPanel(force){
         const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
         return `<div class="card">
           <div class="q" dir="auto">${txt(n.question)}</div>
-          <div class="a" dir="auto">${txt(o.label||n.chosen)}</div>
+          <div class="a" dir="auto">${txt(n.chosen_label||o.label||n.chosen)}</div>
           ${restsOn(n)}
           <div class="foot"><span class="pill">${esc(n.domain)}</span>${badge(n.id)}
             ${DROPPING===n.id?''
@@ -1340,7 +1357,22 @@ async function rewriteMemory(){
   } finally { b.disabled=false; b.textContent='Rewrite now'; await load(); renderPanel(); }
 }
 
+let QTY_ERR=null;
+
+/* A typed number. The server checks it against the unit and range the question
+   declares, because decisions.jsonl is append-only and "about a year" written
+   into it once is written into it for good. */
+async function answerQty(node){
+  const el=$('qty-in'); const raw=(el?el.value:'').trim();
+  if(!raw){ QTY_ERR='Type a number.'; return paint(); }
+  el.disabled=true; QTY_ERR=null;
+  const r=await post('/api/answer',{node, value:raw, by:'user'});
+  if(r.ok) return load();
+  QTY_ERR=r.error; paint();
+}
+
 async function answer(node,value){
+  QTY_ERR=null;
   const r=await post('/api/answer',{node,value,by:'user'});
   if(r.ok) return load();
   if(S){ S.chat=[...(S.chat||[]), {role:'agent',

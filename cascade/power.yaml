@@ -93,6 +93,29 @@ nodes:
             provenance: standard
             source: {doc: "IPC-2221", locator: "section 6.2"}
 
+  # The tool walked a whole battery design and never asked this, because every
+  # answer it could hold was one of a fixed list and a runtime is a number. It
+  # is the most consequential fact about a battery board and it had nowhere to
+  # live.
+  - id: req.runtime
+    type: requirement
+    question: "How long must it run on one set of cells?"
+    why: "Every part that draws current spends the same budget. Until this number exists there is nothing to measure a part against, and a quiescent current of 1 mA looks as harmless as one of 1 uA."
+    requires: {req.source: battery}
+    answer:
+      kind: quantity
+      unit: "hours"
+      min: 1
+      max: 100000
+      hint: "a day is 24, a year is 8760"
+    locks:
+      - id: pwr.budget
+        text: "Everything on this board shares one budget: your cell's capacity divided by {value} hours. Look the capacity up in mAh, divide, and check every part's quiescent current against that number before you check anything else about it."
+        provenance: convention
+      - id: pwr.budget.sleep
+        text: "Over {value} hours the board spends almost all its time idle, so it is the SLEEPING current that sets the lifetime, not the working current. Measure the idle draw of each part, not its datasheet headline."
+        provenance: convention
+
   - id: req.env
     type: requirement
     question: "Where does the board live?"
