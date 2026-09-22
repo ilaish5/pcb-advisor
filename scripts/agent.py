@@ -6,16 +6,18 @@ It gets no file access and no tools.  The SERVER applies the actions, which
 keeps one writer and means any model or runtime can be dropped in behind this
 interface without touching the rest of the tool.
 
-Backends:
-  claude    spawn `claude -p`, parse a JSON block off stdout
-  external  do nothing; an agent attached elsewhere is driving the folder
+This file owns the protocol - the rules, the state summary, and pulling the
+actions block back out of the reply.  It does not own the engine: which engine
+runs is `scripts/gateway/`, configured by `agent.provider`.
 """
 import json
 import pathlib
 import re
-import subprocess
+import sys
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import gateway     # noqa: E402
+import workspace   # noqa: E402
 
 RULES = """You are the PCB design advisor. You walk a student down a decision cascade.
 
@@ -91,27 +93,31 @@ def _parse(text):
     return reply, actions
 
 
-def respond(model, message, history, backend="claude", timeout=180):
-    if backend == "external":
-        return {"reply": None, "actions": [], "backend": "external"}
+def respond(model, message, history, backend=None, timeout=None):
+    """(state, message) -> {reply, actions}. `backend` names an engine; None
+    means whatever `agent.provider` is set to."""
+    name = gateway.resolve(backend)
+    if name == "external":
+        return {"reply": None, "actions": [], "backend": name, "provider": name}
 
-    convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-8:])
+    keep = int(workspace.get("agent.history_messages", 8))
+    convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-keep:])
     prompt = (f"{RULES}\n\n--- CURRENT STATE ---\n{_summary(model)}\n\n"
               f"--- CONVERSATION SO FAR ---\n{convo}\n\n"
               f"--- STUDENT SAYS ---\n{message}\n")
-    try:
-        proc = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "text"],
-            cwd=str(ROOT), capture_output=True, text=True, timeout=timeout)
-    except FileNotFoundError:
-        return {"reply": "No `claude` CLI on PATH. Set backend=external and drive the "
-                         "project folder from your own agent.", "actions": [], "error": True}
-    except subprocess.TimeoutExpired:
-        return {"reply": "The agent timed out.", "actions": [], "error": True}
 
-    if proc.returncode != 0:
-        return {"reply": f"Agent failed: {(proc.stderr or '').strip()[:400]}",
-                "actions": [], "error": True}
+    res = gateway.route(gateway.Request(
+        prompt=prompt,
+        system=RULES,
+        history=[{"role": m.get("role"), "text": m.get("text")} for m in history[-keep:]],
+        timeout=int(timeout or workspace.get("agent.timeout_seconds", 180)),
+    ), name=name)
 
-    reply, actions = _parse(proc.stdout)
-    return {"reply": reply or "(no reply)", "actions": actions, "backend": "claude"}
+    if not res.ok:
+        return {"reply": f"[{res.provider or name}] {res.error}", "actions": [],
+                "backend": res.provider or name, "provider": res.provider or name,
+                "error": True}
+
+    reply, actions = _parse(res.text)
+    return {"reply": reply or "(no reply)", "actions": actions,
+            "backend": res.provider, "provider": res.provider, "model": res.model}

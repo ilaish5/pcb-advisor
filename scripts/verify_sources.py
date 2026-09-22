@@ -10,14 +10,13 @@ import sys
 import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import sources  # noqa: E402
-
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+import sources    # noqa: E402
+import workspace  # noqa: E402
 
 
 def main():
     checked = passed = failed = skipped = 0
-    for path in sorted((ROOT / "cascade").glob("*.yaml")):
+    for path in sorted(workspace.cascade_dir().glob("*.yaml")):
         cas = yaml.safe_load(path.read_text(encoding="utf-8"))
         for node in cas.get("nodes", []):
             for opt in node.get("options", []) or []:

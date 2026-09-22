@@ -177,7 +177,9 @@ input[type=text]{flex:1;background:var(--card);border:1px solid var(--line);
 
 <script>
 let S=null, busy=false, TAB='decisions';
-let PROJ=new URLSearchParams(location.search).get('project')||'demo';
+let CFG=null;
+// no project in the URL means "whatever config calls the default" - boot() fills it in
+let PROJ=new URLSearchParams(location.search).get('project')||'';
 const $=id=>document.getElementById(id);
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const HEB=/[\u0590-\u05FF]/;
@@ -193,6 +195,7 @@ const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ);
 
 async function loadProjects(){
   const r=await (await fetch('/api/projects')).json();
+  if(!PROJ) PROJ=r.default;
   $('projsel').innerHTML=r.projects.map(p=>
     `<option value="${esc(p.name)}" ${p.name===PROJ?'selected':''}>${esc(p.name)}</option>`).join('');
 }
@@ -543,5 +546,11 @@ function upload(input){
     input.value=''; load(); };
   rd.readAsDataURL(f);
 }
-loadProjects(); load(); setInterval(()=>{if(!busy)load();},3000);
+async function boot(){
+  try{ CFG=await (await fetch('/api/config')).json(); }catch(e){ CFG=null; }
+  await loadProjects();          // settles PROJ before the first state fetch
+  await load();
+  setInterval(()=>{if(!busy)load();},3000);
+}
+boot();
 </script>

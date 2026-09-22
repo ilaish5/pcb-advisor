@@ -19,7 +19,9 @@ import sys
 
 import yaml
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import workspace  # noqa: E402
+
 VALID = {"computed", "standard", "datasheet", "convention"}
 
 
@@ -94,10 +96,10 @@ def check(path):
     return errors, warnings, len(node_ids), stats
 
 
-if __name__ == "__main__":
+def main():
     failed = False
     totals = {k: 0 for k in VALID}
-    for path in sorted((ROOT / "cascade").glob("*.yaml")):
+    for path in sorted(workspace.cascade_dir().glob("*.yaml")):
         errors, warnings, n_nodes, stats = check(path)
         for k, v in stats.items():
             totals[k] += v
@@ -109,6 +111,10 @@ if __name__ == "__main__":
             print(f"  FAIL  {e}")
         failed = failed or bool(errors)
 
-    print(f"\ntotals: " + "  ".join(f"{k}={v}" for k, v in totals.items()))
+    print("\ntotals: " + "  ".join(f"{k}={v}" for k, v in totals.items()))
     print("FAILED" if failed else "ok - every constraint declares how it is known")
-    sys.exit(1 if failed else 0)
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

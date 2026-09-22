@@ -1,3 +1,7 @@
+# Your machine's settings. config/defaults.json holds the shipped values and IS
+# tracked; this file holds only what you changed. `python3 pcb.py init` makes it.
+config.json
+
 # Vendor documents are not ours to redistribute. The .json beside each one keeps
 # the URL and sha256, and `python3 scripts/sources.py restore` fetches them back.
 shared/datasheets/*

@@ -6,12 +6,13 @@ state files; it never writes the model.  Everything the UI shows is derived here
 """
 import json
 import pathlib
-import re
 import sys
 
 import yaml
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import project as project_mod  # noqa: E402
+import workspace  # noqa: E402
 
 PROVENANCE = {
     "computed":   {"icon": "📐", "label": "computed",  "rank": 0},
@@ -26,7 +27,7 @@ PROVENANCE = {
 def load_cascades():
     """All domains, keyed by domain name."""
     out = {}
-    for path in sorted((ROOT / "cascade").glob("*.yaml")):
+    for path in sorted(workspace.cascade_dir().glob("*.yaml")):
         cas = yaml.safe_load(path.read_text(encoding="utf-8"))
         out[cas["domain"]] = cas
     return out
@@ -38,15 +39,17 @@ def load_jsonl(path):
     return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
 
 
-def project_dir(name):
-    return ROOT / "projects" / name
+def project_dir(name=None):
+    return workspace.project_dir(name)
 
 
 # ---------------------------------------------------------------- building
 
-def build(project="demo"):
+def build(project=None):
+    project = workspace.safe_name(project or workspace.default_project())
     cascades = load_cascades()
     pdir = project_dir(project)
+    meta = project_mod.load_meta(project)
     events = load_jsonl(pdir / "decisions.jsonl")
     messages = load_jsonl(pdir / "threads.jsonl")
     chat = load_jsonl(pdir / "chat.jsonl")
@@ -155,6 +158,9 @@ def build(project="demo"):
 
     return {
         "project": project,
+        "title": meta.get("title") or project,
+        "meta": meta,
+        "board": {**workspace.get("engineering_defaults", {}), **(meta.get("board") or {})},
         "stage": "sketch" if not sketch.get("confirmed") else "cascade",
         "sketch": sketch,
         "unmapped_blocks": unmapped,
@@ -238,7 +244,7 @@ def save_sketch(project, sketch):
 def list_sources(project):
     out = []
     for scope, d in (("project", project_dir(project) / "sources"),
-                     ("shared", ROOT / "shared" / "datasheets")):
+                     ("shared", workspace.datasheets_dir())):
         if not d.exists():
             continue
         for f in sorted(d.iterdir()):
@@ -252,48 +258,17 @@ def list_sources(project):
 
 def list_projects():
     """Every project in the workspace, newest activity first."""
-    root = ROOT / "projects"
-    root.mkdir(parents=True, exist_ok=True)
-    out = []
-    for d in root.iterdir():
-        if not d.is_dir() or d.name.startswith("."):
-            continue
-        sketch = load_sketch(d)
-        decisions = load_jsonl(d / "decisions.jsonl")
-        chat = load_jsonl(d / "chat.jsonl")
-        stamps = [e.get("ts", "") for e in decisions + chat if e.get("ts")]
-        out.append({
-            "name": d.name,
-            "brief": sketch.get("brief") or (chat[0]["text"][:80] if chat else ""),
-            "blocks": len(sketch.get("blocks", [])),
-            "decisions": len({e["node"] for e in decisions if e.get("node")}),
-            "messages": len(chat),
-            "confirmed": bool(sketch.get("confirmed")),
-            "updated": max(stamps) if stamps else "",
-        })
-    out.sort(key=lambda p: p["updated"], reverse=True)
-    return out
+    return project_mod.list_all()
 
 
 def create_project(name):
-    safe = re.sub(r"[^A-Za-z0-9._-]", "-", name).strip("-")[:60] or "untitled"
-    d = ROOT / "projects" / safe
-    if d.exists():
-        n = 2
-        while (ROOT / "projects" / f"{safe}-{n}").exists():
-            n += 1
-        safe = f"{safe}-{n}"
-        d = ROOT / "projects" / safe
-    (d / "sources").mkdir(parents=True, exist_ok=True)
-    for f in ("decisions.jsonl", "threads.jsonl", "chat.jsonl"):
-        (d / f).touch()
-    save_sketch(safe, {"brief": "", "blocks": [], "links": [], "confirmed": False})
-    return safe
+    """Instantiate the project template. Returns the folder name used."""
+    return project_mod.create(name)
 
 
-def write(project="demo"):
+def write(project=None):
     m = build(project)
-    pdir = project_dir(project)
+    pdir = project_dir(m["project"])
     pdir.mkdir(parents=True, exist_ok=True)
     (pdir / "design-model.json").write_text(
         json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -301,7 +276,7 @@ def write(project="demo"):
 
 
 if __name__ == "__main__":
-    proj = sys.argv[1] if len(sys.argv) > 1 else "demo"
+    proj = sys.argv[1] if len(sys.argv) > 1 else workspace.default_project()
     m = write(proj)
     p = m["progress"]
     print(f"{proj}: stage={m['stage']} domains={m['domains'] or '-'}")

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "name": "__NAME__",
+  "title": "__TITLE__",
+  "brief": "__BRIEF__",
+  "created": "__NOW__",
+  "updated": "__NOW__",
+  "owner": "__OWNER__",
+  "status": "draft",
+  "tags": [],
+  "board": {},
+  "notes": ""
+}

@@ -1,0 +1,87 @@
+# Configuration
+
+Everything is a local file. Nothing is stored anywhere you cannot open in an editor.
+
+```
+config/defaults.json   shipped with the repo, always complete, tracked in git
+config.json            yours, local, gitignored — only what you changed
+environment            PCB_ADVISOR_HOME, PCB_ADVISOR_CONFIG, PCB_ADVISOR_PORT,
+                       PCB_ADVISOR_PROVIDER
+```
+
+They layer in that order. `python3 pcb.py init` writes `config.json`; every other
+key falls through to the defaults, so you inherit future defaults instead of
+freezing today's. Saving writes back **only the difference** — that is why your
+`config.json` stays three lines long.
+
+```bash
+python3 pcb.py config                        # the effective config, merged
+python3 pcb.py config server.port            # one value
+python3 pcb.py config server.port 9000       # set it
+python3 pcb.py config user.language he
+python3 pcb.py config agent.provider external
+```
+
+A key that no default declares is reported as a warning at startup — a typo in a
+config file should not fail silently.
+
+## The sections
+
+### `workspace` — where things live
+
+| key | default | note |
+|---|---|---|
+| `projects_dir` | `projects` | your designs |
+| `shared_dir` | `shared` | the document cache, shared by every project |
+| `cascade_dir` | `cascade` | the knowledge graphs |
+| `reference_dir` | `reference` | the same knowledge, for a human |
+| `templates_dir` | `templates` | what `pcb.py new` copies |
+| `ui_dir` | `ui` | the browser UI |
+
+A relative path resolves against the **workspace home**; an absolute one is used
+as-is, so `projects_dir` can point at Dropbox or a git repo of your own.
+
+`PCB_ADVISOR_HOME` moves the workspace. Your work (`projects`, `shared`) follows
+it; the corpus (`cascade`, `reference`, `templates`, `ui`) stays with the install,
+because the knowledge is part of the program, not of your data:
+
+```bash
+PCB_ADVISOR_HOME=~/Documents/boards python3 pcb.py init
+PCB_ADVISOR_HOME=~/Documents/boards python3 pcb.py serve
+```
+
+### `server`
+
+| key | default |
+|---|---|
+| `host` | `127.0.0.1` — localhost only, on purpose |
+| `port` | `8931` |
+| `default_project` | `demo` |
+| `open_browser` | `true` |
+
+### `user`
+
+`name` (stamped as a project's owner), `language` (`auto` follows what you type),
+`units` (`mm` / `mil`), `show_unverified`, `theme`.
+
+### `agent`
+
+Which LLM engine answers, and how. See [gateway.md](gateway.md).
+
+| key | default |
+|---|---|
+| `provider` | `claude_code` |
+| `timeout_seconds` | `180` |
+| `history_messages` | `8` — how much conversation goes with each turn |
+| `providers.<id>` | per-engine settings (command, model, enabled) |
+
+### `engineering_defaults`
+
+The starting point for a new board: `layers`, `copper_oz`, `trace_layer`,
+`ambient_c`, `max_temp_rise_c`, `min_track_mm`, `min_clearance_mm`,
+`min_via_drill_mm`, `board_finish`, `assembly`.
+
+These are **copied** into `project.json` when a project is created, and the copy
+is what the project uses from then on. Changing a default later does not rewrite
+boards you already started — a design that was calculated for 1 oz copper must
+not silently become a 2 oz design.

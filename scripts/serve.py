@@ -5,25 +5,32 @@ All reasoning lives in model.py; all knowledge lives in cascade/ and sources/.
 This file reads state, appends to it, and applies agent actions.  Keeping one
 writer is what stops the two-sources-of-truth failure.
 
-    python3 scripts/serve.py [project] [port]
+Nothing here is hardcoded: ports, paths, the default project and which LLM
+engine to route to all come from config.json (see scripts/workspace.py).
+
+    python3 pcb.py serve [--project NAME] [--port N] [--engine ID]
 """
+import argparse
 import base64
 import datetime as dt
 import json
 import pathlib
 import sys
+import threading
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import agent             # noqa: E402
+import gateway           # noqa: E402
 import model             # noqa: E402
-import render_schematic  # noqa: E402
+import project as project_mod  # noqa: E402
 import sources           # noqa: E402
+import workspace         # noqa: E402
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-BACKEND = "claude"
-DEFAULT_PROJECT = "demo"
+BACKEND = None            # set at startup; None means "whatever config says"
+DEFAULT_PROJECT = None
 
 
 def now():
@@ -35,12 +42,20 @@ def append(project, filename, record):
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    project_mod.touch(project)          # so the project list sorts by real activity
 
 
 def redraw(project):
+    """The drawing stack is optional. A decision must never be lost to a bad
+    picture - or to schemdraw not being installed."""
+    try:
+        import render_schematic
+    except ImportError as exc:
+        print(f"(no diagram: {exc}. pip install -r requirements.txt)")
+        return
     try:
         render_schematic.render(project)
-    except Exception as exc:            # a decision must never be lost to a bad picture
+    except Exception as exc:
         print(f"render failed: {exc}")
 
 
@@ -76,8 +91,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def project(self):
         q = parse_qs(urlparse(self.path).query)
-        name = (q.get("project") or [DEFAULT_PROJECT])[0]
-        return pathlib.Path(name).name or DEFAULT_PROJECT
+        name = (q.get("project") or [DEFAULT_PROJECT or workspace.default_project()])[0]
+        return workspace.safe_name(name)
 
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
         if isinstance(body, (dict, list)):
@@ -95,15 +110,26 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
-            return self._send(200, (ROOT / "ui" / "index.html").read_text(encoding="utf-8"),
+            return self._send(200, (workspace.ui_dir() / "index.html").read_text(encoding="utf-8"),
                               "text/html; charset=utf-8")
         if path == "/api/projects":
             return self._send(200, {"projects": model.list_projects(),
-                                    "default": DEFAULT_PROJECT})
+                                    "default": DEFAULT_PROJECT or workspace.default_project()})
         if path == "/api/state":
             m = model.build(project=self.project())
-            m["backend"] = BACKEND
+            m["backend"] = gateway.resolve(BACKEND)
+            m["engine"] = gateway.resolve(BACKEND)
             return self._send(200, m)
+        if path == "/api/config":
+            cfg = workspace.load()
+            return self._send(200, {
+                "user": cfg.get("user", {}),
+                "engineering_defaults": cfg.get("engineering_defaults", {}),
+                "server": {"default_project": DEFAULT_PROJECT or workspace.default_project()},
+                "engine": gateway.resolve(BACKEND),
+                "engines": gateway.describe_all(),
+                "home": str(workspace.home()),
+            })
         if path == "/api/schematic.svg":
             proj = self.project()
             svg = model.project_dir(proj) / "artifacts" / "blocks.svg"
@@ -114,7 +140,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/source/"):
             name = unquote(path.split("/api/source/", 1)[1])
             for base in (model.project_dir(self.project()) / "sources",
-                         ROOT / "shared" / "datasheets"):
+                         workspace.datasheets_dir()):
                 f = base / pathlib.Path(name).name
                 if f.exists():
                     ctype = "application/pdf" if f.suffix == ".pdf" else "text/plain; charset=utf-8"
@@ -177,10 +203,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/projects/new":
             name = (data.get("name") or "").strip() or "untitled"
-            created = model.create_project(name)
+            created = project_mod.create(name, title=data.get("title") or name,
+                                     brief=data.get("brief", ""))
             redraw(created)
             return self._send(200, {"created": created,
                                     "projects": model.list_projects()})
+
+        if path == "/api/project/meta":
+            # title, status, tags, and this board's engineering settings
+            meta = project_mod.load_meta(proj)
+            for key in ("title", "brief", "status", "tags", "notes"):
+                if key in data:
+                    meta[key] = data[key]
+            if isinstance(data.get("board"), dict):
+                meta["board"] = {**(meta.get("board") or {}), **data["board"]}
+            project_mod.save_meta(proj, meta)
+            project_mod.touch(proj)
+            return self._send(200, model.build(project=proj))
 
         if path == "/api/upload":
             # base64 in JSON rather than multipart: the stdlib cgi module was
@@ -235,11 +274,46 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
 
-if __name__ == "__main__":
-    DEFAULT_PROJECT = sys.argv[1] if len(sys.argv) > 1 else "demo"
-    port = int(sys.argv[2]) if len(sys.argv) > 2 else 8931
-    BACKEND = sys.argv[3] if len(sys.argv) > 3 else "claude"
+def main(argv=None):
+    global BACKEND, DEFAULT_PROJECT
+
+    cfg = workspace.load()
+    ap = argparse.ArgumentParser(prog="serve", description="pcb-advisor server")
+    ap.add_argument("project", nargs="?", help="project to open (default: from config)")
+    ap.add_argument("port", nargs="?", type=int, help="port (default: from config)")
+    ap.add_argument("engine", nargs="?", help="LLM engine id (default: from config)")
+    ap.add_argument("--project", dest="project_opt")
+    ap.add_argument("--port", dest="port_opt", type=int)
+    ap.add_argument("--engine", "--backend", dest="engine_opt")
+    ap.add_argument("--host", dest="host_opt")
+    ap.add_argument("--no-browser", action="store_true")
+    a = ap.parse_args(argv)
+
+    DEFAULT_PROJECT = workspace.safe_name(
+        a.project_opt or a.project or cfg["server"]["default_project"])
+    port = a.port_opt or a.port or int(cfg["server"]["port"])
+    host = a.host_opt or cfg["server"]["host"]
+    BACKEND = gateway.resolve(a.engine_opt or a.engine)
+
+    for key in workspace.unknown_keys():
+        print(f"  warning: unknown config key {key}")
+
+    project_mod.ensure(DEFAULT_PROJECT)
     redraw(DEFAULT_PROJECT)
-    print(f"pcb-advisor  workspace={ROOT.name}  backend={BACKEND}  "
-          f"http://localhost:{port}")
-    ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+
+    url = f"http://{host}:{port}"
+    ok, why = gateway.provider(BACKEND).available()
+    print(f"pcb-advisor  home={workspace.home()}  project={DEFAULT_PROJECT}")
+    print(f"             engine={BACKEND}" + ("" if ok else f"  (unavailable: {why})"))
+    print(f"             {url}")
+
+    if cfg["server"].get("open_browser") and not a.no_browser:
+        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    try:
+        ThreadingHTTPServer((host, port), Handler).serve_forever()
+    except KeyboardInterrupt:
+        print("\nstopped")
+
+
+if __name__ == "__main__":
+    main()

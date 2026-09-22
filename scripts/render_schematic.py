@@ -20,7 +20,8 @@ import schemdraw
 import schemdraw.elements as elm
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import model  # noqa: E402
+import model      # noqa: E402
+import workspace  # noqa: E402
 
 try:
     from bidi import get_display
@@ -103,9 +104,9 @@ def layers(blocks, links):
     return layer
 
 
-def render(project="demo"):
+def render(project=None):
     m = model.build(project=project)
-    pdir = model.project_dir(project)
+    pdir = model.project_dir(m["project"])
     (pdir / "artifacts").mkdir(parents=True, exist_ok=True)
     svg = pdir / "artifacts" / "blocks.svg"
 
@@ -187,6 +188,6 @@ def _chain(d, m):
 
 
 if __name__ == "__main__":
-    proj = sys.argv[1] if len(sys.argv) > 1 else "demo"
+    proj = sys.argv[1] if len(sys.argv) > 1 else workspace.default_project()
     svg, png = render(proj)
     print(f"wrote {svg.name}, {png.name}")

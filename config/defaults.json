@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+
+  "workspace": {
+    "projects_dir": "projects",
+    "shared_dir": "shared",
+    "cascade_dir": "cascade",
+    "reference_dir": "reference",
+    "templates_dir": "templates",
+    "ui_dir": "ui"
+  },
+
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8931,
+    "default_project": "demo",
+    "open_browser": true
+  },
+
+  "user": {
+    "name": "",
+    "language": "auto",
+    "units": "mm",
+    "show_unverified": true,
+    "theme": "light"
+  },
+
+  "agent": {
+    "provider": "claude_code",
+    "timeout_seconds": 180,
+    "history_messages": 8,
+    "providers": {
+      "claude_code": {
+        "enabled": true,
+        "command": "claude",
+        "args": ["-p", "--output-format", "text"],
+        "model": ""
+      },
+      "external": {
+        "enabled": true
+      },
+      "codex": {
+        "enabled": false,
+        "command": "codex",
+        "args": [],
+        "model": ""
+      },
+      "antigravity": {
+        "enabled": false,
+        "command": "antigravity",
+        "args": [],
+        "model": ""
+      },
+      "openai_api": {
+        "enabled": false,
+        "base_url": "",
+        "model": "",
+        "api_key_env": "OPENAI_API_KEY"
+      }
+    }
+  },
+
+  "engineering_defaults": {
+    "layers": 2,
+    "copper_oz": 1.0,
+    "trace_layer": "external",
+    "ambient_c": 25,
+    "max_temp_rise_c": 10,
+    "min_track_mm": 0.2,
+    "min_clearance_mm": 0.2,
+    "min_via_drill_mm": 0.3,
+    "board_finish": "HASL",
+    "assembly": "reflow"
+  }
+}

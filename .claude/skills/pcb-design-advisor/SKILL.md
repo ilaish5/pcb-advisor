@@ -23,7 +23,7 @@ A confident wrong layout rule is worse than no tool.
 
 ## Loop
 
-1. `python3 scripts/model.py <project>` — see what is open, blocked, answered.
+1. `python3 pcb.py show <project>` — see what is open, blocked, answered.
 2. Pick **one** open node. Ask its question, in the user's language, with the `why`.
    Anchor the question on that node id:
    `POST /api/message {"anchor":"<node id>","text":"...","role":"agent"}`
@@ -43,8 +43,10 @@ Anchor on a constraint id when the user challenges a rule or wants the reasoning
 ## What is derived — never hand-edit
 
 `design-model.json`, `constraints.md`, `artifacts/*` are all regenerated from
-`decisions.jsonl` + the cascade. The only writable state is the two `.jsonl` logs,
-and they are append-only: to change an answer, append a new one.
+`decisions.jsonl` + the cascade. Writable state is the three `.jsonl` logs
+(append-only: to change an answer, append a new one), `sketch.json`, and
+`project.json` — the last holds the project's title and its board settings
+(layers, copper weight, temperature rise) which seed the calculation scripts.
 
 ## Scripts, not guesses
 
@@ -52,7 +54,8 @@ and they are append-only: to change an answer, append a new one.
 - `scripts/validate_cascade.py` — run after any edit to the corpus. It fails if a
   constraint has no source.
 - `scripts/render_schematic.py`, `scripts/render_constraints.py` — regenerate outputs.
-- `scripts/serve.py <project> [port]` — the browser UI.
+- `python3 pcb.py serve [--project NAME]` — the browser UI.
+- `python3 pcb.py engines` — which LLM engine is routing (see `scripts/gateway/`).
 
 ## Sources
 

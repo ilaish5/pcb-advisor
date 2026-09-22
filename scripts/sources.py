@@ -17,9 +17,15 @@ import shutil
 import sys
 import urllib.request
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
-CACHE = ROOT / "shared" / "datasheets"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import workspace  # noqa: E402
+
 UA = "Mozilla/5.0 (compatible; pcb-advisor/0.1; educational use)"
+
+
+def cache():
+    """The shared document library. One copy, reused by every project."""
+    return workspace.datasheets_dir()
 
 
 def _safe(name):
@@ -32,9 +38,9 @@ def _meta_path(path):
 
 def fetch(url, name=None, timeout=45):
     """Download into the shared cache. Returns the metadata dict."""
-    CACHE.mkdir(parents=True, exist_ok=True)
+    cache().mkdir(parents=True, exist_ok=True)
     name = _safe(name or url.rstrip("/").split("/")[-1] or "document.pdf")
-    path = CACHE / name
+    path = cache() / name
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         blob = resp.read()
@@ -52,7 +58,7 @@ def fetch(url, name=None, timeout=45):
 
 def text_of(name):
     """Plain text of a cached document, itself cached next to it."""
-    path = CACHE / _safe(name)
+    path = cache() / _safe(name)
     if not path.exists():
         raise FileNotFoundError(f"{name} is not in the cache")
     txt_path = path.with_suffix(path.suffix + ".txt")
@@ -110,8 +116,8 @@ def verify(name, quote):
 
 def use(project, name):
     """Copy a cached document into the project, so the project folder stands alone."""
-    src = CACHE / _safe(name)
-    dst_dir = ROOT / "projects" / project / "sources"
+    src = cache() / _safe(name)
+    dst_dir = workspace.project_dir(project) / "sources"
     dst_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst_dir / src.name)
     if _meta_path(src).exists():
@@ -135,7 +141,7 @@ def restore():
     """
     import yaml
     want = {}
-    for path in sorted((ROOT / "cascade").glob("*.yaml")):
+    for path in sorted(workspace.cascade_dir().glob("*.yaml")):
         cas = yaml.safe_load(path.read_text(encoding="utf-8"))
         for node in cas.get("nodes", []):
             for opt in node.get("options", []) or []:
@@ -144,7 +150,7 @@ def restore():
                     if src.get("url") and src.get("cached"):
                         want[src["cached"]] = src["url"]
     for name, url in sorted(want.items()):
-        if (CACHE / name).exists():
+        if (cache() / name).exists():
             print(f"  have  {name}")
             continue
         try:
@@ -167,6 +173,6 @@ if __name__ == "__main__":
     elif cmd == "use":
         print(use(sys.argv[2], sys.argv[3]))
     else:
-        for f in sorted(CACHE.glob("*")):
+        for f in sorted(cache().glob("*")):
             if f.suffix not in (".json", ".txt"):
                 print(f.name, f.stat().st_size)

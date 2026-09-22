@@ -3,10 +3,11 @@ import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import model  # noqa: E402
+import model      # noqa: E402
+import workspace  # noqa: E402
 
 
-def render(project="demo"):
+def render(project=None):
     m = model.build(project=project)
     out = [
         f"# אילוצי תכן — {m['title']}",
@@ -42,12 +43,12 @@ def render(project="demo"):
         out.append("")
     if m["blocked"]:
         out += ["## חסום", ""]
-        out += [f"- `{n['id']}` — ממתין ל: {', '.join(n['waiting_on'])}" for n in m["blocked"]]
+        out += [f"- `{n['id']}` — ממתין ל: {n.get('reason', '?')}" for n in m["blocked"]]
     return "\n".join(out)
 
 
 if __name__ == "__main__":
-    proj = sys.argv[1] if len(sys.argv) > 1 else "demo"
+    proj = sys.argv[1] if len(sys.argv) > 1 else workspace.default_project()
     path = model.project_dir(proj) / "constraints.md"
     path.write_text(render(proj), encoding="utf-8")
     print(f"wrote {path}")

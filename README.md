@@ -6,8 +6,21 @@ you down a decision cascade. Every choice you make appends the constraints that
 choice just locked in — each one labelled with **how we know it**.
 
 ```bash
-python3 scripts/serve.py demo 8931          # then open http://localhost:8931
-python3 scripts/serve.py demo 8931 external # drive it from your own agent instead
+pip install -r requirements.txt
+python3 pcb.py init                  # folders + config.json + a first project
+python3 pcb.py serve                 # opens http://localhost:8931
+```
+
+One entry point for everything:
+
+```bash
+python3 pcb.py new "usb sensor board"   # start a design from the template
+python3 pcb.py list                     # what is in the workspace
+python3 pcb.py show usb-sensor-board    # where it stands
+python3 pcb.py engines                  # which LLM engine is wired up
+python3 pcb.py config user.language he  # read or set any setting
+python3 pcb.py check                    # validate the corpus and its citations
+python3 pcb.py trace 1.5                # IPC-2221 trace width
 ```
 
 ## Two stages
@@ -56,21 +69,31 @@ chat.jsonl       │                      ├─► the graph
 sketch.json     ─┘                      └─► the decisions table
 ```
 
-Only those four are writable, and three are append-only. Everything else is derived
-and gets overwritten. Anchors point at the model, never at the picture, which is why
-a question pinned to `U_REG` survives a redraw.
+Only those four feed the model, and three of them are append-only. `project.json`
+and `notes.md` are yours to edit; everything else is derived and gets overwritten.
+Anchors point at the model, never at the picture, which is why a question pinned
+to `U_REG` survives a redraw.
 
 ## One workspace folder
 
 ```
 pcb-advisor/                 <- the whole workspace, portable, git-friendly
+  pcb.py                     <- the one entry point
+  config/defaults.json       <- shipped settings, tracked
+  config.json                <- yours, local, gitignored. Only what you changed.
   projects/<name>/           <- one folder per design, self-contained
   shared/datasheets/         <- fetched once, sha256'd, reused by every project
   cascade/*.yaml             <- the knowledge graphs
   reference/*.md             <- the same knowledge for a human
+  templates/project/         <- what `pcb.py new` copies
+  scripts/  ui/  docs/
   .claude/skills/            <- the orchestrating skill
-  scripts/  ui/
 ```
+
+Nothing is hardcoded: every path, the port, the default project and the LLM
+engine come from the config. `PCB_ADVISOR_HOME` moves your work somewhere else
+entirely — your projects follow, the corpus stays with the install. See
+[docs/configuration.md](docs/configuration.md).
 
 Projects are listed and switched in the right-hand nav; `+ New project` starts an
 empty one. The project is a query parameter (`?project=name`), so two tabs can hold
@@ -80,15 +103,21 @@ two designs at once.
 
 ```
 projects/<name>/
+  project.json      title, status, and THIS board's settings (layers, copper, dT)
   sketch.json       the agreed block diagram
   decisions.jsonl   {ts, node, value, by}
   threads.jsonl     {ts, anchor, role, text}   anchored on a node OR a constraint
   chat.jsonl        the conversation
+  notes.md          yours; nothing reads it
   sources/          copies of the documents this project actually cited
   design-model.json derived
   artifacts/        derived
-sources/cache/      shared library: fetched once, sha256'd, reused by every project
+shared/datasheets/  shared library: fetched once, sha256'd, reused by every project
 ```
+
+`project.json` is copied from your `engineering_defaults` when the project is
+created, and the copy is what the project uses from then on. Changing a default
+later never rewrites a board you already started.
 
 Any agent can drive this. A human can too — open the folder, read the questions,
 write answers. That is why the corpus is YAML and Markdown, not prompts.
@@ -97,13 +126,37 @@ write answers. That is why the corpus is YAML and Markdown, not prompts.
 
 `agent.py` gets `(state, message)` and returns `{reply, actions}`. It has no file
 access and no tools; the **server** applies the actions. One writer, and any model
-or runtime drops in behind that interface. Backends: `claude` (spawns `claude -p`)
-and `external` (an agent elsewhere is driving the folder).
+or runtime drops in behind that interface.
+
+## Any engine behind one gateway
+
+`scripts/gateway/` routes a turn to whichever LLM you configured. A provider is a
+transport and nothing more — text in, text out — so it knows nothing about
+cascades, actions or files:
+
+```bash
+python3 pcb.py engines
+* claude_code    implemented  ready
+  external       implemented  ready
+  codex          planned      Codex CLI is registered but not implemented yet
+  antigravity    planned      Antigravity is registered but not implemented yet
+  openai_api     planned      OpenAI-compatible HTTP API is registered but not implemented yet
+```
+
+Claude Code routes today. The rest are **registered but not implemented**: they
+appear in the table and fail with a message naming the file to write, which is
+deliberately better than a provider that half-works. Adding one is a class and a
+line in the registry — see [docs/gateway.md](docs/gateway.md).
 
 ## Layout
 
 | path | what |
 |---|---|
+| `pcb.py` | the entry point: init, serve, new, list, show, engines, config, check |
+| `config/defaults.json` | every setting, with its shipped value |
+| `scripts/workspace.py` | config + paths. Nothing else hardcodes a path. |
+| `scripts/project.py` | project lifecycle: template, `project.json`, listing, reset |
+| `scripts/gateway/` | LLM routing — one door, any engine |
 | `cascade/*.yaml` | the decision graphs — power, mcu, analog |
 | `reference/*.md` | the same knowledge, written for a human with no agent |
 | `scripts/model.py` | cascade + state → model. Deterministic. |
@@ -122,3 +175,4 @@ and `external` (an agent elsewhere is driving the folder).
 - RF cascade (mcu and analog are thin — power is the worked one)
 - schematic detail past block level
 - pulling the remaining 31 quotes
+- gateway providers other than Claude Code (the slots are registered and documented)
