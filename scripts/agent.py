@@ -2,9 +2,14 @@
 Agent adapter.
 
 The agent is treated as a pure function:  (state, message) -> {reply, actions}.
-It gets no file access and no tools.  The SERVER applies the actions, which
-keeps one writer and means any model or runtime can be dropped in behind this
+Whatever it does while thinking, only those actions change the design, and the
+SERVER applies them - one writer, and any model or runtime drops in behind this
 interface without touching the rest of the tool.
+
+An engine that lives in the workspace (a CLI agent) also gets a --- WORKSPACE ---
+section: the real paths, what it may write, and the scripts worth running. An
+engine without hands does not, because telling it to go and read a file does not
+fail loudly, it invents.
 
 This file owns the protocol - the rules, the state summary, and pulling the
 actions block back out of the reply.  It does not own the engine: which engine
@@ -28,8 +33,11 @@ HARD RULES
   the student.
 - If something is outside the cascades loaded, say so plainly instead of
   improvising a rule.
-- Do not recall part numbers, pinouts or stock levels from memory. Say you need
-  a datasheet.
+- Do not recall part numbers, pinouts or stock levels from memory. `documents`
+  in CURRENT STATE lists what is already on disk; if what you need is not there,
+  say so rather than remembering it.
+- A quote counts only if you have seen it in the document. Say which document
+  and where, so the student can check you.
 
 STAGE 1 - SKETCH
 If stage is "sketch", the student is describing what they want to build. Propose
@@ -73,10 +81,49 @@ def _summary(model):
             for n in model["open"]
         ],
         "answered": [{"id": n["id"], "chosen": n["chosen"]} for n in model["answered"]],
-        "active_constraints": [{"id": c["id"], "text": c["text"]} for c in model["constraints"]],
+        # provenance travels WITH the constraint. Without it the agent is asked
+        # to explain how we know a rule while holding only the rule.
+        "active_constraints": [
+            {"id": c["id"], "text": c["text"], "provenance": c["provenance"],
+             "verified": c["verified"], "source": c.get("source") or {}}
+            for c in model["constraints"]
+        ],
+        # the index of what is already on disk. Cheap, and it is the difference
+        # between "I need a datasheet" and "the datasheet is right here".
+        "documents": [
+            {k: v for k, v in
+             {"name": d.get("name"), "scope": d.get("scope"), "url": d.get("url")}.items()
+             if v} for d in model.get("sources", [])
+        ],
+        "board": model.get("board", {}),
         "conflicts": model["conflicts"],
     }
     return json.dumps(s, ensure_ascii=False, indent=2)
+
+
+def _workspace_section(project):
+    """Only for an engine that can actually open a file. Telling a text-only
+    engine to go and read something does not fail loudly - it invents."""
+    w = workspace.describe(project)
+    lines = [f"You are running in {w['home']}, and the current project is "
+             f"{w['project']}. You may open these yourself.", ""]
+    for place in w["places"]:
+        write = place["write"]
+        tag = "write ok" if write is True else ("read only" if write is False else write)
+        lines.append(f"  {place['path']}   [{tag}]")
+        lines.append(f"      {place['what']}")
+    lines += ["", "Scripts. Prefer these over reasoning it out yourself:"]
+    for sc in w["scripts"]:
+        lines.append(f"  {sc['run']}")
+        lines.append(f"      {sc['what']}")
+    lines += ["",
+              "Reading is free: open a datasheet, grep the corpus, check a value. "
+              "Writing is not yours. Never edit the .jsonl logs - they are "
+              "append-only and carry who decided what, and the server appends to "
+              "them when you emit an action. Never add a constraint to the "
+              "cascade; propose it to the student instead. To add a document, "
+              "run scripts/sources.py so its sha256 is recorded."]
+    return "\n".join(lines)
 
 
 def _parse(text):
@@ -102,9 +149,14 @@ def respond(model, message, history, backend=None, timeout=None):
 
     keep = int(workspace.get("agent.history_messages", 8))
     convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-keep:])
-    prompt = (f"{RULES}\n\n--- CURRENT STATE ---\n{_summary(model)}\n\n"
-              f"--- CONVERSATION SO FAR ---\n{convo}\n\n"
-              f"--- STUDENT SAYS ---\n{message}\n")
+
+    parts = [RULES]
+    if gateway.provider(name).has_workspace():
+        parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project")))
+    parts.append("--- CURRENT STATE ---\n" + _summary(model))
+    parts.append("--- CONVERSATION SO FAR ---\n" + convo)
+    parts.append("--- STUDENT SAYS ---\n" + message + "\n")
+    prompt = "\n\n".join(parts)
 
     res = gateway.route(gateway.Request(
         prompt=prompt,

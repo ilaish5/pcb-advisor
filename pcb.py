@@ -8,6 +8,7 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py list                 what is in the workspace
     python3 pcb.py show [project]       where the design stands
     python3 pcb.py engines              which LLM engines are wired up
+    python3 pcb.py tools [--apply]      what the engine may touch on your machine
     python3 pcb.py config [key] [value] read or set a setting
     python3 pcb.py check                validate the corpus and the citations
     python3 pcb.py reset [project]      wipe a project's state
@@ -83,10 +84,57 @@ def cmd_engines(args):
     for d in gateway.describe_all():
         mark = "*" if d["active"] else " "
         state = "ready" if d["available"] else d["reason"]
+        hands = "in the workspace" if d.get("workspace") else "text only"
         print(f"{mark} {d['id']:14} {d['status']:12} {state}")
-        if d.get("tools"):
-            print(f"{'':17}tools: {d['tools']}")
+        print(f"{'':17}{hands}" + (f" · tools: {d['tools']}" if d.get("tools") else ""))
     print("\n* = active. Change with: python3 pcb.py config agent.provider <id>")
+
+
+# Read the workspace and run the scripts; never edit a file directly. Tested
+# against the real CLI: without an allow-list it asks for approval, and in
+# print mode there is nobody to approve, so the scripts silently never run.
+RECOMMENDED_TOOLS = {
+    "allowed": [
+        "Read", "Grep", "Glob",
+        "Bash(python3 scripts/trace_width.py *)",
+        "Bash(python3 scripts/sources.py *)",
+        "Bash(python3 scripts/model.py *)",
+    ],
+    "disallowed": ["Write", "Edit", "NotebookEdit"],
+}
+
+
+def cmd_tools(args):
+    """Show what the engine may touch, and offer the policy that makes the
+    scripts actually reachable. Nothing is changed unless --apply is passed."""
+    current = workspace.get("agent.providers.claude_code.tools") or {}
+    set_keys = {k: v for k, v in current.items() if v is not None}
+
+    if "--apply" in args:
+        for key, value in RECOMMENDED_TOOLS.items():
+            workspace.set_value(f"agent.providers.claude_code.tools.{key}", value)
+        print(f"applied to {workspace.config_path()}")
+        set_keys = RECOMMENDED_TOOLS
+    elif "--clear" in args:
+        for key in ("available", "allowed", "disallowed", "permission_mode"):
+            workspace.set_value(f"agent.providers.claude_code.tools.{key}", None)
+        print("cleared - back to the CLI's own settings")
+        return
+
+    print("claude_code, in force now:")
+    if set_keys:
+        for key, value in set_keys.items():
+            print(f"  {key:16} {json.dumps(value, ensure_ascii=False)}")
+    else:
+        print("  nothing set - the CLI's own settings decide.")
+        print("  The engine will TRY to run scripts/trace_width.py and be asked")
+        print("  for approval, which nobody can give in print mode, so it will")
+        print("  report that it could not compute rather than computing.")
+        print("\nRecommended (read and compute, never write):")
+        for key, value in RECOMMENDED_TOOLS.items():
+            print(f"  {key:16} {json.dumps(value, ensure_ascii=False)}")
+        print("\n  python3 pcb.py tools --apply      to set it")
+        print("  python3 pcb.py tools --clear      to undo")
 
 
 def cmd_config(args):
@@ -141,7 +189,8 @@ def cmd_trace(args):
 
 COMMANDS = {
     "init": cmd_init, "serve": cmd_serve, "new": cmd_new, "list": cmd_list,
-    "show": cmd_show, "engines": cmd_engines, "config": cmd_config,
+    "show": cmd_show, "engines": cmd_engines, "tools": cmd_tools,
+    "config": cmd_config,
     "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
 }
 

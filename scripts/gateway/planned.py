@@ -14,12 +14,14 @@ from .base import Provider
 class CodexProvider(Provider):
     id = "codex"
     title = "Codex CLI"
+    workspace_access = True
     doc = "Planned. Implement in scripts/gateway/codex.py - same shape as claude_code.py."
 
 
 class AntigravityProvider(Provider):
     id = "antigravity"
     title = "Antigravity"
+    workspace_access = True
     doc = "Planned. Implement in scripts/gateway/antigravity.py."
 
 

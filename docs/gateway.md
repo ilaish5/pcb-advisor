@@ -30,6 +30,29 @@ A provider is a transport and nothing more: **text in, text out**. It does not
 know what a cascade is, it does not parse actions, and it never touches a file.
 That boundary is what keeps a new engine cheap.
 
+## Engines with hands, and engines without
+
+A CLI agent sits in the workspace and can open a datasheet, grep the corpus and
+run `trace_width.py`. An HTTP API cannot do any of that. Each provider declares
+which it is:
+
+```python
+class ClaudeCodeProvider(Provider):
+    workspace_access = True
+```
+
+`agent.py` reads it and builds a **different prompt** for each. An engine with
+hands gets a `--- WORKSPACE ---` section: the real paths, what it may write, and
+the scripts worth running. An engine without hands does not — because telling a
+text-only engine to go and read a file does not fail loudly, **it invents**.
+
+The flag is computed, not just declared: `claude_code` reports `False` when
+`tools.available` is `""`, since a CLI with every tool disabled is text-only
+again. `pcb.py engines` prints which each one is.
+
+Set `workspace_access = True` on a new provider only if it can really reach the
+filesystem the server is running on.
+
 ## Adding an engine
 
 1. Copy `scripts/gateway/claude_code.py`.
@@ -117,6 +140,58 @@ design, and the server is what applies them:
 
 Any other action type is dropped. The engine cannot create a constraint: those
 come from the cascade automatically once a decision is recorded.
+
+## A recommended tool policy
+
+The default passes no flags, which leaves the CLI's own settings alone — and
+that means the engine will **try** to run `trace_width.py`, be asked to approve
+the command, and get no answer, because print mode has nobody to ask. It then
+reports honestly that it could not compute. Verified against the real CLI.
+
+One command fixes it:
+
+```bash
+python3 pcb.py tools            # what is in force, and what is recommended
+python3 pcb.py tools --apply    # read and compute, never write
+python3 pcb.py tools --clear    # back to the CLI's own settings
+```
+
+What that sets:
+
+```json
+"allowed":    ["Read", "Grep", "Glob",
+               "Bash(python3 scripts/trace_width.py *)",
+               "Bash(python3 scripts/sources.py *)",
+               "Bash(python3 scripts/model.py *)"],
+"disallowed": ["Write", "Edit", "NotebookEdit"]
+```
+
+Reading, grepping and the scripts are reachable; direct edits are not. The three
+things worth protecting, in order:
+
+1. **`decisions.jsonl` / `threads.jsonl` / `chat.jsonl`** — append-only, and each
+   decision records `by` (user or agent). An edit destroys the record of a
+   student changing their mind; a forged `by` destroys the only enforcement of
+   "the student decides, the agent recommends". These are also outside git, so
+   there is nothing to revert to.
+2. **`cascade/*.yaml`** — a constraint invented here is served to every future
+   project, and `convention` provenance requires no source at all, so
+   `validate_cascade.py` will not catch it. Git does track the corpus, so this
+   one is at least visible in a diff.
+3. Derived files are rewritten on the next run; writing them achieves nothing.
+
+Adding a document is the one write worth allowing, and it goes through
+`scripts/sources.py fetch` rather than curl, so the sha256 and the url are
+recorded with it.
+
+### Why the prompt goes on stdin
+
+`--allowedTools`, `--disallowedTools` and `--tools` are **variadic**: the CLI
+reads every following argument as another tool name. A prompt passed as a
+trailing argument is therefore swallowed the moment any tool flag is set, and
+the CLI exits with "Input must be provided". The provider pipes the prompt
+through stdin instead, which also sidesteps ARG_MAX and lets a pattern contain
+spaces — `Bash(python3 scripts/trace_width.py *)` only works this way.
 
 ## Errors
 

@@ -18,6 +18,7 @@ python3 pcb.py new "usb sensor board"   # start a design from the template
 python3 pcb.py list                     # what is in the workspace
 python3 pcb.py show usb-sensor-board    # where it stands
 python3 pcb.py engines                  # which LLM engine is wired up
+python3 pcb.py tools                    # what that engine may touch on your machine
 python3 pcb.py config user.language he  # read or set any setting
 python3 pcb.py check                    # validate the corpus and its citations
 python3 pcb.py trace 1.5                # IPC-2221 trace width
@@ -124,9 +125,10 @@ write answers. That is why the corpus is YAML and Markdown, not prompts.
 
 ## The agent is a pure function
 
-`agent.py` gets `(state, message)` and returns `{reply, actions}`. It has no file
-access and no tools; the **server** applies the actions. One writer, and any model
-or runtime drops in behind that interface.
+`agent.py` gets `(state, message)` and returns `{reply, actions}`. Whatever the
+engine does while it thinks, only those actions change the design, and the
+**server** applies them. One writer, and any model or runtime drops in behind
+that interface.
 
 ## Any engine behind one gateway
 
@@ -143,6 +145,12 @@ python3 pcb.py engines
   openai_api     planned      OpenAI-compatible HTTP API is registered but not implemented yet
 ```
 
+An engine that lives in the workspace — any CLI agent — also gets a map of the
+folders and the scripts, so it can open the datasheet it needs and run
+`trace_width.py` instead of estimating. An engine without hands does not get
+that map, because telling it to go and read a file makes it invent. Each
+provider declares which it is; `pcb.py tools` sets what it may touch.
+
 Claude Code routes today. The rest are **registered but not implemented**: they
 appear in the table and fail with a message naming the file to write, which is
 deliberately better than a provider that half-works. Adding one is a class and a
@@ -152,7 +160,7 @@ line in the registry — see [docs/gateway.md](docs/gateway.md).
 
 | path | what |
 |---|---|
-| `pcb.py` | the entry point: init, serve, new, list, show, engines, config, check |
+| `pcb.py` | the entry point: init, serve, new, list, show, engines, tools, config, check |
 | `config/defaults.json` | every setting, with its shipped value |
 | `scripts/workspace.py` | config + paths. Nothing else hardcodes a path. |
 | `scripts/project.py` | project lifecycle: template, `project.json`, listing, reset |

@@ -20,6 +20,7 @@ class ClaudeCodeProvider(Provider):
     id = "claude_code"
     title = "Claude Code CLI"
     status = "implemented"
+    workspace_access = True
     doc = "Runs the `claude` binary on PATH. No API key here - the CLI owns auth."
 
     # ------------------------------------------------------------- tools
@@ -54,6 +55,11 @@ class ClaudeCodeProvider(Provider):
                 value = ",".join(str(v) for v in value)
             argv += [flag, str(value)]
         return argv
+
+    def has_workspace(self):
+        """`--tools ""` disables every tool, so the engine is back to text-only
+        and must not be told to go and read things."""
+        return str((self.config.get("tools") or {}).get("available", "x")) != ""
 
     def _tool_problem(self):
         cfg = self.config.get("tools") or {}
@@ -97,12 +103,18 @@ class ClaudeCodeProvider(Provider):
         cmd = self.config.get("command", "claude")
         args = list(self.config.get("args") or ["-p", "--output-format", "text"])
         model = request.model or self.config.get("model") or ""
-        argv = [cmd, *args, *self._tool_argv(), request.prompt]
+        argv = [cmd, *args, *self._tool_argv()]
         if model:
             argv += ["--model", model]
 
+        # The prompt goes on stdin, never as an argument. --allowedTools and
+        # friends are variadic: anything after them is read as another tool
+        # name, so a trailing prompt argument is silently swallowed and the CLI
+        # exits with "Input must be provided". stdin also sidesteps ARG_MAX and
+        # lets a tool pattern contain spaces - Bash(python3 scripts/x.py *).
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True,
+            proc = subprocess.run(argv, input=request.prompt,
+                                  capture_output=True, text=True,
                                   timeout=request.timeout,
                                   cwd=request.options.get("cwd") or None)
         except FileNotFoundError:

@@ -213,6 +213,73 @@ def safe_name(name):
 
 # ---------------------------------------------------------------- setup
 
+# ---------------------------------------------------------------- the map
+#
+# What an engine with hands needs to know to find its way around. Generated,
+# never written by hand: paths come from the config and PCB_ADVISOR_HOME can
+# move them, so a hardcoded map would become a lie the first time someone
+# changes projects_dir.
+#
+# `write` is the honest answer to "may the engine edit this directly", and the
+# reasons matter more than the rule:
+#   - the .jsonl logs are append-only and carry `by` (user or agent). Editing
+#     one destroys the record of a student changing their mind, and forging
+#     `by` destroys the only enforcement of "the student decides".
+#   - the cascade is the corpus. A constraint invented there is served to every
+#     future project, and `convention` provenance requires no source at all, so
+#     validation will not catch it.
+#   - derived files are rewritten on the next run; writing them is pointless.
+
+def describe(project=None):
+    """The workspace as an engine needs to see it: real paths, what is in them,
+    and what it may write. Relative to home, so the prompt stays short."""
+    pdir = project_dir(project)
+
+    def rel(p):
+        return str(p.relative_to(home())) if p.is_relative_to(home()) else str(p)
+
+    return {
+        "home": str(home()),
+        "project": pdir.name,
+        "places": [
+            {"path": rel(cascade_dir()) + "/*.yaml", "write": False,
+             "what": "the corpus: every question, option and constraint, with its provenance"},
+            {"path": rel(reference_dir()) + "/*.md", "write": False,
+             "what": "the same knowledge written out for a human"},
+            {"path": rel(datasheets_dir()), "write": "via scripts/sources.py only",
+             "what": "the shared document library. Each file has a .json beside it "
+                     "with its url and sha256, and a .txt with its extracted text"},
+            {"path": rel(pdir / "sources"), "write": "via scripts/sources.py only",
+             "what": "copies of the documents THIS project cited"},
+            {"path": rel(pdir / "project.json"), "write": False,
+             "what": "this board's settings: layers, copper weight, temperature rise"},
+            {"path": rel(pdir / "decisions.jsonl"), "write": False,
+             "what": "append-only log of decisions. Never edit; the server appends "
+                     "when you emit an answer action"},
+            {"path": rel(pdir / "threads.jsonl"), "write": False,
+             "what": "append-only, anchored discussions. The server appends on an ask action"},
+            {"path": rel(pdir / "chat.jsonl"), "write": False,
+             "what": "append-only conversation"},
+            {"path": rel(pdir / "notes.md"), "write": True,
+             "what": "the student's own notes. Nothing derives from it"},
+            {"path": rel(pdir / "design-model.json"), "write": False,
+             "what": "DERIVED, rewritten every run. Read it if you want the full state"},
+        ],
+        "scripts": [
+            {"run": "python3 scripts/sources.py list",
+             "what": "what is already in the document library"},
+            {"run": "python3 scripts/sources.py fetch <url> [name]",
+             "what": "add a document. Use this rather than curl - it records the sha256"},
+            {"run": 'python3 scripts/sources.py verify <name> "<quote>"',
+             "what": "is this quote really in that document? Run it BEFORE you quote"},
+            {"run": "python3 scripts/trace_width.py <amps> --oz <copper> --rise <degrees>",
+             "what": "IPC-2221 trace width. Run it; never estimate a width yourself"},
+            {"run": "python3 scripts/model.py <project>",
+             "what": "the full design state, more than the summary above carries"},
+        ],
+    }
+
+
 def init(force=False):
     """Create the workspace folders and a config.json. Safe to re-run."""
     made = []

@@ -42,6 +42,14 @@ class Provider:
     status = "planned"          # implemented | planned
     doc = ""
 
+    # Does this engine sit in the workspace with hands of its own - able to open
+    # a datasheet, grep the corpus, run trace_width.py? A CLI agent does; an HTTP
+    # API does not. agent.py reads this and builds a DIFFERENT prompt for each:
+    # one that says "go and look", or one that carries the data inline. Getting
+    # this wrong is silent - an engine told to read a file it cannot reach does
+    # not fail, it invents.
+    workspace_access = False
+
     def __init__(self, config=None):
         self.config = config or {}
 
@@ -57,8 +65,12 @@ class Provider:
     def complete(self, request: Request) -> Result:
         raise NotImplementedError
 
+    def has_workspace(self):
+        """Overridden where config can take the hands away again."""
+        return self.workspace_access
+
     def describe(self):
         ok, why = self.available()
         return {"id": self.id, "title": self.title, "status": self.status,
-                "available": ok, "reason": why,
+                "available": ok, "reason": why, "workspace": self.has_workspace(),
                 "model": self.config.get("model", ""), "doc": self.doc}
