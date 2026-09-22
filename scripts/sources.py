@@ -8,7 +8,6 @@ every claim resting on it can be flagged stale.
 The important function here is verify(): a stored quote must be findable,
 verbatim, in the fetched document.  That turns "trust me" into a test.
 """
-import datetime as dt
 import hashlib
 import json
 import pathlib
@@ -45,14 +44,27 @@ def fetch(url, name=None, timeout=45):
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         blob = resp.read()
     path.write_bytes(blob)
+    # The sidecar describes the DOCUMENT - what it is, where it came from, what
+    # it hashes to. All of that is the same on every machine, which is why the
+    # file can be tracked in git at all.
     meta = {
         "name": name,
         "url": url,
         "sha256": hashlib.sha256(blob).hexdigest(),
         "bytes": len(blob),
-        "fetched_at": dt.datetime.now().isoformat(timespec="seconds"),
     }
-    _meta_path(path).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    # When the document is unchanged, leave the sidecar alone. `restore` warms
+    # the cache on every fresh clone, and writing a new timestamp each time made
+    # a tracked file dirty as a side effect of setting the project up - so
+    # `git status` was never clean and nobody could see their own changes.
+    old_path = _meta_path(path)
+    if old_path.exists():
+        try:
+            if json.loads(old_path.read_text(encoding="utf-8")) == meta:
+                return meta
+        except json.JSONDecodeError:
+            pass
+    old_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     return meta
 
 
@@ -149,6 +161,7 @@ def restore():
                     src = lock.get("source") or {}
                     if src.get("url") and src.get("cached"):
                         want[src["cached"]] = src["url"]
+    failed = 0
     for name, url in sorted(want.items()):
         if (cache() / name).exists():
             print(f"  have  {name}")
@@ -158,14 +171,18 @@ def restore():
             print(f"  got   {name}")
         except Exception as exc:
             print(f"  FAIL  {name}: {exc}")
-    return want
+            failed += 1
+    if failed:
+        print(f"\n{failed} document(s) could not be fetched. Every rule citing them "
+              f"stays unverified.")
+    return failed
 
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     if cmd == "restore":
-        restore()
-        raise SystemExit(0)
+        # a setup step that prints FAIL and exits 0 is one no script can check
+        raise SystemExit(1 if restore() else 0)
     if cmd == "fetch":
         print(json.dumps(fetch(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None), indent=2))
     elif cmd == "verify":
