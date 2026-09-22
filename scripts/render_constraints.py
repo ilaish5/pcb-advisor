@@ -7,43 +7,64 @@ import model      # noqa: E402
 import workspace  # noqa: E402
 
 
+def _source(c):
+    """The provenance line. A constraint that cannot say how it is known says so."""
+    src = c.get("source") or {}
+    bits = [f"{c['icon']} {c['provenance']}"]
+    if src.get("doc"):
+        bits.append(src["doc"])
+    if src.get("locator"):
+        bits.append(src["locator"])
+    if src.get("url"):
+        bits.append(src["url"])
+    if c["provenance"] != "computed":
+        bits.append("verified" if c.get("verified") else "**unverified**")
+    return " · ".join(bits)
+
+
 def render(project=None):
     m = model.build(project=project)
+    p = m["progress"]
     out = [
-        f"# אילוצי תכן — {m['title']}",
+        f"# Design constraints — {m['title']}",
         "",
-        "**נגזר אוטומטית. אל תערוך ידנית** — הקובץ נכתב מחדש בכל הרצה של "
-        "`scripts/render_constraints.py`. המקור הוא `decisions.jsonl`.",
+        "**Derived. Do not edit by hand** — this file is rewritten on every run of "
+        "`scripts/render_constraints.py`. The source is `decisions.jsonl`.",
         "",
-        f"{m['progress']['answered']}/{m['progress']['total']} החלטות · "
-        f"{len(m['constraints'])} אילוצים פעילים",
+        f"{p['answered']}/{p['total']} decisions · {len(m['constraints'])} active "
+        f"constraints · {p['unverified']} unverified",
         "",
     ]
     if m["answered"]:
-        out += ["## החלטות שהתקבלו", "", "| החלטה | נבחר | מי |", "|---|---|---|"]
+        out += ["## Decisions made", "", "| Question | Chosen | By |", "|---|---|---|"]
         for n in m["answered"]:
             opt = next((o for o in n["options"] if o["id"] == n["chosen"]), {})
             out.append(f"| {n['question']} | {opt.get('label', n['chosen'])} | {n['chosen_by']} |")
         out.append("")
     if m["constraints"]:
-        out += ["## אילוצים פעילים", ""]
+        out += ["## Active constraints", ""]
         for c in m["constraints"]:
             out += [
                 f"### `{c['id']}`",
                 "",
                 c["text"],
                 "",
-                f"- **נובע מ:** {c['from_node']} = {c['from_label']}",
-                f"- **מקור:** {c['source']}",
+                f"- **Follows from:** {c['from_node']} = {c['from_label']}",
+                f"- **How we know it:** {_source(c)}",
                 "",
             ]
+    if m["conflicts"]:
+        out += ["## Conflicts", ""]
+        out += [f"- `{cf['a']}` vs `{cf['b']}` — {cf['note']}" for cf in m["conflicts"]]
+        out.append("")
     if m["open"]:
-        out += ["## שאלות פתוחות", ""]
+        out += ["## Open questions", ""]
         out += [f"- `{n['id']}` — {n['question']}" for n in m["open"]]
         out.append("")
     if m["blocked"]:
-        out += ["## חסום", ""]
-        out += [f"- `{n['id']}` — ממתין ל: {n.get('reason', '?')}" for n in m["blocked"]]
+        out += ["## Blocked", ""]
+        out += [f"- `{n['id']}` — {n.get('reason', '?')}" for n in m["blocked"]]
+        out.append("")
     return "\n".join(out)
 
 
