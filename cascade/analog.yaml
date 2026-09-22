@@ -41,7 +41,7 @@ nodes:
             provenance: convention
       - id: single_plane
         label: "One solid ground plane"
-        costs: ["simpler and often correct, but you must control where the return current flows"]
+        note: "simpler and often correct, but you must control where the return current flows"
         locks:
           - id: analog.plane.partition
             text: "With a single plane, partition by placement instead: keep noisy and quiet sections physically apart so their return currents never overlap."

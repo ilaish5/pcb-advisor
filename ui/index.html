@@ -220,6 +220,8 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .opts{display:flex;flex-direction:column;gap:8px}
 .opt{text-align:left;padding:11px 13px;font-size:14px;width:100%}
 .opt .cost{color:var(--cost);font-size:12px;margin-top:3px}
+.opt .note-opt{color:var(--dim);font-size:12px;margin-top:3px}
+.opt .adds{color:var(--mute);font-size:11.5px;margin-top:4px}
 .empty{color:var(--dim);text-align:center;padding:36px 14px;font-size:13px;line-height:1.7}
 
 /* ---------- input ---------- */
@@ -817,7 +819,7 @@ function paint(){
     h+=`<div class="ask" dir="${bi(n.question)}"><div class="q">${txt(n.question)}</div>
       <div class="why">${txt(n.why||'')}</div><div class="opts">` +
       (n.options||[]).map(o=>`<button class="opt" dir="${bi(o.label)}" onclick="answer('${n.id}','${o.id}')">
-        ${txt(o.label)}${(o.costs||[]).length?`<div class="cost">${o.costs.map(txt).join(' · ')}</div>`:''}
+        ${txt(o.label)}${optWeight(o)}
       </button>`).join('') + `</div></div>`;
   }
   if(busy) h+=`<div class="msg advisor"><div class="thinking"><i></i>the advisor is working…</div></div>`;
@@ -1027,6 +1029,23 @@ async function savePrefs(){
   CFG=r.config;
   if(CFG.user) applyTheme(CFG.user.theme);
   renderPanel(); load();
+}
+
+/* An option's price is rarely only in `costs`. It is also the parts it adds and
+   the rules it locks in - and an option with none of those rendered bare read as
+   free next to one with a red line under it. Every option now carries its weight,
+   and `note` is neutral: reassurance should not wear the same alarm red as a hazard. */
+function optWeight(o){
+  const parts=(o.blocks||[]).map(b=>(b.label||b.id).replace(/\n/g,' '));
+  const locks=(o.locks||[]).length;
+  let h='';
+  if((o.costs||[]).length) h+=`<div class="cost">${o.costs.map(txt).join(' · ')}</div>`;
+  if(o.note) h+=`<div class="note-opt">${txt(o.note)}</div>`;
+  const adds=[];
+  if(parts.length) adds.push(`adds ${parts.map(esc).join(', ')}`);
+  if(locks)        adds.push(`${locks} rule${locks>1?'s':''} follow${locks>1?'':'s'}`);
+  if(adds.length)  h+=`<div class="adds">${adds.join(' · ')}</div>`;
+  return h;
 }
 
 function memlen(){

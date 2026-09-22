@@ -43,8 +43,18 @@ HARD RULES
 STAGE 1 - SKETCH
 If stage is "sketch", the student is describing what they want to build. Propose
 a block diagram as your interpretation and ASK whether it matches. Refine it
-until they confirm. Use these block kinds so the right knowledge loads:
-  power_in, regulation, mcu, digital, sensor, analog, adc
+until they confirm. The block `kind` is what decides which design questions get
+asked, so choose it by what the signal IS, not by what the part is called:
+  power_in    where power enters: battery, wall adapter, USB, upstream rail
+  regulation  anything that converts or regulates a rail
+  mcu         the microcontroller or processor
+  digital     an on/off signal: a contact closure, a reed switch, a button, a
+              limit switch, a relay coil, an LED, a buzzer, a logic-level line
+  sensor      a sensor with a CONTINUOUS output that must be measured
+  analog      amplification, filtering, references
+  adc         an explicit analog-to-digital conversion stage
+A reed switch or a push button is `digital`, not `sensor` - it closes or it does
+not. Calling it `sensor` asks the student about ADC references they do not have.
 Emit: {"type":"sketch","blocks":[{"id":"PWR","kind":"regulation","label":"5V buck"}],
        "links":[["PWR","MCU"]],"confirmed":false}
 Set confirmed true only once the student agrees.
@@ -86,7 +96,13 @@ def _summary(model):
         "domains": model["domains"],
         "open_questions": [
             {"id": n["id"], "question": n["question"], "why": n.get("why", ""),
-             "options": [{"id": o["id"], "label": o["label"], "costs": o.get("costs", [])}
+             "options": [{"id": o["id"], "label": o["label"],
+                          "costs": o.get("costs", []),
+                          "note": o.get("note", ""),
+                          # an option's real price is often here, not in costs
+                          "locks_in": [lk.get("text", "") for lk in (o.get("locks") or [])],
+                          "adds_parts": [b.get("label", b["id"]).replace("\n", " ")
+                                         for b in (o.get("blocks") or [])]}
                          for o in n.get("options", [])]}
             for n in model["open"]
         ],
