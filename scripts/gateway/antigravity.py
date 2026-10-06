@@ -18,6 +18,9 @@ from .base import Provider, Request, Result
 
 _AGY_MODELS_CACHE = None
 
+# what agy accepts for --effort
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+
 class AntigravityProvider(Provider):
     id = "antigravity"
     title = "Antigravity CLI"
@@ -31,6 +34,9 @@ class AntigravityProvider(Provider):
         cmd = self.config.get("command", "agy")
         if not shutil.which(cmd):
             return False, f"`{cmd}` is not on PATH"
+        effort = self.config.get("effort")
+        if effort is not None and effort not in EFFORTS:
+            return False, f"effort '{effort}' is not one of {', '.join(EFFORTS)}"
         return True, ""
 
     def describe(self):
@@ -40,7 +46,10 @@ class AntigravityProvider(Provider):
             cmd = self.config.get("command", "agy")
             if shutil.which(cmd):
                 try:
-                    out = subprocess.check_output([cmd, "models"], stderr=subprocess.DEVNULL, text=True)
+                    # describe() runs while the settings page loads, so a CLI that
+                    # hangs here must not hang the server with it
+                    out = subprocess.check_output([cmd, "models"], stderr=subprocess.DEVNULL,
+                                                  text=True, timeout=10)
                     models = []
                     for line in out.strip().split("\n"):
                         if line.strip():
@@ -75,6 +84,9 @@ class AntigravityProvider(Provider):
         argv = [cmd, *args]
         if model:
             argv += ["--model", model]
+        effort = self.config.get("effort")
+        if effort:
+            argv += ["--effort", effort]
 
         try:
             proc = subprocess.run(
