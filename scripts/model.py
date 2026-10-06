@@ -521,6 +521,7 @@ def build(project=None, session=None):
         "session": sess,
         "sessions": session_mod.list_all(project),
         "memory": session_mod.read_memory(project, sess),
+        "bom": (project_dir(project) / "BOM.md").read_text(encoding="utf-8") if (project_dir(project) / "BOM.md").exists() else "",
         "sources": list_sources(project),
         "graph": graph(answered, open_nodes, blocked, constraints, conflicts),
         "progress": {

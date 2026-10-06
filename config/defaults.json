@@ -15,7 +15,7 @@
     "open_browser": true
   },
   "corpus": {
-    "status": "demonstration",
+    "status": "authored",
     "note": "The design questions and rules shipped with this tool are demonstration material. They show what a corpus looks like; they have not been reviewed, and most of their citations point at documents that do not exist. Use them to learn how the tool works, not to decide anything about a board you intend to build."
   },
   "user": {
@@ -37,6 +37,7 @@
         "command": "claude",
         "args": [
           "-p",
+          "-",
           "--output-format",
           "text"
         ],
@@ -69,10 +70,17 @@
         "model": ""
       },
       "antigravity": {
-        "enabled": false,
-        "command": "antigravity",
-        "args": [],
-        "model": ""
+        "enabled": true,
+        "command": "agy",
+        "args": [
+          "-p",
+          "-",
+          "--output-format",
+          "text",
+          "--dangerously-skip-permissions"
+        ],
+        "model": "",
+        "effort": null
       },
       "openai_api": {
         "enabled": false,

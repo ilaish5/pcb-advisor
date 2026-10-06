@@ -17,10 +17,10 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import workspace                                        # noqa: E402
 from .base import Provider, Request, Result             # noqa: E402,F401
+from .antigravity import AntigravityProvider            # noqa: E402
 from .claude_code import ClaudeCodeProvider             # noqa: E402
 from .external import ExternalProvider                  # noqa: E402
 from .planned import (                                  # noqa: E402
-    AntigravityProvider,
     CodexProvider,
     OpenAICompatibleProvider,
 )
@@ -34,7 +34,8 @@ REGISTRY = {
 }
 
 # names people actually type, mapped to what is registered
-ALIASES = {"claude": "claude_code", "claude-code": "claude_code", "cli": "claude_code"}
+ALIASES = {"claude": "claude_code", "claude-code": "claude_code", "cli": "claude_code",
+           "agy": "antigravity"}
 
 
 def resolve(name=None):

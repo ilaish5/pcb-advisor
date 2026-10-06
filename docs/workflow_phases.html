@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+    <meta charset="UTF-8">
+    <title>תרשים זרימה - שלבי העבודה</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background-color: #f8f9fa; 
+            text-align: center; 
+            margin: 40px auto; 
+            max-width: 1000px;
+            color: #333;
+        }
+        h2 { color: #2c3e50; margin-bottom: 30px; }
+        .mermaid { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05); 
+            display: flex; 
+            justify-content: center; 
+            direction: ltr; /* Mermaid needs LTR to render correctly */
+        }
+    </style>
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+</head>
+<body>
+    <h2>תרשים זרימה: 3 השלבים המרכזיים של pcb-advisor</h2>
+    <div class="mermaid">
+    flowchart TD
+        classDef phase fill:#f8f9fa,stroke:#6c757d,stroke-width:2px,font-weight:bold,color:#212529
+        classDef student fill:#d1e7dd,stroke:#0f5132,stroke-width:1px,color:#0f5132
+        classDef system fill:#cff4fc,stroke:#055160,stroke-width:1px,color:#055160
+
+        P1["שלב 1: קונספט, מלאי והכנות (שערים 1-3)"]:::phase
+        S1["הסטודנט מביא: תמונת סכמה שמצא, רשימת רכיבים ו-BOM ראשוני"]:::student
+        M1["המערכת בתגובה: מחלקת לבלוקים, מזהה אילוצים, מוודאת מלאי וקובעת חוקי תכן"]:::system
+
+        P2["שלב 2: שרטוט ופריסה (שערים 4-5)"]:::phase
+        S2["הסטודנט מביא: קבצים מיוצאים מאלטיום (Netlist, ODB++, ERC, DRC)"]:::student
+        M2["המערכת בתגובה: בודקת רציפות, עמידה בזרמים, מציפה תקלות וממליצה על תיקונים"]:::system
+
+        P3["שלב 3: סגירת תוצרים (שערים 6-7)"]:::phase
+        S3["הסטודנט מביא: קבצי ייצור סופיים למפעל (Gerbers, Drill, Pick & Place)"]:::student
+        M3["המערכת בתגובה: מאשרת חבילה למפעל ומפיקה טיוטת פרקי שיקולי תכנון לדוח"]:::system
+
+        P1 --> S1
+        S1 --> M1
+        M1 -->|הסטודנט מתחיל לעבוד באלטיום| P2
+        P2 --> S2
+        S2 --> M2
+        M2 -->|הלוח עובד ומוכן| P3
+        P3 --> S3
+        S3 --> M3
+    </div>
+</body>
+</html>

@@ -101,7 +101,7 @@ class ClaudeCodeProvider(Provider):
             return Result(provider=self.id, error=why)
 
         cmd = self.config.get("command", "claude")
-        args = list(self.config.get("args") or ["-p", "--output-format", "text"])
+        args = list(self.config.get("args") or ["-p", "-", "--output-format", "text"])
         model = request.model or self.config.get("model") or ""
         argv = [cmd, *args, *self._tool_argv()]
         if model:

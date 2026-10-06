@@ -26,18 +26,18 @@
   /* tells the browser to render its own bits - spinners, scrollbars, the caret -
      in dark, instead of dropping a white control into a dark page */
   color-scheme: dark;
-  --bg:#0f1117; --panel:#12151e; --card:#191d29; --menu:#161b28; --pop:#1b2030;
-  --field:#0f1320; --lk:#1a1d28;
-  --line:#282e3d; --line2:#1e2331; --edge:#33405c; --edge2:#3d4a68; --rule:#2b3550;
-  --ink:#e9ebf1; --ink2:#cfd4e0; --dim:#8d95a8; --mute:#6b7488;
-  --hover:#1a2030; --hover2:#222a3b; --sel:#22293a;
-  --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444;
-  --on-accent:#fff; --ring:#3b82f633;
-  --you:#1b2a3d; --you-line:#24405c;
-  --blk-line:#39435c; --wire:#5a6480; --wire-hot:#ef444455;
-  --conflict-bg:#2a1518; --danger-ink:#fca5a5;
-  --warn-bg:#4a3a12; --warn-line:#4a3a12; --warn-edge:#6a5a2a; --warn-ink:#e0c169;
-  --shadow:#0009; --shadow-menu:rgba(0,0,0,.55);
+  --bg:#0b0f19; --panel:rgba(15, 23, 42, 0.75); --card:rgba(30, 41, 59, 0.6); --menu:#1e293b; --pop:#1e293b;
+  --field:rgba(15, 23, 42, 0.5); --lk:rgba(30, 41, 59, 0.3);
+  --line:rgba(255, 255, 255, 0.1); --line2:rgba(255, 255, 255, 0.05); --edge:rgba(255, 255, 255, 0.15); --edge2:rgba(255, 255, 255, 0.2); --rule:rgba(255, 255, 255, 0.1);
+  --ink:#f8fafc; --ink2:#cbd5e1; --dim:#94a3b8; --mute:#64748b;
+  --hover:rgba(255, 255, 255, 0.05); --hover2:rgba(255, 255, 255, 0.08); --sel:rgba(56, 189, 248, 0.15);
+  --accent:#38bdf8; --ok:#10b981; --warn:#fbbf24; --bad:#ef4444;
+  --on-accent:#0f172a; --ring:rgba(56, 189, 248, 0.3);
+  --you:rgba(56, 189, 248, 0.1); --you-line:rgba(56, 189, 248, 0.2);
+  --blk-line:rgba(56, 189, 248, 0.5); --wire:#64748b; --wire-hot:#ef4444;
+  --conflict-bg:rgba(239, 68, 68, 0.1); --danger-ink:#fca5a5;
+  --warn-bg:rgba(251, 191, 36, 0.1); --warn-line:rgba(251, 191, 36, 0.2); --warn-edge:rgba(251, 191, 36, 0.3); --warn-ink:#fcd34d;
+  --shadow:rgba(0,0,0,0.5); --shadow-menu:rgba(0,0,0,0.6);
 }
 
 /* The light palette is written twice on purpose: once for an explicit choice and
@@ -122,13 +122,12 @@ input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1p
 .dd-i .tick{color:var(--accent);font-size:11px;visibility:hidden}
 .dd-i.on .tick{visibility:visible}
 
-/* ---------- three columns: nav | design | conversation ---------- */
-.side{width:300px;min-width:210px;flex:none;background:var(--panel);
-  border-right:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden}
+/* ---------- UI layout: unified sidebar | design ---------- */
+.side{width:430px;min-width:300px;flex:none;background:var(--panel);backdrop-filter:blur(16px);
+  border-right:1px solid var(--line2);display:flex;flex-direction:column;overflow:hidden}
 .mid{flex:1;min-width:280px;display:flex;flex-direction:column;overflow:hidden;
-  background:var(--panel)}
-.chat{width:430px;min-width:300px;flex:none;border-left:1px solid var(--line);
-  display:flex;flex-direction:column;overflow:hidden}
+  background:var(--bg)}
+.chat{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .split{width:5px;flex:none;cursor:col-resize;background:transparent}
 .split:hover,.split.on{background:var(--accent)}
 
@@ -141,11 +140,16 @@ input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1p
 .picker .row{display:flex;gap:6px}
 
 .picker button{padding:6px 9px;font-size:12px}
-.snav{display:flex;flex-wrap:wrap;gap:4px;padding:10px 12px;border-bottom:1px solid var(--line)}
-.snav button{padding:5px 10px;font-size:12.5px;border-color:transparent;background:transparent;
-  color:var(--dim)}
-.snav button:hover{color:var(--ink);background:var(--hover);border-color:transparent}
-.snav button.on{background:var(--sel);border-color:var(--edge2);color:var(--ink)}
+.snav{display:flex;flex-wrap:nowrap;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);overflow-x:auto; align-items:center;}
+.snav::-webkit-scrollbar { display: none; }
+.snav { -ms-overflow-style: none; scrollbar-width: none; }
+.snav-item { display:flex; align-items:center; background:transparent; border-radius:6px; border:1px solid transparent; }
+.snav-item:hover { border-color:var(--edge2); background:var(--hover); }
+.snav button{padding:4px 8px;font-size:12px;border-color:transparent;background:transparent; color:var(--dim); cursor:pointer;}
+.snav button:hover{color:var(--ink);}
+.snav button.on{background:var(--sel);border-color:var(--edge2);color:var(--ink); border-radius:4px;}
+.snav .open-ide-btn { padding:4px 6px; font-size:11px; opacity:0.6; }
+.snav .open-ide-btn:hover { opacity:1; }
 .snav .badge{background:var(--warn-bg);color:var(--warn);border-radius:99px;
   font-size:10px;padding:0 5px;margin-left:5px}
 .sbody{flex:1;overflow-y:auto;padding:12px 13px}
@@ -153,7 +157,7 @@ input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1p
   display:flex;gap:8px;align-items:center}
 
 /* ---------- the diagram: real DOM, so it is legible and editable ---------- */
-.diagram{flex:1;background:var(--panel);display:flex;flex-direction:column;
+.diagram{flex:1;background:radial-gradient(circle, rgba(100,116,139,0.3) 1.5px, transparent 1.5px);background-size:24px 24px;display:flex;flex-direction:column;
   min-height:0;position:relative}
 /* dragging must not select the text underneath */
 body.nosel{user-select:none;-webkit-user-select:none}
@@ -167,21 +171,22 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .canvas{flex:1;overflow:hidden;position:relative;cursor:grab;touch-action:none}
 .canvas.drag{cursor:grabbing}
 .stage{position:absolute;left:0;top:0;transform-origin:0 0}
-.blk{position:absolute;width:158px;min-height:64px;background:var(--card);
-  border:1.5px solid var(--blk-line);border-radius:10px;padding:9px 11px;cursor:pointer;
+.blk{position:absolute;width:158px;min-height:64px;background:rgba(15, 23, 42, 0.85);backdrop-filter:blur(12px);
+  border:1px solid rgba(255, 255, 255, 0.1);border-radius:12px;padding:9px 11px;cursor:pointer;
   display:flex;flex-direction:column;justify-content:center;gap:3px;
-  font-size:13px;line-height:1.35;z-index:2}
+  font-size:13px;line-height:1.35;z-index:2;box-shadow:0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1);color:#f1f5f9;transition:all 0.2s ease;}
 /* a part the design questions added: on the board, but nothing says where */
-.blk.loose{border-style:dashed;opacity:.85}
+.blk.loose{border-style:dashed;opacity:.7}
 .loosecap{position:absolute;left:0;text-align:center;color:var(--dim);font-size:12px;
   z-index:1;pointer-events:none}
-.blk:hover{border-color:var(--accent)}
-.blk.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+.blk:hover{border-color:var(--accent);box-shadow:0 0 10px var(--ring);}
+.blk.sel{border-color:var(--accent);box-shadow:0 0 15px rgba(56, 189, 248, 0.4), inset 0 1px 1px rgba(255,255,255,0.2);}
 .blk.linking{border-color:var(--ok);border-style:dashed}
 .blk .kind{font-size:10px;color:var(--dim)}
 .wires{position:absolute;inset:0;z-index:1;overflow:visible}
-.wires path{stroke:var(--wire);fill:none}
+.wires path{stroke:var(--wire);fill:none;filter:drop-shadow(0 0 3px rgba(100,116,139,0.5))}
 .wires path.hit{stroke:transparent;stroke-width:14;cursor:pointer;fill:none}
+.wires marker path { fill: var(--wire); stroke: none; filter: none; }
 .wires path.hit:hover{stroke:var(--wire-hot)}
 .pop{position:absolute;z-index:20;background:var(--pop);border:1px solid var(--edge2);
   border-radius:10px;padding:12px;width:250px;display:flex;flex-direction:column;gap:8px;
@@ -247,6 +252,62 @@ body.nosel{user-select:none;-webkit-user-select:none}
 .askchip{display:flex;align-items:center;gap:7px;margin:0 16px 9px;font-size:12px;
   color:var(--dim);background:var(--field);border:1px solid var(--edge);
   border-radius:99px;padding:4px 6px 4px 12px;width:fit-content}
+
+/* ---------- IDE tabs ---------- */
+.ide-tabs {
+  display: flex;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  padding: 0 8px;
+  gap: 2px;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.ide-tab {
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--dim);
+  background: transparent;
+  border-radius: 6px 6px 0 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  user-select: none;
+}
+.ide-tab:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.ide-tab.active {
+  background: var(--card);
+  color: var(--ink);
+  font-weight: 500;
+  box-shadow: 0 -2px 0 var(--accent) inset;
+}
+.ide-tab .close-btn {
+  font-size: 16px;
+  color: var(--mute);
+  padding: 0 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.ide-tab .close-btn:hover {
+  background: var(--line);
+  color: var(--ink);
+}
+.doc-viewer {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+}
+.doc-viewer iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+}
 .askchip b{color:var(--ink);font-weight:600}
 .askchip button{padding:0 6px;border:0;background:transparent;color:var(--dim);font-size:13px}
 .thinking{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:13px;
@@ -320,6 +381,9 @@ table{width:100%;border-collapse:collapse;font-size:12.5px}
 th{text-align:left;color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.07em;
    text-transform:uppercase;padding:5px 8px;border-bottom:1px solid var(--line)}
 td{padding:9px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
+.bom-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;border:1px solid var(--line)}
+.bom-table th{padding:8px;border:1px solid var(--line);background:var(--field);text-align:left;color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
+.bom-table td{padding:8px;border:1px solid var(--line);vertical-align:top}
 .quote{color:var(--dim);font-size:12px;margin-top:5px;font-style:italic}
 .meta{color:var(--mute);font-size:11px;margin-top:4px}
 .pill{font-size:10.5px;border:1px solid var(--line);border-radius:99px;
@@ -335,87 +399,153 @@ a{color:var(--accent);text-decoration:none}
 .tools{display:flex;gap:8px;margin-top:10px}
 input[type=text]{flex:1;padding:8px 11px}
 </style>
+<body style="display:flex; flex-direction:column; height:100vh; margin:0">
 
-<aside class="side" id="side">
-  <div class="brand"><span class="dot"></span>PCB Advisor</div>
-
-  <div class="picker">
-    <span class="lab">Board</span>
-    <div class="row">
+<header class="global-header" style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid var(--line); background:var(--panel); gap: 16px;">
+  <div class="brand" style="border:none; padding:0; font-weight:600; display:flex; align-items:center; gap:8px; font-size:14.5px;">
+    <span class="dot"></span>PCB Advisor
+  </div>
+  <div class="picker" style="border:none; padding:0; display:flex; flex-direction:row; align-items:center; gap:8px;">
+    <span class="lab" style="margin:0; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute);">Board</span>
+    <div class="row" style="margin:0;">
       <span id="projsel"></span>
-      <button onclick="newProject()" title="a new board">+</button>
+      <button onclick="newProject()" title="a new board" style="padding:4px 8px; font-size:12px;">+</button>
     </div>
-    <span class="lab" id="sesslab">Conversation</span>
-    <div class="row" id="sessrow">
+    <span class="lab" id="sesslab" style="margin:0 0 0 10px; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute);">Conversation</span>
+    <div class="row" id="sessrow" style="margin:0;">
       <span id="sesssel"></span>
-      <button onclick="newSession()" title="a clean conversation about this board">+</button>
+      <button onclick="newSession()" title="a clean conversation about this board" style="padding:4px 8px; font-size:12px;">+</button>
     </div>
   </div>
+  <div style="flex:1"></div>
+  <button id="t-settings" onclick="openInIde('settings')" title="Settings" style="display:flex; align-items:center; justify-content:center; padding: 5px 8px; background:transparent; border:none; color:var(--dim); cursor:pointer;">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"></circle>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+      </svg>
+  </button>
+</header>
+<div style="display:flex; flex:1; min-height:0; overflow:hidden;">
+<aside class="side" id="side">
 
   <nav class="snav">
+    <button id="t-chat" onclick="showPanel('chat')">Chat</button>
     <button id="t-decisions" onclick="showPanel('decisions')">Decisions</button>
     <button id="t-constraints" onclick="showPanel('constraints')">Constraints</button>
     <button id="t-sources" onclick="showPanel('sources')">Sources</button>
+    <button id="t-components" onclick="showPanel('components')">Components</button>
     <button id="t-memory" onclick="showPanel('memory')">Memory</button>
-    <button id="t-settings" onclick="showPanel('settings')">Settings</button>
+    <button onclick="openInIde('panel:'+TAB)" title="Open current panel in main area" style="margin-left:auto; padding:2px 6px; font-size:12px; color:var(--accent);">↗</button>
   </nav>
 
   <div class="sbody" id="sbody"></div>
+  <div id="anchor-sbody" style="display:none;"></div>
+  
+  <section class="chat" id="chatPane" style="display:none">
+    <div class="chead">
+      <span id="stat"></span>
+      <span class="sp"></span>
+      <span id="engine"></span>
+    </div>
+    <div class="log" id="log"><div class="wrap" id="wrap"></div></div>
+    <div class="compose">
+      <div class="askchip" id="askchip" style="display:none"></div>
+      <div class="wrap">
+      <textarea id="say" dir="auto" placeholder="Describe what you want to design…"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+      <button class="send" id="sendbtn" onclick="send()">Send</button>
+    </div></div>
+  </section>
+  <div id="anchor-chatPane" style="display:none;"></div>
+
   <div class="sfoot"><span id="foot"></span></div>
 </aside>
 
 <div class="split" id="splitL" title="drag to resize"></div>
 
 <main class="mid">
-  <!-- Filled from the config when the shipped knowledge has not been authored.
-       Not dismissible on purpose: the point is that nothing here should be
-       relied on for a real board, and a strip you can close is one you close. -->
-  <div class="demobar" id="demobar" style="display:none"></div>
-  <div class="diagram" id="diagram">
-    <div class="dbar">
-      <span id="dtitle">Diagram</span>
-      <span class="sp"></span>
-      <button onclick="addBlock()">+ Block</button>
-      <span class="zoom">
-        <button onclick="zoomBy(1/1.2)" title="zoom out">−</button>
-        <span class="pct" id="zpct">100%</span>
-        <button onclick="zoomBy(1.2)" title="zoom in">+</button>
-        <button onclick="fit(true)" title="fit and centre">Fit</button>
-      </span>
-      <button class="go" id="sendsketch" style="display:none" onclick="sendSketch()">
-        Send changes to advisor</button>
+  <div style="display:flex; align-items:flex-end; background:var(--bg); flex:none; border-bottom:1px solid var(--line);">
+    <div class="ide-tabs" id="ide-tabs" style="flex:1; border-bottom:none;"></div>
+  </div>
+
+  <div class="demobar" id="demobar" style="display:none; flex:none;"></div>
+  
+  <div style="display:flex; flex:1; min-height:0; overflow:hidden;">
+    <div id="ide-content-left" style="flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden;">
+      <div id="anchor-diagram" style="display:none;"></div>
+      <div class="diagram" id="diagram">
+        <div class="dbar">
+          <span id="dtitle">Diagram</span>
+          <span class="sp"></span>
+          <button onclick="addBlock()">+ Block</button>
+          <span class="zoom">
+            <button onclick="zoomBy(1/1.2)" title="zoom out">−</button>
+            <span class="pct" id="zpct">100%</span>
+            <button onclick="zoomBy(1.2)" title="zoom in">+</button>
+            <button onclick="fit(true)" title="fit and centre">Fit</button>
+          </span>
+          <button class="go" id="sendsketch" style="display:none" onclick="sendSketch()">
+            Send changes to advisor</button>
+        </div>
+        <div class="canvas" id="canvas"><div class="stage" id="stage"></div></div>
+        <div class="hintbar" id="dhint"></div>
+      </div>
+      <div class="doc-viewer" id="doc-viewer">
+        <iframe id="doc-iframe"></iframe>
+      </div>
+      <div class="native-panel" id="native-panel" style="display:none; flex:1; overflow-y:auto; padding:0; background:var(--bg);"></div>
     </div>
-    <div class="canvas" id="canvas"><div class="stage" id="stage"></div></div>
-    <div class="hintbar" id="dhint"></div>
   </div>
 </main>
-
-<div class="split" id="splitR" title="drag to resize"></div>
-
-<section class="chat">
-  <div class="chead">
-    <span id="stat"></span>
-    <span class="sp"></span>
-    <span id="engine"></span>
-  </div>
-  <div class="log" id="log"><div class="wrap" id="wrap"></div></div>
-  <div class="compose">
-    <div class="askchip" id="askchip" style="display:none"></div>
-    <div class="wrap">
-    <textarea id="say" dir="auto" placeholder="Describe what you want to design…"
-      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
-    <button class="send" id="sendbtn" onclick="send()">Send</button>
-  </div></div>
-</section>
+</div>
 
 <script>
-let S=null, busy=false, TAB='decisions';
+let S=null, busy=false, TAB='chat';
 let CFG=null;
 // no project in the URL means "whatever config calls the default" - boot() fills it in
 let PROJ=new URLSearchParams(location.search).get('project')||'';
 let SESS=new URLSearchParams(location.search).get('session')||'';
 const $=id=>document.getElementById(id);
 const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function renderMarkdown(md) {
+  let html = esc(md);
+  html = html.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+  const lines = html.split('\n');
+  let inTable = false;
+  let out = [];
+  let isFirstRow = false;
+  
+  for(let i=0; i<lines.length; i++) {
+    let line = lines[i].trim();
+    if(line.startsWith('|') && line.endsWith('|')) {
+      if(!inTable) {
+        out.push('<table class="bom-table">');
+        inTable = true;
+        isFirstRow = true;
+      }
+      if(line.includes('|---')) continue;
+      let cells = line.split('|').slice(1, -1);
+      if(isFirstRow) { 
+        out.push('<tr>' + cells.map(c => `<th>${c.trim()}</th>`).join('') + '</tr>');
+        isFirstRow = false;
+      } else {
+        out.push('<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>');
+      }
+    } else {
+      if(inTable) { out.push('</table>'); inTable = false; }
+      if(line.startsWith('#')) {
+        out.push(`<div style="font-weight:bold; font-size:16px; margin:15px 0 5px;">${line.replace(/^#+\s*/, '')}</div>`);
+      } else if (line) {
+        out.push(`<div>${line}</div>`);
+      } else {
+        out.push('<br>');
+      }
+    }
+  }
+  if(inTable) out.push('</table>');
+  return out.join('');
+}
 const HEB=/[\u0590-\u05FF]/;
 // A flow arrow between two Hebrew words has to point the other way. Only flip
 // when Hebrew sits on BOTH sides, so "Vin -> SW -> L" is left alone.
@@ -427,6 +557,113 @@ const bi=s=>HEB.test(s)?'rtl':'auto';
 const txt=s=>esc(flow(s)).replace(/\n/g,'<br>');
 const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ)
   +(SESS?'&session='+encodeURIComponent(SESS):'');
+
+let openTabs = [];
+let activeIdeTab = 'diagram';
+
+function applyTabToContainer(tab, containerId) {
+  let container = $(containerId);
+  if(!container) return;
+  
+  // if diagram/chat is currently here, park it back to body if we are removing it
+  if (container.contains($('diagram')) && tab !== 'diagram') {
+     $('anchor-diagram').parentNode.insertBefore($('diagram'), $('anchor-diagram'));
+     $('diagram').style.display = 'none';
+  }
+  if (container.contains($('chatPane')) && tab !== 'panel:chat') {
+     $('anchor-chatPane').parentNode.insertBefore($('chatPane'), $('anchor-chatPane'));
+     $('chatPane').style.display = (TAB === 'chat') ? 'flex' : 'none';
+  }
+  if (container.contains($('sbody')) && tab !== 'panel:' + TAB) {
+     $('anchor-sbody').parentNode.insertBefore($('sbody'), $('anchor-sbody'));
+     $('sbody').style.display = (TAB !== 'chat') ? 'block' : 'none';
+  }
+
+  // Clear existing iframe/panels
+  container.querySelectorAll('.doc-frame').forEach(e => e.remove());
+  
+  if (!tab) {
+     // do nothing
+  } else if (tab === 'diagram') {
+    container.appendChild($('diagram'));
+    $('diagram').style.display = 'flex';
+  } else if (tab.startsWith('panel:')) {
+    let p = tab.substring(6);
+    if (p === 'chat') {
+       container.appendChild($('chatPane'));
+       $('chatPane').style.display = 'flex';
+       setTimeout(scrollLog, 10);
+    } else {
+       // move sbody into here
+       container.appendChild($('sbody'));
+       $('sbody').style.display = 'block';
+       let oldTab = TAB;
+       TAB = p;
+       renderPanel(true);
+       TAB = oldTab;
+    }
+  } else {
+    let iframe = document.createElement('iframe');
+    iframe.className = 'doc-frame';
+    iframe.style.width = '100%';
+    iframe.style.height = '100%';
+    iframe.style.border = 'none';
+    iframe.src = q('/api/source/' + encodeURIComponent(tab));
+    container.appendChild(iframe);
+  }
+}
+
+function openInIde(filename) {
+  if (!openTabs.includes(filename)) {
+    openTabs.push(filename);
+  }
+  switchIdeTab(filename);
+}
+
+function switchIdeTab(tab) {
+  activeIdeTab = tab;
+  renderIdeTabs();
+  applyTabToContainer(tab, 'ide-content-left');
+}
+
+function closeIdeTab(e, tab) {
+  e.stopPropagation();
+  openTabs = openTabs.filter(t => t !== tab);
+  
+  if (activeIdeTab === tab) switchIdeTab(openTabs.length ? openTabs[0] : 'diagram');
+  
+  renderIdeTabs();
+}
+
+function makeTabsHtml(activeTab) {
+    let clickFn = 'switchIdeTab';
+    let html = `<div class="ide-tab ${activeTab==='diagram'?'active':''}" onclick="${clickFn}('diagram')">Diagram</div>`;
+    for (const t of openTabs) {
+      let disp = t.startsWith('panel:') ? t.substring(6) : t;
+      html += `<div class="ide-tab ${activeTab===t?'active':''}" onclick="${clickFn}('${esc(t).replace(/'/g, "\\'")}')">
+        ${esc(disp)} <span class="close-btn" onclick="closeIdeTab(event, '${esc(t).replace(/'/g, "\\'")}')">×</span>
+      </div>`;
+    }
+    
+    // Add dropdown menu arrow at the end of tabs for quick access
+    let dropdownId = 'ide-dd-left';
+    html += `<div style="margin-left:auto; display:flex; align-items:flex-end; padding-bottom:5px;">
+        <button onclick="ddToggle('${dropdownId}', event)" style="background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:2px 8px; font-size:10px; cursor:pointer; color:var(--dim);">▾</button>
+        <div class="dd" id="dd-${dropdownId}" style="position:absolute; right:10px; top:100%; min-width:150px; z-index:1000; width:0; height:0;"></div>
+      </div>`;
+    return html;
+}
+
+function renderIdeTabs() {
+  if($('ide-tabs')) $('ide-tabs').innerHTML = makeTabsHtml(activeIdeTab);
+  
+  let items = [ {v: 'diagram', label: 'Diagram'} ];
+  for (const t of openTabs) {
+    items.push({v: t, label: t.startsWith('panel:') ? t.substring(6) : t});
+  }
+  
+  ddSet('ide-dd-left', items, activeIdeTab, (v) => { switchIdeTab(v); });
+}
 
 /* Every write to the server goes through here.
 
@@ -663,8 +900,24 @@ function zoomBy(k){
     zoom=nz; moved=true; applyView();
   },{passive:false});
 
-  let sx=0,sy=0,ox=0,oy=0,down=false,shifted=false;
+  let sx=0,sy=0,ox=0,oy=0,down=false,shifted=false,draggingBlock=null,bx=0,by=0;
   c.addEventListener('pointerdown',e=>{
+    const blk = e.target.closest('.blk');
+    if (blk && S.stage === 'sketch') {
+       const id = blk.dataset.id;
+       const b = sketch.blocks.find(x => x.id === id);
+       if (b) {
+         draggingBlock = b;
+         down = true; shifted = false;
+         sx = e.clientX; sy = e.clientY;
+         // Compute initial x, y if not already set manually, wait we can just read from style.left
+         bx = b.x !== undefined ? b.x : parseInt(blk.style.left, 10);
+         by = b.y !== undefined ? b.y : parseInt(blk.style.top, 10);
+         c.setPointerCapture(e.pointerId);
+         document.body.classList.add('nosel');
+         return;
+       }
+    }
     if(e.target.closest('.blk')||e.target.closest('.pop')) return;
     down=true; shifted=false; sx=e.clientX; sy=e.clientY; ox=panX; oy=panY;
     c.setPointerCapture(e.pointerId); c.classList.add('drag');
@@ -674,18 +927,28 @@ function zoomBy(k){
     if(!down) return;
     const dx=e.clientX-sx, dy=e.clientY-sy;
     if(Math.abs(dx)+Math.abs(dy)>3) shifted=true;
-    panX=ox+dx; panY=oy+dy; moved=true; applyView();
+    if (draggingBlock) {
+      draggingBlock.x = Math.round(bx + dx/zoom);
+      draggingBlock.y = Math.round(by + dy/zoom);
+      dirty = true;
+      drawDiagram();
+    } else {
+      panX=ox+dx; panY=oy+dy; moved=true; applyView();
+    }
   });
-  const up=()=>{ if(down&&!shifted&&popFor){popFor=null;drawDiagram();} down=false;
-                 c.classList.remove('drag'); document.body.classList.remove('nosel'); };
+  const up=(e)=>{ 
+    if(down&&!shifted&&popFor&&!draggingBlock){popFor=null;drawDiagram();} 
+    if(down&&!shifted&&draggingBlock){clickBlock(e, draggingBlock.id);}
+    down=false; draggingBlock=null;
+    c.classList.remove('drag'); document.body.classList.remove('nosel'); 
+  };
   c.addEventListener('pointerup',up); c.addEventListener('pointercancel',up);
 })();
 
 /* drag either splitter, IDE style. Widths persist per browser. */
 (function(){
-  for(const [id, el, key, dir] of [['splitL', 'side', 'pcbadv.wL', 1],
-                                   ['splitR', 'chat', 'pcbadv.wR', -1]]){
-    const grip=$(id), pane=document.querySelector('.'+ (el==='side'?'side':'chat'));
+  for(const [id, el, key, dir] of [['splitL', 'side', 'pcbadv.wL', 1]]){
+    const grip=$(id), pane=document.querySelector('.'+ el);
     const saved=parseInt(lsGet(key)||'0',10);
     if(saved>180) pane.style.width=saved+'px';
     let down=false,sx=0,w0=0;
@@ -780,7 +1043,15 @@ function drawDiagram(){
     wDiag=Math.max(wDiag, (w-1)*(BW+GX)+BW);
     hDiag=looseTop+(Math.ceil(loose.length/w)-1)*(BH+GY)+BH;
   }
-  const skips=links.filter(([a,b])=>pos[a]&&pos[b]&&Math.abs(L[b]-L[a])>1).length;
+  blocks.forEach(b => {
+    if (b.x !== undefined && b.y !== undefined) {
+      pos[b.id] = {x: b.x, y: b.y, loose: pos[b.id] ? pos[b.id].loose : false};
+      wDiag = Math.max(wDiag, b.x + BW + 40);
+      hDiag = Math.max(hDiag, b.y + BH + 40);
+    }
+  });
+
+  const skips=links.filter(([a,b])=>pos[a]&&pos[b]&&Math.abs((L[b]||0)-(L[a]||0))>1).length;
   const laneH=skips*22+(skips?18:0);
 
   let wires='', hits='';
@@ -796,7 +1067,8 @@ function drawDiagram(){
       d=`M ${cx1} ${p.y+BH} L ${cx1} ${lane} L ${cx2} ${lane} L ${cx2} ${r.y+BH}`;
       lane+=22;
     } else if(Math.abs(sy-ey)<1){ d=`M ${sx} ${sy} L ${ex} ${ey}`; }
-    else { const mx=(sx+ex)/2; d=`M ${sx} ${sy} L ${mx} ${sy} L ${mx} ${ey} L ${ex} ${ey}`; }
+    else if(p.x === r.x) { const mx = sx - 40; d=`M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`; }
+    else { const mx=(sx+ex)/2; d=`M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`; }
     wires+=`<path d="${d}" stroke-width="1.6" marker-end="url(#ah)"/>`;
     hits +=`<path class="hit" d="${d}" onclick="dropLink(${i})"><title>click to remove</title></path>`;
   });
@@ -813,7 +1085,7 @@ function drawDiagram(){
          decisions — how these connect is not decided yet</div>` : '') +
     blocks.map(b=>{const pt=pos[b.id];
       return `<div class="blk ${pt.loose?'loose':''} ${popFor===b.id?'sel':''} ${linkFrom===b.id?'linking':''}"
-        style="left:${pt.x}px;top:${pt.y}px" onclick="clickBlock(event,'${b.id}')">
+        data-id="${esc(b.id)}" style="left:${pt.x}px;top:${pt.y}px">
         <div dir="auto">${esc(b.label||b.id)}</div>
         <div class="kind">${esc(b.id)} · ${esc(b.kind||'?')}</div></div>`;}).join('');
 
@@ -974,7 +1246,13 @@ function paint(){
   renderPanel();
 }
 
-function showPanel(tab){ TAB=tab; lsSet('pcbadv.tab',tab); renderPanel(true); }
+function showPanel(tab){ 
+  TAB=tab; 
+  lsSet('pcbadv.tab',tab); 
+  if(tab==='chat') { $('sbody').style.display='none'; $('chatPane').style.display='flex'; }
+  else { $('sbody').style.display='block'; $('chatPane').style.display='none'; }
+  renderPanel(true); 
+}
 
 let PANEL_SHOWN=null;
 
@@ -996,7 +1274,7 @@ function renderPanel(force){
               && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !el.disabled;
   if(!force && (typing || document.querySelector('.dd.open')) && PANEL_SHOWN===TAB) return;
 
-  for(const t of ['decisions','constraints','sources','memory','settings'])
+  for(const t of ['chat','decisions','constraints','sources','memory','settings'])
     $('t-'+t).classList.toggle('on', t===TAB);
   const w=(S.progress.waiting_on_agent||0)+(S.progress.waiting_on_student||0);
   $('t-constraints').innerHTML='Constraints'+(w?`<span class="badge">${w}</span>`:'');
@@ -1048,14 +1326,51 @@ function renderPanel(force){
       : `<div class="empty">Constraints appear as you decide.</div>`;
   }
   if(TAB==='sources'){
-    h = (S.sources||[]).map(f=>`<div class="srcrow"><span>${f.name.endsWith('.pdf')?'📄':'📘'}</span>
+    const datasheets = (S.sources||[]).filter(f => f.name.toLowerCase().endsWith('.pdf') || f.name.toLowerCase().endsWith('.csv'));
+    const outputs = (S.sources||[]).filter(f => !f.name.toLowerCase().endsWith('.pdf') && !f.name.toLowerCase().endsWith('.csv'));
+    
+    const renderSrc = (f) => `<div>
+      <div class="srcrow"><span>${f.name.endsWith('.pdf')?'📄':'📘'}</span>
       <span class="g">${esc(f.name)}</span><span class="pill">${esc(f.scope)}</span>
-      <a href="${q('/api/source/'+encodeURIComponent(f.name))}" target="_blank">open</a></div>`).join('')
-      || `<div class="empty">No documents yet.</div>`;
+      <a href="javascript:void(0)" onclick="openInIde('${esc(f.name).replace(/'/g, "\\'")}')">open</a>
+      <a href="javascript:void(0)" onclick="askSrc('${esc(f.name).replace(/'/g, "\\'")}')" style="margin-left:8px;">ask</a>
+      <a href="javascript:void(0)" onclick="deleteSource('${esc(f.name).replace(/'/g, "\\'")}')" style="color:var(--warn-ink); margin-left:8px;">delete</a></div>
+      ${ASKING_SRC === f.name ? `
+        <div style="display:flex; gap:8px; margin: 0 14px 14px 34px;">
+          <input id="src-q-${esc(f.name).replace(/[^a-zA-Z0-9]/g, '_')}" style="flex:1; background:var(--card); border:1px solid var(--line); border-radius:7px; padding:7px 9px; color:var(--ink); font-size:13px;" placeholder="Ask about this document..." onkeydown="if(event.key==='Enter') sendSrcQ('${esc(f.name).replace(/'/g, "\\'")}')">
+          <button onclick="sendSrcQ('${esc(f.name).replace(/'/g, "\\'")}')">Ask</button>
+        </div>` : ''}
+      </div>`;
+
+    h = `<details open style="margin-bottom:12px;"><summary style="cursor:pointer; font-weight:bold; margin-bottom:8px;">Datasheets</summary>` + 
+        (datasheets.length ? datasheets.map(renderSrc).join('') : `<div class="empty" style="margin-top:0">No datasheets yet.</div>`) + 
+        `</details>`;
+    h += `<details open style="margin-bottom:12px;"><summary style="cursor:pointer; font-weight:bold; margin-bottom:8px;">Outputs</summary>` + 
+        (outputs.length ? outputs.map(renderSrc).join('') : `<div class="empty" style="margin-top:0">No outputs yet.</div>`) + 
+        `</details>`;
     h += `<div class="tools"><input type="text" id="srcurl" placeholder="https://…/datasheet.pdf">
       <button onclick="fetchSrc()">Fetch</button>
       <button onclick="document.getElementById('up').click()">Upload</button>
       <input type="file" id="up" style="display:none" onchange="upload(this)"></div>`;
+  }
+  if(TAB==='components'){
+    const isEdit = window.BOM_EDIT_MODE;
+    if(isEdit) {
+      h = `<div class="empty" style="text-align:left">Editing Bill of Materials (BOM.md).</div>
+        <textarea id="bom-text" dir="auto" style="width:100%;min-height:280px;background:var(--field);
+          color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;
+          font:13px/1.55 ui-monospace,monospace">${esc(S.bom||'')}</textarea>
+        <div class="tools">
+          <button onclick="saveBom()">Save BOM</button>
+          <button onclick="window.BOM_EDIT_MODE=false; renderPanel(true)" style="background:transparent; border:1px solid var(--line); color:var(--dim);">Cancel</button>
+        </div>`;
+    } else {
+      h = `<div class="empty" style="text-align:left">Bill of Materials (BOM.md). The advisor updates this automatically.</div>
+        <div style="background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:12px;">
+          ${renderMarkdown(S.bom||'')}
+        </div>
+        <div class="tools"><button onclick="window.BOM_EDIT_MODE=true; renderPanel(true)">Edit Raw Text</button></div>`;
+    }
   }
   if(TAB==='memory'){
     // what this conversation would otherwise forget. The student owns it.
@@ -1239,6 +1554,10 @@ function settingsHTML(){
     <input type="number" step="${step||1}" id="s-${k}" value="${v}"></label>`;
   const engines=(CFG.engines||[]).filter(e=>e.status==='implemented')
     .map(e=>({v:e.id, label:e.title, sub:e.available?'ready':e.reason}));
+  const allModels = [];
+  for (const e of (CFG.engines||[])) if (e.models) allModels.push(...e.models);
+  const modelOpts = allModels.map(m => `<option value="${esc(m.id)}"></option>`).join('');
+
   return `<div class="set">
     <h4>This board</h4>
     <label><span>Title</span><input type="text" id="s-title" value="${esc(S.title||'')}"></label>
@@ -1259,9 +1578,13 @@ function settingsHTML(){
 
     <h4>Engine</h4>
     <label><span>Provider</span><span id="s-provider"></span></label>
+    <label><span>Model</span>
+      <input type="text" id="s-model" list="model-list" value="${esc(CFG.agent?CFG.agent.model||'':'')}" placeholder="e.g. claude-sonnet-4-6">
+      <datalist id="model-list">${modelOpts}</datalist>
+    </label>
     ${num('memory_every','Memory every',CFG.agent?CFG.agent.memory_every:10)}
     ${num('memory_max_chars','Memory chars',CFG.agent?CFG.agent.memory_max_chars:2000,100)}
-    <div class="tools"><button onclick="savePrefs()">Save settings</button></div>
+    <div class="tools"><button onclick="savePrefs(this)">Save settings</button></div>
     <p class="note">Everything else lives in <code>config.json</code>.
       See docs/configuration.md.</p>
   </div>`;
@@ -1298,7 +1621,9 @@ async function saveBoard(){
   await load(); renderPanel();
 }
 
-async function savePrefs(){
+async function savePrefs(btn){
+  const oldText = btn.textContent;
+  btn.textContent = 'Saving...';
   const r=await (await fetch('/api/config',{method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({set:{
@@ -1306,11 +1631,14 @@ async function savePrefs(){
       'user.theme':val('s-theme')||THEME,
       'user.show_unverified':val('s-show_unverified'),
       'agent.provider':val('s-provider'),
+      'agent.model':val('s-model'),
       'agent.memory_every':+val('s-memory_every'),
       'agent.memory_max_chars':+val('s-memory_max_chars')}})})).json();
-  if(r.error){ alert(r.error); return; }
+  if(r.error){ alert(r.error); btn.textContent = oldText; return; }
   CFG=r.config;
   if(CFG.user) applyTheme(CFG.user.theme);
+  btn.textContent = 'Saved!';
+  setTimeout(() => { btn.textContent = oldText; }, 2000);
   renderPanel(); load();
 }
 
@@ -1345,6 +1673,14 @@ async function saveMemory(){
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({text:$('mem').value})})).json();
   if(r.trimmed) alert('Saved, but it was over the limit and was trimmed.');
+  load();
+}
+
+async function saveBom(){
+  const r=await (await fetch(q('/api/bom'),{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:$('bom-text').value})})).json();
+  window.BOM_EDIT_MODE = false;
   load();
 }
 
@@ -1405,6 +1741,11 @@ async function send(){
     else load();
   }
 }
+async function deleteSource(name) {
+  if (!confirm(`Delete source: ${name}?`)) return;
+  const r = await post('/api/delete_source', {name});
+  if(r.error) alert(r.error); else load();
+}
 async function fetchSrc(){
   const u=$('srcurl').value.trim(); if(!u) return; $('srcurl').value='';
   const r=await (await fetch(q('/api/fetch_source'),{method:'POST',
@@ -1420,17 +1761,69 @@ function upload(input){
     input.value=''; load(); };
   rd.readAsDataURL(f);
 }
+
+document.addEventListener('paste', (e) => {
+  if (TAB !== 'chat') return;
+  const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+  for (let index in items) {
+    const item = items[index];
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const blob = item.getAsFile();
+      const name = `screenshot_${Date.now()}.png`;
+      const rd = new FileReader();
+      rd.onload = async () => {
+        const r = await fetch(q('/api/upload'), {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: name, data_b64: rd.result.split(',')[1]})
+        });
+        if (r.ok) {
+          const el = $('say');
+          const prefix = el.value ? el.value + '\n\n' : '';
+          el.value = prefix + `![screenshot](sources/${name})`;
+        } else {
+          alert('Failed to upload image.');
+        }
+      };
+      rd.readAsDataURL(blob);
+    }
+  }
+});
+let ASKING_SRC = null;
+function askSrc(name) {
+  ASKING_SRC = ASKING_SRC === name ? null : name;
+  renderPanel(true);
+}
+function sendSrcQ(name) {
+  const safeId = name.replace(/[^a-zA-Z0-9]/g, '_');
+  const el = $('src-q-' + safeId);
+  if (!el || !el.value.trim()) return;
+  const q = el.value.trim();
+  const text = `Please answer based on the attached file: [${name}](sources/${name})\n\n${q}`;
+  
+  ASKING_SRC = null;
+  TAB = 'chat';
+  showPanel(TAB);
+  
+  const chatEl = $('say');
+  if (chatEl) {
+    chatEl.value = text;
+    send();
+  }
+}
+
 async function boot(){
-  TAB=lsGet('pcbadv.tab')||'decisions';
+  TAB=lsGet('pcbadv.tab')||'chat';
+  showPanel(TAB);
   try{ CFG=await (await fetch('/api/config')).json(); }catch(e){ CFG=null; }
-  // the server owns the setting; the cached one only covered the round trip
   if(CFG && CFG.user) applyTheme(CFG.user.theme);
   const c=(CFG&&CFG.corpus)||{};
   if(c.status && c.status!=='authored' && c.note){
     $('demobar').innerHTML=`<b>Demonstration content.</b> ${esc(c.note)}`;
     $('demobar').style.display='';
   }
-  await loadProjects();          // settles PROJ before the first state fetch
+  await loadProjects();
+  switchIdeTab(activeIdeTab);
   await load();
   setInterval(()=>{if(!busy)load();},3000);
 }

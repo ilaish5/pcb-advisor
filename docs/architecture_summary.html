@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="he">
+<head>
+    <meta charset="UTF-8">
+    <title>סיכום מנהלים - pcb-advisor</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; max-width: 900px; margin: 0 auto; padding: 40px; color: #333; background-color: #fcfcfc;}
+        h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        h2 { color: #2980b9; margin-top: 40px; }
+        ul { background: #ffffff; padding: 20px 40px 20px 40px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); list-style-position: inside; }
+        li { margin-bottom: 12px; }
+        strong { color: #2c3e50; }
+        pre, code { background: #f1f2f6; padding: 2px 6px; border-radius: 4px; direction: ltr; display: inline-block; font-family: Consolas, monospace; }
+        .mermaid { background: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); text-align: center; direction: ltr; margin-top: 20px;}
+    </style>
+    <script type="module">
+      import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+      mermaid.initialize({ startOnLoad: true });
+    </script>
+</head>
+<body>
+    <h1>סיכום מנהלים: ארכיטקטורת מערכת pcb-advisor</h1>
+
+    <h2>1. חזון המערכת ומטרה</h2>
+    <p><strong>pcb-advisor</strong> היא מערכת תומכת-החלטה חינוכית עבור סטודנטים לפיתוח חומרה ומעגלים מודפסים. המערכת <strong>אינה</strong> כלי אוטומטי לתכנון מעגלים ואינה עורכת קבצי CAD. במקום זאת, היא מלווה את הסטודנט משלב השרטוט ועד לשליחת קבצי הייצור, מוודאת את שלמות התכן מול דרישות העולם האמיתי (מלאי, יצרנים, דאטהשיטים), ומתעדת את כל ההחלטות.</p>
+    <p>התוצר הסופי הכפול: חבילת קבצי ייצור בדוקה, וטיוטה אוטומטית לפרקי ה"שיקולי התכנון" שמוכנה להגשה בדוח האקדמי.</p>
+
+    <h2>2. עקרונות ארכיטקטוניים מנחים (Design Principles)</h2>
+    <ul>
+        <li><strong>יומן אירועים מצטבר (Append-Only Event Sourcing):</strong> כל אינטראקציה נרשמת ליומן (<code>decisions.jsonl</code>). המודל נגזר מהיומן דטרמיניסטית בכל פעם מחדש, מה שמונע לחלוטין מצב של השחתת נתונים או "הזיות" (Hallucinations) מצד ה-AI.</li>
+        <li><strong>הפרדת תפקידים – "פה, ידיים ושופט":</strong> סוכן ה-AI משמש כדי לאסוף נתונים מדאטהשיטים ולהציף שאלות מנחות, הסטודנט "שופט" ומחליט באופן סופי, והשרת המרכזי הוא היחיד שמורשה לכתוב ולשמור נתונים.</li>
+        <li><strong>עבודה מול תוצרים מיוצאים (Export-Driven):</strong> המערכת מנותקת לחלוטין מסביבת העבודה הפנימית של Altium. הסטודנט מייצא קבצים סטנדרטיים (Netlist, BOM, DRC, Gerbers) והמערכת קוראת ומנתחת אותם.</li>
+        <li><strong>עקיבות ואמינות מוחלטת (Provenance):</strong> כל בקשה או אילוץ חייבים להיות מקושרים למקור ודאי (דאטהשיט חתום, טבלת יכולות יצרן, או תקן רשמי כמו IPC-2221).</li>
+    </ul>
+
+    <h2>3. זרימת העבודה: מודל שבעת השערים (The 7 Gates)</h2>
+    <ul>
+        <li><strong>שער 1 - הבנת המעגל:</strong> הזנת סכמה ראשונית &larr; דיאגרמת בלוקים ואילוצי פריסה מוקדמים (מיקומים מכניים).</li>
+        <li><strong>שער 2 - יצרן וחוקי תכן:</strong> בחירת יצרן (כגון PCBWay/JLCPCB) &larr; גזירת Design Rules מדויקים למרווחים ורוחבי נתיבים.</li>
+        <li><strong>שער 3 - רכיבים ומלאי:</strong> טעינת BOM &larr; בדיקת זמינות מלאי אצל מפיצים בזמן אמת והצעת חלופות.</li>
+        <li><strong>שער 4 - סכמה:</strong> טעינת Netlist ו-ERC &larr; אימות חשמלי מול ה-Datasheet (חיבורי חשמל, Pull-ups, ניתוק).</li>
+        <li><strong>שער 5 - פריסה (Layout):</strong> טעינת ODB++ ודוח DRC &larr; אימות עמידה בחוקי שער 2 וכן עמידת הזרמים בנתיבים מול תקני IPC.</li>
+        <li><strong>שער 6 - קבצי ייצור:</strong> טעינת Gerbers ו-Drill &larr; וידוא חבילה הנדסית שלמה ומוכנה לשליחה.</li>
+        <li><strong>שער 7 - דוח אקדמי:</strong> איסוף אוטומטי של כלל יומן ההחלטות מכל השערים לכדי טיוטת פרקי דוח ההגשה.</li>
+    </ul>
+
+    <h2>4. תרשים זרימת מידע</h2>
+    <div class="mermaid">
+flowchart TD
+    Student[סטודנט] <-->|צ'אט + העלאת קבצים| UI(ממשק משתמש)
+    UI <--> Agent[סוכן AI]
+    
+    subgraph pcb-advisor [מערכת pcb-advisor]
+        Agent -->|הצעת החלטות| Server[שרת מרכזי]
+        Server -->|כתיבה בלבד| EventLog[(יומן החלטות ואילוצים)]
+        EventLog -->|בנייה מחדש| BoardModel[מודל לוח דטרמיניסטי]
+        BoardModel --> UI
+    end
+    
+    subgraph Altium
+        CAD[Altium Designer] -.->|הנחיות יצוא| Exports[Netlist, BOM, ODB++, Gerbers, DRC]
+    end
+    
+    Exports -->|קריאה| Parsers[קוראי תוצרים]
+    Parsers --> BoardModel
+    
+    External[דאטהשיטים, יכולות יצרן] --> |הורדה ושמירה| Agent
+    External --> BoardModel
+    
+    BoardModel ===>|שער 6| Fab[חבילת ייצור ליצרן]
+    BoardModel ===>|שער 7| Report[טיוטת דוח הגשה אקדמי]
+    </div>
+</body>
+</html>

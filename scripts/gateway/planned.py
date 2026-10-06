@@ -18,13 +18,6 @@ class CodexProvider(Provider):
     doc = "Planned. Implement in scripts/gateway/codex.py - same shape as claude_code.py."
 
 
-class AntigravityProvider(Provider):
-    id = "antigravity"
-    title = "Antigravity"
-    workspace_access = True
-    doc = "Planned. Implement in scripts/gateway/antigravity.py."
-
-
 class OpenAICompatibleProvider(Provider):
     id = "openai_api"
     title = "OpenAI-compatible HTTP API"

@@ -96,7 +96,7 @@ def compact_if_due(project, sess):
 # runs the tool, not to the student sitting in front of it.
 SETTABLE = (
     "user.language", "user.units", "user.show_unverified", "user.name",
-    "user.theme", "agent.provider", "agent.memory_every",
+    "user.theme", "agent.provider", "agent.model", "agent.memory_every",
     "agent.memory_max_chars", "agent.history_messages",
     "server.default_project",
 )
@@ -465,6 +465,11 @@ class Handler(BaseHTTPRequestHandler):
             session_mod.write_memory(proj, sess, text)
             return self._send(200, {"memory": text, "trimmed": trimmed})
 
+        if path == "/api/bom":
+            text = data.get("text") or ""
+            (model.project_dir(proj) / "BOM.md").write_text(text, encoding="utf-8")
+            return self._send(200, {"bom": text})
+
         if path == "/api/projects/new":
             name = (data.get("name") or "").strip() or "untitled"
             created = project_mod.create(name, title=data.get("title") or name,
@@ -534,6 +539,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"error": f"could not fetch: {exc}"})
             return self._send(200, model.build(project=proj, session=sess))
 
+        if path == "/api/delete_source":
+            name = data.get("name")
+            if not name:
+                return self._send(400, {"error": "name required"})
+            sources.unuse(proj, name)
+            return self._send(200, model.build(project=proj, session=sess))
+
         return self._send(404, {"error": "not found"})
 
 
@@ -559,7 +571,9 @@ def main(argv=None):
         a.project_opt or a.project or cfg["server"]["default_project"])
     port = a.port_opt or a.port or int(cfg["server"]["port"])
     host = a.host_opt or cfg["server"]["host"]
-    BACKEND = gateway.resolve(a.engine_opt or a.engine)
+    # If the user explicitly asks for an engine, use it. Otherwise, None means
+    # "read from config dynamically", so settings changes apply without restart.
+    BACKEND = a.engine_opt or a.engine
 
     for key in workspace.unknown_keys():
         print(f"  warning: unknown config key {key}")
@@ -568,9 +582,10 @@ def main(argv=None):
     redraw(DEFAULT_PROJECT)
 
     url = f"http://{host}:{port}"
-    ok, why = gateway.provider(BACKEND).available()
+    _engine = gateway.resolve(BACKEND)
+    ok, why = gateway.provider(_engine).available()
     print(f"pcb-advisor  home={workspace.home()}  project={DEFAULT_PROJECT}")
-    print(f"             engine={BACKEND}" + ("" if ok else f"  (unavailable: {why})"))
+    print(f"             engine={_engine}" + ("" if ok else f"  (unavailable: {why})"))
     print(f"             {url}")
     if not QUIET:
         print("             logging requests; --quiet turns this off")
