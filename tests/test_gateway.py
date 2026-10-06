@@ -72,6 +72,7 @@ def test_the_tool_policy_is_passed_to_the_cli(home, monkeypatch):
 
     def fake_run(argv, **kw):
         seen["argv"] = " ".join(argv)
+        seen["list"] = list(argv)
 
         class R:
             returncode, stdout, stderr = 0, "ok", ""
@@ -82,7 +83,12 @@ def test_the_tool_policy_is_passed_to_the_cli(home, monkeypatch):
     gateway.route(gateway.Request(prompt="x", timeout=5), name="claude_code")
     assert "--allowedTools" in seen["argv"]
     assert "--disallowedTools" in seen["argv"]
-    assert "Write" in seen["argv"]          # refused by default
+    argv = seen["list"]
+    allowed = argv[argv.index("--allowedTools") + 1].split(",")
+    # writing is allowed file by file - never the files the server owns
+    assert "Edit(./projects/*/BOM.md)" in allowed
+    assert not {"Write", "Edit"} & set(allowed)
+    assert not [a for a in allowed if "sketch.json" in a or "decisions" in a]
 
 
 def test_a_failing_engine_reports_rather_than_raises(home, monkeypatch):

@@ -137,22 +137,25 @@ def use(project, name):
     return str(dst_dir / src.name)
 
 
-def unuse(project, name):
-    """Remove a document from a project or the shared cache."""
-    # First try project specific sources
-    target = workspace.project_dir(project) / "sources" / name
-    if not target.exists():
-        # Fall back to shared cache if not in project
-        target = workspace.datasheets_dir() / name
+def get(project, url, name=None):
+    """Fetch into the shared cache and copy into the project, in one step - the
+    whole of "add this datasheet to my board". Returns the metadata, plus where
+    the project copy landed."""
+    meta = fetch(url, name)
+    return {**meta, "path": use(project, meta["name"])}
 
-    if target.exists():
-        target.unlink()
-        if _meta_path(target).exists():
-            _meta_path(target).unlink()
-        txt = target.with_suffix(target.suffix + ".txt")
-        if txt.exists():
-            txt.unlink()
-    return "ok"
+
+def unuse(project, name):
+    """Take a document out of ONE project. The shared cache is left alone: other
+    projects may cite it, and its .json is the tracked record of where it came
+    from."""
+    target = workspace.project_dir(project) / "sources" / _safe(name)
+    removed = []
+    for p in (target, _meta_path(target), target.with_suffix(target.suffix + ".txt")):
+        if p.exists():
+            p.unlink()
+            removed.append(p.name)
+    return {"removed": removed}
 
 
 def search_hint(part):
@@ -205,10 +208,12 @@ if __name__ == "__main__":
         print(json.dumps(fetch(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None), indent=2))
     elif cmd == "verify":
         print(json.dumps(verify(sys.argv[2], sys.argv[3]), indent=2, ensure_ascii=False))
+    elif cmd == "get":
+        print(json.dumps(get(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None), indent=2))
     elif cmd == "use":
         print(use(sys.argv[2], sys.argv[3]))
     elif cmd == "unuse":
-        print(unuse(sys.argv[2], sys.argv[3]))
+        print(json.dumps(unuse(sys.argv[2], sys.argv[3])))
     else:
         for f in sorted(cache().glob("*")):
             if f.suffix not in (".json", ".txt"):

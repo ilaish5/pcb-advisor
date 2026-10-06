@@ -48,13 +48,18 @@
             "Read",
             "Grep",
             "Glob",
+            "WebSearch",
+            "WebFetch",
             "Bash(python3 scripts/trace_width.py *)",
             "Bash(python3 scripts/sources.py *)",
-            "Bash(python3 scripts/model.py *)"
+            "Bash(python3 scripts/model.py *)",
+            "Edit(./projects/*/notes.md)",
+            "Edit(./projects/*/BOM.md)",
+            "Edit(./projects/*/BOM.csv)",
+            "Edit(./projects/*/sources/*.md)",
+            "Edit(./projects/*/sources/*.md.json)"
           ],
           "disallowed": [
-            "Write",
-            "Edit",
             "NotebookEdit"
           ],
           "permission_mode": null

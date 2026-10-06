@@ -264,15 +264,20 @@ def describe(project=None):
                      "situation, what was ruled out and why, open promises. Bounded, "
                      "and rewritten by a separate call - do not edit it mid-turn"},
             {"path": rel(pdir / "notes.md"), "write": True,
-             "what": "the student's own notes. Nothing derives from it"},
+             "what": "the project's notes: decisions, constraints, context. Nothing derives from it"},
+            {"path": rel(pdir / "BOM.md"), "write": True,
+             "what": "the bill of materials. The student also edits it in the UI"},
             {"path": rel(pdir / "design-model.json"), "write": False,
              "what": "DERIVED, rewritten every run. Read it if you want the full state"},
         ],
         "scripts": [
             {"run": "python3 scripts/sources.py list",
              "what": "what is already in the document library"},
+            {"run": f"python3 scripts/sources.py get {pdir.name} <url> [name]",
+             "what": "add a datasheet to this project. Use this rather than curl - "
+                     "it records the url and sha256, which is what makes it citable"},
             {"run": "python3 scripts/sources.py fetch <url> [name]",
-             "what": "add a document. Use this rather than curl - it records the sha256"},
+             "what": "add a document to the shared library only"},
             {"run": 'python3 scripts/sources.py verify <name> "<quote>"',
              "what": "is this quote really in that document? Run it BEFORE you quote"},
             {"run": "python3 scripts/trace_width.py <amps> --oz <copper> --rise <degrees>",
