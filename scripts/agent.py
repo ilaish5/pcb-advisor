@@ -278,7 +278,6 @@ def respond(model, message, history, backend=None, timeout=None):
         system=parts[0],
         history=[{"role": m.get("role"), "text": m.get("text")} for m in history[-keep:]],
         timeout=int(timeout or workspace.get("agent.timeout_seconds", 180)),
-        model=workspace.get("agent.model"),
         # the workspace map and the tool allowlist are both relative to home
         options={"cwd": str(workspace.home())}
     ), name=name)

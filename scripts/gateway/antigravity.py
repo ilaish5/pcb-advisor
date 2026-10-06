@@ -91,6 +91,9 @@ class AntigravityProvider(Provider):
         try:
             proc = subprocess.run(
                 argv,
+                # the prompt is in argv; an inherited stdin left agy waiting on
+                # a terminal nobody types into, until the timeout
+                stdin=subprocess.DEVNULL,
                 capture_output=True, text=True,
                 timeout=request.timeout,
                 cwd=request.options.get("cwd") or None,

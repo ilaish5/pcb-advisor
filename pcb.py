@@ -3,7 +3,7 @@
 pcb-advisor — one entry point for the whole workspace.
 
     python3 pcb.py init                 create the folders and config.json
-    python3 pcb.py serve                start the server, open the browser
+    python3 pcb.py serve                start the server, open the browser (also: run)
     python3 pcb.py new "usb sensor"     start a project from the template
     python3 pcb.py list                 what is in the workspace
     python3 pcb.py show [project]       where the design stands
@@ -201,7 +201,7 @@ def cmd_trace(args):
 
 
 COMMANDS = {
-    "init": cmd_init, "serve": cmd_serve, "new": cmd_new, "list": cmd_list,
+    "init": cmd_init, "serve": cmd_serve, "run": cmd_serve, "new": cmd_new, "list": cmd_list,
     "show": cmd_show, "engines": cmd_engines, "tools": cmd_tools,
     "chats": cmd_chats,
     "config": cmd_config,

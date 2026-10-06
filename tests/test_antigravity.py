@@ -61,3 +61,8 @@ def test_a_hanging_model_list_does_not_hang_describe(home, monkeypatch):
     monkeypatch.setattr(subprocess, "check_output", hang)
     assert gateway.provider("antigravity").describe()["models"] == []
     assert seen["timeout"], "agy models must run with a timeout"
+
+
+def test_agy_never_waits_on_the_terminal(home, monkeypatch):
+    _, seen = _run(monkeypatch)
+    assert seen["kw"].get("stdin") is subprocess.DEVNULL

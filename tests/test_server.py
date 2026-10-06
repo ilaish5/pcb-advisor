@@ -154,3 +154,17 @@ def test_the_browser_cannot_set_a_config_key_that_is_not_its_own(server, battery
     code, body = post(server, "/api/config",
                       {"set": {"corpus.status": "authored"}}, battery_mcu)
     assert code == 400 and "not settable" in body["error"]
+
+
+def test_a_model_belongs_to_the_engine_it_was_chosen_for(server, battery_mcu):
+    """A Gemini id sent to Claude Code fails every turn, so switching engine
+    must not carry the previous engine's model with it."""
+    import workspace
+    post(server, "/api/config", {"set": {"agent.provider": "antigravity",
+                                         "agent.model": "gemini-x"}}, battery_mcu)
+    assert workspace.get("agent.providers.antigravity.model") == "gemini-x"
+    code, body = post(server, "/api/config",
+                      {"set": {"agent.provider": "claude_code"}}, battery_mcu)
+    assert code == 200
+    assert body["config"]["agent"]["model"] == ""
+    assert workspace.get("agent.providers.claude_code.model") == ""

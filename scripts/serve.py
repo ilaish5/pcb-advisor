@@ -112,7 +112,9 @@ def _public_config():
         # student must not be able to dismiss it, and it is not theirs to change
         "corpus": cfg.get("corpus", {}),
         "engineering_defaults": cfg.get("engineering_defaults", {}),
-        "agent": {k: v for k, v in agent_cfg.items() if k != "providers"},
+        "agent": {**{k: v for k, v in agent_cfg.items() if k != "providers"},
+                  "model": (agent_cfg.get("providers", {})
+                            .get(gateway.resolve(BACKEND), {}).get("model", ""))},
         "server": {"default_project": DEFAULT_PROJECT or workspace.default_project()},
         "engine": gateway.resolve(BACKEND),
         "engines": gateway.describe_all(),
@@ -433,7 +435,13 @@ class Handler(BaseHTTPRequestHandler):
             bad = [k for k in changes if k not in SETTABLE]
             if bad:
                 return self._send(400, {"error": f"not settable from here: {', '.join(bad)}"})
-            for key, value in changes.items():
+            # a model name belongs to one engine - a Gemini id sent to Claude
+            # fails the turn - so it is stored under whichever engine is current,
+            # and the engine is switched first when both arrive together
+            for key in sorted(changes, key=lambda k: k != "agent.provider"):
+                value = changes[key]
+                if key == "agent.model":
+                    key = f"agent.providers.{gateway.resolve(BACKEND)}.model"
                 workspace.set_value(key, value)
             return self._send(200, {"config": _public_config()})
 
