@@ -49,11 +49,15 @@ def test_an_unknown_effort_is_reported_not_passed(home, monkeypatch):
 
 
 def test_a_hanging_model_list_does_not_hang_describe(home, monkeypatch):
+    seen = {}
+
     def hang(argv, **kw):
-        assert kw.get("timeout"), "agy models must run with a timeout"
-        raise subprocess.TimeoutExpired(argv, kw["timeout"])
+        # describe() swallows exceptions, so record rather than assert in here
+        seen["timeout"] = kw.get("timeout")
+        raise subprocess.TimeoutExpired(argv, kw.get("timeout") or 0)
 
     monkeypatch.setattr(antigravity, "_AGY_MODELS_CACHE", None)
     monkeypatch.setattr(shutil, "which", lambda cmd: "/bin/" + cmd)
     monkeypatch.setattr(subprocess, "check_output", hang)
     assert gateway.provider("antigravity").describe()["models"] == []
+    assert seen["timeout"], "agy models must run with a timeout"
