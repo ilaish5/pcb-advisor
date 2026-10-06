@@ -103,3 +103,11 @@ def test_a_planned_engine_says_so_instead_of_pretending(home):
         pytest.skip("every registered engine is implemented")
     ok, why = gateway.provider(row["id"]).available()
     assert ok is False and why
+
+
+def test_every_engine_gets_the_rules_files_in_its_prompt():
+    import agent
+    text = agent.rules()
+    assert text.startswith("You are the PCB design advisor")
+    for f in agent.RULES_DIR.glob("*.md"):
+        assert f.read_text(encoding="utf-8").strip() in text

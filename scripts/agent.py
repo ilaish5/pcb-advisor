@@ -25,6 +25,17 @@ import gateway     # noqa: E402
 import session     # noqa: E402
 import workspace   # noqa: E402
 
+# The rules live as files, not as a string in this module, so that every kind of
+# agent reaches the same text: a CLI agent can open them, and an engine without
+# hands gets them here, in the prompt. Core first - it says who the agent is.
+RULES_DIR = pathlib.Path(__file__).resolve().parent.parent / ".agents" / "rules"
+
+
+def rules():
+    files = sorted(RULES_DIR.glob("*.md"), key=lambda f: (not f.stem.endswith("-core"), f.name))
+    return "\n\n".join(f.read_text(encoding="utf-8").strip() for f in files)
+
+
 def _summary(model):
     s = {
         "stage": model["stage"],
@@ -237,7 +248,7 @@ def respond(model, message, history, backend=None, timeout=None):
     keep = int(workspace.get("agent.history_messages", 8))
     convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-keep:])
 
-    parts = []
+    parts = [rules()]
     memory = (model.get("memory") or "").strip()
     if memory:
         parts.append("--- MEMORY (this conversation, kept small on purpose) ---\n"
@@ -264,6 +275,7 @@ def respond(model, message, history, backend=None, timeout=None):
 
     res = gateway.route(gateway.Request(
         prompt=prompt,
+        system=parts[0],
         history=[{"role": m.get("role"), "text": m.get("text")} for m in history[-keep:]],
         timeout=int(timeout or workspace.get("agent.timeout_seconds", 180)),
         model=workspace.get("agent.model"),
