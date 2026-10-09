@@ -10,7 +10,7 @@ def test_get_puts_a_datasheet_in_the_project_with_its_provenance(home, tmp_path)
     meta = sources.get("board", pdf.as_uri())
     copy = home / "projects" / "board" / "sources" / "LM1117.pdf"
     assert copy.exists()
-    side = json.loads((copy.parent / "LM1117.pdf.json").read_text())
+    side = json.loads((copy.parent / "LM1117.pdf.json").read_text(encoding="utf-8"))
     assert side["url"] == pdf.as_uri() and side["sha256"] == meta["sha256"]
 
 

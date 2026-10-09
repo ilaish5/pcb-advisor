@@ -22,6 +22,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import gateway     # noqa: E402
+import oscompat    # noqa: E402
 import session     # noqa: E402
 import workspace   # noqa: E402
 
@@ -131,7 +132,7 @@ def _workspace_section(project):
               "cascade; propose it to the student instead. To add a document, "
               "run scripts/sources.py so its sha256 is recorded. To view available "
               "sources, read the files in the 'sources/' directory. To delete a "
-              "document, run 'python3 scripts/sources.py unuse <project_name> <document_name>'."]
+              "document, run '" + oscompat.py("python3 scripts/sources.py unuse <project_name> <document_name>") + "'."]
     return "\n".join(lines)
 
 

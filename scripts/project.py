@@ -222,6 +222,8 @@ def reset(name):
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     if cmd == "new":
         print(create(sys.argv[2] if len(sys.argv) > 2 else "untitled"))

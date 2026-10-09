@@ -275,4 +275,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     sys.exit(main())

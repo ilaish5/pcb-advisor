@@ -328,7 +328,9 @@ textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radiu
 .set label{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:12.5px}
 .set label span{flex:1;color:var(--dim)}
 .set label input{width:116px;flex:none;font-size:12.5px;padding:5px 8px}
-.set label .dd{width:116px;flex:none}
+.set{max-width:460px}
+.set label .dd{width:200px;flex:none}
+.set label .meta{width:200px;flex:none;padding:5px 8px}
 .set label .dd-t{font-size:12.5px;padding:5px 8px}
 .set label input[type=checkbox]{width:17px}
 .set .note{color:var(--mute);font-size:11px;line-height:1.5;margin:5px 0 0}
@@ -418,7 +420,7 @@ input[type=text]{flex:1;padding:8px 11px}
     </div>
   </div>
   <div style="flex:1"></div>
-  <button id="t-settings" onclick="openInIde('settings')" title="Settings" style="display:flex; align-items:center; justify-content:center; padding: 5px 8px; background:transparent; border:none; color:var(--dim); cursor:pointer;">
+  <button id="t-settings" onclick="openInIde('panel:settings')" title="Settings" style="display:flex; align-items:center; justify-content:center; padding: 5px 8px; background:transparent; border:none; color:var(--dim); cursor:pointer;">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="3"></circle>
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
@@ -811,10 +813,9 @@ function paintSessions(){
   const rows=S.sessions||[];
   ddSet('sesssel', rows.map(x=>({v:x.id, label:x.title,
     sub:`${x.messages} message${x.messages===1?'':'s'}`})), S.session, switchSession);
-  // one conversation is the normal case; do not make it look like a thing to manage
-  const many=rows.length>1;
-  $('sesslab').style.display=many?'':'none';
-  $('sessrow').style.display=many?'':'none';
+  // always shown: with one conversation the "+" is the only way to start another
+  $('sesslab').style.display='';
+  $('sessrow').style.display='';
   $('foot').textContent=`${rows.length} conversation${rows.length>1?'s':''}`;
 }
 
@@ -1258,6 +1259,17 @@ let PANEL_SHOWN=null;
 
 function renderPanel(force){
   if(!S) return;
+  // sbody can live in the main area (a panel opened from the gear or the ↗).
+  // The poll renders with the rail's TAB, which would wipe it blank, so render
+  // the panel it is actually hosting.
+  const host=$('ide-content-left');
+  if(host && host.contains($('sbody')) && activeIdeTab.startsWith('panel:')){
+    const hosted=activeIdeTab.substring(6);
+    if(hosted!=='chat' && hosted!==TAB){
+      const old=TAB; TAB=hosted;
+      try{ return renderPanel(force); } finally{ TAB=old; }
+    }
+  }
   // The state polls every few seconds. Re-rendering under someone's hands would
   // shut an open menu and wipe half-typed text, so while they are working in
   // the panel, leave it alone.
@@ -1554,9 +1566,6 @@ function settingsHTML(){
     <input type="number" step="${step||1}" id="s-${k}" value="${v}"></label>`;
   const engines=(CFG.engines||[]).filter(e=>e.status==='implemented')
     .map(e=>({v:e.id, label:e.title, sub:e.available?'ready':e.reason}));
-  const allModels = [];
-  for (const e of (CFG.engines||[])) if (e.models) allModels.push(...e.models);
-  const modelOpts = allModels.map(m => `<option value="${esc(m.id)}"></option>`).join('');
 
   return `<div class="set">
     <h4>This board</h4>
@@ -1578,10 +1587,8 @@ function settingsHTML(){
 
     <h4>Engine</h4>
     <label><span>Provider</span><span id="s-provider"></span></label>
-    <label><span>Model</span>
-      <input type="text" id="s-model" list="model-list" value="${esc(CFG.agent?CFG.agent.model||'':'')}" placeholder="e.g. claude-sonnet-4-6">
-      <datalist id="model-list">${modelOpts}</datalist>
-    </label>
+    <label><span>Model</span><span id="s-model"></span></label>
+    <label><span>Effort</span><span class="meta">High</span></label>
     ${num('memory_every','Memory every',CFG.agent?CFG.agent.memory_every:10)}
     ${num('memory_max_chars','Memory chars',CFG.agent?CFG.agent.memory_max_chars:2000,100)}
     <div class="tools"><button onclick="savePrefs(this)">Save settings</button></div>
@@ -1603,7 +1610,16 @@ function settingsDropdowns(){
         THEME, chooseTheme, {right:true});
   ddSet('s-provider', (CFG.engines||[]).filter(e=>e.status==='implemented')
         .map(e=>({v:e.id,label:e.title,sub:e.available?'ready':e.reason})),
-        a.provider||CFG.engine, null, {right:true});
+        a.provider||CFG.engine, id=>{ DD['s-provider'].value=id; modelDropdown(id, ''); }, {right:true});
+  modelDropdown(a.provider||CFG.engine, a.model);
+}
+
+// a model belongs to one engine, so the list follows the provider picked
+function modelDropdown(engine, current){
+  const e=(CFG.engines||[]).find(x=>x.id===engine)||{};
+  const items=(e.models||[]).map(m=>({v:m.id,label:m.name||m.id}));
+  const keep=items.some(x=>x.v===current)?current:(items[0]&&items[0].v)||'';
+  ddSet('s-model', items, keep, null, {right:true});
 }
 
 const val=id=>{

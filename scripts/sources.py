@@ -85,7 +85,8 @@ def text_of(name):
         except Exception:
             import subprocess
             text = subprocess.run(["pdftotext", str(path), "-"],
-                                  capture_output=True, text=True).stdout
+                                  capture_output=True, encoding="utf-8",
+                                  errors="replace").stdout
     else:
         text = path.read_text(encoding="utf-8", errors="replace")
     txt_path.write_text(text, encoding="utf-8")
@@ -200,6 +201,8 @@ def restore():
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     if cmd == "restore":
         # a setup step that prints FAIL and exits 0 is one no script can check

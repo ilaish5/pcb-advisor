@@ -78,7 +78,7 @@ def test_no_rule_claims_a_document_that_cannot_be_fetched():
 def test_a_role_noun_dressed_as_a_citation_is_rejected(broken):
     def edit(d):
         p = d / "power.yaml"
-        p.write_text(p.read_text().replace(
+        p.write_text(p.read_text(encoding="utf-8").replace(
             "provenance: check_your_part", "provenance: datasheet", 1), encoding="utf-8")
     assert any("needs source.url" in e for e in broken(edit))
 
@@ -86,7 +86,7 @@ def test_a_role_noun_dressed_as_a_citation_is_rejected(broken):
 def test_a_computed_rule_without_its_arithmetic_is_rejected(broken):
     def edit(d):
         p = d / "power.yaml"
-        p.write_text(p.read_text().replace(
+        p.write_text(p.read_text(encoding="utf-8").replace(
             'calculation: "1 mA x 8760 h = 8.76 Ah per year"', "", 1), encoding="utf-8")
     assert any("needs a `calculation`" in e for e in broken(edit))
 
@@ -95,7 +95,7 @@ def test_a_check_your_part_rule_that_cites_a_document_is_rejected(broken):
     """If you have the document, it is a citation and must be verifiable."""
     def edit(d):
         p = d / "power.yaml"
-        p.write_text(p.read_text().replace(
+        p.write_text(p.read_text(encoding="utf-8").replace(
             'source: {doc: "regulator datasheet", locator: "Electrical Characteristics - Dropout Voltage"}',
             'source: {doc: "regulator datasheet", locator: "Dropout", url: "http://e.com/x.pdf"}',
             1), encoding="utf-8")
@@ -105,7 +105,7 @@ def test_a_check_your_part_rule_that_cites_a_document_is_rejected(broken):
 def test_a_rule_needing_a_part_nothing_can_place_is_rejected(broken):
     def edit(d):
         p = d / "analog.yaml"
-        p.write_text(p.read_text().replace("needs_block: U_REG", "needs_block: U_NOPE", 1),
+        p.write_text(p.read_text(encoding="utf-8").replace("needs_block: U_REG", "needs_block: U_NOPE", 1),
                      encoding="utf-8")
     assert any("no cascade can put on a board" in e for e in broken(edit))
 
@@ -113,7 +113,7 @@ def test_a_rule_needing_a_part_nothing_can_place_is_rejected(broken):
 def test_a_dangling_dependency_is_rejected(broken):
     def edit(d):
         p = d / "power.yaml"
-        p.write_text(p.read_text().replace(
+        p.write_text(p.read_text(encoding="utf-8").replace(
             "depends_on: [req.source, req.vout, req.iload]",
             "depends_on: [req.source, req.nope]", 1), encoding="utf-8")
     assert any("depends_on unknown node" in e for e in broken(edit))
@@ -122,6 +122,6 @@ def test_a_dangling_dependency_is_rejected(broken):
 def test_a_duplicate_rule_id_is_rejected(broken):
     def edit(d):
         p = d / "power.yaml"
-        p.write_text(p.read_text().replace("- id: pwr.iq", "- id: pwr.in.range", 1),
+        p.write_text(p.read_text(encoding="utf-8").replace("- id: pwr.iq", "- id: pwr.in.range", 1),
                      encoding="utf-8")
     assert any("duplicate constraint id" in e for e in broken(edit))

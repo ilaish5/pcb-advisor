@@ -25,6 +25,23 @@ python3 pcb.py check                    # validate the corpus and its citations
 python3 pcb.py trace 1.5                # IPC-2221 trace width
 ```
 
+## Windows and macOS
+
+Both are supported. The commands above say `python3`, which is what macOS calls
+it; on Windows type `python` (or `py`) instead - everything else is the same.
+
+What differs between the two lives in `scripts/oscompat.py`, nowhere else:
+
+- every child process is spoken to in UTF-8, so Hebrew survives a Windows console;
+- the engine CLI is run by its full path, because npm installs `claude.cmd` on
+  Windows and subprocess cannot start a `.cmd` by its bare name;
+- the commands the engine may run are written `{python} scripts/...` in
+  `config/defaults.json` and filled in per machine, so the allow-list matches
+  what its shell actually types;
+- paths handed to the engine use forward slashes on both.
+
+CI runs the suite on Windows, macOS and Linux.
+
 ## Two stages
 
 **Sketch.** Free text in. The agent proposes a block diagram — its interpretation —

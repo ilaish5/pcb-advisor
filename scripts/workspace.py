@@ -19,6 +19,8 @@ import os
 import pathlib
 import re
 
+import oscompat
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
 DEFAULTS_PATH = REPO / "config" / "defaults.json"
 
@@ -208,6 +210,9 @@ def safe_name(name):
     what must never survive is anything that could escape the projects dir."""
     safe = _UNSAFE.sub("-", str(name or ""))
     safe = re.sub(r"[-\s]+", "-", safe).strip("-. ")[:60].strip("-. ")
+    # names Windows reserves for devices, with or without an extension
+    if re.fullmatch(r"(?i)(con|prn|aux|nul|com\d|lpt\d)(\..*)?", safe):
+        safe = "_" + safe
     return safe or "untitled"
 
 
@@ -234,7 +239,8 @@ def describe(project=None):
     pdir = project_dir(project)
 
     def rel(p):
-        return str(p.relative_to(home())) if p.is_relative_to(home()) else str(p)
+        # forward slashes on Windows too: the engine reads these into a shell
+        return (p.relative_to(home()) if p.is_relative_to(home()) else p).as_posix()
 
     return {
         "home": str(home()),
@@ -271,18 +277,18 @@ def describe(project=None):
              "what": "DERIVED, rewritten every run. Read it if you want the full state"},
         ],
         "scripts": [
-            {"run": "python3 scripts/sources.py list",
+            {"run": oscompat.py("python3 scripts/sources.py list"),
              "what": "what is already in the document library"},
-            {"run": f"python3 scripts/sources.py get {pdir.name} <url> [name]",
+            {"run": oscompat.py(f"python3 scripts/sources.py get {pdir.name} <url> [name]"),
              "what": "add a datasheet to this project. Use this rather than curl - "
                      "it records the url and sha256, which is what makes it citable"},
-            {"run": "python3 scripts/sources.py fetch <url> [name]",
+            {"run": oscompat.py("python3 scripts/sources.py fetch <url> [name]"),
              "what": "add a document to the shared library only"},
-            {"run": 'python3 scripts/sources.py verify <name> "<quote>"',
+            {"run": oscompat.py('python3 scripts/sources.py verify <name> "<quote>"'),
              "what": "is this quote really in that document? Run it BEFORE you quote"},
-            {"run": "python3 scripts/trace_width.py <amps> --oz <copper> --rise <degrees>",
+            {"run": oscompat.py("python3 scripts/trace_width.py <amps> --oz <copper> --rise <degrees>"),
              "what": "IPC-2221 trace width. Run it; never estimate a width yourself"},
-            {"run": "python3 scripts/model.py <project>",
+            {"run": oscompat.py("python3 scripts/model.py <project>"),
              "what": "the full design state, more than the summary above carries"},
         ],
     }
@@ -309,6 +315,8 @@ def init(force=False):
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     import sys
 
     args = sys.argv[1:]

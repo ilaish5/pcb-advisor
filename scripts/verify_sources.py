@@ -10,6 +10,7 @@ import sys
 import yaml
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import oscompat   # noqa: E402
 import sources    # noqa: E402
 import workspace  # noqa: E402
 
@@ -61,11 +62,13 @@ def main():
         # a clean clone hits this every time: the vendor PDFs are correctly
         # gitignored, so the first run fails until the cache is warmed
         print("\nThe cited documents are not in git - they are vendor PDFs.")
-        print("Run:  python3 scripts/sources.py restore")
+        print(oscompat.py("Run:  python3 scripts/sources.py restore"))
     if failed:
         print("FAILED")
     return 1 if failed else 0
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     sys.exit(main())

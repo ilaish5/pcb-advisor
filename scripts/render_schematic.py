@@ -263,6 +263,8 @@ def legend_text(m):
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     proj = sys.argv[1] if len(sys.argv) > 1 else workspace.default_project()
     svg, png = render(proj)
     print(f"wrote {svg.name}, {png.name}")

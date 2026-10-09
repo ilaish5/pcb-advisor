@@ -2,6 +2,8 @@
 import shutil
 import subprocess
 
+import oscompat
+
 from .base import Provider, Request, Result
 
 # what the CLI accepts for --permission-mode
@@ -52,7 +54,9 @@ class ClaudeCodeProvider(Provider):
             if value is None:
                 continue                       # the CLI's own settings stand
             if isinstance(value, (list, tuple)):
-                value = ",".join(str(v) for v in value)
+                # "Bash({python} scripts/x.py *)" becomes python3 on a Mac and
+                # python or py on Windows - whatever the engine's shell will type
+                value = ",".join(oscompat.py(str(v)) for v in value)
             argv += [flag, str(value)]
         return argv
 
@@ -91,6 +95,7 @@ class ClaudeCodeProvider(Provider):
         d = super().describe()
         cfg = self.config.get("tools") or {}
         set_keys = [k for k, _ in TOOL_FLAGS if cfg.get(k) is not None]
+        d["models"] = [{"id": "opus", "name": "Opus"}, {"id": "sonnet", "name": "Sonnet"}]
         d["tools"] = ", ".join(f"{k}={cfg[k]}" for k in set_keys) if set_keys \
             else "the CLI's own settings"
         return d
@@ -103,9 +108,12 @@ class ClaudeCodeProvider(Provider):
         cmd = self.config.get("command", "claude")
         args = list(self.config.get("args") or ["-p", "-", "--output-format", "text"])
         model = request.model or self.config.get("model") or ""
-        argv = [cmd, *args, *self._tool_argv()]
+        argv = [oscompat.resolve(cmd), *args, *self._tool_argv()]
         if model:
             argv += ["--model", model]
+        effort = self.config.get("effort")
+        if effort:
+            argv += ["--effort", effort]
 
         # The prompt goes on stdin, never as an argument. --allowedTools and
         # friends are variadic: anything after them is read as another tool
@@ -114,7 +122,8 @@ class ClaudeCodeProvider(Provider):
         # lets a tool pattern contain spaces - Bash(python3 scripts/x.py *).
         try:
             proc = subprocess.run(argv, input=request.prompt,
-                                  capture_output=True, text=True,
+                                  capture_output=True, **oscompat.TEXT,
+                                  env=oscompat.child_env(),
                                   timeout=request.timeout,
                                   cwd=request.options.get("cwd") or None)
         except FileNotFoundError:

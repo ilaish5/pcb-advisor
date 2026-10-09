@@ -15,6 +15,7 @@ import base64
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
 import threading
 import webbrowser
@@ -501,7 +502,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/upload":
             # base64 in JSON rather than multipart: the stdlib cgi module was
             # removed in 3.13, and a datasheet is small enough not to care.
-            name = pathlib.Path(data.get("name") or "upload.bin").name
+            # also strip what Windows refuses in a file name (: ? * " < > |)
+            name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", pathlib.Path(data.get("name") or "upload.bin").name)
             blob = data.get("data_b64")
             if not blob:
                 return self._send(400, {"error": "data_b64 required"})

@@ -26,8 +26,11 @@ def _run(monkeypatch, **request):
 def test_the_prompt_takes_the_place_of_the_dash(home, monkeypatch):
     res, seen = _run(monkeypatch)
     assert res.ok and res.text == "ok"
-    assert seen["argv"][0] == "agy"
+    # the full path which() found: on Windows the CLI may be agy.cmd, which
+    # subprocess cannot start by its bare name
+    assert seen["argv"][0] == "/bin/agy"
     assert "hello" in seen["argv"] and "-" not in seen["argv"]
+    assert seen["kw"]["encoding"] == "utf-8"
 
 
 def test_effort_reaches_the_cli_only_when_set(home, monkeypatch):

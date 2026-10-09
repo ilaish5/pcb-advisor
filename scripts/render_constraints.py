@@ -69,6 +69,8 @@ def render(project=None):
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     proj = sys.argv[1] if len(sys.argv) > 1 else workspace.default_project()
     path = model.project_dir(proj) / "constraints.md"
     path.write_text(render(proj), encoding="utf-8")

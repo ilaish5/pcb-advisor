@@ -93,7 +93,7 @@ def test_the_log_still_shows_what_was_answered_and_why_it_went(battery_mcu, home
     p = battery_mcu
     _append(p, {"node": "power.topology", "value": "linear"})
     _append(p, {"node": "power.topology", "retract": True, "why": "no regulator"})
-    lines = (home / "projects" / p / "decisions.jsonl").read_text().splitlines()
+    lines = (home / "projects" / p / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
     assert any('"value": "linear"' in l for l in lines)
     assert any('"retract": true' in l and "no regulator" in l for l in lines)
 
@@ -292,7 +292,7 @@ def test_a_default_is_never_written_to_the_log(battery_mcu, home):
     """A persisted default goes stale the moment the answer it keys on changes -
     the same bug class as a decision nobody can retract."""
     model.build(project=battery_mcu)
-    lines = (home / "projects" / battery_mcu / "decisions.jsonl").read_text().splitlines()
+    lines = (home / "projects" / battery_mcu / "decisions.jsonl").read_text(encoding="utf-8").splitlines()
     assert not any("mcu.decoupling" in l for l in lines)
     assert not any('"corpus"' in l for l in lines)
 

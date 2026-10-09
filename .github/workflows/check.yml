@@ -6,7 +6,13 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Altium only runs on Windows, so that is where most students run this.
+    # The authors are on macOS. Both have to pass, not just the CI default.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -19,17 +25,17 @@ jobs:
       # not declare how it is known, or that cites a document nobody can fetch,
       # fails the build rather than reaching a student.
       - name: the corpus validates
-        run: python3 scripts/validate_cascade.py
+        run: python scripts/validate_cascade.py
 
       - name: nothing is broken
-        run: python3 -m pytest tests/ -q
+        run: python -m pytest tests/ -q
 
       # Vendor PDFs are not redistributed with this repo, so the cache has to be
       # warmed before any quote can be checked against its document. If the
       # vendor is unreachable this step fails and the next one is skipped -
       # which is the honest outcome: we did not verify anything.
       - name: fetch the cited documents
-        run: python3 scripts/sources.py restore
+        run: python scripts/sources.py restore
 
       - name: every quote is really in its document
-        run: python3 scripts/verify_sources.py
+        run: python scripts/verify_sources.py

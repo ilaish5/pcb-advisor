@@ -18,6 +18,8 @@ def width_mm(current_a, layer="external", rise_c=10.0, oz=1.0):
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("current", type=float, help="amps")
     ap.add_argument("--layer", choices=list(K), default="external")

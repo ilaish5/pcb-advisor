@@ -327,6 +327,8 @@ def _split_sections(text):
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     proj = sys.argv[2] if len(sys.argv) > 2 else workspace.default_project()
     cmd = sys.argv[1] if len(sys.argv) > 1 else "list"
     if cmd == "new":

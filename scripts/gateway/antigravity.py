@@ -10,13 +10,17 @@ Differences from Claude Code:
   - An optional `effort` key (low | medium | high | xhigh | max) maps to
     --effort, which has no Claude Code equivalent.
 """
+import re
 import shutil
 import subprocess
+
+import oscompat
 
 from .base import Provider, Request, Result
 
 
 _AGY_MODELS_CACHE = None
+_OFFERED = ("gemini-3.1-pro-high", "gemini-3.8-flash-high")
 
 # what agy accepts for --effort
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -48,8 +52,9 @@ class AntigravityProvider(Provider):
                 try:
                     # describe() runs while the settings page loads, so a CLI that
                     # hangs here must not hang the server with it
-                    out = subprocess.check_output([cmd, "models"], stderr=subprocess.DEVNULL,
-                                                  text=True, timeout=10)
+                    out = subprocess.check_output([oscompat.resolve(cmd), "models"],
+                                                  stderr=subprocess.DEVNULL,
+                                                  **oscompat.TEXT, timeout=10)
                     models = []
                     for line in out.strip().split("\n"):
                         if line.strip():
@@ -61,7 +66,11 @@ class AntigravityProvider(Provider):
                     _AGY_MODELS_CACHE = []
             else:
                 _AGY_MODELS_CACHE = []
-        d["models"] = _AGY_MODELS_CACHE
+        # the settings page offers Pro and Flash at high effort; the rest of the
+        # list is for the CLI, not for a student choosing an engine
+        d["models"] = [m for m in _AGY_MODELS_CACHE
+                       if re.fullmatch(r"gemini-[\d.]+-(pro|flash)-high", m["id"])
+                       and m["id"] in _OFFERED] or _AGY_MODELS_CACHE
         return d
 
     def complete(self, request: Request) -> Result:
@@ -81,7 +90,7 @@ class AntigravityProvider(Provider):
             args[idx] = request.prompt
 
         model = request.model or self.config.get("model") or ""
-        argv = [cmd, *args]
+        argv = [oscompat.resolve(cmd), *args]
         if model:
             argv += ["--model", model]
         effort = self.config.get("effort")
@@ -94,7 +103,8 @@ class AntigravityProvider(Provider):
                 # the prompt is in argv; an inherited stdin left agy waiting on
                 # a terminal nobody types into, until the timeout
                 stdin=subprocess.DEVNULL,
-                capture_output=True, text=True,
+                capture_output=True, **oscompat.TEXT,
+                env=oscompat.child_env(),
                 timeout=request.timeout,
                 cwd=request.options.get("cwd") or None,
             )

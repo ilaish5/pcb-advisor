@@ -637,6 +637,8 @@ def write(project=None, session=None):
 
 
 if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
     proj = sys.argv[1] if len(sys.argv) > 1 else workspace.default_project()
     m = write(proj)
     p = m["progress"]

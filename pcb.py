@@ -24,6 +24,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "scripts"))
 
 import gateway     # noqa: E402
+import oscompat    # noqa: E402
 import project     # noqa: E402
 import workspace   # noqa: E402
 
@@ -40,7 +41,7 @@ def cmd_init(args):
         print(f"  created  {made}")
     if not report["created"]:
         print("  already set up — nothing to do")
-    print("\nnext: python3 pcb.py serve")
+    print(oscompat.py("\nnext: python3 pcb.py serve"))
 
 
 def cmd_serve(args):
@@ -54,13 +55,13 @@ def cmd_new(args):
     name = args[0]
     created = project.create(name, title=name)
     print(f"created projects/{created}")
-    print(f"open:   python3 pcb.py serve --project {created}")
+    print(oscompat.py(f"open:   python3 pcb.py serve --project {created}"))
 
 
 def cmd_list(args):
     rows = project.list_all()
     if not rows:
-        print("no projects yet — python3 pcb.py new \"my board\"")
+        print(oscompat.py("no projects yet — python3 pcb.py new \"my board\""))
         return
     for p in rows:
         mark = "✓" if p["confirmed"] else "·"
@@ -88,7 +89,7 @@ def cmd_engines(args):
         hands = "in the workspace" if d.get("workspace") else "text only"
         print(f"{mark} {d['id']:14} {d['status']:12} {state}")
         print(f"{'':17}{hands}" + (f" · tools: {d['tools']}" if d.get("tools") else ""))
-    print("\n* = active. Change with: python3 pcb.py config agent.provider <id>")
+    print(oscompat.py("\n* = active. Change with: python3 pcb.py config agent.provider <id>"))
 
 
 # THIS SHIPS AS THE DEFAULT, in config/defaults.json. Read the workspace and run
@@ -98,9 +99,9 @@ def cmd_engines(args):
 RECOMMENDED_TOOLS = {
     "allowed": [
         "Read", "Grep", "Glob",
-        "Bash(python3 scripts/trace_width.py *)",
-        "Bash(python3 scripts/sources.py *)",
-        "Bash(python3 scripts/model.py *)",
+        "Bash({python} scripts/trace_width.py *)",
+        "Bash({python} scripts/sources.py *)",
+        "Bash({python} scripts/model.py *)",
     ],
     "disallowed": ["Write", "Edit", "NotebookEdit"],
 }
@@ -115,7 +116,7 @@ def cmd_tools(args):
         print("cleared - the CLI's own settings decide now.")
         print("The engine will ask for approval before running scripts/trace_width.py,")
         print("and print mode has nobody to approve, so it will report that it could")
-        print("not compute. Restore with: python3 pcb.py tools --apply")
+        print(oscompat.py("not compute. Restore with: python3 pcb.py tools --apply"))
         return
     if "--apply" in args:
         for key, value in RECOMMENDED_TOOLS.items():
@@ -127,12 +128,12 @@ def cmd_tools(args):
     print("claude_code may touch:")
     if set_keys:
         for key, value in set_keys.items():
-            print(f"  {key:16} {json.dumps(value, ensure_ascii=False)}")
+            print(oscompat.py(f"  {key:16} {json.dumps(value, ensure_ascii=False)}"))
         if set_keys == RECOMMENDED_TOOLS:
             print("\n  (the shipped default: read and compute, never write)")
     else:
         print("  nothing set - the CLI's own settings decide, and the scripts")
-        print("  will not run. python3 pcb.py tools --apply restores the default.")
+        print(oscompat.py("  will not run. python3 pcb.py tools --apply restores the default."))
 
 
 def cmd_chats(args):
@@ -210,6 +211,7 @@ COMMANDS = {
 
 
 def main():
+    oscompat.utf8_stdio()
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
         print(__doc__.strip())
