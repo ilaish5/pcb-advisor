@@ -57,7 +57,9 @@
             "Edit(./projects/*/BOM.md)",
             "Edit(./projects/*/BOM.csv)",
             "Edit(./projects/*/sources/*.md)",
-            "Edit(./projects/*/sources/*.md.json)"
+            "Edit(./projects/*/sources/*.md.json)",
+            "Bash({python} scripts/skills/export_bom.py *)",
+            "Bash({python} scripts/render_schematic.py *)"
           ],
           "disallowed": [
             "NotebookEdit"

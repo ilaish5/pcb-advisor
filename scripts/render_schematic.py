@@ -159,10 +159,10 @@ def _board(d, m):
     design questions added are placed below, under a heading that says plainly
     that we do not know how they connect.
     """
-    sketching = m["stage"] == "sketch"
-    blocks = (m["sketch"].get("blocks", []) if sketching else m["blocks"]) or []
+    sketching = not m["idea"].get("confirmed")
+    blocks = (m["idea"].get("blocks", []) if sketching else m["blocks"]) or []
     links = [tuple(l) for l in
-             ((m["sketch"].get("links") if sketching else m.get("links")) or [])
+             ((m["idea"].get("links") if sketching else m.get("links")) or [])
              if len(l) == 2]
 
     if not blocks:
@@ -230,7 +230,7 @@ def _board(d, m):
     xs = [p[0] for p in pos.values()]
     ys = [p[1] for p in pos.values()]
     if sketching:
-        state = "confirmed" if m["sketch"].get("confirmed") else "proposed — confirm or correct it"
+        state = "confirmed" if m["idea"].get("confirmed") else "proposed — confirm or correct it"
         head, sub = f"BLOCK DIAGRAM — {state}", None
     else:
         p = m["progress"]

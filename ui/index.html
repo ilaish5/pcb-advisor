@@ -1,1847 +1,671 @@
-<!doctype html>
-<meta charset="utf-8">
 <title>PCB Advisor</title>
-<link rel="icon" href="data:,">
-
-<script>
-/* Runs before the first paint, so the page never flashes the wrong theme while
-   /api/config is still in flight. The server's answer is the truth; this is the
-   last answer it gave, cached. Private windows throw on localStorage - a theme
-   is not worth a blank page, so failure just means "auto". */
-(function(){
-  try{
-    var t=localStorage.getItem('pcbadv.theme');
-    if(t==='light'||t==='dark') document.documentElement.setAttribute('data-theme',t);
-  }catch(e){}
-})();
-</script>
-
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
-/* ---------- colour, in one place ----------
-   Three modes. `auto` sets no data-theme at all and lets the media query below
-   decide, so the OS is followed even with JS disabled; `light` and `dark` pin
-   the attribute. Every colour in this file is a token - a literal here is a
-   colour that cannot follow the theme. */
+/* Layout: chat (left) | main screen with tabs (center) | navigation sidebar (right). Light theme only, by choice. */
 :root{
-  /* tells the browser to render its own bits - spinners, scrollbars, the caret -
-     in dark, instead of dropping a white control into a dark page */
-  color-scheme: dark;
-  --bg:#0b0f19; --panel:rgba(15, 23, 42, 0.75); --card:rgba(30, 41, 59, 0.6); --menu:#1e293b; --pop:#1e293b;
-  --field:rgba(15, 23, 42, 0.5); --lk:rgba(30, 41, 59, 0.3);
-  --line:rgba(255, 255, 255, 0.1); --line2:rgba(255, 255, 255, 0.05); --edge:rgba(255, 255, 255, 0.15); --edge2:rgba(255, 255, 255, 0.2); --rule:rgba(255, 255, 255, 0.1);
-  --ink:#f8fafc; --ink2:#cbd5e1; --dim:#94a3b8; --mute:#64748b;
-  --hover:rgba(255, 255, 255, 0.05); --hover2:rgba(255, 255, 255, 0.08); --sel:rgba(56, 189, 248, 0.15);
-  --accent:#38bdf8; --ok:#10b981; --warn:#fbbf24; --bad:#ef4444;
-  --on-accent:#0f172a; --ring:rgba(56, 189, 248, 0.3);
-  --you:rgba(56, 189, 248, 0.1); --you-line:rgba(56, 189, 248, 0.2);
-  --blk-line:rgba(56, 189, 248, 0.5); --wire:#64748b; --wire-hot:#ef4444;
-  --conflict-bg:rgba(239, 68, 68, 0.1); --danger-ink:#fca5a5;
-  --warn-bg:rgba(251, 191, 36, 0.1); --warn-line:rgba(251, 191, 36, 0.2); --warn-edge:rgba(251, 191, 36, 0.3); --warn-ink:#fcd34d;
-  --shadow:rgba(0,0,0,0.5); --shadow-menu:rgba(0,0,0,0.6);
-}
-
-/* The light palette is written twice on purpose: once for an explicit choice and
-   once for the media query. A shared class would need JS to attach it, and the
-   whole point of the media query is to work before any JS has run. */
-:root[data-theme="light"]{
-  color-scheme: light;
-  --bg:#f4f6fa; --panel:#e9ecf3; --card:#fff; --menu:#fff; --pop:#fff;
-  --field:#fff; --lk:#f3f5fa;
-  --line:#c8cfdd; --line2:#e5e9f0; --edge:#b0bacd; --edge2:#9aa5be; --rule:#c3cbdb;
-  --ink:#151922; --ink2:#333b4b; --dim:#556074; --mute:#5f6a7e;
-  --hover:#e4e8f2; --hover2:#eaeef8; --sel:#dbe4f8;
-  --accent:#1d4ed8; --ok:#15803d; --warn:#8a5a00; --bad:#c62828;
-  --on-accent:#fff; --ring:#1d4ed833;
-  --you:#dbeafe; --you-line:#8fbaf5;
-  --blk-line:#8e9ab4; --wire:#68738c; --wire-hot:#ef444488;
-  --conflict-bg:#fdeaea; --danger-ink:#9b1c1c;
-  --warn-bg:#f7e7bd; --warn-line:#c99f42; --warn-edge:#c39b3e; --warn-ink:#6b4e0a;
-  --shadow:#0f172a26; --shadow-menu:rgba(15,23,42,.16);
-}
-
-/* `auto`: no data-theme attribute, so this only ever applies to someone who has
-   not chosen. An explicit choice sets the attribute and wins by not matching. */
-@media (prefers-color-scheme: light){
-  :root:not([data-theme]){
-    color-scheme: light;
-    --bg:#f4f6fa; --panel:#e9ecf3; --card:#fff; --menu:#fff; --pop:#fff;
-    --field:#fff; --lk:#f3f5fa;
-    --line:#c8cfdd; --line2:#e5e9f0; --edge:#b0bacd; --edge2:#9aa5be; --rule:#c3cbdb;
-    --ink:#151922; --ink2:#333b4b; --dim:#556074; --mute:#5f6a7e;
-    --hover:#e4e8f2; --hover2:#eaeef8; --sel:#dbe4f8;
-    --accent:#1d4ed8; --ok:#15803d; --warn:#8a5a00; --bad:#c62828;
-    --on-accent:#fff; --ring:#1d4ed833;
-    --you:#dbeafe; --you-line:#8fbaf5;
-    --blk-line:#8e9ab4; --wire:#68738c; --wire-hot:#ef444488;
-    --conflict-bg:#fdeaea; --danger-ink:#9b1c1c;
-    --warn-bg:#f7e7bd; --warn-line:#c99f42; --warn-edge:#c39b3e; --warn-ink:#6b4e0a;
-    --shadow:#0f172a26; --shadow-menu:rgba(15,23,42,.16);
-  }
+  color-scheme:light;
+  --bg:#eef1f6; --panel:#ffffff; --panel2:#f5f7fb; --line:#d6dce8; --line2:#e7ebf2;
+  --ink:#141a26; --ink2:#323c50; --dim:#5b667b;
+  --accent:#2148c9; --accent-ink:#ffffff; --accent-soft:#e3e9fb;
+  --net:#6b2fb3; --net-soft:#f0e7fb;
+  --ok:#167a46; --ok-soft:#e1f2e8; --warn:#8f5d00; --warn-soft:#fbefd2; --bad:#b8322a; --bad-soft:#fbe4e2;
+  --nav:#17203a; --nav-ink:#dfe5f3; --nav-dim:#94a0bd; --nav-sel:#2a3657;
+  --sch-bg:#fbfcfe; --sch-wire:#233f99; --sch-body:#fdf2c8; --sch-body-line:#7d2f14; --sch-text:#151515;
+  --sch-pwr:#d27a12; --sch-pwr3:#2e7a33; --sch-gnd:#6b4a3a; --sch-dash:#a3abba;
+  --hl:rgba(33,72,201,.15); --hl2:rgba(33,72,201,.07);
+  --shadow:0 1px 2px rgba(20,26,38,.06),0 6px 20px rgba(20,26,38,.07);
+  --f-ui:"IBM Plex Sans","Segoe UI",Arial,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box}
-html,body{height:100%;margin:0}
-body{background:var(--bg);color:var(--ink);
-     font:14px/1.6 -apple-system,"Segoe UI",Inter,Arial,sans-serif;
-     display:flex;overflow:hidden}
-button{background:var(--card);border:1px solid var(--line);border-radius:8px;
-  color:var(--ink);padding:6px 11px;font:inherit;font-size:13px;cursor:pointer}
-button:hover{border-color:var(--accent)}
-input,textarea{background:var(--card);border:1px solid var(--line);border-radius:8px;
-  color:var(--ink);font:inherit;font-size:13px;padding:6px 9px;
-  -webkit-appearance:none;appearance:none}
-input:focus,textarea:focus{outline:none;border-color:var(--accent)}
-input[type=number]{-moz-appearance:textfield}
-input[type=number]::-webkit-inner-spin-button,
-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:14px;line-height:1.5;margin:0}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.m{font-family:var(--f-mono)}
+.app{height:100%;display:grid;grid-template-columns:minmax(300px,370px) minmax(0,1fr) 216px;gap:12px;padding-inline:16px;padding-block:12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);min-height:0;min-width:0}
 
-/* a checkbox we control, instead of the OS one */
-input[type=checkbox]{width:17px;height:17px;border-radius:5px;cursor:pointer;
-  position:relative;flex:none;padding:0}
-input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
-input[type=checkbox]:checked::after{content:"";position:absolute;left:5px;top:1px;
-  width:4px;height:9px;border:solid var(--on-accent);border-width:0 2px 2px 0;transform:rotate(43deg)}
+/* ---------- nav (right) ---------- */
+.nav{background:var(--nav);color:var(--nav-ink);border-radius:12px;display:flex;flex-direction:column;gap:18px;padding:14px 10px;min-height:0;overflow-y:auto}
+.brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;padding:0 6px}
+.brand svg{width:22px;height:22px;flex:none}
+.ngroup{display:grid;gap:2px}
+.nlabel{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--nav-dim);padding:0 8px 4px}
+.nitem{display:flex;align-items:center;gap:10px;border:0;background:none;color:var(--nav-ink);text-align:left;padding:7px 8px;border-radius:8px;font-size:13.5px}
+.nitem svg{width:17px;height:17px;flex:none;opacity:.85}
+.nitem .lbl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nitem .cnt{font-family:var(--f-mono);font-size:11px;color:var(--nav-dim)}
+.nitem:hover{background:rgba(255,255,255,.06)}
+.nitem[aria-current="true"]{background:var(--nav-sel);font-weight:600}
+.nitem .pdot{width:8px;height:8px;border-radius:50%;background:var(--nav-dim);flex:none;margin-inline:4.5px}
+.nitem[aria-current="true"] .pdot{background:#7fd1a4}
+.nsub{display:grid;gap:1px;padding-left:35px}
+.nsub button{border:0;background:none;color:var(--nav-dim);text-align:left;padding:3px 8px;border-radius:6px;font-size:12.5px}
+.nsub button:hover{color:var(--nav-ink)}
+.nsub button[aria-current="true"]{color:var(--nav-ink);font-weight:600}
+.nfoot{margin-top:auto;display:grid;gap:8px}
+.mock{font-size:11.5px;color:#f3d48c;border:1px solid #6b5a2c;border-radius:8px;padding:5px 8px;line-height:1.35}
 
-/* ---------- dropdowns: ours, so the popup matches the app ---------- */
-.dd{position:relative;flex:1;min-width:0}
-.dd-t{width:100%;display:flex;align-items:center;gap:7px;text-align:left}
-.dd-t span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dd-t i{font-style:normal;color:var(--dim);font-size:10px;transform:translateY(1px)}
-.dd.open .dd-t{border-color:var(--accent)}
-.dd-m{display:none;position:absolute;z-index:40;top:calc(100% + 5px);left:0;min-width:100%;
-  width:max-content;max-width:300px;max-height:290px;overflow-y:auto;background:var(--menu);border:1px solid var(--edge);
-  border-radius:10px;padding:5px;box-shadow:0 14px 34px var(--shadow-menu)}
-.dd.open .dd-m{display:block}
-.dd-m.right{left:auto;right:0}
-.dd-i{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:0;
-  background:transparent;border-radius:7px;padding:7px 9px;font-size:13px;white-space:nowrap}
-.dd-i:hover{background:var(--hover2)}
-.dd-i.on{background:var(--sel);color:var(--ink)}
-.dd-i b{flex:none;font-weight:400}
-.dd-i em{font-style:normal;color:var(--mute);font-size:11px;margin-left:auto;
-  overflow:hidden;text-overflow:ellipsis}
-.dd-i .tick{color:var(--accent);font-size:11px;visibility:hidden}
-.dd-i.on .tick{visibility:visible}
+/* ---------- chat (left) ---------- */
+.chat{display:grid;grid-template-rows:auto minmax(0,1fr) auto;position:relative;overflow:hidden}
+.chead{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line2)}
+.convbtn{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--panel2);border-radius:8px;padding:4px 10px;font-weight:600;font-size:13px;min-width:0;flex:1;text-align:left}
+.convbtn span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+.convbtn svg{width:14px;height:14px;flex:none}
+.newbtn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:4px 10px;font-size:13px;white-space:nowrap}
+.newbtn:hover,.convbtn:hover{border-color:var(--accent)}
+.convs{position:absolute;inset:51px 0 0 0;background:var(--panel);z-index:4;overflow-y:auto;padding:8px}
+.convs h4{margin:8px 6px 4px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim)}
+.conv{display:grid;gap:1px;width:100%;text-align:left;border:1px solid transparent;background:none;border-radius:8px;padding:7px 9px}
+.conv:hover{background:var(--panel2)}
+.conv[aria-current="true"]{background:var(--accent-soft);border-color:var(--accent)}
+.conv .t{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13px}
+.conv .t small{font-weight:400;color:var(--dim);font-size:11.5px;white-space:nowrap}
+.conv .p{font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.conv .anc{font-family:var(--f-mono);font-size:11px;color:var(--net);background:var(--net-soft);border-radius:4px;padding:0 5px;margin-right:4px}
+.msgs{overflow-y:auto;padding:14px 14px 6px;display:flex;flex-direction:column;gap:12px}
+.msg.user{align-self:flex-end;max-width:88%}
+.msg.user .bubble{background:var(--accent-soft);border-radius:12px 12px 3px 12px;padding:8px 12px;white-space:pre-wrap}
+.msg.agent .who{font-size:11.5px;color:var(--dim);font-weight:600;margin-bottom:2px}
+.msg.agent .txt{color:var(--ink2)}
+.msg.agent .txt p{margin:0 0 6px}
+.msg.agent .txt ul,.msg.agent .txt ol{margin:4px 0 6px;padding-left:18px}
+.msg.agent .txt li{margin-bottom:4px}
+.ref{font-family:var(--f-mono);font-size:12px;font-weight:600;color:var(--net);background:var(--net-soft);border:0;border-radius:5px;padding:0 6px}
+.ref:hover{text-decoration:underline}
+.src{display:inline-flex;gap:5px;align-items:baseline;font-size:11.5px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:0 7px;margin-top:3px;background:var(--panel2);text-align:left}
+.src b{font-weight:600;color:var(--ink2);font-family:var(--f-mono);font-size:11px}
+button.src:hover{border-color:var(--accent)}
+.tools{border:1px solid var(--line2);border-radius:9px;background:var(--panel2);padding:6px 10px;display:grid;gap:3px;font-size:12.5px}
+.tool{display:grid;grid-template-columns:16px auto minmax(0,1fr);gap:8px;align-items:baseline}
+.tool .tt{font-weight:600;color:var(--ink2);white-space:nowrap}
+.tool .td{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tool .ti::before{display:inline-block;width:14px;text-align:center;font-weight:700}
+.tool.ok .ti::before{content:"✓";color:var(--ok)}
+.tool.warn .ti::before{content:"!";color:var(--warn)}
+.tool.run .ti::before{content:"";width:9px;height:9px;border:2px solid var(--accent);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.tool.run .ti::before{animation:none}}
+.stage{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel2)}
+.stage-k{font-size:11.5px;color:var(--ok);font-weight:600}
+.stage-t{font-weight:600}
+.stage-d{font-size:12.5px;color:var(--dim)}
+.lnk{border:0;background:none;color:var(--accent);padding:0;font-size:12.5px;font-weight:600}
+.lnk:hover{text-decoration:underline}
+.diff{border:1px solid var(--warn);border-radius:10px;overflow:hidden;background:var(--panel)}
+.diff.ok{border-color:var(--ok)} .diff.no{border-color:var(--line);opacity:.75}
+.diff-h{display:flex;align-items:center;gap:8px;padding:7px 12px;background:var(--warn-soft);font-weight:600;font-size:13px}
+.diff.ok .diff-h{background:var(--ok-soft)} .diff.no .diff-h{background:var(--panel2)}
+.diff table{width:100%;border-collapse:collapse;font-size:12.5px}
+.diff td{padding:4px 12px;border-top:1px solid var(--line2);vertical-align:top}
+.diff td:first-child{color:var(--dim);width:30%}
+.diff .old{color:var(--bad);text-decoration:line-through;text-decoration-thickness:1px}
+.diff .new{color:var(--ok);font-weight:600}
+.diff-n{margin:0;padding:6px 12px;font-size:12px;color:var(--dim);border-top:1px solid var(--line2)}
+.diff-a{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--line2)}
+.diff-s{padding:7px 12px;font-size:12.5px;font-weight:600;border-top:1px solid var(--line2);color:var(--dim)}
+.diff.ok .diff-s{color:var(--ok)}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:4px 12px;font-size:13px}
+.btn:hover{border-color:var(--accent)}
+.btn.pri{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.ctx{border:1px dashed var(--net);border-radius:10px;padding:8px 12px;font-size:12.5px;background:var(--net-soft);color:var(--ink2)}
+.ctx b{color:var(--ink)}
+.ctx .nets{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.ctx .nets span{font-family:var(--f-mono);font-size:11px;color:var(--net);border:1px solid var(--net);border-radius:4px;padding:0 5px}
+.composer{border-top:1px solid var(--line2);padding:8px 12px 12px;display:grid;gap:8px}
+.sugs{display:flex;gap:6px;flex-wrap:wrap}
+.sug{border:1px solid var(--line);background:var(--panel2);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--ink2)}
+.sug:hover{border-color:var(--accent);color:var(--accent)}
+.inrow{display:flex;gap:8px;align-items:flex-end}
+.inrow textarea{flex:1;min-width:0;resize:none;border:1px solid var(--line);border-radius:10px;background:var(--panel2);color:var(--ink);padding:8px 11px;font:inherit;min-height:42px;max-height:120px}
+.inrow .btn.pri{height:42px;padding-inline:16px}
 
-/* ---------- UI layout: unified sidebar | design ---------- */
-.side{width:430px;min-width:300px;flex:none;background:var(--panel);backdrop-filter:blur(16px);
-  border-right:1px solid var(--line2);display:flex;flex-direction:column;overflow:hidden}
-.mid{flex:1;min-width:280px;display:flex;flex-direction:column;overflow:hidden;
-  background:var(--bg)}
-.chat{flex:1;display:flex;flex-direction:column;overflow:hidden}
-.split{width:5px;flex:none;cursor:col-resize;background:transparent}
-.split:hover,.split.on{background:var(--accent)}
+/* ---------- center ---------- */
+.work{display:grid;grid-template-rows:auto minmax(0,1fr);position:relative;overflow:hidden}
+.whead{display:flex;align-items:center;gap:12px;padding:10px 16px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.crumb{font-size:12.5px;color:var(--dim);padding-bottom:10px}
+.crumb b{color:var(--ink);font-weight:600}
+.tabs{display:flex;gap:2px;overflow-x:auto;margin-right:auto}
+.tab{border:0;background:none;padding:7px 12px 9px;border-bottom:2px solid transparent;display:flex;gap:7px;align-items:center;white-space:nowrap;color:var(--dim);font-weight:500}
+.tab .n{font-family:var(--f-mono);font-size:11px;border:1px solid currentColor;border-radius:50%;width:18px;height:18px;display:inline-grid;place-items:center}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.tab[aria-selected="true"] .n{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.st{font-size:11px;border-radius:999px;padding:0 7px;font-weight:600;white-space:nowrap}
+.st.ok{background:var(--ok-soft);color:var(--ok)} .st.warn{background:var(--warn-soft);color:var(--warn)} .st.bad{background:var(--bad-soft);color:var(--bad)} .st.dim{background:var(--panel2);color:var(--dim)}
+.view{overflow:auto;padding:14px 16px;min-width:0}
+.vhead{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.vhead h2{margin:0;font-size:17px;text-wrap:balance}
+.vhead p{margin:2px 0 0;color:var(--dim);font-size:13px;max-width:70ch}
+.vacts{display:flex;gap:6px;flex-wrap:wrap}
 
-.brand{font-weight:600;padding:13px 16px 11px;border-bottom:1px solid var(--line);
-  display:flex;align-items:center;gap:8px;font-size:14.5px}
-.brand .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
-.picker{padding:10px 12px;border-bottom:1px solid var(--line);
-  display:flex;flex-direction:column;gap:7px}
-.picker .lab{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
-.picker .row{display:flex;gap:6px}
+/* BOM */
+.kpis{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.kpi{border:1px solid var(--line);border-radius:9px;padding:5px 12px;background:var(--panel2);display:flex;gap:8px;align-items:baseline}
+.kpi b{font-family:var(--f-mono);font-size:15px;font-variant-numeric:tabular-nums}
+.kpi span{font-size:12px;color:var(--dim)}
+.kpi.bad{border-color:var(--bad);background:var(--bad-soft)} .kpi.bad b{color:var(--bad)}
+.kpi.warn{border-color:var(--warn);background:var(--warn-soft)} .kpi.warn b{color:var(--warn)}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+table.bom{border-collapse:collapse;width:100%;min-width:1000px;font-size:13px}
+.bom th,.libt th,.srct th{position:sticky;top:0;background:var(--panel2);text-align:left;font-weight:600;font-size:12px;color:var(--dim);padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.bom td{padding:5px 8px;border-bottom:1px solid var(--line2);white-space:nowrap;vertical-align:middle}
+.bom tr,.libt tr{cursor:pointer}
+.bom tbody tr:hover td,.libt tbody tr:hover td{background:var(--hl2)}
+.bom tr.sel td,.libt tr.sel td{background:var(--hl)}
+tr.flash td{animation:flash 1.6s ease-out}
+@keyframes flash{0%{background:var(--ok-soft)}100%{background:transparent}}
+td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:right}
+.refs{font-family:var(--f-mono);font-weight:600;color:var(--net)}
+.bom .mpn input,.bom .note input{font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:5px;padding:1px 5px;width:100%}
+.bom .mpn input{font-family:var(--f-mono);font-size:12.5px;min-width:150px}
+.bom .note input{min-width:170px;color:var(--dim)}
+.bom input:hover{border-color:var(--line)}
+.bom input:focus{border-color:var(--accent);background:var(--panel)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%}
+.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)} .dot.na{background:var(--line)} .dot.pend{background:var(--accent)}
+.lib{font-size:12px;border-radius:5px;padding:0 7px;white-space:nowrap}
+.lib.std{color:var(--dim);background:var(--panel2)} .lib.ok{color:var(--ok);background:var(--ok-soft)} .lib.review{color:var(--warn);background:var(--warn-soft)} .lib.missing{color:var(--bad);background:var(--bad-soft)}
+.secs{display:flex;gap:3px}
+.secb{font-family:var(--f-mono);font-size:11px;font-weight:600;border:1px solid var(--line);background:var(--panel);border-radius:4px;padding:0 5px}
+.secb:hover{border-color:var(--accent);color:var(--accent)}
+.stock.bad{color:var(--bad);font-weight:600}
+.foot{font-size:12px;color:var(--dim);margin-top:8px}
 
-.picker button{padding:6px 9px;font-size:12px}
-.snav{display:flex;flex-wrap:nowrap;gap:6px;padding:8px 12px;border-bottom:1px solid var(--line);overflow-x:auto; align-items:center;}
-.snav::-webkit-scrollbar { display: none; }
-.snav { -ms-overflow-style: none; scrollbar-width: none; }
-.snav-item { display:flex; align-items:center; background:transparent; border-radius:6px; border:1px solid transparent; }
-.snav-item:hover { border-color:var(--edge2); background:var(--hover); }
-.snav button{padding:4px 8px;font-size:12px;border-color:transparent;background:transparent; color:var(--dim); cursor:pointer;}
-.snav button:hover{color:var(--ink);}
-.snav button.on{background:var(--sel);border-color:var(--edge2);color:var(--ink); border-radius:4px;}
-.snav .open-ide-btn { padding:4px 6px; font-size:11px; opacity:0.6; }
-.snav .open-ide-btn:hover { opacity:1; }
-.snav .badge{background:var(--warn-bg);color:var(--warn);border-radius:99px;
-  font-size:10px;padding:0 5px;margin-left:5px}
-.sbody{flex:1;overflow-y:auto;padding:12px 13px}
-.sfoot{border-top:1px solid var(--line);padding:8px 13px;font-size:11.5px;color:var(--mute);
-  display:flex;gap:8px;align-items:center}
+/* detail drawer */
+.detail{position:absolute;top:0;right:0;bottom:0;width:320px;max-width:100%;border-left:1px solid var(--line);overflow-y:auto;background:var(--panel);box-shadow:-10px 0 28px rgba(20,26,38,.12);z-index:5}
+.dt{padding:14px 16px;display:grid;gap:14px}
+.dt-h{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.dt-h .refs{font-size:13px}
+.dt-h h3{margin:2px 0 0;font-family:var(--f-mono);font-size:16px;word-break:break-all}
+.dt-h p{margin:2px 0 0;color:var(--dim);font-size:12.5px}
+.x{border:0;background:none;font-size:18px;line-height:1;color:var(--dim);padding:2px 6px;border-radius:6px}
+.x:hover{background:var(--panel2)}
+.dt-a{display:flex;gap:6px;flex-wrap:wrap}
+.dsec h4{margin:0 0 5px;font-size:11px;color:var(--dim);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.where{display:grid;gap:4px}
+.where button{display:flex;gap:8px;align-items:baseline;text-align:left;border:1px solid var(--line2);background:var(--panel2);border-radius:7px;padding:4px 8px;font-size:12.5px}
+.where button:hover{border-color:var(--accent)}
+.where .r{font-family:var(--f-mono);font-weight:600;color:var(--net)}
+.where .s{color:var(--dim)}
+.netl{display:flex;flex-wrap:wrap;gap:4px}
+.netl span{font-family:var(--f-mono);font-size:11px;color:var(--net);border:1px solid var(--net);border-radius:4px;padding:0 5px}
+table.sup{width:100%;border-collapse:collapse;font-size:12.5px}
+.sup td,.sup th{padding:3px 4px;border-bottom:1px solid var(--line2);text-align:left}
+.sup th{font-weight:600;color:var(--dim);font-size:11.5px}
+.sup tr.best td{color:var(--ok);font-weight:600}
+.checked{font-size:11.5px;color:var(--dim);margin-top:4px}
+.libg{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}
+.libg div{border:1px solid var(--line2);border-radius:7px;padding:4px 6px;text-align:center;font-size:12px}
+.libg b{display:block;font-size:14px}
+.y{color:var(--ok)} .nn{color:var(--bad)} .q{color:var(--warn)}
+.dnote{font-size:12.5px;color:var(--ink2);background:var(--panel2);border-radius:7px;padding:6px 9px}
 
-/* ---------- the diagram: real DOM, so it is legible and editable ---------- */
-.diagram{flex:1;background:radial-gradient(circle, rgba(100,116,139,0.3) 1.5px, transparent 1.5px);background-size:24px 24px;display:flex;flex-direction:column;
-  min-height:0;position:relative}
-/* dragging must not select the text underneath */
-body.nosel{user-select:none;-webkit-user-select:none}
-.zoom{display:flex;align-items:center;gap:2px;margin-inline-start:6px}
-.zoom button{padding:4px 9px;font-size:13px;line-height:1}
-.zoom .pct{color:var(--dim);font-size:11.5px;width:42px;text-align:center}
-.dbar{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:12px;color:var(--dim)}
-.dbar .sp{flex:1}
-.dbar button{padding:5px 10px;font-size:12px}
-.dbar button.go{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
-.canvas{flex:1;overflow:hidden;position:relative;cursor:grab;touch-action:none}
-.canvas.drag{cursor:grabbing}
-.stage{position:absolute;left:0;top:0;transform-origin:0 0}
-.blk{position:absolute;width:158px;min-height:64px;background:rgba(15, 23, 42, 0.85);backdrop-filter:blur(12px);
-  border:1px solid rgba(255, 255, 255, 0.1);border-radius:12px;padding:9px 11px;cursor:pointer;
-  display:flex;flex-direction:column;justify-content:center;gap:3px;
-  font-size:13px;line-height:1.35;z-index:2;box-shadow:0 4px 20px rgba(0, 0, 0, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.1);color:#f1f5f9;transition:all 0.2s ease;}
-/* a part the design questions added: on the board, but nothing says where */
-.blk.loose{border-style:dashed;opacity:.7}
-.loosecap{position:absolute;left:0;text-align:center;color:var(--dim);font-size:12px;
-  z-index:1;pointer-events:none}
-.blk:hover{border-color:var(--accent);box-shadow:0 0 10px var(--ring);}
-.blk.sel{border-color:var(--accent);box-shadow:0 0 15px rgba(56, 189, 248, 0.4), inset 0 1px 1px rgba(255,255,255,0.2);}
-.blk.linking{border-color:var(--ok);border-style:dashed}
-.blk .kind{font-size:10px;color:var(--dim)}
-.wires{position:absolute;inset:0;z-index:1;overflow:visible}
-.wires path{stroke:var(--wire);fill:none;filter:drop-shadow(0 0 3px rgba(100,116,139,0.5))}
-.wires path.hit{stroke:transparent;stroke-width:14;cursor:pointer;fill:none}
-.wires marker path { fill: var(--wire); stroke: none; filter: none; }
-.wires path.hit:hover{stroke:var(--wire-hot)}
-.pop{position:absolute;z-index:20;background:var(--pop);border:1px solid var(--edge2);
-  border-radius:10px;padding:12px;width:250px;display:flex;flex-direction:column;gap:8px;
-  box-shadow:0 12px 32px var(--shadow)}
-.pop input,.pop select{width:100%;background:var(--card);border:1px solid var(--line);
-  border-radius:7px;padding:7px 9px;color:var(--ink);font:inherit;font-size:13px}
-.pop .row{display:flex;gap:7px}
-.pop .dd{width:100%}
-.pop .row button{flex:1;font-size:12px}
-.danger{color:var(--danger-ink)}
-.hintbar{font-size:11.5px;color:var(--dim);padding:0 14px 8px}
-.demobar{background:var(--warn-bg);color:var(--warn-ink);border-bottom:1px solid var(--warn-line);
-  padding:8px 14px;font-size:12px;line-height:1.5}
-.demobar b{font-weight:600}
+/* schematic */
+.sheets{display:flex;gap:4px;flex-wrap:wrap}
+.sheet{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:3px 10px;font-size:12.5px}
+.sheet[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.sheet:disabled{color:var(--dim);cursor:default;opacity:.7}
+.schwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--sch-bg)}
+svg.sch{display:block;width:100%;min-width:980px;height:auto}
+.sch text{font-family:var(--f-mono);font-size:10px;fill:var(--sch-text)}
+.sch .refd{font-weight:600;font-size:11.5px}
+.sch .mpn{fill:var(--sch-wire);font-size:9.5px}
+.sch .pnum{font-size:8.5px;fill:var(--dim)}
+.sch .pname{font-weight:600}
+.sch .net{fill:var(--net);font-weight:600}
+.sch .pwr{fill:var(--sch-pwr);font-weight:700}
+.sch .pwr3{fill:var(--sch-pwr3);font-weight:700}
+.sch .refs{font-size:9.5px;fill:var(--sch-text);font-weight:400}
+.sch .w{stroke:var(--sch-wire);stroke-width:1.6;fill:none;stroke-linecap:round}
+.sch .pin{stroke:var(--sch-text);stroke-width:1.2}
+.sch .pb{stroke:var(--sch-pwr);stroke-width:2.6}
+.sch .pb3{stroke:var(--sch-pwr3);stroke-width:2.6}
+.sch .g{stroke:var(--sch-gnd);stroke-width:1.6}
+.sch .gt{fill:var(--sch-gnd);font-size:8px;font-weight:600}
+.sch .body{fill:var(--sch-body);stroke:var(--sch-body-line);stroke-width:1.8}
+.sch .nbox{fill:var(--sch-bg);stroke:var(--net);stroke-width:1.2}
+.sch .secr{fill:none;stroke:var(--sch-dash);stroke-dasharray:7 5;stroke-width:1.3}
+.sch .sect{font-family:var(--f-ui);font-weight:600;font-size:12px;fill:var(--ink)}
+.sch .title{font-family:var(--f-ui);font-weight:700;font-size:14px;fill:var(--ink)}
+.sch .nc{stroke:var(--bad);stroke-width:1.8}
+.sch .nct{fill:var(--bad);font-size:8px}
+.sch .note{fill:var(--dim);font-size:9px;font-style:italic}
+.sch .wn{fill:var(--bad);font-size:9px;font-style:italic}
+.sch .jn{fill:var(--sch-wire)}
+.sch .dnp{opacity:.5}
+.sch .dnp .w{stroke-dasharray:3 3}
+.sch .tpc{fill:none;stroke:var(--sch-wire);stroke-width:1.8}
+.sch .part{cursor:pointer;transition:opacity .2s}
+.sch .hlbox{fill:transparent;stroke:none}
+.sch .part:hover .hlbox{fill:var(--hl2)}
+.sch .part.sel .hlbox{fill:var(--hl);stroke:var(--accent);stroke-width:1.6}
+.sch.focus .part:not(.sel){opacity:.28}
 
-/* ---------- the conversation ---------- */
-.chead{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;
-  align-items:center;gap:9px;font-size:12.5px;color:var(--dim)}
-.chead .sp{flex:1}
-.log{flex:1;overflow-y:auto;padding:18px 0}
-.wrap{max-width:100%;margin:0 auto;padding:0 16px;
-      display:flex;flex-direction:column;gap:15px}
-.msg{display:flex;flex-direction:column;gap:5px}
-.who{font-size:11px;color:var(--dim)}
-.bubble{border-radius:12px;padding:12px 15px;font-size:14px}
-.you .bubble{background:var(--you);border:1px solid var(--you-line);align-self:flex-end;max-width:80%}
-.you{align-items:flex-end}
-.advisor .bubble{background:var(--card);border:1px solid var(--line)}
+/* idea */
+.idea{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px;align-items:start}
+.card{border:1px solid var(--line);border-radius:10px;background:var(--panel)}
+.card h3{margin:0;padding:9px 14px;font-size:13px;border-bottom:1px solid var(--line2);color:var(--ink2)}
+.agreed{margin:0}
+.agreed div{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:8px 14px;border-bottom:1px solid var(--line2)}
+.agreed div:last-child{border-bottom:0}
+.agreed dt{font-weight:600;font-size:13px}
+.agreed dd{margin:0;font-size:13px;color:var(--ink2)}
+.agreed small{display:block;color:var(--dim);font-size:11.5px}
+.reqs{list-style:none;margin:0;padding:8px 14px 6px;display:grid;gap:6px;font-size:13px}
+.reqs li{display:flex;gap:8px;align-items:baseline}
+.reqs .ic{font-weight:700;width:14px;flex:none}
+svg.blocks{display:block;width:100%;height:auto}
+.blocks rect{fill:var(--panel2);stroke:var(--line);stroke-width:1.4}
+.blocks .cur rect{fill:var(--accent-soft);stroke:var(--accent)}
+.blocks .open rect{stroke-dasharray:5 4}
+.blocks text{font-family:var(--f-mono);font-size:12px;fill:var(--ink)}
+.blocks .s{fill:var(--dim);font-size:10.5px}
+.blocks path{stroke:var(--dim);stroke-width:1.5;fill:none}
+.blocks .pl{fill:var(--sch-pwr);font-size:10px;font-weight:600}
+.blocks g.cur{cursor:pointer}
 
-/* a decision, shown inline in the timeline */
-.dec{border-left:2px solid var(--ok);padding:2px 0 2px 14px}
-.dec .head{font-size:13.5px}
-.dec .head b{color:var(--ok);font-weight:600}
-/* taking something out is not an achievement: it must not read like one */
-.dec.gone{border-left-color:var(--line)}
-.dec.gone .head b{color:var(--dim);font-weight:500}
-.dec.gone .locked{opacity:.6}
-.dec .lost{margin-top:8px;font-size:12px;color:var(--dim)}
-.locked{margin-top:8px;display:flex;flex-direction:column;gap:6px}
-.lk{background:var(--lk);border:1px solid var(--line);border-radius:9px;
-    padding:9px 12px;font-size:13px;color:var(--ink2)}
-.lk .tag{color:var(--dim);font-size:11px;margin-right:6px}
-/* An answer that locks nothing used to pass in silence, which reads as "nothing
-   applies" when it often means "the question could not express your case". */
-.nothing{margin-top:7px;font-size:12.5px;color:var(--dim);line-height:1.5;
-  border-left:2px solid var(--warn-line);padding-left:10px}
+/* library / sources / skills */
+table.libt,table.srct{border-collapse:collapse;width:100%;font-size:13px}
+table.libt{min-width:740px} table.srct{min-width:780px}
+.libt td,.srct td{padding:7px 8px;border-bottom:1px solid var(--line2);white-space:nowrap}
+.libt .c{text-align:center;font-weight:700}
+.howto{margin-top:14px;border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--panel2);font-size:13px}
+.howto code{font-family:var(--f-mono);font-size:12px;display:block;background:var(--panel);border:1px solid var(--line2);border-radius:6px;padding:6px 9px;margin:6px 0;overflow-x:auto;white-space:nowrap}
+.sgroup{margin-bottom:22px}
+.sgh{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.sgh h3{margin:0;font-size:14px}
+.sgh p{margin:0;font-size:12.5px;color:var(--dim)}
+.path{font-family:var(--f-mono);font-size:11.5px;color:var(--dim);background:var(--panel2);border:1px solid var(--line2);border-radius:5px;padding:0 6px}
+.srct .fname{font-family:var(--f-mono);font-size:12.5px;font-weight:500}
+.srct .kind{font-family:var(--f-mono);font-size:11px;border:1px solid var(--line);border-radius:4px;padding:0 5px;color:var(--dim)}
+.srct .hash{font-family:var(--f-mono);font-size:12px;color:var(--dim)}
+.srct .org{color:var(--dim);font-size:12.5px}
+.srct .cite{font-size:12.5px;color:var(--ink2);white-space:normal;min-width:180px}
+.srct tr.hit td{background:var(--hl)}
+.sidecar{font-size:12.5px;color:var(--dim);border:1px dashed var(--line);border-radius:9px;padding:9px 12px;background:var(--panel2)}
+.sidecar pre{margin:6px 0 0;font-family:var(--f-mono);font-size:11.5px;color:var(--ink2);overflow-x:auto}
+.skills{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px}
+.skill{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel);display:grid;gap:4px;align-content:start}
+.skill .t{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13.5px}
+.skill .d{font-size:12.5px;color:var(--dim)}
+.skill .u{font-size:11.5px;color:var(--dim);font-family:var(--f-mono)}
+.tag{font-size:11px;border-radius:999px;padding:0 8px;font-weight:600;white-space:nowrap}
+.tag.ok{background:var(--ok-soft);color:var(--ok)} .tag.plan{background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
 
-/* the live question, with its answers right there */
-.ask{background:var(--card);border:1px solid var(--edge);border-radius:12px;padding:16px}
-.ask .q{font-size:15.5px;font-weight:600;margin-bottom:5px}
-.ask .why{color:var(--dim);font-size:13px;margin-bottom:13px}
-.opts{display:flex;flex-direction:column;gap:8px}
-.opt{text-align:left;padding:11px 13px;font-size:14px;width:100%}
-/* Both lines are neutral on purpose. Red is a hazard signal; an option is not a
-   hazard, and colouring one option's consequence red turns a consideration into
-   a verdict - which is the one thing the advisor is forbidden to hand out. */
-.opt .weigh{color:var(--mute);font-size:11.5px;margin-top:4px}
-.opt .nuance{color:var(--dim);font-size:12px;margin-top:3px}
-.empty{color:var(--dim);text-align:center;padding:36px 14px;font-size:13px;line-height:1.7}
+.toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 16px;border-radius:9px;font-size:13px;box-shadow:var(--shadow);z-index:20;max-width:calc(100% - 32px)}
+.mobile-only{display:none}
 
-/* ---------- input ---------- */
-.compose{border-top:1px solid var(--line);padding:12px 0}
-.askchip{display:flex;align-items:center;gap:7px;margin:0 16px 9px;font-size:12px;
-  color:var(--dim);background:var(--field);border:1px solid var(--edge);
-  border-radius:99px;padding:4px 6px 4px 12px;width:fit-content}
-
-/* ---------- IDE tabs ---------- */
-.ide-tabs {
-  display: flex;
-  background: var(--bg);
-  border-bottom: 1px solid var(--line);
-  padding: 0 8px;
-  gap: 2px;
-  overflow-x: auto;
-  flex-shrink: 0;
+@media (max-width:1280px){
+  .app{grid-template-columns:minmax(290px,340px) minmax(0,1fr) 60px}
+  .nav{padding:12px 6px;align-items:center}
+  .nav .lbl,.nav .cnt,.nav .nlabel,.nav .nsub,.nav .mock,.brand span{display:none}
+  .nitem{justify-content:center;width:44px;padding:9px}
+  .idea{grid-template-columns:minmax(0,1fr)}
 }
-.ide-tab {
-  padding: 6px 14px;
-  font-size: 13px;
-  color: var(--dim);
-  background: transparent;
-  border-radius: 6px 6px 0 0;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-  user-select: none;
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  .nav{order:-1;flex-direction:row;align-items:center;padding:6px 8px;gap:4px;overflow-x:auto}
+  .nav .ngroup{display:flex;gap:2px}
+  .nav .nfoot,.nav .projects{display:none}
+  .mobile-only{display:flex}
+  .app[data-view="chat"] .work{display:none}
+  .app[data-view="work"] .chat{display:none}
+  .detail{width:100%}
 }
-.ide-tab:hover {
-  background: var(--hover);
-  color: var(--ink);
-}
-.ide-tab.active {
-  background: var(--card);
-  color: var(--ink);
-  font-weight: 500;
-  box-shadow: 0 -2px 0 var(--accent) inset;
-}
-.ide-tab .close-btn {
-  font-size: 16px;
-  color: var(--mute);
-  padding: 0 4px;
-  border-radius: 4px;
-  line-height: 1;
-}
-.ide-tab .close-btn:hover {
-  background: var(--line);
-  color: var(--ink);
-}
-.doc-viewer {
-  display: none;
-  flex: 1;
-  min-height: 0;
-  background: var(--bg);
-}
-.doc-viewer iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-}
-.askchip b{color:var(--ink);font-weight:600}
-.askchip button{padding:0 6px;border:0;background:transparent;color:var(--dim);font-size:13px}
-.thinking{display:flex;align-items:center;gap:8px;color:var(--dim);font-size:13px;
-  padding:2px 0}
-.thinking i{width:6px;height:6px;border-radius:50%;background:var(--accent);
-  animation:pulse 1.1s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
-.about{font-size:11px;color:var(--dim);margin-bottom:3px}
-.compose .wrap{flex-direction:row;gap:9px;align-items:flex-end}
-textarea{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;
-  padding:11px 13px;color:var(--ink);font:inherit;resize:none;height:48px}
-.send{background:var(--accent);border-color:var(--accent);color:var(--on-accent);padding:11px 20px}
-
-/* ---------- settings, in the left rail like an IDE ---------- */
-.set h4{margin:16px 0 7px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
-  color:var(--mute);font-weight:600}
-.set h4:first-child{margin-top:0}
-.set label{display:flex;align-items:center;gap:8px;margin-bottom:7px;font-size:12.5px}
-.set label span{flex:1;color:var(--dim)}
-.set label input{width:116px;flex:none;font-size:12.5px;padding:5px 8px}
-.set{max-width:460px}
-.set label .dd{width:200px;flex:none}
-.set label .meta{width:200px;flex:none;padding:5px 8px}
-.set label .dd-t{font-size:12.5px;padding:5px 8px}
-.set label input[type=checkbox]{width:17px}
-.set .note{color:var(--mute);font-size:11px;line-height:1.5;margin:5px 0 0}
-.thr{margin-top:8px;border-left:2px solid var(--rule);padding-left:9px}
-.thr .m{margin:5px 0;font-size:12.5px;line-height:1.5}
-.thr .m b{color:var(--dim);font-weight:600;margin-right:5px}
-.thr .row{display:flex;gap:6px;margin-top:7px}
-.thr input{flex:1;background:var(--field);color:var(--ink);border:1px solid var(--line);
-  border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
-.thr .settled{margin-top:7px;color:var(--dim);font-size:12px;line-height:1.5}
-.thr .settled .still{color:var(--warn-ink);margin-top:3px}
-.thr-err{margin-top:7px;color:var(--warn-ink);font-size:12px;line-height:1.5}
-.ask-badge{cursor:pointer;border:1px solid var(--line);background:var(--hover);border-radius:999px;
-  padding:1px 8px;font-size:11.5px;color:var(--dim);white-space:nowrap}
-.ask-badge.wait{border-color:var(--warn-edge);color:var(--warn-ink)}
-.ask-badge.done{opacity:.55}
-/* settled, but what it was about is still in the design: not the same as done */
-.ask-badge.ack{border-color:var(--warn-edge);color:var(--dim)}
-/* Taking a question out is a real edit, so it does not get a button competing
-   with the answers. It is a quiet link that opens one field asking why. */
-.drop{cursor:pointer;color:var(--mute);font-size:11px;border-bottom:1px dotted var(--line);
-      margin-left:auto;white-space:nowrap}
-.drop:hover{color:var(--warn-ink)}
-.droprow{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
-.droprow input{flex:1;min-width:150px;background:var(--field);color:var(--ink);
-  border:1px solid var(--line);border-radius:6px;padding:6px 8px;font:inherit;font-size:12.5px}
-.card.gone{opacity:.72;border-style:dashed}
-.card.gone .a{font-weight:400;color:var(--dim)}
-.gone-head{color:var(--mute);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;
-  margin:14px 0 7px}
-.gone-head.foryou{cursor:pointer;user-select:none}
-.gone-head.foryou:hover{color:var(--dim)}
-.card.corpus{border-style:dashed}
-.card.corpus .a{font-weight:500}
-.card .why{margin-top:5px;font-size:12px;line-height:1.5;color:var(--dim)}
-.qty{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
-.qty input{width:140px;background:var(--field);color:var(--ink);border:1px solid var(--line);
-  border-radius:8px;padding:8px 10px;font:inherit;font-size:14px}
-.qty .unit{color:var(--dim);font-size:13px}
-.qty .thr-err{flex-basis:100%}
-
-/* cards, not tables: the rail is narrow and a two-column table clips */
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
-  padding:11px 12px;margin-bottom:9px;font-size:12.5px;line-height:1.55}
-.card .q{color:var(--dim);font-size:12px;margin-bottom:3px}
-.card .a{font-weight:600;font-size:13px}
-.card .foot{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:8px}
-.card .stale{margin-top:6px;font-size:11.5px;line-height:1.5;color:var(--warn-ink)}
-table{width:100%;border-collapse:collapse;font-size:12.5px}
-th{text-align:left;color:var(--dim);font-weight:500;font-size:10.5px;letter-spacing:.07em;
-   text-transform:uppercase;padding:5px 8px;border-bottom:1px solid var(--line)}
-td{padding:9px 8px;border-bottom:1px solid var(--line2);vertical-align:top}
-.bom-table{width:100%;border-collapse:collapse;margin:10px 0;font-size:13px;border:1px solid var(--line)}
-.bom-table th{padding:8px;border:1px solid var(--line);background:var(--field);text-align:left;color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
-.bom-table td{padding:8px;border:1px solid var(--line);vertical-align:top}
-.quote{color:var(--dim);font-size:12px;margin-top:5px;font-style:italic}
-.meta{color:var(--mute);font-size:11px;margin-top:4px}
-.pill{font-size:10.5px;border:1px solid var(--line);border-radius:99px;
-      padding:1px 7px;color:var(--dim);white-space:nowrap}
-.pill.u{color:var(--warn);border-color:var(--warn-line)}
-a{color:var(--accent);text-decoration:none}
-.conflict{background:var(--conflict-bg);border-left:3px solid var(--bad);border-radius:8px;
-          padding:11px 13px;margin-bottom:12px;font-size:13px}
-.conflict b{color:var(--danger-ink)}
-.srcrow{display:flex;gap:10px;align-items:center;background:var(--card);
-  border:1px solid var(--line);border-radius:9px;padding:9px 12px;margin-bottom:7px;font-size:13px}
-.srcrow .g{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tools{display:flex;gap:8px;margin-top:10px}
-input[type=text]{flex:1;padding:8px 11px}
 </style>
-<body style="display:flex; flex-direction:column; height:100vh; margin:0">
 
-<header class="global-header" style="display:flex; align-items:center; padding:8px 16px; border-bottom:1px solid var(--line); background:var(--panel); gap: 16px;">
-  <div class="brand" style="border:none; padding:0; font-weight:600; display:flex; align-items:center; gap:8px; font-size:14.5px;">
-    <span class="dot"></span>PCB Advisor
-  </div>
-  <div class="picker" style="border:none; padding:0; display:flex; flex-direction:row; align-items:center; gap:8px;">
-    <span class="lab" style="margin:0; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute);">Board</span>
-    <div class="row" style="margin:0;">
-      <span id="projsel"></span>
-      <button onclick="newProject()" title="a new board" style="padding:4px 8px; font-size:12px;">+</button>
-    </div>
-    <span class="lab" id="sesslab" style="margin:0 0 0 10px; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--mute);">Conversation</span>
-    <div class="row" id="sessrow" style="margin:0;">
-      <span id="sesssel"></span>
-      <button onclick="newSession()" title="a clean conversation about this board" style="padding:4px 8px; font-size:12px;">+</button>
-    </div>
-  </div>
-  <div style="flex:1"></div>
-  <button id="t-settings" onclick="openInIde('panel:settings')" title="Settings" style="display:flex; align-items:center; justify-content:center; padding: 5px 8px; background:transparent; border:none; color:var(--dim); cursor:pointer;">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="3"></circle>
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-      </svg>
-  </button>
-</header>
-<div style="display:flex; flex:1; min-height:0; overflow:hidden;">
-<aside class="side" id="side">
-
-  <nav class="snav">
-    <button id="t-chat" onclick="showPanel('chat')">Chat</button>
-    <button id="t-decisions" onclick="showPanel('decisions')">Decisions</button>
-    <button id="t-constraints" onclick="showPanel('constraints')">Constraints</button>
-    <button id="t-sources" onclick="showPanel('sources')">Sources</button>
-    <button id="t-components" onclick="showPanel('components')">Components</button>
-    <button id="t-memory" onclick="showPanel('memory')">Memory</button>
-    <button onclick="openInIde('panel:'+TAB)" title="Open current panel in main area" style="margin-left:auto; padding:2px 6px; font-size:12px; color:var(--accent);">↗</button>
-  </nav>
-
-  <div class="sbody" id="sbody"></div>
-  <div id="anchor-sbody" style="display:none;"></div>
-  
-  <section class="chat" id="chatPane" style="display:none">
+<div class="app" id="app" data-view="work">
+  <!-- LEFT: chat -->
+  <section class="panel chat" aria-label="Chat with the agent">
     <div class="chead">
-      <span id="stat"></span>
-      <span class="sp"></span>
-      <span id="engine"></span>
+      <button class="convbtn" data-act="convs" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.6" fill="none"/></svg><span id="convtitle">Main</span></button>
+      <button class="newbtn" data-act="new">+ New</button>
     </div>
-    <div class="log" id="log"><div class="wrap" id="wrap"></div></div>
-    <div class="compose">
-      <div class="askchip" id="askchip" style="display:none"></div>
-      <div class="wrap">
-      <textarea id="say" dir="auto" placeholder="Describe what you want to design…"
-        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
-      <button class="send" id="sendbtn" onclick="send()">Send</button>
-    </div></div>
+    <div class="convs" id="convs" hidden></div>
+    <div class="msgs" id="msgs" aria-live="polite"></div>
+    <div class="composer">
+      <div class="sugs" id="sugs"></div>
+      <form class="inrow" id="form">
+        <textarea id="input" rows="1" placeholder="Message the agent… (Enter to send)"></textarea>
+        <button class="btn pri" type="submit">Send</button>
+      </form>
+    </div>
   </section>
-  <div id="anchor-chatPane" style="display:none;"></div>
 
-  <div class="sfoot"><span id="foot"></span></div>
-</aside>
+  <!-- CENTER: main screen -->
+  <section class="panel work" aria-label="Workspace">
+    <div class="whead" id="whead"></div>
+    <div class="view" id="view"></div>
+    <aside class="detail" id="detail" hidden></aside>
+  </section>
 
-<div class="split" id="splitL" title="drag to resize"></div>
-
-<main class="mid">
-  <div style="display:flex; align-items:flex-end; background:var(--bg); flex:none; border-bottom:1px solid var(--line);">
-    <div class="ide-tabs" id="ide-tabs" style="flex:1; border-bottom:none;"></div>
-  </div>
-
-  <div class="demobar" id="demobar" style="display:none; flex:none;"></div>
-  
-  <div style="display:flex; flex:1; min-height:0; overflow:hidden;">
-    <div id="ide-content-left" style="flex:1; display:flex; flex-direction:column; min-width:0; overflow:hidden;">
-      <div id="anchor-diagram" style="display:none;"></div>
-      <div class="diagram" id="diagram">
-        <div class="dbar">
-          <span id="dtitle">Diagram</span>
-          <span class="sp"></span>
-          <button onclick="addBlock()">+ Block</button>
-          <span class="zoom">
-            <button onclick="zoomBy(1/1.2)" title="zoom out">−</button>
-            <span class="pct" id="zpct">100%</span>
-            <button onclick="zoomBy(1.2)" title="zoom in">+</button>
-            <button onclick="fit(true)" title="fit and centre">Fit</button>
-          </span>
-          <button class="go" id="sendsketch" style="display:none" onclick="sendSketch()">
-            Send changes to advisor</button>
-        </div>
-        <div class="canvas" id="canvas"><div class="stage" id="stage"></div></div>
-        <div class="hintbar" id="dhint"></div>
-      </div>
-      <div class="doc-viewer" id="doc-viewer">
-        <iframe id="doc-iframe"></iframe>
-      </div>
-      <div class="native-panel" id="native-panel" style="display:none; flex:1; overflow-y:auto; padding:0; background:var(--bg);"></div>
-    </div>
-  </div>
-</main>
+  <!-- RIGHT: navigation -->
+  <nav class="nav" aria-label="Navigation" id="nav"></nav>
 </div>
+<div class="toast" id="toast" hidden></div>
 
 <script>
-let S=null, busy=false, TAB='chat';
-let CFG=null;
-// no project in the URL means "whatever config calls the default" - boot() fills it in
-let PROJ=new URLSearchParams(location.search).get('project')||'';
-let SESS=new URLSearchParams(location.search).get('session')||'';
-const $=id=>document.getElementById(id);
-const esc=s=>(s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function renderMarkdown(md) {
-  let html = esc(md);
-  html = html.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
-  const lines = html.split('\n');
-  let inTable = false;
-  let out = [];
-  let isFirstRow = false;
-  
-  for(let i=0; i<lines.length; i++) {
-    let line = lines[i].trim();
-    if(line.startsWith('|') && line.endsWith('|')) {
-      if(!inTable) {
-        out.push('<table class="bom-table">');
-        inTable = true;
-        isFirstRow = true;
-      }
-      if(line.includes('|---')) continue;
-      let cells = line.split('|').slice(1, -1);
-      if(isFirstRow) { 
-        out.push('<tr>' + cells.map(c => `<th>${c.trim()}</th>`).join('') + '</tr>');
-        isFirstRow = false;
-      } else {
-        out.push('<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>');
-      }
-    } else {
-      if(inTable) { out.push('</table>'); inTable = false; }
-      if(line.startsWith('#')) {
-        out.push(`<div style="font-weight:bold; font-size:16px; margin:15px 0 5px;">${line.replace(/^#+\s*/, '')}</div>`);
-      } else if (line) {
-        out.push(`<div>${line}</div>`);
-      } else {
-        out.push('<br>');
-      }
-    }
-  }
-  if(inTable) out.push('</table>');
-  return out.join('');
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+let state = null;
+let page = 'workspace', tab = 'bom', sel = null, hitSrc = null;
+let cur = 'main';
+let convsOpen = false;
+let schematicSvg = '';
+
+const SUPS = ['LCSC','Mouser','DigiKey'];
+const SECTIONS = {A:'U4 · LTE modem', B:'VBAT · caps and TVS', C:'PWRKEY driver', D:'U5 · level shifter', E:'Antenna', F:'SIM', G:'Test points'};
+
+const lineByKey = k => (state?.bom || []).find(l => l.line === k);
+const lineOfRef = r => (state?.bom || []).find(l => (l.refs || []).includes(r));
+const qty = l => (l.dnp || l.nobuy) ? 0 : (l.refs || []).length;
+
+function best(l){
+  if(!l.sup) return null;
+  let b = null;
+  for(const s of SUPS){ const v = l.sup[s]; if(!v) continue; const [st, p] = v;
+    if(p != null && st > 0 && st >= qty(l) && (!b || p < b.price)) b = {s, stock:st, price:p}; }
+  return b;
 }
-const HEB=/[\u0590-\u05FF]/;
-// A flow arrow between two Hebrew words has to point the other way. Only flip
-// when Hebrew sits on BOTH sides, so "Vin -> SW -> L" is left alone.
-const flow=s=>(s||'')
-  .replace(/([\u0590-\u05FF][^\S\n]*)→([^\S\n]*[\u0590-\u05FF])/g,'$1←$2')
-  .replace(/([\u0590-\u05FF][^\S\n]*)->([^\S\n]*[\u0590-\u05FF])/g,'$1<-$2');
-// dir=auto lets the browser pick paragraph direction from the first strong character
-const bi=s=>HEB.test(s)?'rtl':'auto';
-const txt=s=>esc(flow(s)).replace(/\n/g,'<br>');
-const q=p=>p+(p.includes('?')?'&':'?')+'project='+encodeURIComponent(PROJ)
-  +(SESS?'&session='+encodeURIComponent(SESS):'');
+function status(l){
+  if(l.nobuy || l.dnp) return 'na';
+  if(!l.sup) return 'pend';
+  if(!best(l)) return 'bad';
+  if(l.lib === 'review' || l.lib === 'missing') return 'warn';
+  return 'ok';
+}
+const money = p => p == null ? '—' : '$' + (p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2));
+const num = n => n.toLocaleString('en-US');
+const LIBTXT = {std:'Altium default', ok:'In library · verified', review:'In library · to review', missing:'Missing'};
 
-let openTabs = [];
-let activeIdeTab = 'diagram';
+function totals(){
+  let parts = 0, cost = 0, bad = 0, review = 0, buy = 0, inStock = 0;
+  for(const l of (state?.bom || [])){ parts += qty(l); const b = best(l);
+    if(qty(l)){ buy++; if(b){ inStock++; cost += b.price * qty(l); } }
+    if(status(l) === 'bad') bad++; if(l.lib === 'review') review++; }
+  return {lines:(state?.bom || []).length, parts, cost, bad, review, buy, inStock};
+}
+const libCount = () => (state?.bom || []).filter(l => l.lib === 'ok' || l.lib === 'review').length;
 
-function applyTabToContainer(tab, containerId) {
-  let container = $(containerId);
-  if(!container) return;
-  
-  // if diagram/chat is currently here, park it back to body if we are removing it
-  if (container.contains($('diagram')) && tab !== 'diagram') {
-     $('anchor-diagram').parentNode.insertBefore($('diagram'), $('anchor-diagram'));
-     $('diagram').style.display = 'none';
-  }
-  if (container.contains($('chatPane')) && tab !== 'panel:chat') {
-     $('anchor-chatPane').parentNode.insertBefore($('chatPane'), $('anchor-chatPane'));
-     $('chatPane').style.display = (TAB === 'chat') ? 'flex' : 'none';
-  }
-  if (container.contains($('sbody')) && tab !== 'panel:' + TAB) {
-     $('anchor-sbody').parentNode.insertBefore($('sbody'), $('anchor-sbody'));
-     $('sbody').style.display = (TAB !== 'chat') ? 'block' : 'none';
-  }
-
-  // Clear existing iframe/panels
-  container.querySelectorAll('.doc-frame').forEach(e => e.remove());
-  
-  if (!tab) {
-     // do nothing
-  } else if (tab === 'diagram') {
-    container.appendChild($('diagram'));
-    $('diagram').style.display = 'flex';
-  } else if (tab.startsWith('panel:')) {
-    let p = tab.substring(6);
-    if (p === 'chat') {
-       container.appendChild($('chatPane'));
-       $('chatPane').style.display = 'flex';
-       setTimeout(scrollLog, 10);
-    } else {
-       // move sbody into here
-       container.appendChild($('sbody'));
-       $('sbody').style.display = 'block';
-       let oldTab = TAB;
-       TAB = p;
-       renderPanel(true);
-       TAB = oldTab;
-    }
-  } else {
-    let iframe = document.createElement('iframe');
-    iframe.className = 'doc-frame';
-    iframe.style.width = '100%';
-    iframe.style.height = '100%';
-    iframe.style.border = 'none';
-    iframe.src = q('/api/source/' + encodeURIComponent(tab));
-    container.appendChild(iframe);
+async function loadState() {
+  try {
+    const res = await fetch('/api/state');
+    state = await res.json();
+    const svgRes = await fetch('/api/schematic.svg');
+    if(svgRes.ok) schematicSvg = await svgRes.text();
+    renderAll();
+  } catch(e) {
+    console.error(e);
   }
 }
 
-function openInIde(filename) {
-  if (!openTabs.includes(filename)) {
-    openTabs.push(filename);
+async function sendChat(text) {
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text})
+    });
+    state = await res.json();
+    renderAll();
+  } catch(e) {
+    console.error(e);
   }
-  switchIdeTab(filename);
 }
 
-function switchIdeTab(tab) {
-  activeIdeTab = tab;
-  renderIdeTabs();
-  applyTabToContainer(tab, 'ide-content-left');
-}
-
-function closeIdeTab(e, tab) {
-  e.stopPropagation();
-  openTabs = openTabs.filter(t => t !== tab);
-  
-  if (activeIdeTab === tab) switchIdeTab(openTabs.length ? openTabs[0] : 'diagram');
-  
-  renderIdeTabs();
-}
-
-function makeTabsHtml(activeTab) {
-    let clickFn = 'switchIdeTab';
-    let html = `<div class="ide-tab ${activeTab==='diagram'?'active':''}" onclick="${clickFn}('diagram')">Diagram</div>`;
-    for (const t of openTabs) {
-      let disp = t.startsWith('panel:') ? t.substring(6) : t;
-      html += `<div class="ide-tab ${activeTab===t?'active':''}" onclick="${clickFn}('${esc(t).replace(/'/g, "\\'")}')">
-        ${esc(disp)} <span class="close-btn" onclick="closeIdeTab(event, '${esc(t).replace(/'/g, "\\'")}')">×</span>
-      </div>`;
-    }
-    
-    // Add dropdown menu arrow at the end of tabs for quick access
-    let dropdownId = 'ide-dd-left';
-    html += `<div style="margin-left:auto; display:flex; align-items:flex-end; padding-bottom:5px;">
-        <button onclick="ddToggle('${dropdownId}', event)" style="background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:2px 8px; font-size:10px; cursor:pointer; color:var(--dim);">▾</button>
-        <div class="dd" id="dd-${dropdownId}" style="position:absolute; right:10px; top:100%; min-width:150px; z-index:1000; width:0; height:0;"></div>
-      </div>`;
-    return html;
-}
-
-function renderIdeTabs() {
-  if($('ide-tabs')) $('ide-tabs').innerHTML = makeTabsHtml(activeIdeTab);
-  
-  let items = [ {v: 'diagram', label: 'Diagram'} ];
-  for (const t of openTabs) {
-    items.push({v: t, label: t.startsWith('panel:') ? t.substring(6) : t});
+async function sendMessage(text, anchor) {
+  try {
+    const res = await fetch('/api/message', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text, anchor, role: 'user', ask_agent: true})
+    });
+    state = await res.json();
+    renderAll();
+  } catch(e) {
+    console.error(e);
   }
+}
+
+function srcById(id) {
+  return (state?.sources || []).find(s => s.name === id || s.id === id);
+}
+const srcChip = (id, where) => {
+  const s = srcById(id);
+  if(!s) return '';
+  return `<button class="src" data-src="${s.name}"><b>${esc(s.name)}</b>${where ? ' · ' + esc(where) : ''}</button>`;
+}
+
+function renderAll() {
+  renderNav();
+  renderChat();
+  renderCenter();
+}
+
+function msgHTML(m) {
+  if (m.role === 'user') return `<div class="msg user"><div class="bubble">${esc(m.text || m.html || '')}</div></div>`;
+  if (m.role === 'agent') return `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt">${m.html || m.text || ''}</div></div>`;
+  if (m.role === 'resolved') return `<div class="stage"><div class="stage-k">Resolved</div><div class="stage-t">${esc(m.text || '')}</div></div>`;
+  return `<div class="msg agent"><div class="who">System</div><div class="txt">${esc(m.text || '')}</div></div>`;
+}
+
+function renderConvs(){
+  const box = $('#convs');
+  box.hidden = !convsOpen;
+  $('[data-act="convs"]').setAttribute('aria-expanded', convsOpen);
+  if(!convsOpen) return;
   
-  ddSet('ide-dd-left', items, activeIdeTab, (v) => { switchIdeTab(v); });
-}
-
-/* Every write to the server goes through here.
-
-   The old pattern was `S = await (await fetch(...)).json()`, which has three
-   ways to fail silently. A rejected request returns a JSON error body, and
-   assigning it to S replaced the entire design state with {error:"..."} - the
-   next render then read S.constraints off an object that has none and threw,
-   killing the panel with nothing on screen to say why. A hung request never
-   resolved, leaving whatever control was disabled disabled forever. And a
-   thrown fetch was an unhandled rejection nobody saw.
-
-   So: never return the server's error as state, always answer, always in
-   bounded time. The caller gets {ok:true,data} or {ok:false,error} and decides
-   what to show; S is only ever replaced on a success. */
-async function post(path, body, ms){
-  const ctl = ('AbortController' in window) ? new AbortController() : null;
-  const timer = ctl ? setTimeout(()=>ctl.abort(), ms||30000) : null;
-  try{
-    const r = await fetch(q(path), {method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
-      signal: ctl?ctl.signal:undefined});
-    let data=null;
-    try{ data = await r.json(); }catch(e){ data=null; }
-    if(!r.ok) return {ok:false, error:(data&&data.error) || ('the server said '+r.status)};
-    return {ok:true, data};
-  }catch(e){
-    return {ok:false, error: (e&&e.name==='AbortError')
-      ? 'the server did not answer in time' : 'could not reach the server'};
-  }finally{ if(timer) clearTimeout(timer); }
-}
-
-/* localStorage is not merely empty in a private window - reading it throws, and
-   an uncaught throw up here takes the whole script with it. Nothing kept in it
-   (a tab, two pane widths, the theme) is worth a blank page. */
-function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
-function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
-
-/* Our own dropdown. A native <select> renders its popup with the OS chrome,
-   which cannot be styled and does not match anything else on the page. */
-const DD={};
-
-function ddSet(id, items, value, pick, opts){
-  DD[id]={items, value, pick, ...(opts||{})};
-  const host=$(id); if(host) host.innerHTML=ddHTML(id);
-}
-
-function ddHTML(id){
-  const d=DD[id]||{items:[]};
-  const cur=d.items.find(x=>String(x.v)===String(d.value));
-  return `<div class="dd" id="dd-${id}">
-    <button class="dd-t" onclick="ddToggle('${id}',event)">
-      <span>${esc(cur?cur.label:(d.placeholder||'—'))}</span><i>▾</i></button>
-    <div class="dd-m ${d.right?'right':''}">${d.items.map((x,i)=>
-      `<button class="dd-i ${String(x.v)===String(d.value)?'on':''}"
-         onclick="ddPick('${id}',${i},event)"><b>${esc(x.label)}</b>${
-         x.sub?`<em>${esc(x.sub)}</em>`:''}<span class="tick">✓</span></button>`).join('')}</div></div>`;
-}
-
-function ddClose(){ document.querySelectorAll('.dd.open').forEach(e=>e.classList.remove('open')); }
-
-function ddToggle(id,ev){
-  ev.stopPropagation();
-  const el=$('dd-'+id), was=el.classList.contains('open');
-  ddClose(); if(!was) el.classList.add('open');
-}
-
-function ddPick(id,i,ev){
-  ev.stopPropagation(); ddClose();
-  const d=DD[id], item=d.items[i]; if(!item) return;
-  d.value=item.v;
-  const host=$(id); if(host) host.innerHTML=ddHTML(id);
-  if(d.pick) d.pick(item.v);
-}
-
-const ddValue=id=>DD[id]?DD[id].value:undefined;
-addEventListener('click', ddClose);
-addEventListener('keydown', e=>{ if(e.key==='Escape') ddClose(); });
-
-/* ===================== theme =====================
-   Three modes. `light` and `dark` pin data-theme on <html>; `auto` removes it
-   and lets the stylesheet's prefers-color-scheme block decide, which is also
-   what renders correctly before any of this has run. */
-const THEMES=['auto','light','dark'];
-const THEME_MQ = window.matchMedia ? matchMedia('(prefers-color-scheme: light)') : null;
-
-// what the pre-paint script already applied, so THEME never disagrees with the DOM
-let THEME=(()=>{ const t=lsGet('pcbadv.theme'); return THEMES.includes(t)?t:'auto'; })();
-
-// no matchMedia at all (very old browsers) means we cannot tell: assume dark,
-// which is what the stylesheet renders when the media query never matches.
-const systemTheme = () => (THEME_MQ && THEME_MQ.matches) ? 'light' : 'dark';
-
-function applyTheme(mode){
-  THEME = THEMES.includes(mode) ? mode : 'auto';
-  if(THEME==='auto') document.documentElement.removeAttribute('data-theme');
-  else document.documentElement.setAttribute('data-theme', THEME);
-  // cached so the next load paints the right colours before /api/config answers
-  lsSet('pcbadv.theme', THEME);
-}
-
-/* A choice that forgets itself on reload is not a choice. The cache alone is
-   not enough: boot() takes the server's user.theme as authoritative, so a pick
-   that never reached the server is overwritten by the default on the next load. */
-async function chooseTheme(mode){
-  applyTheme(mode);
-  try{
-    const r=await (await fetch('/api/config',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({set:{'user.theme':mode}})})).json();
-    if(r.config) CFG=r.config;
-  }catch(e){ /* the colours are already right; the server can catch up later */ }
-}
-
-/* In `auto` the colours follow the OS through the media query, with no JS in the
-   path. What JS still owes the student is the label: the Theme menu says which
-   way auto currently resolves, and that has to keep up. Patching the one text
-   node rather than re-rendering keeps an open menu open and keeps focus put. */
-function refreshThemeMenu(){
-  const d=DD['s-theme']; if(!d) return;
-  const auto=d.items.find(x=>x.v==='auto'); if(!auto) return;
-  auto.sub='system · now '+systemTheme();
-  const em=document.querySelector('#s-theme .dd-i em');
-  if(em) em.textContent=auto.sub;
-}
-
-if(THEME_MQ){
-  const onScheme=()=>{ if(THEME==='auto') refreshThemeMenu(); };
-  if(THEME_MQ.addEventListener) THEME_MQ.addEventListener('change', onScheme);
-  else if(THEME_MQ.addListener) THEME_MQ.addListener(onScheme);   // older Safari
-}
-
-async function loadProjects(){
-  const r=await (await fetch('/api/projects')).json();
-  if(!PROJ) PROJ=r.default;
-  ddSet('projsel', r.projects.map(p=>({v:p.name, label:p.title||p.name,
-    sub:`${p.decisions} decisions`})), PROJ, switchTo);
-}
-const switchTo=n=>{if(n!==PROJ) location.search='?project='+encodeURIComponent(n);};
-const switchSession=n=>{if(n!==SESS)
-  location.search='?project='+encodeURIComponent(PROJ)+'&session='+encodeURIComponent(n);};
-
-function paintSessions(){
-  if(!S) return;
-  SESS = S.session;
-  const rows=S.sessions||[];
-  ddSet('sesssel', rows.map(x=>({v:x.id, label:x.title,
-    sub:`${x.messages} message${x.messages===1?'':'s'}`})), S.session, switchSession);
-  // always shown: with one conversation the "+" is the only way to start another
-  $('sesslab').style.display='';
-  $('sessrow').style.display='';
-  $('foot').textContent=`${rows.length} conversation${rows.length>1?'s':''}`;
-}
-
-async function newSession(){
-  const r=await (await fetch(q('/api/sessions/new'),{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({})})).json();
-  location.search='?project='+encodeURIComponent(PROJ)+'&session='+encodeURIComponent(r.created);
-}
-async function newProject(){
-  const name=prompt('Name the new project:'); if(!name) return;
-  const r=await (await fetch('/api/projects/new',{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
-  location.search='?project='+encodeURIComponent(r.created);
-}
-
-async function load(){
-  // this also runs on a three-second timer. A failed poll must leave the last
-  // good state on screen - blanking the whole design because a laptop slept or
-  // the server restarted is worse than showing something slightly stale.
-  let next=null;
-  try{
-    const r=await fetch(q('/api/state'));
-    if(r.ok) next=await r.json();
-  }catch(e){ next=null; }
-  if(!next || !next.progress) return;
-  S=next;
-  if(!dirty) sketch=JSON.parse(JSON.stringify(S.sketch||{blocks:[],links:[],confirmed:false}));
-  paintSessions(); paint(); drawDiagram();
-  $('engine').textContent = S.engine || '';
-}
-
-/* ===================== the diagram ===================== */
-const KINDS=['power_in','regulation','mcu','digital','sensor','analog','adc','other'];
-const BW=158, BH=76, GX=74, GY=26;
-let sketch={blocks:[],links:[],confirmed:false}, dirty=false, linkFrom=null, popFor=null;
-let zoom=1, panX=0, panY=0, moved=false, bbox={w:0,h:0}, lastShape='';
-
-function isRTL(s){return HEB.test(s||'');}
-
-function layerOf(blocks,links){
-  const ids=blocks.map(b=>b.id), pre={}; ids.forEach(i=>pre[i]=[]);
-  links.forEach(([a,b])=>{ if(pre[b]&&a!==b&&ids.includes(a)) pre[b].push(a); });
-  const L={}; ids.forEach(i=>L[i]=0);
-  for(let k=0;k<=ids.length;k++){ let ch=false;
-    ids.forEach(i=>{ const w=Math.max(0,...pre[i].map(p=>L[p]+1)); if(w>L[i]){L[i]=w;ch=true;} });
-    if(!ch) break; }
-  return L;
-}
-
-function applyView(){
-  $('stage').style.transform=`translate(${panX}px,${panY}px) scale(${zoom})`;
-  $('zpct').textContent=Math.round(zoom*100)+'%';
-  if(popFor) placePop();
-}
-function clamp(v,a,b){ if(b<a) b=a; return Math.min(b,Math.max(a,v)); }
-
-function fit(manual){
-  const c=$('canvas');
-  if(!bbox.w){zoom=1;panX=panY=0;return applyView();}
-  const pad=34;
-  const k=clamp(Math.min((c.clientWidth-pad*2)/bbox.w,(c.clientHeight-pad*2)/bbox.h),0.3,1.25);
-  zoom=k;
-  panX=(c.clientWidth-bbox.w*k)/2;          // centred, always
-  panY=(c.clientHeight-bbox.h*k)/2;
-  if(manual) moved=false;
-  applyView();
-}
-function zoomBy(k){
-  const c=$('canvas'), cx=c.clientWidth/2, cy=c.clientHeight/2;
-  const nz=clamp(zoom*k,0.3,2.5);
-  panX=cx-(cx-panX)*(nz/zoom); panY=cy-(cy-panY)*(nz/zoom);
-  zoom=nz; moved=true; applyView();
-}
-
-/* wheel zooms about the cursor; dragging empty canvas pans */
-(function(){
-  const c=$('canvas');
-  c.addEventListener('wheel',e=>{
-    e.preventDefault();
-    const r=c.getBoundingClientRect(), cx=e.clientX-r.left, cy=e.clientY-r.top;
-    const nz=clamp(zoom*(e.deltaY<0?1.12:1/1.12),0.3,2.5);
-    panX=cx-(cx-panX)*(nz/zoom); panY=cy-(cy-panY)*(nz/zoom);
-    zoom=nz; moved=true; applyView();
-  },{passive:false});
-
-  let sx=0,sy=0,ox=0,oy=0,down=false,shifted=false,draggingBlock=null,bx=0,by=0;
-  c.addEventListener('pointerdown',e=>{
-    const blk = e.target.closest('.blk');
-    if (blk && S.stage === 'sketch') {
-       const id = blk.dataset.id;
-       const b = sketch.blocks.find(x => x.id === id);
-       if (b) {
-         draggingBlock = b;
-         down = true; shifted = false;
-         sx = e.clientX; sy = e.clientY;
-         // Compute initial x, y if not already set manually, wait we can just read from style.left
-         bx = b.x !== undefined ? b.x : parseInt(blk.style.left, 10);
-         by = b.y !== undefined ? b.y : parseInt(blk.style.top, 10);
-         c.setPointerCapture(e.pointerId);
-         document.body.classList.add('nosel');
-         return;
-       }
-    }
-    if(e.target.closest('.blk')||e.target.closest('.pop')) return;
-    down=true; shifted=false; sx=e.clientX; sy=e.clientY; ox=panX; oy=panY;
-    c.setPointerCapture(e.pointerId); c.classList.add('drag');
-    document.body.classList.add('nosel');
-  });
-  c.addEventListener('pointermove',e=>{
-    if(!down) return;
-    const dx=e.clientX-sx, dy=e.clientY-sy;
-    if(Math.abs(dx)+Math.abs(dy)>3) shifted=true;
-    if (draggingBlock) {
-      draggingBlock.x = Math.round(bx + dx/zoom);
-      draggingBlock.y = Math.round(by + dy/zoom);
-      dirty = true;
-      drawDiagram();
-    } else {
-      panX=ox+dx; panY=oy+dy; moved=true; applyView();
-    }
-  });
-  const up=(e)=>{ 
-    if(down&&!shifted&&popFor&&!draggingBlock){popFor=null;drawDiagram();} 
-    if(down&&!shifted&&draggingBlock){clickBlock(e, draggingBlock.id);}
-    down=false; draggingBlock=null;
-    c.classList.remove('drag'); document.body.classList.remove('nosel'); 
+  const ths = state?.threads || {};
+  let threadsList = Object.values(ths);
+  
+  const item = th => { 
+    return `<button class="conv" data-thread="${th.anchor}" aria-current="${th.anchor === cur}"><span class="t"><span>${th.anchor && th.anchor !== 'main' ? `<span class="anc">${esc(th.anchor)}</span>` : ''}${esc(th.label || th.anchor)}</span></span><span class="p">${th.messages?.length ? esc(th.messages[th.messages.length-1].text || '') : ''}</span></button>`; 
   };
-  c.addEventListener('pointerup',up); c.addEventListener('pointercancel',up);
-})();
+  box.innerHTML = `<h4>Conversations</h4><button class="conv" data-thread="main" aria-current="${cur === 'main'}"><span class="t"><span>Main</span></span></button>` + threadsList.map(item).join('');
+}
 
-/* drag either splitter, IDE style. Widths persist per browser. */
-(function(){
-  for(const [id, el, key, dir] of [['splitL', 'side', 'pcbadv.wL', 1]]){
-    const grip=$(id), pane=document.querySelector('.'+ el);
-    const saved=parseInt(lsGet(key)||'0',10);
-    if(saved>180) pane.style.width=saved+'px';
-    let down=false,sx=0,w0=0;
-    grip.addEventListener('pointerdown',e=>{
-      down=true; sx=e.clientX; w0=pane.getBoundingClientRect().width;
-      grip.setPointerCapture(e.pointerId); grip.classList.add('on');
-      document.body.classList.add('nosel');
-    });
-    grip.addEventListener('pointermove',e=>{
-      if(!down) return;
-      const vw=document.documentElement.clientWidth||1200;
-      pane.style.width=clamp(w0+dir*(e.clientX-sx),200,Math.max(260,vw-480))+'px';
-      applyView();
-    });
-    const up=()=>{ if(down) lsSet(key,
-                     Math.round(pane.getBoundingClientRect().width));
-                   down=false; grip.classList.remove('on');
-                   document.body.classList.remove('nosel'); };
-    grip.addEventListener('pointerup',up); grip.addEventListener('pointercancel',up);
+function renderChat(){
+  if (!state) return;
+  const th = cur === 'main' ? {label: 'Main', messages: state.chat || []} : state.threads?.[cur] || {label: cur, messages: []};
+  $('#convtitle').textContent = th.label || cur;
+  const box = $('#msgs');
+  box.innerHTML = th.messages.length ? th.messages.map(msgHTML).join('') : `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt"><p>New conversation. I can see the BOM, the schematic and all sources.</p></div></div>`;
+  box.scrollTop = box.scrollHeight;
+  $('#sugs').innerHTML = '';
+  renderConvs();
+}
+
+function wheadHTML(){
+  if(page !== 'workspace'){
+    const names = {library:'Altium library', sources:'Sources', skills:'Skills', settings:'Settings'};
+    return `<div class="crumb">${esc(state?.title || 'Project')} / <b>${names[page]}</b></div>`;
   }
-  addEventListener('resize', ()=>applyView());
-})();
-
-/* What J, U and Q mean on THIS board. A teaching tool that prints reference
-   designators and never expands them withholds the one convention the student
-   has not met yet - and the diagram is exactly where they first meet it. */
-function designHint(){
-  const rows=(S.designators||[]);
-  if(!rows.length) return '';
-  return '  ·  ' + rows.map(r=>`${r.prefix} = ${r.means}`).join(', ');
+  const t = totals();
+  const items = [
+    ['idea','1','Idea', `<span class="st ${state?.idea?.confirmed ? 'ok' : 'dim'}">${state?.idea?.confirmed ? 'Confirmed' : 'Draft'}</span>`],
+    ['bom','2','BOM', t.bad ? `<span class="st bad">${t.bad} missing</span>` : t.review ? `<span class="st warn">${t.review} to review</span>` : `<span class="st ok">Ready</span>`],
+    ['sch','3','Schematic', `<span class="st dim">Blocks</span>`],
+  ];
+  return `<div class="tabs" role="tablist">${items.map(([id,n,label,st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div>`;
 }
 
-function drawDiagram(){
-  const stage=$('stage'), canvas=$('canvas');
-  const inSketch = S.stage==='sketch';
-  // In cascade stage the sketch is still the spine: the student's blocks with
-  // their real kind, and the topology THEY drew. Parts the design questions
-  // added are shown, but not wired: we have no idea how they connect, and the
-  // list's order is not a circuit. Chaining them here claimed a test point sat
-  // in series between a crystal and a debug header.
-  const blocks = inSketch ? (sketch.blocks||[])
-                          : (S.blocks||[]).map(b=>({id:b.id, label:b.label,
-                              kind:b.kind||'built', from:b.from}));
-  const links  = inSketch ? (sketch.links||[]) : (S.links||[]);
-  $('dtitle').textContent = inSketch
-    ? (sketch.confirmed?'Block diagram — confirmed':'Block diagram — click a block to correct it')
-    : `Your board — ${S.progress.answered} decisions`;
-  $('dhint').textContent = inSketch
-    ? (linkFrom ? 'Now click the block it feeds into. Esc to cancel.'
-                : 'Click a block to rename it, change its kind, link it or delete it. Click an arrow to remove it.')
-    : 'Only the connections you drew are shown. Go back to the sketch to change the structure.'
-      + designHint();
-  $('sendsketch').style.display = (inSketch&&dirty)?'':'none';
-
-  if(!blocks.length){
-    stage.innerHTML=`<div style="color:var(--dim);width:420px;font-size:13.5px">
-      Nothing sketched yet. Describe what you want to build, or press <b>+ Block</b>.</div>`;
-    stage.style.width='420px'; stage.style.height='60px';
-    bbox={w:420,h:60}; if(!moved) fit(); applyView(); return;
-  }
-
-  const rtl = blocks.some(b=>isRTL(b.label));
-  // Blocks nothing connects to would all land in layer 0 and stack into one
-  // very tall column. They are laid out separately, wrapped, under a caption
-  // that says why they have no arrows.
-  const joined=new Set(); links.forEach(([a,b])=>{joined.add(a);joined.add(b);});
-  const wired=blocks.filter(b=>joined.has(b.id));
-  const loose=blocks.filter(b=>!joined.has(b.id));
-
-  const L=layerOf(wired,links), cols={};
-  wired.forEach(b=>{ (cols[L[b.id]] ||= []).push(b); });
-  const keys=Object.keys(cols).map(Number);
-  const nc=keys.length?Math.max(...keys)+1:0;
-  const maxRows=keys.length?Math.max(...Object.values(cols).map(a=>a.length)):0;
-  const pos={};
-  Object.entries(cols).forEach(([c,items])=>{
-    const col=rtl ? (nc-1-Number(c)) : Number(c);
-    const x=col*(BW+GX);
-    const span=(items.length-1)*(BH+GY);
-    items.forEach((b,i)=>{ pos[b.id]={x, y:(maxRows-1)*(BH+GY)/2 - span/2 + i*(BH+GY)}; });
-  });
-
-  let wDiag=Math.max(nc-1,0)*(BW+GX)+(nc?BW:0);
-  let hDiag=Math.max(maxRows-1,0)*(BH+GY)+(maxRows?BH:0);
-  const LOOSE_COLS=4, looseTop=hDiag+(hDiag?54:0);
-  if(loose.length){
-    const w=Math.min(LOOSE_COLS, loose.length);
-    loose.forEach((b,i)=>{
-      const c=i%w, r=Math.floor(i/w);
-      pos[b.id]={x:(rtl?(w-1-c):c)*(BW+GX), y:looseTop+r*(BH+GY), loose:true};
-    });
-    wDiag=Math.max(wDiag, (w-1)*(BW+GX)+BW);
-    hDiag=looseTop+(Math.ceil(loose.length/w)-1)*(BH+GY)+BH;
-  }
-  blocks.forEach(b => {
-    if (b.x !== undefined && b.y !== undefined) {
-      pos[b.id] = {x: b.x, y: b.y, loose: pos[b.id] ? pos[b.id].loose : false};
-      wDiag = Math.max(wDiag, b.x + BW + 40);
-      hDiag = Math.max(hDiag, b.y + BH + 40);
-    }
-  });
-
-  const skips=links.filter(([a,b])=>pos[a]&&pos[b]&&Math.abs((L[b]||0)-(L[a]||0))>1).length;
-  const laneH=skips*22+(skips?18:0);
-
-  let wires='', hits='';
-  let lane=hDiag+14;
-  links.forEach(([a,b],i)=>{
-    if(!pos[a]||!pos[b]) return;
-    const p=pos[a], r=pos[b], right=r.x>p.x;
-    const sx=p.x+(right?BW:0), sy=p.y+BH/2;
-    const ex=r.x+(right?0:BW), ey=r.y+BH/2;
-    let d;
-    if(Math.abs(L[b]-L[a])>1){
-      const cx1=p.x+BW/2, cx2=r.x+BW/2;
-      d=`M ${cx1} ${p.y+BH} L ${cx1} ${lane} L ${cx2} ${lane} L ${cx2} ${r.y+BH}`;
-      lane+=22;
-    } else if(Math.abs(sy-ey)<1){ d=`M ${sx} ${sy} L ${ex} ${ey}`; }
-    else if(p.x === r.x) { const mx = sx - 40; d=`M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`; }
-    else { const mx=(sx+ex)/2; d=`M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`; }
-    wires+=`<path d="${d}" stroke-width="1.6" marker-end="url(#ah)"/>`;
-    hits +=`<path class="hit" d="${d}" onclick="dropLink(${i})"><title>click to remove</title></path>`;
-  });
-
-  stage.style.width=wDiag+'px'; stage.style.height=(hDiag+laneH)+'px';
-  bbox={w:wDiag,h:hDiag+laneH};
-  stage.innerHTML=
-    `<svg class="wires" width="${wDiag}" height="${hDiag+laneH}">
-       <defs><marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3"
-         orient="auto"><path d="M0,0 L0,6 L8,3 z"/></marker></defs>
-       ${wires}${hits}</svg>` +
-    (loose.length&&!inSketch
-      ? `<div class="loosecap" style="top:${looseTop-30}px;width:${wDiag}px">added by your
-         decisions — how these connect is not decided yet</div>` : '') +
-    blocks.map(b=>{const pt=pos[b.id];
-      return `<div class="blk ${pt.loose?'loose':''} ${popFor===b.id?'sel':''} ${linkFrom===b.id?'linking':''}"
-        data-id="${esc(b.id)}" style="left:${pt.x}px;top:${pt.y}px">
-        <div dir="auto">${esc(b.label||b.id)}</div>
-        <div class="kind">${esc(b.id)} · ${esc(b.kind||'?')}</div></div>`;}).join('');
-
-  // re-fit when the diagram's shape changes, but never fight a manual zoom
-  const shapeKey=blocks.map(b=>b.id).join(',')+'|'+links.length+'|'+S.stage;
-  if(shapeKey!==lastShape){ lastShape=shapeKey; if(!moved) fit(); }
-  applyView();
-  if(popFor) openPop(popFor,pos); else closePops();
+function bomHTML(){
+  const t = totals();
+  const bom = state?.bom || [];
+  return `<div class="vhead"><div><h2>Bill of materials</h2><p>The single source of truth.</p></div>
+    <div class="vacts"></div></div>
+    <div class="kpis">
+      <div class="kpi"><b>${t.lines}</b><span>lines</span></div>
+      <div class="kpi"><b>${t.parts}</b><span>parts to place</span></div>
+      <div class="kpi"><b>${money(t.cost)}</b><span>parts cost / board</span></div>
+      <div class="kpi ${t.bad ? 'bad' : ''}"><b>${t.bad}</b><span>out of stock</span></div>
+      <div class="kpi ${t.review ? 'warn' : ''}"><b>${t.review}</b><span>to verify</span></div>
+    </div>
+    <div class="tblwrap"><table class="bom"><thead><tr><th></th><th>Ref</th><th>Value</th><th>Description</th><th>MPN</th><th>Manufacturer</th><th>Package</th><th>Qty</th><th>Stock</th><th>Unit</th><th>Total</th><th>Library</th><th>Note</th></tr></thead><tbody>
+    ${bom.map(l => { const b = best(l), s = status(l), q = qty(l);
+      return `<tr data-key="${l.line}" class="${sel === l.line ? 'sel' : ''}">
+        <td><span class="dot ${s}"></span></td>
+        <td class="refs">${esc((l.refs||[]).length > 3 ? l.refs[0] + '–' + l.refs.at(-1) : (l.refs||[]).join(', '))}</td>
+        <td class="m">${esc(l.val||'')}</td><td>${esc(l.desc||'')}</td>
+        <td class="mpn">${esc(l.mpn||'')}</td>
+        <td>${esc(l.mfr||'')}</td><td class="m">${esc(l.pkg||'')}</td>
+        <td class="n">${l.dnp ? 'DNP' : q || '—'}</td>
+        <td class="n ${s === 'bad' ? 'stock bad' : ''}">${!l.sup ? 'checking' : q === 0 ? '—' : b ? `${num(b.stock)} <small>${b.s}</small>` : '0'}</td>
+        <td class="n">${b ? money(b.price) : '—'}</td><td class="n">${b ? money(b.price * q) : '—'}</td>
+        <td><span class="lib ${l.lib||'std'}">${LIBTXT[l.lib||'std'] || esc(l.lib||'')}</span></td>
+        <td class="note">${esc(l.note||'')}</td></tr>`; }).join('')}
+    </tbody></table></div>`;
 }
 
-function clickBlock(ev,id){
-  ev.stopPropagation();
-  if(linkFrom && linkFrom!==id){
-    sketch.links.push([linkFrom,id]); linkFrom=null; dirty=true; drawDiagram(); return;
-  }
-  linkFrom=null; popFor=(popFor===id?null:id); drawDiagram();
-}
-function dropLink(i){ sketch.links.splice(i,1); dirty=true; drawDiagram(); }
-
-let popAt={x:0,y:0};
-/* The popup lives in #canvas, but drawDiagram only rebuilds #stage - so nothing
-   ever removed it. With a block selected, the 3-second poll minted a new one on
-   every redraw, and clicking away never closed the old ones. */
-function closePops(){ document.querySelectorAll('.pop').forEach(e=>e.remove()); }
-
-function placePop(){
-  const el=document.querySelector('.pop'); if(!el) return;
-  el.style.left=(panX+popAt.x*zoom)+'px';
-  el.style.top =(panY+(popAt.y+BH)*zoom+10)+'px';
-}
-function openPop(id,pos){
-  closePops();
-  const b=sketch.blocks.find(x=>x.id===id);
-  // the block can vanish underneath us - the stage moves on, or an agent
-  // rewrites the sketch while the popup is open. Drop the selection, do not throw.
-  if(!b || !pos[id]){ popFor=null; return; }
-  popAt=pos[id];
-  const el=document.createElement('div');
-  el.className='pop';
-  el.onclick=e=>e.stopPropagation();
-  el.innerHTML=`<input id="pl" dir="auto" value="${esc(b.label||'')}" placeholder="label">
-    <span id="pk"></span>
-    <div class="row"><button onclick="startLink('${id}')">Link →</button>
-      <button class="danger" onclick="delBlock('${id}')">Delete</button></div>
-    <button style="width:100%;margin-top:7px" onclick="askAbout('${id}')">Ask about this</button>`;
-  $('canvas').appendChild(el); placePop();
-  // the block kind is what selects which cascade loads, so it is worth a real menu
-  ddSet('pk', KINDS.map(k=>({v:k, label:k})), b.kind,
-        v=>{ b.kind=v; dirty=true; drawDiagram(); });
-  const l=el.querySelector('#pl');
-  l.oninput=()=>{b.label=l.value;dirty=true;};
-  l.onblur=()=>drawDiagram();
+function schHTML(){
+  return `<div class="vhead"><div><h2>Schematic</h2><p>Rendered blocks.</p></div></div>
+    <div class="schwrap" style="background:#fff">${schematicSvg}</div>`;
 }
 
-/* ---------- ask the advisor about one block ---------- */
-let ASK_BLOCK=null;
-
-function askAbout(id){
-  ASK_BLOCK=id; popFor=null; drawDiagram();
-  paintAskChip(); $('say').focus();
-}
-function clearAsk(){ ASK_BLOCK=null; paintAskChip(); }
-function paintAskChip(){
-  const el=$('askchip'); if(!el) return;
-  el.innerHTML = ASK_BLOCK
-    ? `asking about <b>${esc(ASK_BLOCK)}</b>
-       <button onclick="clearAsk()" title="ask about the design instead">✕</button>` : '';
-  el.style.display = ASK_BLOCK ? '' : 'none';
-}
-function startLink(id){ linkFrom=id; popFor=null; drawDiagram(); }
-function delBlock(id){
-  sketch.blocks=sketch.blocks.filter(b=>b.id!==id);
-  sketch.links=sketch.links.filter(([a,b])=>a!==id&&b!==id);
-  popFor=null; dirty=true; drawDiagram();
-}
-function addBlock(){
-  let n=1; while(sketch.blocks.some(b=>b.id==='B'+n)) n++;
-  sketch.blocks.push({id:'B'+n,kind:'other',label:'new block'});
-  dirty=true; popFor='B'+n; drawDiagram();
-}
-async function sendSketch(){
-  $('sendsketch').textContent='…';
-  await fetch(q('/api/sketch'),{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({blocks:sketch.blocks,links:sketch.links,confirmed:sketch.confirmed,
-      tell_agent:true,
-      note:'I edited the block diagram directly — here is the corrected version.'})});
-  dirty=false; popFor=null; $('sendsketch').textContent='Send changes to advisor';
-  load();
-}
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){linkFrom=null;popFor=null;drawDiagram();}});
-document.addEventListener('click',()=>{if(popFor){popFor=null;drawDiagram();}});
-window.addEventListener('resize',()=>{if(!moved)fit();else applyView();});
-
-function paint(){
-  const waiting=(S.progress.waiting_on_agent||0)+(S.progress.waiting_on_student||0);
-  const p=S.progress, atBottom = $('log').scrollHeight - $('log').scrollTop - $('log').clientHeight < 120;
-  $('stat').textContent = S.stage==='sketch'
-    ? 'sketching — confirm the blocks'
-    : `${p.answered} decisions · ${p.constraints} constraints` +
-      (p.conflicts?` · ${p.conflicts} conflict`:'') +
-      (waiting?` · ${waiting} question${waiting>1?'s':''} open`:'');
-
-  let h='';
-  for(const m of (S.chat||[])){
-    if(m.role==='decision'){
-      // a withdrawal reuses this card, and must not be mistaken for a decision:
-      // the same green tick over a list of rules that were REMOVED reads as if
-      // they had just been added
-      const gone=!!m.withdrawn, rules=(m.locked||[]), held=(m.waiting||[]);
-      h+=`<div class="msg"><div class="dec${gone?' gone':''}" dir="${bi(m.text)}">
-        <div class="head">${gone?'–':'✓'} <b>${txt(m.text)}</b></div>
-        ${!gone&&!rules.length&&!held.length?`<div class="nothing">Nothing follows from this in the
-          design questions I have — if your case is unusual, say so and I will tell you
-          what I cannot cover.</div>`:''}
-        ${!gone&&held.length?`<div class="nothing">${held.length===1?'One rule follows':
-          held.length+' rules follow'} from this, but only once your board has
-          ${esc(held.map(w=>w.needs||w.needs_block).filter((v,i,a)=>a.indexOf(v)===i).join(' and '))}.
-          Nothing is hidden from you — ask and I will read them out.</div>`:''}
-        ${gone&&rules.length?`<div class="lost">These no longer apply to your board:</div>`:''}
-        ${rules.length?`<div class="locked">${rules.map(l=>
-          `<div class="lk" dir="${bi(l.text)}"><span class="tag">${l.icon}${l.verified?'':' unverified'}</span>${txt(l.text)}</div>`
-        ).join('')}</div>`:''}
-      </div></div>`;
-    } else {
-      h+=`<div class="msg ${m.role==='agent'?'advisor':'you'}">
-        <div class="who">${m.role==='agent'?'advisor':'you'}</div>
-        ${m.block?`<div class="about">about ${esc(m.block)}</div>`:''}
-        <div class="bubble" dir="${bi(m.text)}">${txt(m.text)}</div></div>`;
-    }
-  }
-  // the live question sits at the end of the conversation, with its answers attached
-  if(S.open && S.open.length){
-    const n=S.open[0];
-    // A question can want a number rather than a choice. "How long must it run"
-    // has no shortlist of right answers, which is why it was never asked.
-    const q=n.answer;
-    h+=`<div class="ask" dir="${bi(n.question)}"><div class="q">${txt(n.question)}</div>
-      <div class="why">${txt(n.why||'')}</div>` + (q
-      ? `<div class="qty">
-           <input id="qty-in" type="number" inputmode="decimal" step="any"
-             ${q.min!=null?`min="${q.min}"`:''} ${q.max!=null?`max="${q.max}"`:''}
-             placeholder="${esc(q.hint||'')}"
-             onkeydown="if(event.key==='Enter')answerQty('${esc(n.id)}')">
-           <span class="unit">${esc(q.unit||'')}</span>
-           <button onclick="answerQty('${esc(n.id)}')">Record</button>
-           ${QTY_ERR?`<div class="thr-err" dir="auto">${esc(QTY_ERR)}</div>`:''}</div>`
-      : `<div class="opts">` +
-        (n.options||[]).map(o=>`<button class="opt" dir="${bi(o.label)}" onclick="answer('${n.id}','${o.id}')">
-          ${txt(o.label)}${optWeight(o)}
-        </button>`).join('') + `</div>`) + `</div>`;
-  }
-  if(busy) h+=`<div class="msg advisor"><div class="thinking"><i></i>the advisor is working…</div></div>`;
-  if(!h) h=`<div class="empty">Describe what you want to build.<br>
-    The advisor will sketch it back to you, then walk you through the decisions.</div>`;
-  $('wrap').innerHTML=h;
-  if(atBottom) $('log').scrollTop=$('log').scrollHeight;
-
-  renderPanel();
+function ideaHTML(){
+  const idea = state?.idea || {};
+  return `<div class="vhead"><div><h2>Idea</h2><p>What you and the agent agreed on.</p></div></div>
+    <div class="idea">
+      <div class="card"><h3>Agreed</h3><dl class="agreed">
+        <div><dt>Goal</dt><dd>${esc(idea.goal || '')}</dd></div>
+        ${(idea.agreed || []).map(a => `<div><dt>${esc(a.title||'Item')}</dt><dd>${esc(a.text||'')}</dd></div>`).join('')}
+      </dl></div>
+    </div>`;
 }
 
-function showPanel(tab){ 
-  TAB=tab; 
-  lsSet('pcbadv.tab',tab); 
-  if(tab==='chat') { $('sbody').style.display='none'; $('chatPane').style.display='flex'; }
-  else { $('sbody').style.display='block'; $('chatPane').style.display='none'; }
-  renderPanel(true); 
+function libHTML(){
+  const bom = state?.bom || [];
+  const rows = bom.filter(l => l.lib && l.lib !== 'std');
+  const mk = v => v ? '<span class="y">✓</span>' : '<span class="nn">✗</span>';
+  return `<div class="vhead"><div><h2>Library</h2><p>Parts not in Altium's default libraries.</p></div></div>
+    <div class="tblwrap"><table class="libt"><thead><tr><th>Part</th><th>MPN</th><th>Status</th><th></th></tr></thead><tbody>
+    ${rows.map(l => `<tr data-key="${l.line}" class="${sel === l.line ? 'sel' : ''}"><td class="refs">${esc((l.refs||[]).join(', '))}</td>
+      <td class="m">${esc(l.mpn||'')}</td><td><span class="lib ${l.lib||''}">${LIBTXT[l.lib||'std']||esc(l.lib||'')}</span></td>
+      <td><button class="btn" data-chat="${l.line}">Discuss</button></td></tr>`).join('')}
+    </tbody></table></div>`;
 }
 
-let PANEL_SHOWN=null;
-
-function renderPanel(force){
-  if(!S) return;
-  // sbody can live in the main area (a panel opened from the gear or the ↗).
-  // The poll renders with the rail's TAB, which would wipe it blank, so render
-  // the panel it is actually hosting.
-  const host=$('ide-content-left');
-  if(host && host.contains($('sbody')) && activeIdeTab.startsWith('panel:')){
-    const hosted=activeIdeTab.substring(6);
-    if(hosted!=='chat' && hosted!==TAB){
-      const old=TAB; TAB=hosted;
-      try{ return renderPanel(force); } finally{ TAB=old; }
-    }
-  }
-  // The state polls every few seconds. Re-rendering under someone's hands would
-  // shut an open menu and wipe half-typed text, so while they are working in
-  // the panel, leave it alone.
-  //
-  // `force` is for the panel's own buttons. The guard is against the POLL, not
-  // against the student: without it a Cancel clicked from inside the field it
-  // cancels did nothing, and an error about the field you are typing in could
-  // never be drawn - the one moment it most needs to be.
-  // and it is TYPING that must be protected, not focus. A clicked button keeps
-  // focus inside the panel, so testing for focus alone froze the whole rail
-  // after every button press until the student happened to click elsewhere.
-  const el = document.activeElement;
-  const typing = el && $('sbody').contains(el)
-              && /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && !el.disabled;
-  if(!force && (typing || document.querySelector('.dd.open')) && PANEL_SHOWN===TAB) return;
-
-  for(const t of ['chat','decisions','constraints','sources','memory','settings'])
-    $('t-'+t).classList.toggle('on', t===TAB);
-  const w=(S.progress.waiting_on_agent||0)+(S.progress.waiting_on_student||0);
-  $('t-constraints').innerHTML='Constraints'+(w?`<span class="badge">${w}</span>`:'');
-  let h='';
-  if(TAB==='decisions'){
-    // a 300px rail is too narrow for a table; one card per row reads better
-    // Two kinds, kept apart. A student who cannot tell an architecture choice
-    // from a ten-second yes is looking at fourteen rows of equal weight, and
-    // the ones that taught them something are lost in the ones that did not.
-    const mine=(S.answered||[]).filter(n=>n.chosen_by!=='corpus');
-    const forYou=(S.answered||[]).filter(n=>n.chosen_by==='corpus');
-    h = mine.length ? mine.map(n=>{
-        const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
-        return `<div class="card">
-          <div class="q" dir="auto">${txt(n.question)}</div>
-          <div class="a" dir="auto">${txt(n.chosen_label||o.label||n.chosen)}</div>
-          ${restsOn(n)}
-          <div class="foot"><span class="pill">${esc(n.domain)}</span>${badge(n.id)}
-            ${DROPPING===n.id?''
-              :`<span class="drop" onclick="askDrop('${esc(n.id)}')">no longer relevant</span>`}</div>
-          ${dropRow(n.id)}${thread(n.id)}</div>`;}).join('')
-      : `<div class="empty">Nothing decided yet.</div>`;
-    if(forYou.length) h += forYouHTML(forYou);
-    // what the student took out. Visible, with the reason, and reversible -
-    // an edit you cannot see or undo is one nobody dares make.
-    const gone=(S.irrelevant||[]).filter(n=>n.withdrawn);
-    if(gone.length) h += `<div class="gone-head">Not part of this board</div>` +
-      gone.map(n=>`<div class="card gone">
-        <div class="q" dir="auto">${txt(n.question)}</div>
-        <div class="a" dir="auto">${txt(n.reason||'')}</div>
-        <div class="foot"><span class="pill">${esc(n.domain)}</span>${badge(n.id)}
-          <span class="drop" onclick="reinstate('${esc(n.id)}')">it does apply after all</span></div>
-        ${thread(n.id)}</div>`).join('');
-  }
-  if(TAB==='constraints'){
-    h = (S.conflicts||[]).map(c=>`<div class="conflict"><b>Conflict</b> — ${esc(c.note)}</div>`).join('');
-    h += S.constraints.length ? S.constraints.map(c=>{const s=c.source||{};
-        return `<div class="card">
-          <div dir="auto">${txt(c.text)}</div>
-          ${s.quote?`<div class="quote">“${esc(s.quote)}”</div>`:''}
-          ${c.calculation?`<div class="quote">${esc(c.calculation)}</div>`:''}
-          <div class="foot">
-            <span class="pill ${c.verified?'':'u'}">${c.icon} ${esc(c.provenance_label||c.provenance)}${c.verified?'':' · unverified'}</span>
-            ${badge(c.id)}</div>
-          <div class="meta">from ${esc(c.from_label)}${s.doc?' · ':''}
-            ${s.url?`<a href="${esc(s.url)}" target="_blank">${esc(s.doc)}</a>`:esc(s.doc||'')}
-            ${esc(s.locator||'')}</div>
-          ${thread(c.id)}</div>`;}).join('')
-      : `<div class="empty">Constraints appear as you decide.</div>`;
-  }
-  if(TAB==='sources'){
-    const datasheets = (S.sources||[]).filter(f => f.name.toLowerCase().endsWith('.pdf') || f.name.toLowerCase().endsWith('.csv'));
-    const outputs = (S.sources||[]).filter(f => !f.name.toLowerCase().endsWith('.pdf') && !f.name.toLowerCase().endsWith('.csv'));
-    
-    const renderSrc = (f) => `<div>
-      <div class="srcrow"><span>${f.name.endsWith('.pdf')?'📄':'📘'}</span>
-      <span class="g">${esc(f.name)}</span><span class="pill">${esc(f.scope)}</span>
-      <a href="javascript:void(0)" onclick="openInIde('${esc(f.name).replace(/'/g, "\\'")}')">open</a>
-      <a href="javascript:void(0)" onclick="askSrc('${esc(f.name).replace(/'/g, "\\'")}')" style="margin-left:8px;">ask</a>
-      <a href="javascript:void(0)" onclick="deleteSource('${esc(f.name).replace(/'/g, "\\'")}')" style="color:var(--warn-ink); margin-left:8px;">delete</a></div>
-      ${ASKING_SRC === f.name ? `
-        <div style="display:flex; gap:8px; margin: 0 14px 14px 34px;">
-          <input id="src-q-${esc(f.name).replace(/[^a-zA-Z0-9]/g, '_')}" style="flex:1; background:var(--card); border:1px solid var(--line); border-radius:7px; padding:7px 9px; color:var(--ink); font-size:13px;" placeholder="Ask about this document..." onkeydown="if(event.key==='Enter') sendSrcQ('${esc(f.name).replace(/'/g, "\\'")}')">
-          <button onclick="sendSrcQ('${esc(f.name).replace(/'/g, "\\'")}')">Ask</button>
-        </div>` : ''}
-      </div>`;
-
-    h = `<details open style="margin-bottom:12px;"><summary style="cursor:pointer; font-weight:bold; margin-bottom:8px;">Datasheets</summary>` + 
-        (datasheets.length ? datasheets.map(renderSrc).join('') : `<div class="empty" style="margin-top:0">No datasheets yet.</div>`) + 
-        `</details>`;
-    h += `<details open style="margin-bottom:12px;"><summary style="cursor:pointer; font-weight:bold; margin-bottom:8px;">Outputs</summary>` + 
-        (outputs.length ? outputs.map(renderSrc).join('') : `<div class="empty" style="margin-top:0">No outputs yet.</div>`) + 
-        `</details>`;
-    h += `<div class="tools"><input type="text" id="srcurl" placeholder="https://…/datasheet.pdf">
-      <button onclick="fetchSrc()">Fetch</button>
-      <button onclick="document.getElementById('up').click()">Upload</button>
-      <input type="file" id="up" style="display:none" onchange="upload(this)"></div>`;
-  }
-  if(TAB==='components'){
-    const isEdit = window.BOM_EDIT_MODE;
-    if(isEdit) {
-      h = `<div class="empty" style="text-align:left">Editing Bill of Materials (BOM.md).</div>
-        <textarea id="bom-text" dir="auto" style="width:100%;min-height:280px;background:var(--field);
-          color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;
-          font:13px/1.55 ui-monospace,monospace">${esc(S.bom||'')}</textarea>
-        <div class="tools">
-          <button onclick="saveBom()">Save BOM</button>
-          <button onclick="window.BOM_EDIT_MODE=false; renderPanel(true)" style="background:transparent; border:1px solid var(--line); color:var(--dim);">Cancel</button>
-        </div>`;
-    } else {
-      h = `<div class="empty" style="text-align:left">Bill of Materials (BOM.md). The advisor updates this automatically.</div>
-        <div style="background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-bottom:12px;">
-          ${renderMarkdown(S.bom||'')}
-        </div>
-        <div class="tools"><button onclick="window.BOM_EDIT_MODE=true; renderPanel(true)">Edit Raw Text</button></div>`;
-    }
-  }
-  if(TAB==='memory'){
-    // what this conversation would otherwise forget. The student owns it.
-    h = `<div class="empty" style="text-align:left">This conversation's memory. The advisor
-      rewrites it every few messages, and it is sent with every turn. Decisions are not
-      repeated here — they are already sent in full. You can edit it.</div>
-      <textarea id="mem" dir="auto" style="width:100%;min-height:280px;background:var(--field);
-        color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:10px;
-        font:13px/1.55 ui-monospace,monospace">${esc(S.memory||'')}</textarea>
-      <div class="tools"><button onclick="saveMemory()">Save</button>
-      <button onclick="rewriteMemory()">Rewrite now</button>
-      <span class="meta" id="memlen"></span></div>`;
-  }
-  if(TAB==='settings') h=settingsHTML();
-  $('sbody').innerHTML=h;
-  if(TAB==='settings') settingsDropdowns();
-  if(TAB==='memory') memlen();
-  PANEL_SHOWN=TAB;
+function srcTable(list){
+  return `<div class="tblwrap"><table class="srct"><thead><tr><th>File</th><th>Scope</th><th style="text-align:right">Size</th></tr></thead><tbody>
+    ${list.map(s => `<tr id="src-${s.name}" class="${hitSrc === s.name ? 'hit flash' : ''}"><td class="fname">${esc(s.name)}</td><td><span class="kind">${s.scope}</span></td><td class="n">${s.size}</td></tr>`).join('')}
+    </tbody></table></div>`;
 }
 
-/* A thread hangs on a design element, not on a conversation: it is everything
-   ever said about THIS constraint, in any session. */
-let OPEN_THREAD=null, CLOSING=null, THREAD_ERR=null;
-
-function badge(id){
-  const t=(S.threads||{})[id];
-  const said=t?(t.messages||[]).filter(m=>m.role!=='resolved').length:0;
-  const cls=t&&t.waiting_on?'wait':(t&&t.still_live?'ack':(t&&t.resolved?'done':''));
-  const label=said?`💬 ${said}`+(t.waiting_on?' · waiting on '+t.waiting_on
-                                :(t.still_live?' · noted':'')):'ask';
-  return `<span class="ask-badge ${cls}" onclick="toggleThread('${esc(id)}')">${label}</span>`;
+function sourcesHTML(){
+  return `<div class="vhead"><div><h2>Sources</h2><p>Everything the agent may cite.</p></div></div>
+    <div class="sgroup">${srcTable(state?.sources || [])}</div>`;
 }
 
-function thread(id){
-  if(OPEN_THREAD!==id) return '';
-  const t=(S.threads||{})[id]||{messages:[]};
-  const body=(t.messages||[]).filter(m=>m.role!=='resolved')
-    .map(m=>`<div class="m" dir="${bi(m.text)}"><b>${esc(m.role)}</b>${txt(m.text)}</div>`).join('')
-    || `<div class="m" style="color:var(--dim)">Nothing asked about this yet.</div>`;
-  const mine = THREAD_ERR && THREAD_ERR.anchor===id;
-  const err = mine ? `<div class="thr-err" dir="auto">${esc(THREAD_ERR.text)}</div>` : '';
-  const draft = mine ? (THREAD_ERR.draft||'') : '';
-  // Closing a discussion says what settled it, and says so plainly when the
-  // thing discussed is still in the design - "we talked about it" is not
-  // "we fixed it", and the old one-click close could not tell them apart.
-  const settled = t.resolved
-    ? `<div class="settled" dir="auto">Settled — ${txt(t.resolution||'')}
-       ${t.still_live?`<div class="still">This is still part of your design; closing
-         the discussion did not change it.</div>`:''}</div>` : '';
-
-  if(CLOSING===id) return `<div class="thr">${body}${settled}${err}
-    <div class="row"><input id="thr-why" dir="auto" value="${esc(draft)}"
-      placeholder="What settled it?" onkeydown="if(event.key==='Enter')resolveThread('${esc(id)}')">
-      <button onclick="resolveThread('${esc(id)}')">Done</button>
-      <button onclick="closeReason(null)">Cancel</button></div></div>`;
-
-  return `<div class="thr">${body}${settled}${err}
-    <div class="row"><input id="thr-in" dir="auto" value="${esc(draft)}"
-      placeholder="Ask about this…" onkeydown="if(event.key==='Enter')postThread('${esc(id)}')">
-      <button onclick="postThread('${esc(id)}')">Ask</button>
-      ${t.messages&&t.messages.length&&!t.resolved
-        ? `<button onclick="closeReason('${esc(id)}')">Resolve</button>`:''}</div></div>`;
+function skillsHTML(){
+  return `<div class="vhead"><div><h2>Skills</h2><p>What the agent can do.</p></div></div>`;
 }
 
-/* Questions the corpus answered, because they have one defensible answer and a
-   student stopped by them learns nothing. Collapsed, not hidden: the whole
-   design is that this is browsable rather than blocking. Someone who wants to
-   know what decoupling is opens it and reads one line, instead of being held up
-   by a question whose vocabulary they do not have yet.
-
-   Which makes each `why` load-bearing. Those sentences are the teaching surface
-   now, not a footnote. A default whose reason is not worth reading should have
-   stayed a question. */
-let SHOW_FOR_YOU=false, CHANGING=null;
-
-function forYouHTML(rows){
-  const body = SHOW_FOR_YOU ? rows.map(n=>{
-    const o=(n.options||[]).find(x=>x.id===n.chosen)||{};
-    return `<div class="card corpus">
-      <div class="q" dir="auto">${txt(n.question)}</div>
-      <div class="a" dir="auto">${txt(o.label||n.chosen)}</div>
-      <div class="why" dir="auto">${esc(n.default_icon||'')} ${txt(n.default_why||'')}</div>
-      <div class="foot"><span class="pill">${esc(n.default_provenance||'convention')}</span>
-        ${badge(n.id)}
-        ${CHANGING===n.id?''
-          :`<span class="drop" onclick="changeThis('${esc(n.id)}')">change this</span>`}</div>
-      ${CHANGING===n.id?`<div class="droprow">${(n.options||[])
-        .filter(x=>x.id!==n.chosen)     // the one it already is, is not a choice
-        .map(x=>`<button onclick="answer('${esc(n.id)}','${esc(x.id)}')"
-          >${esc(x.label)}</button>`).join('')}
-        <button onclick="changeThis(null)">Cancel</button></div>`:''}
-      ${thread(n.id)}</div>`;}).join('') : '';
-  return `<div class="gone-head foryou" onclick="toggleForYou()">
-      ${SHOW_FOR_YOU?'▾':'▸'} Decided for you (${rows.length})</div>${body}`;
-}
-
-function toggleForYou(){ SHOW_FOR_YOU=!SHOW_FOR_YOU; CHANGING=null; renderPanel(true); }
-function changeThis(id){ CHANGING=id; renderPanel(true); }
-
-/* A decision is not withdrawn along with the question it was built on - that
-   would delete work nobody asked to undo. But it was decided on a premise that
-   has since gone, and silence is how a board keeps carrying rules nobody would
-   choose again. Say it on the card and leave the choice with them. */
-function restsOn(n){
-  const on=(n.rests_on||[]); if(!on.length) return '';
-  const name=id=>{
-    const g=(S.irrelevant||[]).find(x=>x.id===id);
-    return g ? (g.question||id) : id;
-  };
-  return `<div class="stale" dir="auto">Decided back when “${esc(name(on[0]))}”
-    still applied to your board. Worth a second look.</div>`;
-}
-
-function toggleThread(id){
-  OPEN_THREAD = OPEN_THREAD===id ? null : id;
-  CLOSING=null; THREAD_ERR=null; renderPanel(true);
-}
-
-function closeReason(id){ CLOSING=id; THREAD_ERR=null; renderPanel(true);
-  const el=$('thr-why'); if(el) el.focus(); }
-
-async function postThread(id){
-  const el=$('thr-in'); const text=(el?el.value:'').trim(); if(!text) return;
-  el.disabled=true; el.blur(); THREAD_ERR=null; renderPanel(true);
-  const r=await post('/api/message',{anchor:id,text,role:'user'});
-  // a rejected request used to be assigned straight into S, replacing the whole
-  // design with {error:"..."}. The question stays in the box instead.
-  if(r.ok){ await load(); renderPanel(true); }
-  else { THREAD_ERR={anchor:id, draft:text,
-           text:'Not sent — '+r.error+'. Nothing was saved; try again.'}; renderPanel(true); }
-}
-
-async function resolveThread(id){
-  const el=$('thr-why'); const why=(el?el.value:'').trim();
-  if(!why){ THREAD_ERR={anchor:id, draft:'', text:'Say what settled it, in a few words.'};
-            return renderPanel(true); }
-  el.disabled=true; el.blur(); THREAD_ERR=null;
-  const r=await post('/api/thread/resolve',{anchor:id, text:why});
-  if(r.ok){ CLOSING=null; OPEN_THREAD=null; await load(); renderPanel(true); }
-  else { THREAD_ERR={anchor:id, draft:why, text:'Not saved — '+r.error}; renderPanel(true); }
-}
-
-/* Taking a question out of the design, and putting it back. Both are appends:
-   decisions.jsonl still shows the answer was given and why it stopped applying,
-   so this is an edit the student can make without destroying the record. */
-let DROPPING=null, DROP_ERR=null;
-
-function askDrop(id){ DROPPING=id; DROP_ERR=null; renderPanel(true);
-  const el=$('drop-why'); if(el) el.focus(); }
-
-function dropRow(id){
-  if(DROPPING!==id) return '';
-  return `<div class="droprow">
-    <input id="drop-why" dir="auto" placeholder="Why doesn't it apply to your board?"
-      onkeydown="if(event.key==='Enter')doDrop('${esc(id)}')">
-    <button onclick="doDrop('${esc(id)}')">Remove</button>
-    <button onclick="askDrop(null)">Cancel</button>
-    ${DROP_ERR?`<div class="thr-err" dir="auto">${esc(DROP_ERR)}</div>`:''}</div>`;
-}
-
-async function doDrop(id){
-  const el=$('drop-why'); const why=(el?el.value:'').trim();
-  if(!why){ DROP_ERR='Say why, so this is still readable in a month.'; return renderPanel(true); }
-  el.disabled=true; el.blur(); DROP_ERR=null;
-  const r=await post('/api/retract',{node:id, why, by:'user'});
-  if(r.ok){ DROPPING=null; await load(); renderPanel(true); }
-  else { DROP_ERR='Not saved — '+r.error; renderPanel(true); }
-}
-
-async function reinstate(id){
-  const r=await post('/api/reopen',{node:id, by:'user'});
-  if(r.ok){ await load(); renderPanel(true); }
-  else { DROP_ERR='Not saved — '+r.error; renderPanel(true); }
-}
-
-/* ---------- settings, where the student expected to find them ---------- */
-function settingsHTML(){
-  if(!CFG) return `<div class="empty">Loading…</div>`;
-  const b=S.board||{}, u=CFG.user||{};
-  const num=(k,label,v,step)=>`<label><span>${label}</span>
-    <input type="number" step="${step||1}" id="s-${k}" value="${v}"></label>`;
-  const engines=(CFG.engines||[]).filter(e=>e.status==='implemented')
-    .map(e=>({v:e.id, label:e.title, sub:e.available?'ready':e.reason}));
-
-  return `<div class="set">
-    <h4>This board</h4>
-    <label><span>Title</span><input type="text" id="s-title" value="${esc(S.title||'')}"></label>
-    ${num('layers','Layers',b.layers)}
-    ${num('copper_oz','Copper, oz',b.copper_oz,0.5)}
-    ${num('max_temp_rise_c','Max rise, °C',b.max_temp_rise_c)}
-    ${num('min_track_mm','Min track, mm',b.min_track_mm,0.05)}
-    <p class="note">Copied from the defaults when the board was created. The
-      calculation scripts use these numbers.</p>
-    <div class="tools"><button onclick="saveBoard()">Save board</button></div>
-
-    <h4>Preferences</h4>
-    <label><span>Language</span><span id="s-language"></span></label>
-    <label><span>Units</span><span id="s-units"></span></label>
-    <label><span>Theme</span><span id="s-theme"></span></label>
-    <label><span>Show unverified</span>
-      <input type="checkbox" id="s-show_unverified" ${u.show_unverified?'checked':''}></label>
-
-    <h4>Engine</h4>
-    <label><span>Provider</span><span id="s-provider"></span></label>
-    <label><span>Model</span><span id="s-model"></span></label>
-    <label><span>Effort</span><span class="meta">High</span></label>
-    ${num('memory_every','Memory every',CFG.agent?CFG.agent.memory_every:10)}
-    ${num('memory_max_chars','Memory chars',CFG.agent?CFG.agent.memory_max_chars:2000,100)}
-    <div class="tools"><button onclick="savePrefs(this)">Save settings</button></div>
-    <p class="note">Everything else lives in <code>config.json</code>.
-      See docs/configuration.md.</p>
+function detailHTML(){
+  const l = lineByKey(sel); if(!l) return '';
+  const b = best(l);
+  return `<div class="dt">
+    <div class="dt-h"><div><div class="refs">${esc((l.refs||[]).join(', '))}</div><h3>${esc(l.mpn||'')}</h3><p>${esc(l.mfr||'')} · ${esc(l.pkg||'')} · ${esc(l.desc||'')}</p></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <div class="dt-a"><button class="btn pri" data-chat="${l.line}">Discuss this part</button></div>
+    ${qty(l) ? `<div class="dsec"><h4>Stock and price</h4><table class="sup"><thead><tr><th>Supplier</th><th style="text-align:right">Stock</th><th style="text-align:right">Unit @10</th></tr></thead><tbody>
+      ${SUPS.map(s => { const v = l.sup?.[s] || [0,null]; return `<tr class="${b && b.s === s ? 'best' : ''}"><td>${s}</td><td class="n">${num(v[0])}</td><td class="n">${money(v[1])}</td></tr>`; }).join('')}
+      </tbody></table></div>` : ''}
   </div>`;
 }
 
-function settingsDropdowns(){
-  const u=CFG.user||{}, a=CFG.agent||{};
-  ddSet('s-language', [{v:'auto',label:'auto',sub:'follow what you type'},
-                       {v:'en',label:'English'},{v:'he',label:'עברית'}],
-        u.language||'auto', null, {right:true});
-  ddSet('s-units', [{v:'mm',label:'mm'},{v:'mil',label:'mil'}], u.units||'mm', null, {right:true});
-  // applied on the pick, not on Save: a theme you have to commit to before you
-  // can see it is not a theme you can choose. Save settings still persists it.
-  ddSet('s-theme', [{v:'auto',label:'auto',sub:'system · now '+systemTheme()},
-                    {v:'light',label:'light'},{v:'dark',label:'dark'}],
-        THEME, chooseTheme, {right:true});
-  ddSet('s-provider', (CFG.engines||[]).filter(e=>e.status==='implemented')
-        .map(e=>({v:e.id,label:e.title,sub:e.available?'ready':e.reason})),
-        a.provider||CFG.engine, id=>{ DD['s-provider'].value=id; modelDropdown(id, ''); }, {right:true});
-  modelDropdown(a.provider||CFG.engine, a.model);
+function renderCenter(){
+  $('#whead').innerHTML = wheadHTML();
+  const v = $('#view');
+  v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : ideaHTML())
+    : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML()
+    : `<div class="vhead"><div><h2>Settings</h2></div></div>`;
+  if(page === 'sources' && hitSrc){ const r = document.getElementById('src-' + hitSrc); if(r) r.scrollIntoView({block:'center'}); hitSrc = null; }
+  renderDetail();
 }
 
-// a model belongs to one engine, so the list follows the provider picked
-function modelDropdown(engine, current){
-  const e=(CFG.engines||[]).find(x=>x.id===engine)||{};
-  const items=(e.models||[]).map(m=>({v:m.id,label:m.name||m.id}));
-  const keep=items.some(x=>x.v===current)?current:(items[0]&&items[0].v)||'';
-  ddSet('s-model', items, keep, null, {right:true});
+function renderDetail(){
+  const d = $('#detail');
+  const show = !!sel && ((page === 'workspace' && (tab === 'bom' || tab === 'sch')) || page === 'library');
+  d.hidden = !show;
+  d.innerHTML = show ? detailHTML() : '';
 }
 
-const val=id=>{
-  const e=$(id);
-  if(DD[id]) return ddValue(id);
-  return e ? (e.type==='checkbox'?e.checked:e.value) : undefined;
-};
-
-async function saveBoard(){
-  await fetch(q('/api/project/meta'),{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({title:val('s-title'), board:{
-      layers:+val('s-layers'), copper_oz:+val('s-copper_oz'),
-      max_temp_rise_c:+val('s-max_temp_rise_c'), min_track_mm:+val('s-min_track_mm')}})});
-  await load(); renderPanel();
+function go(p, t){ page = p; if(t) tab = t; renderNav(); renderCenter(); setView('work'); }
+function select(key, goSch){
+  sel = key;
+  if(goSch) { go('workspace','sch'); return; }
+  if(!(page === 'workspace' && (tab === 'bom' || tab === 'sch')) && page !== 'library'){ go('workspace','bom'); return; }
+  document.querySelectorAll('#view tr[data-key]').forEach(tr => tr.classList.toggle('sel', tr.dataset.key === key));
+  renderDetail(); setView('work');
 }
-
-async function savePrefs(btn){
-  const oldText = btn.textContent;
-  btn.textContent = 'Saving...';
-  const r=await (await fetch('/api/config',{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({set:{
-      'user.language':val('s-language'), 'user.units':val('s-units'),
-      'user.theme':val('s-theme')||THEME,
-      'user.show_unverified':val('s-show_unverified'),
-      'agent.provider':val('s-provider'),
-      'agent.model':val('s-model'),
-      'agent.memory_every':+val('s-memory_every'),
-      'agent.memory_max_chars':+val('s-memory_max_chars')}})})).json();
-  if(r.error){ alert(r.error); btn.textContent = oldText; return; }
-  CFG=r.config;
-  if(CFG.user) applyTheme(CFG.user.theme);
-  btn.textContent = 'Saved!';
-  setTimeout(() => { btn.textContent = oldText; }, 2000);
-  renderPanel(); load();
+function setView(v){
+  if(!matchMedia('(max-width:860px)').matches) return;
+  $('#app').dataset.view = v;
 }
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3200); }
 
-/* An option's price is rarely only in `costs`. It is also the parts it adds and
-   the rules it locks in - and an option with none of those rendered bare read as
-   free next to one with a red line under it. Every option now carries its weight,
-   and `note` is neutral: reassurance should not wear the same alarm red as a hazard. */
-function optWeight(o){
-  // Weight comes from the structural fields first, because an author cannot
-  // forget to add a part or a rule - they CAN forget to write a cost, and in
-  // this corpus they usually did on whichever option they preferred. `costs`
-  // and `note` are the nuance the counts cannot express, not a verdict.
-  const parts=(o.blocks||[]).map(b=>(b.label||b.id).replace(/\n/g,' '));
-  const locks=(o.locks||[]).length;
-  const weigh=[];
-  if(parts.length) weigh.push(`adds ${parts.map(esc).join(', ')}`);
-  if(locks)        weigh.push(`${locks} rule${locks>1?'s':''} follow${locks>1?'':'s'}`);
-  if(!weigh.length) weigh.push('adds nothing');
-  const nuance=[...(o.costs||[]), ...(o.note?[o.note]:[])];
-  return `<div class="weigh">${weigh.join(' · ')}</div>` +
-         (nuance.length?`<div class="nuance">${nuance.map(txt).join(' · ')}</div>`:'');
-}
-
-function memlen(){
-  const el=$('mem'); if(!el) return;
-  $('memlen').textContent = el.value.length + ' characters';
-  el.oninput = () => $('memlen').textContent = el.value.length + ' characters';
-}
-
-async function saveMemory(){
-  const r=await (await fetch(q('/api/memory'),{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:$('mem').value})})).json();
-  if(r.trimmed) alert('Saved, but it was over the limit and was trimmed.');
-  load();
-}
-
-async function saveBom(){
-  const r=await (await fetch(q('/api/bom'),{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({text:$('bom-text').value})})).json();
-  window.BOM_EDIT_MODE = false;
-  load();
-}
-
-async function rewriteMemory(){
-  const b=event.target; b.disabled=true; b.textContent='Rewriting…';
-  try{
-    const r=await (await fetch(q('/api/memory'),{method:'POST',
-      headers:{'Content-Type':'application/json'},body:JSON.stringify({})})).json();
-    if(r.rewritten && !r.rewritten.ok) alert(r.rewritten.reason||'could not rewrite');
-  } finally { b.disabled=false; b.textContent='Rewrite now'; await load(); renderPanel(); }
-}
-
-let QTY_ERR=null;
-
-/* A typed number. The server checks it against the unit and range the question
-   declares, because decisions.jsonl is append-only and "about a year" written
-   into it once is written into it for good. */
-async function answerQty(node){
-  const el=$('qty-in'); const raw=(el?el.value:'').trim();
-  if(!raw){ QTY_ERR='Type a number.'; return paint(); }
-  el.disabled=true; QTY_ERR=null;
-  const r=await post('/api/answer',{node, value:raw, by:'user'});
-  if(r.ok) return load();
-  QTY_ERR=r.error; paint();
-}
-
-async function answer(node,value){
-  QTY_ERR=null;
-  const r=await post('/api/answer',{node,value,by:'user'});
-  if(r.ok) return load();
-  if(S){ S.chat=[...(S.chat||[]), {role:'agent',
-    text:'That answer did not reach the server — '+r.error+'. Nothing was recorded, so pick it again.'}];
-    paint(); }
-}
-async function send(){
-  const el=$('say'), text=el.value.trim(); if(!text||busy) return;
-  const block=ASK_BLOCK;
-  busy=true; $('sendbtn').textContent='…'; el.value=''; clearAsk();
-
-  // A reply takes ten to twenty-five seconds. Waiting for the round trip before
-  // showing anything meant your own message vanished and nothing replaced it -
-  // the tool looked broken rather than busy. Show it now; load() replaces the
-  // whole log with the server's copy when the answer lands.
-  if(S){ S.chat=[...(S.chat||[]), {role:'user', text, block, ts:new Date().toISOString()}];
-         paint(); }
-
-  let failed=false;
-  try{
-    const r=await fetch(q('/api/chat'),{method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({text, block})});
-    failed=!r.ok;
-  }catch(e){ failed=true; }
-  finally{
-    busy=false; $('sendbtn').textContent='Send';
-    if(failed && S){ S.chat=[...(S.chat||[]),
-      {role:'agent', text:'That did not reach the advisor. Your message is not saved — try again.'}];
-      paint(); }
-    else load();
-  }
-}
-async function deleteSource(name) {
-  if (!confirm(`Delete source: ${name}?`)) return;
-  const r = await post('/api/delete_source', {name});
-  if(r.error) alert(r.error); else load();
-}
-async function fetchSrc(){
-  const u=$('srcurl').value.trim(); if(!u) return; $('srcurl').value='';
-  const r=await (await fetch(q('/api/fetch_source'),{method:'POST',
-    headers:{'Content-Type':'application/json'},body:JSON.stringify({url:u})})).json();
-  if(r.error) alert(r.error); load();
-}
-function upload(input){
-  const f=input.files[0]; if(!f) return;
-  const rd=new FileReader();
-  rd.onload=async()=>{ await fetch(q('/api/upload'),{method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name:f.name,data_b64:rd.result.split(',')[1]})});
-    input.value=''; load(); };
-  rd.readAsDataURL(f);
-}
-
-document.addEventListener('paste', (e) => {
-  if (TAB !== 'chat') return;
-  const items = (e.clipboardData || e.originalEvent.clipboardData).items;
-  for (let index in items) {
-    const item = items[index];
-    if (item.kind === 'file' && item.type.startsWith('image/')) {
-      const blob = item.getAsFile();
-      const name = `screenshot_${Date.now()}.png`;
-      const rd = new FileReader();
-      rd.onload = async () => {
-        const r = await fetch(q('/api/upload'), {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({name: name, data_b64: rd.result.split(',')[1]})
-        });
-        if (r.ok) {
-          const el = $('say');
-          const prefix = el.value ? el.value + '\n\n' : '';
-          el.value = prefix + `![screenshot](sources/${name})`;
-        } else {
-          alert('Failed to upload image.');
-        }
-      };
-      rd.readAsDataURL(blob);
-    }
+document.addEventListener('click', e => {
+  const el = e.target.closest('button, tr[data-key], g.part, g[data-tab]');
+  if(!el) return;
+  if(el.matches('tr[data-key]')){ if(e.target.closest('input,button')) { if(!e.target.closest('button')) return; } else { select(el.dataset.key); return; } }
+  const d = el.dataset;
+  if(d.thread){ cur = d.thread; convsOpen = false; renderChat(); setView('chat'); return; }
+  if(d.tab){ go('workspace', d.tab); return; }
+  if(d.page){ go(d.page); return; }
+  if(d.view){ setView(d.view); return; }
+  if(d.src){ hitSrc = d.src; go('sources'); return; }
+  if(d.chat){ cur = d.chat; convsOpen = false; renderChat(); setView('chat'); return; }
+  switch(d.act){
+    case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); return;
+    case 'convs': convsOpen = !convsOpen; renderConvs(); return;
+    case 'new': cur = 'main'; convsOpen = false; renderChat(); return;
   }
 });
-let ASKING_SRC = null;
-function askSrc(name) {
-  ASKING_SRC = ASKING_SRC === name ? null : name;
-  renderPanel(true);
-}
-function sendSrcQ(name) {
-  const safeId = name.replace(/[^a-zA-Z0-9]/g, '_');
-  const el = $('src-q-' + safeId);
-  if (!el || !el.value.trim()) return;
-  const q = el.value.trim();
-  const text = `Please answer based on the attached file: [${name}](sources/${name})\n\n${q}`;
+
+$('#form').addEventListener('submit', e => { 
+  e.preventDefault(); 
+  const i = $('#input'); 
+  const text = i.value.trim();
+  if(!text) return;
+  i.value = '';
   
-  ASKING_SRC = null;
-  TAB = 'chat';
-  showPanel(TAB);
-  
-  const chatEl = $('say');
-  if (chatEl) {
-    chatEl.value = text;
-    send();
+  if (cur === 'main') {
+    sendChat(text);
+  } else {
+    sendMessage(text, cur);
   }
+});
+
+$('#input').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); $('#form').requestSubmit(); } });
+
+const ICON = {
+  ws:'<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="2.5" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="11.5" y="2.5" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2.5" y="11.5" width="15" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  lib:'<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="4" width="10" height="12" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2 7h3M2 10h3M2 13h3M15 7h3M15 10h3M15 13h3" stroke="currentColor" stroke-width="1.6"/></svg>',
+  src:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5h8l4 4v9H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 3.5v4h4M7 11h6M7 14h4" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
+  sk:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2 4 11h5l-1 7 7-9h-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  chat:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H8l-4 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  set:'<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6" stroke="currentColor" stroke-width="1.6"/></svg>',
+};
+
+function renderNav(){
+  const t = totals();
+  const ni = (id, icon, label, cnt) => `<button class="nitem" data-page="${id}" aria-current="${page === id}" title="${label}">${ICON[icon]}<span class="lbl">${label}</span>${cnt != null ? `<span class="cnt">${cnt}</span>` : ''}</button>`;
+  $('#nav').innerHTML = `
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="12" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2 9h4M2 15h4M18 9h4M18 15h4" stroke="currentColor" stroke-width="1.8"/></svg><span>PCB Advisor</span></div>
+    <div class="ngroup projects"><div class="nlabel">Project</div>
+      <button class="nitem" aria-current="true"><span class="pdot"></span><span class="lbl">${esc(state?.title || 'Project')}</span></button>
+    </div>
+    <div class="ngroup"><div class="nlabel">Workspace</div>
+      <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
+      ${ni('workspace','ws','Workspace')}
+      <div class="nsub">${[['idea','Idea'],['bom','BOM'],['sch','Schematic']].map(([id,l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
+      ${ni('library','lib','Library', libCount())}
+      ${ni('sources','src','Sources', (state?.sources || []).length)}
+    </div>`;
 }
 
-async function boot(){
-  TAB=lsGet('pcbadv.tab')||'chat';
-  showPanel(TAB);
-  try{ CFG=await (await fetch('/api/config')).json(); }catch(e){ CFG=null; }
-  if(CFG && CFG.user) applyTheme(CFG.user.theme);
-  const c=(CFG&&CFG.corpus)||{};
-  if(c.status && c.status!=='authored' && c.note){
-    $('demobar').innerHTML=`<b>Demonstration content.</b> ${esc(c.note)}`;
-    $('demobar').style.display='';
-  }
-  await loadProjects();
-  switchIdeTab(activeIdeTab);
-  await load();
-  setInterval(()=>{if(!busy)load();},3000);
-}
-boot();
+loadState();
 </script>

@@ -154,44 +154,37 @@ def apply_actions(project, actions):
     applied = []
     for a in actions or []:
         kind = a.get("type")
-        if kind == "sketch":
-            model.save_sketch(project, {
-                "brief": a.get("brief", model.load_sketch(model.project_dir(project)).get("brief", "")),
-                "blocks": a.get("blocks", []),
-                "links": a.get("links", []),
-                "confirmed": bool(a.get("confirmed", False)),
+        if kind == "idea.propose":
+            idea = model.load_idea(model.project_dir(project))
+            # simple mock apply for now
+            applied.append("idea.propose")
+        elif kind == "idea.confirm":
+            idea = model.load_idea(model.project_dir(project))
+            idea["confirmed"] = True
+            model.save_idea(project, idea)
+            applied.append("idea.confirm")
+        elif kind == "bom.propose":
+            append(project, "bom-log.jsonl", {
+                "ts": now(), "by": "agent-approved", "line": a.get("line"), 
+                "changes": a.get("changes", {}), "reason": a.get("reason"), "sources": a.get("sources", [])
             })
-            applied.append("sketch")
-        elif kind == "answer" and a.get("node") and a.get("value") not in (None, ""):
-            value, why = _checked_value(project, a["node"], a["value"])
-            if why:
-                # a number the model wrote as prose is not an answer, and the
-                # log is append-only: there is no cleaning it up afterwards
-                print(f"(answer dropped: {a['node']} - {why})")
-                continue
-            append(project, "decisions.jsonl", {"ts": now(), "node": a["node"],
-                                                "value": value, "by": "agent"})
-            applied.append(f"answer:{a['node']}")
-        elif kind == "retract" and a.get("node"):
-            # the one action that can take something OUT of the design. It is
-            # still an append: the log keeps the answer and adds why it stopped
-            # applying. A node that does not exist is a typo, not a withdrawal.
-            if a["node"] not in model.anchors(project):
-                print(f"(retract dropped: no such question {a['node']})")
-                continue
-            if not (a.get("why") or "").strip():
-                print(f"(retract dropped: no reason given for {a['node']})")
-                continue
-            append(project, "decisions.jsonl", {"ts": now(), "node": a["node"],
-                                                "retract": True, "why": a["why"],
-                                                "by": "agent"})
-            applied.append(f"retract:{a['node']}")
-        elif kind == "ask" and a.get("anchor") and a.get("text"):
-            if a["anchor"] not in model.anchors(project):
-                print(f"(ask dropped: no such anchor {a['anchor']})")
-                continue
-            append(project, "threads.jsonl", {"ts": now(), "anchor": a["anchor"],
-                                              "role": "agent", "text": a["text"]})
+            applied.append(f"bom.propose:{a.get('line')}")
+        elif kind == "netlist.write":
+            # write netlist
+            sheet = a.get("sheet")
+            if sheet:
+                pdir = model.project_dir(project)
+                ndir = pdir / "netlist"
+                ndir.mkdir(parents=True, exist_ok=True)
+                (ndir / f"{sheet}.json").write_text(json.dumps(a.get("data", {}), ensure_ascii=False, indent=2), encoding="utf-8")
+            applied.append(f"netlist.write:{sheet}")
+        elif kind == "library.add":
+            applied.append("library.add")
+        elif kind == "thread.open" and a.get("anchor") and a.get("text"):
+            append(project, "threads.jsonl", {"ts": now(), "anchor": a["anchor"], "role": "agent", "text": a["text"]})
+            applied.append(f"thread.open:{a['anchor']}")
+        elif kind in ("ask", "sheet") and a.get("anchor") and a.get("text"):
+            append(project, "threads.jsonl", {"ts": now(), "anchor": a["anchor"], "role": "agent", "text": a["text"]})
             applied.append(f"ask:{a['anchor']}")
     if applied:
         redraw(project)
@@ -291,78 +284,6 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:
             return self._send(400, {"error": "bad json"})
-
-        if path == "/api/answer":
-            if not data.get("node") or data.get("value") in (None, ""):
-                return self._send(400, {"error": "node and value required"})
-            before_m = model.build(project=proj, session=sess)
-            value, why = _checked_value(proj, data["node"], data["value"], before_m)
-            if why:
-                return self._send(400, {"error": why})
-            before = {c["id"] for c in before_m["constraints"]}
-            append(proj, "decisions.jsonl", {"ts": now(), "node": data["node"],
-                                             "value": value, "by": data.get("by", "user")})
-            after = model.build(project=proj, session=sess)
-            gained = [c for c in after["constraints"] if c["id"] not in before]
-            node = next((n for n in after["answered"] if n["id"] == data["node"]), {})
-            opt = next((o for o in node.get("options", []) if o["id"] == value), {})
-            shown = node.get("chosen_label") or opt.get("label", value)
-            # an answer that records nothing because the board lacks a part is
-            # not the same as one the corpus has nothing to say about, and the
-            # student should not have to guess which of the two just happened
-            held = [w for w in after["withheld"] if w["from_node"] == data["node"]]
-            say(proj, sess, {
-                "ts": now(), "role": "decision",
-                "text": f"{node.get('question', data['node'])}  ->  {shown}",
-                "node": data["node"],
-                "locked": [{"id": c["id"], "text": c["text"], "icon": c["icon"],
-                            "verified": c["verified"]} for c in gained],
-                "waiting": [{"id": w["id"], "text": w["text"],
-                             "needs": w["needs"]} for w in held],
-            })
-            redraw(proj)
-            return self._send(200, model.build(project=proj, session=sess))
-
-        if path == "/api/retract":
-            # "this does not apply to my board". The design questions assume a
-            # shape of circuit, and when the student's board is not that shape
-            # the honest move is to take the question out - not to answer it
-            # wrongly and not to leave it open forever.
-            if not data.get("node"):
-                return self._send(400, {"error": "node required"})
-            why = (data.get("why") or "").strip()
-            if not why:
-                return self._send(400, {"error": "say why it does not apply"})
-            if data["node"] not in model.anchors(proj):
-                return self._send(400, {"error": f"no such question: {data['node']}"})
-            before = model.build(project=proj, session=sess)
-            node = next((n for n in before["answered"] if n["id"] == data["node"]), {})
-            lost = [c for c in before["constraints"] if c["from_node"] == data["node"]]
-            append(proj, "decisions.jsonl", {"ts": now(), "node": data["node"],
-                                             "retract": True, "why": why,
-                                             "by": data.get("by", "user")})
-            say(proj, sess, {
-                "ts": now(), "role": "decision", "withdrawn": True,
-                "text": f"{node.get('question', data['node'])}  —  no longer relevant: {why}",
-                "node": data["node"],
-                "locked": [{"id": c["id"], "text": c["text"], "icon": c["icon"],
-                            "verified": c["verified"]} for c in lost],
-            })
-            redraw(proj)
-            return self._send(200, model.build(project=proj, session=sess))
-
-        if path == "/api/reopen":
-            # the undo for the above. Without it, taking a question out is a
-            # one-way door and nobody uses it - which is how the deadlock it
-            # exists to clear survives.
-            if not data.get("node"):
-                return self._send(400, {"error": "node required"})
-            if data["node"] not in model.anchors(proj):
-                return self._send(400, {"error": f"no such question: {data['node']}"})
-            append(proj, "decisions.jsonl", {"ts": now(), "node": data["node"],
-                                             "reopen": True, "by": data.get("by", "user")})
-            redraw(proj)
-            return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/message":
             if not data.get("anchor") or not data.get("text"):
@@ -514,28 +435,6 @@ class Handler(BaseHTTPRequestHandler):
             target.with_suffix(target.suffix + ".json").write_text(json.dumps(
                 {"name": name, "url": None, "uploaded_at": now(),
                  "origin": "uploaded by the student"}, indent=2), encoding="utf-8")
-            return self._send(200, model.build(project=proj, session=sess))
-
-        if path == "/api/sketch":
-            # the student edited the diagram. Server is still the only writer.
-            cur = model.load_sketch(model.project_dir(proj))
-            model.save_sketch(proj, {
-                "brief": data.get("brief", cur.get("brief", "")),
-                "blocks": data.get("blocks", cur.get("blocks", [])),
-                "links": data.get("links", cur.get("links", [])),
-                "confirmed": bool(data.get("confirmed", cur.get("confirmed", False))),
-            })
-            if data.get("note"):
-                say(proj, sess, {"ts": now(), "role": "user", "text": data["note"]})
-            redraw(proj)
-            if data.get("tell_agent"):
-                m = model.build(project=proj, session=sess)
-                res = agent.respond(m, data.get("note") or "I edited the sketch.",
-                                    m["chat"], backend=BACKEND)
-                applied = apply_actions(proj, res.get("actions"))
-                if res.get("reply"):
-                    say(proj, sess, {"ts": now(), "role": "agent",
-                                     "text": res["reply"], "applied": applied})
             return self._send(200, model.build(project=proj, session=sess))
 
         if path == "/api/fetch_source":

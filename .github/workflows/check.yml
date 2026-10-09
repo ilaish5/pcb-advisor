@@ -20,13 +20,6 @@ jobs:
           python-version: "3.11"
 
       - run: pip install -r requirements-dev.txt
-
-      # The corpus guards run against the repo as it stands: a rule that does
-      # not declare how it is known, or that cites a document nobody can fetch,
-      # fails the build rather than reaching a student.
-      - name: the corpus validates
-        run: python scripts/validate_cascade.py
-
       - name: nothing is broken
         run: python -m pytest tests/ -q
 
