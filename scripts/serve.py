@@ -285,6 +285,15 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return self._send(400, {"error": "bad json"})
 
+        
+        if path == "/api/idea":
+            idea = model.load_idea(model.project_dir(proj))
+            idea["blocks"] = data.get("blocks", idea.get("blocks", []))
+            idea["links"] = data.get("links", idea.get("links", []))
+            model.save_idea(proj, idea)
+            redraw(proj)
+            return self._send(200, model.build(project=proj, session=sess))
+
         if path == "/api/message":
             if not data.get("anchor") or not data.get("text"):
                 return self._send(400, {"error": "anchor and text required"})
@@ -407,6 +416,20 @@ class Handler(BaseHTTPRequestHandler):
             redraw(created)
             return self._send(200, {"created": created,
                                     "projects": model.list_projects()})
+
+        if path == "/api/projects/delete":
+            name = (data.get("name") or "").strip()
+            if not name:
+                return self._send(400, {"error": "name required"})
+            
+            import shutil
+            proj_dir = model.project_dir(name)
+            if proj_dir.exists():
+                shutil.rmtree(proj_dir)
+            
+            projects = model.list_projects()
+            default = projects[0]["name"] if projects else "demo"
+            return self._send(200, {"deleted": name, "projects": projects, "default": default})
 
         if path == "/api/project/meta":
             # title, status, tags, and this board's engineering settings

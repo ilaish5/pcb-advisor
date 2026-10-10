@@ -39,72 +39,9 @@ def rules():
 
 def _summary(model):
     s = {
-        "stage": model["stage"],
-        "sketch": model["sketch"],
-        "domains": model["domains"],
-        "open_questions": [
-            {"id": n["id"], "question": n["question"], "why": n.get("why", ""),
-             # a question that wants a measurement, not a choice
-             **({"wants_a_number": n["answer"]} if n.get("answer") else {}),
-             "options": [{"id": o["id"], "label": o["label"],
-                          "costs": o.get("costs", []),
-                          "note": o.get("note", ""),
-                          # an option's real price is often here, not in costs
-                          "locks_in": [lk.get("text", "") for lk in (o.get("locks") or [])],
-                          "adds_parts": [b.get("label", b["id"]).replace("\n", " ")
-                                         for b in (o.get("blocks") or [])]}
-                         for o in n.get("options", [])]}
-            for n in model["open"]
-        ],
-        "answered": [{"id": n["id"], "chosen": n["chosen"],
-                      # who settled it. The corpus answering is not the student
-                      # answering, and telling them they chose something they
-                      # never saw is worse than the question would have been.
-                      **({"decided_by": "the corpus, not the student",
-                          "default_reason": n.get("default_why", "")}
-                         if n.get("chosen_by") == "corpus" else {}),
-                      # decided on a premise that has since been taken out. Not
-                      # withdrawn automatically - that would delete their work -
-                      # so RAISE it with them rather than quietly carrying on.
-                      **({"was_decided_when": n["rests_on"]} if n.get("rests_on") else {})}
-                     for n in model["answered"]],
-        # taken out of this design, with the reason. Without it the advisor
-        # re-opens the very question the student just explained away.
-        "not_applicable": [{"id": n["id"], "why": n.get("reason", "")}
-                           for n in model.get("irrelevant", []) if n.get("withdrawn")],
-        # provenance travels WITH the constraint. Without it the agent is asked
-        # to explain how we know a rule while holding only the rule.
-        "active_constraints": [
-            {"id": c["id"], "text": c["text"], "provenance": c["provenance"],
-             "verified": c["verified"], "source": c.get("source") or {}}
-            for c in model["constraints"]
-        ],
-        # the index of what is already on disk. Cheap, and it is the difference
-        # between "I need a datasheet" and "the datasheet is right here".
-        "documents": [
-            {k: v for k, v in
-             {"name": d.get("name"), "scope": d.get("scope"), "url": d.get("url")}.items()
-             if v} for d in model.get("sources", [])
-        ],
-        # rules the corpus holds back because this board lacks the part they are
-        # about. The advisor must know they exist and why, or it invents them.
-        "withheld_constraints": [
-            {"id": w["id"], "text": w["text"], "applies_once_the_board_has": w["needs"]}
-            for w in model.get("withheld", [])
-        ],
-        "board": model.get("board", {}),
-        # threads waiting on the agent go in full - they are what the student
-        # asked and nobody answered. The rest are a count; the engine can read
-        # threads.jsonl if it wants them.
-        "open_threads": [
-            {"anchor": t["anchor"], "about": t["label"],
-             "messages": [{"role": m["role"], "text": m["text"]}
-                          for m in t["messages"] if m.get("role") in ("user", "agent")]}
-            for t in (model.get("threads") or {}).values() if t.get("waiting_on") == "agent"
-        ],
-        "threads_waiting_on_student": model.get("progress", {}).get("waiting_on_student", 0),
-        "conflicts": model["conflicts"],
-        "sources": model.get("sources", []),
+        "idea": model.get("idea", {}),
+        "bom_stats": f"{len(model.get('bom', []))} lines",
+        "progress": model.get("progress", {})
     }
     return json.dumps(s, ensure_ascii=False, indent=2)
 

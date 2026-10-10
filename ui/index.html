@@ -11,7 +11,7 @@
   --accent:#2148c9; --accent-ink:#ffffff; --accent-soft:#e3e9fb;
   --net:#6b2fb3; --net-soft:#f0e7fb;
   --ok:#167a46; --ok-soft:#e1f2e8; --warn:#8f5d00; --warn-soft:#fbefd2; --bad:#b8322a; --bad-soft:#fbe4e2;
-  --nav:#17203a; --nav-ink:#dfe5f3; --nav-dim:#94a0bd; --nav-sel:#2a3657;
+  --nav:#f5f7fb; --nav-ink:#141a26; --nav-dim:#5b667b; --nav-sel:#e3e9fb;
   --sch-bg:#fbfcfe; --sch-wire:#233f99; --sch-body:#fdf2c8; --sch-body-line:#7d2f14; --sch-text:#151515;
   --sch-pwr:#d27a12; --sch-pwr3:#2e7a33; --sch-gnd:#6b4a3a; --sch-dash:#a3abba;
   --hl:rgba(33,72,201,.15); --hl2:rgba(33,72,201,.07);
@@ -315,6 +315,13 @@ table.libt{min-width:740px} table.srct{min-width:780px}
   .app[data-view="work"] .chat{display:none}
   .detail{width:100%}
 }
+
+.block:hover .del-blk { display: block !important; }
+.block:hover .port { opacity: 1 !important; }
+.port:hover { transform: scale(1.5) !important; }
+.port[data-side="top"]:hover, .port[data-side="bottom"]:hover { transform: translateX(-50%) scale(1.5) !important; }
+.port[data-side="left"]:hover, .port[data-side="right"]:hover { transform: translateY(-50%) scale(1.5) !important; }
+.link-group:hover .del-lnk { display: block !important; }
 </style>
 
 <div class="app" id="app" data-view="work">
@@ -352,10 +359,36 @@ const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
 let state = null;
+
+async function delProject(name) {
+  if(!confirm('Delete project ' + name + '?')) return;
+  const res = await fetch('/api/projects/delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name})
+  });
+  if(res.ok) {
+    const data = await res.json();
+    window.location.href = '/?project=' + data.default;
+  }
+}
+
+function settingsHTML(){
+  return `<div class="vhead"><div><h2>Settings</h2><p>Manage project and app preferences.</p></div></div>
+  <div class="card" style="padding: 16px;">
+    <h3 style="padding:0 0 10px; border-bottom:1px solid var(--line2); margin-top:0;">Danger Zone</h3>
+    <p style="color:var(--dim); font-size:13px;">Permanently delete this project and all its data. This cannot be undone.</p>
+    <button class="btn pri" style="background:var(--bad); border-color:var(--bad);" onclick="delProject('${state?.project}')">Delete Project</button>
+  </div>`;
+}
+
+let allProjects = [];
 let page = 'workspace', tab = 'bom', sel = null, hitSrc = null;
 let cur = 'main';
 let convsOpen = false;
 let schematicSvg = '';
+let canvasPan = {x: 0, y: 0}, canvasZoom = 1;
+let isPanning = false;
 
 const SUPS = ['LCSC','Mouser','DigiKey'];
 const SECTIONS = {A:'U4 · LTE modem', B:'VBAT · caps and TVS', C:'PWRKEY driver', D:'U5 · level shifter', E:'Antenna', F:'SIM', G:'Test points'};
@@ -393,9 +426,15 @@ const libCount = () => (state?.bom || []).filter(l => l.lib === 'ok' || l.lib ==
 
 async function loadState() {
   try {
-    const res = await fetch('/api/state');
+    const projRes = await fetch('/api/projects');
+    if (projRes.ok) {
+      const pData = await projRes.json();
+      allProjects = pData.projects || [];
+    }
+    const q = window.location.search;
+    const res = await fetch('/api/state' + q);
     state = await res.json();
-    const svgRes = await fetch('/api/schematic.svg');
+    const svgRes = await fetch('/api/schematic.svg' + window.location.search);
     if(svgRes.ok) schematicSvg = await svgRes.text();
     renderAll();
   } catch(e) {
@@ -405,7 +444,7 @@ async function loadState() {
 
 async function sendChat(text) {
   try {
-    const res = await fetch('/api/chat', {
+    const res = await fetch('/api/chat' + window.location.search, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({text})
@@ -419,7 +458,7 @@ async function sendChat(text) {
 
 async function sendMessage(text, anchor) {
   try {
-    const res = await fetch('/api/message', {
+    const res = await fetch('/api/message' + window.location.search, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({text, anchor, role: 'user', ask_agent: true})
@@ -465,7 +504,18 @@ function renderConvs(){
   const item = th => { 
     return `<button class="conv" data-thread="${th.anchor}" aria-current="${th.anchor === cur}"><span class="t"><span>${th.anchor && th.anchor !== 'main' ? `<span class="anc">${esc(th.anchor)}</span>` : ''}${esc(th.label || th.anchor)}</span></span><span class="p">${th.messages?.length ? esc(th.messages[th.messages.length-1].text || '') : ''}</span></button>`; 
   };
-  box.innerHTML = `<h4>Conversations</h4><button class="conv" data-thread="main" aria-current="${cur === 'main'}"><span class="t"><span>Main</span></span></button>` + threadsList.map(item).join('');
+  
+  let html = `<h4>Conversations</h4><button class="conv" data-thread="main" aria-current="${cur === 'main'}"><span class="t"><span>Main</span></span></button>` + threadsList.map(item).join('');
+  
+  if (state?.sessions && state.sessions.length) {
+    const currentSession = new URLSearchParams(window.location.search).get('session');
+    html += `<h4>Past Sessions</h4>` + state.sessions.map(s => {
+      const isCurrent = (currentSession === s.id) || (!currentSession && state.sessions[state.sessions.length - 1].id === s.id);
+      return `<a class="conv" href="/?project=${state?.project || ''}&session=${s.id}" style="text-decoration:none; display:block;" aria-current="${isCurrent}"><span class="t"><span>${esc(s.id)}</span><small>${esc(s.created || '')}</small></span></a>`;
+    }).join('');
+  }
+  
+  box.innerHTML = html;
 }
 
 function renderChat(){
@@ -522,18 +572,55 @@ function bomHTML(){
 }
 
 function schHTML(){
-  return `<div class="vhead"><div><h2>Schematic</h2><p>Rendered blocks.</p></div></div>
-    <div class="schwrap" style="background:#fff">${schematicSvg}</div>`;
+  return `<div class="vhead"><div><h2>Schematic</h2><p>PDF Schematic View</p></div></div>
+    <div class="sheets" style="margin-bottom: 10px;">
+      <a class="sheet" href="#" onclick="document.getElementById('pdf-frame').src='/api/source/sheet01.pdf'; return false;">Sheet 01 PDF</a>
+      <a class="sheet" href="#" onclick="document.getElementById('pdf-frame').src='/api/source/sheet02.pdf'; return false;">Sheet 02 PDF</a>
+    </div>
+    <div class="schwrap" style="height: 600px; background:#fff">
+      <iframe id="pdf-frame" src="" width="100%" height="100%" style="border:none;"></iframe>
+    </div>`;
 }
 
 function ideaHTML(){
   const idea = state?.idea || {};
+  let canvasHtml = '';
+  if (idea.blocks) {
+    const blocksHtml = idea.blocks.map((b, i) => {
+      const x = b.x !== undefined ? b.x : (i * 130 + 20);
+      const y = b.y !== undefined ? b.y : 50;
+      return `<div class="block" data-id="${b.id}" style="position:absolute; left:${x}px; top:${y}px; width:120px; padding:10px; background:var(--panel); border:1px solid var(--accent); border-radius:6px; cursor:grab; text-align:center; box-shadow:var(--shadow); z-index:2; font-size:12px; font-weight:600;">
+  <button class="del-blk" style="position:absolute; top:-8px; right:-8px; width:20px; height:20px; border-radius:10px; background:var(--bad); color:white; border:none; font-size:12px; cursor:pointer; display:none; padding:0; line-height:1;">×</button>
+  ${esc(b.label || b.id)}
+  <div class="port" data-side="top" style="position:absolute; top:-6px; left:50%; transform:translateX(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
+  <div class="port" data-side="right" style="position:absolute; right:-6px; top:50%; transform:translateY(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
+  <div class="port" data-side="bottom" style="position:absolute; bottom:-6px; left:50%; transform:translateX(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
+  <div class="port" data-side="left" style="position:absolute; left:-6px; top:50%; transform:translateY(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
+</div>`;
+    }).join('');
+    
+    const svgLines = `<svg id="canvas-svg" style="position:absolute; inset:0; width:100%; height:100%; z-index:1; overflow:visible;"></svg>`;
+    canvasHtml = `<div class="card" style="margin-top:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line2); padding-right: 14px;">
+        <h3 style="border-bottom:none; margin:0; padding:9px 14px;">Block Diagram</h3>
+        <button id="add-block-btn" class="btn pri">+ Add Block</button>
+      </div>
+      <div id="canvas" oncontextmenu="return false;" style="position: relative; width: 100%; height: 500px; border: 1px solid var(--line); overflow: hidden; background:var(--sch-bg);">
+        <div id="canvas-inner" style="position:absolute; inset:0; transform-origin: 0 0; transform: translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom});">
+          ${svgLines}
+          ${blocksHtml}
+        </div>
+      </div>
+    </div>`;
+  }
+
   return `<div class="vhead"><div><h2>Idea</h2><p>What you and the agent agreed on.</p></div></div>
-    <div class="idea">
+    <div class="idea" style="display:block;">
       <div class="card"><h3>Agreed</h3><dl class="agreed">
         <div><dt>Goal</dt><dd>${esc(idea.goal || '')}</dd></div>
         ${(idea.agreed || []).map(a => `<div><dt>${esc(a.title||'Item')}</dt><dd>${esc(a.text||'')}</dd></div>`).join('')}
       </dl></div>
+      ${canvasHtml}
     </div>`;
 }
 
@@ -580,10 +667,13 @@ function renderCenter(){
   $('#whead').innerHTML = wheadHTML();
   const v = $('#view');
   v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : ideaHTML())
-    : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML()
+    : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : page === 'settings' ? settingsHTML()
     : `<div class="vhead"><div><h2>Settings</h2></div></div>`;
   if(page === 'sources' && hitSrc){ const r = document.getElementById('src-' + hitSrc); if(r) r.scrollIntoView({block:'center'}); hitSrc = null; }
   renderDetail();
+  if (page === 'workspace' && tab === 'idea') {
+    requestAnimationFrame(drawLines);
+  }
 }
 
 function renderDetail(){
@@ -608,8 +698,37 @@ function setView(v){
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3200); }
 
 document.addEventListener('click', e => {
+  const pl = document.getElementById('proj-list');
+  if (pl && !pl.hidden && !e.target.closest('.projects')) {
+    pl.hidden = true;
+  }
+  const cv = document.getElementById('convs');
+  if (cv && !cv.hidden && !e.target.closest('.chead') && !e.target.closest('#convs')) {
+    convsOpen = false;
+    cv.hidden = true;
+    const btn = document.querySelector('[data-act="convs"]');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+
   const el = e.target.closest('button, tr[data-key], g.part, g[data-tab]');
   if(!el) return;
+  
+  if (el.id === 'add-block-btn') {
+    const label = prompt("Enter block label:");
+    if (label) {
+      if (!state.idea) state.idea = { blocks: [], links: [] };
+      const id = 'blk_' + Math.random().toString(36).substr(2, 6);
+      state.idea.blocks.push({ id, label, x: 20, y: 20 });
+      fetch('/api/idea' + window.location.search, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links })
+      }).catch(console.error);
+      renderCenter();
+    }
+    return;
+  }
+
   if(el.matches('tr[data-key]')){ if(e.target.closest('input,button')) { if(!e.target.closest('button')) return; } else { select(el.dataset.key); return; } }
   const d = el.dataset;
   if(d.thread){ cur = d.thread; convsOpen = false; renderChat(); setView('chat'); return; }
@@ -621,7 +740,17 @@ document.addEventListener('click', e => {
   switch(d.act){
     case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); return;
     case 'convs': convsOpen = !convsOpen; renderConvs(); return;
-    case 'new': cur = 'main'; convsOpen = false; renderChat(); return;
+    case 'new': 
+      fetch('/api/sessions/new' + window.location.search, {method: 'POST'})
+        .then(r => r.json())
+        .then(data => {
+          if (data.created) {
+            const url = new URL(window.location.href);
+            url.searchParams.set('session', data.created);
+            window.location.href = url.toString();
+          }
+        }).catch(console.error);
+      return;
   }
 });
 
@@ -655,8 +784,20 @@ function renderNav(){
   const ni = (id, icon, label, cnt) => `<button class="nitem" data-page="${id}" aria-current="${page === id}" title="${label}">${ICON[icon]}<span class="lbl">${label}</span>${cnt != null ? `<span class="cnt">${cnt}</span>` : ''}</button>`;
   $('#nav').innerHTML = `
     <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="12" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2 9h4M2 15h4M18 9h4M18 15h4" stroke="currentColor" stroke-width="1.8"/></svg><span>PCB Advisor</span></div>
-    <div class="ngroup projects"><div class="nlabel">Project</div>
-      <button class="nitem" aria-current="true"><span class="pdot"></span><span class="lbl">${esc(state?.title || 'Project')}</span></button>
+    <div class="ngroup projects" style="position:relative;"><div class="nlabel">Projects</div>
+      ${allProjects.length ? `
+        <button class="nitem" onclick="const pl = document.getElementById('proj-list'); pl.hidden = !pl.hidden;" aria-current="true" style="position:relative; width:100%;">
+          <span class="pdot"></span><span class="lbl">${esc(state?.title || 'Project')}</span>
+          <svg style="width: 14px; height: 14px; opacity: 0.5; margin-left: auto;" viewBox="0 0 16 16" fill="currentColor"><path d="M4 6h8l-4 5z"/></svg>
+        </button>
+        <div id="proj-list" style="position:absolute; top:42px; left:0; right:0; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px; z-index:100; box-shadow:var(--shadow);" hidden>
+          ${allProjects.map(p => `
+            <a class="conv" href="/?project=${p.name}" aria-current="${p.name === state?.project ? 'true' : 'false'}" style="text-decoration:none; display:block; padding:6px 8px; margin-bottom:2px;"><span class="t">${esc(p.title || p.name)}</span></a>
+          `).join('')}
+        </div>
+      ` : `
+        <button class="nitem" aria-current="true"><span class="pdot"></span><span class="lbl">${esc(state?.title || 'Project')}</span></button>
+      `}
     </div>
     <div class="ngroup"><div class="nlabel">Workspace</div>
       <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
@@ -664,7 +805,255 @@ function renderNav(){
       <div class="nsub">${[['idea','Idea'],['bom','BOM'],['sch','Schematic']].map(([id,l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
       ${ni('library','lib','Library', libCount())}
       ${ni('sources','src','Sources', (state?.sources || []).length)}
+    </div>
+    <div class="nfoot">
+      ${ni('settings','set','Settings')}
     </div>`;
+}
+
+let dragBlock = null;
+let startX, startY, startLeft, startTop;
+
+let linkingFrom = null;
+let linkingSide = null;
+let tempLine = null;
+
+document.addEventListener('mousedown', e => {
+  if (e.target.matches('.del-blk')) {
+    const b = e.target.closest('.block');
+    const id = b.dataset.id;
+    state.idea.blocks = state.idea.blocks.filter(blk => blk.id !== id);
+    state.idea.links = (state.idea.links || []).filter(l => l[0] !== id && l[1] !== id);
+    fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
+    renderCenter();
+    return;
+  }
+  
+  if (e.target.matches('.del-lnk')) {
+    const g = e.target.closest('.link-group');
+    const idx = parseInt(g.dataset.idx);
+    state.idea.links.splice(idx, 1);
+    fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
+    renderCenter();
+    return;
+  }
+
+  if (e.target.closest('.link-group')) {
+    const g = e.target.closest('.link-group');
+    const idx = parseInt(g.dataset.idx);
+    if (e.button === 0) {
+      const currentLbl = state.idea.links[idx][4] || '';
+      const newLbl = prompt("Edit link label (or clear to remove label):", currentLbl);
+      if (newLbl !== null) {
+        state.idea.links[idx][4] = newLbl;
+        fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
+        renderCenter();
+      }
+    }
+    return;
+  }
+
+  if (e.target.matches('.port')) {
+    linkingFrom = e.target.closest('.block').dataset.id;
+    linkingSide = e.target.dataset.side || 'auto';
+    e.stopPropagation();
+    return;
+  }
+
+  const canvas = e.target.closest('#canvas');
+  if (canvas && e.button === 2) {
+    isPanning = true;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = canvasPan.x;
+    startTop = canvasPan.y;
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+  
+  const b = e.target.closest('.block');
+  if(b && b.closest('#canvas')) {
+    dragBlock = b;
+    startX = e.clientX;
+    startY = e.clientY;
+    startLeft = parseInt(b.style.left) || 0;
+    startTop = parseInt(b.style.top) || 0;
+    b.style.cursor = 'grabbing';
+  }
+});
+
+document.addEventListener('mousemove', e => {
+  if (isPanning) {
+    canvasPan.x = startLeft + (e.clientX - startX);
+    canvasPan.y = startTop + (e.clientY - startY);
+    const inner = document.getElementById('canvas-inner');
+    if (inner) inner.style.transform = `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`;
+    return;
+  }
+  if (linkingFrom) {
+    const canvas = document.getElementById('canvas').getBoundingClientRect();
+    const inner = document.getElementById('canvas-inner').getBoundingClientRect();
+    let mouseX = (e.clientX - inner.left) / canvasZoom;
+    let mouseY = (e.clientY - inner.top) / canvasZoom;
+    
+    const svg = document.getElementById('canvas-svg');
+    let tmp = document.getElementById('tmp-line');
+    if (!tmp) {
+      tmp = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      tmp.id = "tmp-line";
+      tmp.setAttribute("stroke", "var(--accent)");
+      tmp.setAttribute("stroke-width", "2");
+      tmp.setAttribute("stroke-dasharray", "4");
+      svg.appendChild(tmp);
+    }
+    const srcEl = document.querySelector(`.block[data-id="${linkingFrom}"]`);
+    let x1 = parseInt(srcEl.style.left) + srcEl.offsetWidth/2;
+    let y1 = parseInt(srcEl.style.top) + srcEl.offsetHeight/2;
+    
+    if (linkingSide && linkingSide !== 'auto') {
+      const h = srcEl.offsetHeight, w = srcEl.offsetWidth, L = parseInt(srcEl.style.left), T = parseInt(srcEl.style.top);
+      if(linkingSide==='top') { x1 = L+w/2; y1 = T; }
+      else if(linkingSide==='bottom') { x1 = L+w/2; y1 = T+h; }
+      else if(linkingSide==='left') { x1 = L; y1 = T+h/2; }
+      else if(linkingSide==='right') { x1 = L+w; y1 = T+h/2; }
+    }
+    
+    tmp.setAttribute("x1", x1);
+    tmp.setAttribute("y1", y1);
+    tmp.setAttribute("x2", mouseX);
+    tmp.setAttribute("y2", mouseY);
+    return;
+  }
+  if (dragBlock) {
+    const dx = (e.clientX - startX) / canvasZoom;
+    const dy = (e.clientY - startY) / canvasZoom;
+    dragBlock.style.left = (startLeft + dx) + 'px';
+    dragBlock.style.top = (startTop + dy) + 'px';
+    drawLines();
+  }
+});
+
+document.addEventListener('mouseup', e => {
+  if (linkingFrom) {
+    const b = e.target.closest('.block');
+    if (b && b.dataset.id !== linkingFrom) {
+      if (!state.idea.links) state.idea.links = [];
+      const tgtSide = e.target.matches('.port') ? e.target.dataset.side : 'auto';
+      state.idea.links.push([linkingFrom, b.dataset.id, linkingSide, tgtSide]);
+      fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
+    }
+    linkingFrom = null;
+    const tmp = document.getElementById('tmp-line');
+    if (tmp) tmp.remove();
+    renderCenter();
+    return;
+  }
+  if (isPanning) {
+    isPanning = false;
+    const canvas = document.getElementById('canvas');
+    if (canvas) canvas.style.cursor = 'default';
+    return;
+  }
+  if (dragBlock) {
+    dragBlock.style.cursor = 'grab';
+    const id = dragBlock.dataset.id;
+    const block = state.idea.blocks.find(b => b.id === id);
+    if (block) {
+      block.x = parseInt(dragBlock.style.left);
+      block.y = parseInt(dragBlock.style.top);
+    }
+    dragBlock = null;
+    drawLines();
+    fetch('/api/idea' + window.location.search, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links || [] })
+    }).catch(console.error);
+  }
+});
+
+document.addEventListener('dblclick', e => {
+  const b = e.target.closest('.block');
+  if (b) {
+    const block = state.idea.blocks.find(blk => blk.id === b.dataset.id);
+    if (block) {
+      const newLabel = prompt("Edit block label:", block.label);
+      if (newLabel) {
+        block.label = newLabel;
+        fetch('/api/idea' + window.location.search, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links })
+        }).catch(console.error);
+        renderCenter();
+      }
+    }
+  }
+});
+
+// Replaced wheel event to bind directly to canvas instead of document
+document.addEventListener('mouseover', function attachWheel(e) {
+  const canvas = e.target.closest('#canvas');
+  if (canvas && !canvas.dataset.wheelAttached) {
+    canvas.dataset.wheelAttached = 'true';
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const zoomDelta = e.deltaY > 0 ? 0.95 : 1.05; // fixed zoom direction
+      canvasZoom *= zoomDelta;
+      const inner = document.getElementById('canvas-inner');
+      if (inner) inner.style.transform = `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`;
+    }, {passive: false});
+  }
+});
+/* old wheel */
+document.addEventListener('never', e => {
+  const canvas = e.target.closest('#canvas');
+  if (canvas) {
+    e.preventDefault();
+    const zoomDelta = e.deltaY > 0 ? 1.05 : 0.95;
+    canvasZoom *= zoomDelta;
+    const inner = document.getElementById('canvas-inner');
+    if (inner) inner.style.transform = `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`;
+  }
+}, {passive: false});
+
+function drawLines() {
+  const svg = document.getElementById('canvas-svg');
+  if (!svg || !state?.idea?.links) return;
+  
+  let linesHtml = '';
+  state.idea.links.forEach((link, idx) => {
+    const srcId = link[0], tgtId = link[1], sSide = link[2] || 'auto', tSide = link[3] || 'auto', lbl = link[4] || '';
+    const srcEl = document.querySelector(`.block[data-id="${srcId}"]`);
+    const tgtEl = document.querySelector(`.block[data-id="${tgtId}"]`);
+    if (srcEl && tgtEl) {
+      let x1 = parseInt(srcEl.style.left) + srcEl.offsetWidth/2;
+      let y1 = parseInt(srcEl.style.top) + srcEl.offsetHeight/2;
+      let x2 = parseInt(tgtEl.style.left) + tgtEl.offsetWidth/2;
+      let y2 = parseInt(tgtEl.style.top) + tgtEl.offsetHeight/2;
+      
+      const getP = (el, s) => {
+        const h = el.offsetHeight, w = el.offsetWidth, L = parseInt(el.style.left), T = parseInt(el.style.top);
+        if(s==='top') return [L+w/2, T]; if(s==='bottom') return [L+w/2, T+h];
+        if(s==='left') return [L, T+h/2]; if(s==='right') return [L+w, T+h/2];
+        return [L+w/2, T+h/2];
+      };
+      if (sSide !== 'auto') [x1, y1] = getP(srcEl, sSide);
+      if (tSide !== 'auto') [x2, y2] = getP(tgtEl, tSide);
+
+      linesHtml += `<g class="link-group" data-idx="${idx}" style="cursor:pointer; pointer-events:stroke;">
+        <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="12" />
+        <line class="viz-line" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--dim)" stroke-width="2" marker-end="url(#arrow)" pointer-events="none" />
+        ${lbl ? `<rect x="${(x1+x2)/2 - 15}" y="${(y1+y2)/2 - 8}" width="30" height="16" fill="var(--panel2)" rx="4" pointer-events="none"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2 + 3}" text-anchor="middle" font-size="10" font-family="var(--f-mono)" fill="var(--dim)" pointer-events="none">${esc(lbl)}</text>` : ''}
+        <circle class="del-lnk" cx="${(x1+x2)/2}" cy="${(y1+y2)/2 - 15}" r="8" fill="var(--bad)" style="display:none;" />
+        <text class="del-lnk" x="${(x1+x2)/2}" y="${(y1+y2)/2 - 11}" fill="white" font-size="12" font-family="sans-serif" text-anchor="middle" style="display:none; cursor:pointer;" pointer-events="none">×</text>
+      </g>`;
+    }
+  });
+  if (linesHtml) {
+    linesHtml = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dim)"/></marker></defs>` + linesHtml;
+  }
+  svg.innerHTML = linesHtml;
 }
 
 loadState();
