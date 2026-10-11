@@ -367,6 +367,58 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _public_config())
         if path == "/api/altium":
             return self._send(200, _altium_state(self.project()))
+        if path == "/api/altium/file":
+            req_path = self.query("path")
+            if not req_path:
+                return self._send(403, {"error": "forbidden"})
+            link = project_mod.altium_link(self.project())
+            project_file = link.get("project_file", "")
+            if not project_file:
+                return self._send(403, {"error": "no Altium project linked"})
+
+            prj_path = pathlib.Path(project_file).resolve()
+            allowed = {os.path.normcase(str(prj_path))}
+            if link.get("pcb_file"):
+                try:
+                    allowed.add(os.path.normcase(str(pathlib.Path(link["pcb_file"]).resolve())))
+                except Exception:
+                    pass
+            try:
+                from altium.prjpcb import read_prjpcb
+                prj_info = read_prjpcb(prj_path)
+                for doc in prj_info.get("documents", []):
+                    doc_p = pathlib.Path(doc.replace("\\", "/"))
+                    doc_target = doc_p.resolve() if doc_p.is_absolute() else (prj_path.parent / doc_p).resolve()
+                    allowed.add(os.path.normcase(str(doc_target)))
+                for sheet in prj_info.get("sheets", []):
+                    s_p = pathlib.Path(sheet.replace("\\", "/"))
+                    s_target = s_p.resolve() if s_p.is_absolute() else (prj_path.parent / s_p).resolve()
+                    allowed.add(os.path.normcase(str(s_target)))
+                for pcb in prj_info.get("pcbs", []):
+                    pcb_p = pathlib.Path(pcb.replace("\\", "/"))
+                    pcb_target = pcb_p.resolve() if pcb_p.is_absolute() else (prj_path.parent / pcb_p).resolve()
+                    allowed.add(os.path.normcase(str(pcb_target)))
+            except Exception:
+                pass
+
+            try:
+                target = pathlib.Path(req_path).resolve()
+            except Exception:
+                return self._send(403, {"error": "forbidden"})
+
+            if os.path.normcase(str(target)) not in allowed:
+                return self._send(403, {"error": "forbidden"})
+
+            try:
+                from altium import AltiumReadError, read_any
+                from altium.dump import summarize
+                doc = read_any(target)
+                res = summarize(target, doc)
+                return self._send(200, res)
+            except AltiumReadError as exc:
+                return self._send(422, {"error": str(exc)})
+            except Exception as exc:
+                return self._send(422, {"error": str(exc)})
         if path == "/api/skills":
             from skills import registry
             return self._send(200, {"skills": registry.listing()})
@@ -386,7 +438,10 @@ class Handler(BaseHTTPRequestHandler):
                     ctype = mimetypes.guess_type(f.name)[0] or "text/plain"
                     if ctype.startswith("text/") or "xml" in ctype or "html" in ctype:
                         ctype = "text/plain; charset=utf-8"  # never let an uploaded .html run in the UI origin
-                    return self._send(200, f.read_bytes(), ctype)
+                    extra = {}
+                    if self.query("download") == "1":
+                        extra["Content-Disposition"] = f'attachment; filename="{f.name}"'
+                    return self._send(200, f.read_bytes(), ctype, extra=extra)
             return self._send(404, {"error": "not in the library"})
         if path.startswith("/api/export/"):
             name = pathlib.Path(unquote(path.split("/api/export/", 1)[1])).name

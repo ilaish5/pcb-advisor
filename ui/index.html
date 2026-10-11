@@ -341,6 +341,20 @@ table.libt{min-width:740px} table.srct{min-width:780px}
 .crumb{padding-top:10px}
 .dnote{font-size:12.5px;color:var(--ink2);background:var(--panel2);border-radius:7px;padding:6px 9px}
 .msg.agent .txt{overflow-wrap:anywhere}
+.viewer{position:absolute;top:0;right:0;bottom:0;width:min(680px,100%);border-left:1px solid var(--line);background:var(--panel);box-shadow:-10px 0 28px rgba(20,26,38,.12);z-index:7;display:flex;flex-direction:column;min-width:0}
+.viewer-h{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line2);background:var(--panel2);flex:none}
+.viewer-h .vtitle{font-weight:600;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
+.viewer-h .vtitle .badge{font-family:var(--f-mono);font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 6px;flex:none}
+.viewer-h .vacts{display:flex;align-items:center;gap:8px;flex:none}
+.viewer-b{padding:14px;overflow-y:auto;overflow-x:auto;flex:1;min-height:0;display:flex;flex-direction:column}
+.viewer-tbl{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+.viewer-tbl th,.viewer-tbl td{padding:5px 8px;border:1px solid var(--line2);text-align:left}
+.viewer-tbl th{background:var(--panel2);font-weight:600;color:var(--dim)}
+.viewer-pre{margin:0;padding:12px;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;overflow:auto;flex:1;white-space:pre-wrap;word-break:break-word;font-size:12px;font-family:var(--f-mono);color:var(--ink2)}
+.fname-btn{font-family:var(--f-mono);font-size:12.5px;font-weight:500;text-align:left;border:0;background:none;padding:0;color:var(--accent);cursor:pointer}
+.fname-btn:hover{text-decoration:underline}
+.ext-lnk{font-size:12px;color:var(--dim);text-decoration:none;margin-left:4px;padding:1px 4px;border-radius:3px;display:inline-block}
+.ext-lnk:hover{color:var(--accent);background:var(--panel2)}
 </style>
 </head>
 <body>
@@ -367,6 +381,7 @@ table.libt{min-width:740px} table.srct{min-width:780px}
     <div class="whead" id="whead"></div>
     <div class="view" id="view"></div>
     <aside class="detail" id="detail" hidden></aside>
+    <aside class="viewer" id="viewer" hidden aria-label="File viewer"></aside>
   </section>
 
   <!-- RIGHT: navigation -->
@@ -469,7 +484,7 @@ const srcByName = n => (S.sources || []).find(s => s.name === n);
 /* ---------- text: citations, refs, lists ---------- */
 function chip(name, where) {
   const known = srcByName(name);
-  return `<button class="src ${known ? '' : 'broken'}" data-src="${esc(name)}" title="${known ? '' : 'Not in Sources'}"><b>${esc(name)}</b>${where ? ' · ' + esc(where) : ''}</button>`;
+  return `<button class="src ${known ? '' : 'broken'}" data-src="${esc(name)}" ${where ? `data-where="${esc(where)}"` : ''} title="${known ? '' : 'Not in Sources'}"><b>${esc(name)}</b>${where ? ' · ' + esc(where) : ''}</button>`;
 }
 function inline(t) {
   // t is escaped text. Citations and refs become buttons; **bold** and `code` are the only markup.
@@ -770,7 +785,7 @@ function libHTML() {
 function srcTable(list) {
   if (!list.length) return '<div class="dnote">Nothing here yet.</div>';
   return `<div class="tblwrap"><table class="srct"><thead><tr><th>File</th><th>Type</th><th style="text-align:right">Size</th><th>Origin</th><th>sha256</th><th>Text</th><th>Used for</th></tr></thead><tbody>
-    ${list.map(s => `<tr id="src-${esc(s.name).replace(/[^\w-]/g, '_')}" class="${hitSrc === s.name ? 'hit flash' : ''}"><td class="fname">${s.present ? `<a href="/api/source/${encodeURIComponent(s.name)}?${q()}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)}${s.present ? '' : ' <span class="tag plan">not here</span>'}</td><td><span class="kind">${esc(s.kind)}</span></td><td class="n">${esc(s.size)}</td>
+    ${list.map(s => `<tr id="src-${esc(s.name).replace(/[^\w-]/g, '_')}" class="${hitSrc === s.name ? 'hit flash' : ''}"><td class="fname">${s.present ? `<button type="button" class="fname-btn" data-src="${esc(s.name)}">${esc(s.name)}</button> <a href="/api/source/${encodeURIComponent(s.name)}?${q()}" target="_blank" rel="noopener" class="ext-lnk" title="Open in new tab" aria-label="Open in new tab">↗</a>` : esc(s.name)}${s.present ? '' : ' <span class="tag plan">not here</span>'}</td><td><span class="kind">${esc(s.kind)}</span></td><td class="n">${esc(s.size)}</td>
       <td class="org">${esc(s.origin)}</td><td class="hash">${esc(s.sha256)}</td><td>${s.text ? '<span class="y">✓</span>' : '—'}</td><td class="cite">${esc(s.used_for)}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
@@ -808,19 +823,40 @@ function settingsHTML() {
       const l = a.linked;
       const sum = l.summary || {};
       const pcbs = sum.pcbs || [];
+      const prjDir = l.project_file ? l.project_file.replace(/[\\/][^\\/]+$/, '') : '';
+      const prjSep = (l.project_file && l.project_file.includes('\\')) ? '\\' : '/';
+      const resolvePcb = rel => (rel.includes(':') || rel.startsWith('/') || !prjDir) ? rel : (prjDir + prjSep + rel.replace(/[\\/]/g, prjSep));
+
       let pcbPicker = '';
       if (pcbs.length > 1) {
-        pcbPicker = `<label>PcbDoc<select id="altium-pcb-select">` +
+        const selectedPcbRel = pcbs.find(p => (l.pcb_file && (l.pcb_file.endsWith(p) || l.pcb_file.toLowerCase().includes(p.toLowerCase())))) || pcbs[0];
+        const selectedPcbPath = l.pcb_file || resolvePcb(selectedPcbRel);
+        pcbPicker = `<label>PcbDoc<div style="display:flex;gap:8px;align-items:center"><select id="altium-pcb-select" style="flex:1">` +
           pcbs.map(p => {
             const isSel = (l.pcb_file && (l.pcb_file.endsWith(p) || l.pcb_file.toLowerCase().includes(p.toLowerCase())));
             return `<option value="${esc(p)}" ${isSel ? 'selected' : ''}>${esc(p)}</option>`;
           }).join('') +
-          `</select></label>`;
+          `</select><button type="button" class="btn" data-altium-path="${esc(selectedPcbPath)}">View</button></div></label>`;
       } else if (pcbs.length === 1) {
-        pcbPicker = `<div>PcbDoc: <span class="m">${esc(pcbs[0])}</span></div>`;
+        const pcbPath = l.pcb_file || resolvePcb(pcbs[0]);
+        pcbPicker = `<div>PcbDoc: <button type="button" class="btn" data-altium-path="${esc(pcbPath)}"><span class="m">${esc(pcbs[0])}</span></button></div>`;
       } else {
-        pcbPicker = `<div>PcbDoc: <span class="m">${esc(l.pcb_file || 'None')}</span></div>`;
+        pcbPicker = `<div>PcbDoc: ${l.pcb_file ? `<button type="button" class="btn" data-altium-path="${esc(l.pcb_file)}"><span class="m">${esc(l.pcb_file.split(/[\\/]/).pop())}</span></button>` : '<span class="m">None</span>'}</div>`;
       }
+
+      const sheetsList = (l.sheets && l.sheets.length)
+        ? l.sheets
+        : ((sum.sheets || []).map(s => resolvePcb(s)));
+      const sheetsHTML = sheetsList.length
+        ? `<div style="display:grid;gap:4px">` +
+          `<div style="font-size:12px;color:var(--dim)">Sheets (${sheetsList.length}):</div>` +
+          `<div style="display:flex;flex-wrap:wrap;gap:6px">` +
+          sheetsList.map(sh => {
+            const shName = sh.split(/[\\/]/).pop();
+            return `<button type="button" class="btn" data-altium-path="${esc(sh)}"><span class="m">${esc(shName)}</span></button>`;
+          }).join('') +
+          `</div></div>`
+        : '';
 
       const missingHTML = (sum.missing && sum.missing.length)
         ? `<div class="warnbox"><b>Missing documents (${sum.missing.length}):</b><ul>${sum.missing.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`
@@ -832,10 +868,10 @@ function settingsHTML() {
             <b>Linked project: ${esc(sum.name || l.project_file.split(/[\\/]/).pop())}</b>
             <button class="btn" data-act="altium-unlink">Unlink</button>
           </div>
-          <div>Project file: <span class="m">${esc(l.project_file)}</span>${l.exists ? '' : ' <span class="tag plan">file missing</span>'}</div>
+          <div>Project file: <button type="button" class="btn" data-altium-path="${esc(l.project_file)}"><span class="m">${esc(l.project_file)}</span></button>${l.exists ? '' : ' <span class="tag plan">file missing</span>'}</div>
           ${pcbPicker}
           <label>Output folder<input id="altium-outdir" value="${esc(l.outputs_dir || '')}" placeholder="Outputs folder path"></label>
-          <div>Sheets: <b>${sum.sheets ? sum.sheets.length : 0}</b> · PCBs: <b>${pcbs.length}</b></div>
+          ${sheetsHTML}
           ${missingHTML}
         </div>`;
     } else {
@@ -951,6 +987,269 @@ function select(key, goSch) {
 function setView(v) { if (matchMedia('(max-width:860px)').matches) $('#app').dataset.view = v; }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3600); }
 
+/* ---------- file viewer ---------- */
+function closeViewer() {
+  const v = $('#viewer');
+  if (v && !v.hidden) {
+    v.hidden = true;
+    v.innerHTML = '';
+  }
+}
+function parseCsvLine(line) {
+  const cells = [];
+  let cur = '', inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (ch === ',' && !inQ) {
+      cells.push(cur.trim()); cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+async function openViewerSource(name, where) {
+  const v = $('#viewer');
+  if (!v) return;
+  setView('work');
+  v.hidden = false;
+  const known = srcByName(name);
+  const size = (known && known.size) ? known.size : '';
+  const ext = (name.includes('.') ? '.' + name.split('.').pop() : '').toLowerCase();
+  const qDownload = q({download: '1'});
+  const downloadUrl = `/api/source/${encodeURIComponent(name)}?${qDownload}`;
+  const rawUrl = `/api/source/${encodeURIComponent(name)}?${q()}`;
+
+  if (['.schdoc', '.pcbdoc', '.prjpcb', '.rul'].includes(ext)) {
+    let resolved = null;
+    if (ALTIUM_DATA && ALTIUM_DATA.linked) {
+      const l = ALTIUM_DATA.linked;
+      const allDocs = [...(l.sheets || []), l.pcb_file, l.project_file].filter(Boolean);
+      resolved = allDocs.find(p => p.toLowerCase().endsWith(name.toLowerCase()));
+    }
+    if (resolved) {
+      return openViewerAltium(resolved);
+    }
+  }
+
+  if (ext === '.pdf') {
+    let iframeUrl = rawUrl;
+    const m = (where || '').match(/\b(?:p\.?|page)\s*(\d+)\b/i);
+    if (m) iframeUrl += '#page=' + m[1];
+    v.innerHTML = `
+      <div class="viewer-h">
+        <div class="vtitle"><span class="badge">PDF</span><span title="${esc(name)}">${esc(name)}${m ? ` (p. ${m[1]})` : ''}</span></div>
+        <div class="vacts">
+          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
+          <a class="lnk" href="${esc(iframeUrl)}" target="_blank" rel="noopener">Open in tab</a>
+          <button class="x" data-act="closeviewer" aria-label="Close">×</button>
+        </div>
+      </div>
+      <div class="viewer-b" style="padding:0">
+        <iframe src="${esc(iframeUrl)}" style="width:100%;height:100%;border:0;flex:1;min-height:0" title="${esc(name)}"></iframe>
+      </div>`;
+    return;
+  }
+
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) {
+    v.innerHTML = `
+      <div class="viewer-h">
+        <div class="vtitle"><span class="badge">IMAGE</span><span title="${esc(name)}">${esc(name)}</span></div>
+        <div class="vacts">
+          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
+          <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
+          <button class="x" data-act="closeviewer" aria-label="Close">×</button>
+        </div>
+      </div>
+      <div class="viewer-b" style="align-items:center;justify-content:center;background:var(--panel2)">
+        <img src="${esc(rawUrl)}" alt="${esc(name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px">
+      </div>`;
+    return;
+  }
+
+  if (['.txt', '.text', '.md', '.markdown', '.csv', '.json'].includes(ext) || (known && known.text)) {
+    v.innerHTML = `
+      <div class="viewer-h">
+        <div class="vtitle"><span class="badge">${esc(ext ? ext.slice(1).toUpperCase() : 'TEXT')}</span><span title="${esc(name)}">${esc(name)}</span></div>
+        <div class="vacts">
+          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
+          <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
+          <button class="x" data-act="closeviewer" aria-label="Close">×</button>
+        </div>
+      </div>
+      <div class="viewer-b"><div class="dnote">Loading text…</div></div>`;
+    try {
+      const res = await fetch(rawUrl);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      const bodyEl = v.querySelector('.viewer-b');
+      if (!bodyEl) return;
+      if (ext === '.csv') {
+        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+        const maxRows = 500;
+        const rows = [];
+        for (let i = 0; i < Math.min(lines.length, maxRows); i++) {
+          rows.push(parseCsvLine(lines[i]));
+        }
+        if (rows.length) {
+          const head = rows[0];
+          const bodyRows = rows.slice(1);
+          bodyEl.innerHTML = `<div class="tblwrap"><table class="viewer-tbl">` +
+            `<thead><tr>${head.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>` +
+            `<tbody>${bodyRows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>` +
+            `</table></div>` +
+            (lines.length > maxRows ? `<div class="dnote" style="margin-top:8px">Showing 500 of ${lines.length} rows</div>` : '');
+        } else {
+          bodyEl.innerHTML = `<div class="dnote">Empty CSV file</div>`;
+        }
+      } else {
+        bodyEl.innerHTML = `<pre class="viewer-pre">${esc(text)}</pre>`;
+      }
+    } catch (err) {
+      const bodyEl = v.querySelector('.viewer-b');
+      if (bodyEl) bodyEl.innerHTML = `<div class="warnbox"><b>Failed to load text:</b> ${esc(err.message)}</div>`;
+    }
+    return;
+  }
+
+  // Anything else: name, size and a "Download" link
+  v.innerHTML = `
+    <div class="viewer-h">
+      <div class="vtitle"><span class="badge">FILE</span><span title="${esc(name)}">${esc(name)}</span></div>
+      <div class="vacts">
+        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div class="viewer-b">
+      <div class="card" style="padding:16px;display:grid;gap:12px">
+        <div><b>File name:</b> <span class="m">${esc(name)}</span></div>
+        ${size ? `<div><b>Size:</b> ${esc(size)}</div>` : ''}
+        <div><a class="btn pri" href="${esc(downloadUrl)}" download>Download</a></div>
+      </div>
+    </div>`;
+}
+async function openViewerAltium(path) {
+  const v = $('#viewer');
+  if (!v) return;
+  setView('work');
+  v.hidden = false;
+  const fileName = path.split(/[\\/]/).pop();
+  const ext = (fileName.includes('.') ? '.' + fileName.split('.').pop() : '').toLowerCase();
+  v.innerHTML = `
+    <div class="viewer-h">
+      <div class="vtitle"><span class="badge">ALTIUM</span><span title="${esc(path)}">${esc(fileName)}</span></div>
+      <div class="vacts">
+        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div class="viewer-b"><div class="dnote">Loading Altium summary…</div></div>`;
+
+  try {
+    const data = await api('/api/altium/file?path=' + encodeURIComponent(path), undefined, {soft: true});
+    const bodyEl = v.querySelector('.viewer-b');
+    if (!bodyEl) return;
+    if (data.error) {
+      bodyEl.innerHTML = `<div class="warnbox"><b>Cannot read file:</b><div style="margin-top:4px">${esc(data.error)}</div></div>`;
+      return;
+    }
+
+    let contentHtml = `<div><b>Path:</b> <span class="m path" style="word-break:break-all">${esc(path)}</span></div>`;
+
+    if (ext === '.schdoc') {
+      contentHtml += `
+        <div class="kpis" style="margin-top:12px">
+          <div class="kpi"><b>${data.components ?? 0}</b><span>components</span></div>
+          <div class="kpi"><b>${data.wires ?? 0}</b><span>wires</span></div>
+          <div class="kpi"><b>${data.net_labels ?? 0}</b><span>net labels</span></div>
+          <div class="kpi"><b>${data.power_ports ?? 0}</b><span>power ports</span></div>
+          <div class="kpi"><b>${data.ports ?? 0}</b><span>ports</span></div>
+          <div class="kpi"><b>${data.junctions ?? 0}</b><span>junctions</span></div>
+        </div>`;
+      if (data.components_sample && data.components_sample.length) {
+        contentHtml += `<div class="dsec" style="margin-top:14px"><h4>Components sample (${data.components_sample.length} of ${data.components})</h4>
+          <div class="tblwrap"><table class="viewer-tbl">
+            <thead><tr><th>Designator</th><th>Library Ref</th><th>Footprint</th><th>Pins</th></tr></thead>
+            <tbody>${data.components_sample.map(c => `<tr><td class="m refs">${esc(c.ref)}</td><td class="m">${esc(c.lib_ref)}</td><td class="m">${esc(c.footprint)}</td><td class="n">${c.pins}</td></tr>`).join('')}</tbody>
+          </table></div></div>`;
+      }
+      if (data.record_counts && Object.keys(data.record_counts).length) {
+        const counts = Object.entries(data.record_counts);
+        contentHtml += `<div class="dsec" style="margin-top:14px"><h4>Record counts (${counts.length})</h4>
+          <div class="tblwrap"><table class="viewer-tbl">
+            <thead><tr><th>Record Type</th><th>Count</th></tr></thead>
+            <tbody>${counts.map(([k, count]) => `<tr><td class="m">${esc(k)}</td><td class="n">${count}</td></tr>`).join('')}</tbody>
+          </table></div></div>`;
+      }
+    } else if (ext === '.pcbdoc') {
+      contentHtml += `
+        <div class="kpis" style="margin-top:12px">
+          <div class="kpi"><b>${data.components ?? 0}</b><span>components</span></div>
+          <div class="kpi"><b>${data.nets ?? 0}</b><span>nets</span></div>
+          <div class="kpi"><b>${data.pads ?? 0}</b><span>pads</span></div>
+          <div class="kpi"><b>${data.rules ?? 0}</b><span>rules</span></div>
+          <div class="kpi"><b>${data.classes ?? 0}</b><span>classes</span></div>
+        </div>`;
+      const samples = [
+        ['Components sample', (data.components_sample || []).join(', ')],
+        ['Nets sample', (data.nets_sample || []).join(', ')],
+        ['Pads sample', (data.pads_sample || []).join(', ')],
+      ];
+      contentHtml += `<div class="card" style="margin-top:12px;padding:12px;display:grid;gap:8px">` +
+        samples.filter(s => s[1]).map(([title, val]) => `<div><b>${title}:</b> <span class="m">${esc(val)}</span></div>`).join('') +
+        `</div>`;
+    } else if (ext === '.prjpcb') {
+      const prjDir = path.replace(/[\\/][^\\/]+$/, '');
+      const prjSep = path.includes('\\') ? '\\' : '/';
+      const toAbs = rel => (rel.includes(':') || rel.startsWith('/') || !prjDir) ? rel : (prjDir + prjSep + rel.replace(/[\\/]/g, prjSep));
+      contentHtml += `
+        <div class="kpis" style="margin-top:12px">
+          <div class="kpi"><b>${data.documents ?? 0}</b><span>documents</span></div>
+          <div class="kpi"><b>${(data.sheets || []).length}</b><span>sheets</span></div>
+          <div class="kpi"><b>${(data.pcbs || []).length}</b><span>PCBs</span></div>
+        </div>`;
+      if (data.sheets && data.sheets.length) {
+        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>Sheets (${data.sheets.length})</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">` +
+          data.sheets.map(s => `<button type="button" class="btn" data-altium-path="${esc(toAbs(s))}"><span class="m">${esc(s.split(/[\\/]/).pop())}</span></button>`).join('') +
+          `</div></div>`;
+      }
+      if (data.pcbs && data.pcbs.length) {
+        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>PCBs (${data.pcbs.length})</h4>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">` +
+          data.pcbs.map(p => `<button type="button" class="btn" data-altium-path="${esc(toAbs(p))}"><span class="m">${esc(p.split(/[\\/]/).pop())}</span></button>`).join('') +
+          `</div></div>`;
+      }
+      if (data.outjobs && data.outjobs.length) {
+        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>Output Jobs (${data.outjobs.length})</h4>
+          <div>${data.outjobs.map(o => `<span class="m">${esc(o)}</span>`).join(', ')}</div></div>`;
+      }
+      if (data.missing && data.missing.length) {
+        contentHtml += `<div class="warnbox" style="margin-top:12px"><b>Missing documents (${data.missing.length}):</b><ul>${data.missing.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`;
+      }
+    } else if (ext === '.rul') {
+      contentHtml += `
+        <div class="kpis" style="margin-top:12px">
+          <div class="kpi"><b>${data.rules ?? 0}</b><span>rules</span></div>
+        </div>`;
+      if (data.rules_sample && data.rules_sample.length) {
+        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>Rules sample</h4>
+          <ul>${data.rules_sample.map(r => `<li class="m">${esc(r)}</li>`).join('')}</ul></div>`;
+      }
+    } else {
+      contentHtml += `<pre class="viewer-pre" style="margin-top:12px">${esc(JSON.stringify(data, null, 2))}</pre>`;
+    }
+
+    bodyEl.innerHTML = contentHtml;
+  } catch (err) {
+    const bodyEl = v.querySelector('.viewer-b');
+    if (bodyEl) bodyEl.innerHTML = `<div class="warnbox"><b>Failed to load Altium summary:</b> ${esc(err.message)}</div>`;
+  }
+}
+
 /* ---------- events ---------- */
 document.addEventListener('click', async e => {
   const el = e.target.closest('button, tr[data-key], g.part, g[data-tab], a');
@@ -968,12 +1267,14 @@ document.addEventListener('click', async e => {
     if (d.tab) { go('workspace', d.tab); return; }
     if (d.page) { go(d.page); return; }
     if (d.view) { setView(d.view); return; }
-    if (d.src) { hitSrc = d.src; go('sources'); return; }
+    if (d.src) { hitSrc = d.src; openViewerSource(d.src, el.dataset.where); return; }
+    if (d.altiumPath) { openViewerAltium(d.altiumPath); return; }
     if (d.ref) { const l = lineOfRef(d.ref); if (l) select(l.key); return; }
     if (d.show) { select(d.show, true); return; }
     if (d.chat) { openPart(d.chat); return; }
     if (d.sheet) { sheetId = d.sheet; svgCache = {key: '', text: ''}; render(true); return; }
     switch (d.act) {
+      case 'closeviewer': closeViewer(); return;
       case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); applyFocus(); return;
       case 'closecard': compareCard = exportCard = libExport = null; render(true); return;
       case 'convs': convsOpen = !convsOpen; renderConvs(); return;
@@ -1039,6 +1340,7 @@ document.addEventListener('change', async e => {
 });
 $('#form').addEventListener('submit', e => { e.preventDefault(); const i = $('#input'); const t = i.value; i.value = ''; i.style.height = ''; send(t); });
 $('#input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#form').requestSubmit(); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeViewer(); } });
 
 /* ---------- start ---------- */
 (async function start() {
