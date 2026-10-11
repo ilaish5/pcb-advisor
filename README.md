@@ -146,4 +146,5 @@ Antigravity CLI (`agy`) on Windows, then `python pcb.py config agent.provider <i
 | `docs/PRODUCT-PLAN.md` | what the tool does and why (pain points, capabilities, decisions, feasibility) |
 | `docs/ENGINES.md` | install and configure Claude Code / Antigravity |
 | `docs/feasibility/` | the probes that proved the Altium, JLC and .RUL formats |
+| `docs/ORCHESTRATOR-PROMPT.md` | the prompt that starts (or restarts) the build session |
 | `docs/archive/` | history of the v2 rebuild |
