@@ -7,7 +7,7 @@ on:
 jobs:
   test:
     # Altium only runs on Windows, so that is where most students run this.
-    # The authors are on macOS. Both have to pass, not just the CI default.
+    # The authors are on macOS. All three have to pass.
     strategy:
       fail-fast: false
       matrix:
@@ -23,12 +23,8 @@ jobs:
       - name: nothing is broken
         run: python -m pytest tests/ -q
 
-      # Vendor PDFs are not redistributed with this repo, so the cache has to be
-      # warmed before any quote can be checked against its document. If the
-      # vendor is unreachable this step fails and the next one is skipped -
-      # which is the honest outcome: we did not verify anything.
-      - name: fetch the cited documents
-        run: python scripts/sources.py restore
-
-      - name: every quote is really in its document
-        run: python scripts/verify_sources.py
+      - name: the worked example builds and checks
+        run: |
+          python pcb.py init
+          python pcb.py seed
+          python pcb.py check

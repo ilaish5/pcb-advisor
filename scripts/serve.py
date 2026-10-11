@@ -1,9 +1,9 @@
 """
 Renderer + the single writer.
 
-All reasoning lives in model.py; all knowledge lives in cascade/ and sources/.
-This file reads state, appends to it, and applies agent actions.  Keeping one
-writer is what stops the two-sources-of-truth failure.
+State is derived in model.py/store.py from append-only logs; knowledge lives in
+sources/. This file reads state, appends to it, and applies agent actions.
+Keeping one writer is what stops the two-sources-of-truth failure.
 
 Nothing here is hardcoded: ports, paths, the default project and which LLM
 engine to route to all come from config.json (see scripts/workspace.py).
@@ -22,13 +22,16 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+HERE = pathlib.Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE / "skills"))
 import agent             # noqa: E402
 import gateway           # noqa: E402
 import model             # noqa: E402
 import project as project_mod  # noqa: E402
 import session as session_mod  # noqa: E402
 import sources           # noqa: E402
+import store             # noqa: E402
 import workspace         # noqa: E402
 
 BACKEND = None            # set at startup; None means "whatever config says"
@@ -39,45 +42,10 @@ def now():
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
-def append(project, filename, record):
-    """decisions.jsonl and threads.jsonl - the design, shared by every session."""
-    path = model.project_dir(project) / filename
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-    project_mod.touch(project)          # so the project list sorts by real activity
-
-
 def say(project, sess, record):
     """One conversation's log."""
     session_mod.append(project, sess, record)
     project_mod.touch(project)
-
-
-def block_context(m, block_id):
-    """Everything we know about one block, for a question asked about it.
-    Built here rather than in the browser, so any agent driving the folder gets
-    the same context."""
-    b = next((x for x in m.get("blocks", []) if x["id"] == block_id), None)
-    if not b:
-        return None
-    links = m.get("links") or []
-    ctx = {
-        "id": b["id"], "label": b.get("label"), "kind": b.get("kind"),
-        "came_from": b.get("from"),
-        "fed_by": [s for s, t in links if t == block_id],
-        "feeds": [t for s, t in links if s == block_id],
-    }
-    if b.get("by"):
-        ctx["added_by_decision"] = b["by"]
-    # which domain this kind pulls in, and what is already locked because of it
-    ctx["loads_domains"] = sorted(
-        {d for d, c in model.load_cascades().items()
-         if b.get("kind") in (c.get("blocks") or [])})
-    ctx["constraints_from_those"] = [
-        {"id": c["id"], "text": c["text"]} for c in m.get("constraints", [])
-        if c.get("element") in ctx["loads_domains"]][:6]
-    return ctx
 
 
 def compact_if_due(project, sess):
@@ -96,7 +64,7 @@ def compact_if_due(project, sess):
 # What the browser may see and set. The rest of the config belongs to whoever
 # runs the tool, not to the student sitting in front of it.
 SETTABLE = (
-    "user.language", "user.units", "user.show_unverified", "user.name",
+    "user.language", "user.units", "user.name",
     "user.theme", "agent.provider", "agent.model", "agent.memory_every",
     "agent.memory_max_chars", "agent.history_messages",
     "server.default_project",
@@ -108,10 +76,6 @@ def _public_config():
     agent_cfg = cfg.get("agent", {})
     return {
         "user": cfg.get("user", {}),
-        # whether the knowledge this tool is answering from has been authored or
-        # is still the shipped demonstration. Not settable from the browser: a
-        # student must not be able to dismiss it, and it is not theirs to change
-        "corpus": cfg.get("corpus", {}),
         "engineering_defaults": cfg.get("engineering_defaults", {}),
         "agent": {**{k: v for k, v in agent_cfg.items() if k != "providers"},
                   "model": (agent_cfg.get("providers", {})
@@ -126,69 +90,148 @@ def _public_config():
 
 
 def redraw(project):
-    """The drawing stack is optional. A decision must never be lost to a bad
-    picture - or to schemdraw not being installed."""
+    """Sheet pictures are derived; a bad picture must never lose a change."""
     try:
-        import render_schematic
-    except ImportError as exc:
-        print(f"(no diagram: {exc}. pip install -r requirements.txt)")
-        return
-    try:
-        render_schematic.render(project)
+        import render_sheet
+        for sid in store.sheet_ids(project):
+            render_sheet.render(project, sid)
     except Exception as exc:
         print(f"render failed: {exc}")
 
 
-def _checked_value(project, node_id, raw, m=None):
-    """(value, error). A question that asks for a number gets one checked here,
-    because decisions.jsonl is append-only and nothing edits it afterwards."""
-    m = m or model.build(project=project)
-    node = next((n for n in m["open"] + m["answered"] + m["blocked"]
-                 if n["id"] == node_id), None)
-    spec = model.quantity_spec(node) if node else None
-    return model.coerce_quantity(spec, raw) if spec else (raw, None)
+def _agent_may_set_library(changes):
+    """The agent can say what exists. It cannot say a part is verified or accepted:
+    verification is a skill's result, acceptance is the student's."""
+    allowed = {"symbol", "footprint", "step", "model_source", "issues"}
+    return {k: v for k, v in (changes or {}).items() if k in allowed}
 
 
-def apply_actions(project, actions):
-    """The server is the only writer. Agents propose; this applies."""
-    applied = []
+def apply_actions(project, actions, sess=None, last_user=""):
+    """The server is the only writer. Agents propose; this applies.
+    Returns (applied, proposal_ids, refused)."""
+    applied, proposals, refused = [], [], []
     for a in actions or []:
+        if not isinstance(a, dict):
+            continue
         kind = a.get("type")
-        if kind == "idea.propose":
-            idea = model.load_idea(model.project_dir(project))
-            # simple mock apply for now
-            applied.append("idea.propose")
-        elif kind == "idea.confirm":
-            idea = model.load_idea(model.project_dir(project))
-            idea["confirmed"] = True
-            model.save_idea(project, idea)
-            applied.append("idea.confirm")
-        elif kind == "bom.propose":
-            append(project, "bom-log.jsonl", {
-                "ts": now(), "by": "agent-approved", "line": a.get("line"), 
-                "changes": a.get("changes", {}), "reason": a.get("reason"), "sources": a.get("sources", [])
-            })
-            applied.append(f"bom.propose:{a.get('line')}")
-        elif kind == "netlist.write":
-            # write netlist
-            sheet = a.get("sheet")
-            if sheet:
-                pdir = model.project_dir(project)
-                ndir = pdir / "netlist"
-                ndir.mkdir(parents=True, exist_ok=True)
-                (ndir / f"{sheet}.json").write_text(json.dumps(a.get("data", {}), ensure_ascii=False, indent=2), encoding="utf-8")
-            applied.append(f"netlist.write:{sheet}")
-        elif kind == "library.add":
-            applied.append("library.add")
-        elif kind == "thread.open" and a.get("anchor") and a.get("text"):
-            append(project, "threads.jsonl", {"ts": now(), "anchor": a["anchor"], "role": "agent", "text": a["text"]})
-            applied.append(f"thread.open:{a['anchor']}")
-        elif kind in ("ask", "sheet") and a.get("anchor") and a.get("text"):
-            append(project, "threads.jsonl", {"ts": now(), "anchor": a["anchor"], "role": "agent", "text": a["text"]})
-            applied.append(f"ask:{a['anchor']}")
-    if applied:
+        try:
+            if kind == "idea.propose" and a.get("topic") and a.get("text"):
+                store.propose_idea(project, a["topic"], a["text"], by="agent")
+                applied.append(f"idea.propose:{a['topic']}")
+            elif kind == "idea.confirm":
+                # only after the student said yes: the quote must be in what they just wrote
+                said = (a.get("student_said") or "").strip().lower()
+                if said and said in (last_user or "").lower():
+                    store.confirm_idea(project)
+                    applied.append("idea.confirm")
+                else:
+                    refused.append("idea.confirm needs student_said: a quote from the student's last message")
+            elif kind == "bom.propose" and a.get("line") and isinstance(a.get("changes"), dict):
+                rec = store.propose_bom(project, a["line"], a["changes"], a.get("reason", ""),
+                                        a.get("sources", []), _agent_may_set_library(a.get("library")) or None,
+                                        sess, new=bool(a.get("new")))
+                proposals.append(rec["id"])
+                applied.append(f"bom.propose:{a['line']}")
+            elif kind == "netlist.write" and a.get("sheet") and isinstance(a.get("data"), dict):
+                res = store.write_sheet(project, a["sheet"], a["data"])
+                if res["ok"]:
+                    applied.append(f"netlist.write:{res['sheet']}")
+                else:
+                    refused.append(f"netlist.write:{a['sheet']} refused: " + "; ".join(res["errors"][:8]))
+            elif kind == "library.add" and a.get("line"):
+                if a["line"] not in {l["key"] for l in store.bom_lines(project)}:
+                    refused.append(f"library.add: no BOM line {a['line']}")
+                else:
+                    store.add_library(project, a["line"], _agent_may_set_library(a.get("changes")))
+                    applied.append(f"library.add:{a['line']}")
+            elif kind == "thread.open" and a.get("anchor"):
+                if open_part_session(project, a["anchor"]):
+                    applied.append(f"thread.open:{a['anchor']}")
+                else:
+                    refused.append(f"thread.open: nothing to anchor to at {a['anchor']}")
+            else:
+                refused.append(f"{kind}: not a known action, or fields missing")
+        except (ValueError, KeyError) as exc:
+            refused.append(f"{kind}: {exc}")
+    if any(x.startswith("netlist") for x in applied):
         redraw(project)
-    return applied
+    return applied, proposals, refused
+
+
+def open_part_session(project, ref_or_key):
+    """Find or create the conversation anchored to a BOM line."""
+    info = model.anchors(project).get(ref_or_key)
+    key = info["line"] if info and info.get("line") else ref_or_key
+    line = next((l for l in store.bom_lines(project) if l["key"] == key), None)
+    if not line:
+        return None
+    for row in session_mod.list_all(project):
+        if row.get("anchor") == key:
+            return row["id"]
+    sid = session_mod.create(project, title=line.get("mpn") or key, anchor=key, sid=f"part-{key}")
+    ctx = model.part_context(project, line["refs"][0])
+    session_mod.append(project, sid, {"ts": store.now(), "role": "ctx", "part": ctx})
+    session_mod.append(project, sid, {
+        "ts": store.now(), "role": "agent",
+        "text": "What do you want to know about {{ref:" + line["refs"][0] + "}}? I can see its datasheet, "
+                "the nets it connects to and its stock."})
+    return sid
+
+
+def export_library(project):
+    """The Altium library package: manifest + whatever part files exist. Compiling the
+    IntLib itself needs Altium (Windows); this is the hand-over, and it says what is unverified."""
+    import zipfile
+    rows = store.library_view(project)
+    warnings = [f"{r['refs'][0] if r['refs'] else r['line']} ({r['mpn']}): {r['status']}"
+                + (f" - {r['issues']}" if r["issues"] else "") for r in rows if r["status"] != "ok"]
+    out_dir = store.pdir(project) / "exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{project}_library.zip"
+    manifest = {"project": project, "exported": store.now(), "parts": rows, "unverified": warnings}
+    readme = ("Altium library package\n======================\n"
+              "manifest.json lists every non-standard part: symbol, footprint, 3D, where the model came from\n"
+              "and whether it was checked against its datasheet and accepted.\n\n"
+              "To build the IntLib: put the SchLib/PcbLib/STEP files from library/ in a Library Package project in\n"
+              "Altium, compile it, then Components panel > menu > File-based Libraries Preferences > Installed > Install.\n"
+              "Parts listed under 'unverified' must be checked by hand before you trust them.\n")
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+        z.writestr("README.txt", readme)
+        lib = store.pdir(project) / "library"
+        if lib.exists():
+            for f in lib.rglob("*"):
+                if f.is_file():
+                    z.write(f, "library/" + f.relative_to(lib).as_posix())
+    return {"file": path.name, "parts": len(rows), "warnings": warnings}
+
+
+def recheck_async(project, key):
+    """An MPN changed: a skill run answers for the new part, in the background."""
+    def work():
+        try:
+            import check_availability
+            check_availability.check(project, {key})
+        except Exception as exc:
+            print(f"(availability check failed: {exc})")
+    threading.Thread(target=work, daemon=True).start()
+
+
+def run_skill(name, project, *args):
+    """The BOM page's buttons call a skill directly, the same code the agent runs."""
+    if name == "compare":
+        import compare_prices
+        return compare_prices.compare(project)
+    if name == "export_bom":
+        import export_bom
+        return export_bom.export(project, *args)
+    if name == "check":
+        import check_availability
+        return {"results": check_availability.check(project, set(args) or None)}
+    if name == "verify":
+        import verify_part
+        return verify_part.verify(project, args[0])
+    raise ValueError(f"unknown skill {name}")
 
 
 QUIET = False
@@ -196,19 +239,12 @@ QUIET = False
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        """One line per request, unless --quiet.
-
-        This used to be a bare `pass`. A rejected write then produced no trace
-        anywhere: not in the browser, which swallowed it, and not in the
-        terminal, which said nothing. There was no way to tell whether a request
-        had been sent, refused, or dropped - which is a long way to go to keep a
-        terminal tidy.
-        """
+        """One line per request, unless --quiet. A rejected write used to leave no
+        trace anywhere; now it shows up here."""
         if QUIET:
             return
         line = (fmt % args) if args else str(fmt)
-        # the UI polls /api/state every three seconds; logging that would bury
-        # everything else within a minute
+        # the UI polls /api/state every few seconds; logging that would bury everything else
         if "/api/state" in line and " 200 " in line:
             return
         sys.stderr.write(f"  {dt.datetime.now().strftime('%H:%M:%S')}  {line}\n")
@@ -222,7 +258,10 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(urlparse(self.path).query)
         return session_mod.current(project, (q.get("session") or [None])[0])
 
-    def _send(self, code, body, ctype="application/json; charset=utf-8"):
+    def query(self, key):
+        return (parse_qs(urlparse(self.path).query).get(key) or [None])[0]
+
+    def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False)
         if isinstance(body, str):
@@ -231,6 +270,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
 
@@ -246,8 +287,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/state":
             proj = self.project()
             m = model.build(project=proj, session=self.session(proj))
-            m["backend"] = gateway.resolve(BACKEND)
-            m["engine"] = gateway.resolve(BACKEND)
+            m["backend"] = m["engine"] = gateway.resolve(BACKEND)
             return self._send(200, m)
         if path == "/api/sessions":
             proj = self.project()
@@ -255,22 +295,32 @@ class Handler(BaseHTTPRequestHandler):
                                     "current": self.session(proj)})
         if path == "/api/config":
             return self._send(200, _public_config())
-        if path == "/api/schematic.svg":
+        if path == "/api/skills":
+            from skills import registry
+            return self._send(200, {"skills": registry.listing()})
+        if path == "/api/sheet.svg":
             proj = self.project()
-            svg = model.project_dir(proj) / "artifacts" / "blocks.svg"
-            if not svg.exists():
-                redraw(proj)
-            return self._send(200, svg.read_text(encoding="utf-8"),
+            sheet = self.query("sheet") or (store.sheet_ids(proj) or [""])[0]
+            if not store.load_sheet(proj, sheet):
+                return self._send(404, {"error": f"no sheet {sheet!r}"})
+            import render_sheet
+            return self._send(200, render_sheet.render(proj, sheet, write=False),
                               "image/svg+xml; charset=utf-8")
         if path.startswith("/api/source/"):
             name = unquote(path.split("/api/source/", 1)[1])
-            for base in (model.project_dir(self.project()) / "sources",
-                         workspace.datasheets_dir()):
+            for base in (model.project_dir(self.project()) / "sources", workspace.datasheets_dir()):
                 f = base / pathlib.Path(name).name
-                if f.exists():
+                if f.exists() and f.is_file():
                     ctype = "application/pdf" if f.suffix == ".pdf" else "text/plain; charset=utf-8"
                     return self._send(200, f.read_bytes(), ctype)
             return self._send(404, {"error": "not in the library"})
+        if path.startswith("/api/export/"):
+            name = pathlib.Path(unquote(path.split("/api/export/", 1)[1])).name
+            f = model.project_dir(self.project()) / "exports" / name
+            if f.exists():
+                return self._send(200, f.read_bytes(), "application/octet-stream",
+                                  {"Content-Disposition": f'attachment; filename="{name}"'})
+            return self._send(404, {"error": "no such export"})
         return self._send(404, {"error": "not found"})
 
     # ---------------------------------------------------------------- write
@@ -285,90 +335,133 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return self._send(400, {"error": "bad json"})
 
-        
-        if path == "/api/idea":
-            idea = model.load_idea(model.project_dir(proj))
-            idea["blocks"] = data.get("blocks", idea.get("blocks", []))
-            idea["links"] = data.get("links", idea.get("links", []))
-            model.save_idea(proj, idea)
-            redraw(proj)
-            return self._send(200, model.build(project=proj, session=sess))
+        def state():
+            return model.build(project=proj, session=sess)
 
-        if path == "/api/message":
-            if not data.get("anchor") or not data.get("text"):
-                return self._send(400, {"error": "anchor and text required"})
-            # an unchecked anchor is an invisible orphan forever: one typo and
-            # the thread never appears beside anything again
-            if data["anchor"] not in model.anchors(proj):
-                return self._send(400, {"error": f"no such anchor: {data['anchor']}"})
-            append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
-                                           "role": data.get("role", "user"), "text": data["text"]})
-            out = model.build(project=proj, session=sess)
-            # a question from the student is answered by the agent, in the same turn
-            if data.get("role", "user") == "user" and data.get("ask_agent", True):
-                res = agent.respond(out, f"[question about {data['anchor']}] {data['text']}",
-                                    out["chat"], backend=BACKEND)
-                # An `ask` anchored to the thread being answered lands on the
-                # same anchor as the reply, so one question produced two agent
-                # lines with the same timestamp, answering it in contradictory
-                # terms. The reply IS the answer here; the anchor is redundant.
-                actions = [a for a in (res.get("actions") or [])
-                           if not (a.get("type") == "ask"
-                                   and a.get("anchor") == data["anchor"])]
-                applied = apply_actions(proj, actions)
-                if res.get("reply"):
-                    append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
-                                                   "role": "agent", "text": res["reply"]})
-                out = model.build(project=proj, session=sess)
-                out["last_actions"] = applied
-            return self._send(200, out)
-
-        if path == "/api/thread/resolve":
-            if not data.get("anchor"):
-                return self._send(400, {"error": "anchor required"})
-            # A reason is required. Closing used to write an empty line, so a
-            # thread recording a real contradiction could be dismissed in one
-            # click, permanently, with no record of what was concluded - the
-            # exact loss anchoring exists to prevent.
-            why = (data.get("text") or "").strip()
-            if not why:
-                return self._send(400, {"error": "say what settled it"})
-            append(proj, "threads.jsonl", {"ts": now(), "anchor": data["anchor"],
-                                           "role": "resolved", "text": why})
-            return self._send(200, model.build(project=proj, session=sess))
-
+        # ---- the conversation
         if path == "/api/chat":
             text = (data.get("text") or "").strip()
             if not text:
                 return self._send(400, {"error": "text required"})
-            block = data.get("block")
-            say(proj, sess, {"ts": now(), "role": "user", "text": text,
-                             **({"block": block} if block else {})})
+            say(proj, sess, {"ts": now(), "role": "user", "text": text})
             m = model.build(project=proj, session=sess)
             ask = text
-            if block:
-                ctx = block_context(m, block)
+            row = next((r for r in m["sessions"] if r["id"] == sess), {})
+            if row.get("anchor"):
+                ref = (store.bom_lines(proj) and next(
+                    (l["refs"][0] for l in store.bom_lines(proj) if l["key"] == row["anchor"] and l.get("refs")), None))
+                ctx = model.part_context(proj, ref) if ref else None
                 if ctx:
-                    ask = (f"[the student is asking about one block of their diagram]\n"
+                    ask = ("[this conversation is about one part; its context]\n"
                            f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
-            res = agent.respond(m, ask, m["chat"], backend=BACKEND)
-            applied = apply_actions(proj, res.get("actions"))
-            if res.get("reply"):
-                say(proj, sess, {"ts": now(), "role": "agent", "text": res["reply"],
-                                 "applied": applied})
+            res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND)
+            applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text)
+            if res.get("reply") or refused:
+                reply = res.get("reply") or ""
+                if refused:
+                    reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
+                rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
+                if res.get("tools"):
+                    rec["tools"] = res["tools"]
+                if proposals:
+                    rec["proposals"] = proposals
+                say(proj, sess, rec)
             compact_if_due(proj, sess)
-            out = model.build(project=proj, session=sess)
+            out = state()
             out["last_actions"] = applied
             return self._send(200, out)
 
+        # ---- the student decides
+        if path == "/api/proposal":
+            try:
+                store.decide(proj, data.get("id"), data.get("decision"))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            project_mod.touch(proj)
+            if data.get("decision") == "approved":
+                prop = next(p for p in store.proposals(proj) if p["id"] == data["id"])
+                if "mpn" in prop["changes"]:
+                    recheck_async(proj, prop["line"])
+                redraw(proj)
+                ref = next((l["refs"][0] for l in store.bom_lines(proj) if l["key"] == prop["line"] and l.get("refs")),
+                           prop["line"])
+                say(proj, sess, {"ts": now(), "role": "agent",
+                                 "text": "Updated. {{ref:" + ref + "}} is changed in the BOM, on the schematic label "
+                                         "and in the library."})
+            else:
+                say(proj, sess, {"ts": now(), "role": "agent", "text": f"Rejected. {data.get('id')} changes nothing."})
+            return self._send(200, state())
+
+        if path == "/api/bom/edit":
+            try:
+                rec = store.edit_bom(proj, data.get("line"), data.get("field"), data.get("value"))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            if rec and data.get("field") == "mpn":
+                recheck_async(proj, data["line"])
+            if rec:
+                redraw(proj)
+                project_mod.touch(proj)
+            return self._send(200, state())
+
+        if path == "/api/library/accept":
+            entry = store.library_parts(proj).get(data.get("line"))
+            if not entry:
+                return self._send(404, {"error": "no such library part"})
+            if entry.get("verify") != "pass":
+                return self._send(400, {"error": "this part has not passed verification; a student cannot accept past a failed check"})
+            store.add_library(proj, data["line"], {"accepted": True}, by="student")
+            return self._send(200, state())
+
+        if path == "/api/library/export":
+            return self._send(200, export_library(proj))
+
+        if path == "/api/skill":
+            try:
+                name = data.get("name")
+                if name == "export_bom" and not data.get("args"):
+                    data["args"] = ["generic"]
+                return self._send(200, {"result": run_skill(name, proj, *[str(a) for a in data.get("args", [])]),
+                                        "state": state()})
+            except (ValueError, SystemExit) as exc:
+                return self._send(400, {"error": str(exc)})
+
+        if path == "/api/idea":
+            idea = store.load_idea(proj)
+            for key in ("goal", "blocks", "links"):
+                if key in data:
+                    idea[key] = data[key]
+            store.save_idea(proj, idea)
+            return self._send(200, state())
+
+        if path == "/api/idea/confirm":
+            store.confirm_idea(proj)
+            return self._send(200, state())
+
+        if path == "/api/idea/item":
+            if not data.get("topic") or not data.get("text"):
+                return self._send(400, {"error": "topic and text required"})
+            store.propose_idea(proj, data["topic"], data["text"], by="student")
+            return self._send(200, state())
+
+        if path == "/api/thread/open":
+            sid = open_part_session(proj, data.get("anchor") or "")
+            if not sid:
+                return self._send(404, {"error": "nothing to anchor a conversation to"})
+            return self._send(200, {"session": sid, "sessions": session_mod.list_all(proj)})
+
+        # ---- settings, sessions, projects
         if path == "/api/config":
             changes = data.get("set") or {}
             bad = [k for k in changes if k not in SETTABLE]
             if bad:
                 return self._send(400, {"error": f"not settable from here: {', '.join(bad)}"})
-            # a model name belongs to one engine - a Gemini id sent to Claude
-            # fails the turn - so it is stored under whichever engine is current,
-            # and the engine is switched first when both arrive together
+            # a model name belongs to one engine, so it is stored under whichever engine is
+            # current, and the engine is switched first when both arrive together
             for key in sorted(changes, key=lambda k: k != "agent.provider"):
                 value = changes[key]
                 if key == "agent.model":
@@ -378,8 +471,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/sessions/new":
             created = session_mod.create(proj, title=data.get("title"))
-            return self._send(200, {"created": created,
-                                    "sessions": session_mod.list_all(proj)})
+            return self._send(200, {"created": created, "sessions": session_mod.list_all(proj)})
 
         if path == "/api/sessions/rename":
             if not data.get("title"):
@@ -388,51 +480,36 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"sessions": session_mod.list_all(proj)})
 
         if path == "/api/sessions/delete":
-            # the design survives; only this conversation goes
             session_mod.delete(proj, data.get("session") or sess)
             return self._send(200, {"sessions": session_mod.list_all(proj),
                                     "current": session_mod.current(proj)})
 
         if path == "/api/memory":
-            # the student may correct their own memory file by hand
             if data.get("text") is None:
-                res = agent.compact(model.build(project=proj, session=sess), proj, sess,
-                                    backend=BACKEND)
-                return self._send(200, {"rewritten": res,
-                                        "memory": session_mod.read_memory(proj, sess)})
+                res = agent.compact(model.build(project=proj, session=sess), proj, sess, backend=BACKEND)
+                return self._send(200, {"rewritten": res, "memory": session_mod.read_memory(proj, sess)})
             text, trimmed = session_mod.fit(data["text"])
             session_mod.write_memory(proj, sess, text)
             return self._send(200, {"memory": text, "trimmed": trimmed})
 
-        if path == "/api/bom":
-            text = data.get("text") or ""
-            (model.project_dir(proj) / "BOM.md").write_text(text, encoding="utf-8")
-            return self._send(200, {"bom": text})
-
         if path == "/api/projects/new":
             name = (data.get("name") or "").strip() or "untitled"
-            created = project_mod.create(name, title=data.get("title") or name,
-                                     brief=data.get("brief", ""))
-            redraw(created)
-            return self._send(200, {"created": created,
-                                    "projects": model.list_projects()})
+            created = project_mod.create(name, title=data.get("title") or name, brief=data.get("brief", ""))
+            return self._send(200, {"created": created, "projects": model.list_projects()})
 
         if path == "/api/projects/delete":
             name = (data.get("name") or "").strip()
             if not name:
                 return self._send(400, {"error": "name required"})
-            
             import shutil
             proj_dir = model.project_dir(name)
             if proj_dir.exists():
                 shutil.rmtree(proj_dir)
-            
             projects = model.list_projects()
             default = projects[0]["name"] if projects else "demo"
             return self._send(200, {"deleted": name, "projects": projects, "default": default})
 
         if path == "/api/project/meta":
-            # title, status, tags, and this board's engineering settings
             meta = project_mod.load_meta(proj)
             for key in ("title", "brief", "status", "tags", "notes"):
                 if key in data:
@@ -441,11 +518,11 @@ class Handler(BaseHTTPRequestHandler):
                 meta["board"] = {**(meta.get("board") or {}), **data["board"]}
             project_mod.save_meta(proj, meta)
             project_mod.touch(proj)
-            return self._send(200, model.build(project=proj))
+            return self._send(200, state())
 
+        # ---- sources
         if path == "/api/upload":
-            # base64 in JSON rather than multipart: the stdlib cgi module was
-            # removed in 3.13, and a datasheet is small enough not to care.
+            # base64 in JSON rather than multipart: the stdlib cgi module was removed in 3.13.
             # also strip what Windows refuses in a file name (: ? * " < > |)
             name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", pathlib.Path(data.get("name") or "upload.bin").name)
             blob = data.get("data_b64")
@@ -454,11 +531,13 @@ class Handler(BaseHTTPRequestHandler):
             dest = model.project_dir(proj) / "sources"
             dest.mkdir(parents=True, exist_ok=True)
             target = dest / name
-            target.write_bytes(base64.b64decode(blob))
+            raw = base64.b64decode(blob)
+            target.write_bytes(raw)
+            import hashlib
             target.with_suffix(target.suffix + ".json").write_text(json.dumps(
-                {"name": name, "url": None, "uploaded_at": now(),
-                 "origin": "uploaded by the student"}, indent=2), encoding="utf-8")
-            return self._send(200, model.build(project=proj, session=sess))
+                {"name": name, "url": None, "uploaded_at": now(), "origin": "uploaded by the student",
+                 "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}, indent=2), encoding="utf-8")
+            return self._send(200, state())
 
         if path == "/api/fetch_source":
             url = data.get("url")
@@ -469,14 +548,14 @@ class Handler(BaseHTTPRequestHandler):
                 sources.use(proj, meta["name"])
             except Exception as exc:
                 return self._send(200, {"error": f"could not fetch: {exc}"})
-            return self._send(200, model.build(project=proj, session=sess))
+            return self._send(200, state())
 
         if path == "/api/delete_source":
             name = data.get("name")
             if not name:
                 return self._send(400, {"error": "name required"})
             sources.unuse(proj, name)
-            return self._send(200, model.build(project=proj, session=sess))
+            return self._send(200, state())
 
         return self._send(404, {"error": "not found"})
 
@@ -494,16 +573,14 @@ def main(argv=None):
     ap.add_argument("--engine", "--backend", dest="engine_opt")
     ap.add_argument("--host", dest="host_opt")
     ap.add_argument("--no-browser", action="store_true")
-    ap.add_argument("--quiet", action="store_true",
-                    help="do not log requests (the old behaviour)")
+    ap.add_argument("--quiet", action="store_true", help="do not log requests")
     a = ap.parse_args(argv)
     QUIET = a.quiet
 
-    DEFAULT_PROJECT = workspace.safe_name(
-        a.project_opt or a.project or cfg["server"]["default_project"])
+    DEFAULT_PROJECT = workspace.safe_name(a.project_opt or a.project or cfg["server"]["default_project"])
     port = a.port_opt or a.port or int(cfg["server"]["port"])
     host = a.host_opt or cfg["server"]["host"]
-    # If the user explicitly asks for an engine, use it. Otherwise, None means
+    # If the user explicitly asks for an engine, use it. Otherwise None means
     # "read from config dynamically", so settings changes apply without restart.
     BACKEND = a.engine_opt or a.engine
 

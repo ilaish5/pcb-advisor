@@ -1,3 +1,5 @@
+> **SUPERSEDED (2026-10-09).** v2 removed the decision cascade this discussion is about (see `docs/REBUILD-BRIEF.md`). Kept as a record of the question and the options; nothing here is built.
+
 # Open discussion: the rule pack
 
 **Status:** open, paused by the user on 2026-09-22. No code was written for it.

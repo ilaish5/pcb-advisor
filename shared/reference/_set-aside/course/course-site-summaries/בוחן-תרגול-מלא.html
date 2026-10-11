@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>בוחן PCB — 40 שאלות</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&family=Rubik:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+  :root{
+    --bg:#f3f1ea; --surface:#fbfaf6; --surface-2:#efece2;
+    --ink:#20241f; --ink-soft:#585d52; --line:#d9d4c6;
+    --copper:#b06a30; --gold:#a9852c;
+    --ok:#1f7a52; --ok-bg:#e2f3e9; --ok-line:#8fceab;
+    --bad:#b23a3a; --bad-bg:#f6e2e0; --bad-line:#e3a9a4;
+    --solder:#1f5f4a; --solder-soft:#e0ece5;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#14150f; --surface:#1c1e16; --surface-2:#23261c;
+      --ink:#eceadd; --ink-soft:#a3a394; --line:#33362a;
+      --copper:#d99a5c; --gold:#d9b458;
+      --ok:#57c98d; --ok-bg:#172c22; --ok-line:#2f5c44;
+      --bad:#e28782; --bad-bg:#2c1a19; --bad-line:#5c3330;
+      --solder:#4fb894; --solder-soft:#1c2f28;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14150f; --surface:#1c1e16; --surface-2:#23261c;
+    --ink:#eceadd; --ink-soft:#a3a394; --line:#33362a;
+    --copper:#d99a5c; --gold:#d9b458;
+    --ok:#57c98d; --ok-bg:#172c22; --ok-line:#2f5c44;
+    --bad:#e28782; --bad-bg:#2c1a19; --bad-line:#5c3330;
+    --solder:#4fb894; --solder-soft:#1c2f28;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:'Rubik',system-ui,sans-serif;
+    line-height:1.55;direction:rtl;margin:0}
+  .wrap{max-width:840px;margin:0 auto;padding:clamp(18px,4vw,40px)}
+
+  header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:22px}
+  h1{font-family:'Heebo',sans-serif;font-weight:900;font-size:clamp(1.7rem,4vw,2.5rem);
+    margin:0;letter-spacing:-.01em}
+  h1 span{color:var(--copper)}
+  .sub{color:var(--ink-soft);font-size:.92rem;margin-top:8px}
+
+  .bar{position:sticky;top:0;z-index:5;background:var(--bg);
+    display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+    padding:12px 0;margin-bottom:8px;border-bottom:1px solid var(--line)}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .tab{font-family:'Rubik';font-size:.85rem;cursor:pointer;border:1px solid var(--line);
+    background:var(--surface);color:var(--ink);border-radius:999px;padding:6px 14px}
+  .tab.on{background:var(--copper);color:#fff;border-color:var(--copper)}
+  .score{margin-inline-start:auto;font-family:'IBM Plex Mono',monospace;font-size:.85rem;
+    color:var(--solder);background:var(--solder-soft);padding:6px 12px;border-radius:999px;white-space:nowrap}
+  .btn{font-family:'Rubik';font-size:.82rem;cursor:pointer;border:1px solid var(--line);
+    background:var(--surface);color:var(--ink-soft);border-radius:8px;padding:6px 12px}
+
+  .q{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:18px 20px;margin-bottom:14px}
+  .q-top{display:flex;gap:10px;align-items:baseline;margin-bottom:10px}
+  .q-num{font-family:'IBM Plex Mono',monospace;font-size:.78rem;color:#fff;background:var(--copper);
+    border-radius:6px;padding:2px 8px;white-space:nowrap}
+  .q-unit{font-family:'IBM Plex Mono',monospace;font-size:.72rem;color:var(--ink-soft)}
+  .q-multi{font-size:.72rem;color:var(--gold);font-weight:600;margin-inline-start:auto;white-space:nowrap}
+  .q-text{font-family:'Heebo',sans-serif;font-weight:700;font-size:1.05rem;margin:0 0 14px;line-height:1.4}
+  .opts{display:flex;flex-direction:column;gap:8px}
+  .opt{display:flex;align-items:center;gap:10px;text-align:start;cursor:pointer;
+    border:1px solid var(--line);background:var(--bg);color:var(--ink);
+    border-radius:9px;padding:11px 14px;font-size:.94rem;font-family:'Rubik';transition:.12s}
+  .opt:hover:not(.locked){border-color:var(--copper)}
+  .opt .mk{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--line);
+    flex:none;display:grid;place-items:center;font-size:.8rem;font-weight:700}
+  .opt.sel{border-color:var(--copper)}
+  .opt.sel .mk{background:var(--copper);border-color:var(--copper);color:#fff}
+  .opt.locked{cursor:default}
+  .opt.correct{background:var(--ok-bg);border-color:var(--ok-line);color:var(--ok)}
+  .opt.correct .mk{background:var(--ok);border-color:var(--ok);color:#fff}
+  .opt.wrong{background:var(--bad-bg);border-color:var(--bad-line);color:var(--bad)}
+  .opt.wrong .mk{background:var(--bad);border-color:var(--bad);color:#fff}
+  .q-foot{display:flex;gap:10px;align-items:center;margin-top:12px;min-height:20px}
+  .check{font-family:'Rubik';font-weight:600;font-size:.85rem;cursor:pointer;border:none;
+    background:var(--solder);color:#fff;border-radius:8px;padding:8px 18px}
+  .check:disabled{opacity:.4;cursor:default}
+  .verdict{font-size:.85rem;font-weight:600}
+  .verdict.ok{color:var(--ok)} .verdict.no{color:var(--bad)}
+  .reveal{font-size:.8rem;color:var(--ink-soft);cursor:pointer;text-decoration:underline;background:none;border:none;font-family:'Rubik'}
+  .explainbtn{font-family:'Rubik';font-weight:600;font-size:.82rem;cursor:pointer;
+    border:1px solid var(--copper);background:transparent;color:var(--copper);
+    border-radius:8px;padding:7px 14px;display:inline-flex;align-items:center;gap:6px}
+  .explainbtn:hover{background:var(--copper);color:#fff}
+  .explain{margin-top:12px;background:var(--surface-2);border:1px solid var(--line);
+    border-inline-start:3px solid var(--copper);border-radius:10px;
+    padding:14px 16px;font-size:.92rem;line-height:1.7}
+  .explain b{color:var(--copper)}
+  .explain .lbl{font-family:'IBM Plex Mono',monospace;font-size:.72rem;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--ink-soft);display:block;margin-bottom:6px}
+  .q-en{font-size:.78rem;color:var(--ink-soft);direction:ltr;text-align:left;margin:-8px 0 14px;line-height:1.4}
+  footer{margin-top:20px;color:var(--ink-soft);font-size:.76rem;text-align:center;line-height:1.7}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <h1>בוחן תרגול — <span>מעגלים מודפסים</span></h1>
+    <p class="sub">40 שאלות מקוריות מהקוויזים של Altium Education (יחידות 1–4). השאלות תורגמו לעברית (המקור באנגלית מופיע מתחת לכל שאלה). בחר תשובה ולחץ "בדוק". שאלות עם כמה תשובות מסומנות. התשובות אומתו ישירות מול האתר.</p>
+  </header>
+
+  <div class="bar">
+    <div class="tabs" id="tabs"></div>
+    <span class="score" id="score">0 / 0</span>
+    <button class="btn" id="reset">איפוס</button>
+  </div>
+
+  <div id="list"></div>
+
+  <footer>
+    מקור: Altium Education — Unit 1–4 quizzes · התשובות (כולל שאלות רב-בחירה) אומתו מול המשוב הירוק באתר.<br>
+    שים לב: אלו שאלות הקוויזים של הקורס עצמו — הבוחן שלך עשוי לחזור עליהן או לגוון.
+  </footer>
+</div>
+
+<script>
+const Q = [
+ // ===== UNIT 1 =====
+ {u:1,t:"איזה מהמסמכים הבאים מכיל רשימה של כל הרכיבים המשמשים בלוח המורכב (PCBA)?",en:"Which of these documents contains a list of all components used in the PCBA?",o:["רשימת רכיבים (Bill of materials)", "שרטוט הלוח (PCB layout)", "סכמה חשמלית (Schematic)", "ספריית רכיבים (Component library)"],c:[0],
+  e:"ה-BOM (Bill of Materials) הוא רשימת כל הרכיבים בלוח — נוצר אוטומטית ע״י ה-ECAD ומיוצא ל-PDF/Excel. הסכמה מציגה חיבורים, ה-layout מציג מיקום פיזי, והספרייה מכילה נתוני CAD של רכיב בודד. רק ה-BOM הוא הרשימה המלאה."},
+ {u:1,t:"איזה מהמסמכים הבאים מציג את תרשים המעגל והשרטוטים החשמליים עם החיבורים בין הרכיבים?",en:"Which of these documents shows circuit diagrams and electrical drawings with connections between components?",o:["סכמה חשמלית (Schematic)", "שרטוט הלוח (PCB layout)", "רשימת רכיבים (Bill of materials)", "ספריית רכיבים (Component library)"],c:[0],
+  e:"הסכמה (Schematic) היא השרטוט החשמלי — מציגה רכיבים, nets והחיבורים הלוגיים ביניהם (מה מחובר למה). היא לא מתארת מיקום פיזי או איך הנחושת מנותבת — זה תפקיד ה-layout."},
+ {u:1,t:"איזה מהמסמכים הבאים מכיל reference designators של הרכיבים בלוח המורכב?",en:"Which of these documents contains reference designators for components in the PCBA?",o:["סכמה חשמלית (Schematic)", "שרטוט הלוח (PCB layout)", "רשימת רכיבים (Bill of materials)", "ספריית רכיבים (Component library)"],c:[0,1,2],
+  e:"Reference designator (U33, R4...) הוא המפתח שמקשר symbol ↔ footprint ↔ שורה ב-BOM. לכן הוא מופיע בשלושתם: סכמה, layout ו-BOM. הספרייה מגדירה את הרכיב הכללי אך לא נושאת designator של מופע ספציפי בלוח."},
+ {u:1,t:"איזה מונח מתאר את החיבור החשמלי בין שתי נקודות המשורטט בסכמה?",en:"Which term describes the electrical connection between two points drawn in a schematic?",o:["Net", "שכבה (Layer)", "מוליך (Trace)", "חוט (Wire)"],c:[0],
+  e:"Net = חיבור חשמלי בסכמה, וכולל את כל ענפי החוט (לא רק קו בודד). לכל net יש שם. ה-Trace הוא המימוש הפיזי בנחושת ב-layout — כלומר ה-net הוא הלוגי וה-trace הוא הפיזי."},
+ {u:1,t:"איזה מונח מתאר את חיבור הנחושת בין שני רכיבים בשרטוט הלוח?",en:"Which term describes the copper connection between two components in a PCB layout?",o:["מוליך (Trace)", "Net", "חוט (Wire)", "שכבה (Layer)"],c:[0],
+  e:"Trace (track) = חיבור הנחושת הפיזי בין שני רכיבים ב-layout. ה-net הוא המושג הלוגי בסכמה; ה-trace הוא איך הוא מנותב בנחושת בפועל."},
+ {u:1,t:"אילו מהפריטים הבאים כלולים בספריית רכיבים?",en:"Which of these items is included in a component library?",o:["סימבולים סכמטיים של רכיבים", "קובץ ה-layout של הפרויקט שלך", "מודלי סימולציה של רכיבים", "המוליכים והחוטים שמחברים את הרכיבים"],c:[0,2],
+  e:"ספריית רכיבים מכילה את נתוני ה-CAD של הרכיב: schematic symbol, footprint, מודל 3D, מודל SPICE (סימולציה) ומידע רכש. קובץ ה-layout וה-traces שייכים לפרויקט הספציפי — לא לספרייה."},
+ {u:1,t:"איזו תכונה בגיליון סכמה משמשת לציון חיבור חשמלי במקום חוט?",en:"Which feature in a schematic sheet can be used to indicate an electrical connection instead of a wire?",o:["שם net (Net name)", "מוליך (Trace)", "שכבה (Layer)", "Track"],c:[0],
+  e:"net name מאפשר לציין חיבור חשמלי בלי למתוח חוט: שני פינים עם אותו net name מחוברים. זה מנקה את הסכמה ומונע חוטים מצטלבים. trace/track הם אובייקטים של ה-layout, לא של הסכמה."},
+ {u:1,t:"אם צריך לגשת למודל התלת-ממדי של רכיב בתכן שלך, איפה תחפש אותו?",en:"If you need to access the 3D model for a component in your design, where would you look?",o:["ספריית רכיבים (Component library)", "שרטוט הלוח (PCB layout)", "סכמה חשמלית (Schematic)", "רשימת רכיבים (Bill of materials)"],c:[0],
+  e:"המודל התלת-ממדי הוא חלק מנתוני הרכיב בספרייה (יחד עם symbol ו-footprint). הוא משמש לבדיקת התנגשויות מכניות ולהתאמה לאנקלוז׳ר בזמן ה-layout."},
+ {u:1,t:"באיזה מסמך תכן ישתמש המרכיב (assembler) כדי לאתר את הרכיבים בשרטוט הלוח?",en:"Which design document will be used by an assembler to locate components in the PCB layout?",o:["רשימת רכיבים (Bill of materials)", "ספריית רכיבים (Component library)", "שרטוט הלוח (PCB layout)", "סכמה חשמלית (Schematic)"],c:[0],
+  e:"ה-BOM מכיל את ה-reference designators והכמויות, ולכן משמש את המרכיב לזהות אילו רכיבים מולחמים והיכן (בשילוב assembly drawing). זו התשובה הרשמית של הקוויז."},
+ {u:1,t:"איזה מהאובייקטים הבאים בשרטוט הלוח מאפשר להעביר אותות בין שכבות?",en:"Which of the following objects in a PCB layout allows signals to transfer between layers?",o:["Via", "מוליך (Trace)", "Net", "חוט (Wire)"],c:[0],
+  e:"Via = קדח מצופה נחושת שמעביר אות (או מתח/אדמה) בין שכבות. Trace מחבר באותה שכבה; net הוא מושג לוגי בלבד."},
+ // ===== UNIT 2 =====
+ {u:2,t:"באיזה אובייקט משתמשים כדי להגדיר חיבור חשמלי בין שני גיליונות סכמה שונים?",en:"Which object would be used to define an electrical connection between two different schematic sheets?",o:["Port", "שם net (Net name)", "חוט (Wire)", "מחבר (Connector)"],c:[0],
+  e:"Port מחבר חשמלית בין גיליונות (sheets) שונים. בתוך אותו גיליון משתמשים ב-net name או wire — אין להשתמש ב-port לחיבור בתוך אותו גיליון."},
+ {u:2,t:"מהו הכיוון המועדף לניתוב חיבורים חשמליים מכניסות אל מוצאים?",en:"What is the preferred direction to route electrical connections from inputs to outputs?",o:["משמאל לימין", "מימין לשמאל", "מלמעלה למטה", "מלמטה למעלה"],c:[0],
+  e:"מוסכמת קריאות: inputs משמאל, outputs מימין, זרימה משמאל לימין. זה מקל על מעקב הגיוני אחרי המעגל."},
+ {u:2,t:"באיזה סוג אובייקט יש להשתמש בסכמה במקום חוטים מצטלבים?",en:"Which type of object should be used in a schematic instead of crossing wires?",o:["Net names ו-ports", "ports בלבד", "net names בלבד", "אף אחד מאלה"],c:[0],
+  e:"כדי להימנע מחוטים מצטלבים משתמשים גם ב-net names וגם ב-ports — שניהם מציינים חיבור בלי קו פיזי מצטלב, ומשפרים קריאות."},
+ {u:2,t:"איזה מהנהגים הבאים יש להימנע ממנו בעת יצירת סכמות?",en:"Which of the following practices should be avoided when creating schematics?",o:["לנסות למקם את כל המעגלים בגיליון סכמה יחיד", "להשתמש ב-ports ו-net names במקום חוטים מצטלבים", "להשתמש ב-ports של מתח ואדמה במקום שנדרש", "לנסות לקבץ רכיבים של אותו מעגל באותו גיליון סכמה"],c:[0],
+  e:"נוהג טוב הוא לפצל מעגלים לגיליונות לפי פונקציה; דחיסת כל המעגלים לגיליון יחיד פוגעת בקריאות ובתחזוקה. שאר האפשרויות הן דווקא best practices."},
+ {u:2,t:"אילו משימות צריך להשלים לפני העברת הרכיבים ללוח PCB ריק?",en:"Which tasks need to be completed before transferring components into an unpopulated PCB?",o:["להגדיר את צורת הלוח", "ליצור stackup ללוח", "להניח מוליכי נחושת עבור הרכיבים", "למקם vias בלוח הריק כדי לחבר שכבות שונות"],c:[0,1],
+  e:"לפני ייבוא רכיבים ל-PCB ריק: (1) להגדיר צורת/גודל הלוח, (2) להגדיר את ה-stackup. ניתוב traces והצבת vias נעשים אחרי הייבוא — כשכבר יש מה לנתב (ratsnest)."},
+ {u:2,t:"איזה מהמידע הבא על חומרי הלמינציה של הלוח אינו נדרש בעת יצירת ה-stackup?",en:"Which of the following information about PCB laminate materials is not needed when creating the PCB stackup?",o:["שם היצרן של חומר הלמינציה", "קבוע דיאלקטרי (Dk)", "משקל הנחושת (copper weight)", "עובי השכבה"],c:[0],
+  e:"ל-stackup צריך פרמטרים פיזיים: Dk (dielectric constant), עובי שכבה ו-copper weight. שם היצרן של הלמינציה אינו פרמטר תכן הכרחי לבניית ה-stackup."},
+ {u:2,t:"איזה סוג מסמך תכן משתמש ב-sub-sheets המחוברים ביניהם בדומה לרכיבים?",en:"Which type of design document uses sub-sheets that are wired together similar to components?",o:["סכמות היררכיות (Hierarchical schematics)", "סכמות שטוחות (Flat schematics)", "תרשים מלבנים (Block diagram)", "PCB footprint"],c:[0],
+  e:"בסכמה היררכית יש גיליון-על (top) עם sub-sheets המחוברים דרך ports כמו רכיבים. היתרון: שכפול מעגלים חוזרים — תיקון במקום אחד מתעדכן בכל המופעים."},
+ {u:2,t:"כאשר לרכיב כמו IC יש מספר רב של פינים, הדרך הטובה ביותר למקם את החיבורים החשמליים היא:",en:"When a component like an IC has a large number of pins, the best way to place electrical connections is to use:",o:["Ports ו-net names", "חוטים בלבד", "חוטים ו-ports", "net names בלבד"],c:[0],
+  e:"ל-IC עם הרבה פינים עדיף net names ו-ports במקום עשרות חוטים — זה מונע צלחת ספגטי ומשאיר את הסכמה קריאה."},
+ {u:2,t:"אילו בעיות ייווצרו אם לא תקצה שם net ל-net בסכמה?",en:"What problems will arise if you do not assign a net name to a net in a schematic?",o:["כלום; התוכנה תקצה שם אוטומטית", "ה-net לא ייובא לשרטוט הלוח", "ה-net ייחשב כמעגל פתוח", "ה-net ייחשב כקצר חשמלי"],c:[0],
+  e:"אם לא נותנים שם ל-net, התוכנה מקצה שם אוטומטית — לא נגרמת שגיאה. עדיין מומלץ לתת שמות משמעותיים ל-nets חשובים (למשל power/clock) לקריאות."},
+ {u:2,t:"נניח שצריך למקם 8 עותקים של מעגל מורכב בסכמות. באילו סוגי סכמות כדאי להשתמש?",en:"Suppose we need to place 8 copies of a complex circuit into schematics. What types of schematics should be used?",o:["סכמה היררכית אחת וסכמה שטוחה אחת", "סכמה היררכית אחת ו-8 סכמות שטוחות", "8 סכמות שטוחות", "8 סכמות היררכיות"],c:[0],
+  e:"מעגל חוזר → סכמה היררכית אחת (top) + גיליון flat אחד של תת-המעגל, שמופנה 8 פעמים. כך יש עותק מקור יחיד — תיקון בו מתעדכן בכל 8 המופעים."},
+ // ===== UNIT 3 =====
+ {u:3,t:"מה כדאי לקבל מהיצרן כדי שיעזור לך לבנות את מערך השכבות (layer stack)?",en:"What should you get from your fabricator that will help you build a layer stack?",o:["טבלת stackup (Stackup table)", "הצהרת יכולות ייצור (Fabrication capabilities statement)", "דוח בדיקת כללי תכן (Design Rules Check report)", "שרטוט הרכבה (Assembly drawing)"],c:[0],
+  e:"ה-stackup table מהיצרן מפרט הרכבי שכבות מומלצים ובני-ייצור — זה מה שעוזר לבנות layer stack תקין. ה-capabilities statement נותן מגבלות כלליות (מינימום trace/via) אך לא את ההרכב עצמו."},
+ {u:3,t:"איזה מהחומרים הבאים משמש להדפסת reference designators וסימונים אחרים על שכבות פני הלוח?",en:"Which of these materials is used to place reference designators and other markings on the surface layers of a PCB?",o:["Silkscreen", "Solder mask", "נחושת (Copper)", "ציפוי נחושת (Copper plating)"],c:[0],
+  e:"Silkscreen הוא ההדפס (אותיות, designators, לוגו) על פני הלוח. אסור שיודפס על נחושת חשופה. Solder mask נותן צבע/הגנה, נחושת היא המוליך."},
+ {u:3,t:"מהי איננה סיבה להחלת חומר ציפוי (plating) על לוח נחושת חשוף?",en:"Which of the following is not a reason that a plating material would be applied to a bare circuit board?",o:["הוא מאפשר הלחמה בטמפרטורה נמוכה יותר", "הוא מספק משטח לחיבורי הלחמה חזקים", "הוא מגן מפני קורוזיה", "הוא מגן מפני שריטות ופגיעות אחרות"],c:[0],
+  e:"לציפוי (surface finish — זהב/בדיל/ניקל/כסף) שתי מטרות עיקריות: קבלת הלחמה טובה + הגנה מקורוזיה. הוא אינו מוריד את טמפרטורת ההלחמה — לכן זו התשובה ל״מה שאינו סיבה״."},
+ {u:3,t:"מה תפקידן של שכבות ה-prepreg ב-stackup של הלוח?",en:"What is the role of prepreg layers in a PCB stackup?",o:["הן משמשות כדבק בין שאר השכבות", "היא משמשת להפרדת שתי שכבות משטח (plane layers)", "היא משמשת להפרדת שתי שכבות אותות (signal layers)", "היא משמשת להדבקת שתי שכבות prepreg אחרות"],c:[0],
+  e:"Prepreg הוא שכבת ״דבק״ שמחברת cores יחד ב-stackup. Core הוא הלמינציה הקשיחה מצופת נחושת משני צדדיה; ה-prepreg מלכד אותם לחבילה אחת."},
+ {u:3,t:"איזה מסמך מתוך תקני IPC-4101 משמש את יצרן הלוח לזיהוי חומרים תואמים ל-stackup?",en:"What document from the IPC-4101 standards will be used by a board fabricator to identify compatible materials for a PCB stackup?",o:["Slash sheets", "שרטוט ייצור (Fabrication drawing)", "טבלת stackup (Stackup table)", "שרטוט הרכבה (Assembly drawing)"],c:[0,1],
+  e:"ה-slash sheets של IPC-4101 מגדירים אילו קריטריונים חומר למינציה חייב לקיים ומתי שני חומרים תואמים לאותו תהליך ייצור (למשל הערה: ALL STACKUP MATERIALS SHALL CONFORM TO IPC-4101 /24). הקוויז מסמן גם fabrication drawing כנכון, כי בו רושמים את דרישת החומר."},
+ {u:3,t:"בתכנון מיקום הרכיבים בשרטוט הלוח, אילו רכיבים מומלץ למקם ראשונים?",en:"When planning component placement in a PCB layout, which components are recommended to be placed first?",o:["מעבדים גדולים", "נגדים וקבלים קטנים", "מעגלים משולבים קטנים", "vias ומוליכים לניתוב"],c:[0],
+  e:"סדר הצבה: קודם הרכיבים הגדולים (מעבדים) במרכז, אחריהם כניסות מתח, מחברים על הקצה (לפי האנקלוז׳ר), ולבסוף רכיבי RF באזור מבודד. המטרה: למזער הצטלבות nets (כל הצטלבות = מעבר שכבה)."},
+ {u:3,t:"איזה מידע מהרשימה הבאה צריך להיכלל בשרטוט הייצור (fabrication drawing) של הלוח?",en:"What information from the following list should be included in a PCB fabrication drawing?",o:["שרטוט קידוח (Drill drawing)", "רשימת רכיבים (Bill of materials)", "שרטוט פאנל (Panel drawing)", "שרטוט אנקלוז׳ר (Enclosure drawing)"],c:[0],
+  e:"שרטוט הייצור (fabrication drawing) כולל drill drawing — מיקומי וגדלי החורים, סדר שכבות ומידות. BOM שייך להרכבה, panel/enclosure הם מסמכים אחרים."},
+ {u:3,t:"איזה מקבצי הייצור הבאים משמש להפיכת מיקום הרכיבים בהרכבה לאוטומטי?",en:"Which of these manufacturing files is to automate placement of components during assembly?",o:["קובץ Pick-and-place", "קובץ NC drill", "קבצי Gerber", "שרטוט פאנל (Panel drawing)"],c:[0],
+  e:"קובץ ה-pick-and-place נותן קואורדינטות רכיבים למכונת השיבוץ בהרכבה. Gerber = איפה נחושת/מסכות; NC drill = קואורדינטות חורים; panel = סידור לוחות על הפאנל."},
+ {u:3,t:"איזו מהשכבות הבאות מכילה את רכיבי ה-silkscreen בשרטוט הלוח?",en:"Which of these layers contains silkscreen elements in a PCB layout?",o:["שכבת Overlay", "שכבת אותות (Signal layer)", "שכבת משטח (Plane layer)", "שכבה מכנית (Mechanical layer)"],c:[0],
+  e:"ב-Altium שכבת ה-silkscreen נקראת Overlay. שם מודפסים ה-designators והסימונים. Signal/Plane הן שכבות נחושת, Mechanical משמשת למידות ומבנה."},
+ {u:3,t:"מהי סיבה אחת להחלת סגנון thermal relief על via המתחבר לפוליגון או למשטח גדול?",en:"What is one reason a thermal relief style would be applied to a via connecting to a large polygon or plane?",o:["למנוע מהחום לחמוק בזמן ההלחמה", "לפזר חום אל המשטח בזמן הפעולה", "להגדיל את כושר נשיאת הזרם של ה-via", "להקטין את כושר נשיאת הזרם של ה-via"],c:[0],
+  e:"thermal relief מחבר את ה-pad ל-plane בעזרת ״חישורים״ צרים, כדי שהחום לא יתפזר מהר מדי ל-plane בזמן ההלחמה — כך אפשר להלחים כראוי. חיבור נחושת מלא ל-plane היה מבריח את החום ומקשה על ההלחמה."},
+ // ===== UNIT 4 =====
+ {u:4,t:"אילו מהמבנים הבאים משמשים להבטיח ש-vias יהיו אמינים יותר בהרכבה ובפעולה?",en:"Which of these structures is used to ensure vias are more reliable during assembly and in operation?",o:["Teardrops", "פדים רחבים יותר", "קדח בקוטר גדול יותר עם פדים דקים יותר", "מוליכים צרים יותר"],c:[0,1],
+  e:"Teardrops (הרחבה מעוגלת במעבר trace→pad) ו-pads רחבים יותר (annular ring גדול) — שניהם מגבירים אמינות מול drill wander (סטיית קדח): טבעת/פד רחב מקטין סיכון שהקדח יחרוג מהפד. קדח גדול עם פד דק דווקא מקטין את הטבעת ופוגע באמינות."},
+ {u:4,t:"מהי סיבה אחת לאכיפת מרווח גדול יותר בין מוליכים שכנים?",en:"What is one reason to enforce larger spacing between neighboring traces?",o:["לסייע בהקטנת crosstalk", "להקטין קרינה מהמוליך", "להגדיל את מהירות האות בשני המוליכים", "זה מאפשר להשתמש במוליכים דקים יותר"],c:[0],
+  e:"מרווח גדול יותר בין traces מקטין צימוד (crosstalk) בין aggressor ל-victim. כלל 3W: מרווח = פי 3 מרוחב ה-trace, למניעת crosstalk."},
+ {u:4,t:"איזה מסוגי ה-vias הבאים אינו ממולא ומכוסה ב-solder mask?",en:"Which of these types of vias is un-filled and covered with solder mask?",o:["Tented vias", "Via-in-pad", "Via-in-pad plated over (VIPPO)", "Plugged vias"],c:[0],
+  e:"Tented via מכוסה ב-solder mask ואינו ממולא (״אוהל״ מעל הקדח). Via-in-pad ממוקם בתוך פד, VIPPO ממולא ומצופה נחושת, Plugged ממולא באפוקסי לא מוליך."},
+ {u:4,t:"איזה מהגורמים הבאים קובע אם אות דיגיטלי נחשב \"high speed\"?",en:"Which of these factors determines whether a digital signal is considered \"high speed\"?",o:["זמן עלייה (Rise time)", "מחזור השעון (Clock period)", "מהירות ההתפשטות שלו", "המרחק ממישור האדמה הקרוב"],c:[0],
+  e:"מה שהופך אות ל-high-speed הוא זמן העלייה (rise time), לא תדר השעון — שעון איטי יכול לשאת מעברים מהירים. rise time נמדד 10%→90%; מ-~10ns ומטה מתחילות בעיות signal integrity."},
+ {u:4,t:"איזה מהבאסים הדיגיטליים הבאים משתמש בנגדי pull-up כדי לקבוע את זמן העלייה של הרכיב?",en:"Which of these digital buses uses pull-up resistors to set the rise time of the device?",o:["I2C", "SPI", "UART", "כל אלה"],c:[0],
+  e:"I2C משתמש ב-pull-up resistors: הקווים (SCL/SDA) הם open-drain, וה-pull-up יחד עם הקיבול הכולל קובע את זמן העלייה. SPI הוא push-pull CMOS ולא צריך pull-ups."},
+ {u:4,t:"איזה מנהגי הניתוב הבאים עלול לגרום לקרינת EMI במידה הרבה ביותר?",en:"Which of these routing practices is most likely to cause radiated EMI?",o:["ניתוב מעל מישור אדמה מפוצל (split ground plane)", "ניתוב מעל מישור אדמה אחיד", "הצבת vias מוארקים בעת החלפת שכבת ייחוס", "שימוש ב-tented vias לניתוב"],c:[0],
+  e:"ניתוב מעל פיצול (split) ב-ground plane יוצר אי-רציפות בנתיב החזרה → לולאת זרם גדולה → קרינת EMI והפרשי פוטנציאל. מעל plane רציף נתיב החזרה קצר ושקט. כלל זהב: לנתב אותות מהירים תמיד מעל ground plane רציף."},
+ {u:4,t:"איזו סיומת משמשת בשם ה-net של הצד החיובי בזוג דיפרנציאלי?",en:"What suffix is used on the net name for the positive side of a differential pair?",o:["_P", "_N", "_+", "_-"],c:[0],
+  e:"בזוג דיפרנציאלי הצד החיובי מקבל סיומת _P והשלילי _N. זו המוסכמה שבה כלים מזהים אוטומטית זוגות לניתוב differential."},
+ {u:4,t:"מהי הדרך היעילה ביותר להבטיח שמוליכים ינותבו עם עכבה מסוימת?",en:"What is the most effective way to ensure traces are routed with specific impedance?",o:["ליצור design rule המגביל את רוחב המוליך", "ליצור design rule המגביל את עובי המוליך", "להגדיר ידנית את רוחב המוליך בזמן הניתוב", "להסיר מישורי אדמה מתחת למוליכים עם עכבה מבוקרת"],c:[0],
+  e:"הדרך היעילה ביותר לעכבה מבוקרת: design rule (מתוך impedance profile) שכופה את רוחב ה-trace על ה-net, במקום הגדרה ידנית לכל trace. העכבה נקבעת ע״י רוחב ה-trace + מרחק ממישור הייחוס (H) + Dk — לכן קובעים stackup לפני רוחב."},
+ {u:4,t:"אילו מהפריטים הבאים הם סיבות להחלת מבני length matching על מוליכים בזוג דיפרנציאלי?",en:"Which of these items are reasons length matching structures are applied to traces in a differential pair?",o:["מבטיח ששני האותות יגיעו למקבל באותו זמן", "מבטיח ששני האותות יהיו באותה מהירות התפשטות", "מבטיח ששני האותות יהיו באותה עכבה", "מבטיח ששני האותות יהיו באותו זמן עלייה"],c:[0],
+  e:"length matching (meanders) מוסיף אורך ל-trace הקצר כדי ששני האותות יגיעו בו-זמנית לקצה המקבל — כך מבוטל רעש מצב-משותף (common-mode). נדרש גם לבאסים מקבילים כמו DDR."},
+ {u:4,t:"אילו מהשיטות הבאות יכולות לשמש להקטנת inductive crosstalk?",en:"Which of these methods can be used to reduce inductive crosstalk?",o:["לנסות להשתמש במוליכים רחבים יותר", "לנסות להשתמש בלמינציות דקות יותר", "לנתב קבוצות של מוליכים קרוב יותר זו לזו", "לתכנן מוליכים בעלי עכבה גבוהה יותר"],c:[0],
+  e:"לפי הקוויז, traces רחבים יותר מפחיתים inductive crosstalk (צימוד מגנטי, הדומיננטי בתדרים נמוכים). ניתוב traces קרוב יותר זה בזה דווקא מגביר crosstalk. זו התשובה הרשמית של האתר."},
+];
+
+const LET = ["A","B","C","D","E"];
+let filter = 0; // 0 = all
+const done = {}; // idx -> bool correct
+
+const listEl = document.getElementById('list');
+const scoreEl = document.getElementById('score');
+
+// tabs
+const tabsEl = document.getElementById('tabs');
+[["הכל",0],["יח׳ 1",1],["יח׳ 2",2],["יח׳ 3",3],["יח׳ 4",4]].forEach(([lbl,v])=>{
+  const b=document.createElement('button'); b.className='tab'+(v===0?' on':''); b.textContent=lbl;
+  b.onclick=()=>{filter=v; [...tabsEl.children].forEach(c=>c.classList.remove('on')); b.classList.add('on'); render();};
+  tabsEl.appendChild(b);
+});
+
+function updateScore(){
+  const vals=Object.values(done);
+  const answered=vals.length, ok=vals.filter(Boolean).length;
+  scoreEl.textContent = ok+' / '+answered+(answered?'  ('+Math.round(ok/answered*100)+'%)':'');
+}
+
+function render(){
+  listEl.innerHTML='';
+  Q.forEach((q,idx)=>{
+    if(filter && q.u!==filter) return;
+    const multi = q.c.length>1;
+    const card=document.createElement('div'); card.className='q';
+    const sel=new Set();
+    let locked=false;
+
+    card.innerHTML =
+      '<div class="q-top"><span class="q-num">'+(idx+1)+'</span>'+
+      '<span class="q-unit">Unit '+q.u+'</span>'+
+      (multi?'<span class="q-multi">בחר '+q.c.length+' תשובות</span>':'')+'</div>'+
+      '<p class="q-text"></p><p class="q-en"></p><div class="opts"></div>'+
+      '<div class="q-foot"></div>'+
+      '<div class="explain" hidden><span class="lbl">הסבר ורקע תיאורטי</span><span class="etext"></span></div>';
+    card.querySelector('.q-text').textContent=q.t;
+    card.querySelector('.q-en').textContent=q.en||'';
+    card.querySelector('.etext').textContent=q.e;
+
+    const optsEl=card.querySelector('.opts');
+    const opts=q.o.map((txt,i)=>{
+      const el=document.createElement('button'); el.className='opt';
+      el.innerHTML='<span class="mk">'+LET[i]+'</span><span></span>';
+      el.querySelector('span:last-child').textContent=txt;
+      el.onclick=()=>{
+        if(locked) return;
+        if(multi){ el.classList.toggle('sel'); sel.has(i)?sel.delete(i):sel.add(i); }
+        else { optsEl.querySelectorAll('.opt').forEach(o=>o.classList.remove('sel')); sel.clear(); el.classList.add('sel'); sel.add(i); }
+      };
+      optsEl.appendChild(el); return el;
+    });
+
+    const foot=card.querySelector('.q-foot');
+    const chk=document.createElement('button'); chk.className='check'; chk.textContent='בדוק';
+    const verdict=document.createElement('span'); verdict.className='verdict';
+    const rev=document.createElement('button'); rev.className='reveal'; rev.textContent='הצג תשובה';
+    const exp=document.createElement('button'); exp.className='explainbtn'; exp.textContent='הסבר';
+    const expEl=card.querySelector('.explain');
+    exp.onclick=()=>{ expEl.hidden=!expEl.hidden; exp.textContent=expEl.hidden?'הסבר':'הסתר הסבר'; };
+    foot.append(chk,verdict,rev,exp);
+
+    function lockAndShow(showVerdict){
+      locked=true; chk.disabled=true;
+      opts.forEach((el,i)=>{
+        el.classList.add('locked'); el.classList.remove('sel');
+        if(q.c.includes(i)) el.classList.add('correct');
+        else if(sel.has(i)) el.classList.add('wrong');
+      });
+      if(showVerdict){
+        const good = q.c.length===sel.size && [...sel].every(i=>q.c.includes(i));
+        verdict.textContent = good?'✓ נכון':'✗ טעות';
+        verdict.className='verdict '+(good?'ok':'no');
+        if(!(idx in done)){ done[idx]=good; updateScore(); }
+      }
+    }
+    chk.onclick=()=>{ if(sel.size===0) return; lockAndShow(true); };
+    rev.onclick=()=>{ if(!locked) lockAndShow(false); };
+
+    listEl.appendChild(card);
+  });
+}
+
+document.getElementById('reset').onclick=()=>{ for(const k in done) delete done[k]; updateScore(); render(); };
+
+render(); updateScore();
+</script>
+
+</body>
+</html>

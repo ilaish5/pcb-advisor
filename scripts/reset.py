@@ -1,4 +1,4 @@
-"""Wipe a project's state back to empty. The corpus and your notes are untouched."""
+"""Wipe a project's state back to empty. Your notes and uploaded sources are untouched."""
 import pathlib
 import sys
 

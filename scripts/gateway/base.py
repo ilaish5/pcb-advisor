@@ -2,7 +2,7 @@
 What every engine must look like from the outside.
 
 A provider is a transport and nothing more: text in, text out.  It does not know
-what a cascade is, it does not parse actions, and it never touches a file.  That
+what a BOM is, it does not parse actions, and it never touches a file.  That
 is what keeps "swap the engine" a one-line config change instead of a rewrite.
 """
 import dataclasses
@@ -43,7 +43,7 @@ class Provider:
     doc = ""
 
     # Does this engine sit in the workspace with hands of its own - able to open
-    # a datasheet, grep the corpus, run trace_width.py? A CLI agent does; an HTTP
+    # a datasheet, grep the sources, run trace_width.py? A CLI agent does; an HTTP
     # API does not. agent.py reads this and builds a DIFFERENT prompt for each:
     # one that says "go and look", or one that carries the data inline. Getting
     # this wrong is silent - an engine told to read a file it cannot reach does

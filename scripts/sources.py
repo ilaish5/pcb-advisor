@@ -68,9 +68,12 @@ def fetch(url, name=None, timeout=45):
     return meta
 
 
-def text_of(name):
-    """Plain text of a cached document, itself cached next to it."""
+def text_of(name, folder=None):
+    """Plain text of a cached document, itself cached next to it. `folder` is a
+    project's sources/ directory, tried before the shared library."""
     path = cache() / _safe(name)
+    if folder is not None and (pathlib.Path(folder) / _safe(name)).exists():
+        path = pathlib.Path(folder) / _safe(name)
     if not path.exists():
         raise FileNotFoundError(f"{name} is not in the cache")
     txt_path = path.with_suffix(path.suffix + ".txt")
@@ -170,33 +173,43 @@ def search_hint(part):
 
 def restore():
     """
-    Re-fetch every document the cascades cite. Vendor PDFs are not redistributed
-    with this repo, so a fresh clone runs this once before verify_sources.py.
+    Re-fetch every document that has a sidecar with a url but no file on this machine:
+    the shared library and every project's sources/. Vendor PDFs are not redistributed
+    with this repo, so a fresh clone runs this once.
     """
-    import yaml
-    want = {}
-    for path in sorted(workspace.cascade_dir().glob("*.yaml")):
-        cas = yaml.safe_load(path.read_text(encoding="utf-8"))
-        for node in cas.get("nodes", []):
-            for opt in node.get("options", []) or []:
-                for lock in opt.get("locks", []) or []:
-                    src = lock.get("source") or {}
-                    if src.get("url") and src.get("cached"):
-                        want[src["cached"]] = src["url"]
+    folders = [cache()]
+    root = workspace.projects_dir()
+    if root.exists():
+        folders += [d / "sources" for d in sorted(root.iterdir()) if (d / "sources").is_dir()]
     failed = 0
-    for name, url in sorted(want.items()):
-        if (cache() / name).exists():
-            print(f"  have  {name}")
-            continue
-        try:
-            fetch(url, name)
-            print(f"  got   {name}")
-        except Exception as exc:
-            print(f"  FAIL  {name}: {exc}")
-            failed += 1
+    for folder in folders:
+        for side in sorted(folder.glob("*.json")):
+            base = side.name[:-5]
+            if not pathlib.Path(base).suffix:
+                continue                      # not a sidecar of a document
+            try:
+                meta = json.loads(side.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                continue
+            url = meta.get("url")
+            if (folder / base).exists():
+                print(f"  have  {base}")
+                continue
+            if not url:
+                print(f"  skip  {base}: no url recorded (it was uploaded by hand)")
+                continue
+            try:
+                if folder == cache():
+                    fetch(url, base)
+                else:
+                    blob = urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": UA}), timeout=45).read()
+                    (folder / base).write_bytes(blob)
+                print(f"  got   {base}")
+            except Exception as exc:
+                print(f"  FAIL  {base}: {exc}")
+                failed += 1
     if failed:
-        print(f"\n{failed} document(s) could not be fetched. Every rule citing them "
-              f"stays unverified.")
+        print(f"\n{failed} document(s) could not be fetched. Citations of them stay unchecked.")
     return failed
 
 

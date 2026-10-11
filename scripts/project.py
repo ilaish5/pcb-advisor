@@ -14,12 +14,13 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import session  # noqa: E402
+import store  # noqa: E402
 import workspace  # noqa: E402
 
 SCHEMA_VERSION = 1
 # the design log. The conversation lives in chats/<id>.jsonl, one per session.
-STATE_FILES = ("decisions.jsonl", "threads.jsonl")
-DERIVED = ("design-model.json", "constraints.md", "artifacts")
+LOGS = ("bom-log.jsonl", "supply-log.jsonl", "proposals.jsonl", "library-log.jsonl")
+DERIVED = ("design-model.json", "bom.json", "artifacts")
 
 
 def now():
@@ -99,14 +100,13 @@ def ensure(name):
     d.mkdir(parents=True, exist_ok=True)
     (d / "sources").mkdir(exist_ok=True)
     (d / "chats").mkdir(exist_ok=True)
-    for f in STATE_FILES:
+    for f in LOGS:
         (d / f).touch()
+    (d / "netlist").mkdir(exist_ok=True)
     if not session.list_all(name):
         session.create(name, title="First conversation")
-    if not (d / "sketch.json").exists():
-        (d / "sketch.json").write_text(json.dumps(
-            {"brief": "", "blocks": [], "links": [], "confirmed": False},
-            ensure_ascii=False, indent=2), encoding="utf-8")
+    if not (d / "idea.json").exists():
+        store.save_idea(workspace.safe_name(name), store.load_idea(workspace.safe_name(name)))
     if not meta_path(name).exists():
         save_meta(name, {
             "schema_version": SCHEMA_VERSION,
@@ -175,28 +175,20 @@ def list_all():
         if not d.is_dir() or d.name.startswith("."):
             continue
         meta = load_meta(d.name)
-        sketch = {}
-        if (d / "sketch.json").exists():
-            try:
-                sketch = json.loads((d / "sketch.json").read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                sketch = {}
-        decisions = _lines(d / "decisions.jsonl")
+        idea = store.load_idea(d.name)
         sessions = session.list_all(d.name)
-        chat = _lines(session.chat_path(d.name, sessions[0]["id"])) if sessions else []
-        stamps = [e.get("ts", "") for e in decisions + chat if e.get("ts")]
+        stamps = [r.get("updated", "") for r in sessions] + [meta.get("updated", "")]
         out.append({
             "name": d.name,
             "title": meta.get("title") or d.name,
-            "brief": sketch.get("brief") or meta.get("brief")
-                     or (chat[0]["text"][:80] if chat else ""),
+            "brief": idea.get("goal") or meta.get("brief") or "",
             "status": meta.get("status", "draft"),
-            "blocks": len(sketch.get("blocks", [])),
-            "decisions": len({e["node"] for e in decisions if e.get("node")}),
+            "lines": len(store.bom_lines(d.name)),
+            "sheets": len(store.sheet_ids(d.name)),
             "sessions": len(sessions),
             "messages": sum(x.get("messages", 0) for x in sessions),
-            "confirmed": bool(sketch.get("confirmed")),
-            "updated": max(stamps) if stamps else meta.get("updated", ""),
+            "confirmed": bool(idea.get("confirmed")),
+            "updated": max(stamps) if any(stamps) else "",
         })
     out.sort(key=lambda p: p["updated"], reverse=True)
     return out
@@ -205,17 +197,14 @@ def list_all():
 # ---------------------------------------------------------------- reset
 
 def reset(name):
-    """Back to empty. The corpus and your notes are untouched."""
+    """Back to empty. Your notes and uploaded sources are untouched."""
     d = dir_of(name)
     if not d.exists():
         raise SystemExit(f"no such project: {name}")
-    for f in ("decisions.jsonl", "threads.jsonl", "design-model.json", "constraints.md"):
+    for f in LOGS + ("design-model.json", "bom.json", "idea.json"):
         (d / f).unlink(missing_ok=True)
-    shutil.rmtree(d / "artifacts", ignore_errors=True)
-    shutil.rmtree(d / "chats", ignore_errors=True)
-    (d / "sketch.json").write_text(json.dumps(
-        {"brief": "", "blocks": [], "links": [], "confirmed": False},
-        ensure_ascii=False, indent=2), encoding="utf-8")
+    for sub in ("artifacts", "chats", "netlist", "exports", "library"):
+        shutil.rmtree(d / sub, ignore_errors=True)
     ensure(name)
     touch(name)
     return workspace.safe_name(name)
@@ -233,4 +222,4 @@ if __name__ == "__main__":
         print(json.dumps(load_meta(sys.argv[2]), ensure_ascii=False, indent=2))
     else:
         for p in list_all():
-            print(f"{p['name']:24} {p['decisions']:>3} decisions  {p['updated']}  {p['brief'][:40]}")
+            print(f"{p['name']:24} {p['lines']:>3} BOM lines  {p['updated']}  {p['brief'][:40]}")

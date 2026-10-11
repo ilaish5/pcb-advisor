@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>מפת הבוחן — PCB</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;900&family=Rubik:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap');
+  :root{
+    --bg:#f3f1ea;
+    --surface:#fbfaf6;
+    --surface-2:#efece2;
+    --ink:#20241f;
+    --ink-soft:#585d52;
+    --line:#d9d4c6;
+    --copper:#b06a30;
+    --copper-soft:#c99a5f;
+    --solder:#1f5f4a;
+    --solder-soft:#e0ece5;
+    --gold:#a9852c;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#14150f;
+      --surface:#1c1e16;
+      --surface-2:#23261c;
+      --ink:#eceadd;
+      --ink-soft:#a3a394;
+      --line:#33362a;
+      --copper:#d99a5c;
+      --copper-soft:#8a5a2c;
+      --solder:#4fb894;
+      --solder-soft:#1c2f28;
+      --gold:#d9b458;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#14150f;
+    --surface:#1c1e16;
+    --surface-2:#23261c;
+    --ink:#eceadd;
+    --ink-soft:#a3a394;
+    --line:#33362a;
+    --copper:#d99a5c;
+    --copper-soft:#8a5a2c;
+    --solder:#4fb894;
+    --solder-soft:#1c2f28;
+    --gold:#d9b458;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Rubik',system-ui,sans-serif;
+    line-height:1.55;
+    direction:rtl;
+    margin:0;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:clamp(20px,4vw,44px)}
+
+  header{
+    display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;
+    gap:16px;padding-bottom:20px;margin-bottom:26px;
+    border-bottom:2px solid var(--ink);
+  }
+  h1{
+    font-family:'Heebo',sans-serif;font-weight:900;
+    font-size:clamp(1.9rem,4.5vw,3rem);line-height:1.05;margin:0;
+    letter-spacing:-.01em;text-wrap:balance;
+  }
+  h1 span{color:var(--copper)}
+  .sub{color:var(--ink-soft);font-size:.95rem;margin-top:8px;max-width:52ch}
+  .badge{
+    font-family:'IBM Plex Mono',monospace;font-size:.72rem;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--solder);background:var(--solder-soft);
+    padding:6px 12px;border-radius:999px;white-space:nowrap;
+  }
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:18px}
+  @media (max-width:720px){.grid{grid-template-columns:1fr}}
+
+  .card{
+    background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:20px 22px;position:relative;overflow:hidden;
+  }
+  .card::before{
+    content:"";position:absolute;inset-block:0;inset-inline-start:0;width:4px;
+    background:linear-gradient(var(--copper),var(--gold));
+  }
+  .u-head{display:flex;align-items:baseline;gap:10px;margin-bottom:4px}
+  .u-num{
+    font-family:'IBM Plex Mono',monospace;font-size:.8rem;font-weight:500;
+    color:var(--bg);background:var(--copper);border-radius:6px;
+    padding:2px 8px;letter-spacing:.05em;
+  }
+  .u-title{font-family:'Heebo',sans-serif;font-weight:700;font-size:1.18rem;margin:0}
+  .u-en{color:var(--ink-soft);font-size:.78rem;font-family:'IBM Plex Mono',monospace;margin:2px 0 14px}
+
+  .topics{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+  .topics li{padding-inline-start:16px;position:relative;font-size:.92rem}
+  .topics li::before{
+    content:"";position:absolute;inset-inline-start:0;top:.62em;
+    width:6px;height:6px;border-radius:2px;background:var(--copper-soft);
+  }
+  .topics b{color:var(--ink);font-weight:600}
+  .k{
+    font-family:'IBM Plex Mono',monospace;font-size:.82em;
+    background:var(--surface-2);border:1px solid var(--line);
+    padding:1px 5px;border-radius:5px;white-space:nowrap;direction:ltr;display:inline-block;
+  }
+
+  .note{
+    margin-top:28px;background:var(--solder-soft);border:1px solid var(--line);
+    border-radius:14px;padding:18px 22px;
+  }
+  .note h3{font-family:'Heebo',sans-serif;margin:0 0 12px;font-size:1.05rem;color:var(--solder)}
+  .flags{display:flex;flex-wrap:wrap;gap:8px}
+  .flag{
+    font-size:.82rem;background:var(--surface);border:1px solid var(--line);
+    border-radius:8px;padding:7px 11px;
+  }
+  .flag b{color:var(--copper);font-family:'IBM Plex Mono',monospace;font-size:.82em}
+
+  footer{margin-top:24px;color:var(--ink-soft);font-size:.78rem;text-align:center}
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>מפת הבוחן — <span>מעגלים מודפסים</span></h1>
+      <p class="sub">מבט-על על מה שנבחן: קורס Altium Education, יחידות 1–4. כל כרטיס = יחידה אחת עם הנושאים המרכזיים. פירוט מלא בקובץ הסיכום.</p>
+    </div>
+    <span class="badge">4 יחידות · ~118 שיעורים</span>
+  </header>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="u-head"><span class="u-num">01</span><h2 class="u-title">יסודות תכן PCB</h2></div>
+      <div class="u-en">Introduction to PCB Design</div>
+      <ul class="topics">
+        <li><b>4 מסמכי התכן</b> — מי מכיל מה: Schematic · BOM · Layout · Libraries</li>
+        <li><b>מונחי יסוד</b> — PCB↔PCBA, trace, plane vs signal, stackup, laminate, reference designator</li>
+        <li><b>סינכרון דו-כיווני</b> סכמה↔layout (<span class="k">Update PCB Document</span>)</li>
+        <li><b>Altium 365</b> — ענן לשיתוף פרויקטים</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <div class="u-head"><span class="u-num">02</span><h2 class="u-title">סכמות וספריות</h2></div>
+      <div class="u-en">Schematics and Libraries</div>
+      <ul class="topics">
+        <li><b>Nets & Ports</b> — ground=GND כברירת מחדל · port רק בין גיליונות</li>
+        <li><b>סמלים</b> — pinout מול datasheet, multi-part, סוגי פינים (default: passive)</li>
+        <li><b>Flat vs Hierarchical</b> — מעגל חוזר → hierarchical</li>
+        <li><b>שרשרת אספקה</b> — stock, distributor, MOQ, lifecycle, Octopart</li>
+        <li><b>מעבר ל-Layout</b> — ECO, ratsnest, עובי לוח <span class="k">1.57mm</span>, copper weight, Dk/Df</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <div class="u-head"><span class="u-num">03</span><h2 class="u-title">Layout של הלוח</h2></div>
+      <div class="u-en">PCB Layout</div>
+      <ul class="topics">
+        <li><b>אנטומיה</b> — solder mask, silkscreen, plating, core/prepreg, THT vs SMD</li>
+        <li><b>Stackup</b> — סימטרי, זוגי, ~1.57mm · תפקידי <b>ground plane</b></li>
+        <li><b>חומרים</b> — Dk, Tg, IPC-4101 · מה מבקשים מהיצרן</li>
+        <li><b>קבצי ייצור</b> — Gerber, Drill, Pick-and-place · DRC ו-DFM</li>
+        <li><b>Design Rules</b> — 10 קטגוריות · clearances בטוחים (<span class="k">4/8/5 mil</span>)</li>
+        <li><b>סדר עבודה + ניווט</b> ב-PCB Editor</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <div class="u-head"><span class="u-num">04</span><h2 class="u-title">ניתוב ושלמות אות</h2></div>
+      <div class="u-en">Routing & Signal Integrity</div>
+      <ul class="topics">
+        <li><b>Traces</b> — microstrip vs stripline, כלל 3W, <span class="k">50Ω/100Ω</span>, זוויות</li>
+        <li><b>Vias</b> — סוגים (through/blind/buried/micro), teardrops, <span class="k">8 mil</span></li>
+        <li><b>IPC-6012</b> — מחלקות annular ring (Class 1/2/3)</li>
+        <li><b>Single-ended vs Differential</b> — length matching, עכבה, net class</li>
+        <li><b>מישור ייחוס</b> — 2 כללי הזהב, מעבר מעל split</li>
+        <li><b>באסים</b> — I2C / SPI / UART · מה זה High-Speed (rise time)</li>
+        <li><b>Crosstalk · EMI/EMC · ESD</b> — מסננים, FCC/CISPR, termination</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <div class="note">
+    <h3>מספרים ועובדות שחוזרים בבוחן</h3>
+    <div class="flags">
+      <span class="flag">עובי לוח סטנדרטי <b>1.57mm=62mil</b></span>
+      <span class="flag">1.0 oz/ft² נחושת ≈ <b>35µm</b></span>
+      <span class="flag">copper-to-copper מינ׳ <b>4mil</b></span>
+      <span class="flag">קדח via מינ׳ <b>8mil</b></span>
+      <span class="flag">עכבה נפוצה <b>50Ω</b> · זוג <b>100Ω</b></span>
+      <span class="flag">כלל <b>3W</b> נגד crosstalk</span>
+      <span class="flag">rise time בעייתי <b>≤10ns</b></span>
+      <span class="flag">I2C ≤ <b>400pF</b> · ≤ <b>3mA</b></span>
+      <span class="flag">High-Speed = <b>rise time</b>, לא clock</span>
+      <span class="flag">ground default שם <b>GND</b></span>
+    </div>
+  </div>
+
+  <footer>מבוסס על <b>סיכום-יחידות-1-4.md</b> · בוחן אמריקאי, 15–20 שאלות</footer>
+</div>
+
+</body>
+</html>

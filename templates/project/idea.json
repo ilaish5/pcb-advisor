@@ -1,0 +1,31 @@
+{
+  "goal": "",
+  "agreed": [],
+  "blocks": [],
+  "links": [],
+  "confirmed": false,
+  "requirements": [
+    {
+      "id": "ics",
+      "text": "At least 3 ICs",
+      "check": "ic_count",
+      "min": 3
+    },
+    {
+      "id": "parts",
+      "text": "About 10 other parts",
+      "check": "part_count",
+      "min": 10
+    },
+    {
+      "id": "stock",
+      "text": "All parts in stock",
+      "check": "stock"
+    },
+    {
+      "id": "approval",
+      "text": "Manufacturer approves the files: a later stage",
+      "check": "later"
+    }
+  ]
+}

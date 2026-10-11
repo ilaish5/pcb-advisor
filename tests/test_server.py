@@ -11,6 +11,9 @@ import urllib.request
 
 import pytest
 
+import session as session_mod
+import store
+
 
 @pytest.fixture
 def server(home, monkeypatch):
@@ -19,7 +22,7 @@ def server(home, monkeypatch):
     import serve
 
     monkeypatch.setattr(serve, "QUIET", True)
-    monkeypatch.setattr(serve, "redraw", lambda project: None)   # no drawing stack
+    monkeypatch.setattr(serve, "recheck_async", lambda project, key: None)   # no network
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
     t = threading.Thread(target=httpd.serve_forever, daemon=True)
     t.start()
@@ -30,7 +33,7 @@ def server(home, monkeypatch):
 
 def post(base, path, body, project):
     req = urllib.request.Request(
-        f"{base}{path}?project={project}", method="POST",
+        f"{base}{path}{chr(38) if chr(63) in path else chr(63)}project={project}", method="POST",
         data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -39,32 +42,230 @@ def post(base, path, body, project):
         return e.code, json.loads(e.read())
 
 
-# ---------------------------------------------------------------- refusals
-#
-# Each of these used to be accepted, and each one cost something: a decision
-# withdrawn with no record of why, a discussion closed with no record of what
-# settled it, a typo'd id written into an append-only log forever.
+def get(base, path, project, raw=False):
+    try:
+        with urllib.request.urlopen(f"{base}{path}{'&' if '?' in path else '?'}project={project}", timeout=10) as r:
+            body = r.read()
+            return r.status, (body if raw else json.loads(body))
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
 
 
+def line(state, key):
+    return next(l for l in state["bom"] if l["key"] == key)
 
 
+# ---------------------------------------------------------------- reading
+
+def test_state_carries_everything_the_ui_draws(server, lte):
+    code, st = get(server, "/api/state", lte)
+    assert code == 200
+    for key in ("idea", "bom", "totals", "proposals", "sheets", "library", "sources", "chat", "sessions", "requirements"):
+        assert key in st, key
+    assert st["sheets"][0]["id"] == "03" and "U4" in st["sheets"][0]["parts"]
 
 
-def test_the_browser_cannot_set_a_config_key_that_is_not_its_own(server, battery_mcu):
-    code, body = post(server, "/api/config",
-                      {"set": {"corpus.status": "authored"}}, battery_mcu)
+def test_the_sheet_is_served_as_svg(server, lte):
+    code, body = get(server, "/api/sheet.svg?sheet=03", lte, raw=True)
+    assert code == 200 and body.startswith(b"<svg")
+    assert get(server, "/api/sheet.svg?sheet=99", lte)[0] == 404
+
+
+def test_the_skills_page_comes_from_the_registry(server, lte):
+    code, body = get(server, "/api/skills", lte)
+    assert code == 200 and any(s["name"] == "Check availability" and s["available"] for s in body["skills"])
+
+
+# ---------------------------------------------------------------- the student decides
+
+def test_approving_a_proposal_changes_the_bom_and_the_library_together(server, lte):
+    _, st = get(server, "/api/state", lte)
+    prop = next(p for p in st["proposals"] if p["status"] == "pending")
+    assert line(st, "D30")["mpn"] == "ESD56301D05"
+    code, st = post(server, "/api/proposal", {"id": prop["id"], "decision": "approved"}, lte)
+    assert code == 200
+    d30 = line(st, "D30")
+    assert d30["mpn"] == "PESD5V0S1BL" and d30["library"] == "review" and d30["supply"] is None
+    assert next(p for p in st["proposals"] if p["id"] == prop["id"])["status"] == "approved"
+
+
+def test_rejecting_changes_nothing(server, lte):
+    _, st = get(server, "/api/state", lte)
+    prop = next(p for p in st["proposals"] if p["status"] == "pending")
+    code, st = post(server, "/api/proposal", {"id": prop["id"], "decision": "rejected"}, lte)
+    assert code == 200 and line(st, "D30")["mpn"] == "ESD56301D05"
+
+
+def test_a_proposal_cannot_be_decided_twice_or_with_a_made_up_decision(server, lte):
+    _, st = get(server, "/api/state", lte)
+    pid = next(p for p in st["proposals"] if p["status"] == "pending")["id"]
+    assert post(server, "/api/proposal", {"id": pid, "decision": "maybe"}, lte)[0] == 400
+    assert post(server, "/api/proposal", {"id": pid, "decision": "rejected"}, lte)[0] == 200
+    assert post(server, "/api/proposal", {"id": pid, "decision": "approved"}, lte)[0] == 400
+    assert post(server, "/api/proposal", {"id": "nope", "decision": "approved"}, lte)[0] == 404
+
+
+def test_editing_an_mpn_marks_the_line_as_checking(server, lte):
+    code, st = post(server, "/api/bom/edit", {"line": "U5", "field": "mpn", "value": "TXS0104EPW"}, lte)
+    assert code == 200 and line(st, "U5")["supply"] is None and st["totals"]["checking"] >= 1
+
+
+def test_editing_a_field_that_is_not_editable_is_refused(server, lte):
+    assert post(server, "/api/bom/edit", {"line": "U5", "field": "supply", "value": 1}, lte)[0] == 400
+    assert post(server, "/api/bom/edit", {"line": "NOPE", "field": "note", "value": "x"}, lte)[0] == 404
+
+
+def test_a_student_cannot_accept_a_part_that_failed_verification(server, lte):
+    assert post(server, "/api/library/accept", {"line": "D31"}, lte)[0] == 400       # mismatch
+    assert post(server, "/api/library/accept", {"line": "NOPE"}, lte)[0] == 404
+    store.add_library(lte, "D31", {"verify": "pass"}, by="verify_part")
+    code, st = post(server, "/api/library/accept", {"line": "D31"}, lte)
+    assert code == 200 and line(st, "D31")["library"] == "ok"
+
+
+def test_the_library_export_warns_about_what_is_unverified(server, lte):
+    code, out = post(server, "/api/library/export", {}, lte)
+    assert code == 200 and out["file"].endswith("_library.zip")
+    assert any("D31" in w for w in out["warnings"]) and any("D30" in w for w in out["warnings"])
+    code, body = get(server, f"/api/export/{out['file']}", lte, raw=True)
+    assert code == 200 and body[:2] == b"PK"
+
+
+# ---------------------------------------------------------------- what the agent may do
+
+def test_a_bom_proposal_from_the_agent_changes_nothing_by_itself(home, lte):
+    import serve
+    applied, props, refused = serve.apply_actions(lte, [{
+        "type": "bom.propose", "line": "U5", "changes": {"mpn": "SN74AXC4T774"}, "reason": "test",
+        "sources": ["txs0104e.pdf"]}])
+    assert props and not refused
+    assert {l["key"]: l for l in store.bom(lte)}["U5"]["mpn"] == "TXS0104EPWR"
+    assert any(p["id"] == props[0] and p["status"] == "pending" for p in store.proposals(lte))
+
+
+def test_the_agent_cannot_mark_a_part_verified_or_accepted(home, lte):
+    import serve
+    serve.apply_actions(lte, [{"type": "library.add", "line": "D31", "changes": {
+        "verify": "pass", "accepted": True, "model_source": "SnapEDA"}}])
+    serve.apply_actions(lte, [{"type": "bom.propose", "line": "D30", "changes": {"mpn": "X"},
+                               "library": {"verify": "pass", "accepted": True, "symbol": True}}])
+    entry = store.library_parts(lte)["D31"]
+    assert entry["verify"] == "mismatch" and entry["accepted"] is False
+    prop = [p for p in store.proposals(lte) if p["changes"].get("mpn") == "X"][0]
+    assert prop["library"] == {"symbol": True}
+
+
+def test_a_netlist_with_a_bad_pin_or_unknown_ref_is_refused(home, lte):
+    import serve
+    applied, _, refused = serve.apply_actions(lte, [{"type": "netlist.write", "sheet": "05", "data": {
+        "parts": [{"ref": "U99", "pins": [{"name": "A", "num": "1", "net": "N"}]},
+                  {"ref": "U5", "pins": [{"name": "B", "num": "2", "net": ""}]}]}}])
+    assert not applied and "05" not in store.sheet_ids(lte)
+    assert "U99" in refused[0] and "no net" in refused[0]
+
+
+def test_confirming_the_idea_needs_a_quote_from_the_student(home, empty):
+    import serve
+    _, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm"}], last_user="yes")
+    assert refused and not store.load_idea(empty)["confirmed"]
+    _, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm", "student_said": "sure thing"}],
+                                        last_user="Yes, confirmed.")
+    assert refused and not store.load_idea(empty)["confirmed"]
+    applied, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm", "student_said": "yes, confirmed"}],
+                                              last_user="Yes, confirmed.")
+    assert applied == ["idea.confirm"] and store.load_idea(empty)["confirmed"]
+
+
+def test_an_unknown_action_is_reported_not_swallowed(home, lte):
+    import serve
+    _, _, refused = serve.apply_actions(lte, [{"type": "answer", "node": "x"}, {"type": "bom.propose", "line": "NOPE", "changes": {}}])
+    assert len(refused) == 2
+
+
+def test_a_part_conversation_is_anchored_and_starts_with_its_context(home, lte):
+    import serve
+    sid = serve.open_part_session(lte, "C35")             # a ref inside the C100 line
+    row = next(r for r in session_mod.list_all(lte) if r["id"] == sid)
+    assert row["anchor"] == "C100"
+    chat = session_mod.load_chat(lte, sid)
+    assert chat[0]["role"] == "ctx" and chat[0]["part"]["mpn"] == "CL05B104KO5NNNC"
+    assert "+3V3" in chat[0]["part"]["nets"]
+    assert serve.open_part_session(lte, "C34") == sid      # the same line, the same conversation
+
+
+def test_chat_stores_the_replys_tools_and_proposals(server, lte, monkeypatch):
+    import agent
+    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: {
+        "reply": "Proposed.", "tools": [{"t": "Check availability", "d": "x", "st": "ok"}],
+        "actions": [{"type": "bom.propose", "line": "U5", "changes": {"note": "n"}, "reason": "r"}]})
+    code, st = post(server, "/api/chat", {"text": "hello"}, lte)
+    assert code == 200
+    last = st["chat"][-1]
+    assert last["role"] == "agent" and last["tools"][0]["t"] == "Check availability" and last["proposals"]
+    assert st["chat"][-2]["text"] == "hello"
+
+
+def test_chat_in_a_part_conversation_gives_the_agent_that_parts_context(server, lte, monkeypatch):
+    import agent
+    seen = {}
+    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: (
+        seen.update(ask=ask) or {"reply": "ok", "actions": [], "tools": []}))
+    _, out = post(server, "/api/thread/open", {"anchor": "U5"}, lte)
+    code, _ = post(server, f"/api/chat?session={out['session']}", {"text": "why OE?"}, lte)
+    assert code == 200 and "TXS0104EPWR" in seen["ask"] and "why OE?" in seen["ask"]
+
+
+def test_a_refused_action_is_shown_to_the_student(server, lte, monkeypatch):
+    import agent
+    monkeypatch.setattr(agent, "respond", lambda *a, **k: {
+        "reply": "Done.", "tools": [], "actions": [{"type": "idea.confirm"}]})
+    _, st = post(server, "/api/chat", {"text": "yes"}, lte)
+    assert "Not applied" in st["chat"][-1]["text"]
+
+
+# ---------------------------------------------------------------- the rest of the surface
+
+def test_the_browser_cannot_set_a_config_key_that_is_not_its_own(server, lte):
+    code, body = post(server, "/api/config", {"set": {"server.port": 1}}, lte)
     assert code == 400 and "not settable" in body["error"]
 
 
-def test_a_model_belongs_to_the_engine_it_was_chosen_for(server, battery_mcu):
+def test_a_model_belongs_to_the_engine_it_was_chosen_for(server, lte):
     """A Gemini id sent to Claude Code fails every turn, so switching engine
     must not carry the previous engine's model with it."""
     import workspace
-    post(server, "/api/config", {"set": {"agent.provider": "antigravity",
-                                         "agent.model": "gemini-x"}}, battery_mcu)
+    post(server, "/api/config", {"set": {"agent.provider": "antigravity", "agent.model": "gemini-x"}}, lte)
     assert workspace.get("agent.providers.antigravity.model") == "gemini-x"
-    code, body = post(server, "/api/config",
-                      {"set": {"agent.provider": "claude_code"}}, battery_mcu)
+    code, body = post(server, "/api/config", {"set": {"agent.provider": "claude_code"}}, lte)
+    assert code == 200 and body["config"]["agent"]["model"] == ""
+
+
+def test_an_upload_gets_a_safe_name_and_a_sidecar_with_its_hash(server, lte):
+    import base64
+    code, st = post(server, "/api/upload", {"name": "test:file?.pdf", "data_b64": base64.b64encode(b"hello").decode()}, lte)
     assert code == 200
-    assert body["config"]["agent"]["model"] == ""
-    assert workspace.get("agent.providers.claude_code.model") == ""
+    row = next(s for s in st["sources"] if s["name"] == "test_file_.pdf")
+    assert row["scope"] == "project" and row["present"] and row["sha256"] == "2cf24dba"
+
+
+def test_a_citation_resolves_to_a_listed_source(lte):
+    import model
+    names = {s["name"] for s in model.list_sources(lte)}
+    assert set(model.citations(lte)) <= names
+
+
+def test_the_agent_prompt_survives_a_context_card_in_the_history(home, lte, monkeypatch):
+    """A part conversation starts with a card that has no text; it used to crash the turn."""
+    import agent
+    import gateway
+    import model
+    import serve
+    seen = {}
+
+    class Res:
+        ok, text, provider, model, error = True, "fine", "claude_code", "", ""
+    monkeypatch.setattr(gateway, "route", lambda req, name=None: (seen.update(prompt=req.prompt) or Res()))
+    sid = serve.open_part_session(lte, "U5")
+    m = model.build(project=lte, session=sid)
+    out = agent.respond(m, "why OE?", m["chat"], backend="claude_code")
+    assert out["reply"] == "fine" and "why OE?" in seen["prompt"]

@@ -81,12 +81,12 @@ def test_broken_json_fails_loudly_rather_than_falling_back(home):
 
 # ---------------------------------------------------------------- the split
 
-def test_your_work_follows_the_home_and_the_corpus_stays_with_the_install(home):
+def test_your_work_follows_the_home_and_the_ui_stays_with_the_install(home):
     """This is the whole reason PCB_ADVISOR_HOME exists: a design is your data,
-    the knowledge is part of the program."""
+    the program is the install."""
     assert workspace.projects_dir().is_relative_to(home)
     assert workspace.shared_dir().is_relative_to(home)
-    assert workspace.cascade_dir().is_relative_to(workspace.REPO)
+    assert workspace.templates_dir().is_relative_to(workspace.REPO)
     assert workspace.ui_dir().is_relative_to(workspace.REPO)
 
 
@@ -102,7 +102,7 @@ def test_the_map_given_to_an_engine_is_generated_not_hardcoded(home):
     """A hardcoded map becomes a lie the first time someone moves a folder."""
     workspace.set_value("workspace.projects_dir", "designs")
     places = {p["path"] for p in workspace.describe("demo")["places"]}
-    assert any(p.startswith("designs/demo") for p in places)
+    assert any("designs/demo" in p for p in places)
 
 
 def test_the_map_never_offers_write_access_to_an_append_only_log(home):
@@ -111,18 +111,18 @@ def test_the_map_never_offers_write_access_to_an_append_only_log(home):
             assert place["write"] is False, place["path"]
 
 
-def test_the_corpus_is_never_writable_from_the_map(home):
-    """A constraint invented there is served to every future project, and
-    `convention` provenance requires no source at all - so validation would
-    never catch it."""
-    corpus = [p for p in workspace.describe("demo")["places"]
-              if p["path"].endswith("cascade/*.yaml")]
-    assert corpus and all(p["write"] is False for p in corpus)
+def test_documents_are_only_written_through_the_sources_script(home):
+    """The sha256 in the sidecar is what makes a document citable."""
+    docs = [p for p in workspace.describe("demo")["places"] if "sources" in p["path"] or "datasheets" in p["path"]]
+    assert docs and all(p["write"] == "via scripts/sources.py only" for p in docs)
 
 
-def test_the_map_gives_an_absolute_path_once_the_home_has_moved(home):
-    """With PCB_ADVISOR_HOME elsewhere the corpus is no longer under it, and a
-    path relative to the wrong root is one the engine cannot open."""
-    corpus = next(p for p in workspace.describe("demo")["places"]
-                  if p["path"].endswith("cascade/*.yaml"))
-    assert corpus["path"].startswith(str(workspace.REPO))
+def test_paths_given_to_an_engine_use_forward_slashes(home):
+    """The engine reads them into a shell; a backslash is an escape there."""
+    for place in workspace.describe("demo")["places"]:
+        assert "\\" not in place["path"], place["path"]
+
+
+def test_the_ui_and_templates_stay_with_the_install(home):
+    assert workspace.ui_dir().as_posix().startswith(workspace.REPO.as_posix())
+    assert workspace.templates_dir().as_posix().startswith(workspace.REPO.as_posix())

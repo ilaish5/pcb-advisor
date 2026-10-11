@@ -149,10 +149,10 @@ def _unknown(base, over, prefix):
 
 # ---------------------------------------------------------------- paths
 
-# The corpus ships with the repo; your work lives in the workspace home. They
+# The templates and the UI ship with the repo; your work lives in the workspace home. They
 # are usually the same folder, and PCB_ADVISOR_HOME is what pulls them apart:
 # your projects move to the new home, the knowledge stays where it was installed.
-_REPO_DIRS = {"cascade_dir", "reference_dir", "templates_dir", "ui_dir"}
+_REPO_DIRS = {"templates_dir", "ui_dir"}
 
 
 def _dir(key):
@@ -169,14 +169,6 @@ def projects_dir():
 
 def shared_dir():
     return _dir("shared_dir")
-
-
-def cascade_dir():
-    return _dir("cascade_dir")
-
-
-def reference_dir():
-    return _dir("reference_dir")
 
 
 def templates_dir():
@@ -228,9 +220,6 @@ def safe_name(name):
 #   - the .jsonl logs are append-only and carry `by` (user or agent). Editing
 #     one destroys the record of a student changing their mind, and forging
 #     `by` destroys the only enforcement of "the student decides".
-#   - the cascade is the corpus. A constraint invented there is served to every
-#     future project, and `convention` provenance requires no source at all, so
-#     validation will not catch it.
 #   - derived files are rewritten on the next run; writing them is pointless.
 
 def describe(project=None):
@@ -239,57 +228,68 @@ def describe(project=None):
     pdir = project_dir(project)
 
     def rel(p):
-        # forward slashes on Windows too: the engine reads these into a shell
-        return (p.relative_to(home()) if p.is_relative_to(home()) else p).as_posix()
+        # The engine runs in the install (REPO), where scripts/ is. Paths are relative to
+        # it, and absolute when the workspace home is somewhere else. Forward slashes on
+        # Windows too: the engine reads these into a shell.
+        return (p.relative_to(REPO) if p.is_relative_to(REPO) else p).as_posix()
 
     return {
         "home": str(home()),
+        "cwd": str(REPO),
         "project": pdir.name,
         "places": [
-            {"path": rel(cascade_dir()) + "/*.yaml", "write": False,
-             "what": "the corpus: every question, option and constraint, with its provenance"},
-            {"path": rel(reference_dir()) + "/*.md", "write": False,
-             "what": "the same knowledge written out for a human"},
             {"path": rel(datasheets_dir()), "write": "via scripts/sources.py only",
-             "what": "the shared document library. Each file has a .json beside it "
+             "what": "the shared library: course material and datasheets. Each file has a .json beside it "
                      "with its url and sha256, and a .txt with its extracted text"},
             {"path": rel(pdir / "sources"), "write": "via scripts/sources.py only",
-             "what": "copies of the documents THIS project cited"},
+             "what": "documents THIS project uses, same format"},
             {"path": rel(pdir / "project.json"), "write": False,
              "what": "this board's settings: layers, copper weight, temperature rise"},
-            {"path": rel(pdir / "decisions.jsonl"), "write": False,
-             "what": "append-only log of decisions. Never edit; the server appends "
-                     "when you emit an answer action"},
-            {"path": rel(pdir / "threads.jsonl"), "write": False,
-             "what": "append-only, anchored discussions. The server appends on an ask action"},
+            {"path": rel(pdir / "idea.json"), "write": False,
+             "what": "the agreed idea, block diagram and checklist. The server writes it when you emit idea.* actions"},
+            {"path": rel(pdir / "bom-log.jsonl"), "write": False,
+             "what": "append-only: every applied BOM change. You change the BOM only by emitting bom.propose; "
+                     "the student approves, and the server appends"},
+            {"path": rel(pdir / "bom.json"), "write": False,
+             "what": "DERIVED from the logs: the BOM lines with stock, price and library state. Read it, never edit it"},
+            {"path": rel(pdir / "supply-log.jsonl"), "write": False,
+             "what": "append-only stock and price checks, with supplier and time. Only the availability skill writes it"},
+            {"path": rel(pdir / "proposals.jsonl"), "write": False,
+             "what": "append-only: your BOM proposals and the student's decisions on them"},
+            {"path": rel(pdir / "library-log.jsonl"), "write": False,
+             "what": "append-only: library parts, their model source and verification"},
+            {"path": rel(pdir / "netlist") + "/<sheet>.json", "write": False,
+             "what": "one schematic sheet. Emit netlist.write; the server validates it against the BOM"},
             {"path": rel(pdir / "chats") + "/<id>.jsonl", "write": False,
-             "what": "append-only conversations, one file per session. index.json "
-                     "lists them; decisions and threads are shared across all of them"},
+             "what": "append-only conversations, one file per session. index.json lists them; a session with an "
+                     "anchor is about one BOM line"},
             {"path": rel(pdir / "chats") + "/<id>.memory.md", "write": False,
-             "what": "what a conversation would otherwise forget: the student's "
-                     "situation, what was ruled out and why, open promises. Bounded, "
-                     "and rewritten by a separate call - do not edit it mid-turn"},
+             "what": "what a conversation would otherwise forget. Bounded, and rewritten by a separate call"},
             {"path": rel(pdir / "notes.md"), "write": True,
-             "what": "the project's notes: decisions, constraints, context. Nothing derives from it"},
-            {"path": rel(pdir / "BOM.md"), "write": True,
-             "what": "the bill of materials. The student also edits it in the UI"},
-            {"path": rel(pdir / "design-model.json"), "write": False,
-             "what": "DERIVED, rewritten every run. Read it if you want the full state"},
+             "what": "the project's notes. Nothing derives from it"},
         ],
         "scripts": [
+            {"run": oscompat.py("python3 scripts/skills/check_availability.py <project> [LINE ...]"),
+             "what": "stock and price per supplier, stored with the time. NEVER state stock or price without running this"},
+            {"run": oscompat.py("python3 scripts/skills/compare_prices.py <project>"),
+             "what": "cost per board by supplier, from the stored checks"},
+            {"run": oscompat.py("python3 scripts/skills/verify_part.py <project> <line>"),
+             "what": "compare a part's pins with its datasheet text; the result is stored"},
+            {"run": oscompat.py("python3 scripts/skills/export_bom.py <project> [jlc|pcbway|generic]"),
+             "what": "write the BOM for a manufacturer"},
+            {"run": oscompat.py("python3 scripts/skills/render_sheet.py <project> <sheet>"),
+             "what": "draw a sheet from its netlist"},
             {"run": oscompat.py("python3 scripts/sources.py list"),
              "what": "what is already in the document library"},
             {"run": oscompat.py(f"python3 scripts/sources.py get {pdir.name} <url> [name]"),
-             "what": "add a datasheet to this project. Use this rather than curl - "
-                     "it records the url and sha256, which is what makes it citable"},
-            {"run": oscompat.py("python3 scripts/sources.py fetch <url> [name]"),
-             "what": "add a document to the shared library only"},
+             "what": "add a datasheet to this project. Use this rather than curl - it records the url and sha256, "
+                     "which is what makes it citable"},
             {"run": oscompat.py('python3 scripts/sources.py verify <name> "<quote>"'),
              "what": "is this quote really in that document? Run it BEFORE you quote"},
             {"run": oscompat.py("python3 scripts/trace_width.py <amps> --oz <copper> --rise <degrees>"),
              "what": "IPC-2221 trace width. Run it; never estimate a width yourself"},
             {"run": oscompat.py("python3 scripts/model.py <project>"),
-             "what": "the full design state, more than the summary above carries"},
+             "what": "the full project state, more than the summary above carries"},
         ],
     }
 

@@ -7,11 +7,12 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py new "usb sensor"     start a project from the template
     python3 pcb.py list                 what is in the workspace
     python3 pcb.py show [project]       where the design stands
+    python3 pcb.py seed                 the worked example: projects/lte-tracker
     python3 pcb.py engines              which LLM engines are wired up
     python3 pcb.py tools [--clear]      what the engine may touch on your machine
     python3 pcb.py chats [project]      conversations, and when memory was rewritten
     python3 pcb.py config [key] [value] read or set a setting
-    python3 pcb.py check                validate the corpus and the citations
+    python3 pcb.py check [project]      every sheet validates, every citation resolves
     python3 pcb.py reset [project]      wipe a project's state
     python3 pcb.py trace 1.5            IPC-2221 trace width
 
@@ -61,25 +62,34 @@ def cmd_new(args):
 def cmd_list(args):
     rows = project.list_all()
     if not rows:
-        print(oscompat.py("no projects yet — python3 pcb.py new \"my board\""))
+        print(oscompat.py("no projects yet — python3 pcb.py new \"my board\"  (or: python3 pcb.py seed)"))
         return
     for p in rows:
         mark = "✓" if p["confirmed"] else "·"
-        print(f"{mark} {p['name']:24} {p['decisions']:>3} decisions  "
+        print(f"{mark} {p['name']:24} {p['lines']:>3} BOM lines  {p['sheets']} sheets  "
               f"{p['updated'][:16]:16}  {p['brief'][:44]}")
 
 
 def cmd_show(args):
     import model
     m = model.write(args[0] if args else None)
-    pr = m["progress"]
-    print(f"{m['project']}: stage={m['stage']} domains={m['domains'] or '-'}")
-    print(f"  {pr['answered']}/{pr['total']} answered · {pr['constraints']} constraints "
-          f"({pr['unverified']} unverified) · {pr['conflicts']} conflicts")
-    for n in m["open"]:
-        print(f"  OPEN   {n['id']}  {n['question']}")
-    for n in m["blocked"]:
-        print(f"  next   {n['id']}  ({n['reason']})")
+    t = m["totals"]
+    print(f"{m['project']}: idea {'confirmed' if m['idea']['confirmed'] else 'open'} · "
+          f"{t['lines']} BOM lines · {len(m['sheets'])} sheets")
+    print(f"  {t['parts']} parts to place · ${t['cost']:.2f} parts/board · "
+          f"{t['out_of_stock']} out of stock · {t['checking']} checking · {t['to_verify']} to verify")
+    for p in m["proposals"]:
+        if p["status"] == "pending":
+            print(f"  PENDING  {p['id']}  {p['line']}: {', '.join(p['changes'])}  ({p['reason'][:60]})")
+    for r in m["requirements"]:
+        print(f"  {'✓' if r['ok'] else '·' if r['ok'] is None else '✗'} {r['text']} {r['detail']}")
+
+
+def cmd_seed(args):
+    import seed
+    res = seed.seed(force="--force" in args)
+    print(("created" if res["created"] else "already there:"), f"projects/{res['project']}")
+    print(oscompat.py(f"open:   python3 pcb.py serve --project {res['project']}"))
 
 
 def cmd_engines(args):
@@ -102,6 +112,7 @@ RECOMMENDED_TOOLS = {
         "Bash({python} scripts/trace_width.py *)",
         "Bash({python} scripts/sources.py *)",
         "Bash({python} scripts/model.py *)",
+        "Bash({python} scripts/skills/*.py *)",
     ],
     "disallowed": ["Write", "Edit", "NotebookEdit"],
 }
@@ -171,14 +182,22 @@ def cmd_config(args):
 
 
 def cmd_check(args):
-    import validate_cascade
+    """Every sheet validates against the BOM, every citation resolves to a source."""
+    import model
+    import store
     import verify_sources
-    bad = validate_cascade.main()
-    try:
-        failed = verify_sources.main()
-    except SystemExit as exc:
-        failed = exc.code
-    return 1 if (bad or failed) else 0
+    projects = args or [p["name"] for p in project.list_all()]
+    bad = 0
+    refs = None
+    for name in projects:
+        refs = {r for l in store.bom_lines(name) for r in l.get("refs", [])}
+        for sid in store.sheet_ids(name):
+            errors = store.validate_sheet(store.load_sheet(name, sid), refs)
+            for e in errors:
+                print(f"  FAIL  {name}/{sid}: {e}")
+            bad += len(errors)
+        print(f"  ok    {name}: {len(store.sheet_ids(name))} sheet(s) checked")
+    return 1 if (bad or verify_sources.main(projects)) else 0
 
 
 def cmd_reset(args):
@@ -203,7 +222,7 @@ def cmd_trace(args):
 
 COMMANDS = {
     "init": cmd_init, "serve": cmd_serve, "run": cmd_serve, "new": cmd_new, "list": cmd_list,
-    "show": cmd_show, "engines": cmd_engines, "tools": cmd_tools,
+    "show": cmd_show, "seed": cmd_seed, "engines": cmd_engines, "tools": cmd_tools,
     "chats": cmd_chats,
     "config": cmd_config,
     "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,

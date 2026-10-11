@@ -1,9 +1,10 @@
-# PCB-Advisor Project
+# PCB-Advisor project
 
-You are working on a PCB Advisor project in this directory.
-To understand the current state of the design, check:
-- `sketch.json`: the agreed block diagram
-- `decisions.jsonl`: the decisions made so far
-- `design-model.json`: the current derived state
-- `notes.md`: freeform notes about the project
-- `README.md`: project directory overview
+You are working on a PCB Advisor project in this directory. To understand where it stands:
+- `idea.json`: the goal, the agreed items, the block diagram, the checklist
+- `bom.json`: the BOM (DERIVED from `bom-log.jsonl`, `supply-log.jsonl` and `library-log.jsonl`; never edit)
+- `proposals.jsonl`: what was proposed, and what the student decided
+- `netlist/<sheet>.json`: the schematic sheets
+- `chats/`: the conversations
+- `notes.md`: freeform notes
+Changes go through the action channel (see `.agents/rules/`); the server is the only writer.

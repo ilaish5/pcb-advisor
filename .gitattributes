@@ -1,1 +1,14 @@
 * text=auto eol=lf
+*.pdf binary
+*.png binary
+*.zip binary
+
+# Altium files: keep byte-exact (OLE binaries; PrjPcb/OutJob are CRLF text Altium writes itself)
+*.SchDoc binary
+*.PcbDoc binary
+*.SchLib binary
+*.PcbLib binary
+*.IntLib binary
+*.PrjPcb -text
+*.OutJob -text
+*.RUL -text

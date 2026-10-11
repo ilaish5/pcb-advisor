@@ -38,19 +38,35 @@ def rules():
 
 
 def _summary(model):
+    """What the agent sees of the project on every turn: small, and enough to not guess."""
+    bom = []
+    for l in model.get("bom", []):
+        row = {"line": l["key"], "refs": l.get("refs"), "value": l.get("value"), "mpn": l.get("mpn"),
+               "library": l.get("library")}
+        if l.get("dnp") or l.get("nobuy"):
+            row["not_bought"] = True
+        sup = l.get("supply")
+        row["stock"] = ("not checked" if sup is None else
+                        {k: v.get("stock") for k, v in sup.items()})
+        bom.append(row)
     s = {
-        "idea": model.get("idea", {}),
-        "bom_stats": f"{len(model.get('bom', []))} lines",
-        "progress": model.get("progress", {})
+        "idea": {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "agreed", "confirmed")},
+        "totals": model.get("totals"),
+        "bom": bom,
+        "sheets": [{"id": sh["id"], "title": sh["title"], "parts": len(sh["parts"])} for sh in model.get("sheets", [])],
+        "pending_proposals": [{"id": p["id"], "line": p["line"], "changes": p["changes"]}
+                              for p in model.get("proposals", []) if p["status"] == "pending"],
+        "checklist": model.get("requirements"),
+        "sources": [x["name"] for x in model.get("sources", [])],
     }
-    return json.dumps(s, ensure_ascii=False, indent=2)
+    return json.dumps(s, ensure_ascii=False, indent=1)
 
 
 def _workspace_section(project):
     """Only for an engine that can actually open a file. Telling a text-only
     engine to go and read something does not fail loudly - it invents."""
     w = workspace.describe(project)
-    lines = [f"You are running in {w['home']}, and the current project is "
+    lines = [f"You are running in {w['cwd']} (the install; the workspace is {w['home']}), and the current project is "
              f"{w['project']}. You may open these yourself.", ""]
     for place in w["places"]:
         write = place["write"]
@@ -62,11 +78,10 @@ def _workspace_section(project):
         lines.append(f"  {sc['run']}")
         lines.append(f"      {sc['what']}")
     lines += ["",
-              "Reading is free: open a datasheet, grep the corpus, check a value. "
+              "Reading is free: open a datasheet, grep the sources, check a value. "
               "Writing is not yours. Never edit the .jsonl logs - they are "
               "append-only and carry who decided what, and the server appends to "
-              "them when you emit an action. Never add a constraint to the "
-              "cascade; propose it to the student instead. To add a document, "
+              "them when you emit an action. To add a document, "
               "run scripts/sources.py so its sha256 is recorded. To view available "
               "sources, read the files in the 'sources/' directory. To delete a "
               "document, run '" + oscompat.py("python3 scripts/sources.py unuse <project_name> <document_name>") + "'."]
@@ -90,8 +105,8 @@ holds only what the transcript would otherwise lose:
   How they work             language, level, how much detail they want.
 
 HARD RULES
-- Never put a design rule here. Those come only from the authored questions.
-  A layout or electrical rule in this file is a bug.
+- Never put an electrical or layout rule here as if it were established. Only what
+  the student said or agreed to.
 - Only what the student actually said or agreed to. If you are unsure, leave it out.
 - Keep the four headings exactly as they are, even if a section is empty.
 - Every line is a short bullet. No prose paragraphs.
@@ -165,15 +180,19 @@ def _strip_fence(text):
 def _parse(text):
     """Pull the actions block out; tolerate a model that forgets it."""
     blocks = re.findall(r"```json\s*(.*?)```", text, re.S)
-    actions = []
+    actions, tools = [], []
     for b in blocks:
         try:
             obj = json.loads(b)
-            actions.extend(obj.get("actions", []) if isinstance(obj, dict) else obj)
         except json.JSONDecodeError:
-            pass
+            continue
+        if isinstance(obj, dict):
+            actions.extend(obj.get("actions", []))
+            tools.extend(t for t in obj.get("tools", []) if isinstance(t, dict) and t.get("t"))
+        elif isinstance(obj, list):
+            actions.extend(obj)
     reply = re.sub(r"```json\s*.*?```", "", text, flags=re.S).strip()
-    return reply, actions
+    return reply, actions, tools
 
 
 def respond(model, message, history, backend=None, timeout=None):
@@ -184,6 +203,8 @@ def respond(model, message, history, backend=None, timeout=None):
         return {"reply": None, "actions": [], "backend": name, "provider": name}
 
     keep = int(workspace.get("agent.history_messages", 8))
+    # a context card (role "ctx") has no text; the agent gets that context in the message itself
+    history = [m for m in history if m.get("text")]
     convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-keep:])
 
     parts = [rules()]
@@ -193,19 +214,6 @@ def respond(model, message, history, backend=None, timeout=None):
                      + memory)
     if gateway.provider(name).has_workspace():
         parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project")))
-    # A banner in the corner is not enough: the student asks the advisor, not the
-    # screen. This is injected rather than written into RULES so that it stops
-    # being said the moment someone authors a corpus and flips the config.
-    corpus = workspace.get("corpus", {}) or {}
-    if corpus.get("status") and corpus["status"] != "authored":
-        parts.append(
-            "--- ABOUT THE KNOWLEDGE YOU ARE USING ---\n"
-            f"{corpus.get('note', '')}\n"
-            "Do not pretend otherwise. If the student says they are building "
-            "this for real, ordering parts, or submitting it, tell them once, "
-            "plainly, that the rules you are quoting are demonstration material "
-            "and have not been reviewed - then carry on helping. Do not repeat "
-            "it every turn, and never use it as a reason to refuse an answer.")
     parts.append("--- CURRENT STATE ---\n" + _summary(model))
     parts.append("--- CONVERSATION SO FAR ---\n" + convo)
     parts.append("--- STUDENT SAYS ---\n" + message + "\n")
@@ -216,8 +224,8 @@ def respond(model, message, history, backend=None, timeout=None):
         system=parts[0],
         history=[{"role": m.get("role"), "text": m.get("text")} for m in history[-keep:]],
         timeout=int(timeout or workspace.get("agent.timeout_seconds", 180)),
-        # the workspace map and the tool allowlist are both relative to home
-        options={"cwd": str(workspace.home())}
+        # the workspace map and the tool allowlist are both relative to the install (scripts/ lives there)
+        options={"cwd": str(workspace.REPO)}
     ), name=name)
 
     if not res.ok:
@@ -225,6 +233,6 @@ def respond(model, message, history, backend=None, timeout=None):
                 "backend": res.provider or name, "provider": res.provider or name,
                 "error": True}
 
-    reply, actions = _parse(res.text)
-    return {"reply": reply or "(no reply)", "actions": actions,
+    reply, actions, tools = _parse(res.text)
+    return {"reply": reply or "(no reply)", "actions": actions, "tools": tools,
             "backend": res.provider, "provider": res.provider, "model": res.model}

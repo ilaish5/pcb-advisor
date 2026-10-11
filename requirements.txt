@@ -1,6 +1,1 @@
-pyyaml          # the cascades
-schemdraw       # artifacts/blocks.svg for the project folder
-matplotlib      # schemdraw's backend
-cairosvg        # svg -> png
-python-bidi     # Hebrew in the exported SVG (the browser UI does its own bidi)
 pypdf           # pull text out of datasheets so quotes can be verified

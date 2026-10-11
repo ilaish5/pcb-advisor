@@ -1,155 +1,217 @@
 """
-The engine. state (what happened) -> design model.
+The model: the project's logs -> one dict the UI and the agent both read.
+
+Nothing here decides anything. store.py folds the logs; this file puts the
+pieces side by side (idea, BOM, sheets, library, sources, conversations) and
+evaluates the checklist against the final-project rules.
 """
+import hashlib
 import json
 import pathlib
+import re
 import sys
-import datetime as dt
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import project as project_mod
-import session as session_mod
-import workspace
-import sources as sources_mod
+import project as project_mod  # noqa: E402
+import session as session_mod  # noqa: E402
+import store                   # noqa: E402
+import workspace               # noqa: E402
+
+CITE = re.compile(r"\{\{src:([^|}]+)(?:\|([^}]*))?\}\}")
+REF = re.compile(r"\{\{ref:([^}]+)\}\}")
+
 
 def project_dir(name=None):
     return workspace.project_dir(name)
 
-def load_jsonl(path):
-    if not path.exists():
-        return []
-    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
 
-def load_idea(pdir):
-    path = pdir / "idea.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    # migrate from sketch.json if it exists
-    old_path = pdir / "sketch.json"
-    if old_path.exists():
-        old = json.loads(old_path.read_text(encoding="utf-8"))
-        idea = {
-            "goal": old.get("brief", ""),
-            "agreed": [],
-            "blocks": old.get("blocks", []),
-            "links": old.get("links", []),
-            "confirmed": old.get("confirmed", False)
-        }
-        save_idea(pdir.name, idea)
-        old_path.unlink()
-        return idea
-    return {"goal": "", "agreed": [], "blocks": [], "links": [], "confirmed": False}
+load_jsonl = store.read_jsonl
+load_idea = store.load_idea
+
 
 def save_idea(project, idea):
-    pdir = project_dir(project)
-    pdir.mkdir(parents=True, exist_ok=True)
-    (pdir / "idea.json").write_text(json.dumps(idea, ensure_ascii=False, indent=2), encoding="utf-8")
+    return store.save_idea(project, idea)
 
-def anchors(project=None):
-    pdir = project_dir(project)
-    out = {}
-    
-    # BOM lines
-    bom = load_bom(project)
-    for line in bom:
-        for ref in line.get("refs", []):
-            out[ref] = {"kind": "part", "label": ref}
-            
-    # sheets
-    for f in (pdir / "netlist").glob("*.json"):
-        sheet_id = f.stem
-        out[sheet_id] = {"kind": "sheet", "label": f"Sheet {sheet_id}"}
-        
-    return out
-
-def load_bom(project):
-    pdir = project_dir(project)
-    log_path = pdir / "bom-log.jsonl"
-    bom = {}
-    if log_path.exists():
-        for change in load_jsonl(log_path):
-            line_key = change.get("line")
-            if line_key:
-                if "changes" in change:
-                    if line_key not in bom:
-                        bom[line_key] = {}
-                    bom[line_key].update(change["changes"])
-    
-    # Save derived bom.json
-    bom_list = list(bom.values())
-    (pdir / "bom.json").write_text(json.dumps(bom_list, ensure_ascii=False, indent=2), encoding="utf-8")
-    return bom_list
-
-def list_sources(project):
-    out = []
-    for scope, d in (("project", project_dir(project) / "sources"),
-                     ("shared", workspace.datasheets_dir())):
-        if not d.exists():
-            continue
-        for f in sorted(d.iterdir()):
-            if f.name.startswith(".") or f.suffix in (".json", ".txt"):
-                continue
-            meta_path = f.with_suffix(f.suffix + ".json")
-            meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-            out.append({"name": f.name, "scope": scope, "size": f.stat().st_size, **meta})
-    return out
 
 def list_projects():
     return project_mod.list_all()
 
+
 def create_project(name):
     return project_mod.create(name)
+
+
+# ---------------------------------------------------------------- sources
+
+def _size(n):
+    return f"{n / 1024:.0f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
+
+
+def _kind(name):
+    return (pathlib.Path(name).suffix.lstrip(".") or "file").upper()
+
+
+def citations(project):
+    """{source name: [where it was cited]} from chats and proposals."""
+    out = {}
+    for row in session_mod.list_all(project):
+        for m in session_mod.load_chat(project, row["id"]):
+            for name, loc in CITE.findall(m.get("text", "")):
+                out.setdefault(name.strip(), []).append((loc or "").strip())
+    for p in store.proposals(project):
+        for name in p.get("sources", []):
+            out.setdefault(name, []).append("proposal " + p["line"])
+    return out
+
+
+def _host(url):
+    parts = (url or "").split("/")
+    return parts[2] if len(parts) > 2 else ""
+
+
+def list_sources(project):
+    """Shared library + project sources. A document is a file with a .json sidecar
+    (url, sha256, bytes); a sidecar alone still lists, flagged as not present."""
+    cites = citations(project)
+    rows = []
+    for scope, d in (("shared", workspace.datasheets_dir()), ("project", project_dir(project) / "sources")):
+        if not d.exists():
+            continue
+        names = {}
+        for f in d.iterdir():
+            if f.name.startswith(".") or f.suffix == ".txt":
+                continue
+            base = f.name
+            if f.suffix == ".json" and pathlib.Path(f.name[:-5]).suffix:
+                base = f.name[:-5]          # a sidecar: name.pdf.json -> name.pdf
+            names[base] = True
+        for name in sorted(names):
+            path = d / name
+            meta_path = d / (name + ".json")
+            meta = {}
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except json.JSONDecodeError:
+                    meta = {}
+            present = path.exists() and path.is_file()
+            sha = meta.get("sha256") or (hashlib.sha256(path.read_bytes()).hexdigest() if present and path.stat().st_size < 50_000_000 else "")
+            used = cites.get(name, [])
+            rows.append({
+                "name": name, "scope": scope, "kind": _kind(name), "present": present,
+                "size": _size(path.stat().st_size) if present else (_size(meta["bytes"]) if meta.get("bytes") else "—"),
+                "origin": meta.get("origin") or _host(meta.get("url")) or "uploaded",
+                "url": meta.get("url"), "sha256": sha[:8] if sha else "—",
+                "text": (d / (name + ".txt")).exists() or (path.suffix in (".md", ".txt") and present),
+                "used_for": f"{len(used)} citation{'s' if len(used) != 1 else ''}" + (f" · {used[0]}" if used and used[0] else "") if used else "—",
+            })
+    return rows
+
+
+# ---------------------------------------------------------------- anchors, sheets
+
+def anchors(project=None):
+    """Everything a conversation can be anchored to: a refdes or a sheet id."""
+    out = {}
+    for line in store.bom_lines(project):
+        for ref in line.get("refs", []):
+            out[ref] = {"kind": "part", "label": ref, "line": line["key"]}
+    for sid in store.sheet_ids(project):
+        out[sid] = {"kind": "sheet", "label": f"Sheet {sid}"}
+    return out
+
+
+def sheets(project):
+    out = []
+    for sid in store.sheet_ids(project):
+        s = store.load_sheet(project, sid)
+        out.append({"id": sid, "title": s.get("title", ""),
+                    "sections": s.get("sections", []),
+                    "parts": {p["ref"]: {"section": p.get("section"),
+                                         "nets": store.nets_of(project, p["ref"])}
+                              for p in s.get("parts", [])}})
+    return out
+
+
+def part_context(project, ref):
+    """What the agent knows about one part. Built here, so any agent gets the same card."""
+    line = next((l for l in store.bom(project, write=False) if ref in l.get("refs", [])), None)
+    if not line:
+        return None
+    where = []
+    for sid in store.sheet_ids(project):
+        sheet = store.load_sheet(project, sid)
+        titles = {s["id"]: s.get("title", "") for s in sheet.get("sections", [])}
+        for p in sheet.get("parts", []):
+            if p["ref"] == ref:
+                where.append({"sheet": sid, "block": p.get("section"), "title": titles.get(p.get("section"), "")})
+    return {"ref": ref, "line": line["key"], "mpn": line.get("mpn"), "value": line.get("value"),
+            "manufacturer": line.get("manufacturer"), "package": line.get("package"),
+            "description": line.get("description"), "datasheet": line.get("datasheet"),
+            "refs": line.get("refs", []), "where": where,
+            "nets": sorted({n for r in line.get("refs", []) for n in store.nets_of(project, r)}), "library": line.get("library"),
+            "note": line.get("note")}
+
+
+# ---------------------------------------------------------------- idea checklist
+
+def requirements(project, idea, lines, tot):
+    """The Idea tab's checklist against the final-project rules. Each row is
+    computed from the BOM, never typed in."""
+    ic_refs = {r for l in lines for r in l.get("refs", []) if r.startswith("U")}
+    other = sum(len(l.get("refs", [])) for l in lines) - len(ic_refs)
+    out = []
+    for req in idea.get("requirements", []):
+        c = req.get("check")
+        if c == "ic_count":
+            ok, detail = len(ic_refs) >= req.get("min", 3), f"{len(ic_refs)}"
+        elif c == "part_count":
+            ok, detail = other >= req.get("min", 10), f"{other}"
+        elif c == "stock":
+            bad = [l["key"] for l in lines if store.qty(l) and l.get("supply") is not None and not store.best_offer(l)]
+            ok = None if tot["checking"] and not bad else not bad
+            detail = ", ".join(bad) + " missing" if bad else ""
+        else:
+            ok, detail = None, ""
+        out.append({"id": req.get("id"), "text": req.get("text"), "ok": ok, "detail": detail})
+    return out
+
+
+# ---------------------------------------------------------------- build
 
 def build(project=None, session=None):
     project = workspace.safe_name(project or workspace.default_project())
     pdir = project_dir(project)
     meta = project_mod.load_meta(project)
-    
-    messages = load_jsonl(pdir / "threads.jsonl")
     sess = session_mod.current(project, session)
-    chat = session_mod.load_chat(project, sess)
-    idea = load_idea(pdir)
-    
-    known = anchors(project)
-    threads = {}
-    for m in sorted(messages, key=lambda m: m.get("ts", "")):
-        threads.setdefault(m["anchor"], []).append(m)
-
-    for anchor, msgs in threads.items():
-        meta_a = known.get(anchor, {"kind": "unknown", "label": anchor})
-        closing = [m for m in msgs if m.get("role") == "resolved"]
-        resolved = bool(closing)
-        said = [m for m in msgs if m.get("role") in ("user", "agent")]
-        last = said[-1].get("role") if said else None
-        threads[anchor] = {
-            "anchor": anchor,
-            "kind": meta_a["kind"],
-            "label": meta_a["label"],
-            "messages": msgs,
-            "resolved": resolved,
-            "resolution": (closing[-1].get("text") or "").strip() if closing else "",
-            "waiting_on": None if resolved else {"user": "agent", "agent": "student"}.get(last),
-        }
-
+    idea = store.load_idea(project)
+    lines = store.bom(project)
+    tot = store.totals(lines)
+    props = store.proposals(project)
+    sessions = session_mod.list_all(project)
     return {
         "project": project,
         "title": meta.get("title") or project,
         "meta": meta,
         "board": {**workspace.get("engineering_defaults", {}), **(meta.get("board") or {})},
         "idea": idea,
-        "threads": threads,
-        "chat": chat,
-        "session": sess,
-        "sessions": session_mod.list_all(project),
-        "memory": session_mod.read_memory(project, sess),
-        "bom": load_bom(project),
+        "requirements": requirements(project, idea, lines, tot),
+        "bom": lines,
+        "totals": tot,
+        "proposals": props,
+        "sheets": sheets(project),
+        "library": store.library_view(project),
         "sources": list_sources(project),
+        "chat": session_mod.load_chat(project, sess),
+        "session": sess,
+        "sessions": sessions,
+        "memory": session_mod.read_memory(project, sess),
         "progress": {
-            "waiting_on_agent": sum(1 for t in threads.values() if t["waiting_on"] == "agent"),
-            "waiting_on_student": sum(1 for t in threads.values() if t["waiting_on"] == "student"),
-            "threads": len(threads),
+            "pending_proposals": sum(1 for p in props if p["status"] == "pending"),
+            "to_verify": tot["to_verify"], "out_of_stock": tot["out_of_stock"],
         },
     }
+
 
 def write(project=None, session=None):
     m = build(project, session)
@@ -158,3 +220,8 @@ def write(project=None, session=None):
     (pdir / "design-model.json").write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
     return m
 
+
+if __name__ == "__main__":
+    import oscompat
+    oscompat.utf8_stdio()
+    print(json.dumps(build(sys.argv[1] if len(sys.argv) > 1 else None), ensure_ascii=False, indent=2))

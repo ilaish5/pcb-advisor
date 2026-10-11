@@ -1,29 +1,93 @@
 # pcb-advisor
 
-A design-considerations tool for students. You describe what you want to build;
-it sketches a block diagram and asks whether that's what you meant; then it walks
-you down a decision cascade. Every choice you make appends the constraints that
-choice just locked in — each one labelled with **how we know it**.
+A co-pilot for a student's PCB project. The chat with an agent is the main interface. The student
+arrives with a rough idea; the agent helps refine it, then helps with everything about parts, and the
+student leaves the first stage with three outputs:
+
+1. **A BOM** - editable, with stock, price and manufacturer for every line.
+2. **An example schematic** - drawn from a netlist, for the student to redraw in Altium.
+3. **An Altium library package** - only the parts Altium does not ship, each marked verified or not.
+
+Out of scope for now: layout, routing, Gerbers, manufacturer DFM, the written report.
 
 ```bash
 pip install -r requirements.txt
-python3 pcb.py init                  # folders + config.json + a first project
-python3 pcb.py serve                 # opens http://localhost:8931
+python3 pcb.py init                       # folders + config.json
+python3 pcb.py seed                       # the worked example: projects/lte-tracker
+python3 pcb.py serve --project lte-tracker   # opens http://localhost:8931
 ```
 
-One entry point for everything:
+Everything else:
 
 ```bash
-python3 pcb.py new "usb sensor board"   # start a design from the template
+python3 pcb.py new "usb sensor board"   # start a project from the template
 python3 pcb.py list                     # what is in the workspace
-python3 pcb.py show usb-sensor-board    # where it stands
+python3 pcb.py show lte-tracker         # where it stands: BOM, stock, pending proposals, checklist
+python3 pcb.py check                    # every sheet validates against the BOM, every citation resolves
 python3 pcb.py engines                  # which LLM engine is wired up
 python3 pcb.py tools                    # what that engine may touch on your machine
 python3 pcb.py config user.language he  # read or set any setting
-python3 pcb.py chats                    # conversations and their memory
-python3 pcb.py check                    # validate the corpus and its citations
 python3 pcb.py trace 1.5                # IPC-2221 trace width
 ```
+
+## The screen
+
+Three columns, English UI, light theme.
+
+| Left | Centre | Right |
+|---|---|---|
+| **Chat.** A conversation list, "+ New". A part conversation is anchored to a BOM line. | **Idea · BOM · Schematic**, and a part drawer that slides in. | Projects, Workspace, Altium library, Sources, Skills, Settings. |
+
+- **Idea** - the agreed items (each with who proposed it and its status), the block diagram, and a checklist
+  against the final-project rules computed from the BOM.
+- **BOM** - KPIs, an editable table (MPN and note), stock and price per supplier. Editing an MPN marks the
+  line "checking" until a skill run answers for the new part.
+- **Schematic** - drawn from `netlist/<sheet>.json` and the BOM. Click a part to open its BOM line; select a
+  BOM line to light up its parts.
+- **A BOM change from the agent is a diff card** with Approve / Reject. Nothing changes until the student
+  approves; approving updates the BOM, the schematic label and the library together.
+- **Altium library** - non-standard parts with symbol / footprint / 3D / model source / status. A part is
+  "verified" only when a skill checked it against its datasheet **and** the student accepted it.
+- **Sources** - the shared library (course material) and the project's documents, each with a `.json`
+  sidecar (url, sha256, bytes) and extracted text. Every citation chip in the chat opens a file here.
+
+## Where things live
+
+```
+projects/<name>/
+  project.json
+  idea.json            goal, agreed items, blocks, links, checklist        (server-written)
+  bom-log.jsonl        APPEND-ONLY, one line per applied change
+  bom.json             DERIVED from the logs. Never hand-edited
+  supply-log.jsonl     APPEND-ONLY stock and price checks, with supplier and time
+  proposals.jsonl      APPEND-ONLY agent proposals and the student's decisions
+  library-log.jsonl    APPEND-ONLY library parts, model source, verification
+  netlist/<sheet>.json one sheet, validated against the BOM before it is written
+  chats/               <id>.jsonl, index.json (with anchors), <id>.memory.md
+  sources/             the project's documents (file + .json + .txt)
+  exports/             BOM exports and the library package
+  notes.md
+shared/datasheets/     fetched once, sha256'd, reused by every project
+```
+
+The principle: **append-only logs are the truth, everything else is derived.** The server is the only
+writer; an agent proposes actions and the server validates and applies them
+(see [docs/gateway.md](docs/gateway.md)).
+
+## Skills
+
+Python, cross-platform, in `scripts/skills/`. The agent runs them; the BOM page buttons run the same code.
+
+| skill | what |
+|---|---|
+| `check_availability.py` | stock and price: LCSC (JLCPCB parts search); Mouser with `MOUSER_API_KEY` |
+| `compare_prices.py` | cost per board by supplier, from the stored checks |
+| `verify_part.py` | a part's pins against its datasheet text |
+| `export_bom.py` | JLC, PCBWay and generic CSV |
+| `render_sheet.py` | a sheet drawn from its netlist |
+
+Not built yet: download models, build a part from a datasheet, compile an IntLib. See
+[docs/V2-STATUS.md](docs/V2-STATUS.md).
 
 ## Windows and macOS
 
@@ -40,277 +104,39 @@ What differs between the two lives in `scripts/oscompat.py`, nowhere else:
   what its shell actually types;
 - paths handed to the engine use forward slashes on both.
 
-CI runs the suite on Windows, macOS and Linux.
-
-## Two stages
-
-**Sketch.** Free text in. The agent proposes a block diagram — its interpretation —
-and asks you to confirm or correct it. This is where intent gets *agreed* rather
-than inferred, and it is also what selects which cascades load: each block `kind`
-maps to a domain.
-
-**Cascade.** One question at a time, with its rationale. Answer in the chat or by
-clicking. Constraints accumulate; the graph grows; the schematic sharpens.
-
-## How we know things — the provenance contract
-
-| badge | meaning | what it must carry |
-|---|---|---|
-| 📐 computed | a script produced it | the `calculation` itself |
-| 📘 standard | a published standard says it | document + locator |
-| 📄 datasheet | a **specific, fetchable** document says it | document + locator + url; cached file + verbatim quote to count as verified |
-| 🔎 check your part | depends on the part you chose | where in that datasheet to look |
-| ⚠ convention | craft, no citable source | must say so out loud |
-
-`check your part` exists because most of what looked like citations here were
-not. Eleven rules cited "regulator datasheet", "ADC datasheet", "P-FET
-datasheet" — documents that cannot exist, that no student can fetch and no
-script can check, passing validation as silently as a real reference. They were
-never citations. They are instructions to go and read whichever part you
-actually chose, which is a good thing for a rule to say and a bad thing to
-disguise. Naming the class made the real debt visible: **three** datasheet
-citations, not thirteen.
-
-Two scripts enforce this, and both run in CI:
-
-- `validate_cascade.py` — a rule must declare its provenance and carry what that
-  class requires. A `datasheet` rule with no url is rejected; so is a `computed`
-  rule with no arithmetic, and a `check your part` rule that cites a document.
-- `verify_sources.py` — every quote marked verified must be findable, **verbatim**,
-  in the cached document. Fabricate a quote and it fails.
-
-A fresh clone prints this, because the vendor PDFs are not redistributed here:
-
-```
-$ python3 scripts/verify_sources.py
-  todo  sw.hotloop: cites 'TI SLYT614', no quote pulled yet
-  FAIL  sw.keepaway: slyt614.pdf is not in the cache
-  FAIL  sw.cin: slyt614.pdf is not in the cache
-
-0 quotes verified, 2 failed, 1 citation still to check
-nothing to verify in: check_your_part=10  computed=2  convention=17  standard=3
-
-The cited documents are not in git - they are vendor PDFs.
-Run:  python3 scripts/sources.py restore
-```
-
-Do that once and the two FAILs become `ok`. The `todo` stays until someone opens
-the document and pulls the quote — that line is the corpus being honest about
-its own state, and it is meant to be visible.
-
-## A question is a choice or a measurement
-
-Most questions offer a shortlist. Some ask for a number, because some answers
-have no shortlist:
-
-```yaml
-- id: req.runtime
-  question: "How long must it run on one set of cells?"
-  requires: {req.source: battery}
-  answer: {kind: quantity, unit: "hours", min: 1, max: 100000}
-  locks:
-    - id: pwr.budget
-      text: "Everything on this board shares one budget: your cell's capacity
-              divided by {value} hours..."
-```
-
-The number is checked against the unit and the range before it reaches the
-append-only log, and `{value}` puts it back into the rules that follow from it.
-
-This is here because the tool once walked a complete battery design, asked
-fourteen questions, and never asked how long the battery had to last — the most
-consequential number on the board. It had nowhere to live: every answer the
-schema could hold was one of a fixed list.
-
-## Some questions answer themselves
-
-A question with one defensible answer carries a `default` — an option, a `why`
-and a provenance badge, authored in the YAML. The model applies it, and the
-panel shows those separately under **Decided for you**, collapsed, each with
-its one-line reason and a click to change it.
-
-That is not the model choosing: a default is corpus content like a constraint,
-written down and badged. It is there because a student who walked the whole
-cascade said it was "just a mess — dozens of decisions I don't really
-understand, a list that never ends". Collapsed is the point. Browsable rather
-than blocking.
-
-Defaults are derived on every build and never written to `decisions.jsonl`;
-only a student's override is.
-
-## The one rule
-
-```
-decisions.jsonl   ─┐
-threads.jsonl      ├─► design-model.json ─┬─► blocks.svg
-chats/<id>.jsonl   │                      ├─► the graph
-sketch.json       ─┘                      └─► the decisions table
-```
-
-Only those four feed the model, and three of them are append-only. `project.json`
-and `notes.md` are yours to edit; everything else is derived and gets overwritten.
-Anchors point at the model, never at the picture, which is why a question pinned
-to `U_REG` survives a redraw.
+CI runs the suite on Windows, macOS and Linux. `docs/WINDOWS-HANDOFF.md` is the checklist for verifying a
+build on a Windows machine.
 
 ## One workspace folder
 
-```
-pcb-advisor/                 <- the whole workspace, portable, git-friendly
-  pcb.py                     <- the one entry point
-  config/defaults.json       <- shipped settings, tracked
-  config.json                <- yours, local, gitignored. Only what you changed.
-  projects/<name>/           <- one folder per design, self-contained
-  shared/datasheets/         <- fetched once, sha256'd, reused by every project
-  cascade/*.yaml             <- the knowledge graphs
-  reference/*.md             <- the same knowledge for a human
-  templates/project/         <- what `pcb.py new` copies
-  scripts/  ui/  docs/
-  .claude/skills/            <- the orchestrating skill
-```
-
-Nothing is hardcoded: every path, the port, the default project and the LLM
-engine come from the config. `PCB_ADVISOR_HOME` moves your work somewhere else
-entirely — your projects follow, the corpus stays with the install. See
-[docs/configuration.md](docs/configuration.md).
-
-Projects are listed and switched in the right-hand nav; `+ New project` starts an
-empty one. The project is a query parameter (`?project=name`), so two tabs can hold
-two designs at once.
-
-## The protocol is the folder
-
-```
-projects/<name>/
-  project.json      title, status, and THIS board's settings (layers, copper, dT)
-  sketch.json       the agreed block diagram
-  decisions.jsonl   {ts, node, value, by}       shared by every conversation
-  threads.jsonl     {ts, anchor, role, text}    anchored on a node OR a constraint
-  chats/
-    index.json      the conversations
-    <id>.jsonl      one conversation
-    <id>.memory.md  what that conversation would otherwise forget
-  notes.md          yours; nothing reads it
-  sources/          copies of the documents this project actually cited
-  design-model.json derived
-  artifacts/        derived
-shared/datasheets/  shared library: fetched once, sha256'd, reused by every project
-```
-
-`project.json` is copied from your `engineering_defaults` when the project is
-created, and the copy is what the project uses from then on. Changing a default
-later never rewrites a board you already started.
-
-Any agent can drive this. A human can too — open the folder, read the questions,
-write answers. That is why the corpus is YAML and Markdown, not prompts.
-
-## Two axes: the timeline and the element
-
-A conversation is chronological. A **thread** is spatial: everything ever said
-about one constraint or one decision, hanging on that element, in any session.
-Ask "why must the hot loop be small?" and the answer lives on `sw.hotloop` — so
-it is still there next month when that constraint comes up again, instead of
-buried forty messages back.
-
-The agent anchors on its own whenever it explains or challenges a specific
-element, and the student can ask from the badge beside any constraint. Anchors
-are validated against the corpus: a mistyped id is refused rather than becoming
-an orphan nobody ever sees. Both directions of "open" are tracked — a question
-*the student* asked and nobody answered is the one that actually gets lost, and
-it is sent back to the agent until it is dealt with. Only the student resolves
-a thread.
-
-## Conversations split, the design does not
-
-A project is a board; a session is one conversation about it. `decisions.jsonl`
-and `threads.jsonl` stay at project level, so you can open a clean conversation
-about the layout without dragging 200 messages about the power supply behind
-you — and without losing a single decision. That is the opposite of a chat app,
-and it is the point.
-
-Each conversation keeps a **memory** file, bounded at 2000 characters and
-rewritten by a separate call every ten messages. It deliberately does not
-summarise the decisions — those are sent in full on every turn anyway. It holds
-what the transcript loses:
-
-```markdown
-## The student's situation
-- Enclosure fixed at 40x30 mm. Budget ~$15. Due in 5 weeks.
-- Owns 0805 resistors; the lab requires through-hole where possible.
-## Ruled out, and why
-- LDO (5V→3.3V @600mA): ~1 W dissipated, too much for the enclosure.
-## Open promises
-- Check the connector's current rating once the part is chosen.
-## How they work
-- Second-year student — keep explanations short.
-```
-
-When it outgrows the limit the engine is asked to **compress** it — merge
-duplicates, drop what a later message overturned — not to have it cut off. The
-server rebuilds the file from the four headings, so any narration around the
-document is dropped rather than counted against the limit. It is a plain `.md`
-the student can edit, and a tab in the UI.
-
-## The agent is a pure function
-
-`agent.py` gets `(state, message)` and returns `{reply, actions}`. Whatever the
-engine does while it thinks, only those actions change the design, and the
-**server** applies them. One writer, and any model or runtime drops in behind
-that interface.
+`PCB_ADVISOR_HOME` moves your work (`projects/`, `shared/`, `config.json`) somewhere else; the program
+(`scripts/`, `ui/`, `templates/`) stays with the install. Nothing is hardcoded: every path, the port, the
+default project and the LLM engine come from the config. See [docs/configuration.md](docs/configuration.md).
 
 ## Any engine behind one gateway
 
-`scripts/gateway/` routes a turn to whichever LLM you configured. A provider is a
-transport and nothing more — text in, text out — so it knows nothing about
-cascades, actions or files:
+`scripts/gateway/` routes a turn to whichever LLM you configured. A provider is a transport and nothing
+more: text in, text out. Claude Code and Antigravity (`agy`) route today; the rest are registered but not
+implemented. See [docs/gateway.md](docs/gateway.md).
 
-```bash
-python3 pcb.py engines
-* claude_code    implemented  ready
-  external       implemented  ready
-  codex          planned      Codex CLI is registered but not implemented yet
-  antigravity    planned      Antigravity is registered but not implemented yet
-  openai_api     planned      OpenAI-compatible HTTP API is registered but not implemented yet
-```
-
-An engine that lives in the workspace — any CLI agent — also gets a map of the
-folders and the scripts, so it can open the datasheet it needs and run
-`trace_width.py` instead of estimating. An engine without hands does not get
-that map, because telling it to go and read a file makes it invent. Each
-provider declares which it is. What it may touch is a setting that ships
-working — reads and the calculation scripts allowed, Write and Edit refused —
-and `pcb.py tools --clear` hands control back to the CLI's own permissions.
-
-Claude Code routes today. The rest are **registered but not implemented**: they
-appear in the table and fail with a message naming the file to write, which is
-deliberately better than a provider that half-works. Adding one is a class and a
-line in the registry — see [docs/gateway.md](docs/gateway.md).
+**Install and sign in to an engine first:** [docs/ENGINES.md](docs/ENGINES.md) - Claude Code or the
+Antigravity CLI (`agy`) on Windows, then `python pcb.py config agent.provider <id>`.
 
 ## Layout
 
 | path | what |
 |---|---|
-| `pcb.py` | the entry point: init, serve, new, list, show, engines, tools, config, check |
+| `pcb.py` | the entry point |
 | `config/defaults.json` | every setting, with its shipped value |
-| `scripts/workspace.py` | config + paths. Nothing else hardcodes a path. |
-| `scripts/project.py` | project lifecycle: template, `project.json`, listing, reset |
-| `scripts/gateway/` | LLM routing — one door, any engine |
-| `cascade/*.yaml` | the decision graphs — power, mcu, analog |
-| `reference/*.md` | the same knowledge, written for a human with no agent |
-| `scripts/model.py` | cascade + state → model. Deterministic. |
-| `scripts/validate_cascade.py` | provenance contract |
-| `scripts/verify_sources.py` | quotes must exist in the real document |
-| `scripts/sources.py` | fetch, cache, extract, verify |
-| `scripts/trace_width.py` | IPC-2221. A script, never a model answer. |
-| `scripts/agent.py` | pure-function agent adapter |
-| `scripts/serve.py` | renderer and the only writer |
-| `scripts/reset.py` | wipe a project's state |
-| `ui/index.html` | the five surfaces |
-| `tests/` | the defects that reached a student once |
-
-## Not built
-
-- `stock-check`
-- RF cascade (mcu and analog are thin — power is the worked one)
-- schematic detail past block level
-- pulling the one remaining quote, and authoring a corpus worth citing
-- gateway providers other than Claude Code (the slots are registered and documented)
+| `scripts/store.py` | the logs and their derived views; netlist validation |
+| `scripts/model.py` | the whole project as one dict, for the UI and the agent |
+| `scripts/serve.py` | the HTTP server and the only writer |
+| `scripts/agent.py` | the reply protocol and the prompt |
+| `scripts/gateway/` | LLM routing |
+| `scripts/skills/` | what the agent can run |
+| `scripts/sources.py` | fetch, cache, extract, verify a quote word for word |
+| `scripts/seed.py` | the lte-tracker example |
+| `.agents/rules/*.md`, `.claude/skills/` | the agent's rules |
+| `ui/index.html` | the screen |
+| `docs/mock/` | the visual and behavioural spec the UI was built from |
+| `tests/` | the defects that reached a student once, and the contract of the write path |

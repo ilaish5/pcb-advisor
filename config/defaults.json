@@ -3,8 +3,6 @@
   "workspace": {
     "projects_dir": "projects",
     "shared_dir": "shared",
-    "cascade_dir": "cascade",
-    "reference_dir": "reference",
     "templates_dir": "templates",
     "ui_dir": "ui"
   },
@@ -14,15 +12,10 @@
     "default_project": "demo",
     "open_browser": true
   },
-  "corpus": {
-    "status": "authored",
-    "note": "The design questions and rules shipped with this tool are demonstration material. They show what a corpus looks like; they have not been reviewed, and most of their citations point at documents that do not exist. Use them to learn how the tool works, not to decide anything about a board you intend to build."
-  },
   "user": {
     "name": "",
     "language": "auto",
     "units": "mm",
-    "show_unverified": true,
     "theme": "auto"
   },
   "agent": {
@@ -58,8 +51,8 @@
             "Edit(./projects/*/BOM.csv)",
             "Edit(./projects/*/sources/*.md)",
             "Edit(./projects/*/sources/*.md.json)",
-            "Bash({python} scripts/skills/export_bom.py *)",
-            "Bash({python} scripts/render_schematic.py *)"
+            "Bash({python} scripts/skills/*.py *)",
+            "Bash({python} scripts/verify_sources.py *)"
           ],
           "disallowed": [
             "NotebookEdit"

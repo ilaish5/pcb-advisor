@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PCB Advisor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -11,7 +16,7 @@
   --accent:#2148c9; --accent-ink:#ffffff; --accent-soft:#e3e9fb;
   --net:#6b2fb3; --net-soft:#f0e7fb;
   --ok:#167a46; --ok-soft:#e1f2e8; --warn:#8f5d00; --warn-soft:#fbefd2; --bad:#b8322a; --bad-soft:#fbe4e2;
-  --nav:#f5f7fb; --nav-ink:#141a26; --nav-dim:#5b667b; --nav-sel:#e3e9fb;
+  --nav:#17203a; --nav-ink:#dfe5f3; --nav-dim:#94a0bd; --nav-sel:#2a3657;
   --sch-bg:#fbfcfe; --sch-wire:#233f99; --sch-body:#fdf2c8; --sch-body-line:#7d2f14; --sch-text:#151515;
   --sch-pwr:#d27a12; --sch-pwr3:#2e7a33; --sch-gnd:#6b4a3a; --sch-dash:#a3abba;
   --hl:rgba(33,72,201,.15); --hl2:rgba(33,72,201,.07);
@@ -316,19 +321,34 @@ table.libt{min-width:740px} table.srct{min-width:780px}
   .detail{width:100%}
 }
 
-.block:hover .del-blk { display: block !important; }
-.block:hover .port { opacity: 1 !important; }
-.port:hover { transform: scale(1.5) !important; }
-.port[data-side="top"]:hover, .port[data-side="bottom"]:hover { transform: translateX(-50%) scale(1.5) !important; }
-.port[data-side="left"]:hover, .port[data-side="right"]:hover { transform: translateY(-50%) scale(1.5) !important; }
-.link-group:hover .del-lnk { display: block !important; }
+/* ---------- added for the live app ---------- */
+.src.broken{border-color:var(--bad);color:var(--bad)}
+.msg.agent .txt p{margin:0 0 6px}
+.diff-a .btn{white-space:nowrap}
+.warnbox{margin-top:8px;border:1px solid var(--warn);background:var(--warn-soft);border-radius:8px;padding:6px 10px}
+.warnbox ul{margin:4px 0 0;padding-left:18px}
+.issue{font-size:12px;color:var(--warn);white-space:normal;max-width:300px}
+.howto{position:relative}
+.howto .x{position:absolute;top:4px;right:6px}
+.howto ul{margin:6px 0 0;padding-left:18px}
+.form{display:grid;gap:12px;max-width:520px}
+.form label{display:grid;gap:3px;font-size:13px;font-weight:600}
+.form label small{font-weight:400;color:var(--dim)}
+.form input,.form select,.form textarea{font:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:var(--panel2);color:var(--ink)}
+.form textarea{font-family:var(--f-mono);font-size:12.5px}
+.btn:disabled{opacity:.5;cursor:default}
+.srct a{color:inherit}
+.crumb{padding-top:10px}
+.dnote{font-size:12.5px;color:var(--ink2);background:var(--panel2);border-radius:7px;padding:6px 9px}
+.msg.agent .txt{overflow-wrap:anywhere}
 </style>
-
+</head>
+<body>
 <div class="app" id="app" data-view="work">
   <!-- LEFT: chat -->
   <section class="panel chat" aria-label="Chat with the agent">
     <div class="chead">
-      <button class="convbtn" data-act="convs" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.6" fill="none"/></svg><span id="convtitle">Main</span></button>
+      <button class="convbtn" data-act="convs" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.6" fill="none"/></svg><span id="convtitle">Conversation</span></button>
       <button class="newbtn" data-act="new">+ New</button>
     </div>
     <div class="convs" id="convs" hidden></div>
@@ -336,8 +356,8 @@ table.libt{min-width:740px} table.srct{min-width:780px}
     <div class="composer">
       <div class="sugs" id="sugs"></div>
       <form class="inrow" id="form">
-        <textarea id="input" rows="1" placeholder="Message the agent… (Enter to send)"></textarea>
-        <button class="btn pri" type="submit">Send</button>
+        <textarea id="input" rows="1" dir="auto" placeholder="Message the agent… (Enter to send)"></textarea>
+        <button class="btn pri" type="submit" id="sendbtn">Send</button>
       </form>
     </div>
   </section>
@@ -353,708 +373,580 @@ table.libt{min-width:740px} table.srct{min-width:780px}
   <nav class="nav" aria-label="Navigation" id="nav"></nav>
 </div>
 <div class="toast" id="toast" hidden></div>
+<input type="file" id="filepick" hidden>
 
 <script>
 const $ = (s, r = document) => r.querySelector(s);
-const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-
-let state = null;
-
-async function delProject(name) {
-  if(!confirm('Delete project ' + name + '?')) return;
-  const res = await fetch('/api/projects/delete', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name})
-  });
-  if(res.ok) {
-    const data = await res.json();
-    window.location.href = '/?project=' + data.default;
-  }
-}
-
-function settingsHTML(){
-  return `<div class="vhead"><div><h2>Settings</h2><p>Manage project and app preferences.</p></div></div>
-  <div class="card" style="padding: 16px;">
-    <h3 style="padding:0 0 10px; border-bottom:1px solid var(--line2); margin-top:0;">Danger Zone</h3>
-    <p style="color:var(--dim); font-size:13px;">Permanently delete this project and all its data. This cannot be undone.</p>
-    <button class="btn pri" style="background:var(--bad); border-color:var(--bad);" onclick="delProject('${state?.project}')">Delete Project</button>
-  </div>`;
-}
-
-let allProjects = [];
-let page = 'workspace', tab = 'bom', sel = null, hitSrc = null;
-let cur = 'main';
-let convsOpen = false;
-let schematicSvg = '';
-let canvasPan = {x: 0, y: 0}, canvasZoom = 1;
-let isPanning = false;
-
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const SUPS = ['LCSC','Mouser','DigiKey'];
-const SECTIONS = {A:'U4 · LTE modem', B:'VBAT · caps and TVS', C:'PWRKEY driver', D:'U5 · level shifter', E:'Antenna', F:'SIM', G:'Test points'};
+const URLQ = new URLSearchParams(location.search);
 
-const lineByKey = k => (state?.bom || []).find(l => l.line === k);
-const lineOfRef = r => (state?.bom || []).find(l => (l.refs || []).includes(r));
+/* ---------- state ---------- */
+let S = null;                 // the whole project, from /api/state
+let PROJECT = URLQ.get('project') || null;
+let SESSION = URLQ.get('session') || null;
+let PROJECTS = [], SKILLS = null, CONFIG = null;
+let page = 'workspace', tab = 'bom', sel = null, hitSrc = null, sheetId = null;
+let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null;
+let svgCache = {key: '', text: ''};
+let lastChatKey = '', lastCenterKey = '';
+
+const q = (extra = {}) => {
+  const p = new URLSearchParams({project: PROJECT, ...(SESSION ? {session: SESSION} : {}), ...extra});
+  return p.toString();
+};
+async function api(path, body, opts = {}) {
+  const sep = path.includes('?') ? '&' : '?';
+  const url = path + sep + q();
+  const r = body === undefined
+    ? await fetch(url)
+    : await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+  let data = null;
+  try { data = await r.json(); } catch (e) { data = {error: 'bad response'}; }
+  if (!r.ok && !opts.soft) { toast(data.error || ('Error ' + r.status)); throw new Error(data.error || r.status); }
+  return data;
+}
+function setState(st) {
+  S = st;
+  if (st.session) SESSION = st.session;
+}
+async function refresh(force) {
+  try {
+    const st = await api('/api/state');
+    setState(st);
+    render(force);
+  } catch (e) { /* the toast already said it */ }
+}
+
+/* ---------- derived values ---------- */
+const lines = () => (S ? S.bom : []);
+const lineByKey = k => lines().find(l => l.key === k);
+const lineOfRef = r => lines().find(l => (l.refs || []).includes(r));
 const qty = l => (l.dnp || l.nobuy) ? 0 : (l.refs || []).length;
-
-function best(l){
-  if(!l.sup) return null;
+function best(l) {
+  if (!l.supply) return null;
   let b = null;
-  for(const s of SUPS){ const v = l.sup[s]; if(!v) continue; const [st, p] = v;
-    if(p != null && st > 0 && st >= qty(l) && (!b || p < b.price)) b = {s, stock:st, price:p}; }
+  for (const s of SUPS) {
+    const v = l.supply[s]; if (!v || v.unit_price == null) continue;
+    if ((v.stock || 0) >= Math.max(qty(l), 1) && (!b || v.unit_price < b.price)) b = {s, stock: v.stock, price: v.unit_price, at: v.checked_at};
+  }
   return b;
 }
-function status(l){
-  if(l.nobuy || l.dnp) return 'na';
-  if(!l.sup) return 'pend';
-  if(!best(l)) return 'bad';
-  if(l.lib === 'review' || l.lib === 'missing') return 'warn';
+function status(l) {
+  if (l.nobuy || l.dnp) return 'na';
+  if (l.supply == null) return 'pend';
+  if (!best(l)) return 'bad';
+  if (l.library === 'review' || l.library === 'missing') return 'warn';
   return 'ok';
 }
 const money = p => p == null ? '—' : '$' + (p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2));
-const num = n => n.toLocaleString('en-US');
-const LIBTXT = {std:'Altium default', ok:'In library · verified', review:'In library · to review', missing:'Missing'};
-
-function totals(){
-  let parts = 0, cost = 0, bad = 0, review = 0, buy = 0, inStock = 0;
-  for(const l of (state?.bom || [])){ parts += qty(l); const b = best(l);
-    if(qty(l)){ buy++; if(b){ inStock++; cost += b.price * qty(l); } }
-    if(status(l) === 'bad') bad++; if(l.lib === 'review') review++; }
-  return {lines:(state?.bom || []).length, parts, cost, bad, review, buy, inStock};
-}
-const libCount = () => (state?.bom || []).filter(l => l.lib === 'ok' || l.lib === 'review').length;
-
-async function loadState() {
-  try {
-    const projRes = await fetch('/api/projects');
-    if (projRes.ok) {
-      const pData = await projRes.json();
-      allProjects = pData.projects || [];
-    }
-    const q = window.location.search;
-    const res = await fetch('/api/state' + q);
-    state = await res.json();
-    const svgRes = await fetch('/api/schematic.svg' + window.location.search);
-    if(svgRes.ok) schematicSvg = await svgRes.text();
-    renderAll();
-  } catch(e) {
-    console.error(e);
+const num = n => (n ?? 0).toLocaleString('en-US');
+const LIBTXT = {std: 'Altium default', ok: 'In library · verified', review: 'In library · to review', missing: 'Missing'};
+const FIELD = {mpn: 'MPN', manufacturer: 'Manufacturer', package: 'Package', value: 'Value', description: 'Description',
+  note: 'Note', datasheet: 'Datasheet', dnp: 'Not fitted', nobuy: 'Not bought', refs: 'Designators'};
+const sheetsOfLine = l => {
+  const out = [];
+  for (const r of l.refs || []) for (const sh of S.sheets) {
+    const p = sh.parts[r]; if (!p) continue;
+    const sec = (sh.sections || []).find(x => x.id === p.section);
+    out.push({ref: r, sheet: sh.id, section: p.section, title: sec ? sec.title : '', nets: p.nets});
   }
-}
+  return out;
+};
+const checkedAt = () => {
+  let t = '';
+  for (const l of lines()) for (const s of Object.values(l.supply || {})) if ((s.checked_at || '') > t) t = s.checked_at;
+  return t ? t.replace('T', ' ').slice(0, 16) : null;
+};
+const srcByName = n => (S.sources || []).find(s => s.name === n);
 
-async function sendChat(text) {
-  try {
-    const res = await fetch('/api/chat' + window.location.search, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text})
-    });
-    state = await res.json();
-    renderAll();
-  } catch(e) {
-    console.error(e);
+/* ---------- text: citations, refs, lists ---------- */
+function chip(name, where) {
+  const known = srcByName(name);
+  return `<button class="src ${known ? '' : 'broken'}" data-src="${esc(name)}" title="${known ? '' : 'Not in Sources'}"><b>${esc(name)}</b>${where ? ' · ' + esc(where) : ''}</button>`;
+}
+function inline(t) {
+  // t is escaped text. Citations and refs become buttons; **bold** and `code` are the only markup.
+  return t
+    .replace(/\{\{src:([^|}]+)(?:\|([^}]*))?\}\}/g, (m, n, w) => chip(n.trim().replace(/&amp;/g, '&'), (w || '').trim().replace(/&amp;/g, '&')))
+    .replace(/\{\{ref:([^}]+)\}\}/g, (m, r) => `<button class="ref" data-ref="${r}">${r}</button>`)
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/`([^`]+)`/g, '<span class="m">$1</span>');
+}
+function fmt(text) {
+  const out = []; let list = null;
+  const flush = () => { if (list) { out.push(`<${list.t}>${list.items.map(i => `<li>${i}</li>`).join('')}</${list.t}>`); list = null; } };
+  for (const raw of String(text || '').split('\n')) {
+    const line = esc(raw);
+    const ul = /^\s*[-*] (.*)$/.exec(line), ol = /^\s*\d+[.)] (.*)$/.exec(line);
+    if (ul || ol) {
+      const t = ul ? 'ul' : 'ol';
+      if (!list || list.t !== t) { flush(); list = {t, items: []}; }
+      list.items.push(inline((ul || ol)[1]));
+    } else if (!line.trim()) { flush(); }
+    else if (list && /^\s{2,}/.test(raw)) { list.items[list.items.length - 1] += '<br>' + inline(line.trim()); }
+    else { flush(); out.push(`<p>${inline(line)}</p>`); }
   }
+  flush();
+  return out.join('');
 }
 
-async function sendMessage(text, anchor) {
-  try {
-    const res = await fetch('/api/message' + window.location.search, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text, anchor, role: 'user', ask_agent: true})
-    });
-    state = await res.json();
-    renderAll();
-  } catch(e) {
-    console.error(e);
-  }
+/* ---------- chat ---------- */
+function diffHTML(p) {
+  if (!p) return '';
+  const keys = Object.keys(p.changes || {});
+  const rows = keys.map(k => [FIELD[k] || k, p.before ? p.before[k] : null, p.changes[k]]);
+  if (p.library) rows.push(['Library', 'Missing', 'Model from ' + (p.library.model_source || 'agent') + ' · needs your check']);
+  const cls = p.status === 'approved' ? 'ok' : p.status === 'rejected' ? 'no' : '';
+  const ref = (lineByKey(p.line)?.refs || [p.line])[0];
+  const show = v => Array.isArray(v) ? v.join(', ') : (v === null || v === undefined || v === '') ? '—' : String(v);
+  return `<div class="diff ${cls}"><div class="diff-h">Proposed BOM change <button class="ref" data-ref="${esc(ref)}">${esc(p.new ? 'new line ' + p.line : ref)}</button></div>
+    <table>${rows.map(r => `<tr><td>${esc(r[0])}</td><td><span class="old">${esc(show(r[1]))}</span> → <span class="new">${esc(show(r[2]))}</span></td></tr>`).join('')}</table>
+    <p class="diff-n">${esc(p.reason || '')} ${(p.sources || []).map(s => chip(s, '')).join(' ')}</p>
+    ${p.status === 'pending' ? `<div class="diff-a"><button class="btn pri" data-decide="approved" data-pid="${esc(p.id)}">Approve change</button><button class="btn" data-decide="rejected" data-pid="${esc(p.id)}">Reject</button></div>`
+      : p.status === 'approved' ? `<div class="diff-s">Approved · BOM, schematic and library updated</div>` : `<div class="diff-s">Rejected · ${esc(p.line)} unchanged</div>`}
+  </div>`;
 }
-
-function srcById(id) {
-  return (state?.sources || []).find(s => s.name === id || s.id === id);
+function ctxHTML(part) {
+  if (!part) return '';
+  const secs = [...new Set((part.where || []).map(w => `${w.sheet}:${w.block}${w.title ? ' (' + w.title + ')' : ''}`))].join(', ');
+  return `<div class="ctx"><b>The agent has this part's context:</b> <span class="m">${esc(part.mpn)}</span>${secs ? ' · sheet ' + esc(secs) : ''}${part.datasheet ? ' · ' + chip(part.datasheet, '') : ''}
+    <div class="nets">${(part.nets || []).map(n => `<span>${esc(n)}</span>`).join('')}</div></div>`;
 }
-const srcChip = (id, where) => {
-  const s = srcById(id);
-  if(!s) return '';
-  return `<button class="src" data-src="${s.name}"><b>${esc(s.name)}</b>${where ? ' · ' + esc(where) : ''}</button>`;
+function toolsHTML(items) {
+  return `<div class="tools">${items.map(t => `<div class="tool ${esc(t.st || 'ok')}"><span class="ti"></span><span class="tt">${esc(t.t)}</span><span class="td">${esc(t.d || '')}</span></div>`).join('')}</div>`;
 }
-
-function renderAll() {
-  renderNav();
-  renderChat();
-  renderCenter();
+function stageHTML() {
+  if (!S.idea.confirmed) return '';
+  const when = (S.idea.confirmed_at || '').slice(0, 10);
+  return `<div class="stage"><div class="stage-k">Stage 1 · Idea · confirmed${when ? ' ' + esc(when) : ''}</div><div class="stage-t">${esc(S.title)}</div>
+    <div class="stage-d">${S.sheets.length} sheet${S.sheets.length === 1 ? '' : 's'} · ${S.totals.lines} BOM lines</div><button class="lnk" data-tab="idea">Open the idea summary</button></div>`;
 }
-
 function msgHTML(m) {
-  if (m.role === 'user') return `<div class="msg user"><div class="bubble">${esc(m.text || m.html || '')}</div></div>`;
-  if (m.role === 'agent') return `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt">${m.html || m.text || ''}</div></div>`;
-  if (m.role === 'resolved') return `<div class="stage"><div class="stage-k">Resolved</div><div class="stage-t">${esc(m.text || '')}</div></div>`;
-  return `<div class="msg agent"><div class="who">System</div><div class="txt">${esc(m.text || '')}</div></div>`;
+  if (m.role === 'user') return `<div class="msg user"><div class="bubble" dir="auto">${esc(m.text)}</div></div>`;
+  if (m.role === 'ctx') return ctxHTML(m.part);
+  if (m.role === 'agent') {
+    const props = (m.proposals || (m.proposal ? [m.proposal] : [])).map(id => diffHTML(S.proposals.find(p => p.id === id))).join('');
+    return (m.tools && m.tools.length ? toolsHTML(m.tools) : '') +
+      `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt" dir="auto">${fmt(m.text)}</div></div>` + props;
+  }
+  return '';
 }
-
-function renderConvs(){
+function currentRow() { return (S.sessions || []).find(r => r.id === S.session) || {}; }
+function suggestions() {
+  const row = currentRow();
+  if (row.anchor) return ['Why did we pick this part?', 'Find an in-stock alternative', 'What should I check in the datasheet?'];
+  if (row.id === 'idea' || !S.idea.confirmed) return ['What is still open?', 'Does this meet the course rules?'];
+  return ['Check stock for the whole BOM', 'Compare supplier prices', 'What is still open?'];
+}
+function preview(r) { return r.messages ? r.messages + ' message' + (r.messages === 1 ? '' : 's') : 'No messages yet'; }
+function renderConvs() {
   const box = $('#convs');
   box.hidden = !convsOpen;
   $('[data-act="convs"]').setAttribute('aria-expanded', convsOpen);
-  if(!convsOpen) return;
-  
-  const ths = state?.threads || {};
-  let threadsList = Object.values(ths);
-  
-  const item = th => { 
-    return `<button class="conv" data-thread="${th.anchor}" aria-current="${th.anchor === cur}"><span class="t"><span>${th.anchor && th.anchor !== 'main' ? `<span class="anc">${esc(th.anchor)}</span>` : ''}${esc(th.label || th.anchor)}</span></span><span class="p">${th.messages?.length ? esc(th.messages[th.messages.length-1].text || '') : ''}</span></button>`; 
+  if (!convsOpen) return;
+  const rows = S.sessions || [];
+  const item = r => {
+    const l = r.anchor ? lineByKey(r.anchor) : null;
+    const anc = r.anchor ? (l && l.refs.length > 3 ? `${l.refs[0]}…${l.refs.at(-1)}` : (l ? l.refs.join(',') : r.anchor)) : '';
+    return `<button class="conv" data-thread="${esc(r.id)}" aria-current="${r.id === S.session}"><span class="t"><span>${anc ? `<span class="anc">${esc(anc)}</span>` : ''}${esc(r.title)}</span><small>${esc((r.updated || '').slice(5, 10))}</small></span><span class="p">${esc(preview(r))}</span></button>`;
   };
-  
-  let html = `<h4>Conversations</h4><button class="conv" data-thread="main" aria-current="${cur === 'main'}"><span class="t"><span>Main</span></span></button>` + threadsList.map(item).join('');
-  
-  if (state?.sessions && state.sessions.length) {
-    const currentSession = new URLSearchParams(window.location.search).get('session');
-    html += `<h4>Past Sessions</h4>` + state.sessions.map(s => {
-      const isCurrent = (currentSession === s.id) || (!currentSession && state.sessions[state.sessions.length - 1].id === s.id);
-      return `<a class="conv" href="/?project=${state?.project || ''}&session=${s.id}" style="text-decoration:none; display:block;" aria-current="${isCurrent}"><span class="t"><span>${esc(s.id)}</span><small>${esc(s.created || '')}</small></span></a>`;
-    }).join('');
-  }
-  
-  box.innerHTML = html;
+  const proj = rows.filter(r => !r.anchor), parts = rows.filter(r => r.anchor);
+  box.innerHTML = `<h4>Project conversations</h4>${proj.map(item).join('')}` + (parts.length ? `<h4>About a part</h4>${parts.map(item).join('')}` : '');
 }
-
-function renderChat(){
-  if (!state) return;
-  const th = cur === 'main' ? {label: 'Main', messages: state.chat || []} : state.threads?.[cur] || {label: cur, messages: []};
-  $('#convtitle').textContent = th.label || cur;
+function renderChat(force) {
+  const key = JSON.stringify([S.session, S.chat.length, S.chat.at(-1)?.ts, S.proposals.map(p => p.status), pending, S.idea.confirmed]);
+  if (!force && key === lastChatKey) { renderConvs(); return; }
+  lastChatKey = key;
+  const row = currentRow();
+  const l = row.anchor ? lineByKey(row.anchor) : null;
+  $('#convtitle').textContent = (l ? l.refs[0] + (l.refs.length > 1 ? '…' : '') + ' · ' : '') + (row.title || 'Conversation');
   const box = $('#msgs');
-  box.innerHTML = th.messages.length ? th.messages.map(msgHTML).join('') : `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt"><p>New conversation. I can see the BOM, the schematic and all sources.</p></div></div>`;
-  box.scrollTop = box.scrollHeight;
-  $('#sugs').innerHTML = '';
+  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 80 || force;
+  let html = row.anchor ? '' : stageHTML();
+  html += S.chat.length ? S.chat.map(msgHTML).join('')
+    : `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt"><p>New conversation in ${esc(S.title)}. I can see the BOM, the schematic and all sources.</p></div></div>`;
+  if (pending) html += toolsHTML([{t: 'Working…', d: '', st: 'run'}]);
+  box.innerHTML = html;
+  if (stick) box.scrollTop = box.scrollHeight;
+  $('#sugs').innerHTML = suggestions().map(s => `<button class="sug" type="button">${esc(s)}</button>`).join('');
+  $('#sendbtn').disabled = pending;
   renderConvs();
 }
+async function send(text) {
+  text = (text || '').trim(); if (!text || pending) return;
+  pending = true;
+  S.chat = [...S.chat, {role: 'user', text, ts: new Date().toISOString()}];
+  renderChat(true);
+  try { setState(await api('/api/chat', {text})); }
+  catch (e) { /* toast shown */ }
+  pending = false;
+  render(true);
+}
+async function openPart(anchor) {
+  const r = await api('/api/thread/open', {anchor});
+  SESSION = r.session; convsOpen = false;
+  await refresh(true); setView('chat');
+}
+async function switchSession(id) { SESSION = id; convsOpen = false; await refresh(true); setView('chat'); }
 
-function wheadHTML(){
-  if(page !== 'workspace'){
-    const names = {library:'Altium library', sources:'Sources', skills:'Skills', settings:'Settings'};
-    return `<div class="crumb">${esc(state?.title || 'Project')} / <b>${names[page]}</b></div>`;
-  }
-  const t = totals();
-  const items = [
-    ['idea','1','Idea', `<span class="st ${state?.idea?.confirmed ? 'ok' : 'dim'}">${state?.idea?.confirmed ? 'Confirmed' : 'Draft'}</span>`],
-    ['bom','2','BOM', t.bad ? `<span class="st bad">${t.bad} missing</span>` : t.review ? `<span class="st warn">${t.review} to review</span>` : `<span class="st ok">Ready</span>`],
-    ['sch','3','Schematic', `<span class="st dim">Blocks</span>`],
-  ];
-  return `<div class="tabs" role="tablist">${items.map(([id,n,label,st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div>`;
+/* ---------- nav ---------- */
+const ICON = {
+  ws: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="2.5" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="11.5" y="2.5" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2.5" y="11.5" width="15" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+  lib: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="4" width="10" height="12" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2 7h3M2 10h3M2 13h3M15 7h3M15 10h3M15 13h3" stroke="currentColor" stroke-width="1.6"/></svg>',
+  src: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5h8l4 4v9H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 3.5v4h4M7 11h6M7 14h4" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
+  sk: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2 4 11h5l-1 7 7-9h-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  chat: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H8l-4 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  set: '<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6" stroke="currentColor" stroke-width="1.6"/></svg>',
+};
+function renderNav() {
+  const ni = (id, icon, label, cnt) => `<button class="nitem" data-page="${id}" aria-current="${page === id}" title="${label}">${ICON[icon]}<span class="lbl">${label}</span>${cnt != null ? `<span class="cnt">${cnt}</span>` : ''}</button>`;
+  const libCount = (S.library || []).filter(r => r.status === 'ok' || r.status === 'review').length;
+  $('#nav').innerHTML = `
+    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="12" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2 9h4M2 15h4M18 9h4M18 15h4" stroke="currentColor" stroke-width="1.8"/></svg><span>PCB Advisor</span></div>
+    <div class="ngroup projects"><div class="nlabel">Projects</div>
+      ${PROJECTS.map(p => `<button class="nitem" data-proj="${esc(p.name)}" aria-current="${p.name === PROJECT}"><span class="pdot"></span><span class="lbl">${esc(p.title)}</span></button>`).join('')}
+      <button class="nitem" data-act="newproj"><span class="pdot" style="opacity:.4"></span><span class="lbl">+ New project</span></button>
+    </div>
+    <div class="ngroup"><div class="nlabel">${esc(S.title)}</div>
+      <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
+      ${ni('workspace', 'ws', 'Workspace')}
+      <div class="nsub">${[['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic']].map(([id, l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
+      ${ni('library', 'lib', 'Altium library', libCount)}
+      ${ni('sources', 'src', 'Sources', (S.sources || []).length)}
+      ${ni('skills', 'sk', 'Skills', SKILLS ? SKILLS.filter(s => s.available).length : null)}
+    </div>
+    <div class="nfoot">${ni('settings', 'set', 'Settings')}</div>`;
 }
 
-function bomHTML(){
-  const t = totals();
-  const bom = state?.bom || [];
-  return `<div class="vhead"><div><h2>Bill of materials</h2><p>The single source of truth.</p></div>
-    <div class="vacts"></div></div>
+/* ---------- center ---------- */
+function wheadHTML() {
+  if (page !== 'workspace') {
+    const names = {library: 'Altium library', sources: 'Sources', skills: 'Skills', settings: 'Settings'};
+    return `<div class="crumb">${esc(S.title)} / <b>${names[page]}</b></div>`;
+  }
+  const t = S.totals;
+  const items = [
+    ['idea', '1', 'Idea', S.idea.confirmed ? `<span class="st ok">Confirmed</span>` : `<span class="st dim">Open</span>`],
+    ['bom', '2', 'BOM', t.out_of_stock ? `<span class="st bad">${t.out_of_stock} out of stock</span>` : t.to_verify ? `<span class="st warn">${t.to_verify} to review</span>` : t.checking ? `<span class="st dim">checking</span>` : t.lines ? `<span class="st ok">Ready</span>` : `<span class="st dim">Empty</span>`],
+    ['sch', '3', 'Schematic', `<span class="st dim">${S.sheets.length} sheet${S.sheets.length === 1 ? '' : 's'}</span>`],
+  ];
+  return `<div class="tabs" role="tablist">${items.map(([id, n, label, st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div>`;
+}
+function bomHTML() {
+  const t = S.totals, at = checkedAt();
+  return `<div class="vhead"><div><h2>Bill of materials</h2><p>The single source of truth. The agent proposes changes and you approve them. Click a row to see where the part sits in the schematic.</p></div>
+    <div class="vacts"><button class="btn" data-act="check">Check stock</button><button class="btn" data-act="compare">Compare prices</button>
+    <button class="btn" data-act="export" data-fmt="jlc">Export JLC</button><button class="btn" data-act="export" data-fmt="pcbway">Export PCBWay</button></div></div>
+    ${compareCard ? compareHTML() : ''}${exportCard ? exportHTML() : ''}
     <div class="kpis">
       <div class="kpi"><b>${t.lines}</b><span>lines</span></div>
       <div class="kpi"><b>${t.parts}</b><span>parts to place</span></div>
       <div class="kpi"><b>${money(t.cost)}</b><span>parts cost / board</span></div>
-      <div class="kpi ${t.bad ? 'bad' : ''}"><b>${t.bad}</b><span>out of stock</span></div>
-      <div class="kpi ${t.review ? 'warn' : ''}"><b>${t.review}</b><span>to verify</span></div>
+      <div class="kpi ${t.out_of_stock ? 'bad' : ''}"><b>${t.out_of_stock}</b><span>out of stock</span></div>
+      <div class="kpi ${t.checking ? 'warn' : ''}"><b>${t.checking}</b><span>checking</span></div>
+      <div class="kpi ${t.to_verify ? 'warn' : ''}"><b>${t.to_verify}</b><span>to verify</span></div>
     </div>
-    <div class="tblwrap"><table class="bom"><thead><tr><th></th><th>Ref</th><th>Value</th><th>Description</th><th>MPN</th><th>Manufacturer</th><th>Package</th><th>Qty</th><th>Stock</th><th>Unit</th><th>Total</th><th>Library</th><th>Note</th></tr></thead><tbody>
-    ${bom.map(l => { const b = best(l), s = status(l), q = qty(l);
-      return `<tr data-key="${l.line}" class="${sel === l.line ? 'sel' : ''}">
+    ${t.lines ? `<div class="tblwrap"><table class="bom"><thead><tr><th></th><th>Ref</th><th>Value</th><th>Description</th><th>MPN</th><th>Manufacturer</th><th>Package</th><th>Qty</th><th>Stock</th><th>Unit</th><th>Total</th><th>Library</th><th>On sheet</th><th>Note</th></tr></thead><tbody>
+    ${lines().map(l => { const b = best(l), s = status(l), q = qty(l);
+      const secs = [...new Set(sheetsOfLine(l).map(x => x.section))];
+      const refs = l.refs || [];
+      return `<tr data-key="${esc(l.key)}" class="${sel === l.key ? 'sel' : ''}">
         <td><span class="dot ${s}"></span></td>
-        <td class="refs">${esc((l.refs||[]).length > 3 ? l.refs[0] + '–' + l.refs.at(-1) : (l.refs||[]).join(', '))}</td>
-        <td class="m">${esc(l.val||'')}</td><td>${esc(l.desc||'')}</td>
-        <td class="mpn">${esc(l.mpn||'')}</td>
-        <td>${esc(l.mfr||'')}</td><td class="m">${esc(l.pkg||'')}</td>
+        <td class="refs">${esc(refs.length > 3 ? refs[0] + '–' + refs.at(-1) : refs.join(', '))}</td>
+        <td class="m">${esc(l.value)}</td><td>${esc(l.description)}</td>
+        <td class="mpn"><input value="${esc(l.mpn)}" aria-label="MPN ${esc(l.key)}" data-edit="mpn" data-line="${esc(l.key)}"></td>
+        <td>${esc(l.manufacturer)}</td><td class="m">${esc(l.package)}</td>
         <td class="n">${l.dnp ? 'DNP' : q || '—'}</td>
-        <td class="n ${s === 'bad' ? 'stock bad' : ''}">${!l.sup ? 'checking' : q === 0 ? '—' : b ? `${num(b.stock)} <small>${b.s}</small>` : '0'}</td>
+        <td class="n ${s === 'bad' ? 'stock bad' : ''}">${q === 0 ? '—' : l.supply == null ? 'checking' : b ? `${num(b.stock)} <small>${b.s}</small>` : '0'}</td>
         <td class="n">${b ? money(b.price) : '—'}</td><td class="n">${b ? money(b.price * q) : '—'}</td>
-        <td><span class="lib ${l.lib||'std'}">${LIBTXT[l.lib||'std'] || esc(l.lib||'')}</span></td>
-        <td class="note">${esc(l.note||'')}</td></tr>`; }).join('')}
-    </tbody></table></div>`;
+        <td><span class="lib ${esc(l.library)}">${esc(LIBTXT[l.library] || l.library)}</span></td>
+        <td><span class="secs">${secs.map(x => `<button class="secb" data-show="${esc(l.key)}">${esc(x)}</button>`).join('')}</span></td>
+        <td class="note"><input value="${esc(l.note)}" placeholder="Add a note" aria-label="Note ${esc(l.key)}" data-edit="note" data-line="${esc(l.key)}"></td></tr>`; }).join('')}
+    </tbody></table></div>
+    <p class="foot">Unit price at qty 10, shipping excluded. ${at ? 'Stock and prices checked ' + esc(at) + '; run Check stock again before any export.' : 'Not checked yet: run Check stock.'}</p>`
+    : `<div class="dnote">The BOM is empty. Talk to the agent about the idea; it will propose parts and you approve them.</div>`}`;
 }
-
-function schHTML(){
-  return `<div class="vhead"><div><h2>Schematic</h2><p>PDF Schematic View</p></div></div>
-    <div class="sheets" style="margin-bottom: 10px;">
-      <a class="sheet" href="#" onclick="document.getElementById('pdf-frame').src='/api/source/sheet01.pdf'; return false;">Sheet 01 PDF</a>
-      <a class="sheet" href="#" onclick="document.getElementById('pdf-frame').src='/api/source/sheet02.pdf'; return false;">Sheet 02 PDF</a>
-    </div>
-    <div class="schwrap" style="height: 600px; background:#fff">
-      <iframe id="pdf-frame" src="" width="100%" height="100%" style="border:none;"></iframe>
-    </div>`;
+function compareHTML() {
+  const c = compareCard;
+  return `<div class="howto"><b>Parts cost per board by supplier</b> (qty ${c.qty_break}, shipping excluded) <button class="x" data-act="closecard" aria-label="Close">×</button>
+    <ul>${c.suppliers.map(r => `<li><b>${esc(r.supplier)}</b>: <span class="m">${money(r.cost_per_board)}</span>${r.not_checked.length ? ` · ${r.not_checked.length} lines not checked` : ''}${r.missing.length ? ` · missing: ${esc(r.missing.join(', '))}` : r.not_checked.length ? '' : ' · everything in stock'}</li>`).join('')}</ul></div>`;
 }
-
-function ideaHTML(){
-  const idea = state?.idea || {};
-  let canvasHtml = '';
-  if (idea.blocks) {
-    const blocksHtml = idea.blocks.map((b, i) => {
-      const x = b.x !== undefined ? b.x : (i * 130 + 20);
-      const y = b.y !== undefined ? b.y : 50;
-      return `<div class="block" data-id="${b.id}" style="position:absolute; left:${x}px; top:${y}px; width:120px; padding:10px; background:var(--panel); border:1px solid var(--accent); border-radius:6px; cursor:grab; text-align:center; box-shadow:var(--shadow); z-index:2; font-size:12px; font-weight:600;">
-  <button class="del-blk" style="position:absolute; top:-8px; right:-8px; width:20px; height:20px; border-radius:10px; background:var(--bad); color:white; border:none; font-size:12px; cursor:pointer; display:none; padding:0; line-height:1;">×</button>
-  ${esc(b.label || b.id)}
-  <div class="port" data-side="top" style="position:absolute; top:-6px; left:50%; transform:translateX(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
-  <div class="port" data-side="right" style="position:absolute; right:-6px; top:50%; transform:translateY(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
-  <div class="port" data-side="bottom" style="position:absolute; bottom:-6px; left:50%; transform:translateX(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
-  <div class="port" data-side="left" style="position:absolute; left:-6px; top:50%; transform:translateY(-50%); width:12px; height:12px; background:var(--accent); border-radius:50%; cursor:crosshair; opacity:0; transition:opacity 0.2s;"></div>
-</div>`;
-    }).join('');
-    
-    const svgLines = `<svg id="canvas-svg" style="position:absolute; inset:0; width:100%; height:100%; z-index:1; overflow:visible;"></svg>`;
-    canvasHtml = `<div class="card" style="margin-top:16px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line2); padding-right: 14px;">
-        <h3 style="border-bottom:none; margin:0; padding:9px 14px;">Block Diagram</h3>
-        <button id="add-block-btn" class="btn pri">+ Add Block</button>
-      </div>
-      <div id="canvas" oncontextmenu="return false;" style="position: relative; width: 100%; height: 500px; border: 1px solid var(--line); overflow: hidden; background:var(--sch-bg);">
-        <div id="canvas-inner" style="position:absolute; inset:0; transform-origin: 0 0; transform: translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom});">
-          ${svgLines}
-          ${blocksHtml}
-        </div>
-      </div>
-    </div>`;
+function exportHTML() {
+  const e = exportCard, name = e.file.split(/[\\/]/).pop();
+  return `<div class="howto"><b>${esc(name)}</b> is ready: ${e.lines} lines. <a class="lnk" href="/api/export/${encodeURIComponent(name)}?${q()}">Download</a> <button class="x" data-act="closecard" aria-label="Close">×</button>
+    ${e.left_out.length ? `<div>Left out (not fitted or not bought): <span class="m">${esc(e.left_out.join(', '))}</span></div>` : ''}
+    ${e.needs_lcsc && e.needs_lcsc.length ? `<div>No LCSC number yet for: <span class="m">${esc(e.needs_lcsc.join(', '))}</span>. Run Check stock first.</div>` : ''}</div>`;
+}
+let schBusy = false;
+function schHTML() {
+  if (!S.sheets.length) return `<div class="vhead"><div><h2>Example schematic</h2><p>No sheets yet. Ask the agent to draw one once the parts are chosen.</p></div></div>`;
+  if (!sheetId || !S.sheets.find(s => s.id === sheetId)) sheetId = S.sheets[0].id;
+  return `<div class="vhead"><div><h2>Example schematic</h2><p>Rendered from the netlist, not drawn by hand. Click a part to open it in the BOM. You redraw the sheet in Altium from this.</p></div>
+    <div class="sheets">${S.sheets.map(s => `<button class="sheet" data-sheet="${esc(s.id)}" aria-pressed="${s.id === sheetId}"><span class="m">${esc(s.id)}</span> ${esc(s.title)}</button>`).join('')}</div></div>
+    <div class="schwrap" id="schwrap">${svgCache.text ? svgCache.text : '<div class="dnote" style="margin:12px">Drawing…</div>'}</div>`;
+}
+async function loadSheet() {
+  const key = sheetId + '|' + JSON.stringify(lines().map(l => [l.key, l.mpn, l.value, l.dnp])) + JSON.stringify(S.sheets.map(s => Object.keys(s.parts).length));
+  if (svgCache.key === key && svgCache.text) { afterSheet(); return; }
+  const r = await fetch('/api/sheet.svg?' + q({sheet: sheetId}));
+  if (!r.ok) { svgCache = {key: '', text: ''}; return; }
+  svgCache = {key, text: await r.text()};
+  const w = $('#schwrap'); if (w) { w.innerHTML = svgCache.text; afterSheet(); }
+}
+function afterSheet() {
+  const svg = $('#sch'); if (!svg) return;
+  if (!svg.dataset.hl) {
+    for (const g of svg.querySelectorAll('g.part')) {
+      const b = g.getBBox(); if (!b.width) continue;
+      const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      r.setAttribute('x', b.x - 6); r.setAttribute('y', b.y - 6); r.setAttribute('width', b.width + 12); r.setAttribute('height', b.height + 12);
+      r.setAttribute('rx', 6); r.setAttribute('class', 'hlbox'); g.insertBefore(r, g.firstChild);
+    }
+    svg.dataset.hl = '1';
   }
-
-  return `<div class="vhead"><div><h2>Idea</h2><p>What you and the agent agreed on.</p></div></div>
-    <div class="idea" style="display:block;">
-      <div class="card"><h3>Agreed</h3><dl class="agreed">
-        <div><dt>Goal</dt><dd>${esc(idea.goal || '')}</dd></div>
-        ${(idea.agreed || []).map(a => `<div><dt>${esc(a.title||'Item')}</dt><dd>${esc(a.text||'')}</dd></div>`).join('')}
-      </dl></div>
-      ${canvasHtml}
+  applyFocus();
+}
+function applyFocus() {
+  const svg = $('#sch'); if (!svg) return;
+  const l = sel && lineByKey(sel);
+  svg.classList.toggle('focus', !!l);
+  svg.querySelectorAll('g.part').forEach(g => g.classList.toggle('sel', !!l && (l.refs || []).includes(g.dataset.ref)));
+}
+function blocksSVG() {
+  const blocks = S.idea.blocks || [], links = S.idea.links || [];
+  if (!blocks.length) return '<div class="dnote" style="margin:10px">No block diagram yet. The agent draws it once the idea takes shape.</div>';
+  const depth = {}; blocks.forEach(b => depth[b.id] = 0);
+  for (let i = 0; i < blocks.length; i++) for (const [a, b] of links) if (depth[a] !== undefined && depth[b] !== undefined) depth[b] = Math.max(depth[b], depth[a] + 1);
+  const cols = {}; blocks.forEach(b => (cols[depth[b.id]] ||= []).push(b));
+  const W = 140, H = 52, GX = 40, GY = 22, pos = {};
+  const ncol = Object.keys(cols).length, maxn = Math.max(...Object.values(cols).map(c => c.length));
+  Object.entries(cols).forEach(([d, bs]) => bs.forEach((b, i) => pos[b.id] = {x: 10 + d * (W + GX), y: 16 + i * (H + GY) + (maxn - bs.length) * (H + GY) / 2}));
+  const w = 20 + ncol * (W + GX) - GX, h = 32 + maxn * (H + GY) - GY;
+  let s = '';
+  for (const [a, b] of links) { const p = pos[a], r = pos[b]; if (!p || !r) continue;
+    s += `<path d="M${p.x + W} ${p.y + H / 2}C${p.x + W + GX / 2} ${p.y + H / 2} ${r.x - GX / 2} ${r.y + H / 2} ${r.x} ${r.y + H / 2}"/>`; }
+  for (const b of blocks) { const p = pos[b.id];
+    s += `<g class="${b.sheet ? 'cur' : ''} ${b.open ? 'open' : ''}" ${b.sheet ? 'data-tab="sch"' : ''}><rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="7"/><text x="${p.x + 10}" y="${p.y + 22}">${esc(b.label || b.id)}</text><text x="${p.x + 10}" y="${p.y + 40}" class="s">${esc(b.sub || '')}</text></g>`; }
+  return `<svg class="blocks" viewBox="0 0 ${w} ${h}" role="img" aria-label="Block diagram">${s}</svg>`;
+}
+function ideaHTML() {
+  const I = S.idea, items = I.agreed || [];
+  const st = i => i.status === 'confirmed' ? ((i.by === 'student' ? 'From you' : "Agent's proposal") + ' · confirmed') : "Agent's proposal · not confirmed yet";
+  return `<div class="vhead"><div><h2>Idea</h2><p>${esc(I.goal) || 'What you and the agent agreed on before choosing parts. Every line is a decision you can come back to.'}</p></div>
+    <div class="vacts"><button class="btn" data-thread="${esc(((S.sessions || []).find(r => r.id === 'idea') || (S.sessions || []).find(r => !r.anchor) || {}).id || '')}">Open the conversation</button>
+    ${I.confirmed ? `<button class="btn" data-tab="bom">Next: BOM</button>` : `<button class="btn pri" data-act="confirmidea">Confirm the idea</button>`}</div></div>
+    <div class="idea">
+      <div class="card"><h3>Agreed</h3>${items.length ? `<dl class="agreed">${items.map(i => `<div><dt>${esc(i.topic)}</dt><dd dir="auto">${esc(i.text)}<small>${esc(st(i))}</small></dd></div>`).join('')}</dl>` : '<div class="dnote" style="margin:10px">Nothing agreed yet.</div>'}</div>
+      <div style="display:grid;gap:16px">
+        <div class="card"><h3>Block diagram</h3><div style="padding:10px">${blocksSVG()}</div></div>
+        <div class="card"><h3>Against the final-project rules</h3><ul class="reqs">
+          ${(S.requirements || []).map(r => `<li><span class="ic ${r.ok ? 'y' : r.ok === false ? 'nn' : ''}" ${r.ok === null ? 'style="color:var(--dim)"' : ''}>${r.ok ? '✓' : r.ok === false ? '✗' : '○'}</span>${esc(r.text)}${r.detail ? ': ' + esc(r.detail) : ''}</li>`).join('')}
+        </ul>${srcByName('final-project-guidelines.pdf') ? `<div style="padding:0 14px 12px">${chip('final-project-guidelines.pdf', 'Section A')}</div>` : ''}</div>
+      </div>
     </div>`;
 }
-
-function libHTML(){
-  const bom = state?.bom || [];
-  const rows = bom.filter(l => l.lib && l.lib !== 'std');
+function libHTML() {
+  const rows = S.library || [];
   const mk = v => v ? '<span class="y">✓</span>' : '<span class="nn">✗</span>';
-  return `<div class="vhead"><div><h2>Library</h2><p>Parts not in Altium's default libraries.</p></div></div>
-    <div class="tblwrap"><table class="libt"><thead><tr><th>Part</th><th>MPN</th><th>Status</th><th></th></tr></thead><tbody>
-    ${rows.map(l => `<tr data-key="${l.line}" class="${sel === l.line ? 'sel' : ''}"><td class="refs">${esc((l.refs||[]).join(', '))}</td>
-      <td class="m">${esc(l.mpn||'')}</td><td><span class="lib ${l.lib||''}">${LIBTXT[l.lib||'std']||esc(l.lib||'')}</span></td>
-      <td><button class="btn" data-chat="${l.line}">Discuss</button></td></tr>`).join('')}
+  return `<div class="vhead"><div><h2><span class="m">${esc(PROJECT)}.IntLib</span></h2><p>Only parts that aren't in Altium's default libraries. Each has a symbol, a footprint and a 3D model, and shows whether it was checked against its datasheet and accepted by you.</p></div>
+    <div class="vacts"><button class="btn pri" data-act="libexport">Export for Altium</button></div></div>
+    ${libExport ? `<div class="howto"><b>${esc(libExport.file)}</b>: ${libExport.parts} parts. <a class="lnk" href="/api/export/${encodeURIComponent(libExport.file)}?${q()}">Download</a> <button class="x" data-act="closecard" aria-label="Close">×</button>
+      ${libExport.warnings.length ? `<div class="warnbox"><b>Still unverified</b> (${libExport.warnings.length}):<ul>${libExport.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '<div>Every part is verified and accepted.</div>'}
+      <div class="dnote">This writes the manifest and the part files. Compiling the IntLib itself needs Altium on Windows.</div></div>` : ''}
+    ${rows.length ? `<div class="tblwrap"><table class="libt"><thead><tr><th>Part</th><th>MPN</th><th style="text-align:center">Symbol</th><th style="text-align:center">Footprint</th><th style="text-align:center">3D</th><th>Model from</th><th>Status</th><th></th></tr></thead><tbody>
+    ${rows.map(r => `<tr data-key="${esc(r.line)}" class="${sel === r.line ? 'sel' : ''}"><td class="refs">${esc((r.refs || []).join(', '))}</td>
+      <td class="m">${esc(r.mpn)}</td><td class="c">${mk(r.symbol)}</td><td class="c">${mk(r.footprint)}</td><td class="c">${r.step ? '<span class="y">STEP</span>' : '<span class="q">Simple body</span>'}</td>
+      <td>${esc(r.model_source || '—')}${r.issues ? `<div class="issue">${esc(r.issues)}</div>` : ''}</td><td><span class="lib ${esc(r.status)}">${esc(LIBTXT[r.status])}</span></td>
+      <td><button class="btn" data-chat="${esc(r.line)}">Discuss</button>${r.verify === 'pass' && !r.accepted ? ` <button class="btn pri" data-accept="${esc(r.line)}">Accept</button>` : ''}${r.verify !== 'pass' && r.symbol ? ` <button class="btn" data-verify="${esc(r.line)}">Verify</button>` : ''}</td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="dnote">No non-standard parts yet.</div>'}
+    <div class="howto"><b>Install in Altium</b>
+      <code>Components panel ▸ ☰ ▸ File-based Libraries Preferences ▸ Installed ▸ Install…</code>
+      ${srcByName('AD20 Essentials Course Exercises.pdf') ? chip('AD20 Essentials Course Exercises.pdf', 'Module 29, Integrated Library') : ''}</div>`;
+}
+function srcTable(list) {
+  if (!list.length) return '<div class="dnote">Nothing here yet.</div>';
+  return `<div class="tblwrap"><table class="srct"><thead><tr><th>File</th><th>Type</th><th style="text-align:right">Size</th><th>Origin</th><th>sha256</th><th>Text</th><th>Used for</th></tr></thead><tbody>
+    ${list.map(s => `<tr id="src-${esc(s.name).replace(/[^\w-]/g, '_')}" class="${hitSrc === s.name ? 'hit flash' : ''}"><td class="fname">${s.present ? `<a href="/api/source/${encodeURIComponent(s.name)}?${q()}" target="_blank" rel="noopener">${esc(s.name)}</a>` : esc(s.name)}${s.present ? '' : ' <span class="tag plan">not here</span>'}</td><td><span class="kind">${esc(s.kind)}</span></td><td class="n">${esc(s.size)}</td>
+      <td class="org">${esc(s.origin)}</td><td class="hash">${esc(s.sha256)}</td><td>${s.text ? '<span class="y">✓</span>' : '—'}</td><td class="cite">${esc(s.used_for)}</td></tr>`).join('')}
     </tbody></table></div>`;
 }
-
-function srcTable(list){
-  return `<div class="tblwrap"><table class="srct"><thead><tr><th>File</th><th>Scope</th><th style="text-align:right">Size</th></tr></thead><tbody>
-    ${list.map(s => `<tr id="src-${s.name}" class="${hitSrc === s.name ? 'hit flash' : ''}"><td class="fname">${esc(s.name)}</td><td><span class="kind">${s.scope}</span></td><td class="n">${s.size}</td></tr>`).join('')}
-    </tbody></table></div>`;
+function sourcesHTML() {
+  const sh = (S.sources || []).filter(s => s.scope === 'shared'), pr = (S.sources || []).filter(s => s.scope === 'project');
+  return `<div class="vhead"><div><h2>Sources</h2><p>Everything the agent may cite. Each file sits next to a <span class="m">.json</span> sidecar (url, sha256, size) and its extracted <span class="m">.txt</span>, so a quote can be checked word for word.</p></div>
+    <div class="vacts"><button class="btn" data-act="addurl">Add from URL</button><button class="btn pri" data-act="upload">Upload file</button></div></div>
+    <div class="sgroup"><div class="sgh"><h3>Shared library</h3><p>Available in every project · <span class="path">shared/datasheets/</span></p></div>${srcTable(sh)}</div>
+    <div class="sgroup"><div class="sgh"><h3>Project sources</h3><p>Only ${esc(S.title)} · <span class="path">projects/${esc(PROJECT)}/sources/</span></p></div>${srcTable(pr)}</div>
+    ${(S.sources || []).some(s => !s.present) ? `<div class="sidecar">Files marked "not here" are listed by their sidecar but are not on this machine. Run <span class="m">python scripts/sources.py restore</span> to fetch them.</div>` : ''}`;
 }
-
-function sourcesHTML(){
-  return `<div class="vhead"><div><h2>Sources</h2><p>Everything the agent may cite.</p></div></div>
-    <div class="sgroup">${srcTable(state?.sources || [])}</div>`;
+function skillsHTML() {
+  const sk = SKILLS || [];
+  return `<div class="vhead"><div><h2>Skills</h2><p>What the agent can do. You don't call these directly: ask in the chat and the agent picks the right one. The BOM page buttons run the same scripts.</p></div></div>
+    <div class="skills">${sk.map(s => `<div class="skill"><span class="t">${esc(s.name)}<span class="tag ${s.available ? 'ok' : 'plan'}">${s.available ? 'Available' : 'Not built yet'}</span></span><span class="d">${esc(s.what)}</span>${s.script ? `<span class="u">scripts/skills/${esc(s.script)}</span>` : ''}</div>`).join('')}</div>`;
 }
-
-function skillsHTML(){
-  return `<div class="vhead"><div><h2>Skills</h2><p>What the agent can do.</p></div></div>`;
+function settingsHTML() {
+  const c = CONFIG; if (!c) return '<div class="dnote">Loading…</div>';
+  const engines = c.engines || [];
+  return `<div class="vhead"><div><h2>Settings</h2><p>Saved to <span class="m">${esc(c.config_file)}</span>.</p></div></div>
+    <div class="form">
+      <label>Engine<select id="set-provider">${engines.map(e => `<option value="${esc(e.id)}" ${e.active ? 'selected' : ''} ${e.status !== 'implemented' ? 'disabled' : ''}>${esc(e.id)}${e.available ? '' : ' (unavailable: ' + esc(e.reason || '') + ')'}</option>`).join('')}</select></label>
+      <label>Model <small>(blank = the engine's default)</small><input id="set-model" value="${esc(c.agent.model || '')}"></label>
+      <label>Language<select id="set-language">${['auto', 'en', 'he'].map(l => `<option ${c.user.language === l ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Your name<input id="set-name" value="${esc(c.user.name || '')}"></label>
+      <div><button class="btn pri" data-act="saveset">Save</button></div>
+    </div>
+    <div class="form" style="margin-top:18px"><b>This conversation's memory</b>
+      <textarea id="mem" rows="9" dir="auto">${esc(S.memory)}</textarea>
+      <div><button class="btn" data-act="savemem">Save memory</button> <button class="btn" data-act="rewritemem">Rewrite now</button></div></div>
+    <p class="foot">Project folder: <span class="m">${esc(c.home)}</span></p>`;
 }
-
-function detailHTML(){
-  const l = lineByKey(sel); if(!l) return '';
-  const b = best(l);
+function detailHTML() {
+  const l = lineByKey(sel); if (!l) return '';
+  const b = best(l), where = sheetsOfLine(l);
+  const nets = [...new Set(where.flatMap(w => w.nets || []))];
+  const e = l.library_entry || {};
+  const mk = v => v ? '<b class="y">✓</b>' : '<b class="nn">✗</b>';
+  const refs = l.refs || [];
   return `<div class="dt">
-    <div class="dt-h"><div><div class="refs">${esc((l.refs||[]).join(', '))}</div><h3>${esc(l.mpn||'')}</h3><p>${esc(l.mfr||'')} · ${esc(l.pkg||'')} · ${esc(l.desc||'')}</p></div><button class="x" data-act="close" aria-label="Close">×</button></div>
-    <div class="dt-a"><button class="btn pri" data-chat="${l.line}">Discuss this part</button></div>
-    ${qty(l) ? `<div class="dsec"><h4>Stock and price</h4><table class="sup"><thead><tr><th>Supplier</th><th style="text-align:right">Stock</th><th style="text-align:right">Unit @10</th></tr></thead><tbody>
-      ${SUPS.map(s => { const v = l.sup?.[s] || [0,null]; return `<tr class="${b && b.s === s ? 'best' : ''}"><td>${s}</td><td class="n">${num(v[0])}</td><td class="n">${money(v[1])}</td></tr>`; }).join('')}
-      </tbody></table></div>` : ''}
+    <div class="dt-h"><div><div class="refs">${esc(refs.join(', '))}</div><h3>${esc(l.mpn)}</h3><p>${esc(l.manufacturer)} · ${esc(l.package)} · ${esc(l.description)}</p></div><button class="x" data-act="close" aria-label="Close">×</button></div>
+    <div class="dt-a"><button class="btn pri" data-chat="${esc(l.key)}">Discuss this part</button>${where.length ? `<button class="btn" data-show="${esc(l.key)}">Show on schematic</button>` : ''}</div>
+    ${where.length ? `<div class="dsec"><h4>Where it's used</h4><div class="where">${where.map(w => `<button data-show="${esc(l.key)}"><span class="r">${esc(w.ref)}</span><span class="s">Sheet ${esc(w.sheet)} · ${esc(w.section)}${w.title ? ' · ' + esc(w.title) : ''}</span></button>`).join('')}</div></div>` : ''}
+    ${nets.length ? `<div class="dsec"><h4>Nets</h4><div class="netl">${nets.map(n => `<span>${esc(n)}</span>`).join('')}</div></div>` : ''}
+    ${qty(l) ? `<div class="dsec"><h4>Stock and price</h4>${l.supply == null ? '<div class="dnote">Checking… the agent re-checks stock when the MPN changes. You can also press Check stock.</div>' : `<table class="sup"><thead><tr><th>Supplier</th><th style="text-align:right">Stock</th><th style="text-align:right">Unit @10</th></tr></thead><tbody>
+      ${SUPS.map(s => { const v = l.supply[s]; return `<tr class="${b && b.s === s ? 'best' : ''}"><td>${s}</td><td class="n">${v ? num(v.stock) : 'not checked'}</td><td class="n">${v ? money(v.unit_price) : '—'}</td></tr>`; }).join('')}
+      </tbody></table><div class="checked">Checked ${esc(b ? (b.at || '').replace('T', ' ').slice(0, 16) : checkedAt() || '')}${b ? ` · cheapest: ${b.s}` : ' · no supplier has stock'}</div>`}</div>` : ''}
+    <div class="dsec"><h4>Library</h4>${l.library === 'std' ? `<div class="dnote">Standard part from Altium's default libraries.</div>` :
+      `<div class="libg"><div>Symbol${mk(e.symbol)}</div><div>Footprint${mk(e.footprint)}</div><div>3D${e.step ? '<b class="y">STEP</b>' : '<b class="q">Simple</b>'}</div></div>
+       <div class="checked">Model from ${esc(e.model_source || '—')} · <span class="lib ${esc(l.library)}">${esc(LIBTXT[l.library])}</span></div>${e.issues ? `<div class="dnote issue">${esc(e.issues)}</div>` : ''}`}</div>
+    <div class="dsec"><h4>Datasheet</h4>${l.datasheet ? chip(l.datasheet, '') : `<div class="dnote">None stored. Generic part.</div>`}</div>
+    ${l.note ? `<div class="dsec"><h4>Note</h4><div class="dnote">${esc(l.note)}</div></div>` : ''}
   </div>`;
 }
-
-function renderCenter(){
+function renderCenter(force) {
+  const active = document.activeElement;
+  if (!force && active && active.closest && active.closest('#view') && /INPUT|TEXTAREA|SELECT/.test(active.tagName)) return;   // do not eat an edit in progress
   $('#whead').innerHTML = wheadHTML();
   const v = $('#view');
+  const top = v.scrollTop;
   v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : ideaHTML())
-    : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : page === 'settings' ? settingsHTML()
-    : `<div class="vhead"><div><h2>Settings</h2></div></div>`;
-  if(page === 'sources' && hitSrc){ const r = document.getElementById('src-' + hitSrc); if(r) r.scrollIntoView({block:'center'}); hitSrc = null; }
+    : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : settingsHTML();
+  v.scrollTop = top;
+  if (page === 'workspace' && tab === 'sch' && S.sheets.length) loadSheet();
+  if (page === 'sources' && hitSrc) { const r = document.getElementById('src-' + hitSrc.replace(/[^\w-]/g, '_')); if (r) r.scrollIntoView({block: 'center'}); hitSrc = null; }
   renderDetail();
-  if (page === 'workspace' && tab === 'idea') {
-    requestAnimationFrame(drawLines);
-  }
 }
-
-function renderDetail(){
+function renderDetail() {
   const d = $('#detail');
-  const show = !!sel && ((page === 'workspace' && (tab === 'bom' || tab === 'sch')) || page === 'library');
+  const show = !!sel && lineByKey(sel) && ((page === 'workspace' && (tab === 'bom' || tab === 'sch')) || page === 'library');
   d.hidden = !show;
   d.innerHTML = show ? detailHTML() : '';
 }
-
-function go(p, t){ page = p; if(t) tab = t; renderNav(); renderCenter(); setView('work'); }
-function select(key, goSch){
+function render(force) {
+  if (!S) return;
+  document.title = S.title + ' · PCB Advisor';
+  renderNav();
+  renderChat(force);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, page, tab, sel, compareCard, exportCard, libExport, sheetId]);
+  if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
+}
+function go(p, t) { page = p; if (t) tab = t; render(true); setView('work'); }
+function select(key, goSch) {
   sel = key;
-  if(goSch) { go('workspace','sch'); return; }
-  if(!(page === 'workspace' && (tab === 'bom' || tab === 'sch')) && page !== 'library'){ go('workspace','bom'); return; }
+  if (goSch) { go('workspace', 'sch'); return; }
+  if (!(page === 'workspace' && (tab === 'bom' || tab === 'sch')) && page !== 'library') { go('workspace', 'bom'); return; }
   document.querySelectorAll('#view tr[data-key]').forEach(tr => tr.classList.toggle('sel', tr.dataset.key === key));
-  renderDetail(); setView('work');
+  applyFocus(); renderDetail(); setView('work');
 }
-function setView(v){
-  if(!matchMedia('(max-width:860px)').matches) return;
-  $('#app').dataset.view = v;
-}
-function toast(msg){ const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3200); }
+function setView(v) { if (matchMedia('(max-width:860px)').matches) $('#app').dataset.view = v; }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3600); }
 
-document.addEventListener('click', e => {
-  const pl = document.getElementById('proj-list');
-  if (pl && !pl.hidden && !e.target.closest('.projects')) {
-    pl.hidden = true;
-  }
-  const cv = document.getElementById('convs');
-  if (cv && !cv.hidden && !e.target.closest('.chead') && !e.target.closest('#convs')) {
-    convsOpen = false;
-    cv.hidden = true;
-    const btn = document.querySelector('[data-act="convs"]');
-    if (btn) btn.setAttribute('aria-expanded', 'false');
-  }
-
-  const el = e.target.closest('button, tr[data-key], g.part, g[data-tab]');
-  if(!el) return;
-  
-  if (el.id === 'add-block-btn') {
-    const label = prompt("Enter block label:");
-    if (label) {
-      if (!state.idea) state.idea = { blocks: [], links: [] };
-      const id = 'blk_' + Math.random().toString(36).substr(2, 6);
-      state.idea.blocks.push({ id, label, x: 20, y: 20 });
-      fetch('/api/idea' + window.location.search, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links })
-      }).catch(console.error);
-      renderCenter();
-    }
-    return;
-  }
-
-  if(el.matches('tr[data-key]')){ if(e.target.closest('input,button')) { if(!e.target.closest('button')) return; } else { select(el.dataset.key); return; } }
+/* ---------- events ---------- */
+document.addEventListener('click', async e => {
+  const el = e.target.closest('button, tr[data-key], g.part, g[data-tab], a');
+  if (!el) return;
+  if (el.tagName === 'A') return;
+  if (el.matches('g.part')) { const l = lineOfRef(el.dataset.ref); if (l) select(l.key); return; }
+  if (el.matches('tr[data-key]')) { if (e.target.closest('input')) return; if (!e.target.closest('button')) { select(el.dataset.key); return; } }
   const d = el.dataset;
-  if(d.thread){ cur = d.thread; convsOpen = false; renderChat(); setView('chat'); return; }
-  if(d.tab){ go('workspace', d.tab); return; }
-  if(d.page){ go(d.page); return; }
-  if(d.view){ setView(d.view); return; }
-  if(d.src){ hitSrc = d.src; go('sources'); return; }
-  if(d.chat){ cur = d.chat; convsOpen = false; renderChat(); setView('chat'); return; }
-  switch(d.act){
-    case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); return;
-    case 'convs': convsOpen = !convsOpen; renderConvs(); return;
-    case 'new': 
-      fetch('/api/sessions/new' + window.location.search, {method: 'POST'})
-        .then(r => r.json())
-        .then(data => {
-          if (data.created) {
-            const url = new URL(window.location.href);
-            url.searchParams.set('session', data.created);
-            window.location.href = url.toString();
-          }
-        }).catch(console.error);
-      return;
-  }
-});
-
-$('#form').addEventListener('submit', e => { 
-  e.preventDefault(); 
-  const i = $('#input'); 
-  const text = i.value.trim();
-  if(!text) return;
-  i.value = '';
-  
-  if (cur === 'main') {
-    sendChat(text);
-  } else {
-    sendMessage(text, cur);
-  }
-});
-
-$('#input').addEventListener('keydown', e => { if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); $('#form').requestSubmit(); } });
-
-const ICON = {
-  ws:'<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="2.5" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="11.5" y="2.5" width="6" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="2.5" y="11.5" width="15" height="6" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
-  lib:'<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="5" y="4" width="10" height="12" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2 7h3M2 10h3M2 13h3M15 7h3M15 10h3M15 13h3" stroke="currentColor" stroke-width="1.6"/></svg>',
-  src:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 3.5h8l4 4v9H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12 3.5v4h4M7 11h6M7 14h4" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>',
-  sk:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M11 2 4 11h5l-1 7 7-9h-5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
-  chat:'<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v9H8l-4 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>',
-  set:'<svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.5v2.2M10 15.3v2.2M2.5 10h2.2M15.3 10h2.2M4.7 4.7l1.6 1.6M13.7 13.7l1.6 1.6M4.7 15.3l1.6-1.6M13.7 6.3l1.6-1.6" stroke="currentColor" stroke-width="1.6"/></svg>',
-};
-
-function renderNav(){
-  const t = totals();
-  const ni = (id, icon, label, cnt) => `<button class="nitem" data-page="${id}" aria-current="${page === id}" title="${label}">${ICON[icon]}<span class="lbl">${label}</span>${cnt != null ? `<span class="cnt">${cnt}</span>` : ''}</button>`;
-  $('#nav').innerHTML = `
-    <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="12" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2 9h4M2 15h4M18 9h4M18 15h4" stroke="currentColor" stroke-width="1.8"/></svg><span>PCB Advisor</span></div>
-    <div class="ngroup projects" style="position:relative;"><div class="nlabel">Projects</div>
-      ${allProjects.length ? `
-        <button class="nitem" onclick="const pl = document.getElementById('proj-list'); pl.hidden = !pl.hidden;" aria-current="true" style="position:relative; width:100%;">
-          <span class="pdot"></span><span class="lbl">${esc(state?.title || 'Project')}</span>
-          <svg style="width: 14px; height: 14px; opacity: 0.5; margin-left: auto;" viewBox="0 0 16 16" fill="currentColor"><path d="M4 6h8l-4 5z"/></svg>
-        </button>
-        <div id="proj-list" style="position:absolute; top:42px; left:0; right:0; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px; z-index:100; box-shadow:var(--shadow);" hidden>
-          ${allProjects.map(p => `
-            <a class="conv" href="/?project=${p.name}" aria-current="${p.name === state?.project ? 'true' : 'false'}" style="text-decoration:none; display:block; padding:6px 8px; margin-bottom:2px;"><span class="t">${esc(p.title || p.name)}</span></a>
-          `).join('')}
-        </div>
-      ` : `
-        <button class="nitem" aria-current="true"><span class="pdot"></span><span class="lbl">${esc(state?.title || 'Project')}</span></button>
-      `}
-    </div>
-    <div class="ngroup"><div class="nlabel">Workspace</div>
-      <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
-      ${ni('workspace','ws','Workspace')}
-      <div class="nsub">${[['idea','Idea'],['bom','BOM'],['sch','Schematic']].map(([id,l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
-      ${ni('library','lib','Library', libCount())}
-      ${ni('sources','src','Sources', (state?.sources || []).length)}
-    </div>
-    <div class="nfoot">
-      ${ni('settings','set','Settings')}
-    </div>`;
-}
-
-let dragBlock = null;
-let startX, startY, startLeft, startTop;
-
-let linkingFrom = null;
-let linkingSide = null;
-let tempLine = null;
-
-document.addEventListener('mousedown', e => {
-  if (e.target.matches('.del-blk')) {
-    const b = e.target.closest('.block');
-    const id = b.dataset.id;
-    state.idea.blocks = state.idea.blocks.filter(blk => blk.id !== id);
-    state.idea.links = (state.idea.links || []).filter(l => l[0] !== id && l[1] !== id);
-    fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
-    renderCenter();
-    return;
-  }
-  
-  if (e.target.matches('.del-lnk')) {
-    const g = e.target.closest('.link-group');
-    const idx = parseInt(g.dataset.idx);
-    state.idea.links.splice(idx, 1);
-    fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
-    renderCenter();
-    return;
-  }
-
-  if (e.target.closest('.link-group')) {
-    const g = e.target.closest('.link-group');
-    const idx = parseInt(g.dataset.idx);
-    if (e.button === 0) {
-      const currentLbl = state.idea.links[idx][4] || '';
-      const newLbl = prompt("Edit link label (or clear to remove label):", currentLbl);
-      if (newLbl !== null) {
-        state.idea.links[idx][4] = newLbl;
-        fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
-        renderCenter();
-      }
+  try {
+    if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); toast(d.decide === 'approved' ? 'Change applied to the BOM, schematic and library' : 'Rejected. Nothing changed'); return; }
+    if (d.accept) { setState(await api('/api/library/accept', {line: d.accept})); render(true); toast('Accepted'); return; }
+    if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast('Result: ' + r.result.verify); return; }
+    if (d.thread !== undefined && el.dataset.thread !== undefined) { if (d.thread) switchSession(d.thread); return; }
+    if (d.proj) { const u = new URL(location.href); u.searchParams.set('project', d.proj); u.searchParams.delete('session'); location.href = u; return; }
+    if (d.tab) { go('workspace', d.tab); return; }
+    if (d.page) { go(d.page); return; }
+    if (d.view) { setView(d.view); return; }
+    if (d.src) { hitSrc = d.src; go('sources'); return; }
+    if (d.ref) { const l = lineOfRef(d.ref); if (l) select(l.key); return; }
+    if (d.show) { select(d.show, true); return; }
+    if (d.chat) { openPart(d.chat); return; }
+    if (d.sheet) { sheetId = d.sheet; svgCache = {key: '', text: ''}; render(true); return; }
+    switch (d.act) {
+      case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); applyFocus(); return;
+      case 'closecard': compareCard = exportCard = libExport = null; render(true); return;
+      case 'convs': convsOpen = !convsOpen; renderConvs(); return;
+      case 'new': { const r = await api('/api/sessions/new', {}); SESSION = r.created; convsOpen = false; await refresh(true); return; }
+      case 'newproj': { const n = prompt('Name of the new project'); if (!n) return;
+        const r = await api('/api/projects/new', {name: n}); const u = new URL(location.href); u.searchParams.set('project', r.created); u.searchParams.delete('session'); location.href = u; return; }
+      case 'confirmidea': setState(await api('/api/idea/confirm', {})); render(true); toast('Idea confirmed'); return;
+      case 'check': toast('Checking stock… this can take a little while'); { const r = await api('/api/skill', {name: 'check'}); setState(r.state); render(true);
+        const errs = r.result.results.filter(x => x.error); toast('Stock checked' + (errs.length ? ` · ${errs.length} supplier error(s)` : '')); } return;
+      case 'compare': { const r = await api('/api/skill', {name: 'compare'}); compareCard = r.result; exportCard = null; render(true); } return;
+      case 'export': { const r = await api('/api/skill', {name: 'export_bom', args: [d.fmt]}); exportCard = r.result; compareCard = null; render(true); } return;
+      case 'libexport': libExport = await api('/api/library/export', {}); render(true); return;
+      case 'upload': $('#filepick').click(); return;
+      case 'addurl': { const u = prompt('Address of the document (a PDF or text file)'); if (!u) return; toast('Fetching…');
+        const r = await api('/api/fetch_source', {url: u}); if (r.error) { toast(r.error); return; } setState(r); render(true); toast('Added'); } return;
+      case 'saveset': {
+        const set = {'agent.provider': $('#set-provider').value, 'agent.model': $('#set-model').value, 'user.language': $('#set-language').value, 'user.name': $('#set-name').value};
+        const r = await api('/api/config', {set}); CONFIG = r.config; render(true); toast('Saved'); return; }
+      case 'savemem': { await api('/api/memory', {text: $('#mem').value}); await refresh(true); toast('Memory saved'); return; }
+      case 'rewritemem': { toast('Rewriting…'); await api('/api/memory', {}); await refresh(true); return; }
     }
-    return;
-  }
-
-  if (e.target.matches('.port')) {
-    linkingFrom = e.target.closest('.block').dataset.id;
-    linkingSide = e.target.dataset.side || 'auto';
-    e.stopPropagation();
-    return;
-  }
-
-  const canvas = e.target.closest('#canvas');
-  if (canvas && e.button === 2) {
-    isPanning = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    startLeft = canvasPan.x;
-    startTop = canvasPan.y;
-    canvas.style.cursor = 'grabbing';
-    return;
-  }
-  
-  const b = e.target.closest('.block');
-  if(b && b.closest('#canvas')) {
-    dragBlock = b;
-    startX = e.clientX;
-    startY = e.clientY;
-    startLeft = parseInt(b.style.left) || 0;
-    startTop = parseInt(b.style.top) || 0;
-    b.style.cursor = 'grabbing';
-  }
+  } catch (err) { /* api() already toasted */ }
+  if (el.classList.contains('sug')) { send(el.textContent); return; }
 });
-
-document.addEventListener('mousemove', e => {
-  if (isPanning) {
-    canvasPan.x = startLeft + (e.clientX - startX);
-    canvasPan.y = startTop + (e.clientY - startY);
-    const inner = document.getElementById('canvas-inner');
-    if (inner) inner.style.transform = `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`;
-    return;
+document.addEventListener('change', async e => {
+  if (e.target.id === 'filepick') {
+    const f = e.target.files[0]; if (!f) return;
+    const buf = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    try { setState(await api('/api/upload', {name: f.name, data_b64: btoa(bin)})); render(true); toast('Uploaded ' + f.name); } catch (err) { /* toasted */ }
+    e.target.value = ''; return;
   }
-  if (linkingFrom) {
-    const canvas = document.getElementById('canvas').getBoundingClientRect();
-    const inner = document.getElementById('canvas-inner').getBoundingClientRect();
-    let mouseX = (e.clientX - inner.left) / canvasZoom;
-    let mouseY = (e.clientY - inner.top) / canvasZoom;
-    
-    const svg = document.getElementById('canvas-svg');
-    let tmp = document.getElementById('tmp-line');
-    if (!tmp) {
-      tmp = document.createElementNS("http://www.w3.org/2000/svg", "line");
-      tmp.id = "tmp-line";
-      tmp.setAttribute("stroke", "var(--accent)");
-      tmp.setAttribute("stroke-width", "2");
-      tmp.setAttribute("stroke-dasharray", "4");
-      svg.appendChild(tmp);
-    }
-    const srcEl = document.querySelector(`.block[data-id="${linkingFrom}"]`);
-    let x1 = parseInt(srcEl.style.left) + srcEl.offsetWidth/2;
-    let y1 = parseInt(srcEl.style.top) + srcEl.offsetHeight/2;
-    
-    if (linkingSide && linkingSide !== 'auto') {
-      const h = srcEl.offsetHeight, w = srcEl.offsetWidth, L = parseInt(srcEl.style.left), T = parseInt(srcEl.style.top);
-      if(linkingSide==='top') { x1 = L+w/2; y1 = T; }
-      else if(linkingSide==='bottom') { x1 = L+w/2; y1 = T+h; }
-      else if(linkingSide==='left') { x1 = L; y1 = T+h/2; }
-      else if(linkingSide==='right') { x1 = L+w; y1 = T+h/2; }
-    }
-    
-    tmp.setAttribute("x1", x1);
-    tmp.setAttribute("y1", y1);
-    tmp.setAttribute("x2", mouseX);
-    tmp.setAttribute("y2", mouseY);
-    return;
-  }
-  if (dragBlock) {
-    const dx = (e.clientX - startX) / canvasZoom;
-    const dy = (e.clientY - startY) / canvasZoom;
-    dragBlock.style.left = (startLeft + dx) + 'px';
-    dragBlock.style.top = (startTop + dy) + 'px';
-    drawLines();
-  }
+  const i = e.target.closest('input[data-edit]'); if (!i) return;
+  const l = lineByKey(i.dataset.line); if (!l) return;
+  const field = i.dataset.edit, val = i.value.trim();
+  if (val === (l[field] ?? '') || (field === 'mpn' && !val)) return;
+  try {
+    setState(await api('/api/bom/edit', {line: l.key, field, value: val})); render(true);
+    toast(field === 'mpn' ? `MPN updated. Checking stock for ${val}…` : 'Note saved');
+    if (field === 'mpn') setTimeout(() => refresh(), 6000);
+  } catch (err) { /* toasted */ }
 });
+$('#form').addEventListener('submit', e => { e.preventDefault(); const i = $('#input'); const t = i.value; i.value = ''; i.style.height = ''; send(t); });
+$('#input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#form').requestSubmit(); } });
 
-document.addEventListener('mouseup', e => {
-  if (linkingFrom) {
-    const b = e.target.closest('.block');
-    if (b && b.dataset.id !== linkingFrom) {
-      if (!state.idea.links) state.idea.links = [];
-      const tgtSide = e.target.matches('.port') ? e.target.dataset.side : 'auto';
-      state.idea.links.push([linkingFrom, b.dataset.id, linkingSide, tgtSide]);
-      fetch('/api/idea' + window.location.search, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links }) });
-    }
-    linkingFrom = null;
-    const tmp = document.getElementById('tmp-line');
-    if (tmp) tmp.remove();
-    renderCenter();
-    return;
-  }
-  if (isPanning) {
-    isPanning = false;
-    const canvas = document.getElementById('canvas');
-    if (canvas) canvas.style.cursor = 'default';
-    return;
-  }
-  if (dragBlock) {
-    dragBlock.style.cursor = 'grab';
-    const id = dragBlock.dataset.id;
-    const block = state.idea.blocks.find(b => b.id === id);
-    if (block) {
-      block.x = parseInt(dragBlock.style.left);
-      block.y = parseInt(dragBlock.style.top);
-    }
-    dragBlock = null;
-    drawLines();
-    fetch('/api/idea' + window.location.search, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links || [] })
-    }).catch(console.error);
-  }
-});
-
-document.addEventListener('dblclick', e => {
-  const b = e.target.closest('.block');
-  if (b) {
-    const block = state.idea.blocks.find(blk => blk.id === b.dataset.id);
-    if (block) {
-      const newLabel = prompt("Edit block label:", block.label);
-      if (newLabel) {
-        block.label = newLabel;
-        fetch('/api/idea' + window.location.search, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({ blocks: state.idea.blocks, links: state.idea.links })
-        }).catch(console.error);
-        renderCenter();
-      }
-    }
-  }
-});
-
-// Replaced wheel event to bind directly to canvas instead of document
-document.addEventListener('mouseover', function attachWheel(e) {
-  const canvas = e.target.closest('#canvas');
-  if (canvas && !canvas.dataset.wheelAttached) {
-    canvas.dataset.wheelAttached = 'true';
-    canvas.addEventListener('wheel', e => {
-      e.preventDefault();
-      const zoomDelta = e.deltaY > 0 ? 0.95 : 1.05; // fixed zoom direction
-      canvasZoom *= zoomDelta;
-      const inner = document.getElementById('canvas-inner');
-      if (inner) inner.style.transform = `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`;
-    }, {passive: false});
-  }
-});
-/* old wheel */
-document.addEventListener('never', e => {
-  const canvas = e.target.closest('#canvas');
-  if (canvas) {
-    e.preventDefault();
-    const zoomDelta = e.deltaY > 0 ? 1.05 : 0.95;
-    canvasZoom *= zoomDelta;
-    const inner = document.getElementById('canvas-inner');
-    if (inner) inner.style.transform = `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`;
-  }
-}, {passive: false});
-
-function drawLines() {
-  const svg = document.getElementById('canvas-svg');
-  if (!svg || !state?.idea?.links) return;
-  
-  let linesHtml = '';
-  state.idea.links.forEach((link, idx) => {
-    const srcId = link[0], tgtId = link[1], sSide = link[2] || 'auto', tSide = link[3] || 'auto', lbl = link[4] || '';
-    const srcEl = document.querySelector(`.block[data-id="${srcId}"]`);
-    const tgtEl = document.querySelector(`.block[data-id="${tgtId}"]`);
-    if (srcEl && tgtEl) {
-      let x1 = parseInt(srcEl.style.left) + srcEl.offsetWidth/2;
-      let y1 = parseInt(srcEl.style.top) + srcEl.offsetHeight/2;
-      let x2 = parseInt(tgtEl.style.left) + tgtEl.offsetWidth/2;
-      let y2 = parseInt(tgtEl.style.top) + tgtEl.offsetHeight/2;
-      
-      const getP = (el, s) => {
-        const h = el.offsetHeight, w = el.offsetWidth, L = parseInt(el.style.left), T = parseInt(el.style.top);
-        if(s==='top') return [L+w/2, T]; if(s==='bottom') return [L+w/2, T+h];
-        if(s==='left') return [L, T+h/2]; if(s==='right') return [L+w, T+h/2];
-        return [L+w/2, T+h/2];
-      };
-      if (sSide !== 'auto') [x1, y1] = getP(srcEl, sSide);
-      if (tSide !== 'auto') [x2, y2] = getP(tgtEl, tSide);
-
-      linesHtml += `<g class="link-group" data-idx="${idx}" style="cursor:pointer; pointer-events:stroke;">
-        <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="12" />
-        <line class="viz-line" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="var(--dim)" stroke-width="2" marker-end="url(#arrow)" pointer-events="none" />
-        ${lbl ? `<rect x="${(x1+x2)/2 - 15}" y="${(y1+y2)/2 - 8}" width="30" height="16" fill="var(--panel2)" rx="4" pointer-events="none"/><text x="${(x1+x2)/2}" y="${(y1+y2)/2 + 3}" text-anchor="middle" font-size="10" font-family="var(--f-mono)" fill="var(--dim)" pointer-events="none">${esc(lbl)}</text>` : ''}
-        <circle class="del-lnk" cx="${(x1+x2)/2}" cy="${(y1+y2)/2 - 15}" r="8" fill="var(--bad)" style="display:none;" />
-        <text class="del-lnk" x="${(x1+x2)/2}" y="${(y1+y2)/2 - 11}" fill="white" font-size="12" font-family="sans-serif" text-anchor="middle" style="display:none; cursor:pointer;" pointer-events="none">×</text>
-      </g>`;
-    }
-  });
-  if (linesHtml) {
-    linesHtml = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="var(--dim)"/></marker></defs>` + linesHtml;
-  }
-  svg.innerHTML = linesHtml;
-}
-
-loadState();
+/* ---------- start ---------- */
+(async function start() {
+  try {
+    const p = await (await fetch('/api/projects')).json();
+    PROJECTS = p.projects || [];
+    if (!PROJECT) PROJECT = p.default || (PROJECTS[0] && PROJECTS[0].name) || 'demo';
+    const st = await api('/api/state'); setState(st);
+    const [sk, cfg] = await Promise.all([api('/api/skills', undefined, {soft: true}), api('/api/config', undefined, {soft: true})]);
+    SKILLS = sk.skills || []; CONFIG = cfg;
+    if (!S.idea.confirmed && !S.bom.length) tab = 'idea';
+    if (URLQ.get('page')) page = URLQ.get('page');
+    if (URLQ.get('tab')) tab = URLQ.get('tab');
+    if (URLQ.get('sel')) sel = URLQ.get('sel');
+    if (URLQ.get('sheet')) sheetId = URLQ.get('sheet');
+    if (URLQ.get('convs')) convsOpen = true;
+    render(true);
+  } catch (err) { document.body.innerHTML = '<p style="padding:20px">Could not load the project: ' + esc(err.message) + '</p>'; return; }
+  setInterval(() => { if (!pending && !document.hidden) refresh(); }, 4000);
+})();
 </script>
+
+</body>
+</html>

@@ -53,8 +53,11 @@ of `README.md`.
 - **`agy` (Antigravity) gets the prompt as a command-line argument, not on
   stdin.** If `agy` is a `.cmd`, a multi-line prompt, or one over about 8,000
   characters, may be cut off by `cmd.exe`.
-- **`cairosvg`** needs a native Cairo DLL. Without it, only the PNG export
-  should be skipped, with a message, and nothing else should fail.
+- **Skills on Windows.** `scripts/skills/*.py` run as `python scripts/skills/<x>.py`; the engine runs in the
+  install folder, so these relative paths must work even when `PCB_ADVISOR_HOME` is elsewhere.
+- **Hebrew in the new files.** `idea.json`, the `.jsonl` logs, the netlist and the exported CSV are UTF-8 with
+  LF line endings (`.gitattributes` says `* text=auto eol=lf`); a project name or a note in Hebrew must
+  round-trip.
 - **Paths:** the repo or home folder may sit under OneDrive, contain spaces or
   Hebrew, or exceed 260 characters.
 
@@ -129,6 +132,19 @@ Run them in order, and keep the numbers in your report.
 | C5 | Send a long, multi-line message (paste about 60 lines). | The full message reaches the engine. Check the reply refers to the last line. |
 | C6 | If `agy` is installed: set `python pcb.py config agent.provider antigravity` and repeat C2 and C5. | Record whether it is `agy.exe` or `agy.cmd`, and whether the multi-line prompt arrives whole. **Known risk.** |
 | C7 | Look at the server log for any `(png skipped: …)` line. | If it appears, the reason is a missing Cairo DLL and nothing else broke. |
+
+### C2. The v2 surface (needs the Claude CLI logged in for C2.5)
+
+| # | Check | Expected |
+|---|---|---|
+| C2.1 | `python pcb.py seed`, then `python pcb.py show lte-tracker` and `python pcb.py check` | 19 BOM lines, 1 sheet, 1 pending proposal; `check` reports one sheet ok, the course PDF "not here", no FAIL |
+| C2.2 | `python scripts/skills/check_availability.py lte-tracker U5` | a real LCSC answer (stock, price, `C44955`), appended to `supply-log.jsonl` |
+| C2.3 | `python scripts/skills/export_bom.py lte-tracker jlc` then `pcbway` | CSV in `exports/`, opens in Excel; C40/C41 and the test pads are listed as left out |
+| C2.4 | In the browser: BOM, Schematic, Idea, Altium library, Sources, Skills, Settings | every page renders; no console errors; the schematic is sharp at 100% and 200% zoom |
+| C2.5 | Press "Discuss this part" on U5 and ask a question in Hebrew | a part conversation opens with the context card; the reply is readable Hebrew |
+| C2.6 | Approve the D30 proposal; edit an MPN in the table | D30 changes in the BOM and schematic; the edited line shows "checking", then a stock number |
+| C2.7 | Altium library page, "Export for Altium" | `exports/lte-tracker_library.zip` downloads and lists D30 and D31 as unverified |
+| C2.8 | Upload a file named `test:file?.pdf` on the Sources page | saved as `test_file_.pdf`, with a sha256 |
 
 ### D. Altium (Windows only, the reason this machine matters)
 

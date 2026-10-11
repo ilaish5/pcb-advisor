@@ -33,8 +33,6 @@ config file should not fail silently.
 |---|---|---|
 | `projects_dir` | `projects` | your designs |
 | `shared_dir` | `shared` | the document cache, shared by every project |
-| `cascade_dir` | `cascade` | the knowledge graphs |
-| `reference_dir` | `reference` | the same knowledge, for a human |
 | `templates_dir` | `templates` | what `pcb.py new` copies |
 | `ui_dir` | `ui` | the browser UI |
 
@@ -42,8 +40,9 @@ A relative path resolves against the **workspace home**; an absolute one is used
 as-is, so `projects_dir` can point at Dropbox or a git repo of your own.
 
 `PCB_ADVISOR_HOME` moves the workspace. Your work (`projects`, `shared`) follows
-it; the corpus (`cascade`, `reference`, `templates`, `ui`) stays with the install,
-because the knowledge is part of the program, not of your data:
+it; `templates` and `ui` stay with the install, because they are the program, not your data.
+The engine runs in the install (so `scripts/` is where it expects), and is given absolute paths to
+your projects when the home is somewhere else:
 
 ```bash
 PCB_ADVISOR_HOME=~/Documents/boards python3 pcb.py init
@@ -62,7 +61,7 @@ PCB_ADVISOR_HOME=~/Documents/boards python3 pcb.py serve
 ### `user`
 
 `name` (stamped as a project's owner), `language` (`auto` follows what you type),
-`units` (`mm` / `mil`), `show_unverified`, `theme`.
+`units` (`mm` / `mil`), `theme`.
 
 `theme` is `auto` (default), `light` or `dark`. `auto` follows the operating
 system's light/dark setting and changes with it while the page is open. The

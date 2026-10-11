@@ -117,10 +117,11 @@ def _count(path):
 
 # ---------------------------------------------------------------- lifecycle
 
-def create(project=None, title=None):
-    """A new conversation. The id is a timestamp so the folder sorts by itself."""
+def create(project=None, title=None, anchor=None, sid=None):
+    """A new conversation. The id is a timestamp so the folder sorts by itself.
+    `anchor` (a refdes or a sheet id) makes it a part conversation; `sid` forces the id."""
     rows = load_index(project)
-    base = dt.datetime.now().strftime("%Y-%m-%d-%H%M")
+    base = _safe(sid) if sid else dt.datetime.now().strftime("%Y-%m-%d-%H%M")
     sid, n = base, 2
     taken = {r["id"] for r in rows}
     while sid in taken or chat_path(project, sid).exists():
@@ -131,8 +132,11 @@ def create(project=None, title=None):
     write_memory(project, sid, MEMORY_TEMPLATE.format(
         title=title or sid, every=workspace.get("agent.memory_every", 10)))
 
-    rows.append({"id": sid, "title": title or "New conversation",
-                 "created": now(), "updated": now(), "compacted_at": 0})
+    row = {"id": sid, "title": title or "New conversation",
+           "created": now(), "updated": now(), "compacted_at": 0}
+    if anchor:
+        row["anchor"] = anchor
+    rows.append(row)
     save_index(project, rows)
     return sid
 

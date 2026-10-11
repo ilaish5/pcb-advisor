@@ -27,12 +27,12 @@ serve.py            the only writer. Applies actions, never generates them.
 ```
 
 A provider is a transport and nothing more: **text in, text out**. It does not
-know what a cascade is, it does not parse actions, and it never touches a file.
+know what a BOM is, it does not parse actions, and it never touches a file.
 That boundary is what keeps a new engine cheap.
 
 ## Engines with hands, and engines without
 
-A CLI agent sits in the workspace and can open a datasheet, grep the corpus and
+A CLI agent sits in the workspace and can open a datasheet, grep the sources and
 run `trace_width.py`. An HTTP API cannot do any of that. Each provider declares
 which it is:
 
@@ -127,19 +127,22 @@ set here: only the three actions below ever change the design, and they go
 through the server. Tool permissions bound something else — what the engine may
 touch on your machine while it composes a reply.
 
-## The three actions
+## The actions
 
-Whatever tools the engine has, only three things it emits ever change the
-design, and the server is what applies them:
+Whatever tools the engine has, only what it emits as an action changes the project, and the
+server validates and applies it. The reply is prose, then one fenced json block:
+`{"tools": [{t, d, st}], "actions": [...]}`.
 
 | action | effect |
 |---|---|
-| `{"type":"sketch", "blocks":[...], "links":[...], "confirmed":false}` | writes `sketch.json` |
-| `{"type":"answer", "node":"...", "value":"..."}` | appends to `decisions.jsonl` |
-| `{"type":"ask", "anchor":"...", "text":"..."}` | appends to `threads.jsonl` |
+| `idea.propose {topic, text}` | an agreed item in `idea.json`, status "proposed" |
+| `idea.confirm {student_said}` | confirms the idea; refused unless the quote is in the student's last message |
+| `bom.propose {line, changes, reason, sources, new?, library?}` | appends a pending proposal to `proposals.jsonl`. The BOM changes only when the student approves |
+| `netlist.write {sheet, data}` | writes `netlist/<sheet>.json` after validating it against the BOM |
+| `library.add {line, changes}` | appends to `library-log.jsonl`; `verify` and `accepted` are dropped |
+| `thread.open {anchor}` | opens a conversation about one part |
 
-Any other action type is dropped. The engine cannot create a constraint: those
-come from the cascade automatically once a decision is recorded.
+Any other action type is refused and the refusal is shown to the student under the reply.
 
 ## A recommended tool policy
 
@@ -157,26 +160,28 @@ python3 pcb.py tools --apply    # restore the default
 What ships:
 
 ```json
-"allowed":    ["Read", "Grep", "Glob",
+"allowed":    ["Read", "Grep", "Glob", "WebSearch", "WebFetch",
                "Bash(python3 scripts/trace_width.py *)",
                "Bash(python3 scripts/sources.py *)",
-               "Bash(python3 scripts/model.py *)"],
+               "Bash(python3 scripts/model.py *)",
+               "Bash(python3 scripts/skills/*.py *)"],
 "disallowed": ["Write", "Edit", "NotebookEdit"]
 ```
 
 Reading, grepping and the scripts are reachable; direct edits are not. The three
 things worth protecting, in order:
 
-1. **`decisions.jsonl` / `threads.jsonl` / `chat.jsonl`** — append-only, and each
-   decision records `by` (user or agent). An edit destroys the record of a
-   student changing their mind; a forged `by` destroys the only enforcement of
-   "the student decides, the agent recommends". These are also outside git, so
-   there is nothing to revert to.
-2. **`cascade/*.yaml`** — a constraint invented here is served to every future
-   project, and `convention` provenance requires no source at all, so
-   `validate_cascade.py` will not catch it. Git does track the corpus, so this
-   one is at least visible in a diff.
-3. Derived files are rewritten on the next run; writing them achieves nothing.
+1. **The `.jsonl` logs** (`bom-log`, `supply-log`, `proposals`, `library-log`, `chats/*`) —
+   append-only, and each record says who wrote it (`by`). An edit destroys the record of a
+   student changing their mind; a forged `by` destroys the only enforcement of "the student
+   decides, the agent recommends". These are also outside git, so there is nothing to revert to.
+2. **`idea.json`, `netlist/*.json`** — written by the server only, after validation.
+3. Derived files (`bom.json`, `artifacts/`, `design-model.json`) are rewritten on the next run;
+   writing them achieves nothing.
+
+The skills in `scripts/skills/` are the exception: `check_availability.py` appends to
+`supply-log.jsonl` and `verify_part.py` to `library-log.jsonl`, because the time and the result of
+a check are facts, not decisions.
 
 Adding a document is the one write worth allowing, and it goes through
 `scripts/sources.py fetch` rather than curl, so the sha256 and the url are
@@ -195,7 +200,7 @@ spaces — `Bash(python3 scripts/trace_width.py *)` only works this way.
 
 A provider returns `Result(error=...)`; it does not raise. The server turns that
 into a chat line prefixed with the engine id, and the design state is untouched —
-a failed engine must never cost a decision.
+a failed engine must never cost a change.
 
 ## `external`
 
