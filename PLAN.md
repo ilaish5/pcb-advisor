@@ -197,7 +197,14 @@ tokens): precise briefs via `%TEMP%\agy-task.py`; Claude Code plans, briefs and 
 **2026-10-12 user notes:** block diagram must be easy to edit (I10, §3a); final-project guideline checks removed
 (done, commit after I3); open files inside the UI = in-app viewer (I3 follow-up, built next via agy).
 
-**Next: I3 follow-up (in-app file viewer), then I4** (parts + stock, interactive parts tab).
+**Token budget mode (user, 2026-10-12, options 1+3):** the weekly Claude Code quota may not cover I4-I11.
+1. agy writes ALL code (always `--dangerously-skip-permissions`). Claude Code writes a short brief (goal, files allowed,
+   hard limits, acceptance commands) and verifies by running pytest + the acceptance commands + a `git diff --stat`
+   glance; read only risky spots (security, writes outside the project, device path), not every line.
+2. Stages merged, one commit each: **A = I3 viewer + I4**, **B = I5 + I6**, **C = I7 + I8**, **D = I9 + I10**, then
+   **I11**. Stage summaries stay 10 lines; one Hebrew report per merged stage.
+
+**Next: A** (in-app file viewer + I4 parts and stock with the interactive parts tab).
 
 **Waiting for the user:** nothing.
 
