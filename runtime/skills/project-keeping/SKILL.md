@@ -36,6 +36,8 @@ description: Keeps the project folder in order, records who decided what and why
    screenshots; the log. Check the folder against the final-project checklist R1-R11.
 
 ## Scripts
+- `python <repo>/scripts/altium/dump.py <file> [--full]` reads a SchDoc/PcbDoc/PrjPcb/.RUL of the linked Altium project
+  (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/model.py <project>` prints the project state and the final-project checklist status.
 - `python <repo>/scripts/project.py ...` project folder helpers (see its usage text).
 - (planned, stage I10) `scripts/keeping.py` folder order, decision log, change impact, final file organization. Until

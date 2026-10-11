@@ -14,6 +14,8 @@ import argparse
 import base64
 import datetime as dt
 import json
+import mimetypes
+import os
 import pathlib
 import re
 import sys
@@ -67,7 +69,7 @@ SETTABLE = (
     "user.language", "user.units", "user.name",
     "user.theme", "agent.provider", "agent.model", "agent.memory_every",
     "agent.memory_max_chars", "agent.history_messages",
-    "server.default_project",
+    "server.default_project", "altium.install_path",
 )
 
 
@@ -77,6 +79,7 @@ def _public_config():
     return {
         "user": cfg.get("user", {}),
         "engineering_defaults": cfg.get("engineering_defaults", {}),
+        "altium": cfg.get("altium", {"install_path": ""}),
         "agent": {**{k: v for k, v in agent_cfg.items() if k != "providers"},
                   "model": (agent_cfg.get("providers", {})
                             .get(gateway.resolve(BACKEND), {}).get("model", ""))},
@@ -86,6 +89,73 @@ def _public_config():
         "home": str(workspace.home()),
         "config_file": str(workspace.config_path()),
         "settable": list(SETTABLE),
+    }
+
+
+def _altium_state(proj):
+    from altium import registry
+    installs = registry.find_installs()
+    recent = registry.recent_projects()
+    install_path = workspace.get("altium.install_path", "")
+    if install_path:
+        active = next((i for i in installs if i.get("path") == install_path), None)
+        if active:
+            active_install = active
+        else:
+            exe = ""
+            try:
+                candidate = pathlib.Path(install_path) / "X2.EXE"
+                if candidate.is_file():
+                    exe = str(candidate)
+            except OSError:
+                pass
+            active_install = {
+                "build": "",
+                "version": "",
+                "path": install_path,
+                "exe": exe,
+            }
+    elif installs:
+        active_install = installs[0]
+    else:
+        active_install = None
+
+    link = project_mod.altium_link(proj)
+    project_file = link.get("project_file", "")
+    if not project_file:
+        linked = None
+    else:
+        p = pathlib.Path(project_file)
+        exists = p.is_file()
+        if exists:
+            try:
+                from altium.prjpcb import read_prjpcb
+                summary = read_prjpcb(p)
+            except Exception as exc:
+                summary = {"error": str(exc)}
+        else:
+            summary = {"error": "file not found"}
+
+        if isinstance(summary, dict) and "sheets" in summary:
+            sheets = [str((p.parent / pathlib.Path(s.replace("\\", "/"))).resolve()) for s in summary["sheets"]]
+        else:
+            sheets = []
+
+        linked = {
+            "project_file": project_file,
+            "exists": exists,
+            "summary": summary,
+            "pcb_file": link.get("pcb_file", ""),
+            "outputs_dir": link.get("outputs_dir", ""),
+            "sheets": sheets,
+        }
+
+    return {
+        "installs": installs,
+        "recent": recent,
+        "install_path": install_path,
+        "active_install": active_install,
+        "linked": linked,
     }
 
 
@@ -295,6 +365,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "current": self.session(proj)})
         if path == "/api/config":
             return self._send(200, _public_config())
+        if path == "/api/altium":
+            return self._send(200, _altium_state(self.project()))
         if path == "/api/skills":
             from skills import registry
             return self._send(200, {"skills": registry.listing()})
@@ -311,7 +383,9 @@ class Handler(BaseHTTPRequestHandler):
             for base in (model.project_dir(self.project()) / "sources", workspace.datasheets_dir()):
                 f = base / pathlib.Path(name).name
                 if f.exists() and f.is_file():
-                    ctype = "application/pdf" if f.suffix == ".pdf" else "text/plain; charset=utf-8"
+                    ctype = mimetypes.guess_type(f.name)[0] or "text/plain"
+                    if ctype.startswith("text/") or "xml" in ctype or "html" in ctype:
+                        ctype = "text/plain; charset=utf-8"  # never let an uploaded .html run in the UI origin
                     return self._send(200, f.read_bytes(), ctype)
             return self._send(404, {"error": "not in the library"})
         if path.startswith("/api/export/"):
@@ -453,6 +527,74 @@ class Handler(BaseHTTPRequestHandler):
             if not sid:
                 return self._send(404, {"error": "nothing to anchor a conversation to"})
             return self._send(200, {"session": sid, "sessions": session_mod.list_all(proj)})
+
+        if path == "/api/altium/link":
+            raw_path = (data.get("path") or "").strip()
+            if not raw_path:
+                return self._send(400, {"error": "path required"})
+            target = pathlib.Path(raw_path)
+            if not target.exists():
+                return self._send(400, {"error": f"path not found: {raw_path}"})
+            if target.is_dir():
+                prjs = [f for f in target.iterdir() if f.is_file() and f.suffix.lower() == ".prjpcb"]
+                if not prjs:
+                    return self._send(400, {"error": f"no .PrjPcb found in folder: {raw_path}"})
+                if len(prjs) > 1:
+                    return self._send(400, {"error": f"several projects found ({len(prjs)}), pick one"})
+                prj_file = prjs[0].resolve()
+            elif target.is_file():
+                if target.suffix.lower() != ".prjpcb":
+                    return self._send(400, {"error": f"not a .PrjPcb file: {target.name}"})
+                prj_file = target.resolve()
+            else:
+                return self._send(400, {"error": f"not a .PrjPcb: {raw_path}"})
+
+            try:
+                from altium.prjpcb import read_prjpcb
+                summary = read_prjpcb(prj_file)
+            except Exception as exc:
+                return self._send(400, {"error": f"cannot read project file: {exc}"})
+
+            pcb_docs = summary.get("pcbs", [])
+            abs_pcb_map = {}
+            for rel_pcb in pcb_docs:
+                abs_pcb_map[rel_pcb] = str((prj_file.parent / pathlib.Path(rel_pcb.replace("\\", "/"))).resolve())
+
+            given_pcb = data.get("pcb_file")
+            if given_pcb is not None and given_pcb != "":
+                matched_pcb = None
+                norm_given = os.path.normcase(os.path.normpath(str(given_pcb)))
+                for rel_pcb, abs_str in abs_pcb_map.items():
+                    if norm_given == os.path.normcase(os.path.normpath(abs_str)):
+                        matched_pcb = abs_str
+                        break
+                    if norm_given == os.path.normcase(os.path.normpath(rel_pcb)):
+                        matched_pcb = abs_str
+                        break
+                    if pathlib.Path(given_pcb).name.lower() == pathlib.Path(rel_pcb).name.lower():
+                        matched_pcb = abs_str
+                        break
+                if not matched_pcb:
+                    return self._send(400, {"error": f"'{given_pcb}' is not one of the project's PcbDocs: {pcb_docs}"})
+                selected_pcb = matched_pcb
+            else:
+                if len(pcb_docs) == 1:
+                    selected_pcb = list(abs_pcb_map.values())[0]
+                else:
+                    selected_pcb = ""
+
+            given_out = data.get("outputs_dir")
+            if given_out is not None and given_out != "":
+                selected_outputs = str(pathlib.Path(given_out).resolve())
+            else:
+                selected_outputs = str((prj_file.parent / "Outputs").resolve())
+
+            project_mod.set_altium_link(proj, project_file=str(prj_file), pcb_file=selected_pcb, outputs_dir=selected_outputs)
+            return self._send(200, _altium_state(proj))
+
+        if path == "/api/altium/unlink":
+            project_mod.set_altium_link(proj, project_file="")
+            return self._send(200, _altium_state(proj))
 
         # ---- settings, sessions, projects
         if path == "/api/config":

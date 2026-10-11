@@ -119,6 +119,7 @@ def ensure(name):
             "status": "draft",
             "tags": [],
             "board": dict(workspace.get("engineering_defaults", {})),
+            "altium": {"project_file": "", "pcb_file": "", "outputs_dir": ""},
             "notes": "",
         })
     return workspace.safe_name(name)
@@ -135,6 +136,60 @@ def load_meta(name):
     except json.JSONDecodeError:
         return {"name": workspace.safe_name(name), "title": name, "board": {},
                 "error": "project.json is not valid JSON"}
+
+
+def altium_link(name) -> dict:
+    meta = load_meta(name)
+    alt = meta.get("altium")
+    if isinstance(alt, dict):
+        return {
+            "project_file": str(alt.get("project_file", "") or ""),
+            "pcb_file": str(alt.get("pcb_file", "") or ""),
+            "outputs_dir": str(alt.get("outputs_dir", "") or ""),
+        }
+    return {"project_file": "", "pcb_file": "", "outputs_dir": ""}
+
+
+def set_altium_link(name, project_file="", pcb_file=None, outputs_dir=None) -> dict:
+    meta = load_meta(name)
+    link = meta.get("altium")
+    if not isinstance(link, dict):
+        link = {}
+
+    if not project_file:
+        link = {
+            "project_file": "",
+            "pcb_file": str(pcb_file or "") if pcb_file is not None else "",
+            "outputs_dir": str(outputs_dir or "") if outputs_dir is not None else "",
+        }
+        meta["altium"] = link
+        save_meta(name, meta)
+        return link
+
+    p_path = pathlib.Path(project_file).resolve()
+    if pcb_file is None:
+        computed_pcb = ""
+        try:
+            from altium.prjpcb import read_prjpcb
+            summary = read_prjpcb(p_path)
+            pcbs = summary.get("pcbs", [])
+            if len(pcbs) == 1:
+                computed_pcb = str((p_path.parent / pathlib.Path(pcbs[0].replace("\\", "/"))).resolve())
+        except Exception:
+            computed_pcb = ""
+        link["pcb_file"] = computed_pcb
+    else:
+        link["pcb_file"] = str(pathlib.Path(pcb_file).resolve()) if pcb_file else ""
+
+    if outputs_dir is None:
+        link["outputs_dir"] = str((p_path.parent / "Outputs").resolve())
+    else:
+        link["outputs_dir"] = str(pathlib.Path(outputs_dir).resolve()) if outputs_dir else ""
+
+    link["project_file"] = str(p_path)
+    meta["altium"] = link
+    save_meta(name, meta)
+    return link
 
 
 def save_meta(name, meta):

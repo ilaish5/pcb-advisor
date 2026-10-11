@@ -207,6 +207,15 @@ def _add_dirs(project):
     for d in dirs:
         if str(d) not in out:
             out.append(str(d))
+    proj_name = project or workspace.default_project()
+    if proj_name:
+        import project as project_mod
+        link = project_mod.altium_link(proj_name)
+        p_file = link.get("project_file")
+        if p_file:
+            folder = pathlib.Path(p_file).parent
+            if folder.is_dir() and str(folder) not in out:
+                out.append(str(folder))
     return out
 
 

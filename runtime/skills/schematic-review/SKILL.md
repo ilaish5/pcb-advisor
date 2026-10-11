@@ -35,6 +35,8 @@ A finding without a datasheet page is not a finding; it is a question to the stu
 9. Answer with the table below, worst first. Offer to re-check after the student fixes the top items.
 
 ## Scripts
+- `python <repo>/scripts/altium/dump.py <file> [--full]` reads a SchDoc/PcbDoc/PrjPcb/.RUL of the linked Altium project
+  (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/skills/verify_part.py <project> <bom-key>` - checks the part's pin numbers against the datasheet text.
 - `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` - sheet refs missing from the BOM, pins without a net.
 - (planned, stage I6) `<repo>/scripts/netlist_build.py` - netlist from PcbDoc pads and SchDoc wire geometry.

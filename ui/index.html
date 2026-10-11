@@ -385,7 +385,7 @@ const URLQ = new URLSearchParams(location.search);
 let S = null;                 // the whole project, from /api/state
 let PROJECT = URLQ.get('project') || null;
 let SESSION = URLQ.get('session') || null;
-let PROJECTS = [], SKILLS = null, CONFIG = null;
+let PROJECTS = [], SKILLS = null, CONFIG = null, ALTIUM_DATA = null;
 let page = 'workspace', tab = 'bom', sel = null, hitSrc = null, sheetId = null;
 let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null;
 let svgCache = {key: '', text: ''};
@@ -416,6 +416,12 @@ async function refresh(force) {
     setState(st);
     render(force);
   } catch (e) { /* the toast already said it */ }
+}
+async function loadAltium() {
+  try {
+    ALTIUM_DATA = await api('/api/altium', undefined, {soft: true});
+    if (page === 'settings') renderCenter(true);
+  } catch (e) { /* error toasted */ }
 }
 
 /* ---------- derived values ---------- */
@@ -787,6 +793,92 @@ function skillsHTML() {
 function settingsHTML() {
   const c = CONFIG; if (!c) return '<div class="dnote">Loading…</div>';
   const engines = c.engines || [];
+  const a = ALTIUM_DATA;
+  let altBlock = '<div class="form" style="margin-top:18px"><div class="dnote">Loading Altium settings…</div></div>';
+  if (a) {
+    const installs = a.installs || [];
+    const installsHTML = installs.length
+      ? `<div style="display:grid;gap:4px">` +
+        installs.map(i => `<div><span class="m">${esc(i.version || 'Version unknown')}</span>: <span class="path">${esc(i.path)}</span>${i.exe ? ' <small style="color:var(--ok)">✓ X2.EXE</small>' : ''}</div>`).join('') +
+        `</div>`
+      : `<div class="dnote">No Altium Designer install found in the registry</div>`;
+
+    const detectedPath = (a.active_install && a.active_install.path) || (installs[0] && installs[0].path) || '';
+    const currentPath = (CONFIG && CONFIG.altium && CONFIG.altium.install_path) || a.install_path || '';
+
+    let linkedHTML = '';
+    if (a.linked) {
+      const l = a.linked;
+      const sum = l.summary || {};
+      const pcbs = sum.pcbs || [];
+      let pcbPicker = '';
+      if (pcbs.length > 1) {
+        pcbPicker = `<label>PcbDoc<select id="altium-pcb-select">` +
+          pcbs.map(p => {
+            const isSel = (l.pcb_file && (l.pcb_file.endsWith(p) || l.pcb_file.toLowerCase().includes(p.toLowerCase())));
+            return `<option value="${esc(p)}" ${isSel ? 'selected' : ''}>${esc(p)}</option>`;
+          }).join('') +
+          `</select></label>`;
+      } else if (pcbs.length === 1) {
+        pcbPicker = `<div>PcbDoc: <span class="m">${esc(pcbs[0])}</span></div>`;
+      } else {
+        pcbPicker = `<div>PcbDoc: <span class="m">${esc(l.pcb_file || 'None')}</span></div>`;
+      }
+
+      const missingHTML = (sum.missing && sum.missing.length)
+        ? `<div class="warnbox"><b>Missing documents (${sum.missing.length}):</b><ul>${sum.missing.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`
+        : '';
+
+      linkedHTML = `
+        <div class="card" style="padding:10px 14px;display:grid;gap:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <b>Linked project: ${esc(sum.name || l.project_file.split(/[\\/]/).pop())}</b>
+            <button class="btn" data-act="altium-unlink">Unlink</button>
+          </div>
+          <div>Project file: <span class="m">${esc(l.project_file)}</span>${l.exists ? '' : ' <span class="tag plan">file missing</span>'}</div>
+          ${pcbPicker}
+          <label>Output folder<input id="altium-outdir" value="${esc(l.outputs_dir || '')}" placeholder="Outputs folder path"></label>
+          <div>Sheets: <b>${sum.sheets ? sum.sheets.length : 0}</b> · PCBs: <b>${pcbs.length}</b></div>
+          ${missingHTML}
+        </div>`;
+    } else {
+      linkedHTML = `<div class="dnote">No Altium project linked</div>`;
+    }
+
+    const recent = a.recent || [];
+    const recentHTML = recent.length
+      ? `<div style="display:grid;gap:6px">` +
+        recent.map(r => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:3px 0;${r.exists ? '' : 'opacity:0.5'}">
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">
+              <b>${esc(r.name)}</b> <span class="path">${esc(r.path)}</span>${r.exists ? '' : ' <small>(not found)</small>'}
+            </div>
+            <button class="btn" data-act="altium-link" data-path="${esc(r.path)}">Link</button>
+          </div>`).join('') +
+        `</div>`
+      : '<div class="dnote">No recent projects found in the registry</div>';
+
+    altBlock = `
+      <div class="form" style="margin-top:18px">
+        <b>Altium Designer</b>
+        <label>Detected installs${installsHTML}</label>
+        <label>Altium path <small>(blank = newest detected)</small>
+          <div style="display:flex;gap:8px">
+            <input id="set-altium-path" value="${esc(currentPath)}" placeholder="${esc(detectedPath)}" style="flex:1">
+            <button class="btn" data-act="saveset">Save path</button>
+          </div>
+        </label>
+        <div>${linkedHTML}</div>
+        <label>Recent projects
+          ${recentHTML}
+          <div style="display:flex;gap:8px;margin-top:6px">
+            <input id="altium-custom-path" placeholder="Path to .PrjPcb or project folder" style="flex:1">
+            <button class="btn pri" data-act="altium-link-custom">Link</button>
+          </div>
+        </label>
+      </div>`;
+  }
+
   return `<div class="vhead"><div><h2>Settings</h2><p>Saved to <span class="m">${esc(c.config_file)}</span>.</p></div></div>
     <div class="form">
       <label>Engine<select id="set-provider">${engines.map(e => `<option value="${esc(e.id)}" ${e.active ? 'selected' : ''} ${e.status !== 'implemented' ? 'disabled' : ''}>${esc(e.id)}${e.available ? '' : ' (unavailable: ' + esc(e.reason || '') + ')'}</option>`).join('')}</select></label>
@@ -795,6 +887,7 @@ function settingsHTML() {
       <label>Your name<input id="set-name" value="${esc(c.user.name || '')}"></label>
       <div><button class="btn pri" data-act="saveset">Save</button></div>
     </div>
+    ${altBlock}
     <div class="form" style="margin-top:18px"><b>This conversation's memory</b>
       <textarea id="mem" rows="9" dir="auto">${esc(S.memory)}</textarea>
       <div><button class="btn" data-act="savemem">Save memory</button> <button class="btn" data-act="rewritemem">Rewrite now</button></div></div>
@@ -832,6 +925,7 @@ function renderCenter(force) {
     : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : settingsHTML();
   v.scrollTop = top;
   if (page === 'workspace' && tab === 'sch' && S.sheets.length) loadSheet();
+  if (page === 'settings' && !ALTIUM_DATA) loadAltium();
   if (page === 'sources' && hitSrc) { const r = document.getElementById('src-' + hitSrc.replace(/[^\w-]/g, '_')); if (r) r.scrollIntoView({block: 'center'}); hitSrc = null; }
   renderDetail();
 }
@@ -849,7 +943,7 @@ function render(force) {
   const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, page, tab, sel, compareCard, exportCard, libExport, sheetId]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
-function go(p, t) { page = p; if (t) tab = t; render(true); setView('work'); }
+function go(p, t) { page = p; if (t) tab = t; if (p === 'settings') loadAltium(); render(true); setView('work'); }
 function select(key, goSch) {
   sel = key;
   if (goSch) { go('workspace', 'sch'); return; }
@@ -873,7 +967,7 @@ document.addEventListener('click', async e => {
     if (d.accept) { setState(await api('/api/library/accept', {line: d.accept})); render(true); toast('Accepted'); return; }
     if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast('Result: ' + r.result.verify); return; }
     if (d.thread !== undefined && el.dataset.thread !== undefined) { if (d.thread) switchSession(d.thread); return; }
-    if (d.proj) { const u = new URL(location.href); u.searchParams.set('project', d.proj); u.searchParams.delete('session'); location.href = u; return; }
+    if (d.proj) { ALTIUM_DATA = null; const u = new URL(location.href); u.searchParams.set('project', d.proj); u.searchParams.delete('session'); location.href = u; return; }
     if (d.tab) { go('workspace', d.tab); return; }
     if (d.page) { go(d.page); return; }
     if (d.view) { setView(d.view); return; }
@@ -898,9 +992,18 @@ document.addEventListener('click', async e => {
       case 'upload': $('#filepick').click(); return;
       case 'addurl': { const u = prompt('Address of the document (a PDF or text file)'); if (!u) return; toast('Fetching…');
         const r = await api('/api/fetch_source', {url: u}); if (r.error) { toast(r.error); return; } setState(r); render(true); toast('Added'); } return;
+      case 'altium-link': { const p = el.dataset.path; if (!p) return;
+        ALTIUM_DATA = await api('/api/altium/link', {path: p}); render(true); toast('Linked Altium project'); return; }
+      case 'altium-link-custom': { const inp = $('#altium-custom-path'); const p = inp ? inp.value.trim() : '';
+        if (!p) { toast('Path required'); return; }
+        ALTIUM_DATA = await api('/api/altium/link', {path: p}); render(true); toast('Linked Altium project'); return; }
+      case 'altium-unlink': {
+        ALTIUM_DATA = await api('/api/altium/unlink', {}); render(true); toast('Unlinked Altium project'); return; }
       case 'saveset': {
         const set = {'agent.provider': $('#set-provider').value, 'agent.model': $('#set-model').value, 'user.language': $('#set-language').value, 'user.name': $('#set-name').value};
-        const r = await api('/api/config', {set}); CONFIG = r.config; render(true); toast('Saved'); return; }
+        const ap = $('#set-altium-path');
+        if (ap) set['altium.install_path'] = ap.value.trim();
+        const r = await api('/api/config', {set}); CONFIG = r.config; await loadAltium(); render(true); toast('Saved'); return; }
       case 'savemem': { await api('/api/memory', {text: $('#mem').value}); await refresh(true); toast('Memory saved'); return; }
       case 'rewritemem': { toast('Rewriting…'); await api('/api/memory', {}); await refresh(true); return; }
     }
@@ -908,6 +1011,19 @@ document.addEventListener('click', async e => {
   if (el.classList.contains('sug')) { send(el.textContent); return; }
 });
 document.addEventListener('change', async e => {
+  if (e.target.id === 'altium-pcb-select' || e.target.id === 'altium-outdir') {
+    if (!ALTIUM_DATA || !ALTIUM_DATA.linked || !ALTIUM_DATA.linked.project_file) return;
+    const pcbEl = $('#altium-pcb-select');
+    const pcb = pcbEl ? pcbEl.value : (ALTIUM_DATA.linked.pcb_file || undefined);
+    const outEl = $('#altium-outdir');
+    const out = outEl ? outEl.value.trim() : (ALTIUM_DATA.linked.outputs_dir || undefined);
+    try {
+      ALTIUM_DATA = await api('/api/altium/link', {path: ALTIUM_DATA.linked.project_file, pcb_file: pcb, outputs_dir: out});
+      render(true);
+      toast('Project link updated');
+    } catch (err) { /* toasted */ }
+    return;
+  }
   if (e.target.id === 'filepick') {
     const f = e.target.files[0]; if (!f) return;
     const buf = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
@@ -942,6 +1058,7 @@ $('#input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shift
     if (URLQ.get('sel')) sel = URLQ.get('sel');
     if (URLQ.get('sheet')) sheetId = URLQ.get('sheet');
     if (URLQ.get('convs')) convsOpen = true;
+    if (page === 'settings') loadAltium();
     render(true);
   } catch (err) { document.body.innerHTML = '<p style="padding:20px">Could not load the project: ' + esc(err.message) + '</p>'; return; }
   setInterval(() => { if (!pending && !document.hidden) refresh(); }, 4000);

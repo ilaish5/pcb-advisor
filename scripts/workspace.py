@@ -234,12 +234,7 @@ def describe(project=None, engine_home=None):
         return p.as_posix()
 
     repo = REPO.as_posix()
-    return {
-        "home": str(home()),
-        "repo": str(REPO),
-        "cwd": str(engine_home) if engine_home else str(REPO),
-        "project": pdir.name,
-        "places": [
+    places = [
             {"path": f"{repo}/shared/reference", "write": False,
              "what": "the course reference (git-tracked): AGENTS.md is the topic index; course/ad20-essentials/ is the "
                      "step-by-step Altium manual. Read it for any 'how do I ... in Altium' question"},
@@ -272,7 +267,29 @@ def describe(project=None, engine_home=None):
              "what": "what a conversation would otherwise forget. Bounded, and rewritten by a separate call"},
             {"path": rel(pdir / "notes.md"), "write": True,
              "what": "the project's notes. Nothing derives from it"},
-        ],
+        ]
+    try:
+        import project as project_mod
+        link = project_mod.altium_link(pdir.name)
+        p_file = link.get("project_file")
+        if p_file:
+            folder_posix = pathlib.Path(p_file).parent.as_posix()
+            places.append({
+                "path": folder_posix,
+                "write": False,
+                "what": f"the student's Altium project (linked in Settings): {pathlib.Path(p_file).name}; "
+                        f"board {pathlib.Path(link.get('pcb_file') or '?').name}; outputs {link.get('outputs_dir') or '?'}. "
+                        "READ ONLY - never write here; read a SchDoc/PcbDoc/PrjPcb/.RUL with "
+                        + oscompat.py("python3 {repo}/scripts/altium/dump.py <file> [--full]"),
+            })
+    except Exception:
+        pass
+    return {
+        "home": str(home()),
+        "repo": str(REPO),
+        "cwd": str(engine_home) if engine_home else str(REPO),
+        "project": pdir.name,
+        "places": places,
         "scripts": [
             {"run": oscompat.py("python3 {repo}/scripts/skills/check_availability.py <project> [LINE ...]"),
              "what": "stock and price per supplier, stored with the time. NEVER state stock or price without running this"},

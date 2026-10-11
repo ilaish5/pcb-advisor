@@ -39,6 +39,8 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 8. Write the findings table. Offer to re-check after the fix; do not edit the board yourself.
 
 ## Scripts
+- `python <repo>/scripts/altium/dump.py <file> [--full]` reads a SchDoc/PcbDoc/PrjPcb/.RUL of the linked Altium project
+  (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/trace_width.py ...` IPC-2221 trace width for a current; use it instead of estimating.
 - `python <repo>/scripts/model.py <project>` prints project state (BOM, parts, notes) to read the part list.
 - (planned, stage I5) `scripts/checks/board.py` connector side, decap distance, outline layers, CPL rotation from the

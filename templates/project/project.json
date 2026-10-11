@@ -9,5 +9,10 @@
   "status": "draft",
   "tags": [],
   "board": {},
+  "altium": {
+    "project_file": "",
+    "pcb_file": "",
+    "outputs_dir": ""
+  },
   "notes": ""
 }

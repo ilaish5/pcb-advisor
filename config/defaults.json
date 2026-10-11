@@ -18,6 +18,9 @@
     "units": "mm",
     "theme": "auto"
   },
+  "altium": {
+    "install_path": ""
+  },
   "agent": {
     "provider": "claude_code",
     "engine_home": "",

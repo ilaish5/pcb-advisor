@@ -100,11 +100,34 @@ files and skills (context + procedures + tools), so they are a first-class deliv
 Every skill states: when to use it; the steps; the scripts it may run; its references; the pitfalls (from the device
 transcripts); the output format; and has evals (section 5).
 
+## 3a. The product UI (user, 2026-10-11) - binding for every stage
+
+Design happens together, outside Altium; the student goes into Altium only to carry it out. Three spaces:
+1. **Agent + student products** (the main output; tabs):
+   - **Idea**: requirements agreed with the student + a simple **editable block diagram** (shared language).
+     Style = the user's example `docs/ref-block-diagram.png`: a block = part name + one-line role (student's
+     language); colour by domain (power orange, sensing green, MCU blue, comms purple, drive/actuation red, UI grey);
+     every edge labelled (voltage or bus: 3.3V, SPI, UART, I2C/GPIO); dashed frame = the board, off-board blocks
+     outside it; dashed red = hardware safety path. Data in the project (JSON), rendered by Python/SVG, editable.
+   - **Parts table**: interactive (edit, replace), datasheet links, JLC availability indicator, a short "role in the
+     circuit" line per part, "discuss this part" opens a chat with the datasheet in context.
+   - **Schematic**: the Python-rendered preview; click a part or a net -> ask about it (one button).
+   - **Placement and routing**: interactive preview (placement + critical-net plan), same click-to-ask.
+2. **Altium outputs**: every file to export, schematic to Gerber, incl. both BOM types (JLC + generic) and CPL.
+3. **Final manufacturer checks**: JLC DFM / assembly preview - upload the results, triage them with the agent.
+Cross-cutting:
+- **Settings**: link to the Altium project (path, project name, the PcbDoc and sheets, output folder) - everything
+  the scripts need to find the right project.
+- **Open files in the UI** (datasheet, schematic, reference files) and **upload files** to the project knowledge base.
+- **Citations without friction**: chips, not lectures; no refusals for missing sources on standard practice.
+- **The agent guides the student at every stage**: next step at the end of each answer; each tab says what to do.
+
 ## 4. Inputs (read before planning a stage)
 
 | path | what |
 |---|---|
 | `docs/PRODUCT-PLAN.md` | the what (Hebrew) - §1 pain points, §3 capabilities, §5 benchmark, §7 decisions 1-24, §8 rules/OutJob, §9 feasibility |
+| `docs/UI-SPEC.md` | the workspace tabs and behaviour rules the user fixed on 2026-10-11 (Idea, Parts, Schematic, Placement and Routing, Altium outputs, Manufacturer check, knowledge base, settings) |
 | `docs/ENGINES.md` | engine install/config + verified CLI behaviour (agy print mode, stream-json stdin) |
 | `docs/feasibility/` | proven readers: SchDoc, PcbDoc (pads, nets, rules), JLC API + datasheet download, `.RUL` format |
 | `shared/reference/AGENTS.md` | course material map + topic index |
@@ -133,14 +156,14 @@ transcripts); the output format; and has evals (section 5).
 | I0 | **Orientation + architecture.** Read the inputs; keep/replace map of the v2 code; runtime-pack layout (section 3) proven with **both** engines; fix the known engine bugs: agy refuses `--model ...-high` together with `--effort` (send one), long prompts on the command line (Windows ~32K limit) -> stdin with `--input-format stream-json` (`docs/ENGINES.md` §5). Write `docs/ARCHITECTURE.md` (short). | both engines answer a probe that needs a skill file; gateway tests for the two bugs; all tests green | ✅ |
 | I1 | **Measurement harness.** 12 incident fixtures, Q&A eval, behaviour evals, `pcb.py bench`, `docs/BENCHMARK.md` | bench runs end to end; baseline recorded | ✅ |
 | I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ✅ (measurement partial, see §8) |
-| I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, pick a local project) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ⬜ |
-| I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ⬜ |
-| I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ⬜ |
-| I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; skill schematic-review | incidents 6, 7, 9 caught | ⬜ |
+| I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, link the Altium project: PrjPcb, PcbDoc, sheets, output folder); open files in the UI + upload to the knowledge base (§3a) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ✅ (device parse waits for the user, see §7) |
+| I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); interactive parts tab (§3a: edit/replace, availability indicator, role line, chat per part with datasheet); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ⬜ |
+| I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; UI spaces "Altium outputs" and "Final manufacturer checks" (§3a: upload results, discuss); skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ⬜ |
+| I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ⬜ |
 | I7 | **Rules and calcs** (cap 7). Rules tab (JLC preset + extra rules), `.RUL` writer, read-back diff from the PcbDoc, calculators; skill rules-and-calcs | `.RUL` round-trip test; diff test on a changed fixture; one import in Altium listed for the user | ⬜ |
 | I8 | **Library** (caps 3, 4). Model search + link-and-return, package-variant check vs datasheet, one-script library build for Altium; skills part-models + project-library | incident 1 caught | ⬜ |
-| I9 | **Previews** (caps 5, 8). Schematic preview, placement preview + critical-net routing plan; skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ⬜ |
-| I10 | **Idea, Altium help, project keeping** (caps 1, 11, 12). Requirement questions, how-to answers from the AD20 manual, decision log, change impact, final file organization | incident 8 caught at the idea stage; Q&A eval target met | ⬜ |
+| I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ⬜ |
+| I10 | **Idea, Altium help, project keeping** (caps 1, 11, 12). Requirement questions + editable block diagram (§3a), stage guidance in every tab, how-to answers from the AD20 manual, decision log, change impact, final file organization | incident 8 caught at the idea stage; Q&A eval target met | ⬜ |
 | I11 | **Wrap-up.** Full benchmark, README + ENGINES + docs current, English UI check, clean tree, final summary for the user | 12/12 or the gaps explained | ⬜ |
 
 ## 7. Now
@@ -161,11 +184,16 @@ I2: allow-rule in agy settings vs the flag); Claude `Edit(//c/...)` rule form no
 **User decisions (2026-10-11):** agy permissions = (a): ship with `--dangerously-skip-permissions` (gateway default,
 keep it). Do NOT re-run the measurements of I1/I2 (the partial baseline stays as recorded). Ask the user before any
 heavy bench run in later stages (the PC ran out of memory twice). Implementation subagent = **agy** (saves Claude Code
-tokens): precise briefs via `%TEMP%gy-task.py`; Claude Code plans, briefs and verifies every result itself.
+tokens): precise briefs via `%TEMP%\agy-task.py`; Claude Code plans, briefs and verifies every result itself.
 
-**Next: I3** (Altium reader + settings).
+**I3 done (2026-10-11)** - see section 8.
 
-**Waiting for the user:** nothing.
+**Next: I4** (parts + stock, interactive parts tab).
+
+**Waiting for the user:** I3 acceptance "device files parse": the permission classifier blocks me from reading the device
+folder (even read-only). The user runs
+`! .venv\Scripts\python scripts\altium\dump.py "C:\Users\Public\Documents\Altium\real-project\real-project.PcbDoc" --net TC_FAULT`
+(must print Q5D-1, TP8, U3-13, U6-25) or adds a read-only allow rule for that folder.
 
 ## 8. Stage summaries (10 lines each, newest last)
 
@@ -210,3 +238,20 @@ tokens): precise briefs via `%TEMP%gy-task.py`; Claude Code plans, briefs and v
 8. Caveat: the skills carry the device lessons (generalized), so the benchmark is partly in-sample.
 9. Tests: 208 green. Runtime skills updated: all 12 (this stage).
 10. Open: `check_availability.py` still has a Mouser branch (I4); `trace_width.py` is IPC-2221 only (IPC-2152 in I7).
+
+### I3 - Altium reader + settings (2026-10-11) ✅
+1. `scripts/altium/` (stdlib + olefile, read-only): SchDoc (components, params, footprints, pins, wires, labels,
+   ports), PcbDoc (components, nets, pads with nets in mm, rules, classes), PrjPcb, `.RUL`; `pad_net_map`; `read_any`.
+2. `dump.py <file> [--full] [--net NAME]` CLI; listed in AGENTS.md SCRIPTS and in board/schematic/project skills.
+3. Fixture numbers pinned in tests (rules-board 59/76/35/281, finished-board 56/71/45/272, 5 sheets exact).
+4. `altium/registry.py`: installs (HKLM Builds) + recent PrjPcb (HKCU), read-only, injectable fake for tests.
+   This PC: AD26 26.8.1.31; recent = the device PrjPcb.
+5. Project link: `project.json.altium` {project_file, pcb_file, outputs_dir}; GET /api/altium, POST link/unlink;
+   settings block in the UI (installs, path, linked project, PcbDoc pick, output folder, recent + Link).
+6. The engine gets the linked folder via add-dir and a READ ONLY place in the workspace description.
+7. Sources viewer serves by real content type; text/xml/html/svg as plain text (no script in the UI origin).
+   Upload to the knowledge base already existed (Sources page).
+8. Built by agy from two briefs (I3-A readers, I3-B settings); every diff and test read by Claude Code.
+9. Tests: 229 green, skills lint ok. No benchmark run (user: no heavy runs without asking; I3 adds no answers).
+10. Open: device parse + TC_FAULT check waits for the user; the settings UI was not opened in a browser (no GUI).
+

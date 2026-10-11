@@ -1,1 +1,2 @@
 pypdf           # pull text out of datasheets so quotes can be verified
+olefile         # read Altium SchDoc / PcbDoc (OLE compound files), read-only
