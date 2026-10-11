@@ -149,7 +149,8 @@ def part_context(project, ref):
             "description": line.get("description"), "datasheet": line.get("datasheet"),
             "refs": line.get("refs", []), "where": where,
             "nets": sorted({n for r in line.get("refs", []) for n in store.nets_of(project, r)}), "library": line.get("library"),
-            "note": line.get("note")}
+            "note": line.get("note"), "role": line.get("role", ""), "availability": line.get("availability"),
+            "library_type": line.get("library_type"), "risk": line.get("risk", [])}
 
 
 # ---------------------------------------------------------------- build

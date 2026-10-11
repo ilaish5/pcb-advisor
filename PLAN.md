@@ -163,7 +163,7 @@ Cross-cutting:
 | I1 | **Measurement harness.** 12 incident fixtures, Q&A eval, behaviour evals, `pcb.py bench`, `docs/BENCHMARK.md` | bench runs end to end; baseline recorded | ✅ |
 | I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ✅ (measurement partial, see §8) |
 | I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, link the Altium project: PrjPcb, PcbDoc, sheets, output folder); open files in the UI + upload to the knowledge base (§3a) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ✅ |
-| I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); interactive parts tab (§3a: edit/replace, availability indicator, role line, chat per part with datasheet); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ⬜ |
+| I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); interactive parts tab (§3a: edit/replace, availability indicator, role line, chat per part with datasheet); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ✅ |
 | I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; UI spaces "Altium outputs" and "Final manufacturer checks" (§3a: upload results, discuss); skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ⬜ |
 | I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ⬜ |
 | I7 | **Rules and calcs** (cap 7). Rules tab (JLC preset + extra rules), `.RUL` writer, read-back diff from the PcbDoc, calculators; skill rules-and-calcs | `.RUL` round-trip test; diff test on a changed fixture; one import in Altium listed for the user | ⬜ |
@@ -211,7 +211,10 @@ them in the project (`checks/`), and give the engine the slices to read (image i
 `runtime/skills/manufacturer-and-dfm/references/jlcdfm-report.md`. Sample: the user's device report (local only,
 untrusted copy in %TEMP%\dfm-untrusted; not committed).
 
-**Next: A** (in-app file viewer + I4 parts and stock with the interactive parts tab).
+**Stage A done (2026-10-12)** - see section 8. The agy queue (A2->B->C->D) was stopped by Claude Code for low memory
+while B was running; B is left partial and uncommitted in the working tree (pytest green). Restart only when the user asks.
+
+**Next: B** (I5 board + manufacturer checks, I6 schematic review): resume from the partial working tree.
 
 **Waiting for the user:** nothing.
 
@@ -276,3 +279,17 @@ untrusted copy in %TEMP%\dfm-untrusted; not committed).
 10. Device check run by the user: TC_FAULT = Q5D-1, TP8-TP, U3-13, U6-25 (correct; TP8's pad is named TP).
     Open: the settings UI was not opened in a browser (no GUI).
 
+### Stage A (I3 viewer + I4 parts and stock), 2026-10-12
+1. In-app file viewer (A1, commit d3ce322): PDF/image/text/CSV/Altium summary in a pane; citation chips open it;
+   `/api/altium/file` allowlisted to the linked project's files.
+2. `scripts/jlc.py`: JLC parts API client, disk cache in `shared/cache/jlc` (git-ignored, 6 h TTL), part lookup,
+   alternatives (same package, in stock, Basic/Preferred first), datasheet URL from the JLC file endpoint.
+3. `check_availability.py` LCSC branch uses jlc.part (stock, price breaks, library type, package, datasheet).
+4. store: BOM `role` field; availability, risk flags, cost per board (build qty 5, extended fee $3) computed.
+5. serve: /api/parts/alternatives, /api/parts/check, /api/parts/datasheet (download into sources, else link-and-return),
+   /api/bom/propose.
+6. UI parts tab: status dots, library type, cost/board, risk tags, role line, datasheet, alternatives, Check all, KPIs.
+7. Skill parts-and-stock: Scripts section lists the real commands. Runtime pack synced.
+8. Built by agy (briefs a1, a2); verified by Claude Code: pytest + lint + diff stat + network/write spots in jlc.py.
+9. Tests: 242 green (A2 alone, queue run), skills lint ok. Live JLC lookup of STM32G0B1KET6 worked. No benchmark.
+10. Open: neither the viewer nor the parts tab was opened in a browser (no GUI).

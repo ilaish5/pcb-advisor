@@ -23,7 +23,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import workspace  # noqa: E402
 
 BOM_FIELDS = ("refs", "value", "description", "mpn", "manufacturer", "package",
-              "dnp", "nobuy", "note", "library", "datasheet", "sheet")
+              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role")
 # a change to one of these makes the old stock/price answer stale
 SUPPLY_KEYS = ("mpn",)
 SUPPLIERS = ("LCSC", "Mouser", "DigiKey")
@@ -85,10 +85,15 @@ def supply_for(project):
         line = by_key.get(ev.get("line"))
         if not line or ev.get("mpn") != line.get("mpn"):
             continue
-        out.setdefault(ev["line"], {})[ev["supplier"]] = {
+        item = {
             "stock": ev.get("stock"), "unit_price": ev.get("unit_price"),
             "qty_break": ev.get("qty_break"), "checked_at": ev.get("ts"),
-            "source": ev.get("source")}
+            "source": ev.get("source"),
+        }
+        for opt_key in ("library_type", "package", "code", "datasheet_url", "exact"):
+            if opt_key in ev:
+                item[opt_key] = ev[opt_key]
+        out.setdefault(ev["line"], {})[ev["supplier"]] = item
     return out
 
 
@@ -117,6 +122,55 @@ def library_status(line, entry):
     return "review"
 
 
+def line_availability_and_risk(line, best=None, build_qty=5):
+    supply = line.get("supply")
+    q = qty(line)
+
+    lib_type = ""
+    if supply:
+        lcsc_sup = supply.get("LCSC") or {}
+        lib_type = lcsc_sup.get("library_type") or (best or {}).get("library_type") or ""
+    if not lib_type:
+        lib_type = line.get("library_type") or ""
+
+    unit_price = best.get("unit_price") if best else None
+    cost_per_board = round(q * unit_price, 4) if (unit_price is not None and q > 0) else 0.0
+
+    if supply is None:
+        availability = "unchecked"
+        risk = ["not checked"]
+        return availability, lib_type, cost_per_board, risk
+
+    stock = best.get("stock", 0) if best else 0
+    if not best and supply:
+        stock = max((s.get("stock") or 0) for s in supply.values())
+
+    board_qty = q if q > 0 else 1
+    threshold = board_qty * build_qty * 10
+
+    risk = []
+    if stock <= 0:
+        availability = "none"
+        risk.append("out of stock")
+    elif stock < threshold or lib_type == "Extended":
+        availability = "low"
+        if stock < threshold:
+            risk.append("low stock")
+        if lib_type == "Extended":
+            risk.append("Extended fee")
+    else:
+        availability = "ok"
+
+    if stock <= 0 and lib_type == "Extended" and "Extended fee" not in risk:
+        risk.append("Extended fee")
+
+    exact_flags = [s.get("exact") for s in supply.values() if s.get("exact") is not None]
+    if exact_flags and not all(exact_flags):
+        risk.append("no exact MPN match")
+
+    return availability, lib_type, cost_per_board, risk
+
+
 def bom(project, write=True):
     """The derived BOM: lines + supply + library state. Also written to
     bom.json for any agent that would rather read a file."""
@@ -127,12 +181,28 @@ def bom(project, write=True):
     for sh in sheet_ids(project):
         for part in load_sheet(project, sh).get("parts", []):
             sheets.setdefault(part["ref"], (sh, part.get("section")))
+    build_qty = int(workspace.get("jlc.build_qty", 5))
     for l in lines:
         l["supply"] = supply.get(l["key"])
         entry = lib.get(l["key"])
         l["library"] = library_status(l, entry)
         l["library_entry"] = entry
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
+        l["role"] = l.get("role") or ""
+
+        b = best_offer(l)
+        avail, lib_type, cost_pb, risk = line_availability_and_risk(l, b, build_qty=build_qty)
+        l["availability"] = avail
+        l["library_type"] = lib_type
+        l["cost_per_board"] = cost_pb
+        l["risk"] = risk
+
+        sup_dict = l.get("supply") or {}
+        lcsc_sup = sup_dict.get("LCSC") or {}
+        if lcsc_sup.get("code") and not l.get("code"):
+            l["code"] = lcsc_sup["code"]
+        if lcsc_sup.get("datasheet_url") and not l.get("datasheet_url"):
+            l["datasheet_url"] = lcsc_sup["datasheet_url"]
     if write:
         p = pdir(project) / "bom.json"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -157,8 +227,12 @@ def best_offer(line, supply=None):
 
 
 def totals(lines):
+    ext_fee_usd = float(workspace.get("jlc.extended_fee_usd", 3.0))
     t = {"lines": len(lines), "parts": 0, "cost": 0.0, "buy": 0, "in_stock": 0,
-         "out_of_stock": 0, "checking": 0, "to_verify": 0}
+         "out_of_stock": 0, "checking": 0, "to_verify": 0,
+         "cost_per_board": 0.0, "extended_fee": 0.0}
+    extended_parts = set()
+    total_cost_per_board = 0.0
     for l in lines:
         q = qty(l)
         t["parts"] += q
@@ -173,10 +247,23 @@ def totals(lines):
         b = best_offer(l)
         if b:
             t["in_stock"] += 1
-            t["cost"] += b["unit_price"] * q
+            line_cost = b["unit_price"] * q
+            t["cost"] += line_cost
+            total_cost_per_board += line_cost
         else:
             t["out_of_stock"] += 1
+
+        lib_type = l.get("library_type")
+        if not lib_type and l.get("supply"):
+            lcsc_sup = (l["supply"].get("LCSC") or {})
+            lib_type = lcsc_sup.get("library_type")
+        if lib_type == "Extended":
+            part_id = l.get("mpn") or l.get("code") or l.get("key")
+            extended_parts.add(part_id)
+
     t["cost"] = round(t["cost"], 4)
+    t["cost_per_board"] = round(total_cost_per_board, 4)
+    t["extended_fee"] = round(len(extended_parts) * ext_fee_usd, 2)
     return t
 
 
@@ -249,10 +336,18 @@ def edit_bom(project, line, field, value):
         "before": {field: existing[line].get(field)}})
 
 
-def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, source="skill"):
-    return append(project, "supply-log.jsonl", {
+def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, source="skill",
+               library_type=None, package=None, code=None, datasheet_url=None, exact=None):
+    rec = {
         "ts": now(), "line": line, "mpn": mpn, "supplier": supplier, "stock": stock,
-        "unit_price": unit_price, "qty_break": qty_break, "source": source})
+        "unit_price": unit_price, "qty_break": qty_break, "source": source,
+    }
+    if library_type is not None: rec["library_type"] = library_type
+    if package is not None: rec["package"] = package
+    if code is not None: rec["code"] = code
+    if datasheet_url is not None: rec["datasheet_url"] = datasheet_url
+    if exact is not None: rec["exact"] = exact
+    return append(project, "supply-log.jsonl", rec)
 
 
 def add_library(project, line, changes, by="agent"):

@@ -106,5 +106,10 @@
     "min_via_drill_mm": 0.3,
     "board_finish": "HASL",
     "assembly": "reflow"
+  },
+  "jlc": {
+    "cache_hours": 6,
+    "build_qty": 5,
+    "extended_fee_usd": 3.0
   }
 }

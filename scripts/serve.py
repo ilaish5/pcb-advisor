@@ -450,6 +450,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, f.read_bytes(), "application/octet-stream",
                                   {"Content-Disposition": f'attachment; filename="{name}"'})
             return self._send(404, {"error": "no such export"})
+        if path == "/api/parts/alternatives":
+            proj = self.project()
+            key = self.query("line")
+            if not key:
+                return self._send(400, {"error": "line required"})
+            lines = store.bom(proj, write=False)
+            target_line = next((l for l in lines if l["key"] == key), None)
+            if not target_line:
+                return self._send(404, {"error": f"no BOM line {key!r}"})
+            try:
+                import jlc
+                alts = jlc.alternatives(target_line)
+                return self._send(200, alts)
+            except Exception as exc:
+                return self._send(500, {"error": str(exc)})
         return self._send(404, {"error": "not found"})
 
     # ---------------------------------------------------------------- write
@@ -536,6 +551,65 @@ class Handler(BaseHTTPRequestHandler):
                 redraw(proj)
                 project_mod.touch(proj)
             return self._send(200, state())
+
+        if path == "/api/parts/check":
+            target_line = data.get("line")
+            try:
+                import check_availability
+                keys = {target_line} if target_line else None
+                check_availability.check(proj, keys)
+            except Exception as exc:
+                return self._send(500, {"error": f"check failed: {exc}"})
+            return self._send(200, state())
+
+        if path == "/api/parts/datasheet":
+            target_line = data.get("line")
+            if not target_line:
+                return self._send(400, {"error": "line required"})
+            lines = store.bom(proj, write=False)
+            l = next((x for x in lines if x["key"] == target_line), None)
+            if not l:
+                return self._send(404, {"error": f"no BOM line {target_line!r}"})
+
+            url = l.get("datasheet_url")
+            if not url and l.get("supply"):
+                url = (l["supply"].get("LCSC") or {}).get("datasheet_url")
+            if not url:
+                mpn = (l.get("mpn") or "").strip()
+                if mpn and mpn not in ("—", "-"):
+                    try:
+                        import jlc
+                        p = jlc.part(mpn)
+                        if p and p.get("datasheet_url"):
+                            url = p["datasheet_url"]
+                    except Exception:
+                        pass
+
+            if not url:
+                return self._send(200, {"error": "no datasheet URL for this part", "url": None})
+
+            try:
+                meta = sources.fetch(url, name=f"{l.get('mpn') or target_line}.pdf")
+                store.edit_bom(proj, target_line, "datasheet", meta["name"])
+                return self._send(200, {"ok": True, "datasheet": meta["name"], "state": state()})
+            except Exception as exc:
+                return self._send(200, {"error": str(exc), "url": url})
+
+        if path == "/api/bom/propose":
+            line_key = data.get("line")
+            changes = data.get("changes") or {}
+            reason = data.get("reason") or "Alternative part proposed"
+            sources_list = data.get("sources") or []
+            try:
+                rec = store.propose_bom(proj, line_key, changes, reason=reason, sources=sources_list, session=sess)
+                say(proj, sess, {
+                    "ts": now(), "role": "agent",
+                    "text": f"Proposed alternative for {line_key}: {changes.get('mpn') or ''}",
+                    "proposals": [rec["id"]]
+                })
+                return self._send(200, state())
+            except Exception as exc:
+                return self._send(400, {"error": str(exc)})
 
         if path == "/api/library/accept":
             entry = store.library_parts(proj).get(data.get("line"))

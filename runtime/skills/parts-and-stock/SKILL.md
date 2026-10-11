@@ -31,14 +31,11 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
 10. If the JLC query fails, say so and store nothing. A line that was not checked must never look like "no stock".
 
 ## Scripts
-- `python <repo>/scripts/skills/check_availability.py <project> [LINE ...]` - exists today. Searches JLC by MPN, returns stock, unit price
-  at 10 pcs, LCSC code, model name, `exact`, and `checked_at`; writes the supply log. (It still has a Mouser branch: ignore it, JLC only.)
-- `python <repo>/docs/feasibility/feas_jlc.py <LCSC code or keyword>` - exists today. Prints all JLC fields of the first hit, including
-  `componentLibraryType` (base = Basic), `preferredComponentFlag`, `stockCount`, price tiers. Use it to read the type of one part.
-- `python <repo>/scripts/skills/compare_prices.py <project>` - exists today. Cost per board from the stored checks (JLC row only).
-- (planned, stage I4) `scripts/jlc.py` - JLC client with cache and query time; (planned, stage I4) `scripts/parts.py` - the full table:
-  type, cost per board, risk flag, alternatives. Until they exist, build the table by hand from the two scripts above and say that
-  the type and alternatives came from `feas_jlc.py` or a keyword search.
+- `python <repo>/scripts/skills/check_availability.py <project> [LINE ...]` - Searches JLC by MPN, returns stock, unit price at 10 pcs,
+  LCSC code, model name, library type, package, datasheet URL, `exact`, and `checked_at`; writes the supply log.
+- `python <repo>/scripts/jlc.py [search <kw> | part <mpn> | alternatives <kw> [pkg]]` - JLC client with disk cache. Searches parts, best MPN match,
+  or in-stock alternatives with the same package.
+- `python <repo>/scripts/skills/compare_prices.py <project>` - Cost per board from the stored checks (JLC row only).
 
 ## References
 - `<repo>/docs/feasibility/README.md` - what the JLC endpoint returns (stock, library type, prices, datasheet link) and what it lacks.

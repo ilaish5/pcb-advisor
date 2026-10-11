@@ -170,7 +170,8 @@ td.n{font-family:var(--f-mono);font-variant-numeric:tabular-nums;text-align:righ
 .bom input:hover{border-color:var(--line)}
 .bom input:focus{border-color:var(--accent);background:var(--panel)}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%}
-.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)} .dot.na{background:var(--line)} .dot.pend{background:var(--accent)}
+.dot.ok{background:var(--ok)} .dot.warn{background:var(--warn)} .dot.bad{background:var(--bad)} .dot.na{background:var(--line)} .dot.pend{background:var(--accent)} .dot.dim{background:var(--dim)}
+.bom .role-input{min-width:130px;color:var(--ink2);font-size:12.5px}
 .lib{font-size:12px;border-radius:5px;padding:0 7px;white-space:nowrap}
 .lib.std{color:var(--dim);background:var(--panel2)} .lib.ok{color:var(--ok);background:var(--ok-soft)} .lib.review{color:var(--warn);background:var(--warn-soft)} .lib.missing{color:var(--bad);background:var(--bad-soft)}
 .secs{display:flex;gap:3px}
@@ -299,6 +300,7 @@ table.libt{min-width:740px} table.srct{min-width:780px}
 .skill .u{font-size:11.5px;color:var(--dim);font-family:var(--f-mono)}
 .tag{font-size:11px;border-radius:999px;padding:0 8px;font-weight:600;white-space:nowrap}
 .tag.ok{background:var(--ok-soft);color:var(--ok)} .tag.plan{background:var(--panel2);color:var(--dim);border:1px solid var(--line)}
+.tag.bad{background:var(--bad-soft);color:var(--bad)} .tag.warn{background:var(--warn-soft);color:var(--warn)}
 
 .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 16px;border-radius:9px;font-size:13px;box-shadow:var(--shadow);z-index:20;max-width:calc(100% - 32px)}
 .mobile-only{display:none}
@@ -402,7 +404,7 @@ let PROJECT = URLQ.get('project') || null;
 let SESSION = URLQ.get('session') || null;
 let PROJECTS = [], SKILLS = null, CONFIG = null, ALTIUM_DATA = null;
 let page = 'workspace', tab = 'bom', sel = null, hitSrc = null, sheetId = null;
-let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null;
+let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null, altsCard = null;
 let svgCache = {key: '', text: ''};
 let lastChatKey = '', lastCenterKey = '';
 
@@ -464,7 +466,7 @@ const money = p => p == null ? '—' : '$' + (p < 0.01 ? p.toFixed(4) : p < 1 ? 
 const num = n => (n ?? 0).toLocaleString('en-US');
 const LIBTXT = {std: 'Altium default', ok: 'In library · verified', review: 'In library · to review', missing: 'Missing'};
 const FIELD = {mpn: 'MPN', manufacturer: 'Manufacturer', package: 'Package', value: 'Value', description: 'Description',
-  note: 'Note', datasheet: 'Datasheet', dnp: 'Not fitted', nobuy: 'Not bought', refs: 'Designators'};
+  note: 'Note', datasheet: 'Datasheet', dnp: 'Not fitted', nobuy: 'Not bought', refs: 'Designators', role: 'Role'};
 const sheetsOfLine = l => {
   const out = [];
   for (const r of l.refs || []) for (const sh of S.sheets) {
@@ -654,35 +656,74 @@ function wheadHTML() {
   ];
   return `<div class="tabs" role="tablist">${items.map(([id, n, label, st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div>`;
 }
+function altsHTML() {
+  if (!altsCard) return '';
+  const c = altsCard;
+  const l = lineByKey(c.line);
+  return `<div class="howto"><b>Alternatives for ${esc(c.line)} (${esc(c.mpn || l?.mpn || '')})</b> <button class="x" data-act="closecard" aria-label="Close">×</button>
+    ${c.loading ? '<div class="dnote" style="margin-top:6px">Searching in-stock alternatives…</div>' :
+      (!c.list || !c.list.length) ? '<div class="dnote" style="margin-top:6px">No in-stock alternatives found.</div>' :
+      `<div class="tblwrap" style="margin-top:8px"><table class="bom">
+        <thead><tr><th>Code</th><th>MPN</th><th>Manufacturer</th><th>Package</th><th>Type</th><th style="text-align:right">Stock</th><th style="text-align:right">Unit</th><th></th></tr></thead>
+        <tbody>
+          ${c.list.map(a => {
+            const uPrice = (a.price_breaks && a.price_breaks[0]) ? a.price_breaks[0].price : null;
+            return `<tr>
+              <td class="m">${esc(a.code)}</td>
+              <td class="m"><b>${esc(a.mpn)}</b></td>
+              <td>${esc(a.manufacturer)}</td>
+              <td class="m">${esc(a.package)}</td>
+              <td><span class="lib ${a.library_type === 'Basic' || a.library_type === 'Preferred' ? 'ok' : a.library_type === 'Extended' ? 'warn' : 'std'}">${esc(a.library_type || '—')}</span></td>
+              <td class="n">${num(a.stock)}</td>
+              <td class="n">${money(uPrice)}</td>
+              <td><button class="btn pri" data-act="propose-alt" data-line="${esc(c.line)}" data-mpn="${esc(a.mpn)}" data-pkg="${esc(a.package)}" data-desc="${esc(a.description || '')}" data-code="${esc(a.code)}" data-type="${esc(a.library_type || '')}">Propose</button></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table></div>`
+    }
+  </div>`;
+}
 function bomHTML() {
   const t = S.totals, at = checkedAt();
+  const uncheck = lines().filter(l => l.availability === 'unchecked' || l.supply == null).length;
+  const extFee = t.extended_fee || 0;
   return `<div class="vhead"><div><h2>Bill of materials</h2><p>The single source of truth. The agent proposes changes and you approve them. Click a row to see where the part sits in the schematic.</p></div>
-    <div class="vacts"><button class="btn" data-act="check">Check stock</button><button class="btn" data-act="compare">Compare prices</button>
+    <div class="vacts"><button class="btn pri" data-act="check-all">Check all</button><button class="btn" data-act="check">Check stock</button><button class="btn" data-act="compare">Compare prices</button>
     <button class="btn" data-act="export" data-fmt="jlc">Export JLC</button><button class="btn" data-act="export" data-fmt="pcbway">Export PCBWay</button></div></div>
-    ${compareCard ? compareHTML() : ''}${exportCard ? exportHTML() : ''}
+    ${compareCard ? compareHTML() : ''}${exportCard ? exportHTML() : ''}${altsCard ? altsHTML() : ''}
     <div class="kpis">
       <div class="kpi"><b>${t.lines}</b><span>lines</span></div>
       <div class="kpi"><b>${t.parts}</b><span>parts to place</span></div>
-      <div class="kpi"><b>${money(t.cost)}</b><span>parts cost / board</span></div>
+      <div class="kpi"><b>${money(t.cost_per_board ?? t.cost)}</b><span>cost / board</span></div>
+      <div class="kpi ${extFee ? 'warn' : ''}"><b>${money(extFee)}</b><span>Extended fee <small style="color:var(--dim)">(assumption: $${CONFIG?.jlc?.extended_fee_usd || 3}/type)</small></span></div>
+      <div class="kpi ${uncheck ? 'warn' : ''}"><b>${uncheck}</b><span>not checked</span></div>
       <div class="kpi ${t.out_of_stock ? 'bad' : ''}"><b>${t.out_of_stock}</b><span>out of stock</span></div>
-      <div class="kpi ${t.checking ? 'warn' : ''}"><b>${t.checking}</b><span>checking</span></div>
       <div class="kpi ${t.to_verify ? 'warn' : ''}"><b>${t.to_verify}</b><span>to verify</span></div>
     </div>
-    ${t.lines ? `<div class="tblwrap"><table class="bom"><thead><tr><th></th><th>Ref</th><th>Value</th><th>Description</th><th>MPN</th><th>Manufacturer</th><th>Package</th><th>Qty</th><th>Stock</th><th>Unit</th><th>Total</th><th>Library</th><th>On sheet</th><th>Note</th></tr></thead><tbody>
-    ${lines().map(l => { const b = best(l), s = status(l), q = qty(l);
-      const secs = [...new Set(sheetsOfLine(l).map(x => x.section))];
+    ${t.lines ? `<div class="tblwrap"><table class="bom"><thead><tr><th></th><th>Ref</th><th>Role</th><th>Value</th><th>Description</th><th>MPN</th><th>Package</th><th>Type</th><th>Qty</th><th>Stock</th><th>Unit</th><th>Cost/bd</th><th>Risk</th><th>Datasheet</th><th>Actions</th><th>Note</th></tr></thead><tbody>
+    ${lines().map(l => { const b = best(l), q = qty(l);
       const refs = l.refs || [];
+      const avail = l.availability || (status(l) === 'bad' ? 'none' : status(l) === 'warn' ? 'low' : status(l) === 'ok' ? 'ok' : 'unchecked');
+      const dotCls = avail === 'ok' ? 'ok' : avail === 'low' ? 'warn' : avail === 'none' ? 'bad' : 'dim';
+      const dotTip = `Availability: ${avail}${l.risk && l.risk.length ? ' · ' + l.risk.join(', ') : ''}`;
+      const lineCost = l.cost_per_board != null ? l.cost_per_board : (b ? b.price * q : null);
+      const risks = l.risk || [];
       return `<tr data-key="${esc(l.key)}" class="${sel === l.key ? 'sel' : ''}">
-        <td><span class="dot ${s}"></span></td>
+        <td><span class="dot ${dotCls}" title="${esc(dotTip)}"></span></td>
         <td class="refs">${esc(refs.length > 3 ? refs[0] + '–' + refs.at(-1) : refs.join(', '))}</td>
+        <td class="role"><input class="role-input" value="${esc(l.role || '')}" placeholder="Role in circuit" aria-label="Role ${esc(l.key)}" data-edit="role" data-line="${esc(l.key)}"></td>
         <td class="m">${esc(l.value)}</td><td>${esc(l.description)}</td>
         <td class="mpn"><input value="${esc(l.mpn)}" aria-label="MPN ${esc(l.key)}" data-edit="mpn" data-line="${esc(l.key)}"></td>
-        <td>${esc(l.manufacturer)}</td><td class="m">${esc(l.package)}</td>
+        <td class="m">${esc(l.package)}</td>
+        <td><span class="lib ${l.library_type === 'Basic' || l.library_type === 'Preferred' ? 'ok' : l.library_type === 'Extended' ? 'warn' : 'std'}">${esc(l.library_type || '—')}</span></td>
         <td class="n">${l.dnp ? 'DNP' : q || '—'}</td>
-        <td class="n ${s === 'bad' ? 'stock bad' : ''}">${q === 0 ? '—' : l.supply == null ? 'checking' : b ? `${num(b.stock)} <small>${b.s}</small>` : '0'}</td>
-        <td class="n">${b ? money(b.price) : '—'}</td><td class="n">${b ? money(b.price * q) : '—'}</td>
-        <td><span class="lib ${esc(l.library)}">${esc(LIBTXT[l.library] || l.library)}</span></td>
-        <td><span class="secs">${secs.map(x => `<button class="secb" data-show="${esc(l.key)}">${esc(x)}</button>`).join('')}</span></td>
+        <td class="n ${avail === 'none' ? 'stock bad' : ''}">${q === 0 ? '—' : l.supply == null ? 'checking' : b ? `${num(b.stock)} <small>${b.s}</small>` : '0'}</td>
+        <td class="n">${b ? money(b.price) : '—'}</td>
+        <td class="n">${money(lineCost)}</td>
+        <td>${risks.length ? risks.map(r => `<span class="tag ${r === 'out of stock' ? 'bad' : (r === 'low stock' || r === 'Extended fee') ? 'warn' : 'plan'}">${esc(r)}</span>`).join(' ') : '<span class="tag ok">ok</span>'}</td>
+        <td>${l.datasheet ? chip(l.datasheet, '') : `<button class="btn" data-act="get-datasheet" data-line="${esc(l.key)}">Get datasheet</button>`}</td>
+        <td><button class="btn" data-chat="${esc(l.key)}">Discuss</button> <button class="btn" data-act="alts" data-line="${esc(l.key)}">Alternatives</button></td>
         <td class="note"><input value="${esc(l.note)}" placeholder="Add a note" aria-label="Note ${esc(l.key)}" data-edit="note" data-line="${esc(l.key)}"></td></tr>`; }).join('')}
     </tbody></table></div>
     <p class="foot">Unit price at qty 10, shipping excluded. ${at ? 'Stock and prices checked ' + esc(at) + '; run Check stock again before any export.' : 'Not checked yet: run Check stock.'}</p>`
@@ -935,7 +976,8 @@ function detailHTML() {
   const refs = l.refs || [];
   return `<div class="dt">
     <div class="dt-h"><div><div class="refs">${esc(refs.join(', '))}</div><h3>${esc(l.mpn)}</h3><p>${esc(l.manufacturer)} · ${esc(l.package)} · ${esc(l.description)}</p></div><button class="x" data-act="close" aria-label="Close">×</button></div>
-    <div class="dt-a"><button class="btn pri" data-chat="${esc(l.key)}">Discuss this part</button>${where.length ? `<button class="btn" data-show="${esc(l.key)}">Show on schematic</button>` : ''}</div>
+    <div class="dt-a"><button class="btn pri" data-chat="${esc(l.key)}">Discuss this part</button><button class="btn" data-act="alts" data-line="${esc(l.key)}">Alternatives</button>${where.length ? `<button class="btn" data-show="${esc(l.key)}">Show on schematic</button>` : ''}</div>
+    ${l.role ? `<div class="dsec"><h4>Role</h4><div class="dnote">${esc(l.role)}</div></div>` : ''}
     ${where.length ? `<div class="dsec"><h4>Where it's used</h4><div class="where">${where.map(w => `<button data-show="${esc(l.key)}"><span class="r">${esc(w.ref)}</span><span class="s">Sheet ${esc(w.sheet)} · ${esc(w.section)}${w.title ? ' · ' + esc(w.title) : ''}</span></button>`).join('')}</div></div>` : ''}
     ${nets.length ? `<div class="dsec"><h4>Nets</h4><div class="netl">${nets.map(n => `<span>${esc(n)}</span>`).join('')}</div></div>` : ''}
     ${qty(l) ? `<div class="dsec"><h4>Stock and price</h4>${l.supply == null ? '<div class="dnote">Checking… the agent re-checks stock when the MPN changes. You can also press Check stock.</div>' : `<table class="sup"><thead><tr><th>Supplier</th><th style="text-align:right">Stock</th><th style="text-align:right">Unit @10</th></tr></thead><tbody>
@@ -944,7 +986,7 @@ function detailHTML() {
     <div class="dsec"><h4>Library</h4>${l.library === 'std' ? `<div class="dnote">Standard part from Altium's default libraries.</div>` :
       `<div class="libg"><div>Symbol${mk(e.symbol)}</div><div>Footprint${mk(e.footprint)}</div><div>3D${e.step ? '<b class="y">STEP</b>' : '<b class="q">Simple</b>'}</div></div>
        <div class="checked">Model from ${esc(e.model_source || '—')} · <span class="lib ${esc(l.library)}">${esc(LIBTXT[l.library])}</span></div>${e.issues ? `<div class="dnote issue">${esc(e.issues)}</div>` : ''}`}</div>
-    <div class="dsec"><h4>Datasheet</h4>${l.datasheet ? chip(l.datasheet, '') : `<div class="dnote">None stored. Generic part.</div>`}</div>
+    <div class="dsec"><h4>Datasheet</h4>${l.datasheet ? chip(l.datasheet, '') : `<div style="display:flex;align-items:center;gap:8px"><div class="dnote" style="flex:1">None stored.</div><button class="btn" data-act="get-datasheet" data-line="${esc(l.key)}">Get datasheet</button></div>`}</div>
     ${l.note ? `<div class="dsec"><h4>Note</h4><div class="dnote">${esc(l.note)}</div></div>` : ''}
   </div>`;
 }
@@ -973,7 +1015,7 @@ function render(force) {
   document.title = S.title + ' · PCB Advisor';
   renderNav();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, page, tab, sel, compareCard, exportCard, libExport, sheetId]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, page, tab, sel, compareCard, exportCard, libExport, sheetId, altsCard]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
 function go(p, t) { page = p; if (t) tab = t; if (p === 'settings') loadAltium(); render(true); setView('work'); }
@@ -1276,8 +1318,61 @@ document.addEventListener('click', async e => {
     switch (d.act) {
       case 'closeviewer': closeViewer(); return;
       case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); applyFocus(); return;
-      case 'closecard': compareCard = exportCard = libExport = null; render(true); return;
+      case 'closecard': compareCard = exportCard = libExport = altsCard = null; render(true); return;
       case 'convs': convsOpen = !convsOpen; renderConvs(); return;
+      case 'check-all': toast('Checking stock with JLC…'); { const r = await api('/api/parts/check', {}); setState(r); render(true); toast('Stock checked for all lines'); } return;
+      case 'alts': {
+        const lineKey = el.dataset.line;
+        const l = lineByKey(lineKey);
+        altsCard = {line: lineKey, mpn: l ? l.mpn : '', loading: true, list: []};
+        compareCard = exportCard = libExport = null;
+        render(true);
+        try {
+          const list = await api(`/api/parts/alternatives?line=${encodeURIComponent(lineKey)}`);
+          altsCard = {line: lineKey, mpn: l ? l.mpn : '', loading: false, list: Array.isArray(list) ? list : []};
+        } catch (err) {
+          altsCard = {line: lineKey, mpn: l ? l.mpn : '', loading: false, list: []};
+        }
+        render(true);
+        return;
+      }
+      case 'propose-alt': {
+        const lineKey = el.dataset.line;
+        const mpn = el.dataset.mpn;
+        const pkg = el.dataset.pkg;
+        const desc = el.dataset.desc;
+        const code = el.dataset.code;
+        const libType = el.dataset.type;
+        toast('Proposing alternative…');
+        const res = await api('/api/bom/propose', {
+          line: lineKey,
+          changes: {mpn, package: pkg, description: desc},
+          reason: `Alternative part proposed: ${code} (${libType || 'Standard'})`,
+          sources: [`JLC ${code}`]
+        });
+        setState(res);
+        altsCard = null;
+        render(true);
+        toast(`Proposed ${mpn} for line ${lineKey}`);
+        return;
+      }
+      case 'get-datasheet': {
+        const lineKey = el.dataset.line;
+        toast('Fetching datasheet…');
+        const res = await api('/api/parts/datasheet', {line: lineKey});
+        if (res.error) {
+          if (res.url) {
+            alert(`Could not download datasheet automatically (${res.error}).\n\nPlease open this link, download the PDF, and upload it in Sources:\n${res.url}`);
+          } else {
+            toast('Could not find datasheet URL: ' + res.error);
+          }
+          return;
+        }
+        if (res.state) setState(res.state);
+        render(true);
+        toast('Datasheet added to ' + lineKey);
+        return;
+      }
       case 'new': { const r = await api('/api/sessions/new', {}); SESSION = r.created; convsOpen = false; await refresh(true); return; }
       case 'newproj': { const n = prompt('Name of the new project'); if (!n) return;
         const r = await api('/api/projects/new', {name: n}); const u = new URL(location.href); u.searchParams.set('project', r.created); u.searchParams.delete('session'); location.href = u; return; }
