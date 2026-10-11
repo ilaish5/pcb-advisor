@@ -11,8 +11,8 @@ description: Keeps the project folder in order, records who decided what and why
 - The student asks where a file belongs, or the folder is a mess and old versions contradict the new ones.
 - A decision was made in chat ("keep this part", "use USB-C") and must be written down.
 - A part, MCU, voltage or connector changes: list the knock-on changes before anything is edited.
-- The student is near the end and wants the files organized for submission.
-- Not for: choosing parts (parts-and-stock), the course report text or grading (the lecturer's site decides).
+- The student is near the end and wants the files organized.
+- Not for: choosing parts (parts-and-stock), or report text.
 
 ## Steps
 1. Read the state first: `python <repo>/scripts/model.py <project>` and the project's `notes.md`. Do not rely on the chat.
@@ -31,21 +31,19 @@ description: Keeps the project folder in order, records who decided what and why
    level shifting, clock or crystal, programming and debug connector, boot pins, net names used in rules, PCB
    placement, BOM line and LCSC number, CPL rotation, silk text, notes and the log. Name the file to edit.
 6. Do not apply the change. List it, ask the student, wait for approval, then log it.
-7. Final file organization: every deliverable in one place, with the student's name in each file name (the course asks
-   for it) and a date or version; the project folder as one zip; Gerber zip; BOM, CPL; schematic PDF; DFM report and
-   screenshots; the log. Check the folder against the final-project checklist R1-R11.
+7. Final file organization: every output in one place, each file name with the project name and a date or version;
+   the project folder as one zip; Gerber zip; BOM, CPL; schematic PDF; DFM report and screenshots; the log.
 
 ## Scripts
 - `python <repo>/scripts/altium/dump.py <file> [--full]` reads a SchDoc/PcbDoc/PrjPcb/.RUL of the linked Altium project
   (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
-- `python <repo>/scripts/model.py <project>` prints the project state and the final-project checklist status.
+- `python <repo>/scripts/model.py <project>` prints the project state.
 - `python <repo>/scripts/project.py ...` project folder helpers (see its usage text).
 - (planned, stage I10) `scripts/keeping.py` folder order, decision log, change impact, final file organization. Until
   it exists, say "not automated yet", write the entries by hand in `notes.md`, and list files by reading the folders.
 - Submission itself is out of scope: only the file organization.
 
 ## References
-- `<repo>/shared/reference/course/project/final-project-guidelines.he.md` (deliverables and checklist R1-R11)
 - `<repo>/docs/PRODUCT-PLAN.md` (section 7, decisions on order and out-of-scope submission)
 - `<repo>/docs/ARCHITECTURE.md` (data layout of a project folder)
 - `<repo>/shared/reference/course/ad20-essentials/m02-first-project.en.md` (project and file structure in Altium)
@@ -65,5 +63,5 @@ description: Keeps the project folder in order, records who decided what and why
 
 ## Output
 Folder order: a tree, max 20 lines, with the move list `from -> to`. Decision entry: one line in the log format of step 4.
-Change impact: table `Item | Affected? | Why | File to edit | Source`, max 15 rows. Final organization: checklist of
-deliverables with present / missing. Cite `{{src:<file>|<heading>}}`. Answer in the student's language.
+Change impact: table `Item | Affected? | Why | File to edit | Source`, max 15 rows. Final organization: list of
+outputs with present / missing. Cite `{{src:<file>|<heading>}}`. Answer in the student's language.

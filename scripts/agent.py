@@ -58,7 +58,6 @@ def _summary(model):
         "sheets": [{"id": sh["id"], "title": sh["title"], "parts": len(sh["parts"])} for sh in model.get("sheets", [])],
         "pending_proposals": [{"id": p["id"], "line": p["line"], "changes": p["changes"]}
                               for p in model.get("proposals", []) if p["status"] == "pending"],
-        "checklist": model.get("requirements"),
         "sources": [x["name"] for x in model.get("sources", [])],
     }
     return json.dumps(s, ensure_ascii=False, indent=1)

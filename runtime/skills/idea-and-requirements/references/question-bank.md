@@ -31,6 +31,3 @@ Each entry: why it matters, what it decides next. Use only the entries that are 
 
 ## Size, layers, height
 - Why: layer count sets stackup and rules; a height limit conflicts with tall connectors.
-
-## Course rules (R1-R11)
-- Source: `final-project-guidelines.he.md`. R2 (lecturer approval) and R6 (quote only) are the ones students forget.

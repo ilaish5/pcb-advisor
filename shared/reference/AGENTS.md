@@ -7,7 +7,6 @@ Read this file first; then open **one** file section from the index below. Never
 ## What the advisor uses it for
 1. "How do I do X in Altium?" (panels, ECO, rules, OutJob, polygons...) -> short answer + citation. Best source: `course/ad20-essentials/` (step lists).
 2. Explain a PCB concept (stackup, rules, routing, vias, impedance, crosstalk, EMI, fab files) -> `course/altium-education/` (English) or `course/summaries-he/` (Hebrew).
-3. Check a student's work against the **final-project requirements** -> `course/project/final-project-guidelines.he.md` (has an English checklist R1-R11).
 
 ## Full map
 ```
@@ -15,9 +14,6 @@ shared/reference/
   AGENTS.md  README.md                 this file / pointer for humans
   _set-aside/                          NOT for answering: duplicates and noise kept for traceability ([INDEX.md](_set-aside/INDEX.md) lists them)
   course/
-    project/
-      final-project-guidelines.he.md   Hebrew, 1 page: project rules, deliverables, English checklist R1-R11. USE for requirement checks
-      final-project-guidelines.he.pdf  original (1 page)
     lectures/
       lecture3-schematic-simulation.en.md   SPICE simulation in Altium: workflow, 11 analysis types, 5 exercises (condensed from the slides)
       lecture3-schematic-simulation.en.pdf  original slides (25)
@@ -41,7 +37,6 @@ Language: `*.he.md` Hebrew (technical terms stay English); everything else Engli
 `E`=`course/altium-education/`, `H`=`course/summaries-he/`, `A`=`course/ad20-essentials/`. "§" = heading number inside the file.
 | Topic | Concept / explanation | Altium how-to |
 |---|---|---|
-| Final-project requirements, deliverables, submission | `course/project/final-project-guidelines.he.md` (all) | - |
 | Design documents (schematic, BOM, layout, libraries), PCB vs PCBA, terms | `E/unit1-intro` [04]-[09]; `H/unit1-intro.he` §3-§4; `H/cheatsheet` "יחידה 1" | `A/m02-first-project` §2.2 |
 | New project, save, share, Altium 365 | `E/unit1-intro` [11]-[13]; `H/unit1-intro.he` §5 | `A/m02` §2.2-2.3 |
 | Altium UI: panels, shortcuts, layouts, undo | - | `A/m01-design-environment` §1.3-1.7; `A/m04-navigating-schematics` |
@@ -98,7 +93,7 @@ Cite the file you actually read. Say when a menu name comes from AD20 (the cours
 ## Caveats
 - Altium steps are **AD20**. Newer versions rename panels and move the Layer Stack Manager; say so when unsure.
 - `E/unit3` [14] says assembly layers define paste/solder mask apertures. That is loose: in Altium those are the Top/Bottom Solder and Paste layers; assembly layers are mechanical layers for drawings.
-- The lecture-3 slide header says course no. 50177 (different from 27525). The project-guidelines presentation date is blank in the source.
+- The lecture-3 slide header says course no. 50177 (different from 27525).
 - Hebrew unit files are AI-generated summaries (NotebookLM). Where they disagree with `altium-education/`, the English course text wins; the cheatsheet matches it.
 - `E/unit1..4` have no images; phrases like "in the image below" point to nothing.
 - PDF note: the AD20 PDF opens with an empty password but is AES-encrypted. pypdf needs an AES backend: `cryptography` does not build on Windows ARM64, `pycryptodome` works instead. Not needed for answers, since the text is extracted.

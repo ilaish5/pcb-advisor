@@ -2,8 +2,7 @@
 The model: the project's logs -> one dict the UI and the agent both read.
 
 Nothing here decides anything. store.py folds the logs; this file puts the
-pieces side by side (idea, BOM, sheets, library, sources, conversations) and
-evaluates the checklist against the final-project rules.
+pieces side by side (idea, BOM, sheets, library, sources, conversations).
 """
 import hashlib
 import json
@@ -153,30 +152,6 @@ def part_context(project, ref):
             "note": line.get("note")}
 
 
-# ---------------------------------------------------------------- idea checklist
-
-def requirements(project, idea, lines, tot):
-    """The Idea tab's checklist against the final-project rules. Each row is
-    computed from the BOM, never typed in."""
-    ic_refs = {r for l in lines for r in l.get("refs", []) if r.startswith("U")}
-    other = sum(len(l.get("refs", [])) for l in lines) - len(ic_refs)
-    out = []
-    for req in idea.get("requirements", []):
-        c = req.get("check")
-        if c == "ic_count":
-            ok, detail = len(ic_refs) >= req.get("min", 3), f"{len(ic_refs)}"
-        elif c == "part_count":
-            ok, detail = other >= req.get("min", 10), f"{other}"
-        elif c == "stock":
-            bad = [l["key"] for l in lines if store.qty(l) and l.get("supply") is not None and not store.best_offer(l)]
-            ok = None if tot["checking"] and not bad else not bad
-            detail = ", ".join(bad) + " missing" if bad else ""
-        else:
-            ok, detail = None, ""
-        out.append({"id": req.get("id"), "text": req.get("text"), "ok": ok, "detail": detail})
-    return out
-
-
 # ---------------------------------------------------------------- build
 
 def build(project=None, session=None):
@@ -195,7 +170,6 @@ def build(project=None, session=None):
         "meta": meta,
         "board": {**workspace.get("engineering_defaults", {}), **(meta.get("board") or {})},
         "idea": idea,
-        "requirements": requirements(project, idea, lines, tot),
         "bom": lines,
         "totals": tot,
         "proposals": props,

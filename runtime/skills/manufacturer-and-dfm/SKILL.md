@@ -67,7 +67,7 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - BOM lines can stay unselected even with an LCSC number: same number on two lines, a part with several types, or a
   difficult-part fee. The next button should not say unselected parts remain.
 - Some modules (LGA) are Standard assembly only; a drop-in keeps the footprint, and the reason is written down.
-- The quote is the goal of the course project, not an order. Never place the order or save to cart for the student.
+- Stop at the quote. Never place the order or save to cart for the student.
 - After any copper change near pads, re-run the PCB DFM: it checks same-net via to pad and mask opening to trace,
   Altium DRC does not.
 

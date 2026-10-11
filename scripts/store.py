@@ -283,7 +283,6 @@ def load_idea(project):
     idea.setdefault("blocks", [])
     idea.setdefault("links", [])
     idea.setdefault("confirmed", False)
-    idea.setdefault("requirements", [])
     return idea
 
 

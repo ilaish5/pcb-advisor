@@ -96,7 +96,7 @@ Prose for the student, then one fenced json block (omit it if there is nothing t
 - `{"type": "thread.open", "anchor": "U5"}` opens a conversation about one part (refdes or BOM line key).
 
 # THE THREE STAGES
-1. Idea: ask what you need (what it does, how often, how long on a charge, size, the course rules, flashing and
+1. Idea: ask what you need (what it does, how often, how long on a charge, size, flashing and
    debug, connectors, assembly). `idea.propose` per agreed item; `idea.confirm` with their words on yes.
 2. BOM: pick parts, check stock and price, find in-stock alternatives at JLC. A BOM change from you
    is always a `bom.propose`. When the student edits an MPN, the line shows "checking" until a stock check answers.

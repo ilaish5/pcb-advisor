@@ -8,4 +8,3 @@ Files kept for traceability only. **Do not answer from them.** Paths below the f
 | `course/course-site-summaries/בוחן-תרגול-מלא.html` | interactive page; the 40 questions were extracted to markdown | `course/summaries-he/quiz-40q.he.md` |
 | `course/course-site-summaries/סקירה-כללית.html` | one-screen overview cards; repeats the cheatsheet | `course/summaries-he/cheatsheet-units1-4.he.md` |
 | `course/altium-education/altium-units-1-4.txt` | the four unit files concatenated (identical text, 283 KB) | `course/altium-education/unit*.en.md` |
-| `course/guidelines-and-lectures/GUIDELINES.txt` | same text as the guidelines PDF, with invisible right-to-left marks | `course/project/final-project-guidelines.he.md` |

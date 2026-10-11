@@ -542,7 +542,7 @@ function currentRow() { return (S.sessions || []).find(r => r.id === S.session) 
 function suggestions() {
   const row = currentRow();
   if (row.anchor) return ['Why did we pick this part?', 'Find an in-stock alternative', 'What should I check in the datasheet?'];
-  if (row.id === 'idea' || !S.idea.confirmed) return ['What is still open?', 'Does this meet the course rules?'];
+  if (row.id === 'idea' || !S.idea.confirmed) return ['What is still open?', 'What should I decide first?'];
   return ['Check stock for the whole BOM', 'Compare supplier prices', 'What is still open?'];
 }
 function preview(r) { return r.messages ? r.messages + ' message' + (r.messages === 1 ? '' : 's') : 'No messages yet'; }
@@ -746,9 +746,6 @@ function ideaHTML() {
       <div class="card"><h3>Agreed</h3>${items.length ? `<dl class="agreed">${items.map(i => `<div><dt>${esc(i.topic)}</dt><dd dir="auto">${esc(i.text)}<small>${esc(st(i))}</small></dd></div>`).join('')}</dl>` : '<div class="dnote" style="margin:10px">Nothing agreed yet.</div>'}</div>
       <div style="display:grid;gap:16px">
         <div class="card"><h3>Block diagram</h3><div style="padding:10px">${blocksSVG()}</div></div>
-        <div class="card"><h3>Against the final-project rules</h3><ul class="reqs">
-          ${(S.requirements || []).map(r => `<li><span class="ic ${r.ok ? 'y' : r.ok === false ? 'nn' : ''}" ${r.ok === null ? 'style="color:var(--dim)"' : ''}>${r.ok ? '✓' : r.ok === false ? '✗' : '○'}</span>${esc(r.text)}${r.detail ? ': ' + esc(r.detail) : ''}</li>`).join('')}
-        </ul>${srcByName('final-project-guidelines.pdf') ? `<div style="padding:0 14px 12px">${chip('final-project-guidelines.pdf', 'Section A')}</div>` : ''}</div>
       </div>
     </div>`;
 }

@@ -45,7 +45,7 @@ A thinner prepreg gives narrower 50 ohm lines (easier on fine-pitch pads). Use t
 | AcuteAngle | acid traps | >= 90 degrees |
 | PolygonConnect | pour connection | vias direct, pads thermal relief |
 | ComponentClearance | part spacing | about 0.25 mm; assembly may need more |
-Course rule types and "what values": `unit3-pcb-layout.en.md` [25]-[26]. Net classes and queries: `m19` 19.4-19.5.
+Altium design rule types and "what values": `unit3-pcb-layout.en.md` [25]-[26]. Net classes and queries: `m19` 19.4-19.5.
 
 ## .RUL file facts (verified on AD26 and read on AD20 projects)
 - Plain text, latin-1, one rule per line, each line a `|KEY=VALUE|...` record exactly as stored in the PcbDoc, line ends with

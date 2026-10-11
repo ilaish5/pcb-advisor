@@ -60,7 +60,7 @@ def line(state, key):
 def test_state_carries_everything_the_ui_draws(server, lte):
     code, st = get(server, "/api/state", lte)
     assert code == 200
-    for key in ("idea", "bom", "totals", "proposals", "sheets", "library", "sources", "chat", "sessions", "requirements"):
+    for key in ("idea", "bom", "totals", "proposals", "sheets", "library", "sources", "chat", "sessions"):
         assert key in st, key
     assert st["sheets"][0]["id"] == "03" and "U4" in st["sheets"][0]["parts"]
 

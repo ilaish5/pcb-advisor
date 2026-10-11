@@ -175,12 +175,6 @@ IDEA = {
         {"id": "GNSS", "kind": "gnss", "label": "04 GNSS", "sub": "not chosen yet", "open": True},
     ],
     "links": [["BAT", "PWR"], ["PWR", "MCU"], ["MCU", "MDM"], ["MCU", "GNSS"]],
-    "requirements": [
-        {"id": "ics", "text": "At least 3 ICs", "check": "ic_count", "min": 3},
-        {"id": "parts", "text": "About 10 other parts", "check": "part_count", "min": 10},
-        {"id": "stock", "text": "All parts in stock", "check": "stock"},
-        {"id": "approval", "text": "Manufacturer approves the files: a later stage", "check": "later"},
-    ],
 }
 
 
@@ -223,9 +217,6 @@ def seed(name=NAME, force=False):
             {"name": fname, "url": url, "origin": url.split("/")[2], "note": "sidecar only: run "
              "`python scripts/sources.py restore` to fetch the file"}, indent=2), encoding="utf-8")
 
-    (side / "final-project-guidelines.pdf.json").write_text(json.dumps(
-        {"name": "final-project-guidelines.pdf", "url": None, "origin": "course site",
-         "note": "course material, not redistributed: copy the PDF next to this file"}, indent=2), encoding="utf-8")
     store.propose_bom(
         name, "D30",
         {"mpn": "PESD5V0S1BL", "manufacturer": "Nexperia", "package": "SOD-882", "value": "TVS 5V",
@@ -241,8 +232,8 @@ def seed(name=NAME, force=False):
     idea_sid = session.create(name, title="Idea refinement", sid="idea")
     main_sid = session.create(name, title="Modem sheet: parts & library", sid="main")
     chat = [
-        (idea_sid, "user", "I want to build a GPS tracker for my bike that reports its location over cellular. It needs at least 3 ICs for the course."),
-        (idea_sid, "agent", "Three questions before we pick parts:\n1. How often should it report?\n2. How long between charges?\n3. Any size limit?\n{{src:final-project-guidelines.pdf|Section A: at least 3 ICs}}"),
+        (idea_sid, "user", "I want to build a GPS tracker for my bike that reports its location over cellular."),
+        (idea_sid, "agent", "Three questions before we pick parts:\n1. How often should it report?\n2. How long between charges?\n3. Any size limit?"),
         (idea_sid, "user", "Every 5 minutes, a week on one charge, and it has to fit under the saddle."),
         (idea_sid, "agent", "Then I suggest LTE Cat-1 (SIMCom A7670G), since Israel's 2G/3G networks are shutting down. Add a separate GNSS module, an STM32G0 and a 1S Li-ion cell. I put the block diagram in the Idea tab. Does it match what you meant?"),
         (idea_sid, "user", "Yes, confirmed."),

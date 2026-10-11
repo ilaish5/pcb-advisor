@@ -38,8 +38,7 @@ Three columns, English UI, light theme.
 |---|---|---|
 | **Chat.** A conversation list, "+ New". A part conversation is anchored to a BOM line. | **Idea · BOM · Schematic**, and a part drawer that slides in. | Projects, Workspace, Altium library, Sources, Skills, Settings. |
 
-- **Idea** - the agreed items (each with who proposed it and its status), the block diagram, and a checklist
-  against the final-project rules computed from the BOM.
+- **Idea** - the agreed items (each with who proposed it and its status), and the editable block diagram.
 - **BOM** - KPIs, an editable table (MPN and note), stock and price per supplier. Editing an MPN marks the
   line "checking" until a skill run answers for the new part.
 - **Schematic** - drawn from `netlist/<sheet>.json` and the BOM. Click a part to open its BOM line; select a

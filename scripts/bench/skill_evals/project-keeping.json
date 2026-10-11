@@ -18,9 +18,9 @@
    "must_not": [],
    "cite": false},
   {"id": "project-keeping-04", "lang": "en",
-   "question": "Which files do I need to hand in for the course project and how should they be named?",
+   "question": "The board is done. How should I organize and name the final output files?",
    "expect_skill": true,
-   "must": [["name"], ["zip"], ["R9", "R10", "final-project-guidelines"]],
+   "must": [["name"], ["zip"], ["Gerber"]],
    "must_not": [],
-   "cite": true}
+   "cite": false}
 ]}

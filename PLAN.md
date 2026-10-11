@@ -84,7 +84,7 @@ files and skills (context + procedures + tools), so they are a first-class deliv
 
 | runtime skill | capability (PRODUCT-PLAN §3) | main sources |
 |---|---|---|
-| idea-and-requirements | 1 - the questions people regret (power, flashing/debug e.g. USB DFU, cable sides, UI, memory, assembly) | device K4, course guidelines R1-R11 |
+| idea-and-requirements | 1 - the questions people regret (power, flashing/debug e.g. USB DFU, cable sides, UI, memory, assembly) | device K4 |
 | parts-and-stock | 2 - BOM line checked against JLC as it is entered | feasibility `feas_jlc.py`, device `_Work/pcb-outputs/jlc_parts.py` |
 | part-models | 3 - symbol/footprint/3D, link-and-return, package variant vs datasheet | device altium-part-sourcing |
 | project-library | 4 - one library, built by one Altium script the student runs | device altium-library-builder |
@@ -108,7 +108,9 @@ Design happens together, outside Altium; the student goes into Altium only to ca
      Style = the user's example `docs/ref-block-diagram.png`: a block = part name + one-line role (student's
      language); colour by domain (power orange, sensing green, MCU blue, comms purple, drive/actuation red, UI grey);
      every edge labelled (voltage or bus: 3.3V, SPI, UART, I2C/GPIO); dashed frame = the board, off-board blocks
-     outside it; dashed red = hardware safety path. Data in the project (JSON), rendered by Python/SVG, editable.
+     outside it; dashed red = hardware safety path. Data in the project (JSON), rendered as SVG.
+     **Easy to edit (user, 2026-10-12)**: directly in the tab - add, rename, drag, link, recolour and delete blocks and
+     edge labels with the mouse; no JSON, no dialogs chain. The agent's changes arrive as proposals on the same diagram.
    - **Parts table**: interactive (edit, replace), datasheet links, JLC availability indicator, a short "role in the
      circuit" line per part, "discuss this part" opens a chat with the datasheet in context.
    - **Schematic**: the Python-rendered preview; click a part or a net -> ask about it (one button).
@@ -118,7 +120,11 @@ Design happens together, outside Altium; the student goes into Altium only to ca
 Cross-cutting:
 - **Settings**: link to the Altium project (path, project name, the PcbDoc and sheets, output folder) - everything
   the scripts need to find the right project.
-- **Open files in the UI** (datasheet, schematic, reference files) and **upload files** to the project knowledge base.
+- **Open files in the UI** (user, 2026-10-12): a viewer pane inside the app (PDF, image, text/markdown, CSV, Altium
+  file summary via the readers), never a new browser tab; citation chips open it at the file. **Upload files** to the
+  project knowledge base.
+- **No final-project / course-guideline checks** (user, 2026-10-12): removed everywhere (skills, reference files,
+  Idea checklist, evals). Do not add them back.
 - **Citations without friction**: chips, not lectures; no refusals for missing sources on standard practice.
 - **The agent guides the student at every stage**: next step at the end of each answer; each tab says what to do.
 
@@ -188,7 +194,10 @@ tokens): precise briefs via `%TEMP%\agy-task.py`; Claude Code plans, briefs and 
 
 **I3 done (2026-10-11)** - see section 8.
 
-**Next: I4** (parts + stock, interactive parts tab).
+**2026-10-12 user notes:** block diagram must be easy to edit (I10, §3a); final-project guideline checks removed
+(done, commit after I3); open files inside the UI = in-app viewer (I3 follow-up, built next via agy).
+
+**Next: I3 follow-up (in-app file viewer), then I4** (parts + stock, interactive parts tab).
 
 **Waiting for the user:** nothing.
 
