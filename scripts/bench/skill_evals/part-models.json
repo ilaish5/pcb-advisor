@@ -1,0 +1,22 @@
+{"skill": "part-models", "cases": [
+  {"id": "part-models-01", "lang": "en",
+   "question": "I need the symbol, footprint and 3D model for the USB-C connector in my BOM. Where do I get them?",
+   "expect_skill": true,
+   "must": [["EasyEDA", "LCSC"], ["SnapEDA", "Ultra Librarian", "KiCad"], ["download", "link"]],
+   "cite": false},
+  {"id": "part-models-02", "lang": "he",
+   "question": "הורדתי footprint למודול שלי מ-SnapEDA. איך אני יודע שהוא מתאים בדיוק לגרסה שקניתי?",
+   "expect_skill": true,
+   "must": [["ordering", "קוד הזמנה", "מארז", "package"], ["datasheet", "דאטהשיט"], ["pin 1", "פין 1"]],
+   "cite": true},
+  {"id": "part-models-03", "lang": "en",
+   "question": "The 3D model of my diode looks rotated and the band is on the wrong side. What do I check?",
+   "expect_skill": true,
+   "must": [["polarity", "band", "cathode"], ["rotation", "rotate"], ["datasheet"]],
+   "cite": false},
+  {"id": "part-models-04", "lang": "en",
+   "question": "I found a footprint for the same chip family but a different package suffix. Can I just use it?",
+   "expect_skill": true,
+   "must": [["no", "not"], ["package", "suffix", "ordering code"], ["pad", "land pattern"]],
+   "cite": true}
+]}

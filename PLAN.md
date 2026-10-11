@@ -131,8 +131,8 @@ transcripts); the output format; and has evals (section 5).
 | # | Stage | Acceptance | State |
 |---|---|---|---|
 | I0 | **Orientation + architecture.** Read the inputs; keep/replace map of the v2 code; runtime-pack layout (section 3) proven with **both** engines; fix the known engine bugs: agy refuses `--model ...-high` together with `--effort` (send one), long prompts on the command line (Windows ~32K limit) -> stdin with `--input-format stream-json` (`docs/ENGINES.md` §5). Write `docs/ARCHITECTURE.md` (short). | both engines answer a probe that needs a skill file; gateway tests for the two bugs; all tests green | ✅ |
-| I1 | **Measurement harness.** 12 incident fixtures, Q&A eval, behaviour evals, `pcb.py bench`, `docs/BENCHMARK.md` | bench runs end to end; baseline recorded | ⬜ |
-| I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ⬜ |
+| I1 | **Measurement harness.** 12 incident fixtures, Q&A eval, behaviour evals, `pcb.py bench`, `docs/BENCHMARK.md` | bench runs end to end; baseline recorded | ✅ |
+| I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ✅ (measurement partial, see §8) |
 | I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, pick a local project) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ⬜ |
 | I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ⬜ |
 | I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ⬜ |
@@ -156,9 +156,14 @@ outside git (`%LOCALAPPDATA%\pcb-advisor\engine`); engine cwd = engine home, `--
 Open points carried forward: headless agy needs `--dangerously-skip-permissions` for skills that run scripts (decide in
 I2: allow-rule in agy settings vs the flag); Claude `Edit(//c/...)` rule form not yet exercised by a real turn (I2 eval).
 
-**Next action:** start I1 (measurement harness): brief subagents for (a) the 12 incident fixtures from the device notes,
-Outputs and transcripts (extract with a script, never read whole), (b) `scripts/bench/` + `pcb.py bench` +
-`docs/BENCHMARK.md`, (c) Altium Q&A eval (~25 questions) + behaviour evals. Then record the baseline.
+**I1 + I2 done (2026-10-11)** - see section 8. One commit for both (pcb.py mixes the two stages).
+
+**User decisions (2026-10-11):** agy permissions = (a): ship with `--dangerously-skip-permissions` (gateway default,
+keep it). Do NOT re-run the measurements of I1/I2 (the partial baseline stays as recorded). Ask the user before any
+heavy bench run in later stages (the PC ran out of memory twice). Implementation subagent = **agy** (saves Claude Code
+tokens): precise briefs via `%TEMP%gy-task.py`; Claude Code plans, briefs and verifies every result itself.
+
+**Next: I3** (Altium reader + settings).
 
 **Waiting for the user:** nothing.
 
@@ -178,3 +183,30 @@ Outputs and transcripts (extract with a script, never read whole), (b) `scripts/
 8. Tests: 110 -> 138 green (new: test_runtime_pack 17, agy stream-json/effort/add_dirs, claude add_dirs).
 9. Benchmark: not yet built (I1). Runtime skill updated: altium-help (first real skill).
 10. Open: agy permission policy for script-running skills; Edit rule form on Windows (both in I2).
+
+### I1 - Measurement harness (2026-10-11) ✅
+1. 12 incident fixtures (`scripts/bench/incidents/`), one per device incident, cleaned of answer leaks (06, 11, 12).
+2. Q&A eval (25 questions) and behaviour evals (13 cases) with keyword groups, must_not and citation checks.
+3. `pcb.py bench [--engine X] [--evals] [--only 1,5]`: deterministic or engine run, answers kept in `docs/bench-runs/`.
+4. `docs/BENCHMARK.md` is rewritten each run and keeps a History section.
+5. Deterministic run: 0/12 caught (no checks exist yet; expected).
+6. Engine baseline from a clean copy of 07c515c + I1 (so the I2 skills could not leak in).
+7. Claude Code: 7/7 caught on incidents 1-7; 8-12 and the evals failed on the session usage limit.
+8. agy (no skip flag): 2/12, Q&A 0.63, behaviour 0.23; 33/50 answers empty because agy denied shell commands.
+9. Re-runs were killed twice for low system memory; the user decided not to re-run. Baseline is partial.
+10. Tests: 138 -> green with the bench tests (`tests/test_bench.py`, `tests/test_evals.py`).
+
+### I2 - Runtime core (2026-10-11) ✅
+1. `runtime/AGENTS.md` rewritten (118 lines): hard rules 1-10, how to answer, where things are, scripts, citing,
+   the actions protocol, the three stages, and a `# SKILLS` routing table of the 12 skills.
+2. 12 skills in `runtime/skills/` (frontmatter + When/Steps/Scripts/References/Pitfalls/Output), lessons generalized,
+   no device answers; short `references/` files for checklists, ERC messages, JLC limits, question bank.
+3. Per-skill evals outside the pack: `scripts/bench/skill_evals/<name>.json` (>=3 cases, >=1 Hebrew each).
+4. `scripts/skills/lint.py` + `pcb.py skills lint`: format, lengths, paths exist, planned scripts, forbidden text,
+   routing table == folders == the 12 names, KESTREL-31 codeword. The shipped pack lints clean.
+5. Gateway: agy empty answer with denied tools is now an error that names the cause; denials kept in meta.
+6. agy permissions decided by the user: `--dangerously-skip-permissions` (gateway default).
+7. Measurement: not re-run (user decision, low memory). The "improved vs I1" check is therefore not proven.
+8. Caveat: the skills carry the device lessons (generalized), so the benchmark is partly in-sample.
+9. Tests: 208 green. Runtime skills updated: all 12 (this stage).
+10. Open: `check_availability.py` still has a Mouser branch (I4); `trace_width.py` is IPC-2221 only (IPC-2152 in I7).

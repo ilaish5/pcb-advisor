@@ -112,7 +112,8 @@ class AntigravityProvider(Provider):
 
     @staticmethod
     def _parse(stdout):
-        """(response, error) from stream-json stdout. Non-JSON lines are noise."""
+        """(response, error, denied) from stream-json stdout. Non-JSON lines are noise.
+        denied is the list of display names agy auto-denied in headless mode."""
         found = None
         for line in (stdout or "").splitlines():
             line = line.strip()
@@ -125,21 +126,32 @@ class AntigravityProvider(Provider):
             if isinstance(ev, dict) and ev.get("event") == "result":
                 found = ev
         if found is None:
-            return None, "no result event in agy output"
+            return None, "no result event in agy output", []
         res = found.get("result")
         res = res if isinstance(res, dict) else {}
         status = res.get("status") or found.get("status")
         err = res.get("error") or found.get("error")
         if err:
-            return None, str(err if isinstance(err, str) else json.dumps(err))[:400]
+            return None, str(err if isinstance(err, str) else json.dumps(err))[:400], []
         if status and str(status).upper() != "SUCCESS":
-            return None, f"agy status {status}"
+            return None, f"agy status {status}", []
         resp = res.get("response")
         if resp is None:
             resp = found.get("response")
         if resp is None:
-            return None, "result event has no response"
-        return str(resp), ""
+            return None, "result event has no response", []
+        denied = []
+        for d in res.get("denied_actions") or found.get("denied_actions") or []:
+            name = (d.get("display_name") or d.get("action")) if isinstance(d, dict) else d
+            if name:
+                denied.append(str(name))
+        if not str(resp).strip():
+            if denied:
+                return None, (f"agy denied {', '.join(denied)} in headless mode; the "
+                              "answer is empty. Enable the tool with an allow-rule or "
+                              "--dangerously-skip-permissions (see docs/ENGINES.md)"), denied
+            return None, "agy returned an empty answer", []
+        return str(resp), "", denied
 
     def complete(self, request: Request) -> Result:
         ok, why = self.available()
@@ -169,10 +181,14 @@ class AntigravityProvider(Provider):
                           error=f"timed out after {request.timeout}s")
 
         out, err = proc.stdout or "", (proc.stderr or "").strip()
-        text, problem = self._parse(out)
+        text, problem, denied = self._parse(out)
+        if denied:
+            meta["denied"] = denied
         if proc.returncode != 0 and text is None:
             return Result(provider=self.id, model=model, meta=meta,
                           error=err[:400] or f"exit {proc.returncode}: {problem}")
+        if text is None and denied:
+            return Result(provider=self.id, model=model, meta=meta, error=problem)
         if text is None:
             tail = (out.strip()[-200:] + " | " + err[-200:]).strip(" |")
             return Result(provider=self.id, model=model, meta=meta,

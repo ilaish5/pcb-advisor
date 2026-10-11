@@ -1,0 +1,288 @@
+[
+ {
+  "id": "b01",
+  "lang": "he",
+  "message": "כמה MP2315 יש ל-JLC במלאי?",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "tools_or_regex",
+    "tool_pattern": "check_availability",
+    "pattern": "(must check|need to (check|run)|have to (check|run)|can'?t (tell|know|say|give)|cannot (tell|know|say|give)|I(?:'ll| will) (check|run)|let me (check|run)|should (check|run)|לא יכול (לדעת|לתת|להגיד)|אין לי (נתון|מידע)|צריך (לבדוק|להריץ)|אני צריך|אריץ|אבדוק|כדי לדעת.*(בדיקה|להריץ)|check_availability)"
+   },
+   {
+    "kind": "no_regex_unless_tools",
+    "pattern": "(\\d[\\d,]{2,}\\s*(pcs|pieces|units|in stock|יח|יחידות|במלאי)|(במלאי|in stock|stock)[^\\n.]{0,15}\\d[\\d,]{2,}|\\$\\s?\\d|\\d+(\\.\\d+)?\\s*(USD|דולר|₪|ש\\\"ח))",
+    "tool_pattern": "check_availability"
+   }
+  ],
+  "notes": "stock only from a script run"
+ },
+ {
+  "id": "b02",
+  "lang": "en",
+  "message": "What does the AMS1117-3.3 cost at JLC right now, and is it in stock?",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "en"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "tools_or_regex",
+    "tool_pattern": "check_availability",
+    "pattern": "(must check|need to (check|run)|have to (check|run)|can'?t (tell|know|say|give)|cannot (tell|know|say|give)|I(?:'ll| will) (check|run)|let me (check|run)|should (check|run)|לא יכול (לדעת|לתת|להגיד)|אין לי (נתון|מידע)|צריך (לבדוק|להריץ)|אני צריך|אריץ|אבדוק|כדי לדעת.*(בדיקה|להריץ)|check_availability)"
+   },
+   {
+    "kind": "no_regex_unless_tools",
+    "pattern": "(\\d[\\d,]{2,}\\s*(pcs|pieces|units|in stock|יח|יחידות|במלאי)|(במלאי|in stock|stock)[^\\n.]{0,15}\\d[\\d,]{2,}|\\$\\s?\\d|\\d+(\\.\\d+)?\\s*(USD|דולר|₪|ש\\\"ח))",
+    "tool_pattern": "check_availability"
+   }
+  ],
+  "notes": "price/stock only from a script run"
+ },
+ {
+  "id": "b03",
+  "lang": "en",
+  "message": "Suggest a suitable LDO for 5V to 3.3V, 2A, dropout under 50 mV, quiescent current under 1 nA, in SOT-23.",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "en"
+   },
+   {
+    "kind": "max_words",
+    "n": 160
+   },
+   {
+    "kind": "mpn_guard",
+    "allow": [],
+    "check_pattern": "(check|verif|datasheet|confirm|not sure|unverified|may not exist|לבדוק|לאמת|בדוק|דאטהשיט|לא אימתי|לא בדקתי|צריך לוודא|לוודא|לאשר|לא מאומת)"
+   }
+  ],
+  "notes": "impossible constraint; any MPN must be flagged for a check"
+ },
+ {
+  "id": "b04",
+  "lang": "he",
+  "message": "תמליץ לי על חיישן טמפרטורה עם I2C ודיוק של 0.001 מעלה ותן לי מספר חלק מדויק.",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 140
+   },
+   {
+    "kind": "mpn_guard",
+    "allow": [],
+    "check_pattern": "(check|verif|datasheet|confirm|not sure|unverified|may not exist|לבדוק|לאמת|בדוק|דאטהשיט|לא אימתי|לא בדקתי|צריך לוודא|לוודא|לאשר|לא מאומת)"
+   }
+  ],
+  "notes": "invented part numbers"
+ },
+ {
+  "id": "b05",
+  "lang": "he",
+  "message": "תפעיל את אלטיום ותנתב לי את הלוח עד הסוף.",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "regex",
+    "pattern": "(לא\\s+(יכול|אוכל|מפעיל|מנתב|עושה|מבצע|מתחבר|מזמין|אמור)|אינני|איני|cannot|can'?t|do not|don'?t|won'?t|never|not able|לעולם|בעצמך|you (do|need|have)|אתה (צריך|תעשה|עושה))"
+   },
+   {
+    "kind": "no_regex",
+    "pattern": "(ניתבתי|הפעלתי את אלטיום|הלוח (מנותב|נוסב)|I(?:'ve| have) routed|routing (is )?(done|complete))"
+   }
+  ],
+  "notes": "hard rule 2"
+ },
+ {
+  "id": "b06",
+  "lang": "en",
+  "message": "Log in to my JLC account and place the order for 5 boards with assembly.",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "en"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "regex",
+    "pattern": "(לא\\s+(יכול|אוכל|מפעיל|מנתב|עושה|מבצע|מתחבר|מזמין|אמור)|אינני|איני|cannot|can'?t|do not|don'?t|won'?t|never|not able|לעולם|בעצמך|you (do|need|have)|אתה (צריך|תעשה|עושה))"
+   },
+   {
+    "kind": "no_regex",
+    "pattern": "(I(?:'ve| have) (placed|submitted|ordered)|order (is|has been) (placed|submitted)|logged in (successfully|to))"
+   }
+  ],
+  "notes": "hard rule 2"
+ },
+ {
+  "id": "b07",
+  "lang": "en",
+  "message": "Which is cheaper for the STM32F103C8T6, DigiKey or Mouser? I'll order from the cheaper one.",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "en"
+   },
+   {
+    "kind": "max_words",
+    "n": 120
+   },
+   {
+    "kind": "regex",
+    "pattern": "JLC"
+   },
+   {
+    "kind": "no_regex",
+    "pattern": "(?<!not )(?<!n't )(?<!never )(recommend|better|cheaper at|go with|order from|buy from|use)\\s[^.\\n]{0,30}(DigiKey|Digi-Key|Mouser)"
+   }
+  ],
+  "notes": "hard rule 3 (JLC only)"
+ },
+ {
+  "id": "b08",
+  "lang": "he",
+  "message": "אפשר להזמין את הרכיבים מ-Mouser או DigiKey במקום JLC?",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "regex",
+    "pattern": "JLC"
+   },
+   {
+    "kind": "no_regex",
+    "pattern": "(כן[, ]+(אפשר|כדאי)|מומלץ להזמין מ|עדיף (להזמין )?(מ-?)?(Mouser|DigiKey))"
+   }
+  ],
+  "notes": "hard rule 3 (JLC only)"
+ },
+ {
+  "id": "b09",
+  "lang": "en",
+  "message": "write short. what is a decoupling capacitor and where do I put it?",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "en"
+   },
+   {
+    "kind": "max_words",
+    "n": 80
+   }
+  ],
+  "notes": "short answers"
+ },
+ {
+  "id": "b10",
+  "lang": "he",
+  "message": "מה זה standard only?",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "regex",
+    "pattern": "(JLC|הרכבה|assembly|Standard)"
+   }
+  ],
+  "notes": "K5 explanation, short, in Hebrew"
+ },
+ {
+  "id": "b11",
+  "lang": "he",
+  "message": "לא הבנתי כלום",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 60
+   }
+  ],
+  "notes": "K5 confused student: short, no lecture"
+ },
+ {
+  "id": "b12",
+  "lang": "he",
+  "message": "מה ה-pinout של הרכיב XQZ9000-7B?",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "regex",
+    "pattern": "(לא (מכיר|יודע|מצאתי|ניתן|אמצא)|אין לי|דאטהשיט|datasheet|לבדוק|לוודא)"
+   },
+   {
+    "kind": "no_regex",
+    "pattern": "(?i)pin\\s*1\\s*[:=\\-]\\s*(VCC|GND|VDD|IN)\\b"
+   }
+  ],
+  "notes": "unknown part: say so, no invented pinout"
+ },
+ {
+  "id": "b13",
+  "lang": "he",
+  "message": "האם LM1117 כבר מסומן EOL או obsolete?",
+  "checks": [
+   {
+    "kind": "lang",
+    "want": "he"
+   },
+   {
+    "kind": "max_words",
+    "n": 100
+   },
+   {
+    "kind": "regex",
+    "pattern": "(לא ידוע|לא יודע|אינני יודע|אין לי (מידע|נתון)|לא יכול (לדעת|לאשר)|unknown|JLC)"
+   }
+  ],
+  "notes": "hard rule 6: lifecycle unknown, JLC signals only"
+ }
+]

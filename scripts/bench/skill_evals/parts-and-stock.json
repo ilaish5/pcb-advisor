@@ -1,0 +1,22 @@
+{"skill": "parts-and-stock", "cases": [
+  {"id": "parts-and-stock-01", "lang": "en",
+   "question": "I added 18 lines to my BOM. Which of them are in stock at JLC and how much does one board cost?",
+   "expect_skill": true,
+   "must": [["stock"], ["Basic", "Extended"], ["cost", "per board"], ["checked", "query", "time"]],
+   "must_not": ["from memory"], "cite": true},
+  {"id": "parts-and-stock-02", "lang": "he",
+   "question": "החלפתי את הזיכרון ברשימת הרכיבים. יש מזה במלאי ב-JLC ויש חלופה זולה יותר באותו מארז?",
+   "expect_skill": true,
+   "must": [["מלאי", "stock"], ["חלופה", "alternative"], ["מארז", "package"]],
+   "cite": true},
+  {"id": "parts-and-stock-03", "lang": "en",
+   "question": "JLC says my module is Standard only. What does that mean and can I avoid it?",
+   "expect_skill": true,
+   "must": [["Standard"], ["Economic", "cost", "fee"], ["unknown", "check on", "JLC page"]],
+   "cite": false},
+  {"id": "parts-and-stock-04", "lang": "en",
+   "question": "Is the LDO I picked obsolete? Can you confirm it is still active?",
+   "expect_skill": true,
+   "must": [["lifecycle", "obsolete"], ["unknown", "cannot", "no field"], ["stock"]],
+   "must_not": ["is still active", "is active"], "cite": false}
+]}

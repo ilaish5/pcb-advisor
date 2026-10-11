@@ -1,0 +1,86 @@
+{
+ "skill": "schematic-preview",
+ "cases": [
+  {
+   "lang": "en",
+   "question": "I have an MCU, a 3.3V regulator and a USB connector. Can you draw me what the schematic should look like so I can copy it into Altium?",
+   "must": [
+    [
+     "net label",
+     "label"
+    ],
+    [
+     "power port"
+    ],
+    [
+     "block",
+     "section"
+    ]
+   ],
+   "must_not": [
+    "I redrew your file in Altium"
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "schematic-preview-01"
+  },
+  {
+   "lang": "en",
+   "question": "My schematic sheet is a mess of crossing wires. How should I lay it out so it's readable?",
+   "must": [
+    [
+     "stub",
+     "short wire"
+    ],
+    [
+     "net label",
+     "label"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "schematic-preview-02"
+  },
+  {
+   "lang": "he",
+   "question": "אני רוצה לראות איך אמורה להיראות הסכמה של הלוח שלי לפני שאני מצייר ב-Altium. איך מחלקים לדפים?",
+   "must": [
+    [
+     "block",
+     "בלוק",
+     "section",
+     "sheet",
+     "דפים"
+    ],
+    [
+     "net label",
+     "label",
+     "power port"
+    ]
+   ],
+   "cite": false,
+   "expect_skill": true,
+   "id": "schematic-preview-03"
+  },
+  {
+   "lang": "en",
+   "question": "Draw the pins of this IC for me, I don't have the datasheet.",
+   "must": [
+    [
+     "datasheet"
+    ],
+    [
+     "unknown",
+     "need",
+     "ask"
+    ]
+   ],
+   "must_not": [
+    "pin 1 is"
+   ],
+   "cite": false,
+   "expect_skill": true,
+   "id": "schematic-preview-04"
+  }
+ ]
+}

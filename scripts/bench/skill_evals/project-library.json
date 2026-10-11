@@ -1,0 +1,22 @@
+{"skill": "project-library", "cases": [
+  {"id": "project-library-01", "lang": "en",
+   "question": "I have 25 parts and each came as a separate library. How do I get one library to drag from?",
+   "expect_skill": true,
+   "must": [["one library", "single library", "one script"], ["footprint"], ["student", "you run", "run the script", "not automated"]],
+   "cite": false},
+  {"id": "project-library-02", "lang": "he",
+   "question": "ב-Update PCB קיבלתי Footprint Not Found על רכיבים חדשים מהספרייה. מה הבעיה?",
+   "expect_skill": true,
+   "must": [["Footprint Not Found"], ["link", "קישור", "path", "נתיב"], ["install", "מותקנ", "ספרייה"]],
+   "cite": true},
+  {"id": "project-library-03", "lang": "en",
+   "question": "What parameters should every part in the library carry so the JLC BOM matches?",
+   "expect_skill": true,
+   "must": [["MPN"], ["LCSC"], ["Description", "Manufacturer"]],
+   "cite": false},
+  {"id": "project-library-04", "lang": "en",
+   "question": "My resistors show two labels on the sheet and ERC says no driving source. What is wrong with the library?",
+   "expect_skill": true,
+   "must": [["pin name", "names"], ["Passive", "pin type"], ["library"]],
+   "cite": false}
+]}

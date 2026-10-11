@@ -1,0 +1,100 @@
+{
+ "skill": "schematic-review",
+ "cases": [
+  {
+   "lang": "en",
+   "question": "My sensor chip has a FAULT output. Do I need a pull-up resistor on it? Another chat says yes.",
+   "must": [
+    [
+     "datasheet"
+    ],
+    [
+     "push-pull",
+     "open-drain",
+     "VOH"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "schematic-review-01"
+  },
+  {
+   "lang": "en",
+   "question": "I put a 1uF capacitor on the VCC pin of my buck converter because more decoupling is better. Is that fine?",
+   "must": [
+    [
+     "max",
+     "maximum"
+    ],
+    [
+     "datasheet"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "schematic-review-02"
+  },
+  {
+   "lang": "he",
+   "question": "החלפתי את המעבד שלי לדגם אחר באותה חבילה. מה עוד צריך להשתנות בסכמה?",
+   "must": [
+    [
+     "pin",
+     "רגל",
+     "רגלי"
+    ],
+    [
+     "datasheet",
+     "דאטהשיט"
+    ],
+    [
+     "VCAP",
+     "capacitor",
+     "קבל",
+     "pull-up"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "schematic-review-03"
+  },
+  {
+   "lang": "en",
+   "question": "Altium says 'Net +12V has no driving source'. What does it mean and how do I fix it?",
+   "must": [
+    [
+     "pin type",
+     "power",
+     "library"
+    ],
+    [
+     "ERC",
+     "compile"
+    ]
+   ],
+   "must_not": [
+    "ignore it"
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "schematic-review-04"
+  },
+  {
+   "lang": "en",
+   "question": "I have two pins on my MCU I don't use. What do I do with them?",
+   "must": [
+    [
+     "datasheet"
+    ],
+    [
+     "No-ERC",
+     "NC",
+     "unused"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "schematic-review-05"
+  }
+ ]
+}

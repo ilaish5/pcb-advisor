@@ -162,3 +162,32 @@ def test_agy_never_waits_on_the_terminal(home, monkeypatch):
     _, seen = _run(monkeypatch)
     # stdin is a pipe fed with the prompt (input=), never the inherited terminal
     assert seen["kw"].get("input") and "stdin" not in seen["kw"]
+
+
+def _denied_stream(response, denied):
+    res = {"status": "SUCCESS", "response": response}
+    if denied:
+        res["denied_actions"] = [{"action": "command", "display_name": d} for d in denied]
+    return json.dumps({"event": "result", "result": res}) + "\n"
+
+
+def test_denied_tool_with_empty_answer_is_an_error(home, monkeypatch):
+    res, _ = _run(monkeypatch, stdout=_denied_stream("", ["RunCommand"]))
+    assert not res.ok and "denied" in res.error and "RunCommand" in res.error
+    assert res.meta["denied"] == ["RunCommand"]
+
+
+def test_denied_tool_with_text_keeps_the_text_and_lists_denials(home, monkeypatch):
+    res, _ = _run(monkeypatch, stdout=_denied_stream("partial answer", ["RunCommand"]))
+    assert res.ok and res.text == "partial answer"
+    assert res.meta["denied"] == ["RunCommand"]
+
+
+def test_empty_answer_without_denial_is_an_error(home, monkeypatch):
+    res, _ = _run(monkeypatch, stdout=_denied_stream("  ", []))
+    assert not res.ok and "empty answer" in res.error
+
+
+def test_normal_answer_has_no_denied_meta(home, monkeypatch):
+    res, _ = _run(monkeypatch)
+    assert res.ok and "denied" not in res.meta

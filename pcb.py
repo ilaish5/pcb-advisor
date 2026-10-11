@@ -11,7 +11,9 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py engines              which LLM engines are wired up
     python3 pcb.py tools [--clear]      what the engine may touch on your machine
     python3 pcb.py probe [--engine X]   prove the engine loads the runtime pack (claude_code|antigravity|all)
-    python3 pcb.py chats [project]      conversations, and when memory was rewritten
+    python3 pcb.py bench [--engine X] [--evals] [--only 1,5]  device replay -> docs/BENCHMARK.md
+    python3 pcb.py skills lint [--only NAME]  check runtime/skills against the skill format
+    python3 pcb.py chats [project]    conversations, and when memory was rewritten
     python3 pcb.py config [key] [value] read or set a setting
     python3 pcb.py check [project]      every sheet validates, every citation resolves
     python3 pcb.py reset [project]      wipe a project's state
@@ -175,6 +177,20 @@ def cmd_probe(args):
     return 1 if failed else 0
 
 
+def cmd_bench(args):
+    from bench import runner
+
+    def opt(name):
+        i = args.index(name) + 1 if name in args else 0
+        return args[i] if 0 < i < len(args) else None
+    only = [int(x) for x in opt("--only").split(",")] if opt("--only") else None
+    res = runner.run(engine=opt("--engine"), evals="--evals" in args, only=only)
+    print(res["text"])
+    for p in res["problems"]:
+        print(f"  problem: {p}", file=sys.stderr)
+    print(f"written {res['path']}")
+
+
 def cmd_chats(args):
     import session
     proj = args[0] if args else workspace.default_project()
@@ -248,12 +264,19 @@ def cmd_trace(args):
     print(f"{w:.3f} mm ({w / 0.0254:.1f} mil)   source: IPC-2221 section 6.2")
 
 
+def cmd_skills(args):
+    if not args or args[0] != "lint":
+        raise SystemExit("usage: pcb.py skills lint [--only NAME]")
+    from skills import lint
+    return lint.main(args[1:])
+
+
 COMMANDS = {
     "init": cmd_init, "serve": cmd_serve, "run": cmd_serve, "new": cmd_new, "list": cmd_list,
     "show": cmd_show, "seed": cmd_seed, "engines": cmd_engines, "tools": cmd_tools,
-    "chats": cmd_chats, "probe": cmd_probe,
+    "chats": cmd_chats, "probe": cmd_probe, "bench": cmd_bench,
     "config": cmd_config,
-    "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
+    "skills": cmd_skills, "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
 }
 
 

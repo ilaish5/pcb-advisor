@@ -1,0 +1,371 @@
+[
+ {
+  "id": "q01",
+  "lang": "he",
+  "question": "קיבלתי באלטיום את השגיאה Net +12 has no driving source, מה זה אומר ואיך מתקנים?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m09-compiling.en.md",
+    "heading": "9.4.1 Correcting Errors and Warnings"
+   }
+  ],
+  "max_words": 140,
+  "notes": "K6 real error message"
+ },
+ {
+  "id": "q02",
+  "lang": "he",
+  "question": "מה זה Off grid בשגיאה של הסכמה ואיך מסדרים?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m05-schematic-capture.en.md",
+    "heading": "5.4.1 Setting the grid"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m03-schematic-preferences.en.md",
+    "heading": "3.5 Grids"
+   }
+  ],
+  "max_words": 120,
+  "notes": "K6"
+ },
+ {
+  "id": "q03",
+  "lang": "he",
+  "question": "אני לא רואה את ה-properties של הרכיב, איפה הפאנל?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m15-pcb-global-editing.en.md",
+    "heading": "15.3 Properties Panel"
+   }
+  ],
+  "max_words": 100,
+  "notes": "K6 lost Properties panel"
+ },
+ {
+  "id": "q04",
+  "lang": "he",
+  "question": "איך קובעים כללי תכנון (design rules) ללוח, למשל רוחב מסלול מינימלי?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m19-pcb-rules-and-panels.en.md",
+    "heading": "19.3 Basic Design Rule"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m19-pcb-rules-and-panels.en.md",
+    "heading": "19.3.1 PCB Rules and Constraints Editor"
+   }
+  ],
+  "max_words": 140,
+  "notes": "K5 how were rules set"
+ },
+ {
+  "id": "q05",
+  "lang": "he",
+  "question": "איך נותנים רוחב מסלול שונה לרשת הספק לעומת שאר הרשתות?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m19-pcb-rules-and-panels.en.md",
+    "heading": "19.4 Design Rule Using Net Classes"
+   }
+  ],
+  "max_words": 140,
+  "notes": ""
+ },
+ {
+  "id": "q06",
+  "lang": "he",
+  "question": "שני כללים סותרים, איזה מהם נאכף? איך עובדים העדיפויות?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m19-pcb-rules-and-panels.en.md",
+    "heading": "19.3.2 Rule Priorities"
+   }
+  ],
+  "max_words": 120,
+  "notes": ""
+ },
+ {
+  "id": "q07",
+  "lang": "he",
+  "question": "איך מריצים DRC ומה עושים עם ההפרות?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m23-drc.en.md",
+    "heading": "23.3 Design Rule Check"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m23-drc.en.md",
+    "heading": "23.5 Resolving Violations"
+   }
+  ],
+  "max_words": 140,
+  "notes": ""
+ },
+ {
+  "id": "q08",
+  "lang": "he",
+  "question": "אני לא מצליח להעביר את הסכמה ללוח (Update PCB), מה בודקים לפני?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m11-transfer-to-pcb.en.md",
+    "heading": "11.3 Before the Transfer"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m11-transfer-to-pcb.en.md",
+    "heading": "11.4 Transferring the Design"
+   }
+  ],
+  "max_words": 140,
+  "notes": ""
+ },
+ {
+  "id": "q09",
+  "lang": "he",
+  "question": "איך מגדירים את צורת הלוח (board outline)?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m18-shaping-the-pcb.en.md",
+    "heading": "18.4 Define Board Shape from Selected Objects"
+   }
+  ],
+  "max_words": 120,
+  "notes": ""
+ },
+ {
+  "id": "q10",
+  "lang": "he",
+  "question": "איך מוסיפים via בזמן ניתוב ומשנים את הגודל שלו?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m21-pcb-routing.en.md",
+    "heading": "21.4.4 Vias"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m21-pcb-routing.en.md",
+    "heading": "21.4.4.1 Setting Via Sizes"
+   }
+  ],
+  "max_words": 130,
+  "notes": ""
+ },
+ {
+  "id": "q11",
+  "lang": "he",
+  "question": "איך עושים polygon pour של GND ומה זה flood?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m22-polygons-and-power-planes.en.md",
+    "heading": "22.3 Placing a Polygon Pour"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m22-polygons-and-power-planes.en.md",
+    "heading": "22.6 Flooding a Layer"
+   }
+  ],
+  "max_words": 130,
+  "notes": ""
+ },
+ {
+  "id": "q12",
+  "lang": "he",
+  "question": "איך מייצרים קבצי Gerber ו-BOM בעזרת Output Job?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m25-fabrication-files.en.md",
+    "heading": "25.4 Output Job File"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m25-fabrication-files.en.md",
+    "heading": "25.3 Bill of Materials"
+   }
+  ],
+  "max_words": 150,
+  "notes": ""
+ },
+ {
+  "id": "q13",
+  "lang": "he",
+  "question": "איך מוסיפים שכבות ללוח (למשל ארבע שכבות)?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m17-pcb-layers.en.md",
+    "heading": "17.4 Layer Stack Manager"
+   }
+  ],
+  "max_words": 120,
+  "notes": ""
+ },
+ {
+  "id": "q14",
+  "lang": "he",
+  "question": "איך משנים את ה-snap grid בלוח?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m16-pcb-grids.en.md",
+    "heading": "16.4.1 Global Board Snap Grid"
+   }
+  ],
+  "max_words": 110,
+  "notes": ""
+ },
+ {
+  "id": "q15",
+  "lang": "he",
+  "question": "איך בוחרים את כל ה-vias בלוח ומשנים להם גודל בבת אחת?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m15-pcb-global-editing.en.md",
+    "heading": "15.5.1.1 Selecting Vias"
+   },
+   {
+    "file": "shared/reference/course/ad20-essentials/m15-pcb-global-editing.en.md",
+    "heading": "15.5.1.2 Changing Via Size"
+   }
+  ],
+  "max_words": 130,
+  "notes": ""
+ },
+ {
+  "id": "q16",
+  "lang": "en",
+  "question": "How do I create a new schematic symbol for a crystal that is not in the library?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m26-schematic-library.en.md",
+    "heading": "26.2 Create a Crystal Symbol"
+   }
+  ],
+  "max_words": 130,
+  "notes": ""
+ },
+ {
+  "id": "q17",
+  "lang": "en",
+  "question": "How do I link a footprint to a schematic symbol so it becomes one component?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m28-component-creation.en.md",
+    "heading": "28.2 Linking Footprint to the Symbol"
+   }
+  ],
+  "max_words": 120,
+  "notes": ""
+ },
+ {
+  "id": "q18",
+  "lang": "en",
+  "question": "What is the Dynamic Compiler and how do I turn it on?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m09-compiling.en.md",
+    "heading": "9.5.1 Enabling the Dynamic Compiler"
+   }
+  ],
+  "max_words": 100,
+  "notes": ""
+ },
+ {
+  "id": "q19",
+  "lang": "en",
+  "question": "How do I make the sheet symbols connect to each other in a hierarchical design?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m10-hierarchy.en.md",
+    "heading": "10.5 Connecting the Sheet Symbols"
+   }
+  ],
+  "max_words": 120,
+  "notes": ""
+ },
+ {
+  "id": "q20",
+  "lang": "en",
+  "question": "How do I highlight one net in a different colour on the schematic?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m07-schematic-updating.en.md",
+    "heading": "7.5 Net Color Highlighting"
+   }
+  ],
+  "max_words": 100,
+  "notes": ""
+ },
+ {
+  "id": "q21",
+  "lang": "en",
+  "question": "How do I place all the components of one sheet in a room on the PCB?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m20-pcb-placement.en.md",
+    "heading": "20.4.1 Placing within an Area"
+   }
+  ],
+  "max_words": 120,
+  "notes": ""
+ },
+ {
+  "id": "q22",
+  "lang": "en",
+  "question": "How can I route several traces at once, like a bus?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/ad20-essentials/m21-pcb-routing.en.md",
+    "heading": "21.4.5 Multi-Trace Routing"
+   }
+  ],
+  "max_words": 110,
+  "notes": ""
+ },
+ {
+  "id": "q23",
+  "lang": "en",
+  "question": "What do I need to set to get the right trace width for a 50 ohm controlled impedance line?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/altium-education/unit4-routing-signal-integrity.en.md",
+    "heading": "[17] Calculating Characteristic Impedance and Trace Width"
+   },
+   {
+    "file": "shared/reference/course/altium-education/unit4-routing-signal-integrity.en.md",
+    "heading": "[16] Routing Rules for Impedance Control"
+   }
+  ],
+  "max_words": 140,
+  "notes": "quiz-style"
+ },
+ {
+  "id": "q24",
+  "lang": "en",
+  "question": "Why do all my grounds get the same net name GND even if I picked a chassis symbol?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/altium-education/unit2-schematics-libraries.en.md",
+    "heading": "[03] Power and Ground Ports"
+   },
+   {
+    "file": "shared/reference/course/summaries-he/cheatsheet-units1-4.he.md",
+    "heading": "יחידה 2 — Schematics and Libraries"
+   }
+  ],
+  "max_words": 120,
+  "notes": "quiz-style"
+ },
+ {
+  "id": "q25",
+  "lang": "en",
+  "question": "Annular ring: what is it and how does it relate to via size?",
+  "expect_sources": [
+   {
+    "file": "shared/reference/course/altium-education/unit4-routing-signal-integrity.en.md",
+    "heading": "[08] Annular Ring Diameter"
+   },
+   {
+    "file": "shared/reference/course/altium-education/unit4-routing-signal-integrity.en.md",
+    "heading": "[06] Via Sizes and Styles"
+   }
+  ],
+  "max_words": 110,
+  "notes": "quiz-style"
+ }
+]

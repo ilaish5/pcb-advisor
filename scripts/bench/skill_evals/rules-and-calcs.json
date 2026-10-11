@@ -1,0 +1,116 @@
+{
+ "skill": "rules-and-calcs",
+ "cases": [
+  {
+   "lang": "en",
+   "question": "What design rules should I set in Altium for a 2-layer board made at JLC? Minimum clearance, via size, hole size?",
+   "must": [
+    [
+     "JLC",
+     "jlcpcb"
+    ],
+    [
+     "clearance"
+    ],
+    [
+     "via"
+    ],
+    [
+     "margin",
+     "above the minimum",
+     "checked",
+     "date"
+    ]
+   ],
+   "must_not": [
+    "from memory"
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "rules-and-calcs-01"
+  },
+  {
+   "lang": "en",
+   "question": "What trace width do I need for 2 A on the outer layer, 10 C rise?",
+   "must": [
+    [
+     "IPC"
+    ],
+    [
+     "mm"
+    ],
+    [
+     "round",
+     "up"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "rules-and-calcs-02"
+  },
+  {
+   "lang": "he",
+   "question": "איך אני מייבא את חוקי התכנון ל-Altium בלי להקליד אותם ידנית?",
+   "must": [
+    [
+     ".RUL",
+     "RUL"
+    ],
+    [
+     "Import Rules",
+     "ייבוא",
+     "Import"
+    ],
+    [
+     "Design > Rules",
+     "Design"
+    ]
+   ],
+   "cite": false,
+   "expect_skill": true,
+   "id": "rules-and-calcs-03"
+  },
+  {
+   "lang": "en",
+   "question": "I need a 50 ohm trace on a 4-layer JLC board. What width?",
+   "must": [
+    [
+     "stack",
+     "dielectric",
+     "prepreg"
+    ],
+    [
+     "calculator",
+     "jlcpcb.com/impedance"
+    ]
+   ],
+   "must_not": [
+    "always 0.2 mm"
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "rules-and-calcs-04"
+  },
+  {
+   "lang": "en",
+   "question": "I need a resistor divider to set 3.3V on a regulator feedback pin with 0.8V reference.",
+   "must": [
+    [
+     "Vref",
+     "0.8"
+    ],
+    [
+     "R1"
+    ],
+    [
+     "E24",
+     "E96",
+     "error"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "rules-and-calcs-05"
+  }
+ ]
+}

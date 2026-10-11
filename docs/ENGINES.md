@@ -92,3 +92,8 @@ Restart `python pcb.py serve` after changing the engine.
   For `claude` the flags go before the variadic tool flags, so they cannot swallow or be swallowed.
 - `--print-timeout` takes a duration (`60s`), not a number.
 - `agy.exe` is a real executable, so the `.cmd` quoting problem of npm-installed CLIs does not apply to it.
+- When agy auto-denies a tool in headless mode (no allow-rule), it still exits 0 with `status` SUCCESS and an empty
+  `response`, plus `result.denied_actions: [{"action":"command","display_name":"RunCommand"}]`. The gateway turns an
+  empty response with denials into an error (`agy denied RunCommand in headless mode; ...`), and an empty response
+  without denials into `agy returned an empty answer`. A non-empty response with denials stays ok and the names are
+  in `Result.meta["denied"]`.

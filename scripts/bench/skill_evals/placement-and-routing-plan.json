@@ -1,0 +1,87 @@
+{
+ "skill": "placement-and-routing-plan",
+ "cases": [
+  {
+   "lang": "en",
+   "question": "What should I place first on my PCB, and how do I decide where the USB connector goes?",
+   "must": [
+    [
+     "connector"
+    ],
+    [
+     "edge"
+    ],
+    [
+     "anchor",
+     "first"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "placement-and-routing-plan-01"
+  },
+  {
+   "lang": "en",
+   "question": "How close should the decoupling capacitors be to the MCU pins and which side?",
+   "must": [
+    [
+     "pin"
+    ],
+    [
+     "mm"
+    ],
+    [
+     "datasheet"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "placement-and-routing-plan-02"
+  },
+  {
+   "lang": "he",
+   "question": "איך אני מנתב את ה-USB ואת הקריסטל? מה הסדר של הראוטינג?",
+   "must": [
+    [
+     "differential",
+     "pair",
+     "זוג",
+     "דיפרנציאל"
+    ],
+    [
+     "crystal",
+     "קריסטל"
+    ],
+    [
+     "ground",
+     "GND",
+     "return",
+     "חזרה"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "placement-and-routing-plan-03"
+  },
+  {
+   "lang": "en",
+   "question": "My module has an antenna. Where can I put it on the board and what is around it?",
+   "must": [
+    [
+     "keep-out",
+     "keepout",
+     "keep out"
+    ],
+    [
+     "edge"
+    ],
+    [
+     "datasheet"
+    ]
+   ],
+   "cite": true,
+   "expect_skill": true,
+   "id": "placement-and-routing-plan-04"
+  }
+ ]
+}
