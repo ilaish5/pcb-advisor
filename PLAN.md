@@ -204,6 +204,13 @@ tokens): precise briefs via `%TEMP%\agy-task.py`; Claude Code plans, briefs and 
 2. Stages merged, one commit each: **A = I3 viewer + I4**, **B = I5 + I6**, **C = I7 + I8**, **D = I9 + I10**, then
    **I11**. Stage summaries stay 10 lines; one Hebrew report per merged stage.
 
+**JLCDFM report format (user, 2026-10-12)** - for stage B: the exported PDF is one tall page holding a single JPEG
+(~2400x15000 px), no text layer. `scripts/dfm.py` must: extract the JPEG (pypdf), cut it into ~1400 px slices, save
+them in the project (`checks/`), and give the engine the slices to read (image input), then build the triage table
+(section, check, worst value, level, D/W/G counts, layer). Layout + SMT triage hints:
+`runtime/skills/manufacturer-and-dfm/references/jlcdfm-report.md`. Sample: the user's device report (local only,
+untrusted copy in %TEMP%\dfm-untrusted; not committed).
+
 **Next: A** (in-app file viewer + I4 parts and stock with the interactive parts tab).
 
 **Waiting for the user:** nothing.

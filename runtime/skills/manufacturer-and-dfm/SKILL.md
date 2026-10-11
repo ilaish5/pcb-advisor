@@ -30,8 +30,9 @@ description: Prepares the manufacturing package for JLC and walks the student th
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
 4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
    its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in (same package) for the student to approve.
-5. PCB DFM at JLC: the student opens the free JLC DFM tool, uploads the Gerber zip, presses the DFM check, and sends a
-   screenshot or the exported report of every red item (name, value, location).
+5. PCB DFM at JLC: the student opens the free JLC DFM tool, uploads the Gerber zip, runs PCB DFM + SMT DFM and
+   uploads the exported report PDF. It is one tall image with no text: read it as image slices
+   (`references/jlcdfm-report.md` has the layout and the SMT triage hints).
 6. SMT preview: BOM/CPL upload in the JLC assembly flow, then the Component Placements view. The student checks pin 1
    mark and the body outline of each part against the pads, and sends the list of parts that look rotated.
 7. Triage each item. Real: outline on every layer, silk narrower than the JLC minimum, copper too near the edge, wrong
@@ -55,6 +56,7 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - `<repo>/shared/reference/course/ad20-essentials/m25-fabrication-files.en.md` (OutJob, BOM, Gerber setup)
 - `<repo>/shared/reference/course/altium-education/unit3-pcb-layout.en.md` ([03] process, [06] Preparing for Manufacturing)
 - `<repo>/docs/PRODUCT-PLAN.md` (section 8, export rules)
+- `references/jlcdfm-report.md` - layout of the JLCDFM report PDF and how to triage its SMT section.
 - JLC limits and DFM pages are not in the repo: give the student the link and ask for the number, or say unknown.
 
 ## Pitfalls
