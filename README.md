@@ -87,7 +87,7 @@ Python, cross-platform, in `scripts/skills/`. The agent runs them; the BOM page 
 | `render_sheet.py` | a sheet drawn from its netlist |
 
 Not built yet: download models, build a part from a datasheet, compile an IntLib. See
-[docs/V2-STATUS.md](docs/V2-STATUS.md).
+[docs/archive/V2-STATUS.md](docs/archive/V2-STATUS.md).
 
 ## Windows and macOS
 
@@ -104,7 +104,7 @@ What differs between the two lives in `scripts/oscompat.py`, nowhere else:
   what its shell actually types;
 - paths handed to the engine use forward slashes on both.
 
-CI runs the suite on Windows, macOS and Linux. `docs/WINDOWS-HANDOFF.md` is the checklist for verifying a
+CI runs the suite on Windows, macOS and Linux. `docs/archive/WINDOWS-HANDOFF.md` is the checklist for verifying a
 build on a Windows machine.
 
 ## One workspace folder
@@ -138,5 +138,12 @@ Antigravity CLI (`agy`) on Windows, then `python pcb.py config agent.provider <i
 | `scripts/seed.py` | the lte-tracker example |
 | `.agents/rules/*.md`, `.claude/skills/` | the agent's rules |
 | `ui/index.html` | the screen |
-| `docs/mock/` | the visual and behavioural spec the UI was built from |
+| `docs/archive/mock/` | the visual and behavioural spec the UI was built from |
 | `tests/` | the defects that reached a student once, and the contract of the write path |
+| `tests/fixtures/altium/` | real Altium files (AD20 course exercises) for the read-only reader |
+| `shared/reference/` | course material the agent answers from; map and topic index in its `AGENTS.md` |
+| `PLAN.md` | the implementation plan: single source of truth for the build |
+| `docs/PRODUCT-PLAN.md` | what the tool does and why (pain points, capabilities, decisions, feasibility) |
+| `docs/ENGINES.md` | install and configure Claude Code / Antigravity |
+| `docs/feasibility/` | the probes that proved the Altium, JLC and .RUL formats |
+| `docs/archive/` | history of the v2 rebuild |

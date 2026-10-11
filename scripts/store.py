@@ -8,7 +8,7 @@ The project's data: append-only logs in, derived views out.
     idea.json           goal, agreed items, blocks, links   (server-written)
     netlist/<id>.json   one schematic sheet            (validated before it is written)
 
-The principle (REBUILD-BRIEF): the logs are the truth, everything else is derived.
+The principle (docs/archive/REBUILD-BRIEF.md): the logs are the truth, everything else is derived.
 Nothing here edits a log. bom.json and library.json are rewritten from the logs
 on every read, so a hand-edit of either is lost - on purpose.
 
