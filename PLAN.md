@@ -156,7 +156,7 @@ Cross-cutting:
 | I0 | **Orientation + architecture.** Read the inputs; keep/replace map of the v2 code; runtime-pack layout (section 3) proven with **both** engines; fix the known engine bugs: agy refuses `--model ...-high` together with `--effort` (send one), long prompts on the command line (Windows ~32K limit) -> stdin with `--input-format stream-json` (`docs/ENGINES.md` §5). Write `docs/ARCHITECTURE.md` (short). | both engines answer a probe that needs a skill file; gateway tests for the two bugs; all tests green | ✅ |
 | I1 | **Measurement harness.** 12 incident fixtures, Q&A eval, behaviour evals, `pcb.py bench`, `docs/BENCHMARK.md` | bench runs end to end; baseline recorded | ✅ |
 | I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ✅ (measurement partial, see §8) |
-| I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, link the Altium project: PrjPcb, PcbDoc, sheets, output folder); open files in the UI + upload to the knowledge base (§3a) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ✅ (device parse waits for the user, see §7) |
+| I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, link the Altium project: PrjPcb, PcbDoc, sheets, output folder); open files in the UI + upload to the knowledge base (§3a) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ✅ |
 | I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); interactive parts tab (§3a: edit/replace, availability indicator, role line, chat per part with datasheet); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ⬜ |
 | I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; UI spaces "Altium outputs" and "Final manufacturer checks" (§3a: upload results, discuss); skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ⬜ |
 | I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ⬜ |
@@ -190,10 +190,7 @@ tokens): precise briefs via `%TEMP%\agy-task.py`; Claude Code plans, briefs and 
 
 **Next: I4** (parts + stock, interactive parts tab).
 
-**Waiting for the user:** I3 acceptance "device files parse": the permission classifier blocks me from reading the device
-folder (even read-only). The user runs
-`! .venv\Scripts\python scripts\altium\dump.py "C:\Users\Public\Documents\Altium\real-project\real-project.PcbDoc" --net TC_FAULT`
-(must print Q5D-1, TP8, U3-13, U6-25) or adds a read-only allow rule for that folder.
+**Waiting for the user:** nothing.
 
 ## 8. Stage summaries (10 lines each, newest last)
 
@@ -253,5 +250,6 @@ folder (even read-only). The user runs
    Upload to the knowledge base already existed (Sources page).
 8. Built by agy from two briefs (I3-A readers, I3-B settings); every diff and test read by Claude Code.
 9. Tests: 229 green, skills lint ok. No benchmark run (user: no heavy runs without asking; I3 adds no answers).
-10. Open: device parse + TC_FAULT check waits for the user; the settings UI was not opened in a browser (no GUI).
+10. Device check run by the user: TC_FAULT = Q5D-1, TP8-TP, U3-13, U6-25 (correct; TP8's pad is named TP).
+    Open: the settings UI was not opened in a browser (no GUI).
 
