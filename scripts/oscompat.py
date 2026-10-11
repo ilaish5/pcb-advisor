@@ -6,6 +6,7 @@ through here instead of being special-cased where it bites.
 """
 import functools
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -73,4 +74,39 @@ def py(command):
     Accepts the {python} placeholder used in config/defaults.json, and the
     literal `python3 ` that older configs and prompts carry."""
     command = command.replace("{python}", python_cmd())
+    command = expand_paths(command)
     return re.sub(r"(?<![\w./-])python3 ", python_cmd() + " ", command)
+
+
+def rule_path(path):
+    """A path in the form Claude Code permission rules want for an absolute path:
+    `//` + the POSIX form of the path, where `C:/Users/x` becomes `/c/Users/x`."""
+    posix = pathlib.PurePath(path).as_posix()
+    m = re.match(r"^([A-Za-z]):(/.*)?$", posix)
+    if m:
+        posix = f"/{m.group(1).lower()}{m.group(2) or ''}"
+    return "/" + posix
+
+
+def expand_paths(command):
+    """The {repo} and {projects} placeholders of config/defaults.json. The engine
+    runs in its own folder, not in the repo, so the allow-list needs absolute paths.
+      {repo} {projects}              absolute, forward slashes (a command line)
+      {repo_rule} {projects_rule}    the same, as a permission-rule path (Edit(...))"""
+    if "{repo" not in command and "{projects" not in command:
+        return command
+    import workspace                # late: workspace imports this module
+    repo, projects = workspace.REPO, workspace.projects_dir()
+    for key, path in (("repo", repo), ("projects", projects)):
+        command = command.replace("{%s_rule}" % key, rule_path(path))
+        command = command.replace("{%s}" % key, pathlib.PurePath(path).as_posix())
+    return command
+
+
+def app_data_dir():
+    """Where a per-user program keeps its own files on this OS."""
+    if WINDOWS:
+        return pathlib.Path(os.environ.get("LOCALAPPDATA") or pathlib.Path.home() / "AppData" / "Local")
+    if sys.platform == "darwin":
+        return pathlib.Path.home() / "Library" / "Application Support"
+    return pathlib.Path.home() / ".local" / "share"

@@ -23,18 +23,20 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import gateway     # noqa: E402
 import oscompat    # noqa: E402
+import runtime_pack  # noqa: E402
 import session     # noqa: E402
 import workspace   # noqa: E402
 
-# The rules live as files, not as a string in this module, so that every kind of
-# agent reaches the same text: a CLI agent can open them, and an engine without
-# hands gets them here, in the prompt. Core first - it says who the agent is.
-RULES_DIR = pathlib.Path(__file__).resolve().parent.parent / ".agents" / "rules"
+# The rules live as a file, not as a string in this module, so that every kind of
+# agent reaches the same text: a CLI agent loads it from its engine home (see
+# runtime_pack.py), and an engine without hands gets it here, in the prompt.
+# runtime/AGENTS.md is the source; nothing in runtime/ is auto-loaded by any CLI.
+RULES_DIR = runtime_pack.SOURCE
+RULES_FILE = RULES_DIR / "AGENTS.md"
 
 
 def rules():
-    files = sorted(RULES_DIR.glob("*.md"), key=lambda f: (not f.stem.endswith("-core"), f.name))
-    return "\n\n".join(f.read_text(encoding="utf-8").strip() for f in files)
+    return RULES_FILE.read_text(encoding="utf-8").strip()
 
 
 def _summary(model):
@@ -62,12 +64,14 @@ def _summary(model):
     return json.dumps(s, ensure_ascii=False, indent=1)
 
 
-def _workspace_section(project):
+def _workspace_section(project, engine_home=None):
     """Only for an engine that can actually open a file. Telling a text-only
     engine to go and read something does not fail loudly - it invents."""
-    w = workspace.describe(project)
-    lines = [f"You are running in {w['cwd']} (the install; the workspace is {w['home']}), and the current project is "
-             f"{w['project']}. You may open these yourself.", ""]
+    w = workspace.describe(project, engine_home)
+    lines = [f"You are running in {w['cwd']} (your engine home: instructions and skills only, not the repo). "
+             f"The repo (the install, with scripts/ and shared/) is {w['repo']}; the workspace is {w['home']}; "
+             f"the current project is {w['project']}. Every path below is absolute. "
+             "<repo> in your skills means the repo path above. You may open these yourself.", ""]
     for place in w["places"]:
         write = place["write"]
         tag = "write ok" if write is True else ("read only" if write is False else write)
@@ -82,9 +86,9 @@ def _workspace_section(project):
               "Writing is not yours. Never edit the .jsonl logs - they are "
               "append-only and carry who decided what, and the server appends to "
               "them when you emit an action. To add a document, "
-              "run scripts/sources.py so its sha256 is recorded. To view available "
-              "sources, read the files in the 'sources/' directory. To delete a "
-              "document, run '" + oscompat.py("python3 scripts/sources.py unuse <project_name> <document_name>") + "'."]
+              "run " + oscompat.py("python3 {repo}/scripts/sources.py") + " so its sha256 is recorded. To view available "
+              "sources, read the files in the project's sources/ directory. To delete a "
+              "document, run '" + oscompat.py("python3 {repo}/scripts/sources.py unuse <project_name> <document_name>") + "'."]
     return "\n".join(lines)
 
 
@@ -195,6 +199,17 @@ def _parse(text):
     return reply, actions, tools
 
 
+def _add_dirs(project):
+    """What the engine may reach outside its own folder: the install (scripts, reference),
+    the project, and the workspace when that is somewhere else."""
+    dirs = [workspace.REPO, workspace.project_dir(project), workspace.home()]
+    out = []
+    for d in dirs:
+        if str(d) not in out:
+            out.append(str(d))
+    return out
+
+
 def respond(model, message, history, backend=None, timeout=None):
     """(state, message) -> {reply, actions}. `backend` names an engine; None
     means whatever `agent.provider` is set to."""
@@ -212,8 +227,13 @@ def respond(model, message, history, backend=None, timeout=None):
     if memory:
         parts.append("--- MEMORY (this conversation, kept small on purpose) ---\n"
                      + memory)
+    try:
+        engine_home = runtime_pack.sync()
+    except runtime_pack.RuntimePackError as exc:
+        return {"reply": f"[{name}] {exc}", "actions": [], "backend": name, "provider": name,
+                "error": True}
     if gateway.provider(name).has_workspace():
-        parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project")))
+        parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project"), engine_home))
     parts.append("--- CURRENT STATE ---\n" + _summary(model))
     parts.append("--- CONVERSATION SO FAR ---\n" + convo)
     parts.append("--- STUDENT SAYS ---\n" + message + "\n")
@@ -224,8 +244,9 @@ def respond(model, message, history, backend=None, timeout=None):
         system=parts[0],
         history=[{"role": m.get("role"), "text": m.get("text")} for m in history[-keep:]],
         timeout=int(timeout or workspace.get("agent.timeout_seconds", 180)),
-        # the workspace map and the tool allowlist are both relative to the install (scripts/ lives there)
-        options={"cwd": str(workspace.REPO)}
+        # The engine lives in its own folder, where only the instructions and skills are (sync() above).
+        # The repo, the project and the workspace are reachable only through add_dirs.
+        options={"cwd": str(engine_home), "add_dirs": _add_dirs(model.get("project"))}
     ), name=name)
 
     if not res.ok:

@@ -10,6 +10,7 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py seed                 the worked example: projects/lte-tracker
     python3 pcb.py engines              which LLM engines are wired up
     python3 pcb.py tools [--clear]      what the engine may touch on your machine
+    python3 pcb.py probe [--engine X]   prove the engine loads the runtime pack (claude_code|antigravity|all)
     python3 pcb.py chats [project]      conversations, and when memory was rewritten
     python3 pcb.py config [key] [value] read or set a setting
     python3 pcb.py check [project]      every sheet validates, every citation resolves
@@ -108,11 +109,11 @@ def cmd_engines(args):
 # the scripts never run and the engine reports that it could not compute.
 RECOMMENDED_TOOLS = {
     "allowed": [
-        "Read", "Grep", "Glob",
-        "Bash({python} scripts/trace_width.py *)",
-        "Bash({python} scripts/sources.py *)",
-        "Bash({python} scripts/model.py *)",
-        "Bash({python} scripts/skills/*.py *)",
+        "Read", "Skill", "Grep", "Glob",
+        "Bash({python} {repo}/scripts/trace_width.py *)",
+        "Bash({python} {repo}/scripts/sources.py *)",
+        "Bash({python} {repo}/scripts/model.py *)",
+        "Bash({python} {repo}/scripts/skills/*.py *)",
     ],
     "disallowed": ["Write", "Edit", "NotebookEdit"],
 }
@@ -145,6 +146,33 @@ def cmd_tools(args):
     else:
         print("  nothing set - the CLI's own settings decide, and the scripts")
         print(oscompat.py("  will not run. python3 pcb.py tools --apply restores the default."))
+
+
+def cmd_probe(args):
+    """Sync the runtime pack, then ask each engine for two codes that exist only in
+    the pack (one in a skill file, one in AGENTS.md). PASS = it loaded both."""
+    import runtime_pack
+    want = args[args.index("--engine") + 1] if "--engine" in args and args.index("--engine") + 1 < len(args) else "all"
+    engines = ["claude_code", "antigravity"] if want == "all" else [want]
+    try:
+        print(f"engine home  {runtime_pack.sync()}")
+    except runtime_pack.RuntimePackError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    failed = 0
+    for eng in engines:
+        try:
+            ok, secs, detail = runtime_pack.probe(eng)
+        except KeyError as exc:
+            print(f"  {eng:12} FAIL  {exc}")
+            failed += 1
+            continue
+        if ok is None:
+            print(f"  {eng:12} SKIP  {detail}")
+            continue
+        print(f"  {eng:12} {'PASS' if ok else 'FAIL'}  {secs:5.1f}s  {detail}")
+        failed += 0 if ok else 1
+    return 1 if failed else 0
 
 
 def cmd_chats(args):
@@ -223,7 +251,7 @@ def cmd_trace(args):
 COMMANDS = {
     "init": cmd_init, "serve": cmd_serve, "run": cmd_serve, "new": cmd_new, "list": cmd_list,
     "show": cmd_show, "seed": cmd_seed, "engines": cmd_engines, "tools": cmd_tools,
-    "chats": cmd_chats,
+    "chats": cmd_chats, "probe": cmd_probe,
     "config": cmd_config,
     "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
 }

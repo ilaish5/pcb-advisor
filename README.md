@@ -136,7 +136,7 @@ Antigravity CLI (`agy`) on Windows, then `python pcb.py config agent.provider <i
 | `scripts/skills/` | what the agent can run |
 | `scripts/sources.py` | fetch, cache, extract, verify a quote word for word |
 | `scripts/seed.py` | the lte-tracker example |
-| `.agents/rules/*.md`, `.claude/skills/` | the agent's rules |
+| `runtime/` | the agent's rules and skills: AGENTS.md + skills/, synced to the engine home by `scripts/runtime_pack.py` |
 | `ui/index.html` | the screen |
 | `docs/archive/mock/` | the visual and behavioural spec the UI was built from |
 | `tests/` | the defects that reached a student once, and the contract of the write path |

@@ -7,4 +7,4 @@ You are working on a PCB Advisor project in this directory. To understand where 
 - `netlist/<sheet>.json`: the schematic sheets
 - `chats/`: the conversations
 - `notes.md`: freeform notes
-Changes go through the action channel (see `.agents/rules/`); the server is the only writer.
+Changes go through the action channel (see `runtime/AGENTS.md` in the install); the server is the only writer.

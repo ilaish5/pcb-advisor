@@ -8,7 +8,8 @@ tool a folder you can copy to another machine.
 Layers, lowest first:
   1. config/defaults.json   shipped with the repo, always complete, tracked in git
   2. config.json            yours, local, gitignored, holds only what you changed
-  3. environment            PCB_ADVISOR_HOME, PCB_ADVISOR_CONFIG, PCB_ADVISOR_PORT
+  3. environment            PCB_ADVISOR_HOME, PCB_ADVISOR_CONFIG, PCB_ADVISOR_PORT,
+                         PCB_ADVISOR_PROVIDER, and PCB_ADVISOR_ENGINE_HOME (read by runtime_pack)
 
 A relative path in the config resolves against the workspace home; an absolute
 one is taken as-is, so projects can live outside the repo.
@@ -222,22 +223,26 @@ def safe_name(name):
 #     `by` destroys the only enforcement of "the student decides".
 #   - derived files are rewritten on the next run; writing them is pointless.
 
-def describe(project=None):
+def describe(project=None, engine_home=None):
     """The workspace as an engine needs to see it: real paths, what is in them,
-    and what it may write. Relative to home, so the prompt stays short."""
+    and what it may write. Absolute, because the engine's cwd is not the repo."""
     pdir = project_dir(project)
 
     def rel(p):
-        # The engine runs in the install (REPO), where scripts/ is. Paths are relative to
-        # it, and absolute when the workspace home is somewhere else. Forward slashes on
-        # Windows too: the engine reads these into a shell.
-        return (p.relative_to(REPO) if p.is_relative_to(REPO) else p).as_posix()
+        # The engine runs in its own folder (the engine home), not in the repo, so every
+        # path is absolute. Forward slashes on Windows too: the engine reads these into a shell.
+        return p.as_posix()
 
+    repo = REPO.as_posix()
     return {
         "home": str(home()),
-        "cwd": str(REPO),
+        "repo": str(REPO),
+        "cwd": str(engine_home) if engine_home else str(REPO),
         "project": pdir.name,
         "places": [
+            {"path": f"{repo}/shared/reference", "write": False,
+             "what": "the course reference (git-tracked): AGENTS.md is the topic index; course/ad20-essentials/ is the "
+                     "step-by-step Altium manual. Read it for any 'how do I ... in Altium' question"},
             {"path": rel(datasheets_dir()), "write": "via scripts/sources.py only",
              "what": "the shared library: course material and datasheets. Each file has a .json beside it "
                      "with its url and sha256, and a .txt with its extracted text"},
@@ -269,26 +274,26 @@ def describe(project=None):
              "what": "the project's notes. Nothing derives from it"},
         ],
         "scripts": [
-            {"run": oscompat.py("python3 scripts/skills/check_availability.py <project> [LINE ...]"),
+            {"run": oscompat.py("python3 {repo}/scripts/skills/check_availability.py <project> [LINE ...]"),
              "what": "stock and price per supplier, stored with the time. NEVER state stock or price without running this"},
-            {"run": oscompat.py("python3 scripts/skills/compare_prices.py <project>"),
+            {"run": oscompat.py("python3 {repo}/scripts/skills/compare_prices.py <project>"),
              "what": "cost per board by supplier, from the stored checks"},
-            {"run": oscompat.py("python3 scripts/skills/verify_part.py <project> <line>"),
+            {"run": oscompat.py("python3 {repo}/scripts/skills/verify_part.py <project> <line>"),
              "what": "compare a part's pins with its datasheet text; the result is stored"},
-            {"run": oscompat.py("python3 scripts/skills/export_bom.py <project> [jlc|pcbway|generic]"),
+            {"run": oscompat.py("python3 {repo}/scripts/skills/export_bom.py <project> [jlc|pcbway|generic]"),
              "what": "write the BOM for a manufacturer"},
-            {"run": oscompat.py("python3 scripts/skills/render_sheet.py <project> <sheet>"),
+            {"run": oscompat.py("python3 {repo}/scripts/skills/render_sheet.py <project> <sheet>"),
              "what": "draw a sheet from its netlist"},
-            {"run": oscompat.py("python3 scripts/sources.py list"),
+            {"run": oscompat.py("python3 {repo}/scripts/sources.py list"),
              "what": "what is already in the document library"},
-            {"run": oscompat.py(f"python3 scripts/sources.py get {pdir.name} <url> [name]"),
+            {"run": oscompat.py(f"python3 {repo}/scripts/sources.py get {pdir.name} <url> [name]"),
              "what": "add a datasheet to this project. Use this rather than curl - it records the url and sha256, "
                      "which is what makes it citable"},
-            {"run": oscompat.py('python3 scripts/sources.py verify <name> "<quote>"'),
+            {"run": oscompat.py('python3 {repo}/scripts/sources.py verify <name> "<quote>"'),
              "what": "is this quote really in that document? Run it BEFORE you quote"},
-            {"run": oscompat.py("python3 scripts/trace_width.py <amps> --oz <copper> --rise <degrees>"),
+            {"run": oscompat.py("python3 {repo}/scripts/trace_width.py <amps> --oz <copper> --rise <degrees>"),
              "what": "IPC-2221 trace width. Run it; never estimate a width yourself"},
-            {"run": oscompat.py("python3 scripts/model.py <project>"),
+            {"run": oscompat.py("python3 {repo}/scripts/model.py <project>"),
              "what": "the full project state, more than the summary above carries"},
         ],
     }

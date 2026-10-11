@@ -196,6 +196,15 @@ the CLI exits with "Input must be provided". The provider pipes the prompt
 through stdin instead, which also sidesteps ARG_MAX and lets a pattern contain
 spaces — `Bash(python3 scripts/trace_width.py *)` only works this way.
 
+## Antigravity and `add_dirs`
+
+`antigravity` also sends the prompt on stdin, as one stream-json line
+(`agy -p= --input-format stream-json --output-format stream-json`), so prompt
+length is not limited by the command line; the answer is the `result` event.
+If a model is set, `--effort` is not sent (`Result.meta["dropped"] == ["effort"]`).
+Both CLI providers accept `Request.options["add_dirs"]`, a list of absolute paths,
+passed as one `--add-dir <path>` each. Details: [ENGINES.md](ENGINES.md) section 5.
+
 ## Errors
 
 A provider returns `Result(error=...)`; it does not raise. The server turns that

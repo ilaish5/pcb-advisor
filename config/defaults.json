@@ -20,6 +20,7 @@
   },
   "agent": {
     "provider": "claude_code",
+    "engine_home": "",
     "timeout_seconds": 180,
     "history_messages": 8,
     "memory_every": 10,
@@ -39,20 +40,21 @@
           "available": null,
           "allowed": [
             "Read",
+            "Skill",
             "Grep",
             "Glob",
             "WebSearch",
             "WebFetch",
-            "Bash({python} scripts/trace_width.py *)",
-            "Bash({python} scripts/sources.py *)",
-            "Bash({python} scripts/model.py *)",
-            "Edit(./projects/*/notes.md)",
-            "Edit(./projects/*/BOM.md)",
-            "Edit(./projects/*/BOM.csv)",
-            "Edit(./projects/*/sources/*.md)",
-            "Edit(./projects/*/sources/*.md.json)",
-            "Bash({python} scripts/skills/*.py *)",
-            "Bash({python} scripts/verify_sources.py *)"
+            "Bash({python} {repo}/scripts/trace_width.py *)",
+            "Bash({python} {repo}/scripts/sources.py *)",
+            "Bash({python} {repo}/scripts/model.py *)",
+            "Edit({projects_rule}/*/notes.md)",
+            "Edit({projects_rule}/*/BOM.md)",
+            "Edit({projects_rule}/*/BOM.csv)",
+            "Edit({projects_rule}/*/sources/*.md)",
+            "Edit({projects_rule}/*/sources/*.md.json)",
+            "Bash({python} {repo}/scripts/skills/*.py *)",
+            "Bash({python} {repo}/scripts/verify_sources.py *)"
           ],
           "disallowed": [
             "NotebookEdit"

@@ -86,9 +86,37 @@ def test_the_tool_policy_is_passed_to_the_cli(home, monkeypatch):
     argv = seen["list"]
     allowed = argv[argv.index("--allowedTools") + 1].split(",")
     # writing is allowed file by file - never the files the server owns
-    assert "Edit(./projects/*/BOM.md)" in allowed
+    # absolute rule paths: the engine runs in its own home, not in the repo
+    assert any(a.startswith("Edit(//") and a.endswith("/projects/*/BOM.md)") for a in allowed)
     assert not {"Write", "Edit"} & set(allowed)
     assert not [a for a in allowed if "sketch.json" in a or "decisions" in a]
+
+
+def test_claude_add_dirs_are_flags_that_no_variadic_flag_can_swallow(home, monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"], seen["stdin"] = list(argv), kw.get("input")
+
+        class R:
+            returncode, stdout, stderr = 0, "ok", ""
+        return R()
+
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    req = gateway.Request(prompt="P", timeout=5,
+                          options={"add_dirs": ["C:/one", "C:/two words"]})
+    assert gateway.route(req, name="claude_code").ok
+    argv = seen["argv"]
+    assert argv.count("--add-dir") == 2
+    assert argv[argv.index("--add-dir") + 1] == "C:/one"
+    assert "C:/two words" in argv
+    # before the variadic tool flags, and each followed by a flag or the end
+    assert max(i for i, a in enumerate(argv) if a == "--add-dir")         < argv.index("--allowedTools")
+    assert seen["stdin"] == "P" and "P" not in argv
+    # no option, no flags
+    gateway.route(gateway.Request(prompt="P", timeout=5), name="claude_code")
+    assert "--add-dir" not in seen["argv"]
 
 
 def test_a_failing_engine_reports_rather_than_raises(home, monkeypatch):

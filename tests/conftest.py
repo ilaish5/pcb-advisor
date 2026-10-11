@@ -17,6 +17,15 @@ sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "scripts" / "skills"))
 
 
+@pytest.fixture(autouse=True)
+def engine_home(tmp_path_factory, monkeypatch):
+    """The engine's folder, never the real one in the user's app data. It must sit
+    outside any git tree (the pack refuses otherwise); pytest's temp dir does."""
+    path = tmp_path_factory.mktemp("engine")
+    monkeypatch.setenv("PCB_ADVISOR_ENGINE_HOME", str(path))
+    return path
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """A workspace of our own, with the config reloaded to match."""

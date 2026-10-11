@@ -130,7 +130,7 @@ transcripts); the output format; and has evals (section 5).
 
 | # | Stage | Acceptance | State |
 |---|---|---|---|
-| I0 | **Orientation + architecture.** Read the inputs; keep/replace map of the v2 code; runtime-pack layout (section 3) proven with **both** engines; fix the known engine bugs: agy refuses `--model ...-high` together with `--effort` (send one), long prompts on the command line (Windows ~32K limit) -> stdin with `--input-format stream-json` (`docs/ENGINES.md` §5). Write `docs/ARCHITECTURE.md` (short). | both engines answer a probe that needs a skill file; gateway tests for the two bugs; all tests green | ⬜ |
+| I0 | **Orientation + architecture.** Read the inputs; keep/replace map of the v2 code; runtime-pack layout (section 3) proven with **both** engines; fix the known engine bugs: agy refuses `--model ...-high` together with `--effort` (send one), long prompts on the command line (Windows ~32K limit) -> stdin with `--input-format stream-json` (`docs/ENGINES.md` §5). Write `docs/ARCHITECTURE.md` (short). | both engines answer a probe that needs a skill file; gateway tests for the two bugs; all tests green | ✅ |
 | I1 | **Measurement harness.** 12 incident fixtures, Q&A eval, behaviour evals, `pcb.py bench`, `docs/BENCHMARK.md` | bench runs end to end; baseline recorded | ⬜ |
 | I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ⬜ |
 | I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, pick a local project) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ⬜ |
@@ -151,11 +151,30 @@ the AD20 exercise CAD files reduced to 12 parser fixtures), repo cleaned (histor
 `docs/feasibility/`), baseline commit `6fbb320` + cleanup commit; 110 tests green. Both engines installed and signed in
 on this PC (Claude Code 2.1.296, agy 1.3.3).
 
-**Next action:** start I0 - create the hourly cron, read the inputs (section 4), write the keep/replace map and the
-runtime-pack layout, then brief the first subagents.
+**I0 done (2026-10-11)** - see section 8. Layout: `runtime/` (source) -> `scripts/runtime_pack.py` -> engine home
+outside git (`%LOCALAPPDATA%\pcb-advisor\engine`); engine cwd = engine home, `--add-dir` repo + project.
+Open points carried forward: headless agy needs `--dangerously-skip-permissions` for skills that run scripts (decide in
+I2: allow-rule in agy settings vs the flag); Claude `Edit(//c/...)` rule form not yet exercised by a real turn (I2 eval).
+
+**Next action:** start I1 (measurement harness): brief subagents for (a) the 12 incident fixtures from the device notes,
+Outputs and transcripts (extract with a script, never read whole), (b) `scripts/bench/` + `pcb.py bench` +
+`docs/BENCHMARK.md`, (c) Altium Q&A eval (~25 questions) + behaviour evals. Then record the baseline.
 
 **Waiting for the user:** nothing.
 
 ## 8. Stage summaries (10 lines each, newest last)
 
-_(none yet)_
+### I0 - Orientation + architecture (2026-10-11) ✅
+1. Probed both engines: agy reads AGENTS.md + `.agents/skills`, Claude Code reads CLAUDE.md + `.claude/skills`; both
+   also load the enclosing git root's files -> a pack inside the repo would leak developer context.
+2. Runtime pack: source `runtime/` (AGENTS.md 97 lines + skill `altium-help`), `scripts/runtime_pack.py` syncs it to an
+   engine home outside git (refuses a git tree), writes both skill trees + CLAUDE.md=`@AGENTS.md`, idempotent.
+3. agent.py: cwd = engine home, `add_dirs` = repo + project + workspace; prompt paths absolute; allowlist `{repo}`.
+4. Gateway: agy prompt via stdin stream-json (no 32K limit), model wins over effort (`meta.dropped`); `--add-dir`
+   for both CLIs, placed so Claude's variadic flags cannot swallow it.
+5. Removed the v2 root rules (`.agents/rules`, `.claude/skills/pcb-design-advisor`); repo root has no agent files.
+6. `pcb.py probe`: Claude Code PASS 6.2s, agy PASS 14.9s (skill marker + AGENTS.md codeword, no skip-permissions).
+7. `docs/ARCHITECTURE.md`: keep/change/replace/delete map of all v2 files, planned modules per stage, data layout.
+8. Tests: 110 -> 138 green (new: test_runtime_pack 17, agy stream-json/effort/add_dirs, claude add_dirs).
+9. Benchmark: not yet built (I1). Runtime skill updated: altium-help (first real skill).
+10. Open: agy permission policy for script-running skills; Edit rule form on Windows (both in I2).

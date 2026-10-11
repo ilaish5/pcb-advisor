@@ -108,7 +108,13 @@ class ClaudeCodeProvider(Provider):
         cmd = self.config.get("command", "claude")
         args = list(self.config.get("args") or ["-p", "-", "--output-format", "text"])
         model = request.model or self.config.get("model") or ""
-        argv = [oscompat.resolve(cmd), *args, *self._tool_argv()]
+        # --add-dir is variadic like the tool flags: it goes right after the
+        # fixed args and before another flag, so it never eats a tool pattern
+        # and nothing but a flag ever follows it (the prompt is on stdin).
+        add = []
+        for d in request.options.get("add_dirs") or []:
+            add += ["--add-dir", str(d)]
+        argv = [oscompat.resolve(cmd), *args, *add, *self._tool_argv()]
         if model:
             argv += ["--model", model]
         effort = self.config.get("effort")

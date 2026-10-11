@@ -60,7 +60,8 @@ python pcb.py config agent.providers.antigravity.model gemini-3.1-pro-high
 ```
 
 **Antigravity: set either `model` or `effort`, not both.** The model name already contains the level
-(`...-high`, `...-low`); `agy` refuses `--model gemini-3.8-flash-high --effort low`.
+(`...-high`, `...-low`); `agy` refuses `--model gemini-3.8-flash-high --effort low`. If both are set the
+gateway sends only the model and ignores `effort`.
 
 Restart `python pcb.py serve` after changing the engine.
 
@@ -77,10 +78,17 @@ Restart `python pcb.py serve` after changing the engine.
 
 - `agy -p "text" --output-format json` returns one object: `{"status":"SUCCESS","response":"...","usage":{...}}`.
 - `agy -p -` does **not** read the prompt from stdin; `-` is taken as the prompt itself. The gateway therefore
-  passes the prompt as an argument. Windows limits a command line to about 32,000 characters.
-- For long prompts, stdin works with stream-json:
-  `agy -p= --input-format stream-json --output-format stream-json`, one line per turn:
-  `{"event":"user","message":{"role":"user","content":"..."}}`. The answer is the line with
-  `"event":"result"` -> `result.response`.
+  never puts the prompt in argv (Windows limits a command line to about 32,000 characters). It always runs
+  `agy -p= --input-format stream-json --output-format stream-json` and writes one NDJSON line to stdin:
+  `{"event":"user","message":{"role":"user","content":"..."}}`. The answer is the stdout line with
+  `"event":"result"` -> `result.response`. Non-JSON lines (`logging before google.Init`) are skipped. No result
+  event, or a non-SUCCESS status / error field, becomes an error that carries a short tail of stdout and stderr.
+  Everything is UTF-8 both ways (Hebrew round-trips).
+- A config `args` list is treated as extra flags: `-p`, `-`, `-p=`, `--output-format X` and `--input-format X`
+  are dropped from it (so an old config still works); the rest, e.g. `--dangerously-skip-permissions`, is kept.
+- `--model` and `--effort` conflict: if a model is set, `--effort` is not sent and `Result.meta["dropped"]`
+  is `["effort"]`; `--effort` is sent only when no model is set.
+- `request.options["add_dirs"]` (absolute paths) becomes `--add-dir <path>` per entry, for both `agy` and `claude`.
+  For `claude` the flags go before the variadic tool flags, so they cannot swallow or be swallowed.
 - `--print-timeout` takes a duration (`60s`), not a number.
 - `agy.exe` is a real executable, so the `.cmd` quoting problem of npm-installed CLIs does not apply to it.
