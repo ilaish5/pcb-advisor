@@ -63,6 +63,8 @@ python pcb.py config agent.providers.antigravity.model gemini-3.1-pro-high
 (`...-high`, `...-low`); `agy` refuses `--model gemini-3.8-flash-high --effort low`. If both are set the
 gateway sends only the model and ignores `effort`.
 
+**Permissions and Altium files:** `agy` runs with `--dangerously-skip-permissions` by default (`config/defaults.json`), so it can run the advisor's inspection and calculation scripts non-interactively in headless mode without prompting for approvals. When an Altium project is linked in Settings, its folder is passed to the engine via `--add-dir` and explicitly marked read-only in the prompt's workspace instructions; the engine inspects SchDoc and PcbDoc files directly but never writes to them.
+
 Restart `python pcb.py serve` after changing the engine.
 
 ## 4. If it does not work

@@ -1,149 +1,110 @@
 # pcb-advisor
 
-A co-pilot for a student's PCB project. The chat with an agent is the main interface. The student
-arrives with a rough idea; the agent helps refine it, then helps with everything about parts, and the
-student leaves the first stage with three outputs:
+A local AI co-pilot for a student's PCB design project (Altium Designer + JLCPCB manufacturing).
+The chat with an agent is the main interface. The student arrives with a rough idea; the agent helps
+refine requirements, pick and verify parts, review schematic and layout, configure rules, generate
+manufacturing packages, and triage manufacturer DFM reports.
 
-1. **A BOM** - editable, with stock, price and manufacturer for every line.
-2. **An example schematic** - drawn from a netlist, for the student to redraw in Altium.
-3. **An Altium library package** - only the parts Altium does not ship, each marked verified or not.
+Altium files are read **read-only** from a local folder. The tool prepares what goes into Altium and
+checks what comes out; it never drives Altium's GUI, never routes, never orders, and never logs in for the student.
 
-Out of scope for now: layout, routing, Gerbers, manufacturer DFM, the written report.
+## Capabilities and Workspace Tabs
+
+Seven tabs guide the design across the product lifecycle:
+
+1. **Idea** - agreed requirements, interactive mouse-editable block diagram (drag, rename, link, domain colors, board outline), and agent architecture proposals.
+2. **BOM** - interactive parts table with live JLC availability, unit pricing, cost per board, risk tags, role notes, datasheet links, and in-stock alternatives.
+3. **Schematic** - Python-rendered interactive preview from SchDoc or netlist; one-click questions on any part or connection ("Ask about this").
+4. **Placement & routing** - interactive board preview (outline, pads, layer toggle), placement plan overlay, and critical-net routing plan.
+5. **Rules** - JLC manufacturing capability preset, custom rules, diff of board rules against preset, `.RUL` export with a 4-step Altium import guide, and engineering calculators (IPC-2152 trace width, voltage divider, LED resistor, via current, microstrip impedance).
+6. **Altium outputs** - ready OutJob generator (Gerber RS-274X, NC drill, JLC BOM, CPL, schematic PDF), CPL exporter, and IntLib library build script.
+7. **Final manufacturer checks** - JLCDFM report PDF ingest (slice extraction + triage table: severity, counts, layer) and triage chat to distinguish real faults from false alarms.
+
+Cross-cutting features:
+- **In-app file viewer** - view PDF datasheets, images, text/markdown, CSV, and Altium document summaries directly in the app without leaving the workspace. Citation chips open files directly.
+- **Settings with Altium link** - link local Altium projects (PrjPcb, PcbDoc, sheets, output folder) with detected installs from the Windows registry.
+- **Knowledge base (Sources)** - manage course references and project datasheets with automated quote verification.
+
+## Setup and Running
+
+Requires Python 3.10+ (Pillow is required for preview rendering and DFM report slicing).
 
 ```bash
-pip install -r requirements.txt
-python3 pcb.py init                       # folders + config.json
-python3 pcb.py seed                       # the worked example: projects/lte-tracker
-python3 pcb.py serve --project lte-tracker   # opens http://localhost:8931
+pip install -r requirements-dev.txt   # includes Pillow and test dependencies
+python pcb.py init                    # create folders and config.json
+python pcb.py seed                    # worked example: projects/lte-tracker
+python pcb.py serve                   # start the server and open http://localhost:8931
 ```
 
-Everything else:
+## CLI Commands
+
+`pcb.py` is the single entry point for workspace management:
 
 ```bash
-python3 pcb.py new "usb sensor board"   # start a project from the template
-python3 pcb.py list                     # what is in the workspace
-python3 pcb.py show lte-tracker         # where it stands: BOM, stock, pending proposals, checklist
-python3 pcb.py check                    # every sheet validates against the BOM, every citation resolves
-python3 pcb.py engines                  # which LLM engine is wired up
-python3 pcb.py tools                    # what that engine may touch on your machine
-python3 pcb.py config user.language he  # read or set any setting
-python3 pcb.py trace 1.5                # IPC-2221 trace width
+python pcb.py init                                      # create workspace folders and config.json
+python pcb.py serve                                     # start the server, open browser (also: run)
+python pcb.py new "usb sensor"                          # start a new project from template
+python pcb.py list                                      # list all projects in the workspace
+python pcb.py show [project]                            # show project state (BOM, stock, proposals, checklist)
+python pcb.py seed                                      # initialize worked example (projects/lte-tracker)
+python pcb.py engines                                   # list configured AI engines (* = active)
+python pcb.py tools [--apply|--clear]                   # view or set engine tool permission policies
+python pcb.py probe [--engine X]                        # verify engine loads the runtime pack and skills
+python pcb.py bench [--engine X] [--evals] [--only 1,5] # run device replay benchmark
+python pcb.py skills lint [--only NAME]                 # lint runtime skills format and consistency
+python pcb.py chats [project]                           # list conversations and memory status
+python pcb.py config [key] [value]                      # read or set configuration values
+python pcb.py check [project]                           # validate sheets against BOM and verify citations
+python pcb.py reset [project]                           # wipe project state
+python pcb.py trace 1.5                                 # calculate IPC-2221 trace width
+python pcb.py rules diff|export|preset                  # diff rules vs JLC preset, export .RUL, show preset
+python pcb.py calc trace-width|divider|led|via|microstrip # engineering calculators
+python pcb.py library search|check-package|build-script # model search, package check, IntLib script
 ```
 
-## The screen
+## AI Engines
 
-Three columns, English UI, light theme.
+pcb-advisor connects to external AI CLIs via `scripts/gateway/`:
+- **Claude Code** (`claude`)
+- **Antigravity CLI** (`agy`)
 
-| Left | Centre | Right |
-|---|---|---|
-| **Chat.** A conversation list, "+ New". A part conversation is anchored to a BOM line. | **Idea · BOM · Schematic**, and a part drawer that slides in. | Projects, Workspace, Altium library, Sources, Skills, Settings. |
+See [docs/ENGINES.md](docs/ENGINES.md) for installation and setup.
 
-- **Idea** - the agreed items (each with who proposed it and its status), and the editable block diagram.
-- **BOM** - KPIs, an editable table (MPN and note), stock and price per supplier. Editing an MPN marks the
-  line "checking" until a skill run answers for the new part.
-- **Schematic** - drawn from `netlist/<sheet>.json` and the BOM. Click a part to open its BOM line; select a
-  BOM line to light up its parts.
-- **A BOM change from the agent is a diff card** with Approve / Reject. Nothing changes until the student
-  approves; approving updates the BOM, the schematic label and the library together.
-- **Altium library** - non-standard parts with symbol / footprint / 3D / model source / status. A part is
-  "verified" only when a skill checked it against its datasheet **and** the student accepted it.
-- **Sources** - the shared library (course material) and the project's documents, each with a `.json`
-  sidecar (url, sha256, bytes) and extracted text. Every citation chip in the chat opens a file here.
+## Tests
 
-## Where things live
-
+```bash
+python -m pytest -q
+python scripts/skills/lint.py
 ```
-projects/<name>/
-  project.json
-  idea.json            goal, agreed items, blocks, links, checklist        (server-written)
-  bom-log.jsonl        APPEND-ONLY, one line per applied change
-  bom.json             DERIVED from the logs. Never hand-edited
-  supply-log.jsonl     APPEND-ONLY stock and price checks, with supplier and time
-  proposals.jsonl      APPEND-ONLY agent proposals and the student's decisions
-  library-log.jsonl    APPEND-ONLY library parts, model source, verification
-  netlist/<sheet>.json one sheet, validated against the BOM before it is written
-  chats/               <id>.jsonl, index.json (with anchors), <id>.memory.md
-  sources/             the project's documents (file + .json + .txt)
-  exports/             BOM exports and the library package
-  notes.md
-shared/datasheets/     fetched once, sha256'd, reused by every project
-```
-
-The principle: **append-only logs are the truth, everything else is derived.** The server is the only
-writer; an agent proposes actions and the server validates and applies them
-(see [docs/gateway.md](docs/gateway.md)).
-
-## Skills
-
-Python, cross-platform, in `scripts/skills/`. The agent runs them; the BOM page buttons run the same code.
-
-| skill | what |
-|---|---|
-| `check_availability.py` | stock and price: LCSC (JLCPCB parts search); Mouser with `MOUSER_API_KEY` |
-| `compare_prices.py` | cost per board by supplier, from the stored checks |
-| `verify_part.py` | a part's pins against its datasheet text |
-| `export_bom.py` | JLC, PCBWay and generic CSV |
-| `render_sheet.py` | a sheet drawn from its netlist |
-
-Not built yet: download models, build a part from a datasheet, compile an IntLib. See
-[docs/archive/V2-STATUS.md](docs/archive/V2-STATUS.md).
-
-## Windows and macOS
-
-Both are supported. The commands above say `python3`, which is what macOS calls
-it; on Windows type `python` (or `py`) instead - everything else is the same.
-
-What differs between the two lives in `scripts/oscompat.py`, nowhere else:
-
-- every child process is spoken to in UTF-8, so Hebrew survives a Windows console;
-- the engine CLI is run by its full path, because npm installs `claude.cmd` on
-  Windows and subprocess cannot start a `.cmd` by its bare name;
-- the commands the engine may run are written `{python} scripts/...` in
-  `config/defaults.json` and filled in per machine, so the allow-list matches
-  what its shell actually types;
-- paths handed to the engine use forward slashes on both.
-
-CI runs the suite on Windows, macOS and Linux. `docs/archive/WINDOWS-HANDOFF.md` is the checklist for verifying a
-build on a Windows machine.
-
-## One workspace folder
-
-`PCB_ADVISOR_HOME` moves your work (`projects/`, `shared/`, `config.json`) somewhere else; the program
-(`scripts/`, `ui/`, `templates/`) stays with the install. Nothing is hardcoded: every path, the port, the
-default project and the LLM engine come from the config. See [docs/configuration.md](docs/configuration.md).
-
-## Any engine behind one gateway
-
-`scripts/gateway/` routes a turn to whichever LLM you configured. A provider is a transport and nothing
-more: text in, text out. Claude Code and Antigravity (`agy`) route today; the rest are registered but not
-implemented. See [docs/gateway.md](docs/gateway.md).
-
-**Install and sign in to an engine first:** [docs/ENGINES.md](docs/ENGINES.md) - Claude Code or the
-Antigravity CLI (`agy`) on Windows, then `python pcb.py config agent.provider <id>`.
 
 ## Layout
 
 | path | what |
 |---|---|
-| `pcb.py` | the entry point |
-| `config/defaults.json` | every setting, with its shipped value |
-| `scripts/store.py` | the logs and their derived views; netlist validation |
-| `scripts/model.py` | the whole project as one dict, for the UI and the agent |
-| `scripts/serve.py` | the HTTP server and the only writer |
-| `scripts/agent.py` | the reply protocol and the prompt |
-| `scripts/gateway/` | LLM routing |
-| `scripts/skills/` | what the agent can run |
-| `scripts/sources.py` | fetch, cache, extract, verify a quote word for word |
-| `scripts/seed.py` | the lte-tracker example |
-| `runtime/` | the agent's rules and skills: AGENTS.md + skills/, synced to the engine home by `scripts/runtime_pack.py` |
-| `ui/index.html` | the screen |
-| `docs/archive/mock/` | the visual and behavioural spec the UI was built from |
-| `tests/` | the defects that reached a student once, and the contract of the write path |
-| `tests/fixtures/altium/` | real Altium files (AD20 course exercises) for the read-only reader |
-| `shared/reference/` | course material the agent answers from; map and topic index in its `AGENTS.md` |
-| `PLAN.md` | the implementation plan: single source of truth for the build |
-| `docs/PRODUCT-PLAN.md` | what the tool does and why (pain points, capabilities, decisions, feasibility) |
-| `docs/ENGINES.md` | install and configure Claude Code / Antigravity |
-| `docs/feasibility/` | the probes that proved the Altium, JLC and .RUL formats |
-| `docs/ORCHESTRATOR-PROMPT.md` | the prompt that starts (or restarts) the build session |
-| `docs/archive/` | history of the v2 rebuild |
+| `pcb.py` | CLI entry point |
+| `config/defaults.json` | default settings |
+| `scripts/serve.py` | HTTP server and single state writer |
+| `scripts/store.py` | append-only logs and derived state |
+| `scripts/model.py` | project state model |
+| `scripts/agent.py` | prompt construction and action dispatcher |
+| `scripts/workspace.py` | workspace paths and environment |
+| `scripts/oscompat.py` | cross-platform helpers (Windows & macOS) |
+| `scripts/runtime_pack.py` | syncs runtime pack to engine home |
+| `scripts/sources.py` | document caching, retrieval, and quote verification |
+| `scripts/jlc.py` | JLC parts API client and cache |
+| `scripts/rules.py` | JLC rules preset, .RUL exporter, and board diff |
+| `scripts/calc.py` | IPC-2152 trace width and engineering calculators |
+| `scripts/library.py` | model search links, package check, and IntLib build script |
+| `scripts/outjob.py` | Altium OutJob file generator |
+| `scripts/dfm.py` | JLCDFM PDF report slicer and triage table |
+| `scripts/keeping.py` | decision log, change impact, and file organization |
+| `scripts/preview_sch.py` | SchDoc interactive SVG preview renderer |
+| `scripts/preview_pcb.py` | PcbDoc interactive SVG preview renderer |
+| `scripts/altium/` | read-only Altium document readers (SchDoc, PcbDoc, PrjPcb, .RUL) |
+| `scripts/checks/` | layout and schematic review checks |
+| `scripts/skills/` | skill-specific scripts run by the engine |
+| `scripts/gateway/` | AI engine CLI abstraction layer |
+| `runtime/` | AGENTS.md constitution and skill definitions |
+| `ui/index.html` | browser UI |
+| `tests/` | automated test suite |
+| `docs/` | architecture, engines guide, and product specs |

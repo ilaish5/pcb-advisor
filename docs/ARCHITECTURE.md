@@ -93,23 +93,33 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | headless `agy` without skip-permissions auto-denies command tools | skills that run scripts need the flag or a read-only design (decide in I2) |
 | pack synced before every engine turn (`runtime_pack.sync`, idempotent) and by `scripts/runtime_pack.py sync` | engine home is derived state, never hand-edited |
 
-## 5. Planned new modules
+## 5. Modules (stages I0-I10)
 
 | module | purpose | stage |
 |---|---|---|
-| `runtime/` + `scripts/runtime_pack.py` | pack source and materializer | I0 |
-| `scripts/bench/` (`fixtures/`, `runner.py`, `qa_eval.py`, `behaviour.py`) | device replay (12 incidents), Q&A eval, behaviour evals; `pcb.py bench` writes `docs/BENCHMARK.md` | I1 |
-| `scripts/skills/lint.py` (+ `tests/test_skill_lint.py`) | frontmatter, triggers, references, pitfalls present per skill | I2 |
-| `scripts/altium/` (`ole.py`, `schdoc.py`, `pcbdoc.py`, `prjpcb.py`, `rul.py`, `registry.py`) | read-only readers built from `docs/feasibility/feas_*.py`; Windows registry lookup of install + recent projects | I3 |
-| `scripts/jlc.py` | JLC client: parts search, stock/price/library type, datasheet via file endpoint, disk cache with query time | I4 |
-| `scripts/parts.py` | parts table: cost per board, risk flag, alternatives; feeds supply-log | I4 |
-| `scripts/outjob.py`, `scripts/checks/board.py` | OutJob generator; connector side, decap distance, outline layers, CPL rotation | I5 |
-| `scripts/dfm.py` | JLC DFM guide: how to run, enter results, triage | I5 |
-| `scripts/netlist_build.py`, `scripts/checks/schematic.py` | netlist from PcbDoc pads and SchDoc geometry; review checks with datasheet citations | I6 |
-| `scripts/rules_rul.py`, `scripts/calcs.py` | rules model + JLC preset, `.RUL` writer, read-back diff; width/impedance/divider calcs | I7 |
-| `scripts/library_build.py`, `scripts/models.py` | one-script library build for Altium; model search + link-and-return | I8 |
-| `scripts/preview/` (`placement.py`, `routing_plan.py`) | placement preview, critical-net plan (schematic preview reuses `render_sheet.py`) | I9 |
+| `scripts/runtime_pack.py` | pack source and materializer | I0 |
+| `scripts/bench/runner.py` | device replay (12 incidents), Q&A eval, behaviour evals | I1 |
+| `scripts/skills/lint.py` | frontmatter, triggers, references, pitfalls present per skill | I2 |
+| `scripts/altium/ole.py` | OLE compound document parser | I3 |
+| `scripts/altium/schdoc.py` | read-only SchDoc reader (components, pins, wires, labels, ports) | I3 |
+| `scripts/altium/pcbdoc.py` | read-only PcbDoc reader (components, nets, pads in mm, rules) | I3 |
+| `scripts/altium/prjpcb.py` | Altium PrjPcb project file reader | I3 |
+| `scripts/altium/rul.py` | Altium .RUL design rules file reader | I3 |
+| `scripts/altium/registry.py` | Windows registry lookup for Altium installs and recent projects | I3 |
+| `scripts/altium/dump.py` | CLI dump and inspect tool for Altium documents | I3 |
+| `scripts/jlc.py` | JLC client: parts search, stock/price/library type, datasheet download, disk cache | I4 |
+| `scripts/outjob.py` | OutJob generator (Gerber, NC drill, JLC BOM, CPL, schematic PDF) | I5 |
+| `scripts/checks/board.py` | board checks: connector side, decap distance, outline layers, CPL rotation | I5 |
+| `scripts/skills/export_cpl.py` | JLC CPL export from linked PcbDoc with BOM fallback | I5 |
+| `scripts/dfm.py` | JLC DFM PDF report ingest, slice extractor, and triage table | I5 |
+| `scripts/checks/schematic.py` | schematic checks: wire netlist, single-pin nets, unconnected IC power, rail mismatch | I6 |
+| `scripts/rules.py` | rules model, JLC preset, .RUL writer, read-back diff against PcbDoc | I7 |
+| `scripts/calc.py` | IPC-2152 trace width, voltage divider, LED resistor, via current, microstrip impedance | I7 |
+| `scripts/library.py` | model search links, package variant check vs datasheet, IntLib build script | I8 |
+| `scripts/preview_sch.py` | SchDoc to interactive SVG preview with click-to-ask anchors | I9 |
+| `scripts/preview_pcb.py` | PcbDoc to SVG preview with placement plan overlay | I9 |
 | `scripts/keeping.py` | folder order, decision log, change impact, final file organization | I10 |
+
 
 ## 6. Data layout
 

@@ -54,12 +54,29 @@ Your working folder is the engine home, not the repo. Each turn the prompt carri
   tools. The server is the only writer. You propose through actions; the server validates and applies.
 
 # SCRIPTS (run them; do not reason it out)
-`check_availability.py` stock and price; `compare_prices.py` cost per board (JLC only); `verify_part.py` pins vs datasheet
-text; `export_bom.py` BOM for a manufacturer; `render_sheet.py` draw a sheet from its netlist; `trace_width.py`
-IPC-2221 width (never estimate one); `sources.py` get/verify/list/unuse documents. `altium/dump.py <file>` reads the student's
-linked Altium project read-only (SchDoc, PcbDoc pads+nets+rules, PrjPcb, .RUL); its folder is in WORKSPACE when linked. All live in `<repo>/scripts/`
-(skills in `scripts/skills/`). Not built yet: downloading models, building a part from a datasheet, compiling an
-IntLib. Say so if asked. A skill may list a script as planned: then say the check is not automated yet.
+Every script a skill names must be run with its real command line; do not reason out what a script computes:
+- `python <repo>/scripts/skills/check_availability.py <project> [LINE ...]` stock and price from JLC with timestamp
+- `python <repo>/scripts/jlc.py search <kw> | part <mpn> | alternatives <kw> [pkg]` JLC parts search, part details, and alternatives
+- `python <repo>/scripts/skills/compare_prices.py <project>` cost per board from stored JLC checks
+- `python <repo>/scripts/skills/verify_part.py <project> <line>` pins and names against datasheet text
+- `python <repo>/scripts/sources.py get <project> <url> [name] | list | verify <file> "<quote>" | unuse <project> <doc>` manage documents
+- `python <repo>/scripts/library.py search <MPN> | check-package <pkg1> <pkg2> | build-script <project> [--out exports]` library model tools
+- `python <repo>/scripts/skills/export_bom.py <project> jlc` export BOM CSV for JLC
+- `python <repo>/scripts/preview_sch.py <schdoc> [--output <out.svg>]` render SchDoc to interactive SVG
+- `python <repo>/scripts/skills/render_sheet.py <project> <sheet>` render netlist sheet to SVG preview
+- `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` check sheet netlist refs against BOM
+- `python <repo>/scripts/checks/schematic.py <file>` schematic checks: single-pin nets, unpowered IC pins, rail mismatch
+- `python <repo>/scripts/rules.py diff <pcbdoc> | export <output.RUL> | preset` JLC preset rules, diff vs PcbDoc, and export .RUL
+- `python <repo>/scripts/calc.py trace-width <amps> | divider <vin> <vout> | led <vs> <vf> <ima> | via <drill> | microstrip <w> <h>` IPC-2152 & calculators
+- `python <repo>/scripts/trace_width.py <amps> --layer external|internal [--rise <C>] [--oz <n>]` IPC-2221 trace width
+- `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project> [--plan <plan.json>]` render PcbDoc to SVG with placement plan overlay
+- `python <repo>/scripts/checks/board.py <pcb_file>` board layout checks: connector opening, decap distance, CPL rotation
+- `python <repo>/scripts/outjob.py <project> [output_dir]` write ready Altium OutJob file
+- `python <repo>/scripts/dfm.py ingest <project> <pdf_path>` ingest JLCDFM report PDF, extract slices, build triage table
+- `python <repo>/scripts/altium/dump.py <file> [--full] [--net NAME]` read-only inspector for SchDoc, PcbDoc pads+nets+rules, PrjPcb, .RUL
+- `python <repo>/scripts/keeping.py <project> log|decisions|impact|report` decision log, change impact, file organization
+- `python <repo>/scripts/model.py <project>` print derived project state (idea, BOM, requirements, sheets)
+- `python <repo>/scripts/project.py ...` project folder and metadata helpers
 
 # CITING
 - In text, a citation is `{{src:file name|locator}}`, for example `{{src:esda6v1w5.pdf|p. 2, Pin configuration}}`.
