@@ -168,8 +168,8 @@ Cross-cutting:
 | I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ✅ |
 | I7 | **Rules and calcs** (cap 7). Rules tab (JLC preset + extra rules), `.RUL` writer, read-back diff from the PcbDoc, calculators; skill rules-and-calcs | `.RUL` round-trip test; diff test on a changed fixture; one import in Altium listed for the user | ✅ |
 | I8 | **Library** (caps 3, 4). Model search + link-and-return, package-variant check vs datasheet, one-script library build for Altium; skills part-models + project-library | incident 1 caught | ✅ |
-| I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ⬜ |
-| I10 | **Idea, Altium help, project keeping** (caps 1, 11, 12). Requirement questions + editable block diagram (§3a), stage guidance in every tab, how-to answers from the AD20 manual, decision log, change impact, final file organization | incident 8 caught at the idea stage; Q&A eval target met | ⬜ |
+| I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ✅ (fixture; device preview by the user) |
+| I10 | **Idea, Altium help, project keeping** (caps 1, 11, 12). Requirement questions + editable block diagram (§3a), stage guidance in every tab, how-to answers from the AD20 manual, decision log, change impact, final file organization | incident 8 caught at the idea stage; Q&A eval target met | ✅ (built; measured in I11) |
 | I11 | **Wrap-up.** Full benchmark, README + ENGINES + docs current, English UI check, clean tree, final summary for the user | 12/12 or the gaps explained | ⬜ |
 
 ## 7. Now
@@ -211,15 +211,17 @@ them in the project (`checks/`), and give the engine the slices to read (image i
 `runtime/skills/manufacturer-and-dfm/references/jlcdfm-report.md`. Sample: the user's device report (local only,
 untrusted copy in %TEMP%\dfm-untrusted; not committed).
 
-**Stage A done (2026-10-12)**, **stage B done**, **stage C done (2026-10-12)** - see section 8. Edge and two idle Claude Code sessions were
+**Stage A done (2026-10-12)**, **stage B done**, **stage C done**, **stage D done (2026-10-12)** - see section 8. Edge and two idle Claude Code sessions were
 closed on the user's request to free memory. On the user's request C and D run in parallel with agy, each in its own
 git worktree (`../pcb-advisor-wt-c` on branch stage-c, `../pcb-advisor-wt-d` on branch stage-d, .venv junctioned);
 Claude Code verifies each, commits it on its branch and merges into this branch, then removes the worktrees.
 
-**Next: merge C and D, then I11** (full benchmark only with the user's OK, docs, English UI check, final summary).
+**Next: I11** (full benchmark only with the user's OK, docs, English UI check, final summary).
 
 **Waiting for the user:** import the JLC rules once in Altium (Rules tab -> export .RUL -> the 4-step import guide
 shown there) and say whether the rules appear as expected.
+2. Open the Schematic and Placement & routing tabs on the device project once and say whether the previews look right
+   (Claude Code may not read device files).
 
 ## 8. Stage summaries (10 lines each, newest last)
 
@@ -313,7 +315,8 @@ shown there) and say whether the rules appear as expected.
 10. Open: the new UI spaces were not opened in a browser (no GUI).
 
 ### Stage C (I7 rules and calculations, I8 library), 2026-10-12
-1. `scripts/rules.py`: JLC capability preset (config `jlc_rules`), `.RUL` writer (latin-1, `¶
+1. `scripts/rules.py`: JLC capability preset (config `jlc_rules`), `.RUL` writer (latin-1, `¶
+
 `), round trip
    with the I3 reader, diff of the board's rules against the preset; CLI `pcb.py rules`.
 2. `scripts/calc.py`: IPC-2152 trace width, divider, LED resistor, via current, microstrip impedance; each answer
@@ -328,3 +331,19 @@ shown there) and say whether the rules appear as expected.
 8. Tests green after the merge, skills lint ok. No benchmark run.
 9. Waiting for the user: one real .RUL import in Altium (section 7).
 10. Open: the Rules tab was not opened in a browser; no JS syntax checker on this PC (node missing).
+
+### Stage D (I9 previews, I10 idea + Altium help + keeping), 2026-10-12
+1. `scripts/preview_sch.py`: SchDoc -> SVG (parts, pins, wires, net labels, power ports, ports), every name escaped,
+   data attributes for click-to-ask; `render_sheet.py` delegates to it.
+2. `scripts/preview_pcb.py`: PcbDoc outline + pads, top/bottom/all layers, `placement-plan.json` overlay.
+3. UI: Schematic tab click part/net -> "Ask about this"; new "Placement & routing" tab (layer toggle, plan card).
+4. Idea tab: block diagram edited with the mouse (drag, rename inline, link blocks with a label, domain colours,
+   board outline); proposals from the engine approved/rejected; one-line stage guidance banner in every tab.
+5. `scripts/keeping.py`: decision log (notes.md), change impact over 13 categories, final file organization report.
+6. Skills schematic-preview, placement-and-routing-plan, idea-and-requirements, project-keeping updated; pack synced.
+7. Built by agy in a worktree in parallel; merged by Claude Code (B's schematic anchor bar replaced by D's selection
+   bar; tabs: Idea, BOM, Schematic, Placement & routing, Rules, Altium outputs, Final manufacturer checks).
+8. Incident: removing the C worktree followed its `.venv` junction and emptied the shared venv; agy patched it with a
+   system-site `.pth`. Fixed: venv rebuilt from requirements (Pillow added to requirements.txt), junctions removed first.
+9. Tests green after the rebuild, skills lint ok. No benchmark run.
+10. Open: previews and the diagram editor not opened in a browser; device previews to be checked by the user (section 7).

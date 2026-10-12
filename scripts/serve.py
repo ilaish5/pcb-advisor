@@ -202,6 +202,11 @@ def apply_actions(project, actions, sess=None, last_user=""):
                                         sess, new=bool(a.get("new")))
                 proposals.append(rec["id"])
                 applied.append(f"bom.propose:{a['line']}")
+            elif kind == "idea.diagram" and isinstance(a.get("changes"), dict):
+                rec = store.propose_idea_diagram(project, a["changes"], a.get("reason", "Diagram update proposed"),
+                                                sources=a.get("sources", []), session=sess)
+                proposals.append(rec["id"])
+                applied.append("idea.diagram")
             elif kind == "netlist.write" and a.get("sheet") and isinstance(a.get("data"), dict):
                 res = store.write_sheet(project, a["sheet"], a["data"])
                 if res["ok"]:
@@ -448,14 +453,47 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/skills":
             from skills import registry
             return self._send(200, {"skills": registry.listing()})
-        if path == "/api/sheet.svg":
+        if path in ("/api/sheet.svg", "/api/preview/sch.svg"):
             proj = self.project()
             sheet = self.query("sheet") or (store.sheet_ids(proj) or [""])[0]
             if not store.load_sheet(proj, sheet):
+                import preview_sch
+                try:
+                    svg = preview_sch.render_project_sch(proj, sheet=sheet)
+                except (Exception, SystemExit):
+                    svg = None
+                if svg and not svg.startswith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100">'):
+                    return self._send(200, svg, "image/svg+xml; charset=utf-8")
                 return self._send(404, {"error": f"no sheet {sheet!r}"})
             import render_sheet
-            return self._send(200, render_sheet.render(proj, sheet, write=False),
-                              "image/svg+xml; charset=utf-8")
+            try:
+                return self._send(200, render_sheet.render(proj, sheet, write=False),
+                                  "image/svg+xml; charset=utf-8")
+            except (Exception, SystemExit):
+                return self._send(404, {"error": f"no sheet {sheet!r}"})
+        if path == "/api/preview/pcb.svg":
+            proj = self.project()
+            layer = self.query("layer") or "all"
+            import preview_pcb
+            svg = preview_pcb.render_project_pcb(proj, layer=layer)
+            return self._send(200, svg, "image/svg+xml; charset=utf-8")
+        if path == "/api/placement/plan":
+            proj = self.project()
+            import preview_pcb
+            return self._send(200, preview_pcb.load_placement_plan(proj))
+        if path == "/api/keeping/decisions":
+            proj = self.project()
+            import keeping
+            return self._send(200, {"decisions": keeping.list_decisions(proj)})
+        if path == "/api/keeping/impact":
+            proj = self.project()
+            item = self.query("item") or ""
+            import keeping
+            return self._send(200, {"impacts": keeping.change_impact(proj, item)})
+        if path == "/api/keeping/report":
+            proj = self.project()
+            import keeping
+            return self._send(200, keeping.file_organization(proj))
         if path.startswith("/api/source/"):
             name = unquote(path.split("/api/source/", 1)[1])
             for base in (model.project_dir(self.project()) / "sources", workspace.datasheets_dir()):
@@ -706,14 +744,18 @@ class Handler(BaseHTTPRequestHandler):
             project_mod.touch(proj)
             if data.get("decision") == "approved":
                 prop = next(p for p in store.proposals(proj) if p["id"] == data["id"])
-                if "mpn" in prop["changes"]:
-                    recheck_async(proj, prop["line"])
-                redraw(proj)
-                ref = next((l["refs"][0] for l in store.bom_lines(proj) if l["key"] == prop["line"] and l.get("refs")),
-                           prop["line"])
-                say(proj, sess, {"ts": now(), "role": "agent",
-                                 "text": "Updated. {{ref:" + ref + "}} is changed in the BOM, on the schematic label "
-                                         "and in the library."})
+                if prop.get("kind") == "idea_diagram":
+                    say(proj, sess, {"ts": now(), "role": "agent",
+                                     "text": "Approved diagram changes. The block diagram has been updated."})
+                else:
+                    if "mpn" in prop.get("changes", {}):
+                        recheck_async(proj, prop["line"])
+                    redraw(proj)
+                    ref = next((l["refs"][0] for l in store.bom_lines(proj) if l["key"] == prop["line"] and l.get("refs")),
+                               prop["line"])
+                    say(proj, sess, {"ts": now(), "role": "agent",
+                                     "text": "Updated. {{ref:" + ref + "}} is changed in the BOM, on the schematic label "
+                                             "and in the library."})
             else:
                 say(proj, sess, {"ts": now(), "role": "agent", "text": f"Rejected. {data.get('id')} changes nothing."})
             return self._send(200, state())
@@ -830,6 +872,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "topic and text required"})
             store.propose_idea(proj, data["topic"], data["text"], by="student")
             return self._send(200, state())
+
+        if path == "/api/placement/plan":
+            import preview_pcb
+            plan = preview_pcb.save_placement_plan(proj, data)
+            return self._send(200, {"ok": True, "plan": plan})
+
+        if path == "/api/keeping/decision":
+            dec = data.get("decision")
+            if not dec:
+                return self._send(400, {"error": "decision required"})
+            import keeping
+            res = keeping.append_decision(proj, dec, who=data.get("who", "student"),
+                                          why=data.get("why", ""), source=data.get("source", ""))
+            return self._send(200, {"ok": True, "entry": res})
 
         if path == "/api/thread/open":
             sid = open_part_session(proj, data.get("anchor") or "")

@@ -34,10 +34,9 @@ The picture is a teaching aid: it shows WHAT to place and HOW to lay it out. The
 10. Send the image path plus a short table (see Output). Say clearly: generated from data, verify with Alt+Click on a net.
 
 ## Scripts
+- `python <repo>/scripts/preview_sch.py <schdoc> [--output <out.svg>]` - renders a linked Altium .SchDoc to interactive SVG.
 - `python <repo>/scripts/skills/render_sheet.py <project> <sheet>` - renders `netlist/<sheet>.json` to `artifacts/sheet-<sheet>.svg`.
 - `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` - lists sheet refs missing from the BOM.
-- (planned, stage I9) `<repo>/scripts/preview/` - same renderer fed from the netlist read out of SchDoc/PcbDoc.
-  Until then the model JSON is written by hand from the datasheet pin tables.
 
 ## References
 - `<repo>/shared/reference/AGENTS.md` - topic index (read "Schematic anatomy" and "Schematic best practice" rows).

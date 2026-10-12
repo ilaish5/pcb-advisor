@@ -280,6 +280,20 @@ def render_sheet(sheet, bom_lines):
 def render(project, sheet_id, write=True):
     sheet = store.load_sheet(project, sheet_id)
     if not sheet:
+        try:
+            import preview_sch
+            import project as project_mod
+            link = project_mod.altium_link(project)
+            if link.get("project_file"):
+                svg = preview_sch.render_project_sch(project, sheet=sheet_id)
+                if svg and not svg.startswith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100">'):
+                    if write:
+                        out = store.pdir(project) / "artifacts" / f"sheet-{sheet_id}.svg"
+                        out.parent.mkdir(parents=True, exist_ok=True)
+                        out.write_text(svg, encoding="utf-8")
+                    return svg
+        except Exception:
+            pass
         raise SystemExit(f"no sheet {sheet_id!r} in {project}")
     svg = render_sheet(sheet, store.bom(project, write=False))
     if write:

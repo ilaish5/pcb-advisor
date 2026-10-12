@@ -362,6 +362,36 @@ table.libt{min-width:740px} table.srct{min-width:780px}
 .triage-tbl th{background:var(--panel2);font-weight:600;color:var(--dim);white-space:nowrap}
 .triage-tbl input,.triage-tbl select{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:4px;padding:3px 5px;background:var(--panel2);color:var(--ink);width:100%;box-sizing:border-box}
 .triage-tbl input:focus,.triage-tbl select:focus{border-color:var(--accent);background:var(--panel)}
+
+/* Stage guidance banner */
+.guidance-bar{display:flex;align-items:center;gap:8px;padding:7px 12px;margin-bottom:12px;background:var(--accent-soft);border:1px solid rgba(33,72,201,.22);border-radius:8px;font-size:12.5px;color:var(--ink2)}
+.guidance-bar .g-icon{font-size:14px;flex:none}
+.guidance-bar .g-lbl{font-weight:700;color:var(--accent);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.guidance-bar .g-txt{flex:1;min-width:0}
+
+/* Selection / ask bar in previews */
+.sel-bar{display:inline-flex;align-items:center;gap:8px;padding:3px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;font-size:12.5px}
+.sel-bar b{font-family:var(--f-mono);color:var(--net)}
+
+/* PCB Preview */
+.pcbwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;background:#121820;min-height:420px;position:relative}
+svg.pcb-preview{display:block;width:100%;min-width:760px;height:auto}
+.pcb-preview.hide-top #pcb-layer-top{display:none}
+.pcb-preview.hide-bottom #pcb-layer-bottom{display:none}
+.pcb-preview.hide-plan #pcb-layer-plan{display:none}
+.plan-card{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--panel2)}
+
+/* Block Diagram Interactive */
+.diag-wrap{position:relative;border:1px solid var(--line);border-radius:10px;background:#f8fafc;overflow:hidden}
+.diag-toolbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line2);flex-wrap:wrap}
+svg.diag-svg{display:block;width:100%;min-width:760px;min-height:460px;user-select:none}
+.diag-block{cursor:grab;transition:filter .15s}
+.diag-block:hover{filter:drop-shadow(0 2px 6px rgba(0,0,0,.15))}
+.diag-block.dragging{cursor:grabbing;filter:drop-shadow(0 4px 12px rgba(0,0,0,.25))}
+.diag-block.linking rect{stroke:#2563eb !important;stroke-width:2.5 !important;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.diag-btn{font-size:11px;padding:2px 7px;border-radius:4px;border:1px solid var(--line);background:var(--panel);cursor:pointer}
+.diag-btn:hover{background:var(--panel2);border-color:var(--accent)}
 </style>
 </head>
 <body>
@@ -414,7 +444,22 @@ let convsOpen = false, pending = false, compareCard = null, exportCard = null, l
 let outjobBanner = null, curCheckStem = null, schAnchor = null;
 let triageMap = {}, triageLoading = {}, indexMap = {}, indexLoading = {};
 let svgCache = {key: '', text: ''};
+let pcbSvgCache = {key: '', text: ''};
+let pcbLayers = {top: true, bottom: true, plan: true};
+let schSel = null, pcbSel = null;
+let diagLinkingFrom = null;
+let isDraggingDiag = false, dragBlockId = null, dragStartX = 0, dragStartY = 0, blockOrigX = 0, blockOrigY = 0;
 let lastChatKey = '', lastCenterKey = '';
+
+const DOMAINS = {
+  power: {id: 'power', name: 'Power', border: '#e67e22', fill: '#fef3e2', text: '#b45309'},
+  sensing: {id: 'sensing', name: 'Sensing', border: '#27ae60', fill: '#e8f8f0', text: '#15803d'},
+  mcu: {id: 'mcu', name: 'MCU', border: '#2980b9', fill: '#ebf5fb', text: '#1d4ed8'},
+  comms: {id: 'comms', name: 'Comms', border: '#8e44ad', fill: '#f3ebf9', text: '#6c3483'},
+  drive: {id: 'drive', name: 'Drive / Actuation', border: '#c0392b', fill: '#fdedec', text: '#b91c1c'},
+  ui: {id: 'ui', name: 'UI / Indicators', border: '#7f8c8d', fill: '#f2f4f4', text: '#4b5563'},
+};
+const DOMAIN_KEYS = Object.keys(DOMAINS);
 
 const q = (extra = {}) => {
   const p = new URLSearchParams({project: PROJECT, ...(SESSION ? {session: SESSION} : {}), ...extra});
@@ -650,7 +695,7 @@ function renderNav() {
     <div class="ngroup"><div class="nlabel">${esc(S.title)}</div>
       <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
       ${ni('workspace', 'ws', 'Workspace')}
-      <div class="nsub">${[['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic'], ['rules', 'Rules'], ['outputs', 'Altium outputs'], ['checks', 'Final manufacturer checks']].map(([id, l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
+      <div class="nsub">${[['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic'], ['pcb', 'Placement & routing'], ['rules', 'Rules'], ['outputs', 'Altium outputs'], ['checks', 'Final manufacturer checks']].map(([id, l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
       ${ni('outputs', 'ws', 'Altium outputs', expCount)}
       ${ni('checks', 'ws', 'Final manufacturer checks', chkCount)}
       ${ni('library', 'lib', 'Altium library', libCount)}
@@ -658,6 +703,47 @@ function renderNav() {
       ${ni('skills', 'sk', 'Skills', SKILLS ? SKILLS.filter(s => s.available).length : null)}
     </div>
     <div class="nfoot">${ni('settings', 'set', 'Settings')}</div>`;
+}
+
+/* ---------- stage guidance ---------- */
+function stageGuidance(targetTab) {
+  if (targetTab === 'idea') {
+    return S.idea && S.idea.confirmed
+      ? 'Idea confirmed. Review block diagram domains and connections, or continue refining parts on the BOM tab.'
+      : 'Refine requirements and the block diagram. Confirm the idea when the architecture is solid to proceed to the BOM.';
+  }
+  if (targetTab === 'bom') {
+    const t = S.totals;
+    const uncheck = lines().filter(l => l.availability === 'unchecked' || l.supply == null).length;
+    if (t.out_of_stock) return `${t.out_of_stock} line(s) out of stock. Ask the agent for pin-compatible alternatives or click 'Alternatives'.`;
+    if (t.to_verify) return `${t.to_verify} line(s) have unverified library footprints/symbols. Verify against datasheets before export.`;
+    if (uncheck) return `${uncheck} part(s) have unchecked stock. Click 'Check stock' to update availability and prices.`;
+    return 'BOM is fully verified and in stock. Ready to review schematic sheets or export for PCB fab.';
+  }
+  if (targetTab === 'sch') {
+    return (S.sheets && S.sheets.length)
+      ? 'Click any component or net in the schematic preview to inspect connections or ask the agent questions.'
+      : 'No schematic sheets yet. Chat with the agent to generate schematic sheets from the BOM.';
+  }
+  if (targetTab === 'pcb') {
+    return 'Inspect placement plan, keep-out zones, and component footprint orientation on top/bottom layers.';
+  }
+  if (targetTab === 'library') {
+    return 'Verify symbols, footprints, and 3D STEP models for custom parts, then export .IntLib for Altium.';
+  }
+  if (targetTab === 'sources') {
+    return 'Manage referenced datasheets, manuals, and design guides cited by the agent during part selection.';
+  }
+  if (targetTab === 'skills') {
+    return 'Browse automated skills for DRC, supply checks, and Altium export workflows.';
+  }
+  if (targetTab === 'settings') {
+    return 'Configure your LLM provider, Altium Designer installation path, and linked .PrjPcb project.';
+  }
+  return 'Follow project progress and interact with the advisor.';
+}
+function guidanceBarHTML(t) {
+  return `<div class="guidance-bar"><span class="g-icon">💡</span><span class="g-lbl">What to do now:</span><span class="g-txt">${esc(stageGuidance(t))}</span></div>`;
 }
 
 /* ---------- center ---------- */
@@ -671,9 +757,10 @@ function wheadHTML() {
     ['idea', '1', 'Idea', S.idea.confirmed ? `<span class="st ok">Confirmed</span>` : `<span class="st dim">Open</span>`],
     ['bom', '2', 'BOM', t.out_of_stock ? `<span class="st bad">${t.out_of_stock} out of stock</span>` : t.to_verify ? `<span class="st warn">${t.to_verify} to review</span>` : t.checking ? `<span class="st dim">checking</span>` : t.lines ? `<span class="st ok">Ready</span>` : `<span class="st dim">Empty</span>`],
     ['sch', '3', 'Schematic', `<span class="st dim">${S.sheets.length} sheet${S.sheets.length === 1 ? '' : 's'}</span>`],
-    ['rules', '4', 'Rules', RULES_DATA ? `<span class="st ok">${RULES_DATA.preset?.rules?.length || 7} preset</span>` : `<span class="st dim">JLC preset</span>`],
-    ['outputs', '5', 'Altium outputs', `<span class="st dim">${(S.exports || []).length} file${(S.exports || []).length === 1 ? '' : 's'}</span>`],
-    ['checks', '6', 'Final manufacturer checks', `<span class="st dim">${(S.checks || []).length} report${(S.checks || []).length === 1 ? '' : 's'}</span>`],
+    ['pcb', '4', 'Placement & routing', `<span class="st dim">Plan</span>`],
+    ['rules', '5', 'Rules', RULES_DATA ? `<span class="st ok">${RULES_DATA.preset?.rules?.length || 7} preset</span>` : `<span class="st dim">JLC preset</span>`],
+    ['outputs', '6', 'Altium outputs', `<span class="st dim">${(S.exports || []).length} file${(S.exports || []).length === 1 ? '' : 's'}</span>`],
+    ['checks', '7', 'Final manufacturer checks', `<span class="st dim">${(S.checks || []).length} report${(S.checks || []).length === 1 ? '' : 's'}</span>`],
   ];
   return `<div class="tabs" role="tablist">${items.map(([id, n, label, st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div>`;
 }
@@ -709,7 +796,8 @@ function bomHTML() {
   const t = S.totals, at = checkedAt();
   const uncheck = lines().filter(l => l.availability === 'unchecked' || l.supply == null).length;
   const extFee = t.extended_fee || 0;
-  return `<div class="vhead"><div><h2>Bill of materials</h2><p>The single source of truth. The agent proposes changes and you approve them. Click a row to see where the part sits in the schematic.</p></div>
+  return `${guidanceBarHTML('bom')}
+    <div class="vhead"><div><h2>Bill of materials</h2><p>The single source of truth. The agent proposes changes and you approve them. Click a row to see where the part sits in the schematic.</p></div>
     <div class="vacts"><button class="btn pri" data-act="check-all">Check all</button><button class="btn" data-act="check">Check stock</button><button class="btn" data-act="compare">Compare prices</button>
     <button class="btn" data-act="export" data-fmt="jlc">Export JLC</button><button class="btn" data-act="export" data-fmt="pcbway">Export PCBWay</button></div></div>
     ${compareCard ? compareHTML() : ''}${exportCard ? exportHTML() : ''}${altsCard ? altsHTML() : ''}
@@ -763,22 +851,19 @@ function exportHTML() {
 }
 let schBusy = false;
 function schHTML() {
-  if (!S.sheets.length) return `<div class="vhead"><div><h2>Example schematic</h2><p>No sheets yet. Ask the agent to draw one once the parts are chosen.</p></div></div>`;
+  if (!S.sheets || !S.sheets.length) return `${guidanceBarHTML('sch')}<div class="vhead"><div><h2>Schematic preview</h2><p>No sheets yet. Ask the agent to draw one once the parts are chosen.</p></div></div>`;
   if (!sheetId || !S.sheets.find(s => s.id === sheetId)) sheetId = S.sheets[0].id;
-  return `<div class="vhead"><div><h2>Example schematic</h2><p>Rendered from the netlist, not drawn by hand. Click a part to open it in the BOM. You redraw the sheet in Altium from this.</p></div>
+  const schSelBar = schSel ? `
+    <div class="sel-bar" id="sch-sel-bar" style="margin-bottom:8px">
+      <span>Selected: <b>${esc(schSel.type)}: ${esc(schSel.name)}</b></span>
+      <button class="btn pri" data-act="ask-sch" data-target="${esc(schSel.name)}" data-kind="${esc(schSel.type)}">Ask about this</button>
+      <button class="btn" data-act="clear-sch-sel">Clear</button>
+    </div>` : '';
+  return `${guidanceBarHTML('sch')}
+    <div class="vhead"><div><h2>Schematic preview</h2><p>Rendered from the netlist and linked SchDoc. Click any component or net to ask questions or inspect connections.</p></div>
     <div class="sheets">${S.sheets.map(s => `<button class="sheet" data-sheet="${esc(s.id)}" aria-pressed="${s.id === sheetId}"><span class="m">${esc(s.id)}</span> ${esc(s.title)}</button>`).join('')}</div></div>
-    ${schAnchor ? `
-      <div class="howto" style="display:flex;align-items:center;justify-content:space-between;margin:0 0 10px 0;padding:8px 12px">
-        <div><b>Selected:</b> <span class="m">${esc(schAnchor.label)}</span></div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn pri" data-act="ask-anchor" data-anchor="${esc(schAnchor.anchor)}">Ask about this</button>
-          <button class="x" data-act="clear-sch-anchor" aria-label="Clear selection">×</button>
-        </div>
-      </div>` : `
-      <div class="dnote" style="margin:0 0 10px 0;padding:6px 10px">
-        Click any part or net label in the schematic to ask the agent about it.
-      </div>`}
-    <div class="schwrap" id="schwrap">${svgCache.text ? svgCache.text : '<div class="dnote" style="margin:12px">Drawing…</div>'}</div>`;
+    ${schSelBar}
+    <div class="schwrap" id="schwrap">${svgCache.text ? svgCache.text : '<div class="dnote" style="margin:12px">Rendering schematic…</div>'}</div>`;
 }
 function outputsHTML() {
   const exports = S.exports || [];
@@ -955,7 +1040,7 @@ async function loadSheet() {
   const w = $('#schwrap'); if (w) { w.innerHTML = svgCache.text; afterSheet(); }
 }
 function afterSheet() {
-  const svg = $('#sch'); if (!svg) return;
+  const svg = $('#schwrap svg') || $('#sch'); if (!svg) return;
   if (!svg.dataset.hl) {
     for (const g of svg.querySelectorAll('g.part')) {
       const b = g.getBBox(); if (!b.width) continue;
@@ -965,48 +1050,232 @@ function afterSheet() {
     }
     svg.dataset.hl = '1';
   }
+  // Click on parts
+  svg.querySelectorAll('g.part').forEach(g => {
+    g.style.cursor = 'pointer';
+    g.onclick = e => {
+      e.stopPropagation();
+      const ref = g.dataset.ref;
+      schSel = {type: 'Component', name: ref};
+      const l = lineOfRef(ref);
+      if (l) select(l.key);
+      else renderCenter(true);
+    };
+  });
+  // Click on net labels, power ports, ports
+  svg.querySelectorAll('g.net-label, g.power-port, g.port').forEach(g => {
+    g.style.cursor = 'pointer';
+    g.onclick = e => {
+      e.stopPropagation();
+      const net = g.dataset.net || g.dataset.port || g.textContent.trim();
+      const type = g.classList.contains('power-port') ? 'Power net' : g.classList.contains('port') ? 'Port' : 'Net';
+      schSel = {type, name: net};
+      renderCenter(true);
+    };
+  });
   applyFocus();
 }
 function applyFocus() {
-  const svg = $('#sch'); if (!svg) return;
+  const svg = $('#schwrap svg') || $('#sch'); if (!svg) return;
   const l = sel && lineByKey(sel);
   svg.classList.toggle('focus', !!l);
   svg.querySelectorAll('g.part').forEach(g => g.classList.toggle('sel', !!l && (l.refs || []).includes(g.dataset.ref)));
 }
-function blocksSVG() {
-  const blocks = S.idea.blocks || [], links = S.idea.links || [];
-  if (!blocks.length) return '<div class="dnote" style="margin:10px">No block diagram yet. The agent draws it once the idea takes shape.</div>';
-  const depth = {}; blocks.forEach(b => depth[b.id] = 0);
-  for (let i = 0; i < blocks.length; i++) for (const [a, b] of links) if (depth[a] !== undefined && depth[b] !== undefined) depth[b] = Math.max(depth[b], depth[a] + 1);
-  const cols = {}; blocks.forEach(b => (cols[depth[b.id]] ||= []).push(b));
-  const W = 140, H = 52, GX = 40, GY = 22, pos = {};
-  const ncol = Object.keys(cols).length, maxn = Math.max(...Object.values(cols).map(c => c.length));
-  Object.entries(cols).forEach(([d, bs]) => bs.forEach((b, i) => pos[b.id] = {x: 10 + d * (W + GX), y: 16 + i * (H + GY) + (maxn - bs.length) * (H + GY) / 2}));
-  const w = 20 + ncol * (W + GX) - GX, h = 32 + maxn * (H + GY) - GY;
-  let s = '';
-  for (const [a, b] of links) { const p = pos[a], r = pos[b]; if (!p || !r) continue;
-    s += `<path d="M${p.x + W} ${p.y + H / 2}C${p.x + W + GX / 2} ${p.y + H / 2} ${r.x - GX / 2} ${r.y + H / 2} ${r.x} ${r.y + H / 2}"/>`; }
-  for (const b of blocks) { const p = pos[b.id];
-    s += `<g class="${b.sheet ? 'cur' : ''} ${b.open ? 'open' : ''}" ${b.sheet ? 'data-tab="sch"' : ''}><rect x="${p.x}" y="${p.y}" width="${W}" height="${H}" rx="7"/><text x="${p.x + 10}" y="${p.y + 22}">${esc(b.label || b.id)}</text><text x="${p.x + 10}" y="${p.y + 40}" class="s">${esc(b.sub || '')}</text></g>`; }
-  return `<svg class="blocks" viewBox="0 0 ${w} ${h}" role="img" aria-label="Block diagram">${s}</svg>`;
+
+/* ---------- pcb preview ---------- */
+function pcbHTML() {
+  const plan = S.placement_plan || null;
+  const selBar = pcbSel ? `
+    <div class="sel-bar" style="margin-bottom:8px">
+      <span>Selected: <b>${esc(pcbSel.type || 'Component')}: ${esc(pcbSel.name)}</b>${pcbSel.desc ? ' · ' + esc(pcbSel.desc) : ''}</span>
+      <button class="btn pri" data-act="ask-pcb" data-target="${esc(pcbSel.name)}" data-kind="${esc(pcbSel.type || 'Component')}">Ask about this</button>
+      <button class="btn" data-act="clear-pcb-sel">Clear</button>
+    </div>` : '';
+  const grpCount = (plan && plan.groups) ? plan.groups.length : 3;
+  const koCount = (plan && plan.keep_outs) ? plan.keep_outs.length : 1;
+  const netCount = (plan && plan.critical_nets) ? plan.critical_nets.length : 2;
+  return `${guidanceBarHTML('pcb')}
+    <div class="vhead"><div><h2>Placement & routing preview</h2><p>PcbDoc components, pads, and outline with proposed placement plan overlays. Toggle layers and click any component to ask about layout.</p></div>
+      <div class="vacts">
+        <button class="btn ${pcbLayers.top ? 'pri' : ''}" data-act="toggle-layer" data-layer="top">Top layer</button>
+        <button class="btn ${pcbLayers.bottom ? 'pri' : ''}" data-act="toggle-layer" data-layer="bottom">Bottom layer</button>
+        <button class="btn ${pcbLayers.plan ? 'pri' : ''}" data-act="toggle-layer" data-layer="plan">Plan overlay</button>
+      </div>
+    </div>
+    ${selBar}
+    <div class="pcbwrap" id="pcbwrap">${pcbSvgCache.text ? pcbSvgCache.text : '<div class="dnote" style="margin:12px;color:#94a3b8">Rendering PCB preview…</div>'}</div>
+    <div class="plan-card" id="plan-card">
+      <h3 style="margin:0 0 8px;font-size:13px">Proposed placement & routing plan</h3>
+      <div style="font-size:12.5px;color:var(--dim);margin-bottom:8px">The agent proposes placement zones, keep-outs, and critical-net priorities before you place parts in Altium.</div>
+      <div class="kpis">
+        <div class="kpi"><b>${grpCount}</b><span>functional zones</span></div>
+        <div class="kpi"><b>${koCount}</b><span>keep-outs</span></div>
+        <div class="kpi"><b>${netCount}</b><span>critical nets</span></div>
+      </div>
+    </div>`;
 }
+async function loadPcb() {
+  const key = PROJECT + '|' + (ALTIUM_DATA?.linked?.pcb_file || '') + '|' + JSON.stringify(pcbLayers);
+  if (pcbSvgCache.key === key && pcbSvgCache.text) { afterPcb(); return; }
+  try {
+    const r = await fetch('/api/preview/pcb.svg?' + q());
+    if (!r.ok) {
+      const w = $('#pcbwrap');
+      if (w) w.innerHTML = '<div class="dnote" style="margin:12px;color:#94a3b8">No PcbDoc linked or preview unavailable. Link an Altium project with a .PcbDoc in Settings.</div>';
+      return;
+    }
+    pcbSvgCache = {key, text: await r.text()};
+    const w = $('#pcbwrap');
+    if (w) { w.innerHTML = pcbSvgCache.text; afterPcb(); }
+  } catch (e) { /* ignored */ }
+}
+function afterPcb() {
+  const svg = $('#pcbwrap svg');
+  if (!svg) return;
+  svg.classList.add('pcb-preview');
+  svg.classList.toggle('hide-top', !pcbLayers.top);
+  svg.classList.toggle('hide-bottom', !pcbLayers.bottom);
+  svg.classList.toggle('hide-plan', !pcbLayers.plan);
+  svg.querySelectorAll('g.pcb-comp').forEach(g => {
+    g.style.cursor = 'pointer';
+    g.onclick = e => {
+      e.stopPropagation();
+      const ref = g.dataset.ref || g.id?.replace(/^pcb-comp-/, '');
+      if (ref) {
+        pcbSel = {type: 'Component', name: ref, desc: g.querySelector('title')?.textContent || ''};
+        renderCenter(true);
+      }
+    };
+  });
+  svg.querySelectorAll('g.plan-group').forEach(g => {
+    g.style.cursor = 'pointer';
+    g.onclick = e => {
+      e.stopPropagation();
+      const grp = g.dataset.group;
+      if (grp) {
+        pcbSel = {type: 'Zone', name: grp, desc: g.querySelector('title')?.textContent || ''};
+        renderCenter(true);
+      }
+    };
+  });
+}
+
+/* ---------- block diagram ---------- */
+function blocksDiagHTML() {
+  const blocks = S.idea.blocks || [];
+  const rawLinks = S.idea.links || [];
+  const diagProp = (S.proposals || []).find(p => p.kind === 'idea_diagram' && p.status === 'pending');
+  const propBanner = diagProp ? `
+    <div class="warnbox" style="margin-bottom:10px;display:flex;align-items:center;justify-content:space-between;gap:10px">
+      <div><b>Agent proposed block diagram update:</b> ${esc(diagProp.reason || 'New blocks and connections')}</div>
+      <div style="display:flex;gap:6px">
+        <button class="btn pri" data-pid="${esc(diagProp.id)}" data-decide="approved">Approve proposal</button>
+        <button class="btn" data-pid="${esc(diagProp.id)}" data-decide="rejected">Reject</button>
+      </div>
+    </div>` : '';
+
+  blocks.forEach((b, idx) => {
+    if (b.x == null || b.y == null) {
+      b.x = 220 + (idx % 3) * 180;
+      b.y = 80 + Math.floor(idx / 3) * 110;
+    }
+  });
+
+  const W = 150, H = 58;
+  const pos = {};
+  blocks.forEach(b => { pos[b.id] = {x: b.x, y: b.y}; });
+
+  let linksSvg = '';
+  rawLinks.forEach((raw, i) => {
+    const l = Array.isArray(raw)
+      ? {from: raw[0], to: raw[1], label: raw[2] || '', safety: raw[3] || /safety/i.test(raw[2] || '')}
+      : {from: raw.from || raw.a, to: raw.to || raw.b, label: raw.label || '', safety: raw.safety || /safety/i.test(raw.label || '')};
+    const p1 = pos[l.from], p2 = pos[l.to];
+    if (!p1 || !p2) return;
+    const x1 = p1.x + W, y1 = p1.y + H / 2;
+    const x2 = p2.x, y2 = p2.y + H / 2;
+    const dx = Math.abs(x2 - x1) * 0.4 + 20;
+    const d = `M ${x1} ${y1} C ${x1 + dx} ${y1} ${x2 - dx} ${y2} ${x2} ${y2}`;
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    const strokeColor = l.safety ? '#dc2626' : '#64748b';
+    const strokeDash = l.safety ? '6 4' : 'none';
+    const strokeWidth = l.safety ? 2.6 : 1.8;
+    const labelText = l.label || (l.safety ? 'SAFETY' : '');
+    const labelW = Math.max(labelText.length * 7 + 14, 28);
+
+    linksSvg += `
+      <g class="diag-link-group">
+        <path d="${d}" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-dasharray="${strokeDash}" fill="none"/>
+        <g class="diag-edge-label" data-act="diag-edit-edge" data-lidx="${i}" transform="translate(${mx}, ${my})" style="cursor:pointer">
+          <rect x="${-labelW / 2}" y="-10" width="${labelW}" height="20" rx="5" fill="#ffffff" stroke="${strokeColor}" stroke-width="1.2"/>
+          <text text-anchor="middle" y="4" font-size="10.5" font-weight="600" fill="${strokeColor}">${esc(labelText || 'link')}</text>
+        </g>
+      </g>`;
+  });
+
+  let blocksSvg = '';
+  blocks.forEach(b => {
+    const dom = DOMAINS[b.domain] || DOMAINS.mcu;
+    const isLinking = diagLinkingFrom === b.id;
+    blocksSvg += `
+      <g class="diag-block ${isLinking ? 'linking' : ''}" data-bid="${esc(b.id)}" transform="translate(${b.x}, ${b.y})">
+        <rect width="${W}" height="${H}" rx="8" fill="${dom.fill}" stroke="${dom.border}" stroke-width="2"/>
+        <text x="10" y="24" font-size="12" font-weight="700" fill="${dom.text}">${esc(b.label || b.id)}</text>
+        <text x="10" y="44" font-size="10" fill="#64748b">${esc(b.role || '')}</text>
+        <g class="diag-btn-del" data-act="diag-del-block" data-bid="${esc(b.id)}" transform="translate(136, 12)" style="cursor:pointer" title="Delete block">
+          <circle r="7" fill="#fff" stroke="#ef4444" stroke-width="1.2"/>
+          <path d="M-2.5 -2.5L2.5 2.5M2.5 -2.5L-2.5 2.5" stroke="#ef4444" stroke-width="1.4"/>
+        </g>
+        <g class="diag-btn-color" data-act="diag-cycle-domain" data-bid="${esc(b.id)}" transform="translate(118, 12)" style="cursor:pointer" title="Cycle domain (${dom.name})">
+          <circle r="6.5" fill="${dom.border}" stroke="#fff" stroke-width="1.2"/>
+        </g>
+        <g class="diag-btn-link" data-act="diag-link-start" data-bid="${esc(b.id)}" transform="translate(100, 12)" style="cursor:pointer" title="Link to block">
+          <circle r="7" fill="#fff" stroke="#3b82f6" stroke-width="1.2"/>
+          <path d="M-3.5 0h7M0 -3.5v7" stroke="#3b82f6" stroke-width="1.4"/>
+        </g>
+      </g>`;
+  });
+
+  return `
+    ${propBanner}
+    <div class="diag-wrap">
+      <div class="diag-toolbar">
+        <button class="btn pri" data-act="diag-add">+ Add block</button>
+        ${diagLinkingFrom ? `<span style="font-size:12px;color:var(--accent);font-weight:600">Click destination block to connect</span> <button class="btn" data-act="diag-cancel-link">Cancel</button>` : ''}
+        <div style="display:flex;align-items:center;gap:8px;margin-left:auto;font-size:11.5px;color:var(--dim)">
+          <span>Domains:</span>
+          ${DOMAIN_KEYS.map(k => `<span style="display:inline-flex;align-items:center;gap:3px;font-size:11px"><span style="width:9px;height:9px;border-radius:2px;background:${DOMAINS[k].border}"></span>${DOMAINS[k].name}</span>`).join(' ')}
+        </div>
+      </div>
+      <svg class="diag-svg" id="diag-svg" viewBox="0 0 860 520" role="img" aria-label="Interactive Block diagram">
+        <rect class="board-frame" x="180" y="30" width="560" height="450" rx="14" fill="rgba(241, 245, 249, 0.45)" stroke="#94a3b8" stroke-width="2" stroke-dasharray="8 6" />
+        <text x="195" y="54" fill="#64748b" font-size="11" font-weight="700" letter-spacing="0.05em">BOARD BOUNDARY (ALTIUM PCB)</text>
+        ${linksSvg}
+        ${blocksSvg}
+      </svg>
+    </div>
+    <div style="font-size:11.5px;color:var(--dim);margin-top:6px">Tip: Drag blocks with mouse. Double-click block to rename. Click + on block to connect. Click color circle to change domain. Click edge label to edit/delete.</div>`;
+}
+
 function ideaHTML() {
   const I = S.idea, items = I.agreed || [];
   const st = i => i.status === 'confirmed' ? ((i.by === 'student' ? 'From you' : "Agent's proposal") + ' · confirmed') : "Agent's proposal · not confirmed yet";
-  return `<div class="vhead"><div><h2>Idea</h2><p>${esc(I.goal) || 'What you and the agent agreed on before choosing parts. Every line is a decision you can come back to.'}</p></div>
-    <div class="vacts"><button class="btn" data-thread="${esc(((S.sessions || []).find(r => r.id === 'idea') || (S.sessions || []).find(r => !r.anchor) || {}).id || '')}">Open the conversation</button>
+  return `${guidanceBarHTML('idea')}
+    <div class="vhead"><div><h2>Idea & Architecture</h2><p>${esc(I.goal) || 'What you and the agent agreed on before choosing parts. Every line is a decision you can come back to.'}</p></div>
+    <div class="vacts"><button class="btn" data-thread="${esc(((S.sessions || []).find(r => r.id === 'idea') || (S.sessions || []).find(r => !r.anchor) || {}).id || '')}">Open conversation</button>
     ${I.confirmed ? `<button class="btn" data-tab="bom">Next: BOM</button>` : `<button class="btn pri" data-act="confirmidea">Confirm the idea</button>`}</div></div>
     <div class="idea">
-      <div class="card"><h3>Agreed</h3>${items.length ? `<dl class="agreed">${items.map(i => `<div><dt>${esc(i.topic)}</dt><dd dir="auto">${esc(i.text)}<small>${esc(st(i))}</small></dd></div>`).join('')}</dl>` : '<div class="dnote" style="margin:10px">Nothing agreed yet.</div>'}</div>
+      <div class="card"><h3>Agreed requirements</h3>${items.length ? `<dl class="agreed">${items.map(i => `<div><dt>${esc(i.topic)}</dt><dd dir="auto">${esc(i.text)}<small>${esc(st(i))}</small></dd></div>`).join('')}</dl>` : '<div class="dnote" style="margin:10px">Nothing agreed yet. Chat with the advisor to establish requirements.</div>'}</div>
       <div style="display:grid;gap:16px">
-        <div class="card"><h3>Block diagram</h3><div style="padding:10px">${blocksSVG()}</div></div>
+        <div class="card"><h3>Block diagram</h3><div style="padding:10px">${blocksDiagHTML()}</div></div>
       </div>
     </div>`;
 }
 function libHTML() {
   const rows = S.library || [];
   const mk = v => v ? '<span class="y">✓</span>' : '<span class="nn">✗</span>';
-  return `<div class="vhead"><div><h2><span class="m">${esc(PROJECT)}.IntLib</span></h2><p>Only parts that aren't in Altium's default libraries. Each has a symbol, a footprint and a 3D model, and shows whether it was checked against its datasheet and accepted by you.</p></div>
+  return `${guidanceBarHTML('library')}
+    <div class="vhead"><div><h2><span class="m">${esc(PROJECT)}.IntLib</span></h2><p>Only parts that aren't in Altium's default libraries. Each has a symbol, a footprint and a 3D model, and shows whether it was checked against its datasheet and accepted by you.</p></div>
     <div class="vacts"><button class="btn pri" data-act="libexport">Export for Altium</button></div></div>
     ${libExport ? `<div class="howto"><b>${esc(libExport.file)}</b>: ${libExport.parts} parts. <a class="lnk" href="/api/export/${encodeURIComponent(libExport.file)}?${q()}">Download</a> <button class="x" data-act="closecard" aria-label="Close">×</button>
       ${libExport.warnings.length ? `<div class="warnbox"><b>Still unverified</b> (${libExport.warnings.length}):<ul>${libExport.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '<div>Every part is verified and accepted.</div>'}
@@ -1030,7 +1299,8 @@ function srcTable(list) {
 }
 function sourcesHTML() {
   const sh = (S.sources || []).filter(s => s.scope === 'shared'), pr = (S.sources || []).filter(s => s.scope === 'project');
-  return `<div class="vhead"><div><h2>Sources</h2><p>Everything the agent may cite. Each file sits next to a <span class="m">.json</span> sidecar (url, sha256, size) and its extracted <span class="m">.txt</span>, so a quote can be checked word for word.</p></div>
+  return `${guidanceBarHTML('sources')}
+    <div class="vhead"><div><h2>Sources</h2><p>Everything the agent may cite. Each file sits next to a <span class="m">.json</span> sidecar (url, sha256, size) and its extracted <span class="m">.txt</span>, so a quote can be checked word for word.</p></div>
     <div class="vacts"><button class="btn" data-act="addurl">Add from URL</button><button class="btn pri" data-act="upload">Upload file</button></div></div>
     <div class="sgroup"><div class="sgh"><h3>Shared library</h3><p>Available in every project · <span class="path">shared/datasheets/</span></p></div>${srcTable(sh)}</div>
     <div class="sgroup"><div class="sgh"><h3>Project sources</h3><p>Only ${esc(S.title)} · <span class="path">projects/${esc(PROJECT)}/sources/</span></p></div>${srcTable(pr)}</div>
@@ -1038,7 +1308,8 @@ function sourcesHTML() {
 }
 function skillsHTML() {
   const sk = SKILLS || [];
-  return `<div class="vhead"><div><h2>Skills</h2><p>What the agent can do. You don't call these directly: ask in the chat and the agent picks the right one. The BOM page buttons run the same scripts.</p></div></div>
+  return `${guidanceBarHTML('skills')}
+    <div class="vhead"><div><h2>Skills</h2><p>What the agent can do. You don't call these directly: ask in the chat and the agent picks the right one. The BOM page buttons run the same scripts.</p></div></div>
     <div class="skills">${sk.map(s => `<div class="skill"><span class="t">${esc(s.name)}<span class="tag ${s.available ? 'ok' : 'plan'}">${s.available ? 'Available' : 'Not built yet'}</span></span><span class="d">${esc(s.what)}</span>${s.script ? `<span class="u">scripts/skills/${esc(s.script)}</span>` : ''}</div>`).join('')}</div>`;
 }
 function settingsHTML() {
@@ -1151,7 +1422,8 @@ function settingsHTML() {
       </div>`;
   }
 
-  return `<div class="vhead"><div><h2>Settings</h2><p>Saved to <span class="m">${esc(c.config_file)}</span>.</p></div></div>
+  return `${guidanceBarHTML('settings')}
+    <div class="vhead"><div><h2>Settings</h2><p>Saved to <span class="m">${esc(c.config_file)}</span>.</p></div></div>
     <div class="form">
       <label>Engine<select id="set-provider">${engines.map(e => `<option value="${esc(e.id)}" ${e.active ? 'selected' : ''} ${e.status !== 'implemented' ? 'disabled' : ''}>${esc(e.id)}${e.available ? '' : ' (unavailable: ' + esc(e.reason || '') + ')'}</option>`).join('')}</select></label>
       <label>Model <small>(blank = the engine's default)</small><input id="set-model" value="${esc(c.agent.model || '')}"></label>
@@ -1389,18 +1661,19 @@ function renderCenter(force) {
   $('#whead').innerHTML = wheadHTML();
   const v = $('#view');
   const top = v.scrollTop;
-  v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : tab === 'rules' ? rulesHTML() : tab === 'outputs' ? outputsHTML() : tab === 'checks' ? checksHTML() : ideaHTML())
+  v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : tab === 'pcb' ? pcbHTML() : tab === 'rules' ? rulesHTML() : tab === 'outputs' ? outputsHTML() : tab === 'checks' ? checksHTML() : ideaHTML())
     : page === 'outputs' ? outputsHTML() : page === 'checks' ? checksHTML() : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : settingsHTML();
   v.scrollTop = top;
   if (page === 'workspace' && tab === 'sch' && S.sheets.length) loadSheet();
   if (page === 'workspace' && tab === 'rules' && !RULES_DATA) loadRules();
+  if (page === 'workspace' && tab === 'pcb') loadPcb();
   if (page === 'settings' && !ALTIUM_DATA) loadAltium();
   if (page === 'sources' && hitSrc) { const r = document.getElementById('src-' + hitSrc.replace(/[^\w-]/g, '_')); if (r) r.scrollIntoView({block: 'center'}); hitSrc = null; }
   renderDetail();
 }
 function renderDetail() {
   const d = $('#detail');
-  const show = !!sel && lineByKey(sel) && ((page === 'workspace' && (tab === 'bom' || tab === 'sch')) || page === 'library');
+  const show = !!sel && lineByKey(sel) && ((page === 'workspace' && (tab === 'bom' || tab === 'sch' || tab === 'pcb')) || page === 'library');
   d.hidden = !show;
   d.innerHTML = show ? detailHTML() : '';
 }
@@ -1739,31 +2012,34 @@ async function openViewerExport(name) {
 
 /* ---------- events ---------- */
 document.addEventListener('click', async e => {
-  const el = e.target.closest('button, tr[data-key], g.part, g[data-tab], text.net, text.pwr, text.pwr3, text.gt, a');
+  const el = e.target.closest('button, tr[data-key], g.part, g.diag-block, g[data-tab], g[data-act], a');
   if (!el) return;
   if (el.tagName === 'A') return;
-  const netEl = el.closest ? el.closest('.net, .pwr, .pwr3, .gt, [data-net]') : null;
-  if (netEl && (page === 'workspace' && tab === 'sch')) {
-    const netTxt = (netEl.dataset.net || netEl.textContent || '').trim();
-    if (netTxt && netTxt !== 'No ERC') {
-      schAnchor = { type: 'net', anchor: 'net:' + netTxt, label: 'Net ' + netTxt };
+  if (diagLinkingFrom) {
+    const blockEl = el.closest('g.diag-block');
+    const destId = blockEl ? blockEl.dataset.bid : null;
+    if (destId && destId !== diagLinkingFrom) {
+      const label = prompt('Signal or voltage label (e.g. SPI, I2C, 3.3V, SAFETY):', 'SPI');
+      if (label !== null) {
+        const links = S.idea.links || [];
+        links.push({from: diagLinkingFrom, to: destId, label: label.trim(), safety: /safety/i.test(label)});
+        diagLinkingFrom = null;
+        await api('/api/idea', {blocks: S.idea.blocks || [], links});
+        renderCenter(true);
+        toast('Blocks connected');
+        return;
+      }
+    }
+    if (el.dataset.act !== 'diag-link-start') {
+      diagLinkingFrom = null;
       renderCenter(true);
-      return;
     }
   }
-  if (el.matches('g.part') || (el.closest && el.closest('g.part'))) {
-    const gp = el.matches('g.part') ? el : el.closest('g.part');
-    const ref = gp.dataset.ref;
-    const l = lineOfRef(ref);
-    schAnchor = { type: 'part', anchor: l ? l.key : ref, label: 'Part ' + (l && l.refs ? l.refs.join(', ') : ref) };
-    if (l) select(l.key);
-    if (page === 'workspace' && tab === 'sch') renderCenter(true);
-    return;
-  }
+  if (el.matches('g.part')) { const l = lineOfRef(el.dataset.ref); if (l) select(l.key); return; }
   if (el.matches('tr[data-key]')) { if (e.target.closest('input')) return; if (!e.target.closest('button')) { select(el.dataset.key); return; } }
   const d = el.dataset;
   try {
-    if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); toast(d.decide === 'approved' ? 'Change applied to the BOM, schematic and library' : 'Rejected. Nothing changed'); return; }
+    if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); toast(d.decide === 'approved' ? 'Change applied' : 'Rejected'); return; }
     if (d.accept) { setState(await api('/api/library/accept', {line: d.accept})); render(true); toast('Accepted'); return; }
     if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast('Result: ' + r.result.verify); return; }
     if (d.thread !== undefined && el.dataset.thread !== undefined) { if (d.thread) switchSession(d.thread); return; }
@@ -1876,6 +2152,115 @@ document.addEventListener('click', async e => {
       case 'closecard': compareCard = exportCard = libExport = altsCard = null; render(true); return;
       case 'convs': convsOpen = !convsOpen; renderConvs(); return;
       case 'check-all': toast('Checking stock with JLC…'); { const r = await api('/api/parts/check', {}); setState(r); render(true); toast('Stock checked for all lines'); } return;
+      case 'ask-sch': {
+        const target = el.dataset.target, kind = el.dataset.kind || 'part';
+        const txt = `Tell me about ${kind} ${target} on the schematic. What is its role and what should I check?`;
+        const inp = $('#input');
+        if (inp) { inp.value = txt; inp.focus(); }
+        setView('chat');
+        return;
+      }
+      case 'clear-sch-sel': schSel = null; renderCenter(true); return;
+      case 'ask-pcb': {
+        const target = el.dataset.target, kind = el.dataset.kind || 'part';
+        const txt = `Tell me about the layout and routing of ${kind} ${target} on the PCB. What are the clearance, placement, and trace rules?`;
+        const inp = $('#input');
+        if (inp) { inp.value = txt; inp.focus(); }
+        setView('chat');
+        return;
+      }
+      case 'clear-pcb-sel': pcbSel = null; renderCenter(true); return;
+      case 'toggle-layer': {
+        const layer = el.dataset.layer;
+        if (layer in pcbLayers) {
+          pcbLayers[layer] = !pcbLayers[layer];
+          afterPcb();
+          renderCenter(true);
+        }
+        return;
+      }
+      case 'diag-add': {
+        const name = prompt('Block name / MPN (e.g. ESP32-S3, TPS54302, USB-C):');
+        if (!name || !name.trim()) return;
+        const role = prompt('One-line role in circuit:', 'Controller / Power / Sensor') || '';
+        const domChoice = prompt('Domain (' + DOMAIN_KEYS.join(', ') + '):', 'mcu') || 'mcu';
+        const domain = DOMAINS[domChoice.toLowerCase()] ? domChoice.toLowerCase() : 'mcu';
+        const newId = 'b_' + Date.now().toString(36);
+        const blocks = S.idea.blocks || [];
+        blocks.push({
+          id: newId,
+          label: name.trim(),
+          role: role.trim(),
+          domain,
+          x: 220 + (blocks.length % 3) * 180,
+          y: 80 + Math.floor(blocks.length / 3) * 110
+        });
+        await api('/api/idea', {blocks, links: S.idea.links || []});
+        renderCenter(true);
+        toast('Block added');
+        return;
+      }
+      case 'diag-del-block': {
+        const bid = d.bid;
+        if (!confirm('Delete block ' + bid + '?')) return;
+        const blocks = (S.idea.blocks || []).filter(b => b.id !== bid);
+        const links = (S.idea.links || []).filter(l => {
+          const from = Array.isArray(l) ? l[0] : (l.from || l.a);
+          const to = Array.isArray(l) ? l[1] : (l.to || l.b);
+          return from !== bid && to !== bid;
+        });
+        await api('/api/idea', {blocks, links});
+        renderCenter(true);
+        toast('Block deleted');
+        return;
+      }
+      case 'diag-cycle-domain': {
+        const bid = d.bid;
+        const b = (S.idea.blocks || []).find(x => x.id === bid);
+        if (b) {
+          const idx = DOMAIN_KEYS.indexOf(b.domain || 'mcu');
+          b.domain = DOMAIN_KEYS[(idx + 1) % DOMAIN_KEYS.length];
+          await api('/api/idea', {blocks: S.idea.blocks, links: S.idea.links || []});
+          renderCenter(true);
+          toast('Domain set to ' + DOMAINS[b.domain].name);
+        }
+        return;
+      }
+      case 'diag-link-start': {
+        diagLinkingFrom = d.bid;
+        renderCenter(true);
+        toast('Click destination block to link');
+        return;
+      }
+      case 'diag-cancel-link': {
+        diagLinkingFrom = null;
+        renderCenter(true);
+        return;
+      }
+      case 'diag-edit-edge': {
+        const lidx = parseInt(d.lidx, 10);
+        const links = S.idea.links || [];
+        const cur = links[lidx];
+        if (!cur) return;
+        const curLabel = Array.isArray(cur) ? (cur[2] || '') : (cur.label || '');
+        const newLabel = prompt('Link label (voltage or bus, blank to delete):', curLabel);
+        if (newLabel === null) return;
+        if (newLabel.trim() === '') {
+          links.splice(lidx, 1);
+        } else {
+          if (Array.isArray(cur)) {
+            cur[2] = newLabel.trim();
+            cur[3] = /safety/i.test(cur[2]);
+          } else {
+            cur.label = newLabel.trim();
+            cur.safety = /safety/i.test(cur.label);
+          }
+        }
+        await api('/api/idea', {blocks: S.idea.blocks, links});
+        renderCenter(true);
+        toast('Link updated');
+        return;
+      }
       case 'alts': {
         const lineKey = el.dataset.line;
         const l = lineByKey(lineKey);
@@ -2023,6 +2408,89 @@ document.addEventListener('change', async e => {
 $('#form').addEventListener('submit', e => { e.preventDefault(); const i = $('#input'); const t = i.value; i.value = ''; i.style.height = ''; send(t); });
 $('#input').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#form').requestSubmit(); } });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeViewer(); } });
+
+/* ---------- diagram drag & inline edit ---------- */
+document.addEventListener('mousedown', e => {
+  const block = e.target.closest('g.diag-block');
+  if (!block) return;
+  if (e.target.closest('[data-act]')) return;
+  dragBlockId = block.dataset.bid;
+  const b = (S.idea.blocks || []).find(x => x.id === dragBlockId);
+  if (!b) return;
+  isDraggingDiag = true;
+  dragStartX = e.clientX;
+  dragStartY = e.clientY;
+  blockOrigX = b.x ?? 220;
+  blockOrigY = b.y ?? 100;
+  block.classList.add('dragging');
+});
+document.addEventListener('mousemove', e => {
+  if (!isDraggingDiag || !dragBlockId) return;
+  const b = (S.idea.blocks || []).find(x => x.id === dragBlockId);
+  if (!b) return;
+  const dx = e.clientX - dragStartX;
+  const dy = e.clientY - dragStartY;
+  b.x = Math.max(10, Math.round(blockOrigX + dx));
+  b.y = Math.max(10, Math.round(blockOrigY + dy));
+  const el = $(`g.diag-block[data-bid="${dragBlockId}"]`);
+  if (el) el.setAttribute('transform', `translate(${b.x}, ${b.y})`);
+});
+document.addEventListener('mouseup', async e => {
+  if (!isDraggingDiag) return;
+  isDraggingDiag = false;
+  const el = $(`g.diag-block[data-bid="${dragBlockId}"]`);
+  if (el) el.classList.remove('dragging');
+  dragBlockId = null;
+  try {
+    await api('/api/idea', {blocks: S.idea.blocks, links: S.idea.links || []});
+    renderCenter(true);
+  } catch (err) { /* toasted */ }
+});
+document.addEventListener('dblclick', async e => {
+  const block = e.target.closest('g.diag-block');
+  if (block) {
+    const bid = block.dataset.bid;
+    const b = (S.idea.blocks || []).find(x => x.id === bid);
+    if (!b) return;
+    const newLabel = prompt('Block name / part:', b.label || b.id);
+    if (newLabel === null) return;
+    const newRole = prompt('One-line role in circuit:', b.role || '') || '';
+    b.label = newLabel.trim() || b.id;
+    b.role = newRole.trim();
+    try {
+      await api('/api/idea', {blocks: S.idea.blocks, links: S.idea.links || []});
+      renderCenter(true);
+      toast('Block updated');
+    } catch (err) { /* toasted */ }
+    return;
+  }
+  const edge = e.target.closest('.diag-edge-label');
+  if (edge) {
+    const lidx = parseInt(edge.dataset.lidx, 10);
+    const links = S.idea.links || [];
+    const cur = links[lidx];
+    if (!cur) return;
+    const curLabel = Array.isArray(cur) ? (cur[2] || '') : (cur.label || '');
+    const newLabel = prompt('Link label (voltage or bus, blank to delete):', curLabel);
+    if (newLabel === null) return;
+    if (newLabel.trim() === '') {
+      links.splice(lidx, 1);
+    } else {
+      if (Array.isArray(cur)) {
+        cur[2] = newLabel.trim();
+        cur[3] = /safety/i.test(cur[2]);
+      } else {
+        cur.label = newLabel.trim();
+        cur.safety = /safety/i.test(cur.label);
+      }
+    }
+    try {
+      await api('/api/idea', {blocks: S.idea.blocks, links});
+      renderCenter(true);
+      toast('Link updated');
+    } catch (err) { /* toasted */ }
+  }
+});
 
 /* ---------- start ---------- */
 (async function start() {
