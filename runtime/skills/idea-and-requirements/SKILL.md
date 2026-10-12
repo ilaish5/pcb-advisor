@@ -36,6 +36,7 @@ Question list (pick, do not ask all):
 ## Scripts
 - None needed for the questions. Do not run stock checks here; if the student already names parts, go to `parts-and-stock`.
 - `python <repo>/scripts/model.py <project>` prints the project state (idea, BOM). Read it before asking.
+- `python <repo>/scripts/keeping.py <project> log|decisions` - records agreed architectural decisions in the decision log.
 
 ## References
 - `<repo>/docs/PRODUCT-PLAN.md` - section 1 (K4: late requirements cost a day of rework) and section 3.

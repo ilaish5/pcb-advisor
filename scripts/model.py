@@ -129,6 +129,20 @@ def sheets(project):
                     "parts": {p["ref"]: {"section": p.get("section"),
                                          "nets": store.nets_of(project, p["ref"])}
                               for p in s.get("parts", [])}})
+    link = project_mod.altium_link(project)
+    if link.get("project_file"):
+        pf = pathlib.Path(link["project_file"])
+        if pf.is_file():
+            try:
+                from altium.prjpcb import read_prjpcb
+                prj_info = read_prjpcb(pf)
+                for s in prj_info.get("sheets", []):
+                    s_name = pathlib.Path(s.replace("\\", "/")).name
+                    s_stem = pathlib.Path(s.replace("\\", "/")).stem
+                    if not any(x["id"] in (s_name, s_stem) for x in out):
+                        out.append({"id": s_stem, "title": s_stem, "sections": [], "parts": {}, "altium": True, "file": s_name})
+            except Exception:
+                pass
     return out
 
 
@@ -165,12 +179,15 @@ def build(project=None, session=None):
     tot = store.totals(lines)
     props = store.proposals(project)
     sessions = session_mod.list_all(project)
+    import preview_pcb
+    placement_plan = preview_pcb.load_placement_plan(project)
     return {
         "project": project,
         "title": meta.get("title") or project,
         "meta": meta,
         "board": {**workspace.get("engineering_defaults", {}), **(meta.get("board") or {})},
         "idea": idea,
+        "placement_plan": placement_plan,
         "bom": lines,
         "totals": tot,
         "proposals": props,

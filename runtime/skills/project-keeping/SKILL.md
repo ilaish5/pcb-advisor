@@ -39,8 +39,7 @@ description: Keeps the project folder in order, records who decided what and why
   (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/model.py <project>` prints the project state.
 - `python <repo>/scripts/project.py ...` project folder helpers (see its usage text).
-- (planned, stage I10) `scripts/keeping.py` folder order, decision log, change impact, final file organization. Until
-  it exists, say "not automated yet", write the entries by hand in `notes.md`, and list files by reading the folders.
+- `python <repo>/scripts/keeping.py <project> log|decisions|impact|report` - decision log, change impact list, file organization.
 - Submission itself is out of scope: only the file organization.
 
 ## References

@@ -296,6 +296,17 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     return append(project, "proposals.jsonl", rec)
 
 
+def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
+    """Record a proposal to update the idea block diagram."""
+    pid = "p" + dt.datetime.now().strftime("%Y%m%d%H%M%S%f")[:17]
+    existing = load_idea(project)
+    before = {"blocks": existing.get("blocks", []), "links": existing.get("links", [])}
+    rec = {"id": pid, "ts": now(), "kind": "idea_diagram", "line": "diagram",
+           "changes": changes, "before": before, "reason": reason, "sources": list(sources),
+           "session": session, "status": "pending"}
+    return append(project, "proposals.jsonl", rec)
+
+
 def decide(project, pid, decision):
     """Approve or reject. Approving appends to bom-log.jsonl (and library-log.jsonl) - that is
     the only way an agent-proposed change reaches the BOM."""
@@ -308,14 +319,22 @@ def decide(project, pid, decision):
         raise ValueError(f"proposal already {prop['status']}")
     append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
     if decision == "approved":
-        append(project, "bom-log.jsonl", {
-            "ts": now(), "by": "agent-approved", "line": prop["line"], "changes": prop["changes"],
-            "before": prop.get("before"), "reason": prop.get("reason"),
-            "sources": prop.get("sources"), "proposal": pid})
-        if prop.get("library"):
-            append(project, "library-log.jsonl", {
-                "ts": now(), "by": "agent-approved", "line": prop["line"],
-                "changes": prop["library"], "proposal": pid})
+        if prop.get("kind") == "idea_diagram":
+            idea = load_idea(project)
+            changes = prop.get("changes") or {}
+            for k in ("blocks", "links"):
+                if k in changes:
+                    idea[k] = changes[k]
+            save_idea(project, idea)
+        else:
+            append(project, "bom-log.jsonl", {
+                "ts": now(), "by": "agent-approved", "line": prop["line"], "changes": prop["changes"],
+                "before": prop.get("before"), "reason": prop.get("reason"),
+                "sources": prop.get("sources"), "proposal": pid})
+            if prop.get("library"):
+                append(project, "library-log.jsonl", {
+                    "ts": now(), "by": "agent-approved", "line": prop["line"],
+                    "changes": prop["library"], "proposal": pid})
     return prop
 
 

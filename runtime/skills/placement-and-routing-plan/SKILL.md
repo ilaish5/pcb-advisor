@@ -39,10 +39,7 @@ Altium. You never move parts and never route. Show the plan picture BEFORE the s
     layer-changing signal via. Pour polygons last (course m22).
 
 ## Scripts
-- (planned, stage I9) `<repo>/scripts/preview/placement.py` - top-view placement picture from the PcbDoc and the zone plan.
-- (planned, stage I9) `<repo>/scripts/preview/routing_plan.py` - critical-net routing plan table and picture.
-  Until I9 exists, say the picture is not automated yet: give the zone list and the anchor table in text, and have the student
-  sketch it on the board outline.
+- `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project> [--plan <plan.json>]` - renders PcbDoc with placement plan overlays to SVG.
 - `python <repo>/scripts/trace_width.py <amps> --layer external --oz 1` - width for a power net (IPC-2221).
 
 ## References
