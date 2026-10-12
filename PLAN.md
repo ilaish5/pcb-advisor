@@ -216,7 +216,13 @@ closed on the user's request to free memory. On the user's request C and D run i
 git worktree (`../pcb-advisor-wt-c` on branch stage-c, `../pcb-advisor-wt-d` on branch stage-d, .venv junctioned);
 Claude Code verifies each, commits it on its branch and merges into this branch, then removes the worktrees.
 
-**Next: I11** (full benchmark only with the user's OK, docs, English UI check, final summary).
+**I11 in progress (2026-10-12):** docs done (`4c5c24e`). UI rework from the user's live feedback, built by agy,
+committed `0d9a3d0` (see section 8 "UI rework"). Queued for agy (quota reset ~12:46): right-drag pan in all zoomable
+views + Idea/nav layout fixes, then diagram hardening (attribute escaping, no validation bypasses). Then: one commit,
+server restart, full benchmark only with the user's OK, final summary.
+
+**Note:** the UI server does not reload Python; restart it after serve.py/store.py changes (a stale server made
+"Ask about this file" look broken on 2026-10-12).
 
 **Waiting for the user:** import the JLC rules once in Altium (Rules tab -> export .RUL -> the 4-step import guide
 shown there) and say whether the rules appear as expected.
@@ -348,4 +354,17 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 8. Incident: removing the C worktree followed its `.venv` junction and emptied the shared venv; agy patched it with a
    system-site `.pth`. Fixed: venv rebuilt from requirements (Pillow added to requirements.txt), junctions removed first.
 9. Tests green after the rebuild, skills lint ok. No benchmark run.
-10. Open: previews and the diagram editor not opened in a browser; device previews to be checked by the user (section 7).
+10. Open at the time: previews not yet opened in a browser. Since done: device previews checked, UI screenshotted in Edge.
+
+### UI rework from user feedback (part of I11), 2026-10-12
+1. Panes: chat | nav | center with splitters, collapse/restore, compact nav, Settings -> Reset layout.
+2. Stages fit the center without horizontal scroll; tab bar has scroll arrows.
+3. Editor groups: stages and files are tabs; split view (⇆/▭), drag tabs between groups, layout persisted.
+4. Idea: requirements on top, Miro-like diagram below (`ui/diagram.js`): shapes, connectors, frames, undo/redo,
+   template; `POST /api/idea/diagram` validates; old blocks/links migrated.
+5. Component panel for schematic/PCB clicks (pins, nets, BOM line, datasheet, ask); previews zoom + fit.
+6. "Ask about this file": chat receives the source text (12k chars); `.pdf` uploads must start with `%PDF-`.
+7. DFM split into PCB (bare board) and SMT (assembly) reports; skill reference `jlcdfm-smt.md`.
+8. Review fixes by Claude Code: test-only bypass removed from upload; flaky chat test stubbed (was calling the model).
+9. Open: diagram attributes not escaped + validation bypasses (queued fix); right-drag pan (queued).
+10. Tests green (all), Edge screenshot of the Idea tab ok. No benchmark run.

@@ -10,6 +10,7 @@ Tests for Miro-like Block Diagram Editor (Idea stage):
 import json
 import math
 import pathlib
+import re
 import threading
 import urllib.error
 import urllib.request
@@ -295,6 +296,91 @@ def test_validation_rejects_invalid_connector_endpoints():
         })
 
 
+@pytest.mark.parametrize("injected", [
+    '#fff" onmouseover="alert(1)',
+    "#fff' onmouseover='alert(1)",
+    "<script>alert(1)</script>",
+    '#fff">',
+    "blue<script>",
+])
+def test_validation_rejects_injected_fill(injected):
+    with pytest.raises(ValueError, match="invalid fill"):
+        store.validate_diagram({
+            "shapes": [{"id": "s1", "type": "block", "x": 0, "y": 0, "w": 100, "h": 50, "fill": injected}]
+        })
+
+
+@pytest.mark.parametrize("injected", [
+    '#000" onmouseover="alert(1)',
+    "#000' onmouseover='alert(1)",
+    "<script>alert(1)</script>",
+    '#000">',
+])
+def test_validation_rejects_injected_stroke(injected):
+    with pytest.raises(ValueError, match="invalid stroke"):
+        store.validate_diagram({
+            "shapes": [{"id": "s1", "type": "block", "x": 0, "y": 0, "w": 100, "h": 50, "stroke": injected}]
+        })
+    with pytest.raises(ValueError, match="invalid stroke"):
+        store.validate_diagram({
+            "connectors": [{"id": "c1", "from": {"x": 0, "y": 0}, "to": {"x": 10, "y": 10}, "stroke": injected}]
+        })
+    with pytest.raises(ValueError, match="invalid stroke"):
+        store.validate_diagram({
+            "frames": [{"id": "f1", "x": 0, "y": 0, "w": 100, "h": 50, "stroke": injected}]
+        })
+
+
+@pytest.mark.parametrize("injected", [
+    's1" onmouseover="alert(1)',
+    "s1' onmouseover='alert(1)",
+    "<script>alert(1)</script>",
+    's1">',
+    "s 1",
+])
+def test_validation_rejects_injected_id(injected):
+    with pytest.raises(ValueError, match="invalid shape id"):
+        store.validate_diagram({
+            "shapes": [{"id": injected, "type": "block", "x": 0, "y": 0, "w": 100, "h": 50}]
+        })
+    with pytest.raises(ValueError, match="invalid connector id"):
+        store.validate_diagram({
+            "connectors": [{"id": injected, "from": {"x": 0, "y": 0}, "to": {"x": 10, "y": 10}}]
+        })
+    with pytest.raises(ValueError, match="invalid frame id"):
+        store.validate_diagram({
+            "frames": [{"id": injected, "x": 0, "y": 0, "w": 100, "h": 50}]
+        })
+
+
+def test_migration_replaces_bad_ids_and_colours():
+    old_idea = {
+        "blocks": [
+            {"id": 'bad"id', "label": "Bad ID Block", "domain": "mcu", "fill": '#fff" onmouseover="alert(1)', "stroke": '<script>'},
+            {"id": "valid_id", "label": "Valid Block", "domain": "invalid_domain", "fill": "valid_color", "stroke": "bad'stroke"},
+        ],
+        "links": [
+            ['bad"id', "valid_id", "link1"],
+        ]
+    }
+    migrated = store.migrate_idea_diagram(old_idea)
+    diag = migrated["diagram"]
+    assert store.validate_diagram(diag)  # must pass validate_diagram
+    assert len(diag["shapes"]) == 2
+    s0 = diag["shapes"][0]
+    assert s0["id"] == "block_0"
+    assert s0["fill"] == store.DOMAIN_COLORS["mcu"]["fill"]
+    assert s0["stroke"] == store.DOMAIN_COLORS["mcu"]["stroke"]
+    s1 = diag["shapes"][1]
+    assert s1["id"] == "valid_id"
+    # bad fill/stroke replaced by domain default
+    assert s1["fill"] == "#f1f5f9"
+    assert s1["stroke"] == "#64748b"
+    c0 = diag["connectors"][0]
+    assert c0["from"]["shape"] == "block_0"
+    assert c0["to"]["shape"] == "valid_id"
+
+
 # ---------------------------------------------------------------- static checks
 
 def test_static_checks_diagram_js():
@@ -334,6 +420,10 @@ def test_static_checks_diagram_js():
     assert "snap" in content.lower(), "Snap to grid feature required in diagram.js"
     assert "grid" in content.lower(), "Dot grid feature required in diagram.js"
     assert "template" in content.lower(), "Template loader required in diagram.js"
+
+    # Security hardening checks
+    assert "sanitizemodel" in content.lower(), "sanitizeModel function required in diagram.js"
+    assert "&#39;" in content, "escapeHtml in diagram.js must escape single quote with &#39;"
 
 
 # ---------------------------------------------------------------- proposal flow
@@ -388,6 +478,46 @@ def test_agent_proposal_flow(lte):
     idea_after_approve = store.load_idea(lte)
     shapes_after = idea_after_approve.get("diagram", {}).get("shapes", [])
     assert any(s.get("id") == "prop_mcu" for s in shapes_after)
+
+
+@pytest.mark.parametrize("bad_field,bad_val", [
+    ("fill", '#fff" onmouseover="alert(1)'),
+    ("stroke", '#000<script>alert(1)</script>'),
+    ("id", 's1" onclick="alert(1)'),
+])
+def test_proposal_approval_with_injected_value_refused_and_idea_unchanged(empty, bad_field, bad_val):
+    initial_idea = store.load_idea(empty)
+    store.save_idea(empty, initial_idea)
+    idea_path = store.pdir(empty) / "idea.json"
+    idea_before = idea_path.read_text(encoding="utf-8")
+
+    shape_dict = {
+        "id": "bad_shape" if bad_field != "id" else bad_val,
+        "type": "block",
+        "x": 100.0,
+        "y": 100.0,
+        "w": 160.0,
+        "h": 68.0,
+        "text": "Malicious Block",
+        "fill": "#ffffff" if bad_field != "fill" else bad_val,
+        "stroke": "#2980b9" if bad_field != "stroke" else bad_val,
+    }
+    rec = store.propose_idea_diagram(
+        empty,
+        {"diagram": {"shapes": [shape_dict], "connectors": [], "frames": []}},
+        reason="Agent proposed injected block"
+    )
+    pid = rec["id"]
+
+    with pytest.raises(ValueError):
+        store.decide(empty, pid, "approved")
+
+    idea_after = idea_path.read_text(encoding="utf-8")
+    assert idea_after == idea_before
+
+    props = store.proposals(empty)
+    target_prop = next(p for p in props if p["id"] == pid)
+    assert target_prop["status"] != "approved"
 
 
 # ---------------------------------------------------------------- server endpoints
@@ -457,3 +587,90 @@ def test_server_idea_diagram_api_endpoints(server, empty):
     code_bad, res_bad = post_json(server, "/api/idea/diagram", bad_payload, empty)
     assert code_bad == 400
     assert "error" in res_bad
+
+
+# ---------------------------------------------------------------- icon-only toolbar & 16 shapes
+
+SIXTEEN_SHAPE_TYPES = [
+    "rectangle", "ellipse", "diamond", "triangle",
+    "rounded_rectangle", "cloud", "star", "arrow_right",
+    "parallelogram", "hexagon", "octagon", "double_arrow",
+    "speech_callout", "cylinder", "process", "note_brace",
+]
+
+
+def test_rail_buttons_aria_labels_and_no_visible_text_labels():
+    """Verify left rail buttons have aria-labels and no visible text labels."""
+    diagram_path = REPO / "ui" / "diagram.js"
+    content = diagram_path.read_text(encoding="utf-8")
+
+    # Match buttons in the left rail
+    rail_match = re.search(r'rail\.innerHTML\s*=\s*`(.*?)`;', content, re.DOTALL)
+    assert rail_match, "Left rail HTML must exist in diagram.js"
+    rail_html = rail_match.group(1)
+
+    buttons = re.findall(r'<button[^>]*class="[^"]*diag-rail-btn[^"]*"[^>]*>.*?</button>', rail_html, re.DOTALL)
+    assert len(buttons) >= 9, f"Rail must have tool and action buttons, found {len(buttons)}"
+
+    for b in buttons:
+        assert 'aria-label="' in b, f"Rail button must have aria-label: {b}"
+        assert 'title="' in b, f"Rail button must have title: {b}"
+        # Strip SVGs and tags to check for any visible text
+        stripped = re.sub(r'<svg.*?</svg>', '', b, flags=re.DOTALL)
+        text_content = re.sub(r'<[^>]+>', '', stripped).strip()
+        assert not text_content, f"Rail button must not contain visible text label: {text_content!r}"
+
+
+def test_16_shape_types_exist_in_diagram_js_and_valid_shape_types():
+    """Verify all 16 shape types exist in ui/diagram.js and store.VALID_SHAPE_TYPES."""
+    diagram_path = REPO / "ui" / "diagram.js"
+    content = diagram_path.read_text(encoding="utf-8")
+
+    for st in SIXTEEN_SHAPE_TYPES:
+        assert st in store.VALID_SHAPE_TYPES, f"{st} must be in store.VALID_SHAPE_TYPES"
+        assert f"'{st}'" in content or f'"{st}"' in content, f"{st} must exist in ui/diagram.js"
+
+
+def test_context_bar_has_fill_border_line_style_and_arrow_controls():
+    """Verify context bar has fill, border, 3 line styles, and 3 arrowheads."""
+    diagram_path = REPO / "ui" / "diagram.js"
+    content = diagram_path.read_text(encoding="utf-8")
+
+    # Fill and border palette controls
+    assert 'toggle-fill-palette' in content, "Context bar must have fill color palette control"
+    assert 'toggle-border-palette' in content, "Context bar must have border color palette control"
+
+    # 3 line style controls (solid, dashed, dotted)
+    assert 'data-val="solid"' in content
+    assert 'data-val="dashed"' in content
+    assert 'data-val="dotted"' in content
+
+    # 3 arrow controls (none, end, both)
+    assert 'data-val="none"' in content
+    assert 'data-val="end"' in content
+    assert 'data-val="both"' in content
+
+
+def test_validation_accepts_16_shape_types_and_rejects_unknown():
+    """Verify validation accepts all 16 shape types and still rejects unknown ones."""
+    for st in SIXTEEN_SHAPE_TYPES:
+        valid_doc = {
+            "shapes": [{
+                "id": f"shape_{st}",
+                "type": st,
+                "x": 10.0,
+                "y": 20.0,
+                "w": 160.0,
+                "h": 68.0,
+            }]
+        }
+        res = store.validate_diagram(valid_doc)
+        assert res["shapes"][0]["type"] == st
+
+    # Reject unknown shape types
+    for bad in ["pentagon", "star_polygon", "nonexistent_shape", "custom_poly"]:
+        with pytest.raises(ValueError, match="unknown shape type"):
+            store.validate_diagram({
+                "shapes": [{"id": "s_bad", "type": bad, "x": 0, "y": 0, "w": 100, "h": 50}]
+            })
+

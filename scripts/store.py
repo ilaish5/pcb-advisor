@@ -18,17 +18,36 @@ import datetime as dt
 import json
 import math
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import workspace  # noqa: E402
 
-VALID_SHAPE_TYPES = {"block", "ellipse", "diamond", "sticky", "text"}
+ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+COLOR_RE = re.compile(r"^(#[0-9A-Fa-f]{3,8}|rgba?\([0-9., %]+\)|[a-zA-Z]{1,20})$")
+
+VALID_SHAPE_TYPES = {
+    "block", "rectangle", "ellipse", "diamond", "triangle",
+    "rounded_rectangle", "rounded-rectangle", "pill",
+    "cloud", "star", "arrow_right", "arrow-right",
+    "parallelogram", "hexagon", "octagon",
+    "double_arrow", "double-arrow",
+    "speech_callout", "speech-callout", "callout",
+    "cylinder", "database", "process",
+    "note_brace", "note-brace", "brace",
+    "sticky", "text",
+}
 VALID_STROKE_STYLES = {"solid", "dashed", "dotted"}
 VALID_CONNECT_ARROWS = {"none", "end", "both", "start"}
 VALID_CONNECT_ROUTES = {"straight", "elbow", "curved"}
+VALID_ENDPOINT_SIDES = {"top", "bottom", "left", "right"}
 VALID_ALIGN = {"left", "center", "right"}
 VALID_FONT_SIZES = {"S", "M", "L"}
+VALID_DOMAINS = {
+    "power", "sensing", "sensors", "mcu", "comms", "rf",
+    "drive", "io", "ui", "sticky", "white", "none", "",
+}
 
 DOMAIN_COLORS = {
     "power": {"fill": "#fef3e2", "stroke": "#e67e22"},
@@ -341,7 +360,7 @@ def validate_diagram(data):
         if not isinstance(s, dict):
             raise ValueError("shape must be an object")
         sid = s.get("id")
-        if not sid or not isinstance(sid, str) or len(sid) > 64:
+        if not sid or not isinstance(sid, str) or not ID_RE.match(sid):
             raise ValueError(f"invalid shape id: {sid!r}")
         stype = s.get("type", "block")
         if stype not in VALID_SHAPE_TYPES:
@@ -361,9 +380,9 @@ def validate_diagram(data):
 
         fill = s.get("fill", "#ffffff")
         stroke = s.get("stroke", "#1e293b")
-        if not isinstance(fill, str) or len(fill) > 64:
+        if not isinstance(fill, str) or not COLOR_RE.match(fill):
             raise ValueError(f"shape {sid} invalid fill")
-        if not isinstance(stroke, str) or len(stroke) > 64:
+        if not isinstance(stroke, str) or not COLOR_RE.match(stroke):
             raise ValueError(f"shape {sid} invalid stroke")
 
         stroke_style = s.get("strokeStyle", "solid")
@@ -388,7 +407,7 @@ def validate_diagram(data):
 
         z = s.get("z", 1)
         if not isinstance(z, (int, float)) or not math.isfinite(z):
-            z = 1
+            raise ValueError(f"shape {sid} field z must be finite number")
 
         locked = bool(s.get("locked", False))
 
@@ -410,8 +429,11 @@ def validate_diagram(data):
             "z": float(z),
             "locked": locked,
         }
-        if "domain" in s and isinstance(s["domain"], str) and len(s["domain"]) <= 64:
-            clean_s["domain"] = s["domain"]
+        if "domain" in s:
+            dom = s["domain"]
+            if not isinstance(dom, str) or dom not in VALID_DOMAINS:
+                raise ValueError(f"shape {sid} invalid domain: {dom!r}")
+            clean_s["domain"] = dom
         if "role" in s and isinstance(s["role"], str) and len(s["role"]) <= 200:
             clean_s["role"] = s["role"]
         valid_shapes.append(clean_s)
@@ -421,18 +443,18 @@ def validate_diagram(data):
         if not isinstance(c, dict):
             raise ValueError("connector must be an object")
         cid = c.get("id")
-        if not cid or not isinstance(cid, str) or len(cid) > 64:
+        if not cid or not isinstance(cid, str) or not ID_RE.match(cid):
             raise ValueError(f"invalid connector id: {cid!r}")
 
         def validate_endpoint(ep, name):
             if not isinstance(ep, dict):
                 raise ValueError(f"connector {cid} {name} must be object")
             if "shape" in ep:
-                if not isinstance(ep["shape"], str) or len(ep["shape"]) > 64:
+                if not isinstance(ep["shape"], str) or not ID_RE.match(ep["shape"]):
                     raise ValueError(f"connector {cid} {name} shape invalid")
                 side = ep.get("side", "right")
-                if side not in {"top", "bottom", "left", "right"}:
-                    side = "right"
+                if side not in VALID_ENDPOINT_SIDES:
+                    raise ValueError(f"connector {cid} {name} invalid side: {side}")
                 return {"shape": ep["shape"], "side": side}
             elif "x" in ep and "y" in ep:
                 x, y = ep["x"], ep["y"]
@@ -450,7 +472,7 @@ def validate_diagram(data):
             raise ValueError(f"connector {cid} label must be string <= 500 chars")
 
         stroke = c.get("stroke", "#64748b")
-        if not isinstance(stroke, str) or len(stroke) > 64:
+        if not isinstance(stroke, str) or not COLOR_RE.match(stroke):
             raise ValueError(f"connector {cid} invalid stroke")
 
         style = c.get("style", "solid")
@@ -481,7 +503,7 @@ def validate_diagram(data):
         if not isinstance(f, dict):
             raise ValueError("frame must be an object")
         fid = f.get("id")
-        if not fid or not isinstance(fid, str) or len(fid) > 64:
+        if not fid or not isinstance(fid, str) or not ID_RE.match(fid):
             raise ValueError(f"invalid frame id: {fid!r}")
 
         for num_field in ("x", "y", "w", "h"):
@@ -497,7 +519,7 @@ def validate_diagram(data):
             raise ValueError(f"frame {fid} title must be string <= 500 chars")
 
         stroke = f.get("stroke", "#94a3b8")
-        if not isinstance(stroke, str) or len(stroke) > 64:
+        if not isinstance(stroke, str) or not COLOR_RE.match(stroke):
             raise ValueError(f"frame {fid} invalid stroke")
 
         valid_frames.append({
@@ -530,23 +552,44 @@ def migrate_idea_diagram(idea):
     blocks = idea.get("blocks") or []
     links = idea.get("links") or []
 
+    id_map = {}
+
     # If diagram has no shapes but idea has blocks, migrate blocks and links
     if not shapes and blocks:
         for idx, b in enumerate(blocks):
-            bid = str(b.get("id") or f"block_{idx}")
+            raw_bid = str(b.get("id") or "")
+            if raw_bid and ID_RE.match(raw_bid):
+                bid = raw_bid
+            else:
+                bid = f"block_{idx}"
+            if raw_bid:
+                id_map[raw_bid] = bid
+
             x = b.get("x")
             y = b.get("y")
-            if x is None or y is None:
+            if x is None or y is None or not isinstance(x, (int, float)) or not math.isfinite(x) or not isinstance(y, (int, float)) or not math.isfinite(y):
                 x = 100 + (idx % 3) * 220
                 y = 80 + (idx // 3) * 140
             w = b.get("w", 160)
+            if not isinstance(w, (int, float)) or not math.isfinite(w):
+                w = 160
             h = b.get("h", 64)
-            domain = str(b.get("domain") or "").lower()
+            if not isinstance(h, (int, float)) or not math.isfinite(h):
+                h = 64
+
+            raw_domain = str(b.get("domain") or "").lower()
+            domain = raw_domain if raw_domain in VALID_DOMAINS else ""
             dom_colors = DOMAIN_COLORS.get(domain, {"fill": "#f1f5f9", "stroke": "#64748b"})
 
             label = str(b.get("label") or bid)
             role = str(b.get("role") or "")
             text = f"{label}\n{role}" if role else label
+
+            raw_fill = b.get("fill")
+            fill = raw_fill if (isinstance(raw_fill, str) and COLOR_RE.match(raw_fill)) else dom_colors["fill"]
+
+            raw_stroke = b.get("stroke")
+            stroke = raw_stroke if (isinstance(raw_stroke, str) and COLOR_RE.match(raw_stroke)) else dom_colors["stroke"]
 
             shapes.append({
                 "id": bid,
@@ -556,14 +599,14 @@ def migrate_idea_diagram(idea):
                 "w": float(w),
                 "h": float(h),
                 "text": text,
-                "fill": b.get("fill") or dom_colors["fill"],
-                "stroke": b.get("stroke") or dom_colors["stroke"],
+                "fill": fill,
+                "stroke": stroke,
                 "strokeStyle": "solid",
-                "strokeWidth": 2,
+                "strokeWidth": 2.0,
                 "fontSize": "M",
                 "bold": True,
                 "align": "center",
-                "z": idx + 1,
+                "z": float(idx + 1),
                 "locked": False,
                 "domain": domain,
                 "role": role,
@@ -583,20 +626,186 @@ def migrate_idea_diagram(idea):
             else:
                 continue
 
+            from_str = str(from_id)
+            to_str = str(to_id)
+            safe_from = id_map.get(from_str, from_str)
+            if not ID_RE.match(safe_from):
+                safe_from = shapes[0]["id"] if shapes else "block_0"
+            safe_to = id_map.get(to_str, to_str)
+            if not ID_RE.match(safe_to):
+                safe_to = shapes[0]["id"] if shapes else "block_0"
+
             connectors.append({
                 "id": f"conn_{i}",
-                "from": {"shape": str(from_id), "side": "right"},
-                "to": {"shape": str(to_id), "side": "left"},
+                "from": {"shape": safe_from, "side": "right"},
+                "to": {"shape": safe_to, "side": "left"},
                 "label": str(label or ("SAFETY" if safety else "")),
                 "stroke": "#dc2626" if safety else "#64748b",
                 "style": "dashed" if safety else "solid",
                 "arrows": "end",
                 "route": "elbow",
             })
+    else:
+        clean_shapes = []
+        for idx, s in enumerate(shapes):
+            if not isinstance(s, dict):
+                continue
+            raw_sid = str(s.get("id") or "")
+            sid = raw_sid if (raw_sid and ID_RE.match(raw_sid)) else f"shape_{idx}"
+            if raw_sid:
+                id_map[raw_sid] = sid
 
-    diagram["shapes"] = shapes
-    diagram["connectors"] = connectors
-    diagram["frames"] = frames
+            raw_dom = str(s.get("domain") or "").lower() if "domain" in s else ""
+            dom = raw_dom if raw_dom in VALID_DOMAINS else ""
+            dom_colors = DOMAIN_COLORS.get(dom, {"fill": "#ffffff", "stroke": "#1e293b"})
+
+            raw_fill = s.get("fill")
+            fill = raw_fill if (isinstance(raw_fill, str) and COLOR_RE.match(raw_fill)) else dom_colors["fill"]
+            raw_stroke = s.get("stroke")
+            stroke = raw_stroke if (isinstance(raw_stroke, str) and COLOR_RE.match(raw_stroke)) else dom_colors["stroke"]
+
+            stype = s.get("type", "block")
+            if stype not in VALID_SHAPE_TYPES:
+                stype = "block"
+
+            x = s.get("x", 0)
+            y = s.get("y", 0)
+            w = s.get("w", 160)
+            h = s.get("h", 68)
+            x = float(x) if isinstance(x, (int, float)) and math.isfinite(x) else 0.0
+            y = float(y) if isinstance(y, (int, float)) and math.isfinite(y) else 0.0
+            w = float(w) if isinstance(w, (int, float)) and math.isfinite(w) and w > 0 else 160.0
+            h = float(h) if isinstance(h, (int, float)) and math.isfinite(h) and h > 0 else 68.0
+
+            s_style = s.get("strokeStyle", "solid")
+            if s_style not in VALID_STROKE_STYLES:
+                s_style = "solid"
+
+            s_width = s.get("strokeWidth", 2)
+            if not isinstance(s_width, (int, float)) or not math.isfinite(s_width):
+                s_width = 2.0
+
+            font_sz = s.get("fontSize", "M")
+            if isinstance(font_sz, (int, float)):
+                if not math.isfinite(font_sz) or font_sz < 4 or font_sz > 120:
+                    font_sz = "M"
+            elif font_sz not in VALID_FONT_SIZES:
+                font_sz = "M"
+
+            align = s.get("align", "center")
+            if align not in VALID_ALIGN:
+                align = "center"
+
+            z = s.get("z", idx + 1)
+            z = float(z) if isinstance(z, (int, float)) and math.isfinite(z) else float(idx + 1)
+
+            clean_s = {
+                "id": sid,
+                "type": stype,
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+                "text": str(s.get("text") or "")[:2000],
+                "fill": fill,
+                "stroke": stroke,
+                "strokeStyle": s_style,
+                "strokeWidth": float(s_width),
+                "fontSize": font_sz,
+                "bold": bool(s.get("bold", False)),
+                "align": align,
+                "z": z,
+                "locked": bool(s.get("locked", False)),
+            }
+            if dom:
+                clean_s["domain"] = dom
+            if "role" in s and isinstance(s["role"], str):
+                clean_s["role"] = s["role"][:200]
+            clean_shapes.append(clean_s)
+        shapes = clean_shapes
+
+        clean_conns = []
+        for idx, c in enumerate(connectors):
+            if not isinstance(c, dict):
+                continue
+            raw_cid = str(c.get("id") or "")
+            cid = raw_cid if (raw_cid and ID_RE.match(raw_cid)) else f"conn_{idx}"
+
+            raw_stroke = c.get("stroke")
+            stroke = raw_stroke if (isinstance(raw_stroke, str) and COLOR_RE.match(raw_stroke)) else "#64748b"
+            style = c.get("style", "solid")
+            if style not in VALID_STROKE_STYLES:
+                style = "solid"
+            arrows = c.get("arrows", "end")
+            if arrows not in VALID_CONNECT_ARROWS:
+                arrows = "end"
+            route = c.get("route", "elbow")
+            if route not in VALID_CONNECT_ROUTES:
+                route = "elbow"
+
+            def sanitize_ep(ep, name):
+                if not isinstance(ep, dict):
+                    return {"x": 0.0, "y": 0.0}
+                if "shape" in ep:
+                    raw_sh = str(ep["shape"])
+                    safe_sh = id_map.get(raw_sh, raw_sh)
+                    if not ID_RE.match(safe_sh):
+                        safe_sh = shapes[0]["id"] if shapes else "shape_0"
+                    side = ep.get("side", "right")
+                    if side not in VALID_ENDPOINT_SIDES:
+                        side = "right"
+                    return {"shape": safe_sh, "side": side}
+                elif "x" in ep and "y" in ep:
+                    x, y = ep["x"], ep["y"]
+                    x = float(x) if isinstance(x, (int, float)) and math.isfinite(x) else 0.0
+                    y = float(y) if isinstance(y, (int, float)) and math.isfinite(y) else 0.0
+                    return {"x": x, "y": y}
+                return {"x": 0.0, "y": 0.0}
+
+            clean_conns.append({
+                "id": cid,
+                "from": sanitize_ep(c.get("from"), "from"),
+                "to": sanitize_ep(c.get("to"), "to"),
+                "label": str(c.get("label") or "")[:500],
+                "stroke": stroke,
+                "style": style,
+                "arrows": arrows,
+                "route": route,
+            })
+        connectors = clean_conns
+
+        clean_frames = []
+        for idx, f in enumerate(frames):
+            if not isinstance(f, dict):
+                continue
+            raw_fid = str(f.get("id") or "")
+            fid = raw_fid if (raw_fid and ID_RE.match(raw_fid)) else f"frame_{idx}"
+            raw_stroke = f.get("stroke")
+            stroke = raw_stroke if (isinstance(raw_stroke, str) and COLOR_RE.match(raw_stroke)) else "#94a3b8"
+            x = f.get("x", 0)
+            y = f.get("y", 0)
+            w = f.get("w", 320)
+            h = f.get("h", 200)
+            x = float(x) if isinstance(x, (int, float)) and math.isfinite(x) else 0.0
+            y = float(y) if isinstance(y, (int, float)) and math.isfinite(y) else 0.0
+            w = float(w) if isinstance(w, (int, float)) and math.isfinite(w) and w > 0 else 320.0
+            h = float(h) if isinstance(h, (int, float)) and math.isfinite(h) and h > 0 else 200.0
+            clean_frames.append({
+                "id": fid,
+                "x": x,
+                "y": y,
+                "w": w,
+                "h": h,
+                "title": str(f.get("title") or "")[:500],
+                "stroke": stroke,
+            })
+        frames = clean_frames
+
+    diagram = validate_diagram({
+        "shapes": shapes,
+        "connectors": connectors,
+        "frames": frames,
+    })
     idea["diagram"] = diagram
 
     # Keep backward compatibility: sync blocks & links from shapes & connectors
@@ -640,27 +849,32 @@ def decide(project, pid, decision):
         raise KeyError(f"no such proposal: {pid}")
     if prop["status"] != "pending":
         raise ValueError(f"proposal already {prop['status']}")
-    append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
+
     if decision == "approved":
         if prop.get("kind") == "idea_diagram":
             idea = load_idea(project)
             changes = prop.get("changes") or {}
-            if "diagram" in changes and isinstance(changes["diagram"], dict):
-                diag = changes["diagram"]
-                try:
-                    idea["diagram"] = validate_diagram(diag)
-                except ValueError:
-                    idea["diagram"] = diag
+            if "diagram" in changes:
+                if not isinstance(changes["diagram"], dict):
+                    raise ValueError("diagram must be an object")
+                idea["diagram"] = validate_diagram(changes["diagram"])
             for k in ("shapes", "connectors", "frames"):
-                if k in changes and isinstance(changes[k], list):
+                if k in changes:
+                    if not isinstance(changes[k], list):
+                        raise ValueError(f"{k} must be an array")
                     idea.setdefault("diagram", {})[k] = changes[k]
             for k in ("blocks", "links"):
                 if k in changes:
                     idea[k] = changes[k]
             if ("blocks" in changes or "links" in changes) and ("diagram" not in changes and "shapes" not in changes):
                 migrate_idea_diagram(idea)
+            if "diagram" in idea:
+                idea["diagram"] = validate_diagram(idea["diagram"])
+
+            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
             save_idea(project, idea)
         else:
+            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
             append(project, "bom-log.jsonl", {
                 "ts": now(), "by": "agent-approved", "line": prop["line"], "changes": prop["changes"],
                 "before": prop.get("before"), "reason": prop.get("reason"),
@@ -669,6 +883,8 @@ def decide(project, pid, decision):
                 append(project, "library-log.jsonl", {
                     "ts": now(), "by": "agent-approved", "line": prop["line"],
                     "changes": prop["library"], "proposal": pid})
+    else:
+        append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
     return prop
 
 
@@ -738,11 +954,10 @@ def load_idea(project):
 def save_idea(project, idea):
     path = pdir(project) / "idea.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    if "diagram" in idea and isinstance(idea["diagram"], dict):
-        try:
-            idea["diagram"] = validate_diagram(idea["diagram"])
-        except ValueError:
-            pass
+    if "diagram" in idea:
+        if not isinstance(idea["diagram"], dict):
+            raise ValueError("diagram must be an object")
+        idea["diagram"] = validate_diagram(idea["diagram"])
         # keep blocks/links synced
         shapes = idea["diagram"].get("shapes", [])
         if shapes:

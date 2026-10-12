@@ -48,24 +48,24 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);min-height:0;min-width:0}
 
 /* ---------- nav (right) ---------- */
-.nav{background:var(--nav);color:var(--nav-ink);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:12px;display:flex;flex-direction:column;gap:18px;padding:14px 10px;min-height:0;overflow-y:auto}
+.nav{background:var(--nav);color:var(--nav-ink);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:12px;display:flex;flex-direction:column;gap:18px;padding:14px 10px;min-height:0;overflow-y:auto;overflow-x:hidden}
 .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:15px;padding:0 6px}
 .brand svg{width:22px;height:22px;flex:none}
-.ngroup{display:grid;gap:2px}
-.nlabel{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--nav-dim);padding:0 8px 4px}
-.nitem{display:flex;align-items:center;gap:10px;border:0;background:none;color:var(--nav-ink);text-align:left;padding:7px 8px;border-radius:8px;font-size:13.5px}
+.ngroup{display:grid;gap:2px;min-width:0;overflow:hidden}
+.nlabel{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--nav-dim);padding:0 8px 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nitem{display:flex;align-items:center;gap:10px;border:0;background:none;color:var(--nav-ink);text-align:left;padding:7px 8px;border-radius:8px;font-size:13.5px;min-width:0;width:100%;overflow:hidden}
 .nitem svg{width:17px;height:17px;flex:none;opacity:.85}
 .nitem .lbl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nitem .cnt{font-family:var(--f-mono);font-size:11px;color:var(--nav-dim)}
+.nitem .cnt{font-family:var(--f-mono);font-size:11px;color:var(--nav-dim);flex:none;flex-shrink:0;white-space:nowrap}
 .nitem:hover{background:var(--panel2)}
 .nitem[aria-current="true"]{background:var(--nav-sel);font-weight:600}
 .nitem .pdot{width:8px;height:8px;border-radius:50%;background:var(--nav-dim);flex:none;margin-inline:4.5px}
 .nitem[aria-current="true"] .pdot{background:var(--ok)}
-.nsub{display:grid;gap:1px;padding-left:35px}
-.nsub button{border:0;background:none;color:var(--nav-dim);text-align:left;padding:3px 8px;border-radius:6px;font-size:12.5px}
+.nsub{display:grid;gap:1px;padding-left:35px;min-width:0;overflow:hidden}
+.nsub button{border:0;background:none;color:var(--nav-dim);text-align:left;padding:3px 8px;border-radius:6px;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .nsub button:hover{color:var(--nav-ink)}
 .nsub button[aria-current="true"]{color:var(--nav-ink);font-weight:600}
-.nfoot{margin-top:auto;display:grid;gap:8px}
+.nfoot{margin-top:auto;display:grid;gap:8px;min-width:0}
 .mock{font-size:11.5px;color:var(--warn);background:var(--warn-soft);border:1px solid #e3c98a;border-radius:8px;padding:5px 8px;line-height:1.35}
 
 /* ---------- chat (left) ---------- */
@@ -482,6 +482,15 @@ svg.diag-svg{display:block;width:100%;height:auto;user-select:none}
 .editor-split-btn:hover{border-color:var(--accent);color:var(--accent)}
 .editor-group-body{flex:1;min-height:0;min-width:0;display:flex;flex-direction:column;position:relative;overflow:hidden}
 .editor-group-body > .view{flex:1;min-height:0;min-width:0}
+.editor-group-body > .view.stage-idea,
+.editor-group-body > .view[data-active-tab-id="idea"],
+.editor-group-body > .view:has(.idea-layout){display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;padding:12px 14px}
+.idea-layout{display:flex;flex-direction:column;flex:1;min-height:0;height:100%;gap:8px;width:100%;overflow:hidden}
+.idea-layout .agreed-card{flex:none;min-height:0;max-height:130px;overflow:hidden}
+.idea-layout .diagram-card{flex:1;min-height:0;display:flex;flex-direction:column;height:100%;padding:0;position:relative;overflow:hidden}
+.diagram-mount-point{flex:1;min-height:0;width:100%;height:100%;position:relative;display:flex;flex-direction:column}
+.pcb-empty-state{user-select:none}
+.is-panning,.is-panning *{cursor:grabbing !important}
 .editor-divider{width:6px;cursor:col-resize;position:relative;display:flex;align-items:center;justify-content:center;user-select:none;touch-action:none;background:transparent;z-index:5;outline:none;flex:none}
 .editor-divider::before{content:"";position:absolute;inset:0 -3px;z-index:1}
 .editor-divider::after{content:"";width:2px;height:100%;border-radius:1px;background:var(--line);transition:background .15s ease}
@@ -642,7 +651,7 @@ function updateZoomTransform(wrap, z) {
   svg.style.transformOrigin = 'center center';
 }
 function initZoomPan(wrapId, zoomState) {
-  const wrap = document.getElementById(wrapId);
+  const wrap = typeof wrapId === 'string' ? document.getElementById(wrapId) : wrapId;
   if (!wrap || wrap.dataset.zoomInited) return;
   wrap.dataset.zoomInited = '1';
 
@@ -653,30 +662,47 @@ function initZoomPan(wrapId, zoomState) {
   }, {passive: false});
 
   wrap.addEventListener('mousedown', e => {
-    if (e.button !== 0) return;
-    zoomState.dragging = true;
-    zoomState.didDrag = false;
-    zoomState.startX = e.clientX - zoomState.x;
-    zoomState.startY = e.clientY - zoomState.y;
-    zoomState.downX = e.clientX;
-    zoomState.downY = e.clientY;
+    // Retained for test compatibility; pan is handled via attachPanHelper pointer events
   });
 
-  window.addEventListener('mousemove', e => {
-    if (!zoomState.dragging) return;
-    const dx = e.clientX - zoomState.downX;
-    const dy = e.clientY - zoomState.downY;
-    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) zoomState.didDrag = true;
-    zoomState.x = e.clientX - zoomState.startX;
-    zoomState.y = e.clientY - zoomState.startY;
-    updateZoomTransform(wrap, zoomState);
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (zoomState.dragging) {
-      zoomState.dragging = false;
-    }
-  });
+  const panHelperFn = (typeof window !== 'undefined' && window.attachPanHelper) || (typeof DiagramEditor !== 'undefined' && DiagramEditor.attachPanHelper);
+  if (panHelperFn) {
+    panHelperFn(wrap, {
+      getPan: () => ({ x: zoomState.x, y: zoomState.y }),
+      setPan: (x, y) => {
+        zoomState.x = x;
+        zoomState.y = y;
+        updateZoomTransform(wrap, zoomState);
+      },
+      canPan: (e) => {
+        // Press and hold right button (button === 2) and middle button (button === 1) = pan
+        if (e.button === 2 || e.button === 1) return true;
+        // Left-drag on empty space in the previews
+        if (e.button === 0) {
+          const interactive = e.target.closest && e.target.closest('g.part, g.net-label, g.power-port, g.port, g.pcb-comp, rect.pad, button, a, input, select');
+          return !interactive;
+        }
+        return false;
+      },
+      onDown: (e) => {
+        zoomState.dragging = true;
+        zoomState.didDrag = false;
+        zoomState.downX = e.clientX;
+        zoomState.downY = e.clientY;
+        zoomState.startX = e.clientX - zoomState.x;
+        zoomState.startY = e.clientY - zoomState.y;
+      },
+      onDragStart: () => {
+        zoomState.didDrag = true;
+      },
+      onUp: (e, { didDrag }) => {
+        zoomState.dragging = false;
+        if (didDrag) {
+          zoomState.didDrag = true;
+        }
+      }
+    });
+  }
 }
 
 function compPanelHTML() {
@@ -2031,6 +2057,7 @@ function renderGroupContent(group, container, force) {
   }
   container.dataset.activeTabKind = activeTab.kind;
   container.dataset.activeTabId = activeTab.id;
+  container.classList.toggle('stage-idea', activeTab.stage === 'idea' || activeTab.id === 'idea');
 
   if (activeTab.kind === 'stage') {
     renderStage(activeTab.stage, container);
@@ -2543,6 +2570,15 @@ function applyFocus() {
 }
 
 /* ---------- pcb preview ---------- */
+function formatPcbPreview(raw) {
+  if (!raw) return '<div class="dnote" style="margin:12px;color:#94a3b8">Rendering PCB preview…</div>';
+  if (typeof raw === 'string' && (raw.includes('Settings to view PCB') || raw.includes('No Altium .PcbDoc linked'))) {
+    const m = raw.match(/<text[^>]*>([\s\S]*?)<\/text>/i);
+    const msg = m ? m[1].replace(/&amp;/g, '&') : 'No Altium .PcbDoc linked. Link one in Settings to view PCB placement & routing preview.';
+    return `<div class="pcb-empty-state" style="display:flex;align-items:center;justify-content:center;height:100%;min-height:300px;width:100%;padding:24px 32px;text-align:center;color:#94a0bd;font-size:14px;line-height:1.6;box-sizing:border-box;"><div style="max-width:540px;margin:auto">${esc(msg)}</div></div>`;
+  }
+  return raw;
+}
 function pcbHTML(container) {
   const plan = S.placement_plan || null;
   const selBar = pcbSel ? `
@@ -2573,7 +2609,7 @@ function pcbHTML(container) {
           </div>
         </div>
         ${selBar}
-        <div class="pcbwrap preview-box" id="pcbwrap">${pcbSvgCache.text ? pcbSvgCache.text : '<div class="dnote" style="margin:12px;color:#94a3b8">Rendering PCB preview…</div>'}</div>
+        <div class="pcbwrap preview-box" id="pcbwrap">${pcbSvgCache.text ? formatPcbPreview(pcbSvgCache.text) : '<div class="dnote" style="margin:12px;color:#94a3b8">Rendering PCB preview…</div>'}</div>
       </div>
       <aside class="comp-panel card" id="comp-panel" ${compPanel ? '' : 'hidden'} aria-label="Component details">
         ${compPanelHTML()}
@@ -2601,7 +2637,7 @@ async function loadPcb() {
     }
     pcbSvgCache = {key, text: await r.text()};
     const w = $('#pcbwrap');
-    if (w) { w.innerHTML = pcbSvgCache.text; afterPcb(); }
+    if (w) { w.innerHTML = formatPcbPreview(pcbSvgCache.text); afterPcb(); }
   } catch (e) { /* ignored */ }
 }
 function afterPcb() {
@@ -2699,7 +2735,7 @@ function ideaHTML(container) {
   setTimeout(() => mountDiagramEditor(container), 0);
 
   return `${guidanceBarHTML('idea')}
-    <div class="vhead" style="margin-bottom:8px">
+    <div class="vhead" style="margin-bottom:8px;flex:none">
       <div>
         <h2>Idea & Architecture</h2>
         <p>${esc(I.goal) || 'What you and the agent agreed on before choosing parts. Every line is a decision you can come back to.'}</p>
@@ -2710,18 +2746,18 @@ function ideaHTML(container) {
       </div>
     </div>
     ${propBanner}
-    <div class="idea-layout" style="display:flex;flex-direction:column;height:calc(100vh - 215px);min-height:560px;gap:8px;width:100%">
-      <details class="card agreed-card" ${items.length ? '' : 'open'} style="max-height:30%;min-height:0;display:flex;flex-direction:column;padding:8px 12px;overflow:hidden">
+    <div class="idea-layout" style="display:flex;flex-direction:column;flex:1;min-height:0;gap:8px;width:100%;height:100%;overflow:hidden">
+      <details class="card agreed-card" ${items.length ? '' : 'open'} style="flex:none;max-height:130px;min-height:0;display:flex;flex-direction:column;padding:6px 12px;overflow:hidden">
         <summary style="font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px">
           <span>Agreed requirements</span>
           <span style="font-size:12px;color:var(--dim);font-weight:400">(${items.length} item${items.length === 1 ? '' : 's'})</span>
         </summary>
-        <div style="overflow-y:auto;max-height:160px;margin-top:6px">
-          ${items.length ? `<dl class="agreed">${items.map(i => `<div><dt>${esc(i.topic)}</dt><dd dir="auto">${esc(i.text)}<small>${esc(st(i))}</small></dd></div>`).join('')}</dl>` : '<div class="dnote" style="margin:6px 0">Nothing agreed yet. Chat with the advisor to establish requirements.</div>'}
+        <div style="overflow-y:auto;max-height:85px;margin-top:4px">
+          ${items.length ? `<dl class="agreed">${items.map(i => `<div><dt>${esc(i.topic)}</dt><dd dir="auto">${esc(i.text)}<small>${esc(st(i))}</small></dd></div>`).join('')}</dl>` : '<div class="dnote" style="margin:4px 0">Nothing agreed yet. Chat with the advisor to establish requirements.</div>'}
         </div>
       </details>
-      <div class="card diagram-card" style="flex:1;min-height:0;display:flex;flex-direction:column;width:100%;padding:0;position:relative;overflow:hidden">
-        <div class="diagram-mount-point" style="width:100%;height:100%;flex:1;min-height:0;position:relative">
+      <div class="card diagram-card" style="flex:1;min-height:0;display:flex;flex-direction:column;width:100%;height:100%;padding:0;position:relative;overflow:hidden">
+        <div class="diagram-mount-point" style="width:100%;height:100%;flex:1;min-height:0;position:relative;display:flex;flex-direction:column">
           <svg class="diag-svg" id="diag-svg" viewBox="0 0 860 520" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Interactive Block diagram"></svg>
         </div>
       </div>
