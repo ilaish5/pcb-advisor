@@ -242,10 +242,10 @@ def test_a_model_belongs_to_the_engine_it_was_chosen_for(server, lte):
 
 def test_an_upload_gets_a_safe_name_and_a_sidecar_with_its_hash(server, lte):
     import base64
-    code, st = post(server, "/api/upload", {"name": "test:file?.pdf", "data_b64": base64.b64encode(b"hello").decode()}, lte)
+    code, st = post(server, "/api/upload", {"name": "test:file?.pdf", "data_b64": base64.b64encode(b"%PDF-1.4 hello").decode()}, lte)
     assert code == 200
     row = next(s for s in st["sources"] if s["name"] == "test_file_.pdf")
-    assert row["scope"] == "project" and row["present"] and row["sha256"] == "2cf24dba"
+    assert row["scope"] == "project" and row["present"] and row["sha256"] == "f31cdee0"
 
 
 def test_a_citation_resolves_to_a_listed_source(lte):

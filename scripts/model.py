@@ -198,6 +198,7 @@ def build(project=None, session=None):
         "meta": meta,
         "board": {**workspace.get("engineering_defaults", {}), **(meta.get("board") or {})},
         "idea": idea,
+        "diagram": idea.get("diagram", {"shapes": [], "connectors": [], "frames": []}),
         "placement_plan": placement_plan,
         "bom": lines,
         "totals": tot,

@@ -382,6 +382,20 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             return self._send(200, (workspace.ui_dir() / "index.html").read_text(encoding="utf-8"),
                               "text/html; charset=utf-8")
+        STATIC_UI = {
+            "/ui/diagram.js": "diagram.js",
+            "/diagram.js": "diagram.js",
+            "/ui/tabs.js": "tabs.js",
+            "/tabs.js": "tabs.js",
+        }
+        if path in STATIC_UI:
+            fname = STATIC_UI[path]
+            ui_dir = workspace.ui_dir().resolve()
+            target = (ui_dir / fname).resolve()
+            if target.is_file() and ui_dir in target.parents:
+                return self._send(200, target.read_text(encoding="utf-8"),
+                                  "application/javascript; charset=utf-8")
+            return self._send(404, {"error": "not found"})
         if path == "/api/projects":
             return self._send(200, {"projects": model.list_projects(),
                                     "default": DEFAULT_PROJECT or workspace.default_project()})
@@ -471,6 +485,17 @@ class Handler(BaseHTTPRequestHandler):
                                   "image/svg+xml; charset=utf-8")
             except (Exception, SystemExit):
                 return self._send(404, {"error": f"no sheet {sheet!r}"})
+        if path == "/api/sch/component":
+            ref = self.query("ref")
+            if not ref:
+                return self._send(400, {"error": "ref required"})
+            sheet = self.query("sheet")
+            proj = self.project()
+            import preview_sch
+            comp = preview_sch.get_component_details(proj, ref, sheet=sheet)
+            if not comp:
+                return self._send(404, {"error": f"component {ref!r} not found"})
+            return self._send(200, comp)
         if path == "/api/preview/pcb.svg":
             proj = self.project()
             layer = self.query("layer") or "all"
@@ -531,7 +556,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": str(exc)})
         if path == "/api/checks":
             import dfm
-            return self._send(200, {"checks": dfm.list_checks(self.project())})
+            kind = self.query("kind")
+            return self._send(200, {"checks": dfm.list_checks(self.project(), kind=kind)})
         if path == "/api/checks/slice":
             stem = self.query("stem")
             slice_file = self.query("slice")
@@ -705,11 +731,26 @@ class Handler(BaseHTTPRequestHandler):
             text = (data.get("text") or "").strip()
             if not text:
                 return self._send(400, {"error": "text required"})
-            say(proj, sess, {"ts": now(), "role": "user", "text": text})
+            source_file = data.get("file") or data.get("source")
+            user_msg = {"ts": now(), "role": "user", "text": text}
+            if source_file:
+                user_msg["source"] = source_file
+            say(proj, sess, user_msg)
             m = model.build(project=proj, session=sess)
             ask = text
             row = next((r for r in m["sessions"] if r["id"] == sess), {})
-            if row.get("anchor"):
+            if source_file:
+                src_text = ""
+                try:
+                    src_text = sources.text_of(source_file, folder=model.project_dir(proj) / "sources")
+                except Exception:
+                    pass
+                if src_text:
+                    ask = (f"[this conversation is about file '{source_file}'; its content]\n"
+                           f"{src_text[:12000]}\n\n{text}")
+                else:
+                    ask = f"[this conversation is about file '{source_file}']\n\n{text}"
+            elif row.get("anchor"):
                 ref = (store.bom_lines(proj) and next(
                     (l["refs"][0] for l in store.bom_lines(proj) if l["key"] == row["anchor"] and l.get("refs")), None))
                 ctx = model.part_context(proj, ref) if ref else None
@@ -855,8 +896,24 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, SystemExit) as exc:
                 return self._send(400, {"error": str(exc)})
 
+        if path == "/api/idea/diagram":
+            diag = data.get("diagram") if "diagram" in data else data
+            try:
+                valid_diag = store.validate_diagram(diag)
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            idea = store.load_idea(proj)
+            idea["diagram"] = valid_diag
+            store.save_idea(proj, idea)
+            return self._send(200, state())
+
         if path == "/api/idea":
             idea = store.load_idea(proj)
+            if "diagram" in data and isinstance(data["diagram"], dict):
+                try:
+                    idea["diagram"] = store.validate_diagram(data["diagram"])
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
             for key in ("goal", "blocks", "links"):
                 if key in data:
                     idea[key] = data[key]
@@ -1035,10 +1092,15 @@ class Handler(BaseHTTPRequestHandler):
             blob = data.get("data_b64")
             if not blob:
                 return self._send(400, {"error": "data_b64 required"})
+            try:
+                raw = base64.b64decode(blob)
+            except Exception as exc:
+                return self._send(400, {"error": f"invalid base64: {exc}"})
+            if name.lower().endswith(".pdf") and not raw.startswith(b"%PDF-"):
+                return self._send(400, {"error": "This file is not a valid PDF (it may be empty or damaged). Upload it again."})
             dest = model.project_dir(proj) / "sources"
             dest.mkdir(parents=True, exist_ok=True)
             target = dest / name
-            raw = base64.b64decode(blob)
             target.write_bytes(raw)
             import hashlib
             target.with_suffix(target.suffix + ".json").write_text(json.dumps(
@@ -1069,13 +1131,18 @@ class Handler(BaseHTTPRequestHandler):
             blob = data.get("data_b64")
             if not blob:
                 return self._send(400, {"error": "data_b64 required"})
+            kind = data.get("kind", "pcb")
+            if kind not in ("pcb", "smt"):
+                return self._send(400, {"error": f"invalid kind '{kind}': must be 'pcb' or 'smt'"})
             try:
                 raw = base64.b64decode(blob)
             except Exception as exc:
                 return self._send(400, {"error": f"invalid base64: {exc}"})
+            if name.lower().endswith(".pdf") and not raw.startswith(b"%PDF-"):
+                return self._send(400, {"error": "This file is not a valid PDF (it may be empty or damaged). Upload it again."})
             import dfm
             try:
-                res = dfm.ingest_pdf(raw, proj, name=name)
+                res = dfm.ingest_pdf(raw, proj, name=name, kind=kind)
                 return self._send(200, res)
             except Exception as exc:
                 return self._send(400, {"error": f"could not ingest DFM report: {exc}"})

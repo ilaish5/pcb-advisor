@@ -220,8 +220,10 @@ Claude Code verifies each, commits it on its branch and merges into this branch,
 
 **Waiting for the user:** import the JLC rules once in Altium (Rules tab -> export .RUL -> the 4-step import guide
 shown there) and say whether the rules appear as expected.
-2. Open the Schematic and Placement & routing tabs on the device project once and say whether the previews look right
-   (Claude Code may not read device files).
+
+Done 2026-10-12 (read-only, with the user's OK): device previews rendered for all 4 sheets + the PcbDoc
+(fixed a missing `import store` in preview_sch.py). Board preview is correct; on the schematic, the 64-pin MCU's
+pin names and top/bottom net labels crowd and get cut to one letter (known limit, readable when zoomed).
 
 ## 8. Stage summaries (10 lines each, newest last)
 

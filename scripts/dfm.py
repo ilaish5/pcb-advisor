@@ -9,8 +9,8 @@ slices stored in projects/<p>/checks/<report-stem>/, and writes index.json.
 Triage findings are stored in projects/<p>/checks/<report-stem>/triage.json.
 
 CLI:
-    python scripts/dfm.py ingest <project> <pdf_path>
-    python scripts/dfm.py list <project>
+    python scripts/dfm.py ingest <project> <pdf_path> [--kind pcb|smt]
+    python scripts/dfm.py list <project> [--kind pcb|smt]
     python scripts/dfm.py triage <project> <stem>
 """
 import argparse
@@ -89,10 +89,15 @@ def slice_image(img: Image.Image, out_dir: pathlib.Path, slice_height: int = SLI
     return slices
 
 
-def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | None = None) -> dict[str, Any]:
+def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | None = None, kind: str = "pcb") -> dict[str, Any]:
     """
     Ingest a JLCDFM report PDF, extract image, slice it, and write index.json + triage.json.
+    kind must be 'pcb' or 'smt'. Defaults to 'pcb'.
     """
+    kind = (kind or "pcb").lower().strip()
+    if kind not in ("pcb", "smt"):
+        raise ValueError(f"Invalid report kind: '{kind}'. Expected 'pcb' or 'smt'")
+
     if name is None:
         if isinstance(pdf_input, (str, pathlib.Path)):
             name = pathlib.Path(pdf_input).name
@@ -114,6 +119,7 @@ def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | 
 
     index_data = {
         "stem": stem,
+        "kind": kind,
         "original_name": name,
         "width": tallest.size[0],
         "height": tallest.size[1],
@@ -138,6 +144,7 @@ def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | 
 
     return {
         "stem": stem,
+        "kind": kind,
         "dir": str(checks_dir),
         "slices": len(slices),
         "slice_files": [s["file"] for s in slices],
@@ -145,8 +152,8 @@ def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | 
     }
 
 
-def list_checks(project: str) -> list[dict[str, Any]]:
-    """List all check reports for a project."""
+def list_checks(project: str, kind: str | None = None) -> list[dict[str, Any]]:
+    """List all check reports for a project. Optionally filter by kind ('pcb' | 'smt')."""
     pdir = workspace.project_dir(project)
     checks_root = pdir / "checks"
     if not checks_root.is_dir():
@@ -162,6 +169,9 @@ def list_checks(project: str) -> list[dict[str, Any]]:
                 idx = json.loads(idx_file.read_text(encoding="utf-8"))
             except Exception:
                 idx = {}
+            report_kind = idx.get("kind", "pcb")
+            if kind and report_kind != kind:
+                continue
             triage_file = d / "triage.json"
             triage_rows = []
             if triage_file.is_file():
@@ -171,6 +181,7 @@ def list_checks(project: str) -> list[dict[str, Any]]:
                     pass
             results.append({
                 "stem": d.name,
+                "kind": report_kind,
                 "original_name": idx.get("original_name", d.name),
                 "slice_count": idx.get("slice_count", len(list(d.glob("slice_*.jpg")))),
                 "created_at": idx.get("created_at"),
@@ -185,7 +196,10 @@ def load_index(project: str, stem: str) -> dict[str, Any]:
     idx_file = workspace.project_dir(project) / "checks" / stem / "index.json"
     if not idx_file.is_file():
         raise FileNotFoundError(f"Check report '{stem}' not found in project '{project}'")
-    return json.loads(idx_file.read_text(encoding="utf-8"))
+    data = json.loads(idx_file.read_text(encoding="utf-8"))
+    if "kind" not in data:
+        data["kind"] = "pcb"
+    return data
 
 
 def load_triage(project: str, stem: str) -> list[dict[str, Any]]:
@@ -243,9 +257,13 @@ def main(argv=None):
     ingest_p = sub.add_parser("ingest")
     ingest_p.add_argument("project", help="Project name")
     ingest_p.add_argument("pdf", help="Path to JLCDFM PDF report")
+    ingest_p.add_argument("--kind", choices=["pcb", "smt"], default="pcb",
+                          help="Report kind: 'pcb' (bare board) or 'smt' (assembly), default 'pcb'")
 
     list_p = sub.add_parser("list")
     list_p.add_argument("project", help="Project name")
+    list_p.add_argument("--kind", choices=["pcb", "smt"], default=None,
+                        help="Filter by report kind ('pcb' or 'smt')")
 
     triage_p = sub.add_parser("triage")
     triage_p.add_argument("project", help="Project name")
@@ -254,10 +272,10 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.cmd == "ingest":
-        res = ingest_pdf(args.pdf, args.project)
+        res = ingest_pdf(args.pdf, args.project, kind=args.kind)
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif args.cmd == "list":
-        res = list_checks(args.project)
+        res = list_checks(args.project, kind=args.kind)
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif args.cmd == "triage":
         res = load_triage(args.project, args.stem)

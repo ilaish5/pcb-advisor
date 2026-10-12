@@ -36,6 +36,7 @@ def test_dfm_ingest_synthetic_pdf(tmp_path, monkeypatch):
 
     res = dfm.ingest_pdf(pdf_path, proj)
     assert res["stem"] == "DFM_analysis_report_JLCDFM_test"
+    assert res["kind"] == "pcb"
     assert res["slices"] == 3  # 3500 px / 1400 = 3 slices (0..1400, 1400..2800, 2800..3500)
 
     # Check files on disk
@@ -48,6 +49,7 @@ def test_dfm_ingest_synthetic_pdf(tmp_path, monkeypatch):
     assert len(slice_files) == 3
 
     index_data = dfm.load_index(proj, res["stem"])
+    assert index_data["kind"] == "pcb"
     assert index_data["width"] == w
     assert index_data["height"] == h
     assert len(index_data["slices"]) == 3
@@ -59,6 +61,7 @@ def test_dfm_ingest_synthetic_pdf(tmp_path, monkeypatch):
     checks = dfm.list_checks(proj)
     assert len(checks) == 1
     assert checks[0]["stem"] == res["stem"]
+    assert checks[0]["kind"] == "pcb"
     assert checks[0]["slice_count"] == 3
 
     # Test slice serving helper

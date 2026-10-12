@@ -18,6 +18,9 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py check [project]      every sheet validates, every citation resolves
     python3 pcb.py reset [project]      wipe a project's state
     python3 pcb.py trace 1.5            IPC-2221 trace width
+    python3 pcb.py rules preset|export|diff   JLC rules preset, .RUL export, board vs rules diff
+    python3 pcb.py calc trace-width|divider|led|via|microstrip   engineering calculators
+    python3 pcb.py library search|check-package|build-script     parts library tools
 
 Everything is local files. Nothing here talks to a server you do not run.
 """

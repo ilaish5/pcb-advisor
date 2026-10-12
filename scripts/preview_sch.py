@@ -313,12 +313,273 @@ def render_project_sch(project: str, sheet: str = None) -> str:
         except Exception:
             pass
 
-    # Fallback to local netlist sheet if available
     try:
         from skills import render_sheet
+        import store
         return render_sheet.render(project, sheet or (store.sheet_ids(project) or [""])[0], write=False)
     except (Exception, SystemExit) as exc:
         return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100"><text x="20" y="50" fill="#999">No schematic preview available ({esc(str(exc))})</text></svg>'
+
+
+def resolve_schdoc_component_pins(doc: dict, target_comp: dict) -> list[dict]:
+    """Resolve nets for pins of a SchDoc component by tracing wires to net labels and power ports."""
+    segments = []
+    for w in doc.get("wires", []):
+        pts = w.get("points", [])
+        for i in range(len(pts) - 1):
+            segments.append((pts[i], pts[i + 1]))
+
+    def point_on_seg(p, seg):
+        (x1, y1), (x2, y2) = seg
+        px, py = p
+        if x1 == x2 == px:
+            return min(y1, y2) <= py <= max(y1, y2)
+        if y1 == y2 == py:
+            return min(x1, x2) <= px <= max(x1, x2)
+        dx, dy = x2 - x1, y2 - y1
+        if dx * (py - y1) == dy * (px - x1):
+            return min(x1, x2) <= px <= max(x1, x2) and min(y1, y2) <= py <= max(y1, y2)
+        return False
+
+    parent = list(range(len(segments)))
+
+    def find(i):
+        if parent[i] == i:
+            return i
+        parent[i] = find(parent[i])
+        return parent[i]
+
+    def union(i, j):
+        ri, rj = find(i), find(j)
+        if ri != rj:
+            parent[ri] = rj
+
+    for i in range(len(segments)):
+        for j in range(i + 1, len(segments)):
+            s1, s2 = segments[i], segments[j]
+            if (point_on_seg(s1[0], s2) or point_on_seg(s1[1], s2) or
+                    point_on_seg(s2[0], s1) or point_on_seg(s2[1], s1)):
+                union(i, j)
+
+    labels = []
+    for item in doc.get("net_labels", []) + doc.get("power_ports", []) + doc.get("ports", []):
+        labels.append(((item.get("x", 0), item.get("y", 0)), (item.get("name") or item.get("text", "")).replace("\\", "")))
+
+    def get_pin_tip(p):
+        x, y, length, orient = p.get("x", 0), p.get("y", 0), p.get("length", 20), p.get("orientation", 0)
+        dx = length if orient == 0 else (-length if orient == 2 else 0)
+        dy = length if orient == 1 else (-length if orient == 3 else 0)
+        return (x + dx, y + dy)
+
+    resolved_pins = []
+    for pin in target_comp.get("pins", []):
+        pt = (pin.get("x", 0), pin.get("y", 0))
+        tip = get_pin_tip(pin)
+        pin_seg = (pt, tip)
+        matched_net = None
+
+        # 1. Direct label at pin tip or base
+        for lpt, lname in labels:
+            if lpt == tip or lpt == pt:
+                matched_net = lname
+                break
+
+        # 2. Wire touching pin tip, base, or pin segment
+        if not matched_net:
+            for s_idx, seg in enumerate(segments):
+                if (point_on_seg(tip, seg) or point_on_seg(pt, seg) or
+                        point_on_seg(seg[0], pin_seg) or point_on_seg(seg[1], pin_seg)):
+                    root = find(s_idx)
+                    for lpt, lname in labels:
+                        for s2_idx, seg2 in enumerate(segments):
+                            if find(s2_idx) == root and point_on_seg(lpt, seg2):
+                                matched_net = lname
+                                break
+                        if matched_net:
+                            break
+                if matched_net:
+                    break
+
+        resolved_pins.append({
+            "number": pin.get("number", ""),
+            "name": pin.get("name", "").replace("\\", ""),
+            "net": matched_net or ""
+        })
+
+    return resolved_pins
+
+
+def get_component_details(project: str, ref: str, sheet: str = None) -> dict | None:
+    """Retrieve full details for a component by designator in a project.
+
+    Gathers MPN, value/comment, package/footprint, sheet, parameters, pins with nets,
+    BOM line info with JLC code + stock, and datasheet link.
+    """
+    if not ref:
+        return None
+
+    import store
+    lines = store.bom(project, write=False)
+    bom_line = next((l for l in lines if ref in l.get("refs", []) or l.get("key") == ref), None)
+
+    comp_found = None
+    sheet_name = sheet or None
+    link = project_mod.altium_link(project)
+    project_file = link.get("project_file")
+
+    # 1. Search Altium SchDocs if linked
+    if project_file and pathlib.Path(project_file).is_file():
+        try:
+            from altium.prjpcb import read_prjpcb
+            from altium.schdoc import read_schdoc
+            prj = read_prjpcb(project_file)
+            prj_dir = pathlib.Path(project_file).parent
+            sheets_list = prj.get("sheets", [])
+
+            ordered_sheets = []
+            if sheet:
+                for s in sheets_list:
+                    p = prj_dir / pathlib.Path(s.replace("\\", "/"))
+                    if p.name.lower() == sheet.lower() or p.stem.lower() == sheet.lower():
+                        ordered_sheets.append(p)
+                        break
+            for s in sheets_list:
+                p = prj_dir / pathlib.Path(s.replace("\\", "/"))
+                if p not in ordered_sheets and p.is_file():
+                    ordered_sheets.append(p)
+
+            for doc_path in ordered_sheets:
+                if not doc_path.is_file():
+                    continue
+                doc = read_schdoc(doc_path)
+                for c in doc.get("components", []):
+                    if c.get("ref", "").lower() == ref.lower():
+                        comp_found = c
+                        sheet_name = doc_path.stem
+                        comp_found["resolved_pins"] = resolve_schdoc_component_pins(doc, c)
+                        break
+                if comp_found:
+                    break
+        except Exception:
+            pass
+
+    # 2. Search local netlists
+    if not comp_found:
+        for sid in store.sheet_ids(project):
+            sh_data = store.load_sheet(project, sid)
+            for part in sh_data.get("parts", []):
+                if part.get("ref", "").lower() == ref.lower():
+                    comp_found = part
+                    sheet_name = sh_data.get("title") or sid
+                    break
+            if comp_found:
+                break
+
+    # 3. Check PcbDoc pads / components
+    pcb_pads = []
+    if link.get("pcb_file") and pathlib.Path(link["pcb_file"]).is_file():
+        try:
+            from altium.pcbdoc import read_pcbdoc
+            pdoc = read_pcbdoc(link["pcb_file"])
+            for pad in pdoc.get("pads", []):
+                if (pad.get("ref") or "").lower() == ref.lower():
+                    pcb_pads.append({
+                        "number": pad.get("name", ""),
+                        "name": pad.get("name", ""),
+                        "net": pad.get("net") or ""
+                    })
+            if not comp_found:
+                for c in pdoc.get("components", []):
+                    if (c.get("ref") or "").lower() == ref.lower():
+                        comp_found = c
+                        sheet_name = sheet_name or "PCB"
+                        break
+        except Exception:
+            pass
+
+    if not comp_found and not bom_line and not pcb_pads:
+        return None
+
+    # Resolve BOM info
+    bom_info = None
+    mpn = ""
+    value = ""
+    package = ""
+    description = ""
+    datasheet = ""
+    jlc_code = ""
+    stock = None
+
+    if bom_line:
+        mpn = bom_line.get("mpn") or ""
+        value = bom_line.get("value") or ""
+        package = bom_line.get("package") or ""
+        description = bom_line.get("description") or ""
+        datasheet = bom_line.get("datasheet") or bom_line.get("datasheet_url") or ""
+        supply = bom_line.get("supply") or {}
+        lcsc = supply.get("LCSC") or {}
+        jlc_code = lcsc.get("code") or bom_line.get("code") or ""
+        stock = lcsc.get("stock")
+        if stock is None:
+            for sup_key in ("Mouser", "DigiKey"):
+                if supply.get(sup_key, {}).get("stock") is not None:
+                    stock = supply[sup_key]["stock"]
+                    break
+        bom_info = {
+            "line": bom_line.get("key"),
+            "mpn": mpn,
+            "jlc_code": jlc_code,
+            "stock": stock,
+            "datasheet": datasheet
+        }
+
+    # Pins
+    pins = []
+    if comp_found and "resolved_pins" in comp_found:
+        pins = comp_found["resolved_pins"]
+    elif comp_found and "pins" in comp_found:
+        for p in comp_found["pins"]:
+            pins.append({
+                "number": str(p.get("number") or p.get("num") or ""),
+                "name": str(p.get("name") or "").replace("\\", ""),
+                "net": p.get("net") or ""
+            })
+    elif pcb_pads:
+        pins = pcb_pads
+    else:
+        nets = store.nets_of(project, ref)
+        if nets:
+            pins = [{"number": str(i + 1), "name": f"Pin {i + 1}", "net": n} for i, n in enumerate(nets)]
+
+    # Parameters
+    params = {}
+    if comp_found and isinstance(comp_found.get("params"), dict):
+        params = comp_found["params"]
+    elif bom_line:
+        for k in ("manufacturer", "package", "value", "role", "note"):
+            if bom_line.get(k):
+                params[k.capitalize()] = str(bom_line[k])
+
+    actual_ref = (comp_found.get("ref") if comp_found else None) or (bom_line.get("refs", [ref])[0] if bom_line else ref)
+    actual_value = (comp_found.get("comment") if comp_found else None) or value or ""
+    actual_mpn = mpn or (comp_found.get("comment") if comp_found else "") or actual_value
+    actual_footprint = (comp_found.get("footprint") or comp_found.get("pattern") if comp_found else None) or package or ""
+    actual_desc = (comp_found.get("description") if comp_found else None) or description or ""
+
+    return {
+        "ref": actual_ref,
+        "value": actual_value,
+        "comment": actual_value,
+        "mpn": actual_mpn,
+        "footprint": actual_footprint,
+        "package": actual_footprint,
+        "sheet": sheet_name or (sheet or "Schematic"),
+        "description": actual_desc,
+        "params": params,
+        "pins": pins,
+        "bom": bom_info,
+        "datasheet": datasheet
+    }
 
 
 def main(argv=None):
