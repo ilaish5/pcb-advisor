@@ -357,6 +357,11 @@ table.libt{min-width:740px} table.srct{min-width:780px}
 .fname-btn:hover{text-decoration:underline}
 .ext-lnk{font-size:12px;color:var(--dim);text-decoration:none;margin-left:4px;padding:1px 4px;border-radius:3px;display:inline-block}
 .ext-lnk:hover{color:var(--accent);background:var(--panel2)}
+.triage-tbl{border-collapse:collapse;width:100%;font-size:12px}
+.triage-tbl th,.triage-tbl td{padding:4px 6px;border:1px solid var(--line2);text-align:left}
+.triage-tbl th{background:var(--panel2);font-weight:600;color:var(--dim);white-space:nowrap}
+.triage-tbl input,.triage-tbl select{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:4px;padding:3px 5px;background:var(--panel2);color:var(--ink);width:100%;box-sizing:border-box}
+.triage-tbl input:focus,.triage-tbl select:focus{border-color:var(--accent);background:var(--panel)}
 </style>
 </head>
 <body>
@@ -391,6 +396,7 @@ table.libt{min-width:740px} table.srct{min-width:780px}
 </div>
 <div class="toast" id="toast" hidden></div>
 <input type="file" id="filepick" hidden>
+<input type="file" id="dfmpick" accept=".pdf" hidden>
 
 <script>
 const $ = (s, r = document) => r.querySelector(s);
@@ -405,6 +411,8 @@ let SESSION = URLQ.get('session') || null;
 let PROJECTS = [], SKILLS = null, CONFIG = null, ALTIUM_DATA = null;
 let page = 'workspace', tab = 'bom', sel = null, hitSrc = null, sheetId = null;
 let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null, altsCard = null;
+let outjobBanner = null, curCheckStem = null, schAnchor = null;
+let triageMap = {}, triageLoading = {}, indexMap = {}, indexLoading = {};
 let svgCache = {key: '', text: ''};
 let lastChatKey = '', lastCenterKey = '';
 
@@ -625,6 +633,8 @@ const ICON = {
 function renderNav() {
   const ni = (id, icon, label, cnt) => `<button class="nitem" data-page="${id}" aria-current="${page === id}" title="${label}">${ICON[icon]}<span class="lbl">${label}</span>${cnt != null ? `<span class="cnt">${cnt}</span>` : ''}</button>`;
   const libCount = (S.library || []).filter(r => r.status === 'ok' || r.status === 'review').length;
+  const expCount = (S.exports || []).length;
+  const chkCount = (S.checks || []).length;
   $('#nav').innerHTML = `
     <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="12" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2 9h4M2 15h4M18 9h4M18 15h4" stroke="currentColor" stroke-width="1.8"/></svg><span>PCB Advisor</span></div>
     <div class="ngroup projects"><div class="nlabel">Projects</div>
@@ -634,7 +644,9 @@ function renderNav() {
     <div class="ngroup"><div class="nlabel">${esc(S.title)}</div>
       <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
       ${ni('workspace', 'ws', 'Workspace')}
-      <div class="nsub">${[['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic']].map(([id, l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
+      <div class="nsub">${[['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic'], ['outputs', 'Altium outputs'], ['checks', 'Final manufacturer checks']].map(([id, l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
+      ${ni('outputs', 'ws', 'Altium outputs', expCount)}
+      ${ni('checks', 'ws', 'Final manufacturer checks', chkCount)}
       ${ni('library', 'lib', 'Altium library', libCount)}
       ${ni('sources', 'src', 'Sources', (S.sources || []).length)}
       ${ni('skills', 'sk', 'Skills', SKILLS ? SKILLS.filter(s => s.available).length : null)}
@@ -645,14 +657,16 @@ function renderNav() {
 /* ---------- center ---------- */
 function wheadHTML() {
   if (page !== 'workspace') {
-    const names = {library: 'Altium library', sources: 'Sources', skills: 'Skills', settings: 'Settings'};
-    return `<div class="crumb">${esc(S.title)} / <b>${names[page]}</b></div>`;
+    const names = {outputs: 'Altium outputs', checks: 'Final manufacturer checks', library: 'Altium library', sources: 'Sources', skills: 'Skills', settings: 'Settings'};
+    return `<div class="crumb">${esc(S.title)} / <b>${names[page] || page}</b></div>`;
   }
   const t = S.totals;
   const items = [
     ['idea', '1', 'Idea', S.idea.confirmed ? `<span class="st ok">Confirmed</span>` : `<span class="st dim">Open</span>`],
     ['bom', '2', 'BOM', t.out_of_stock ? `<span class="st bad">${t.out_of_stock} out of stock</span>` : t.to_verify ? `<span class="st warn">${t.to_verify} to review</span>` : t.checking ? `<span class="st dim">checking</span>` : t.lines ? `<span class="st ok">Ready</span>` : `<span class="st dim">Empty</span>`],
     ['sch', '3', 'Schematic', `<span class="st dim">${S.sheets.length} sheet${S.sheets.length === 1 ? '' : 's'}</span>`],
+    ['outputs', '4', 'Altium outputs', `<span class="st dim">${(S.exports || []).length} file${(S.exports || []).length === 1 ? '' : 's'}</span>`],
+    ['checks', '5', 'Final manufacturer checks', `<span class="st dim">${(S.checks || []).length} report${(S.checks || []).length === 1 ? '' : 's'}</span>`],
   ];
   return `<div class="tabs" role="tablist">${items.map(([id, n, label, st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div>`;
 }
@@ -746,7 +760,184 @@ function schHTML() {
   if (!sheetId || !S.sheets.find(s => s.id === sheetId)) sheetId = S.sheets[0].id;
   return `<div class="vhead"><div><h2>Example schematic</h2><p>Rendered from the netlist, not drawn by hand. Click a part to open it in the BOM. You redraw the sheet in Altium from this.</p></div>
     <div class="sheets">${S.sheets.map(s => `<button class="sheet" data-sheet="${esc(s.id)}" aria-pressed="${s.id === sheetId}"><span class="m">${esc(s.id)}</span> ${esc(s.title)}</button>`).join('')}</div></div>
+    ${schAnchor ? `
+      <div class="howto" style="display:flex;align-items:center;justify-content:space-between;margin:0 0 10px 0;padding:8px 12px">
+        <div><b>Selected:</b> <span class="m">${esc(schAnchor.label)}</span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn pri" data-act="ask-anchor" data-anchor="${esc(schAnchor.anchor)}">Ask about this</button>
+          <button class="x" data-act="clear-sch-anchor" aria-label="Clear selection">×</button>
+        </div>
+      </div>` : `
+      <div class="dnote" style="margin:0 0 10px 0;padding:6px 10px">
+        Click any part or net label in the schematic to ask the agent about it.
+      </div>`}
     <div class="schwrap" id="schwrap">${svgCache.text ? svgCache.text : '<div class="dnote" style="margin:12px">Drawing…</div>'}</div>`;
+}
+function outputsHTML() {
+  const exports = S.exports || [];
+  return `<div class="vhead">
+    <div>
+      <h2>Altium outputs</h2>
+      <p>Fabrication and production files. Linked project directory is read-only; exports are generated in <span class="path">projects/${esc(PROJECT)}/exports/</span>. Copy them to your Altium outputs folder.</p>
+    </div>
+    <div class="vacts">
+      <button class="btn pri" data-act="gen-outjob">Generate OutJob</button>
+      <button class="btn" data-act="export" data-fmt="jlc">Export JLC BOM</button>
+      <button class="btn" data-act="export" data-fmt="pcbway">Export Generic BOM</button>
+      <button class="btn" data-act="gen-cpl">Export CPL</button>
+    </div>
+  </div>
+  ${outjobBanner ? `<div class="howto"><b>OutJob ready</b> <button class="x" data-act="close-outjob-banner" aria-label="Close">×</button>
+    <p style="margin:4px 0">${esc(outjobBanner.instruction || '')}</p>
+    <code>${esc(outjobBanner.path || '')}</code>
+    <div style="margin-top:6px"><a class="btn pri" href="/api/export/${encodeURIComponent((outjobBanner.path || '').split(/[\\/]/).pop())}?${q()}" download>Download OutJob</a></div>
+  </div>` : ''}
+  <div class="howto" style="margin-bottom:16px">
+    <b>Fabrication workflow</b>
+    <p style="margin:4px 0 0">1. Generate the ready OutJob file containing Gerber RS-274X, NC Drill, JLC BOM, Pick and Place CPL, and Schematic PDF.<br>
+    2. Download the OutJob or copy it from <span class="path">projects/${esc(PROJECT)}/exports/</span> into your Altium project folder.<br>
+    3. Export JLC BOM and Pick and Place CPL (CSV) ready for assembly ordering.</p>
+  </div>
+  <div class="sgroup">
+    <div class="sgh">
+      <h3>Generated export files (${exports.length})</h3>
+      <p>Stored in <span class="path">projects/${esc(PROJECT)}/exports/</span></p>
+    </div>
+    ${exports.length ? `
+      <div class="tblwrap"><table class="srct">
+        <thead><tr><th>File name</th><th style="text-align:right">Size</th><th>Actions</th></tr></thead>
+        <tbody>
+          ${exports.map(f => `
+            <tr>
+              <td class="fname"><b>${esc(f.name)}</b></td>
+              <td class="n">${num(f.size)} B</td>
+              <td>
+                <a class="lnk" href="/api/export/${encodeURIComponent(f.name)}?${q()}" download style="display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:5px">Download</a>
+                <button class="btn" data-act="view-export" data-name="${esc(f.name)}" style="margin-left:6px">View</button>
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table></div>` : `
+      <div class="dnote">No files in exports yet. Click Generate OutJob, Export JLC BOM, or Export CPL above.</div>`}
+  </div>`;
+}
+function checksHTML() {
+  const checks = S.checks || [];
+  if (!curCheckStem && checks.length) curCheckStem = checks[0].stem;
+
+  if (curCheckStem && !triageMap[curCheckStem] && !triageLoading[curCheckStem]) {
+    triageLoading[curCheckStem] = true;
+    api('/api/checks/triage?stem=' + encodeURIComponent(curCheckStem)).then(r => {
+      triageMap[curCheckStem] = r.triage || [];
+      triageLoading[curCheckStem] = false;
+      renderCenter(true);
+    }).catch(() => { triageLoading[curCheckStem] = false; });
+  }
+  if (curCheckStem && !indexMap[curCheckStem] && !indexLoading[curCheckStem]) {
+    indexLoading[curCheckStem] = true;
+    api('/api/checks/index?stem=' + encodeURIComponent(curCheckStem)).then(r => {
+      indexMap[curCheckStem] = r;
+      indexLoading[curCheckStem] = false;
+      renderCenter(true);
+    }).catch(() => { indexLoading[curCheckStem] = false; });
+  }
+
+  const curCheck = checks.find(c => c.stem === curCheckStem);
+  const triageRows = (curCheckStem && triageMap[curCheckStem]) ? triageMap[curCheckStem] : [];
+  const idxData = (curCheckStem && indexMap[curCheckStem]) ? indexMap[curCheckStem] : null;
+  const slices = (idxData && idxData.slices) || (curCheck ? curCheck.slices : []);
+
+  return `<div class="vhead">
+    <div>
+      <h2>Final manufacturer checks</h2>
+      <p>Upload a JLCDFM report PDF (from dfm.jlcdfm.com). Inspect report slices and triage findings.</p>
+    </div>
+    <div class="vacts">
+      ${checks.length ? `
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600">
+          Report:
+          <select id="check-stem-select" style="font-size:12.5px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel2)">
+            ${checks.map(c => `<option value="${esc(c.stem)}" ${c.stem === curCheckStem ? 'selected' : ''}>${esc(c.stem)} (${c.slices.length} slices)</option>`).join('')}
+          </select>
+        </label>` : ''}
+      <button class="btn pri" data-act="upload-dfm">Upload JLCDFM report</button>
+      ${curCheckStem ? `<button class="btn" data-act="add-triage-row">+ Add check row</button>` : ''}
+    </div>
+  </div>
+  ${!curCheckStem ? `
+    <div class="howto">
+      <b>No DFM reports ingested yet</b>
+      <p style="margin:6px 0">Upload a report PDF downloaded from dfm.jlcdfm.com. The report is sliced into ~1400 px slices for visual inspection and creates an editable triage table.</p>
+      <button class="btn pri" data-act="upload-dfm" style="margin-top:6px">Upload JLCDFM report (PDF)</button>
+    </div>` : `
+    <div class="sgroup">
+      <div class="sgh">
+        <h3>Triage table (${triageRows.length} checks)</h3>
+        <p>Report: <span class="m">${esc(curCheckStem)}</span> · All changes save automatically</p>
+      </div>
+      ${triageRows.length ? `
+        <div class="tblwrap"><table class="triage-tbl">
+          <thead>
+            <tr>
+              <th>Section</th><th>Check</th><th>Worst</th><th>Level</th>
+              <th style="text-align:right">Danger</th><th style="text-align:right">Warning</th><th style="text-align:right">Good</th>
+              <th>Layer</th><th>Verdict</th><th>Fix</th><th>Evidence</th><th>Discuss</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="triage-body">
+            ${triageRows.map((r, i) => `
+              <tr>
+                <td><input data-triage-field="section" data-idx="${i}" value="${esc(r.section || '')}" placeholder="Section" style="min-width:110px"></td>
+                <td><input data-triage-field="check" data-idx="${i}" value="${esc(r.check || '')}" placeholder="Check name" style="min-width:130px"></td>
+                <td><input data-triage-field="worst" data-idx="${i}" value="${esc(r.worst || '')}" placeholder="Worst" style="width:70px"></td>
+                <td>
+                  <select data-triage-field="level" data-idx="${i}" style="width:85px">
+                    ${['Danger', 'Warning', 'Good', 'Info'].map(lvl => `<option value="${lvl}" ${(r.level || '').toLowerCase() === lvl.toLowerCase() ? 'selected' : ''}>${lvl}</option>`).join('')}
+                  </select>
+                </td>
+                <td><input type="number" data-triage-field="danger" data-idx="${i}" value="${r.danger ?? 0}" style="width:48px;text-align:right"></td>
+                <td><input type="number" data-triage-field="warning" data-idx="${i}" value="${r.warning ?? 0}" style="width:48px;text-align:right"></td>
+                <td><input type="number" data-triage-field="good" data-idx="${i}" value="${r.good ?? 0}" style="width:48px;text-align:right"></td>
+                <td><input data-triage-field="layer" data-idx="${i}" value="${esc(r.layer || '')}" placeholder="Layer" style="width:80px"></td>
+                <td>
+                  <select data-triage-field="verdict" data-idx="${i}" style="width:105px;font-weight:600;color:${r.verdict === 'real' ? 'var(--bad)' : r.verdict === 'model' || r.verdict === 'by design' ? 'var(--ok)' : 'var(--warn)'}">
+                    ${['unknown', 'real', 'model', 'by design'].map(v => `<option value="${v}" ${r.verdict === v ? 'selected' : ''}>${v}</option>`).join('')}
+                  </select>
+                </td>
+                <td><input data-triage-field="fix" data-idx="${i}" value="${esc(r.fix || '')}" placeholder="Suggested fix" style="min-width:140px"></td>
+                <td><input data-triage-field="evidence" data-idx="${i}" value="${esc(r.evidence || '')}" placeholder="Slice / crop / ref" style="min-width:120px"></td>
+                <td><button class="btn" data-act="discuss-dfm" data-stem="${esc(curCheckStem)}" data-check="${esc(r.check || ('check-' + (i + 1)))}">Discuss</button></td>
+                <td><button class="x" data-act="del-triage-row" data-idx="${i}" title="Delete check">×</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table></div>` : `
+        <div class="dnote">Triage table is empty. Click "+ Add check row" to begin triaging findings.</div>`}
+    </div>
+    <div class="sgroup" style="margin-top:20px">
+      <div class="sgh">
+        <h3>Report slices (${slices.length})</h3>
+        <p>Extracted slices from <span class="m">${esc(curCheckStem)}.pdf</span> · Click to view in full size</p>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
+        ${slices.map((s, idx) => `
+          <div class="card" style="padding:8px;display:flex;flex-direction:column;gap:6px">
+            <div style="font-family:var(--f-mono);font-size:12px;font-weight:600;display:flex;justify-content:space-between">
+              <span>Slice ${idx + 1}</span>
+              <span style="color:var(--dim);font-size:11px">${esc(s)}</span>
+            </div>
+            <div style="height:200px;overflow:hidden;border:1px solid var(--line2);border-radius:6px;cursor:pointer;background:var(--panel2);display:flex;align-items:flex-start;justify-content:center" data-act="view-slice" data-stem="${esc(curCheckStem)}" data-slice="${esc(s)}">
+              <img src="/api/checks/slice?stem=${encodeURIComponent(curCheckStem)}&slice=${encodeURIComponent(s)}&${q()}" alt="Slice ${idx + 1}" style="width:100%;height:auto;display:block">
+            </div>
+            <div style="display:flex;gap:6px">
+              <button class="btn" style="flex:1" data-act="view-slice" data-stem="${esc(curCheckStem)}" data-slice="${esc(s)}">View in viewer</button>
+              <a class="lnk" href="/api/checks/slice?stem=${encodeURIComponent(curCheckStem)}&slice=${encodeURIComponent(s)}&${q()}" target="_blank" rel="noopener" style="padding:4px 8px;font-size:12px;border:1px solid var(--line);border-radius:6px">Open</a>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`}`;
 }
 async function loadSheet() {
   const key = sheetId + '|' + JSON.stringify(lines().map(l => [l.key, l.mpn, l.value, l.dnp])) + JSON.stringify(S.sheets.map(s => Object.keys(s.parts).length));
@@ -976,10 +1167,10 @@ function detailHTML() {
   const refs = l.refs || [];
   return `<div class="dt">
     <div class="dt-h"><div><div class="refs">${esc(refs.join(', '))}</div><h3>${esc(l.mpn)}</h3><p>${esc(l.manufacturer)} · ${esc(l.package)} · ${esc(l.description)}</p></div><button class="x" data-act="close" aria-label="Close">×</button></div>
-    <div class="dt-a"><button class="btn pri" data-chat="${esc(l.key)}">Discuss this part</button><button class="btn" data-act="alts" data-line="${esc(l.key)}">Alternatives</button>${where.length ? `<button class="btn" data-show="${esc(l.key)}">Show on schematic</button>` : ''}</div>
+    <div class="dt-a"><button class="btn pri" data-act="ask-anchor" data-anchor="${esc(l.key)}">Ask about this</button><button class="btn" data-chat="${esc(l.key)}">Discuss this part</button><button class="btn" data-act="alts" data-line="${esc(l.key)}">Alternatives</button>${where.length ? `<button class="btn" data-show="${esc(l.key)}">Show on schematic</button>` : ''}</div>
     ${l.role ? `<div class="dsec"><h4>Role</h4><div class="dnote">${esc(l.role)}</div></div>` : ''}
     ${where.length ? `<div class="dsec"><h4>Where it's used</h4><div class="where">${where.map(w => `<button data-show="${esc(l.key)}"><span class="r">${esc(w.ref)}</span><span class="s">Sheet ${esc(w.sheet)} · ${esc(w.section)}${w.title ? ' · ' + esc(w.title) : ''}</span></button>`).join('')}</div></div>` : ''}
-    ${nets.length ? `<div class="dsec"><h4>Nets</h4><div class="netl">${nets.map(n => `<span>${esc(n)}</span>`).join('')}</div></div>` : ''}
+    ${nets.length ? `<div class="dsec"><h4>Nets</h4><div class="netl">${nets.map(n => `<button class="secb" data-net="${esc(n)}" style="cursor:pointer">${esc(n)}</button>`).join('')}</div></div>` : ''}
     ${qty(l) ? `<div class="dsec"><h4>Stock and price</h4>${l.supply == null ? '<div class="dnote">Checking… the agent re-checks stock when the MPN changes. You can also press Check stock.</div>' : `<table class="sup"><thead><tr><th>Supplier</th><th style="text-align:right">Stock</th><th style="text-align:right">Unit @10</th></tr></thead><tbody>
       ${SUPS.map(s => { const v = l.supply[s]; return `<tr class="${b && b.s === s ? 'best' : ''}"><td>${s}</td><td class="n">${v ? num(v.stock) : 'not checked'}</td><td class="n">${v ? money(v.unit_price) : '—'}</td></tr>`; }).join('')}
       </tbody></table><div class="checked">Checked ${esc(b ? (b.at || '').replace('T', ' ').slice(0, 16) : checkedAt() || '')}${b ? ` · cheapest: ${b.s}` : ' · no supplier has stock'}</div>`}</div>` : ''}
@@ -996,8 +1187,8 @@ function renderCenter(force) {
   $('#whead').innerHTML = wheadHTML();
   const v = $('#view');
   const top = v.scrollTop;
-  v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : ideaHTML())
-    : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : settingsHTML();
+  v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : tab === 'outputs' ? outputsHTML() : tab === 'checks' ? checksHTML() : ideaHTML())
+    : page === 'outputs' ? outputsHTML() : page === 'checks' ? checksHTML() : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : settingsHTML();
   v.scrollTop = top;
   if (page === 'workspace' && tab === 'sch' && S.sheets.length) loadSheet();
   if (page === 'settings' && !ALTIUM_DATA) loadAltium();
@@ -1015,7 +1206,7 @@ function render(force) {
   document.title = S.title + ' · PCB Advisor';
   renderNav();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, page, tab, sel, compareCard, exportCard, libExport, sheetId, altsCard]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, S.exports, S.checks, page, tab, sel, compareCard, exportCard, libExport, sheetId, altsCard, outjobBanner, curCheckStem, schAnchor]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
 function go(p, t) { page = p; if (t) tab = t; if (p === 'settings') loadAltium(); render(true); setView('work'); }
@@ -1291,13 +1482,81 @@ async function openViewerAltium(path) {
     if (bodyEl) bodyEl.innerHTML = `<div class="warnbox"><b>Failed to load Altium summary:</b> ${esc(err.message)}</div>`;
   }
 }
+function openViewerSlice(stem, sliceName) {
+  const v = $('#viewer');
+  if (!v) return;
+  setView('work');
+  v.hidden = false;
+  const rawUrl = `/api/checks/slice?stem=${encodeURIComponent(stem)}&slice=${encodeURIComponent(sliceName)}&${q()}`;
+  v.innerHTML = `
+    <div class="viewer-h">
+      <div class="vtitle"><span class="badge">DFM SLICE</span><span title="${esc(sliceName)}">${esc(stem)} / ${esc(sliceName)}</span></div>
+      <div class="vacts">
+        <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
+        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div class="viewer-b" style="align-items:center;justify-content:flex-start;background:var(--panel2);overflow:auto">
+      <img src="${esc(rawUrl)}" alt="${esc(sliceName)}" style="max-width:100%;height:auto;border-radius:4px;box-shadow:var(--shadow)">
+    </div>`;
+}
+async function openViewerExport(name) {
+  const v = $('#viewer');
+  if (!v) return;
+  setView('work');
+  v.hidden = false;
+  const rawUrl = `/api/export/${encodeURIComponent(name)}?${q()}`;
+  const ext = (name.includes('.') ? '.' + name.split('.').pop() : '').toLowerCase();
+  v.innerHTML = `
+    <div class="viewer-h">
+      <div class="vtitle"><span class="badge">EXPORT</span><span title="${esc(name)}">${esc(name)}</span></div>
+      <div class="vacts">
+        <a class="lnk" href="${esc(rawUrl)}" download>Download</a>
+        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
+      </div>
+    </div>
+    <div class="viewer-b"><div class="dnote">Loading…</div></div>`;
+  try {
+    const res = await fetch(rawUrl);
+    const text = await res.text();
+    const bodyEl = v.querySelector('.viewer-b');
+    if (ext === '.csv') {
+      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+      const rows = lines.map(l => parseCsvLine(l));
+      if (rows.length) {
+        bodyEl.innerHTML = `<div class="tblwrap"><table class="viewer-tbl"><thead><tr>${rows[0].map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(1).map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+      } else { bodyEl.innerHTML = '<div class="dnote">Empty CSV</div>'; }
+    } else {
+      bodyEl.innerHTML = `<pre class="viewer-pre">${esc(text)}</pre>`;
+    }
+  } catch (err) {
+    const b = v.querySelector('.viewer-b'); if (b) b.innerHTML = `<div class="dnote">Error: ${esc(err.message)}</div>`;
+  }
+}
 
 /* ---------- events ---------- */
 document.addEventListener('click', async e => {
-  const el = e.target.closest('button, tr[data-key], g.part, g[data-tab], a');
+  const el = e.target.closest('button, tr[data-key], g.part, g[data-tab], text.net, text.pwr, text.pwr3, text.gt, a');
   if (!el) return;
   if (el.tagName === 'A') return;
-  if (el.matches('g.part')) { const l = lineOfRef(el.dataset.ref); if (l) select(l.key); return; }
+  const netEl = el.closest ? el.closest('.net, .pwr, .pwr3, .gt, [data-net]') : null;
+  if (netEl && (page === 'workspace' && tab === 'sch')) {
+    const netTxt = (netEl.dataset.net || netEl.textContent || '').trim();
+    if (netTxt && netTxt !== 'No ERC') {
+      schAnchor = { type: 'net', anchor: 'net:' + netTxt, label: 'Net ' + netTxt };
+      renderCenter(true);
+      return;
+    }
+  }
+  if (el.matches('g.part') || (el.closest && el.closest('g.part'))) {
+    const gp = el.matches('g.part') ? el : el.closest('g.part');
+    const ref = gp.dataset.ref;
+    const l = lineOfRef(ref);
+    schAnchor = { type: 'part', anchor: l ? l.key : ref, label: 'Part ' + (l && l.refs ? l.refs.join(', ') : ref) };
+    if (l) select(l.key);
+    if (page === 'workspace' && tab === 'sch') renderCenter(true);
+    return;
+  }
   if (el.matches('tr[data-key]')) { if (e.target.closest('input')) return; if (!e.target.closest('button')) { select(el.dataset.key); return; } }
   const d = el.dataset;
   try {
@@ -1316,6 +1575,45 @@ document.addEventListener('click', async e => {
     if (d.chat) { openPart(d.chat); return; }
     if (d.sheet) { sheetId = d.sheet; svgCache = {key: '', text: ''}; render(true); return; }
     switch (d.act) {
+      case 'ask-anchor': if (d.anchor) openPart(d.anchor); return;
+      case 'clear-sch-anchor': schAnchor = null; renderCenter(true); return;
+      case 'gen-outjob': {
+        toast('Generating Altium OutJob…');
+        outjobBanner = await api('/api/outjob/generate', {});
+        await refresh(true);
+        toast('OutJob generated in exports/');
+        return;
+      }
+      case 'close-outjob-banner': outjobBanner = null; renderCenter(true); return;
+      case 'gen-cpl': {
+        toast('Exporting CPL…');
+        const r = await api('/api/cpl/export', {});
+        await refresh(true);
+        toast('Exported ' + r.count + ' parts to CPL');
+        return;
+      }
+      case 'view-export': openViewerExport(d.name); return;
+      case 'upload-dfm': $('#dfmpick').click(); return;
+      case 'view-slice': openViewerSlice(d.stem, d.slice); return;
+      case 'discuss-dfm': openPart('dfm:' + d.stem + ':' + d.check); return;
+      case 'add-triage-row': {
+        if (!curCheckStem) return;
+        triageMap[curCheckStem] = triageMap[curCheckStem] || [];
+        triageMap[curCheckStem].push({section: 'General', check: 'Check ' + (triageMap[curCheckStem].length + 1), worst: '—', level: 'Warning', danger: 0, warning: 1, good: 0, layer: 'All', verdict: 'unknown', fix: '', evidence: ''});
+        await api('/api/checks/triage', {stem: curCheckStem, rows: triageMap[curCheckStem]});
+        renderCenter(true);
+        toast('Row added');
+        return;
+      }
+      case 'del-triage-row': {
+        const idx = parseInt(d.idx, 10);
+        if (!curCheckStem || isNaN(idx) || !triageMap[curCheckStem]) return;
+        triageMap[curCheckStem].splice(idx, 1);
+        await api('/api/checks/triage', {stem: curCheckStem, rows: triageMap[curCheckStem]});
+        renderCenter(true);
+        toast('Row removed');
+        return;
+      }
       case 'closeviewer': closeViewer(); return;
       case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); applyFocus(); return;
       case 'closecard': compareCard = exportCard = libExport = altsCard = null; render(true); return;
@@ -1422,6 +1720,38 @@ document.addEventListener('change', async e => {
     const buf = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
     try { setState(await api('/api/upload', {name: f.name, data_b64: btoa(bin)})); render(true); toast('Uploaded ' + f.name); } catch (err) { /* toasted */ }
     e.target.value = ''; return;
+  }
+  if (e.target.id === 'dfmpick') {
+    const f = e.target.files[0]; if (!f) return;
+    toast('Uploading and slicing DFM report…');
+    const buf = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    try {
+      const r = await api('/api/checks/upload', {name: f.name, data_b64: btoa(bin)});
+      curCheckStem = r.stem;
+      await refresh(true);
+      toast(`Report uploaded: ${r.slices.length} slices extracted`);
+    } catch (err) { /* toasted */ }
+    e.target.value = ''; return;
+  }
+  if (e.target.id === 'check-stem-select') {
+    curCheckStem = e.target.value;
+    renderCenter(true);
+    return;
+  }
+  const trg = e.target.closest('[data-triage-field]');
+  if (trg && curCheckStem) {
+    const idx = parseInt(trg.dataset.idx, 10);
+    const field = trg.dataset.triageField;
+    if (!isNaN(idx) && triageMap[curCheckStem] && triageMap[curCheckStem][idx]) {
+      let val = trg.value;
+      if (['danger', 'warning', 'good'].includes(field)) val = parseInt(val, 10) || 0;
+      triageMap[curCheckStem][idx][field] = val;
+      try {
+        await api('/api/checks/triage', {stem: curCheckStem, rows: triageMap[curCheckStem]});
+        toast('Triage saved');
+      } catch (err) { /* toasted */ }
+    }
+    return;
   }
   const i = e.target.closest('input[data-edit]'); if (!i) return;
   const l = lineByKey(i.dataset.line); if (!l) return;

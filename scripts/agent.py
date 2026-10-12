@@ -60,6 +60,15 @@ def _summary(model):
                               for p in model.get("proposals", []) if p["status"] == "pending"],
         "sources": [x["name"] for x in model.get("sources", [])],
     }
+    checks_summary = []
+    for c in model.get("checks", []):
+        stem = c.get("stem")
+        if stem:
+            c_dir = workspace.project_dir(model.get("project")) / "checks" / stem
+            slice_paths = [f.as_posix() for f in sorted(c_dir.glob("slice_*.jpg"))]
+            checks_summary.append({"stem": stem, "slices": slice_paths, "triage_count": c.get("triage_count", 0)})
+    if checks_summary:
+        s["dfm_checks"] = checks_summary
     return json.dumps(s, ensure_ascii=False, indent=1)
 
 

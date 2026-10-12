@@ -164,8 +164,8 @@ Cross-cutting:
 | I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ✅ (measurement partial, see §8) |
 | I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, link the Altium project: PrjPcb, PcbDoc, sheets, output folder); open files in the UI + upload to the knowledge base (§3a) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ✅ |
 | I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); interactive parts tab (§3a: edit/replace, availability indicator, role line, chat per part with datasheet); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ✅ |
-| I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; UI spaces "Altium outputs" and "Final manufacturer checks" (§3a: upload results, discuss); skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ⬜ |
-| I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ⬜ |
+| I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; UI spaces "Altium outputs" and "Final manufacturer checks" (§3a: upload results, discuss); skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ✅ |
+| I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ✅ |
 | I7 | **Rules and calcs** (cap 7). Rules tab (JLC preset + extra rules), `.RUL` writer, read-back diff from the PcbDoc, calculators; skill rules-and-calcs | `.RUL` round-trip test; diff test on a changed fixture; one import in Altium listed for the user | ⬜ |
 | I8 | **Library** (caps 3, 4). Model search + link-and-return, package-variant check vs datasheet, one-script library build for Altium; skills part-models + project-library | incident 1 caught | ⬜ |
 | I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ⬜ |
@@ -211,10 +211,12 @@ them in the project (`checks/`), and give the engine the slices to read (image i
 `runtime/skills/manufacturer-and-dfm/references/jlcdfm-report.md`. Sample: the user's device report (local only,
 untrusted copy in %TEMP%\dfm-untrusted; not committed).
 
-**Stage A done (2026-10-12)** - see section 8. The agy queue (A2->B->C->D) was stopped by Claude Code for low memory
-while B was running; B is left partial and uncommitted in the working tree (pytest green). Restart only when the user asks.
+**Stage A done (2026-10-12)**, **stage B done (2026-10-12)** - see section 8. Edge and two idle Claude Code sessions were
+closed on the user's request to free memory. On the user's request C and D run in parallel with agy, each in its own
+git worktree (`../pcb-advisor-wt-c` on branch stage-c, `../pcb-advisor-wt-d` on branch stage-d, .venv junctioned);
+Claude Code verifies each, commits it on its branch and merges into this branch, then removes the worktrees.
 
-**Next: B** (I5 board + manufacturer checks, I6 schematic review): resume from the partial working tree.
+**Next: merge C and D, then I11** (full benchmark only with the user's OK, docs, English UI check, final summary).
 
 **Waiting for the user:** nothing.
 
@@ -293,3 +295,18 @@ while B was running; B is left partial and uncommitted in the working tree (pyte
 8. Built by agy (briefs a1, a2); verified by Claude Code: pytest + lint + diff stat + network/write spots in jlc.py.
 9. Tests: 242 green (A2 alone, queue run), skills lint ok. Live JLC lookup of STM32G0B1KET6 worked. No benchmark.
 10. Open: neither the viewer nor the parts tab was opened in a browser (no GUI).
+
+### Stage B (I5 board + manufacturer, I6 schematic review), 2026-10-12
+1. `scripts/dfm.py`: JLCDFM PDF -> embedded JPEG -> ~1400 px slices in `projects/<p>/checks/<stem>/`, index.json,
+   triage.json (section, check, worst value, level, D/W/G counts, layer); slice paths resolved inside the folder only.
+2. `scripts/outjob.py`: ready OutJob text (Gerber RS-274X, NC drill, JLC BOM, CPL, schematic PDF) into `exports/`
+   (file name reduced to a bare name by Claude Code: no writes outside exports/).
+3. `scripts/skills/export_cpl.py`: JLC CPL from the linked PcbDoc, BOM fallback.
+4. `scripts/checks/board.py`: connector opening side, decap distance, CPL rotation sanity on the PcbDoc.
+5. `scripts/checks/schematic.py`: netlist from SchDoc wire geometry; single-pin nets, unpowered IC pins, rail mismatch.
+6. serve + UI: "Altium outputs" and "Final manufacturer checks" spaces (upload, slice viewer, triage table, discuss);
+   schematic tab part/net "Ask about this"; exports list and download (bare names only).
+7. Skills board-review, manufacturer-and-dfm, schematic-review list the new scripts. Runtime pack synced.
+8. Built by agy (one run stopped for low memory, resumed from the partial tree); risky spots read by Claude Code.
+9. Tests: 253 green, skills lint ok. No benchmark run (incidents 6-12 to be measured in I11 with the user's OK).
+10. Open: the new UI spaces were not opened in a browser (no GUI).

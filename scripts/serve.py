@@ -229,22 +229,45 @@ def apply_actions(project, actions, sess=None, last_user=""):
 
 
 def open_part_session(project, ref_or_key):
-    """Find or create the conversation anchored to a BOM line."""
+    """Find or create the conversation anchored to a BOM line, net, or DFM check."""
+    if not ref_or_key:
+        return None
     info = model.anchors(project).get(ref_or_key)
     key = info["line"] if info and info.get("line") else ref_or_key
     line = next((l for l in store.bom_lines(project) if l["key"] == key), None)
-    if not line:
-        return None
+    
+    # Check if a session already has this anchor
     for row in session_mod.list_all(project):
-        if row.get("anchor") == key:
+        if row.get("anchor") == key or row.get("anchor") == ref_or_key:
             return row["id"]
-    sid = session_mod.create(project, title=line.get("mpn") or key, anchor=key, sid=f"part-{key}")
-    ctx = model.part_context(project, line["refs"][0])
-    session_mod.append(project, sid, {"ts": store.now(), "role": "ctx", "part": ctx})
+
+    safe_sid_key = re.sub(r"[^\w-]", "_", str(ref_or_key))[:30]
+    if line:
+        sid = session_mod.create(project, title=line.get("mpn") or key, anchor=key, sid=f"part-{key}")
+        ctx = model.part_context(project, line["refs"][0])
+        session_mod.append(project, sid, {"ts": store.now(), "role": "ctx", "part": ctx})
+        session_mod.append(project, sid, {
+            "ts": store.now(), "role": "agent",
+            "text": "What do you want to know about {{ref:" + line["refs"][0] + "}}? I can see its datasheet, "
+                    "the nets it connects to and its stock."})
+        return sid
+
+    if str(ref_or_key).startswith("dfm:"):
+        check_name = ref_or_key.split(":", 2)[-1]
+        sid = session_mod.create(project, title=f"DFM: {check_name}", anchor=ref_or_key, sid=f"dfm-{safe_sid_key}")
+        session_mod.append(project, sid, {
+            "ts": store.now(), "role": "agent",
+            "text": f"Let's discuss DFM check **{check_name}**. We can review the slice crop, check if it's a real issue or model artifact, and decide on a fix."
+        })
+        return sid
+
+    # Net anchor or generic part anchor
+    clean_anchor = str(ref_or_key).replace("net:", "")
+    sid = session_mod.create(project, title=f"Net {clean_anchor}", anchor=ref_or_key, sid=f"net-{safe_sid_key}")
     session_mod.append(project, sid, {
         "ts": store.now(), "role": "agent",
-        "text": "What do you want to know about {{ref:" + line["refs"][0] + "}}? I can see its datasheet, "
-                "the nets it connects to and its stock."})
+        "text": f"What would you like to discuss about net or part **{clean_anchor}**? I can help check connectivity and design rules."
+    })
     return sid
 
 
@@ -465,6 +488,48 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, alts)
             except Exception as exc:
                 return self._send(500, {"error": str(exc)})
+        if path == "/api/checks":
+            import dfm
+            return self._send(200, {"checks": dfm.list_checks(self.project())})
+        if path == "/api/checks/slice":
+            stem = self.query("stem")
+            slice_file = self.query("slice")
+            if not stem or not slice_file:
+                return self._send(400, {"error": "stem and slice query params required"})
+            import dfm
+            p = dfm.get_slice_path(self.project(), stem, slice_file)
+            if not p:
+                return self._send(404, {"error": "slice not found"})
+            return self._send(200, p.read_bytes(), "image/jpeg")
+        if path == "/api/checks/triage":
+            stem = self.query("stem")
+            if not stem:
+                return self._send(400, {"error": "stem query param required"})
+            import dfm
+            return self._send(200, {"stem": stem, "triage": dfm.load_triage(self.project(), stem)})
+        if path == "/api/checks/index":
+            stem = self.query("stem")
+            if not stem:
+                return self._send(400, {"error": "stem query param required"})
+            import dfm
+            try:
+                return self._send(200, dfm.load_index(self.project(), stem))
+            except Exception as exc:
+                return self._send(404, {"error": str(exc)})
+        if path == "/api/exports":
+            proj = self.project()
+            out_dir = model.project_dir(proj) / "exports"
+            files = []
+            if out_dir.is_dir():
+                for f in sorted(out_dir.iterdir()):
+                    if f.is_file():
+                        files.append({
+                            "name": f.name,
+                            "bytes": f.stat().st_size,
+                            "modified": dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds"),
+                            "url": f"/api/export/{f.name}",
+                        })
+            return self._send(200, {"exports": files})
         return self._send(404, {"error": "not found"})
 
     # ---------------------------------------------------------------- write
@@ -827,6 +892,44 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "name required"})
             sources.unuse(proj, name)
             return self._send(200, state())
+
+        if path == "/api/checks/upload":
+            name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", pathlib.Path(data.get("name") or "report.pdf").name)
+            blob = data.get("data_b64")
+            if not blob:
+                return self._send(400, {"error": "data_b64 required"})
+            try:
+                raw = base64.b64decode(blob)
+            except Exception as exc:
+                return self._send(400, {"error": f"invalid base64: {exc}"})
+            import dfm
+            try:
+                res = dfm.ingest_pdf(raw, proj, name=name)
+                return self._send(200, res)
+            except Exception as exc:
+                return self._send(400, {"error": f"could not ingest DFM report: {exc}"})
+
+        if path == "/api/checks/triage":
+            stem = data.get("stem")
+            rows = data.get("rows")
+            if not stem or rows is None:
+                return self._send(400, {"error": "stem and rows required"})
+            import dfm
+            try:
+                saved = dfm.save_triage(proj, stem, rows)
+                return self._send(200, {"ok": True, "stem": stem, "triage": saved})
+            except Exception as exc:
+                return self._send(400, {"error": str(exc)})
+
+        if path == "/api/outjob/generate":
+            import outjob
+            res = outjob.generate_outjob(proj, filename=data.get("filename"))
+            return self._send(200, res)
+
+        if path == "/api/cpl/export":
+            from skills.export_cpl import export_cpl
+            res = export_cpl(proj)
+            return self._send(200, res)
 
         return self._send(404, {"error": "not found"})
 

@@ -267,6 +267,10 @@ def describe(project=None, engine_home=None):
              "what": "what a conversation would otherwise forget. Bounded, and rewritten by a separate call"},
             {"path": rel(pdir / "notes.md"), "write": True,
              "what": "the project's notes. Nothing derives from it"},
+            {"path": rel(pdir / "checks"), "write": False,
+             "what": "DFM check reports and image slices. Each report has index.json, triage.json and slice_*.jpg files"},
+            {"path": rel(pdir / "exports"), "write": "generated outputs",
+             "what": "ready OutJob, BOMs, and CPL files exported for manufacturing"},
         ]
     try:
         import project as project_mod
@@ -291,6 +295,14 @@ def describe(project=None, engine_home=None):
         "project": pdir.name,
         "places": places,
         "scripts": [
+            {"run": oscompat.py("python3 {repo}/scripts/outjob.py <project>"),
+             "what": "generate ready Altium OutJob file (Gerber RS-274X, NC drill, JLC BOM, CPL, schematic PDF)"},
+            {"run": oscompat.py("python3 {repo}/scripts/dfm.py ingest <project> <pdf>"),
+             "what": "ingest JLCDFM report PDF into slices and triage table"},
+            {"run": oscompat.py("python3 {repo}/scripts/checks/board.py <pcb_file>"),
+             "what": "run physical board checks (connectors, decap distance, CPL rotation)"},
+            {"run": oscompat.py("python3 {repo}/scripts/checks/schematic.py <source>"),
+             "what": "build netlist and check single-pin nets, unconnected IC power pins, pin-net mismatches"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/check_availability.py <project> [LINE ...]"),
              "what": "stock and price per supplier, stored with the time. NEVER state stock or price without running this"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/compare_prices.py <project>"),

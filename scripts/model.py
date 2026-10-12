@@ -165,6 +165,17 @@ def build(project=None, session=None):
     tot = store.totals(lines)
     props = store.proposals(project)
     sessions = session_mod.list_all(project)
+    checks_list = []
+    try:
+        import dfm
+        checks_list = dfm.list_checks(project)
+    except Exception:
+        pass
+    exports_list = []
+    exp_dir = pdir / "exports"
+    if exp_dir.is_dir():
+        exports_list = [f.name for f in sorted(exp_dir.iterdir()) if f.is_file()]
+
     return {
         "project": project,
         "title": meta.get("title") or project,
@@ -177,6 +188,8 @@ def build(project=None, session=None):
         "sheets": sheets(project),
         "library": store.library_view(project),
         "sources": list_sources(project),
+        "checks": checks_list,
+        "exports": exports_list,
         "chat": session_mod.load_chat(project, sess),
         "session": sess,
         "sessions": sessions,

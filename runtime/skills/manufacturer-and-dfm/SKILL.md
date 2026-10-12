@@ -16,10 +16,9 @@ description: Prepares the manufacturing package for JLC and walks the student th
 
 ## Steps
 1. Confirm the board passed the batch DRC (board-review) and the BOM has an LCSC number on every fitted line.
-2. OutJob. Give the student the OutJob file when the generator exists, else the manual recipe from
-   {{src:m25-fabrication-files.en.md|25.4 Output Job File}}: Gerber (plot layers: copper, overlays, paste, solder mask,
-   the outline layer), NC Drill, Pick and Place, BOM. Use a fixed output folder (for example `Outputs/Fabrication`,
-   `Outputs/Assembly`) so the files can be read back. The student adds the OutJob to the project, clicks Generate content.
+2. OutJob. Run `scripts/outjob.py <project>` to write the ready OutJob into `projects/<project>/exports/` (or use the manual recipe
+   from {{src:m25-fabrication-files.en.md|25.4 Output Job File}}): Gerber, NC Drill, Pick and Place, BOM, Schematics.
+   The student copies the OutJob into their Altium project folder and clicks Generate content.
 3. Pre-upload check of the generated files (read them, do not trust the dialog):
    a. Outline: the board outline is on its own mechanical layer and appears only in the outline Gerber. It must not be
       in the "add to all plots" list, or every layer gets the outline and JLC reports trace to board edge.
@@ -30,8 +29,8 @@ description: Prepares the manufacturing package for JLC and walks the student th
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
 4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
    its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in (same package) for the student to approve.
-5. PCB DFM at JLC: the student opens the free JLC DFM tool, uploads the Gerber zip, runs PCB DFM + SMT DFM and
-   uploads the exported report PDF. It is one tall image with no text: read it as image slices
+5. PCB DFM at JLC: the student uploads the Gerber zip to JLC DFM, runs PCB + SMT DFM, and uploads the report PDF.
+   Ingest it with `scripts/dfm.py ingest <project> <pdf>` to slice into ~1400 px images and review in the triage table
    (`references/jlcdfm-report.md` has the layout and the SMT triage hints).
 6. SMT preview: BOM/CPL upload in the JLC assembly flow, then the Component Placements view. The student checks pin 1
    mark and the body outline of each part against the pads, and sends the list of parts that look rotated.
@@ -46,10 +45,9 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` writes the JLC BOM csv; lists lines left out and lines
   that need an LCSC number.
 - `python <repo>/scripts/skills/check_availability.py ...` stock and price from JLC, with query time. Quote the time.
-- (planned, stage I5) `scripts/outjob.py` ready OutJob.
-- (planned, stage I5) `scripts/checks/board.py` outline layers, drill units, CPL rotation vs JLC models.
-- (planned, stage I5) `scripts/dfm.py` DFM guide and triage table.
-- Until those exist say "not automated yet" and do steps 2-3 by reading the generated files the student shares.
+- `python <repo>/scripts/outjob.py <project> [output_dir]` writes an Altium OutJob text file (Gerber, NC drill, JLC BOM, CPL, schematic PDF).
+- `python <repo>/scripts/checks/board.py <pcb_file>` checks outline clearances, connector orientation, decap distances, and CPL rotation sanity.
+- `python <repo>/scripts/dfm.py ingest <project> <pdf_path>` ingests a JLCDFM report PDF, extracts slices, and builds the triage table.
 - Never run Altium or log in to JLC for the student.
 
 ## References

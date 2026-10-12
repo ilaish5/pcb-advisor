@@ -17,14 +17,12 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 1. Ask for the board facts you cannot read: board outline and mounting holes, which side each connector's cable
    enters, any antenna or module with a datasheet keep-out. If the student gives only a screenshot, review the screenshot
    and say what you cannot see (bottom side, inner layers).
-2. Connectors. For each connector find the board edge it must face, then the side its opening (cable entry, card slot,
-   plug mouth) points to. The opening must face the nearest board edge and be free of parts. Pads and body outline of a
-   2-pin terminal block are nearly symmetric, so numbers hide a wrong rotation. Ask for a tilted 3D screenshot of
-   each connector (View > 3D layout mode, tilt, look from the edge). Judge only what the 3D image shows.
-3. Decoupling. For each IC list its supply pins and the cap meant for each pin. Gap = pad of the cap to the supply
-   pin, along the copper. Aim at a few mm (roughly 2-5 mm); the small cap sits closer than the bulk cap. One cap per
-   supply pin, not one cap for all. Flag a cap whose current path goes through a via first. Datasheet layout advice wins
-   over the rule of thumb; cite its page.
+2. Connectors. Run `scripts/checks/board.py` to verify opening orientation against the nearest board edge normal. For each connector,
+   the opening must face outward toward the board edge and be free of obstructing parts. Ask for a tilted 3D screenshot
+   (View > 3D layout mode, tilt, look from the edge) to verify symmetric footprints that may hide a 180° rotation.
+3. Decoupling. Run `scripts/checks/board.py` to measure distance from each decoupling cap to its IC power pin on the same net.
+   Aim at a few mm (roughly 2-5 mm); the small cap sits closer than the bulk cap. One cap per supply pin, not one cap for all.
+   Flag a cap whose current path goes through a via first. Datasheet layout advice wins over the rule of thumb; cite its page.
 4. RF and antenna. Use the module datasheet keep-out: no copper, no pour, no parts under or beside the antenna element
    as drawn there. Feed line: short, one layer, over an unbroken reference plane, with GND stitching vias beside it.
    Ask for the stackup before judging width; do not guess an impedance (rules-and-calcs).
@@ -43,8 +41,7 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
   (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/trace_width.py ...` IPC-2221 trace width for a current; use it instead of estimating.
 - `python <repo>/scripts/model.py <project>` prints project state (BOM, parts, notes) to read the part list.
-- (planned, stage I5) `scripts/checks/board.py` connector side, decap distance, outline layers, CPL rotation from the
-  PcbDoc. Until it exists say "this check is not automated yet" and do steps 2-3 from the student's data or images.
+- `python <repo>/scripts/checks/board.py <pcb_file>` checks connector opening vs nearest edge normal, decap distance to IC power pin, and CPL rotation sanity.
 - Never run Altium, Altium scripts or the GUI. The student runs DRC and sends the result.
 
 ## References

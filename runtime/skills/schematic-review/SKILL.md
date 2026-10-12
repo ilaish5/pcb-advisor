@@ -22,8 +22,9 @@ A finding without a datasheet page is not a finding; it is a question to the stu
    or the project sources. No datasheet: ask the student for it (link-and-return) and skip that part; never review from memory.
 3. For each IC read the pin table, the "recommended operating conditions", the "absolute maximum ratings", the typical
    application circuit and the electrical-characteristics rows for the pins you check. Note the page of each.
-4. Run the checks of `references/checklist.md` in order: power pins and decoupling, resets and boot pins, pull-ups/pull-downs,
-   output types, unconnected pins, abs-max margins, regulator caps (min AND max value, ESR), crystal load caps.
+4. Run the checks of `references/checklist.md` in order: run `scripts/checks/schematic.py` to flag single-pin nets,
+   unconnected IC power pins, sheet-local net labels, and power/ground pin name mismatches; then check decoupling,
+   resets and boot pins, pull-ups/pull-downs, output types, abs-max margins, regulator caps, crystal load caps.
 5. Output type: read the VOH/VOL or "output structure" rows. A pin with VOH near VCC is push-pull: no pull-up, and a pull-up
    may even hold a downstream switch on when the driver is dead. Only an open-drain/open-collector pin (or an input with no
    internal bias) needs one.
@@ -39,9 +40,7 @@ A finding without a datasheet page is not a finding; it is a question to the stu
   (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/skills/verify_part.py <project> <bom-key>` - checks the part's pin numbers against the datasheet text.
 - `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` - sheet refs missing from the BOM, pins without a net.
-- (planned, stage I6) `<repo>/scripts/netlist_build.py` - netlist from PcbDoc pads and SchDoc wire geometry.
-- (planned, stage I6) `<repo>/scripts/checks/schematic.py` - automated checks (decoupling, pull-ups, open nets, abs-max).
-  Until I6 exists, say the checks are not automated yet and do them by reading the files and datasheets.
+- `python <repo>/scripts/checks/schematic.py <file>` builds netlist from wire geometry and checks single-pin nets, unconnected IC power, and rail mismatches.
 
 ## References
 - `references/checklist.md` - the checks, how to read each datasheet section, the swap procedure.
