@@ -19,8 +19,12 @@ description: Turns a rough project idea into a short list of open requirements q
 4. Ask the student to answer in one message. Do not choose for them: a default is only a proposal.
 5. After the answers, list what each answer forces (a connector, a part, a footprint, a rule) and name the skill that handles it.
 6. Record agreed items with `idea.propose`, one per topic. Use `idea.confirm` only after a clear yes, quoting their words.
-7. Block diagram: propose blocks (part + one-line role) and labelled links (voltage or bus) as idea items; the
-   student edits the diagram in the Idea tab. A picture only on request.
+7. Block diagram: edit directly with `idea.diagram.edit` (live, no approval) for adding/updating blocks, buses,
+   connectors, frames, or auto-layout. Use `idea.diagram` (proposal with approve/reject) only for whole-diagram
+   overhauls. Keep block text short: name + one-line role (e.g. "Charger\nBQ24075", "MCU\nSTM32G030"); label connectors
+   with bus or rail ("5V", "I2C", "SPI"). Available ops: `add_shape`, `update_shape`, `delete_shape`, `add_connector`,
+   `update_connector`, `delete_connector`, `add_frame`, `update_frame`, `delete_frame`, `auto_layout`. See
+   `references/diagram-ops.md` for full op syntax and power-chain, MCU-bus, and dashed-domain-frame examples.
 
 Question list (pick, do not ask all):
 - Power: source (USB, battery, adapter, 12 V), highest and lowest voltage, peak current, battery life target, charging.
@@ -42,6 +46,7 @@ Question list (pick, do not ask all):
 - `<repo>/docs/PRODUCT-PLAN.md` - section 1 (K4: late requirements cost a day of rework) and section 3.
 - `<repo>/shared/reference/course/altium-education/unit2-schematics-libraries.en.md` - [15]-[19], [22] component choice, supply chain.
 - `references/question-bank.md` - why-it-matters text and follow-ups per question (in this skill folder).
+- `references/diagram-ops.md` - operations and examples for live diagram editing (in this skill folder).
 
 ## Pitfalls
 - Flashing is the classic late question. Some MCU families have a ROM USB DFU boot mode, only on fixed USB pins; others only

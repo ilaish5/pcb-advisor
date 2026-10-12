@@ -14,12 +14,14 @@ on every read, so a hand-edit of either is lost - on purpose.
 
 The only callers that write are the server and the skills in scripts/skills.
 """
+import copy
 import datetime as dt
 import json
 import math
 import pathlib
 import re
 import sys
+from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import workspace  # noqa: E402
@@ -28,7 +30,7 @@ ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 COLOR_RE = re.compile(r"^(#[0-9A-Fa-f]{3,8}|rgba?\([0-9., %]+\)|[a-zA-Z]{1,20})$")
 
 VALID_SHAPE_TYPES = {
-    "block", "rectangle", "ellipse", "diamond", "triangle",
+    "box", "block", "rectangle", "ellipse", "diamond", "triangle",
     "rounded_rectangle", "rounded-rectangle", "pill",
     "cloud", "star", "arrow_right", "arrow-right",
     "parallelogram", "hexagon", "octagon",
@@ -38,8 +40,8 @@ VALID_SHAPE_TYPES = {
     "note_brace", "note-brace", "brace",
     "sticky", "text",
 }
-VALID_STROKE_STYLES = {"solid", "dashed", "dotted"}
-VALID_CONNECT_ARROWS = {"none", "end", "both", "start"}
+VALID_STROKE_STYLES = {"solid", "dashed", "dotted", "thick"}
+VALID_CONNECT_ARROWS = {"none", "end", "both", "start", "to"}
 VALID_CONNECT_ROUTES = {"straight", "elbow", "curved"}
 VALID_ENDPOINT_SIDES = {"top", "bottom", "left", "right"}
 VALID_ALIGN = {"left", "center", "right"}
@@ -976,16 +978,106 @@ def save_idea(project, idea):
     return idea
 
 
+def validate_idea_item(topic, text):
+    if not topic or not isinstance(topic, str) or not topic.strip() or len(topic.strip()) > 60:
+        raise ValueError("topic must be 1-60 chars")
+    if not text or not isinstance(text, str) or not text.strip() or len(text.strip()) > 1000:
+        raise ValueError("text must be 1-1000 chars")
+    return topic.strip(), text.strip()
+
+
 def propose_idea(project, topic, text, by="agent"):
     """An agreed item. The agent proposes; it becomes 'confirmed' only when the student says so."""
+    topic, text = validate_idea_item(topic, text)
     idea = load_idea(project)
     item = next((i for i in idea["agreed"] if i["topic"] == topic), None)
     status = "confirmed" if by == "student" else "proposed"
     if item:
+        if by == "agent" and item.get("text") and item["text"] != text:
+            item["prev_text"] = item["text"]
         item.update(text=text, by=by, status=status, ts=now())
     else:
         idea["agreed"].append({"topic": topic, "text": text, "by": by, "status": status, "ts": now()})
     return save_idea(project, idea)
+
+
+def update_idea_item(project, index=None, old_topic=None, topic=None, text=None):
+    """Student updates/renames a requirement row. Sets by='student' and status='confirmed'."""
+    topic, text = validate_idea_item(topic, text)
+    idea = load_idea(project)
+    agreed = idea.get("agreed", [])
+    item_idx = None
+    if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
+        item_idx = index
+    elif old_topic:
+        item_idx = next((i for i, it in enumerate(agreed) if it["topic"] == old_topic), None)
+    if item_idx is None:
+        raise KeyError("requirement not found")
+
+    for i, it in enumerate(agreed):
+        if i != item_idx and it.get("topic") == topic:
+            raise ValueError("topic exists")
+
+    item = agreed[item_idx]
+    item["topic"] = topic
+    item["text"] = text
+    item["by"] = "student"
+    item["status"] = "confirmed"
+    item["ts"] = now()
+    save_idea(project, idea)
+    return idea
+
+
+def delete_idea_item(project, index=None, topic=None):
+    """Delete a requirement row."""
+    idea = load_idea(project)
+    agreed = idea.get("agreed", [])
+    item_idx = None
+    if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
+        item_idx = index
+    elif topic:
+        item_idx = next((i for i, it in enumerate(agreed) if it.get("topic") == topic), None)
+    if item_idx is None:
+        raise KeyError("requirement not found")
+    deleted = agreed.pop(item_idx)
+    save_idea(project, idea)
+    return deleted
+
+
+def confirm_idea_item(project, index=None, topic=None):
+    """Confirm a specific requirement item (or all if none specified)."""
+    idea = load_idea(project)
+    agreed = idea.get("agreed", [])
+    if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
+        agreed[index]["status"] = "confirmed"
+        agreed[index]["ts"] = now()
+    elif topic:
+        item = next((it for it in agreed if it.get("topic") == topic), None)
+        if not item:
+            raise KeyError(f"no requirement with topic {topic!r}")
+        item["status"] = "confirmed"
+        item["ts"] = now()
+    else:
+        for it in agreed:
+            if it.get("status") == "proposed":
+                it["status"] = "confirmed"
+                it["ts"] = now()
+    save_idea(project, idea)
+    return idea
+
+
+def move_idea_item(project, from_index, to_index):
+    """Reorder requirements list by moving an item from from_index to to_index."""
+    idea = load_idea(project)
+    agreed = idea.get("agreed", [])
+    if not isinstance(from_index, int) or not isinstance(to_index, int):
+        raise ValueError("from and to must be integers")
+    if not (0 <= from_index < len(agreed)) or not (0 <= to_index < len(agreed)):
+        raise ValueError("indices out of range")
+    item = agreed.pop(from_index)
+    agreed.insert(to_index, item)
+    save_idea(project, idea)
+    return idea
 
 
 def confirm_idea(project):
@@ -996,6 +1088,584 @@ def confirm_idea(project):
         if i["status"] == "proposed":
             i["status"] = "confirmed"
     return save_idea(project, idea)
+
+
+# ---------------------------------------------------------------- diagram history & edit
+
+def diagram_history_path(project):
+    return pdir(project) / "idea-diagram-history.json"
+
+
+def diagram_history(project):
+    """Return the list of diagram history snapshots."""
+    path = diagram_history_path(project)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_diagram_snapshot(project, diagram):
+    """Keep last 20 diagram snapshots in idea-diagram-history.json."""
+    path = diagram_history_path(project)
+    history = []
+    if path.is_file():
+        try:
+            history = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(history, list):
+                history = []
+        except Exception:
+            history = []
+    history.append({"ts": now(), "diagram": copy.deepcopy(diagram)})
+    history = history[-20:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    return history
+
+
+def undo_diagram(project):
+    """Restore the previous snapshot from idea-diagram-history.json."""
+    path = diagram_history_path(project)
+    if not path.is_file():
+        raise ValueError("no undo history")
+    try:
+        history = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(history, list) or not history:
+            raise ValueError("no undo history")
+    except Exception as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("no undo history")
+
+    last = history.pop()
+    path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+    idea = load_idea(project)
+    valid_diag = validate_diagram(last.get("diagram", {}))
+    idea["diagram"] = valid_diag
+    save_idea(project, idea)
+    return valid_diag
+
+
+def apply_diagram_edit(project, ops):
+    """Apply a batch of diagram edit operations directly.
+    Cap 100 ops. Validated with validate_diagram; any invalid op raises and leaves diagram unchanged.
+    Before applying, keeps a snapshot in idea-diagram-history.json.
+    """
+    if not isinstance(ops, list):
+        raise ValueError("ops must be a list")
+    if len(ops) > 100:
+        raise ValueError("too many ops (max 100)")
+
+    idea = load_idea(project)
+    cur_diag = idea.get("diagram", {"shapes": [], "connectors": [], "frames": []})
+    shapes = [copy.deepcopy(s) for s in cur_diag.get("shapes", [])]
+    connectors = [copy.deepcopy(c) for c in cur_diag.get("connectors", [])]
+    frames = [copy.deepcopy(f) for f in cur_diag.get("frames", [])]
+
+    touched_ids = set()
+
+    for op in ops:
+        if not isinstance(op, dict):
+            raise ValueError("op must be an object")
+        op_name = op.get("op") or op.get("type")
+        if not op_name:
+            raise ValueError("op requires op or type field")
+
+        if op_name == "add_shape":
+            sid = op.get("id")
+            if sid:
+                if not isinstance(sid, str) or not ID_RE.match(sid):
+                    raise ValueError(f"invalid shape id: {sid!r}")
+                if any(s["id"] == sid for s in shapes):
+                    raise ValueError(f"shape {sid} already exists")
+            else:
+                idx = 1
+                existing_sids = {s["id"] for s in shapes}
+                while f"shape_{idx}" in existing_sids:
+                    idx += 1
+                sid = f"shape_{idx}"
+
+            stype = op.get("type", "block")
+            if stype not in VALID_SHAPE_TYPES:
+                raise ValueError(f"unknown shape type: {stype!r}")
+
+            w = float(op.get("w", 160.0))
+            h = float(op.get("h", 68.0))
+            if not math.isfinite(w) or not math.isfinite(h) or w <= 0 or h <= 0 or w > 20000 or h > 20000:
+                raise ValueError("shape dimensions out of range")
+
+            if "x" in op and "y" in op and op["x"] is not None and op["y"] is not None:
+                x = float(op["x"])
+                y = float(op["y"])
+                if not math.isfinite(x) or not math.isfinite(y):
+                    raise ValueError("shape coordinates must be finite")
+            else:
+                near_id = op.get("near")
+                if not near_id:
+                    for c in connectors:
+                        f_sh = c.get("from", {}).get("shape") if isinstance(c.get("from"), dict) else c.get("from")
+                        t_sh = c.get("to", {}).get("shape") if isinstance(c.get("to"), dict) else c.get("to")
+                        if f_sh == sid and t_sh and any(s["id"] == t_sh for s in shapes):
+                            near_id = t_sh
+                            break
+                        elif t_sh == sid and f_sh and any(s["id"] == f_sh for s in shapes):
+                            near_id = f_sh
+                            break
+                rel_shape = next((s for s in shapes if s["id"] == near_id), None) if near_id else None
+                if rel_shape:
+                    cand_x = rel_shape["x"] + rel_shape["w"] + 40.0
+                    cand_y = rel_shape["y"]
+                elif shapes:
+                    cand_x = max(s["x"] + s["w"] for s in shapes) + 40.0
+                    cand_y = shapes[0]["y"]
+                else:
+                    cand_x = 100.0
+                    cand_y = 100.0
+
+                def overlaps(cx, cy, cw, ch):
+                    for s in shapes:
+                        if not (cx + cw <= s["x"] or cx >= s["x"] + s["w"] or cy + ch <= s["y"] or cy >= s["y"] + s["h"]):
+                            return True
+                    return False
+
+                while overlaps(cand_x, cand_y, w, h):
+                    cand_y += 80.0
+                    if cand_y > 1000.0:
+                        cand_x += 200.0
+                        cand_y = 100.0
+                x, y = cand_x, cand_y
+
+            text = str(op.get("text", ""))
+            if len(text) > 2000:
+                raise ValueError("text must be <= 2000 chars")
+
+            raw_dom = str(op.get("domain", "")).lower() if "domain" in op else ""
+            dom = raw_dom if raw_dom in VALID_DOMAINS else ""
+            if "domain" in op and raw_dom not in VALID_DOMAINS:
+                raise ValueError(f"invalid domain: {raw_dom!r}")
+            dom_colors = DOMAIN_COLORS.get(dom, {"fill": "#ffffff", "stroke": "#1e293b"})
+
+            fill = op.get("fill") or dom_colors["fill"]
+            stroke = op.get("stroke") or dom_colors["stroke"]
+            if not COLOR_RE.match(fill):
+                raise ValueError(f"invalid fill: {fill!r}")
+            if not COLOR_RE.match(stroke):
+                raise ValueError(f"invalid stroke: {stroke!r}")
+
+            stroke_style = op.get("strokeStyle", "solid")
+            if stroke_style not in VALID_STROKE_STYLES:
+                raise ValueError(f"invalid strokeStyle: {stroke_style!r}")
+
+            stroke_width = float(op.get("strokeWidth", 2.0))
+            if not math.isfinite(stroke_width) or stroke_width < 0 or stroke_width > 50:
+                raise ValueError("invalid strokeWidth")
+
+            font_size = op.get("fontSize", "M")
+            if isinstance(font_size, (int, float)):
+                if not math.isfinite(font_size) or font_size < 4 or font_size > 120:
+                    raise ValueError("invalid fontSize")
+            elif font_size not in VALID_FONT_SIZES:
+                raise ValueError(f"invalid fontSize: {font_size}")
+
+            bold = bool(op.get("bold", True))
+            align = op.get("align", "center")
+            if align not in VALID_ALIGN:
+                raise ValueError(f"invalid align: {align}")
+
+            z = float(op.get("z", len(shapes) + 1))
+            locked = bool(op.get("locked", False))
+
+            new_s = {
+                "id": sid, "type": stype, "x": x, "y": y, "w": w, "h": h,
+                "text": text, "fill": fill, "stroke": stroke, "strokeStyle": stroke_style,
+                "strokeWidth": stroke_width, "fontSize": font_size, "bold": bold,
+                "align": align, "z": z, "locked": locked,
+            }
+            if dom:
+                new_s["domain"] = dom
+            if "role" in op and isinstance(op["role"], str):
+                new_s["role"] = op["role"][:200]
+            shapes.append(new_s)
+            touched_ids.add(sid)
+
+        elif op_name == "update_shape":
+            sid = op.get("id")
+            if not sid:
+                raise ValueError("update_shape requires id")
+            shape = next((s for s in shapes if s["id"] == sid), None)
+            if not shape:
+                raise ValueError(f"shape {sid} not found")
+
+            if "type" in op:
+                if op["type"] not in VALID_SHAPE_TYPES:
+                    raise ValueError(f"unknown shape type: {op['type']!r}")
+                shape["type"] = op["type"]
+            for num_f in ("x", "y", "w", "h"):
+                if num_f in op:
+                    v = float(op[num_f])
+                    if not math.isfinite(v):
+                        raise ValueError(f"field {num_f} must be finite")
+                    if num_f in ("w", "h") and (v <= 0 or v > 20000):
+                        raise ValueError(f"field {num_f} out of range")
+                    shape[num_f] = v
+            if "text" in op:
+                t = str(op["text"])
+                if len(t) > 2000:
+                    raise ValueError("text <= 2000 chars")
+                shape["text"] = t
+            if "domain" in op:
+                dom = str(op["domain"]).lower()
+                if dom not in VALID_DOMAINS:
+                    raise ValueError(f"invalid domain: {dom!r}")
+                shape["domain"] = dom
+                if "fill" not in op and dom in DOMAIN_COLORS:
+                    shape["fill"] = DOMAIN_COLORS[dom]["fill"]
+                if "stroke" not in op and dom in DOMAIN_COLORS:
+                    shape["stroke"] = DOMAIN_COLORS[dom]["stroke"]
+            if "fill" in op:
+                if not COLOR_RE.match(op["fill"]):
+                    raise ValueError("invalid fill")
+                shape["fill"] = op["fill"]
+            if "stroke" in op:
+                if not COLOR_RE.match(op["stroke"]):
+                    raise ValueError("invalid stroke")
+                shape["stroke"] = op["stroke"]
+            if "strokeStyle" in op:
+                if op["strokeStyle"] not in VALID_STROKE_STYLES:
+                    raise ValueError("invalid strokeStyle")
+                shape["strokeStyle"] = op["strokeStyle"]
+            if "strokeWidth" in op:
+                sw = float(op["strokeWidth"])
+                if not math.isfinite(sw) or sw < 0 or sw > 50:
+                    raise ValueError("invalid strokeWidth")
+                shape["strokeWidth"] = sw
+            if "fontSize" in op:
+                fs = op["fontSize"]
+                if isinstance(fs, (int, float)):
+                    if not math.isfinite(fs) or fs < 4 or fs > 120:
+                        raise ValueError("invalid fontSize")
+                elif fs not in VALID_FONT_SIZES:
+                    raise ValueError("invalid fontSize")
+                shape["fontSize"] = fs
+            if "bold" in op:
+                shape["bold"] = bool(op["bold"])
+            if "align" in op:
+                if op["align"] not in VALID_ALIGN:
+                    raise ValueError("invalid align")
+                shape["align"] = op["align"]
+            if "z" in op:
+                z = float(op["z"])
+                if not math.isfinite(z):
+                    raise ValueError("z must be finite")
+                shape["z"] = z
+            if "locked" in op:
+                shape["locked"] = bool(op["locked"])
+            if "role" in op:
+                shape["role"] = str(op["role"])[:200]
+            touched_ids.add(sid)
+
+        elif op_name == "delete_shape":
+            sid = op.get("id")
+            if not sid:
+                raise ValueError("delete_shape requires id")
+            if not any(s["id"] == sid for s in shapes):
+                raise ValueError(f"shape {sid} not found")
+            shapes = [s for s in shapes if s["id"] != sid]
+            connectors = [c for c in connectors if not (
+                (isinstance(c.get("from"), dict) and c["from"].get("shape") == sid) or
+                (isinstance(c.get("to"), dict) and c["to"].get("shape") == sid) or
+                c.get("from") == sid or c.get("to") == sid
+            )]
+            touched_ids.add(sid)
+
+        elif op_name == "add_connector":
+            cid = op.get("id")
+            if cid:
+                if not isinstance(cid, str) or not ID_RE.match(cid):
+                    raise ValueError(f"invalid connector id: {cid!r}")
+                if any(c["id"] == cid for c in connectors):
+                    raise ValueError(f"connector {cid} already exists")
+            else:
+                idx = 1
+                existing_cids = {c["id"] for c in connectors}
+                while f"conn_{idx}" in existing_cids:
+                    idx += 1
+                cid = f"conn_{idx}"
+
+            def parse_ep(raw, def_side, name):
+                if isinstance(raw, dict):
+                    if "shape" in raw:
+                        sh = raw["shape"]
+                        if not any(s["id"] == sh for s in shapes):
+                            raise ValueError(f"connector {cid} {name} shape {sh!r} not found")
+                        side = raw.get("side", def_side)
+                        if side not in VALID_ENDPOINT_SIDES:
+                            raise ValueError(f"invalid side: {side}")
+                        return {"shape": sh, "side": side}
+                    elif "x" in raw and "y" in raw:
+                        x, y = float(raw["x"]), float(raw["y"])
+                        if not math.isfinite(x) or not math.isfinite(y):
+                            raise ValueError(f"connector {cid} {name} coordinates must be finite")
+                        return {"x": x, "y": y}
+                    raise ValueError(f"connector {cid} {name} must have shape or coordinates")
+                elif isinstance(raw, str):
+                    if not any(s["id"] == raw for s in shapes):
+                        raise ValueError(f"connector {cid} {name} shape {raw!r} not found")
+                    side = op.get(f"{name}_side", def_side)
+                    if side not in VALID_ENDPOINT_SIDES:
+                        side = def_side
+                    return {"shape": raw, "side": side}
+                raise ValueError(f"connector {cid} {name} required")
+
+            ep_f_raw = op.get("from") or op.get("from_id") or op.get("source")
+            ep_t_raw = op.get("to") or op.get("to_id") or op.get("target")
+            ep_f = parse_ep(ep_f_raw, "right", "from")
+            ep_t = parse_ep(ep_t_raw, "left", "to")
+
+            label = str(op.get("label", ""))[:500]
+            style = op.get("style", "solid")
+            if style not in VALID_STROKE_STYLES:
+                raise ValueError(f"invalid style: {style}")
+            arrows = op.get("arrows", "end")
+            if arrows not in VALID_CONNECT_ARROWS:
+                raise ValueError(f"invalid arrows: {arrows}")
+            route = op.get("route", "elbow")
+            if route not in VALID_CONNECT_ROUTES:
+                raise ValueError(f"invalid route: {route}")
+            stroke = op.get("stroke", "#dc2626" if "safety" in label.lower() else "#64748b")
+            if not COLOR_RE.match(stroke):
+                raise ValueError(f"invalid stroke: {stroke}")
+
+            connectors.append({
+                "id": cid, "from": ep_f, "to": ep_t, "label": label,
+                "stroke": stroke, "style": style, "arrows": arrows, "route": route,
+            })
+            touched_ids.add(cid)
+            if "shape" in ep_f:
+                touched_ids.add(ep_f["shape"])
+            if "shape" in ep_t:
+                touched_ids.add(ep_t["shape"])
+
+        elif op_name == "update_connector":
+            cid = op.get("id")
+            if not cid:
+                raise ValueError("update_connector requires id")
+            conn = next((c for c in connectors if c["id"] == cid), None)
+            if not conn:
+                raise ValueError(f"connector {cid} not found")
+            if "from" in op:
+                conn["from"] = parse_ep(op["from"], "right", "from")
+            if "to" in op:
+                conn["to"] = parse_ep(op["to"], "left", "to")
+            if "label" in op:
+                conn["label"] = str(op["label"])[:500]
+            if "style" in op:
+                if op["style"] not in VALID_STROKE_STYLES:
+                    raise ValueError("invalid style")
+                conn["style"] = op["style"]
+            if "arrows" in op:
+                if op["arrows"] not in VALID_CONNECT_ARROWS:
+                    raise ValueError("invalid arrows")
+                conn["arrows"] = op["arrows"]
+            if "route" in op:
+                if op["route"] not in VALID_CONNECT_ROUTES:
+                    raise ValueError("invalid route")
+                conn["route"] = op["route"]
+            if "stroke" in op:
+                if not COLOR_RE.match(op["stroke"]):
+                    raise ValueError("invalid stroke")
+                conn["stroke"] = op["stroke"]
+            touched_ids.add(cid)
+
+        elif op_name == "delete_connector":
+            cid = op.get("id")
+            if not cid:
+                raise ValueError("delete_connector requires id")
+            if not any(c["id"] == cid for c in connectors):
+                raise ValueError(f"connector {cid} not found")
+            connectors = [c for c in connectors if c["id"] != cid]
+            touched_ids.add(cid)
+
+        elif op_name == "add_frame":
+            fid = op.get("id")
+            if fid:
+                if not isinstance(fid, str) or not ID_RE.match(fid):
+                    raise ValueError(f"invalid frame id: {fid!r}")
+                if any(f["id"] == fid for f in frames):
+                    raise ValueError(f"frame {fid} already exists")
+            else:
+                idx = 1
+                existing_fids = {f["id"] for f in frames}
+                while f"frame_{idx}" in existing_fids:
+                    idx += 1
+                fid = f"frame_{idx}"
+
+            title = str(op.get("title", ""))[:500]
+            stroke = op.get("stroke", "#94a3b8")
+            if not COLOR_RE.match(stroke):
+                raise ValueError("invalid stroke")
+
+            if "around" in op:
+                around = op["around"]
+                if not isinstance(around, list) or not around:
+                    raise ValueError("around must be a non-empty list of shape ids")
+                for sh_id in around:
+                    if not any(s["id"] == sh_id for s in shapes):
+                        raise ValueError(f"frame {fid} around shape {sh_id!r} not found")
+                member_shapes = [s for s in shapes if s["id"] in around]
+                pad = float(op.get("padding", 24.0))
+                min_x = min(s["x"] for s in member_shapes)
+                min_y = min(s["y"] for s in member_shapes)
+                max_x = max(s["x"] + s["w"] for s in member_shapes)
+                max_y = max(s["y"] + s["h"] for s in member_shapes)
+                x = min_x - pad
+                y = min_y - pad
+                w = (max_x - min_x) + 2 * pad
+                h = (max_y - min_y) + 2 * pad
+            else:
+                x = float(op.get("x", 50.0))
+                y = float(op.get("y", 50.0))
+                w = float(op.get("w", 400.0))
+                h = float(op.get("h", 300.0))
+                if not math.isfinite(x) or not math.isfinite(y) or not math.isfinite(w) or not math.isfinite(h) or w < 0 or h < 0:
+                    raise ValueError("frame coordinates/dimensions out of range")
+
+            frames.append({
+                "id": fid, "x": x, "y": y, "w": w, "h": h,
+                "title": title, "stroke": stroke,
+            })
+            touched_ids.add(fid)
+
+        elif op_name == "update_frame":
+            fid = op.get("id")
+            if not fid:
+                raise ValueError("update_frame requires id")
+            frame = next((f for f in frames if f["id"] == fid), None)
+            if not frame:
+                raise ValueError(f"frame {fid} not found")
+            if "around" in op:
+                around = op["around"]
+                if not isinstance(around, list) or not around:
+                    raise ValueError("around must be a non-empty list of shape ids")
+                for sh_id in around:
+                    if not any(s["id"] == sh_id for s in shapes):
+                        raise ValueError(f"frame {fid} around shape {sh_id!r} not found")
+                member_shapes = [s for s in shapes if s["id"] in around]
+                pad = float(op.get("padding", 24.0))
+                min_x = min(s["x"] for s in member_shapes)
+                min_y = min(s["y"] for s in member_shapes)
+                max_x = max(s["x"] + s["w"] for s in member_shapes)
+                max_y = max(s["y"] + s["h"] for s in member_shapes)
+                frame["x"] = min_x - pad
+                frame["y"] = min_y - pad
+                frame["w"] = (max_x - min_x) + 2 * pad
+                frame["h"] = (max_y - min_y) + 2 * pad
+            else:
+                for num_f in ("x", "y", "w", "h"):
+                    if num_f in op:
+                        v = float(op[num_f])
+                        if not math.isfinite(v) or (num_f in ("w", "h") and v < 0):
+                            raise ValueError(f"frame {num_f} invalid")
+                        frame[num_f] = v
+            if "title" in op:
+                frame["title"] = str(op["title"])[:500]
+            if "stroke" in op:
+                if not COLOR_RE.match(op["stroke"]):
+                    raise ValueError("invalid stroke")
+                frame["stroke"] = op["stroke"]
+            touched_ids.add(fid)
+
+        elif op_name == "delete_frame":
+            fid = op.get("id")
+            if not fid:
+                raise ValueError("delete_frame requires id")
+            if not any(f["id"] == fid for f in frames):
+                raise ValueError(f"frame {fid} not found")
+            frames = [f for f in frames if f["id"] != fid]
+            touched_ids.add(fid)
+
+        elif op_name == "auto_layout":
+            frame_members = {}
+            for f in frames:
+                f_mems = []
+                fx, fy, fw, fh = f["x"], f["y"], f["w"], f["h"]
+                for s in shapes:
+                    cx = s["x"] + s["w"] / 2
+                    cy = s["y"] + s["h"] / 2
+                    if fx <= cx <= fx + fw and fy <= cy <= fy + fh:
+                        f_mems.append(s["id"])
+                frame_members[f["id"]] = f_mems
+
+            adj = defaultdict(list)
+            in_deg = {s["id"]: 0 for s in shapes}
+            for c in connectors:
+                f_id = c["from"]["shape"] if isinstance(c["from"], dict) else c["from"]
+                t_id = c["to"]["shape"] if isinstance(c["to"], dict) else c["to"]
+                if f_id in in_deg and t_id in in_deg and f_id != t_id:
+                    adj[f_id].append(t_id)
+                    in_deg[t_id] += 1
+
+            ranks = {}
+            queue = [sid for sid, d in in_deg.items() if d == 0]
+            if not queue and shapes:
+                queue = [shapes[0]["id"]]
+            for q in queue:
+                ranks[q] = 0
+
+            visited = set()
+            curr = list(queue)
+            while curr:
+                nxt = []
+                for u in curr:
+                    visited.add(u)
+                    r_u = ranks.get(u, 0)
+                    for v in adj[u]:
+                        ranks[v] = max(ranks.get(v, 0), r_u + 1)
+                        if v not in visited and v not in nxt:
+                            nxt.append(v)
+                curr = nxt
+
+            for s in shapes:
+                if s["id"] not in ranks:
+                    ranks[s["id"]] = 0
+
+            by_rank = defaultdict(list)
+            for s in shapes:
+                by_rank[ranks[s["id"]]].append(s)
+
+            start_x = 80.0
+            start_y = 80.0
+            gap_x = 80.0
+            gap_y = 40.0
+            for r in sorted(by_rank.keys()):
+                group = by_rank[r]
+                max_w = max(s["w"] for s in group)
+                for i, s in enumerate(group):
+                    s["x"] = start_x
+                    s["y"] = start_y + i * (s["h"] + gap_y)
+                    touched_ids.add(s["id"])
+                start_x += max_w + gap_x
+
+            for f in frames:
+                mems = [s for s in shapes if s["id"] in frame_members.get(f["id"], [])]
+                if mems:
+                    pad = 24.0
+                    f["x"] = min(s["x"] for s in mems) - pad
+                    f["y"] = min(s["y"] for s in mems) - pad
+                    f["w"] = (max(s["x"] + s["w"] for s in mems) - min(s["x"] for s in mems)) + 2 * pad
+                    f["h"] = (max(s["y"] + s["h"] for s in mems) - min(s["y"] for s in mems)) + 2 * pad
+                    touched_ids.add(f["id"])
+        else:
+            raise ValueError(f"unknown op: {op_name}")
+
+    valid_diag = validate_diagram({"shapes": shapes, "connectors": connectors, "frames": frames})
+    save_diagram_snapshot(project, cur_diag)
+    idea["diagram"] = valid_diag
+    save_idea(project, idea)
+    return {"ok": True, "diagram": valid_diag, "touched": list(touched_ids)}
 
 
 # ---------------------------------------------------------------- netlist

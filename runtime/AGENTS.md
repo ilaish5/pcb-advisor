@@ -102,6 +102,8 @@ Prose for the student, then one fenced json block (omit it if there is nothing t
   "proposed" until the student confirms.
 - `{"type": "idea.confirm", "student_said": "<words quoted from the student's last message>"}` only after the
   student said yes in chat; the quote must appear in their last message or it is refused.
+- `{"type": "idea.diagram.edit", "ops": [{"op": "add_shape", "id": "chg", "text": "Charger\\nBQ24075", "domain": "power"}, {"op": "add_connector", "from": "usb", "to": "chg", "label": "5V"}], "reason": "Add charger"}` edit diagram directly and live without waiting for student approval.
+- `{"type": "idea.diagram", "changes": {"diagram": {...}}, "reason": "..."}` whole-diagram proposal for big architectural rewrites with student approval.
 - `{"type": "bom.propose", "line": "D30", "changes": {"mpn": "...", "manufacturer": "...", "package": "..."},
   "reason": "...", "sources": ["file.pdf"], "new": false, "library": {"symbol": true, "footprint": true,
   "step": true, "model_source": "Ultra Librarian"}}` shows a diff card with Approve and Reject. `new: true`

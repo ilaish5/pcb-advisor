@@ -216,10 +216,12 @@ closed on the user's request to free memory. On the user's request C and D run i
 git worktree (`../pcb-advisor-wt-c` on branch stage-c, `../pcb-advisor-wt-d` on branch stage-d, .venv junctioned);
 Claude Code verifies each, commits it on its branch and merges into this branch, then removes the worktrees.
 
-**I11 in progress (2026-10-12):** docs done (`4c5c24e`). UI rework from the user's live feedback, built by agy,
-committed `0d9a3d0` (see section 8 "UI rework"). Queued for agy (quota reset ~12:46): right-drag pan in all zoomable
-views + Idea/nav layout fixes, then diagram hardening (attribute escaping, no validation bypasses). Then: one commit,
-server restart, full benchmark only with the user's OK, final summary.
+**I11 paused (2026-10-12, user: stop, continue another day).** Status file: `docs/STATUS-2026-10-12.md`.
+Done today: UI rework, icon diagram toolbars, right-drag pan, diagram hardening, agent live diagram edits
+(`idea.diagram.edit` + undo), editable requirements, stage strip follows the active tab; 382 tests green.
+Next: (1) agy brief `docs/next-tasks/diagram-offset-and-snap.md` (shape created off-cursor; connectors snap to shape
+points); (2) device check 2: .RUL import into Altium (export only to the advisor's exports); (3) full benchmark only
+with the user's OK; (4) close I11 (section 8 summary, Hebrew report). Hourly cron removed.
 
 **Note:** the UI server does not reload Python; restart it after serve.py/store.py changes (a stale server made
 "Ask about this file" look broken on 2026-10-12).
@@ -366,5 +368,5 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 6. "Ask about this file": chat receives the source text (12k chars); `.pdf` uploads must start with `%PDF-`.
 7. DFM split into PCB (bare board) and SMT (assembly) reports; skill reference `jlcdfm-smt.md`.
 8. Review fixes by Claude Code: test-only bypass removed from upload; flaky chat test stubbed (was calling the model).
-9. Open: diagram attributes not escaped + validation bypasses (queued fix); right-drag pan (queued).
-10. Tests green (all), Edge screenshot of the Idea tab ok. No benchmark run.
+9. Later the same day: attributes escaped + bypasses removed, right-drag pan, icon toolbars, agent live edits, editable requirements.
+10. 382 tests green, Edge screenshots ok. No benchmark run. Open: off-cursor shape creation, connector snapping.

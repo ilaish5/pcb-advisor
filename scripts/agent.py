@@ -39,6 +39,65 @@ def rules():
     return RULES_FILE.read_text(encoding="utf-8").strip()
 
 
+def _compact_diagram(diag):
+    if not isinstance(diag, dict):
+        return {"shapes": [], "connectors": [], "frames": []}
+    shapes_raw = diag.get("shapes", [])
+    conns_raw = diag.get("connectors", [])
+    frames_raw = diag.get("frames", [])
+
+    shapes = []
+    for s in shapes_raw:
+        sh = {
+            "id": s.get("id"),
+            "type": s.get("type", "block"),
+            "text": s.get("text", ""),
+            "domain": s.get("domain", ""),
+            "x": round(float(s.get("x", 0))),
+            "y": round(float(s.get("y", 0))),
+            "w": round(float(s.get("w", 0))),
+            "h": round(float(s.get("h", 0))),
+        }
+        shapes.append(sh)
+
+    connectors = []
+    for c in conns_raw:
+        f = c.get("from")
+        t = c.get("to")
+        f_shape = f.get("shape") if isinstance(f, dict) else str(f or "")
+        t_shape = t.get("shape") if isinstance(t, dict) else str(t or "")
+        connectors.append({
+            "id": c.get("id"),
+            "from": f_shape,
+            "to": t_shape,
+            "label": c.get("label", ""),
+        })
+
+    frames = []
+    for fr in frames_raw:
+        fx = float(fr.get("x", 0))
+        fy = float(fr.get("y", 0))
+        fw = float(fr.get("w", 0))
+        fh = float(fr.get("h", 0))
+        members = []
+        for s in shapes_raw:
+            sx = float(s.get("x", 0)) + float(s.get("w", 0)) / 2
+            sy = float(s.get("y", 0)) + float(s.get("h", 0)) / 2
+            if fx <= sx <= fx + fw and fy <= sy <= fy + fh:
+                members.append(s.get("id"))
+        frames.append({
+            "id": fr.get("id"),
+            "title": fr.get("title", ""),
+            "members": members,
+            "x": round(fx),
+            "y": round(fy),
+            "w": round(fw),
+            "h": round(fh),
+        })
+
+    return {"shapes": shapes, "connectors": connectors, "frames": frames}
+
+
 def _summary(model):
     """What the agent sees of the project on every turn: small, and enough to not guess."""
     bom = []
@@ -51,8 +110,12 @@ def _summary(model):
         row["stock"] = ("not checked" if sup is None else
                         {k: v.get("stock") for k, v in sup.items()})
         bom.append(row)
+    diag_summary = _compact_diagram(model.get("diagram") or (model.get("idea") or {}).get("diagram"))
+    idea_summary = {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "agreed", "confirmed")}
+    idea_summary["diagram"] = diag_summary
     s = {
-        "idea": {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "agreed", "confirmed")},
+        "idea": idea_summary,
+        "diagram": diag_summary,
         "totals": model.get("totals"),
         "bom": bom,
         "sheets": [{"id": sh["id"], "title": sh["title"], "parts": len(sh["parts"])} for sh in model.get("sheets", [])],

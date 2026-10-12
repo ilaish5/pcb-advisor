@@ -486,9 +486,24 @@ svg.diag-svg{display:block;width:100%;height:auto;user-select:none}
 .editor-group-body > .view[data-active-tab-id="idea"],
 .editor-group-body > .view:has(.idea-layout){display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;padding:12px 14px}
 .idea-layout{display:flex;flex-direction:column;flex:1;min-height:0;height:100%;gap:8px;width:100%;overflow:hidden}
-.idea-layout .agreed-card{flex:none;min-height:0;max-height:130px;overflow:hidden}
+.idea-layout .agreed-card{flex:none;min-height:0;max-height:220px;overflow:hidden}
 .idea-layout .diagram-card{flex:1;min-height:0;display:flex;flex-direction:column;height:100%;padding:0;position:relative;overflow:hidden}
 .diagram-mount-point{flex:1;min-height:0;width:100%;height:100%;position:relative;display:flex;flex-direction:column}
+.req-row{display:flex;align-items:flex-start;gap:6px;padding:5px 6px;border-bottom:1px solid var(--line2);border-radius:4px;transition:background .1s}
+.req-row:hover{background:var(--subtle,#f8fafc)}
+.req-row.drag-over{border-top:2px solid var(--accent);background:rgba(33,72,201,.06)}
+.req-row .req-actions{opacity:0;transition:opacity .15s}
+.req-row:hover .req-actions, .req-row:focus-within .req-actions{opacity:1}
+.req-actions .btn-icon{width:24px;height:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--dim)}
+.req-actions .btn-icon:hover{border-color:var(--line);color:var(--ink);background:var(--panel)}
+.req-actions .req-del-btn:hover{color:#ef4444}
+.req-actions .req-confirm-btn:hover{color:#10b981}
+.req-drag-handle{cursor:grab;color:var(--dim);user-select:none;padding:2px 4px;font-size:13px;line-height:1}
+.req-drag-handle:active{cursor:grabbing}
+.req-topic{cursor:pointer;font-weight:600;color:var(--ink)}
+.req-topic:hover{text-decoration:underline}
+.req-text{cursor:pointer}
+.req-text:hover{background:rgba(0,0,0,0.02)}
 .pcb-empty-state{user-select:none}
 .is-panning,.is-panning *{cursor:grabbing !important}
 .editor-divider{width:6px;cursor:col-resize;position:relative;display:flex;align-items:center;justify-content:center;user-select:none;touch-action:none;background:transparent;z-index:5;outline:none;flex:none}
@@ -1002,8 +1017,10 @@ function msgHTML(m) {
   if (m.role === 'ctx') return ctxHTML(m.part);
   if (m.role === 'agent') {
     const props = (m.proposals || (m.proposal ? [m.proposal] : [])).map(id => diffHTML(S.proposals.find(p => p.id === id))).join('');
+    const hasDiagEdit = (m.applied || []).includes('idea.diagram.edit') || m.diagram_edit;
+    const undoBtn = hasDiagEdit ? `<div style="margin-top:8px"><button type="button" class="btn btn-sm" data-act="undo-diagram" title="Undo diagram change" style="font-size:12px;padding:3px 8px;display:inline-flex;align-items:center;gap:4px">Undo diagram change</button></div>` : '';
     return (m.tools && m.tools.length ? toolsHTML(m.tools) : '') +
-      `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt" dir="auto">${fmt(m.text)}</div></div>` + props;
+      `<div class="msg agent"><div class="who">PCB Advisor</div><div class="txt" dir="auto">${fmt(m.text)}${undoBtn}</div></div>` + props;
   }
   return '';
 }
@@ -1062,7 +1079,12 @@ async function send(text) {
   try {
     const payload = {text};
     if (fileContext) { payload.file = fileContext; payload.source = fileContext; }
-    setState(await api('/api/chat', payload));
+    const res = await api('/api/chat', payload);
+    setState(res);
+    const mountEl = document.querySelector('.diagram-mount-point');
+    if (mountEl && mountEl._diagramEditor && res && res.idea && res.idea.diagram) {
+      mountEl._diagramEditor.updateData(res.idea.diagram, res.diagram_touched || []);
+    }
   }
   catch (e) { /* toast shown */ }
   pending = false;
@@ -2060,8 +2082,12 @@ function renderGroupContent(group, container, force) {
   container.classList.toggle('stage-idea', activeTab.stage === 'idea' || activeTab.id === 'idea');
 
   if (activeTab.kind === 'stage') {
-    renderStage(activeTab.stage, container);
-    if (activeTab.stage === 'idea') mountDiagramEditor(container);
+    if (activeTab.stage === 'idea' && container.querySelector('.diagram-mount-point')) {
+      updateIdeaContent(container);
+    } else {
+      renderStage(activeTab.stage, container);
+      if (activeTab.stage === 'idea') mountDiagramEditor(container);
+    }
     if (activeTab.stage === 'sch' && S && S.sheets && S.sheets.length) loadSheet(container);
     if (activeTab.stage === 'rules' && !RULES_DATA) loadRules();
     if (activeTab.stage === 'pcb') loadPcb(container);
@@ -2164,6 +2190,8 @@ function wheadHTML() {
     return `<div style="display:flex;align-items:center;justify-content:space-between;width:100%"><span style="font-size:11.5px;color:var(--dim);font-weight:600">STAGES LAUNCHER</span>${toggleBtn}</div>`;
   }
   const t = S ? S.totals : {lines:0};
+  const actTab = typeof getActiveTab === 'function' ? getActiveTab() : null;
+  const activeStage = (actTab && actTab.kind === 'stage') ? actTab.stage : null;
   const items = [
     ['idea', '1', 'Idea', (S && S.idea && S.idea.confirmed) ? `<span class="st ok">Confirmed</span>` : `<span class="st dim">Open</span>`],
     ['bom', '2', 'BOM', t.out_of_stock ? `<span class="st bad">${t.out_of_stock} out of stock</span>` : t.to_verify ? `<span class="st warn">${t.to_verify} to review</span>` : t.checking ? `<span class="st dim">checking</span>` : t.lines ? `<span class="st ok">Ready</span>` : `<span class="st dim">Empty</span>`],
@@ -2173,7 +2201,7 @@ function wheadHTML() {
     ['outputs', '6', 'Altium outputs', `<span class="st dim">${((S && S.exports) || []).length} file${((S && S.exports) || []).length === 1 ? '' : 's'}</span>`],
     ['checks', '7', 'Final manufacturer checks', `<span class="st dim">${((S && S.checks) || []).length} report${((S && S.checks) || []).length === 1 ? '' : 's'}</span>`],
   ];
-  return `<div class="tabs-wrap"><button type="button" class="tab-arrow prev" data-act="scroll-tabs-left" aria-label="Scroll tabs left" title="Scroll tabs left">‹</button><div class="tabs tabs-scroller" id="tabs-scroller" role="tablist">${items.map(([id, n, label, st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div><button type="button" class="tab-arrow next" data-act="scroll-tabs-right" aria-label="Scroll tabs right" title="Scroll tabs right">›</button>${toggleBtn}</div>`;
+  return `<div class="tabs-wrap"><button type="button" class="tab-arrow prev" data-act="scroll-tabs-left" aria-label="Scroll tabs left" title="Scroll tabs left">‹</button><div class="tabs tabs-scroller" id="tabs-scroller" role="tablist">${items.map(([id, n, label, st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${activeStage === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div><button type="button" class="tab-arrow next" data-act="scroll-tabs-right" aria-label="Scroll tabs right" title="Scroll tabs right">›</button>${toggleBtn}</div>`;
 }
 function altsHTML() {
   if (!altsCard) return '';
@@ -2705,6 +2733,13 @@ function mountDiagramEditor(container) {
         onSave: async (diagData) => {
           if (S && S.idea) S.idea.diagram = diagData;
           await api('/api/idea/diagram', {diagram: diagData});
+        },
+        onServerUndo: async () => {
+          const res = await api('/api/idea/diagram/undo', {});
+          if (res && res.diagram) {
+            setState(res);
+            return res.diagram;
+          }
         }
       });
     }
@@ -2719,9 +2754,89 @@ function mountDiagramEditor(container) {
   }
 }
 
-function ideaHTML(container) {
-  const I = S.idea, items = I.agreed || [];
+function agreedRequirementsHTML() {
+  const I = (S && S.idea) || {}, items = I.agreed || [];
   const st = i => i.status === 'confirmed' ? ((i.by === 'student' ? 'From you' : "Agent's proposal") + ' · confirmed') : "Agent's proposal · not confirmed yet";
+
+  const rowsHtml = items.map((i, idx) => `
+    <div class="req-row" data-index="${idx}" data-topic="${esc(i.topic)}" draggable="true">
+      <span class="req-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
+      <div class="req-content" style="flex:1;min-width:0">
+        <div class="req-view">
+          <div style="display:flex;align-items:center;gap:6px">
+            <strong class="req-topic" data-act="edit-req" title="Click to edit topic">${esc(i.topic)}</strong>
+            <span class="req-by-status" style="font-size:11px;color:var(--dim)">(${esc(st(i))})</span>
+          </div>
+          <div class="req-text" data-act="edit-req" title="Click to edit text" dir="auto" style="font-size:13px;white-space:pre-wrap;cursor:pointer;margin-top:2px">${esc(i.text)}</div>
+        </div>
+        <div class="req-edit-form" hidden style="margin-top:4px">
+          <input type="text" class="req-edit-topic" value="${esc(i.topic)}" maxlength="60" placeholder="Topic (max 60 chars)" style="width:100%;font-size:13px;padding:3px 6px;margin-bottom:4px;border:1px solid var(--line);border-radius:4px" />
+          <textarea class="req-edit-text" maxlength="1000" rows="3" placeholder="Requirement (Enter saves, Shift+Enter newline, Esc cancels)" style="width:100%;font-size:13px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;resize:vertical;font-family:inherit">${esc(i.text)}</textarea>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <button type="button" class="btn btn-sm pri req-save-btn" data-act="save-req">Save</button>
+            <button type="button" class="btn btn-sm req-cancel-btn" data-act="cancel-req">Cancel</button>
+            <span style="font-size:11px;color:var(--dim)">Enter saves, Shift+Enter newline, Esc cancels</span>
+          </div>
+        </div>
+      </div>
+      <div class="req-actions">
+        <button type="button" class="btn-icon req-edit-btn" data-act="edit-req" title="Edit requirement (✎)" aria-label="Edit requirement">✎</button>
+        ${i.status !== 'confirmed' ? `<button type="button" class="btn-icon req-confirm-btn" data-act="confirm-req" title="Confirm requirement (✓)" aria-label="Confirm requirement">✓</button>` : ''}
+        <button type="button" class="btn-icon req-del-btn" data-act="delete-req" title="Delete requirement (🗑)" aria-label="Delete requirement">🗑</button>
+        <button type="button" class="btn-icon req-move-btn req-move-up" data-act="move-req-up" title="Move up (↑)" aria-label="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
+        <button type="button" class="btn-icon req-move-btn req-move-down" data-act="move-req-down" title="Move down (↓)" aria-label="Move down" ${idx === items.length - 1 ? 'disabled' : ''}>↓</button>
+      </div>
+    </div>
+  `).join('');
+
+  return `
+    <details class="card agreed-card" ${items.length ? '' : 'open'} style="flex:none;max-height:220px;min-height:0;display:flex;flex-direction:column;padding:6px 12px;overflow:hidden">
+      <summary style="font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px">
+        <span>Agreed requirements</span>
+        <span style="font-size:12px;color:var(--dim);font-weight:400">(${items.length} item${items.length === 1 ? '' : 's'})</span>
+      </summary>
+      <div class="agreed-items-list" style="overflow-y:auto;max-height:170px;margin-top:4px">
+        ${items.length ? rowsHtml : '<div class="dnote" style="margin:4px 0">Nothing agreed yet. Chat with the advisor or add a requirement below.</div>'}
+        <div class="req-add-row" style="padding:6px 0;margin-top:4px;border-top:1px dashed var(--line2)">
+          <button type="button" class="btn btn-sm req-add-toggle-btn" data-act="show-add-req" style="display:inline-flex;align-items:center;gap:4px">+ Add requirement</button>
+          <div class="req-add-form" hidden style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
+            <input type="text" class="req-add-topic" maxlength="60" placeholder="Topic (max 60 chars)" style="width:100%;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:4px" />
+            <textarea class="req-add-text" maxlength="1000" rows="2" placeholder="Requirement (max 1000 chars)" style="width:100%;font-size:13px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;resize:vertical;font-family:inherit"></textarea>
+            <div style="display:flex;gap:6px;align-items:center;margin-top:2px">
+              <button type="button" class="btn btn-sm pri req-create-btn" data-act="create-req">Add requirement</button>
+              <button type="button" class="btn btn-sm req-cancel-add-btn" data-act="cancel-add-req">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
+  `;
+}
+
+function updateIdeaContent(container) {
+  const card = container.querySelector('.agreed-card');
+  const active = document.activeElement;
+  const isEditing = active && card && card.contains(active) && /INPUT|TEXTAREA/.test(active.tagName);
+  if (card && !isEditing) {
+    const parent = card.parentElement;
+    if (parent) {
+      const temp = document.createElement('div');
+      temp.innerHTML = agreedRequirementsHTML();
+      const newCard = temp.firstElementChild;
+      if (newCard) {
+        newCard.open = card.open;
+        parent.replaceChild(newCard, card);
+      }
+    }
+  }
+  const mountEl = container.querySelector('.diagram-mount-point');
+  if (mountEl && mountEl._diagramEditor && S && S.idea && S.idea.diagram) {
+    mountEl._diagramEditor.updateData(S.idea.diagram);
+  }
+}
+
+function ideaHTML(container) {
+  const I = (S && S.idea) || {};
   const diagProp = (S.proposals || []).find(p => p.kind === 'idea_diagram' && p.status === 'pending');
   const propBanner = diagProp ? `
     <div class="warnbox" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px">
@@ -2747,15 +2862,7 @@ function ideaHTML(container) {
     </div>
     ${propBanner}
     <div class="idea-layout" style="display:flex;flex-direction:column;flex:1;min-height:0;gap:8px;width:100%;height:100%;overflow:hidden">
-      <details class="card agreed-card" ${items.length ? '' : 'open'} style="flex:none;max-height:130px;min-height:0;display:flex;flex-direction:column;padding:6px 12px;overflow:hidden">
-        <summary style="font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px">
-          <span>Agreed requirements</span>
-          <span style="font-size:12px;color:var(--dim);font-weight:400">(${items.length} item${items.length === 1 ? '' : 's'})</span>
-        </summary>
-        <div style="overflow-y:auto;max-height:85px;margin-top:4px">
-          ${items.length ? `<dl class="agreed">${items.map(i => `<div><dt>${esc(i.topic)}</dt><dd dir="auto">${esc(i.text)}<small>${esc(st(i))}</small></dd></div>`).join('')}</dl>` : '<div class="dnote" style="margin:4px 0">Nothing agreed yet. Chat with the advisor to establish requirements.</div>'}
-        </div>
-      </details>
+      ${agreedRequirementsHTML()}
       <div class="card diagram-card" style="flex:1;min-height:0;display:flex;flex-direction:column;width:100%;height:100%;padding:0;position:relative;overflow:hidden">
         <div class="diagram-mount-point" style="width:100%;height:100%;flex:1;min-height:0;position:relative;display:flex;flex-direction:column">
           <svg class="diag-svg" id="diag-svg" viewBox="0 0 860 520" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Interactive Block diagram"></svg>
@@ -3208,7 +3315,24 @@ function select(key, goSch) {
   setView('work');
 }
 function setView(v) { if (matchMedia('(max-width:860px)').matches) $('#app').dataset.view = v; }
-function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => t.hidden = true, 3600); }
+function toast(msg, action) {
+  const t = $('#toast');
+  t.innerHTML = '';
+  const span = document.createElement('span');
+  span.textContent = msg;
+  t.appendChild(span);
+  if (action && action.label && action.onClick) {
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm';
+    btn.style.cssText = 'margin-left:8px;padding:1px 6px;font-size:11px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;';
+    btn.textContent = action.label;
+    btn.onclick = (e) => { e.stopPropagation(); t.hidden = true; action.onClick(); };
+    t.appendChild(btn);
+  }
+  t.hidden = false;
+  clearTimeout(toast.h);
+  toast.h = setTimeout(() => t.hidden = true, action ? 5000 : 3600);
+}
 
 /* ---------- file viewer ---------- */
 function closeViewer() {
@@ -3680,6 +3804,189 @@ document.addEventListener('click', async e => {
       return;
     }
     switch (d.act) {
+      case 'undo-diagram': {
+        try {
+          toast('Undoing diagram change…');
+          const res = await api('/api/idea/diagram/undo', {});
+          if (res && res.diagram) {
+            setState(res);
+            const mountEl = document.querySelector('.diagram-mount-point');
+            if (mountEl && mountEl._diagramEditor) {
+              mountEl._diagramEditor.updateData(res.diagram);
+            }
+            render(true);
+            toast('Diagram change undone');
+          }
+        } catch (err) {
+          toast(err.message || 'Error undoing diagram change');
+        }
+        return;
+      }
+      case 'edit-req': {
+        const reqRow = el.closest('.req-row');
+        if (reqRow) {
+          const v = reqRow.querySelector('.req-view');
+          const f = reqRow.querySelector('.req-edit-form');
+          if (v && f) {
+            v.hidden = true;
+            f.hidden = false;
+            const isTopic = el.classList.contains('req-topic');
+            const target = isTopic ? f.querySelector('.req-edit-topic') : f.querySelector('.req-edit-text');
+            if (target) {
+              target.focus();
+              if (target.select) target.select();
+            }
+          }
+        }
+        return;
+      }
+      case 'cancel-req': {
+        const reqRow = el.closest('.req-row');
+        if (reqRow) {
+          const v = reqRow.querySelector('.req-view');
+          const f = reqRow.querySelector('.req-edit-form');
+          if (v && f) {
+            v.hidden = false;
+            f.hidden = true;
+          }
+        }
+        return;
+      }
+      case 'save-req': {
+        const reqRow = el.closest('.req-row');
+        if (reqRow) {
+          const topic = (reqRow.querySelector('.req-edit-topic')?.value || '').trim();
+          const text = (reqRow.querySelector('.req-edit-text')?.value || '').trim();
+          const idx = parseInt(reqRow.dataset.index, 10);
+          const oldTopic = reqRow.dataset.topic;
+          if (!topic || topic.length > 60 || !text || text.length > 1000) {
+            toast('Topic (1-60 chars) and text (1-1000 chars) required');
+            return;
+          }
+          try {
+            const res = await api('/api/idea/item/update', {index: idx, old_topic: oldTopic, topic, text});
+            setState(res);
+            renderCenter(true);
+            toast(`Requirement "${topic}" updated`);
+          } catch (err) {
+            toast(err.message || 'Error updating requirement');
+          }
+        }
+        return;
+      }
+      case 'confirm-req': {
+        const reqRow = el.closest('.req-row');
+        if (reqRow) {
+          const idx = parseInt(reqRow.dataset.index, 10);
+          const topic = reqRow.dataset.topic;
+          try {
+            const res = await api('/api/idea/item/confirm', {index: idx, topic});
+            setState(res);
+            renderCenter(true);
+            toast(`Requirement "${topic}" confirmed`);
+          } catch (err) {
+            toast(err.message || 'Error confirming requirement');
+          }
+        }
+        return;
+      }
+      case 'delete-req': {
+        const reqRow = el.closest('.req-row');
+        if (reqRow) {
+          const idx = parseInt(reqRow.dataset.index, 10);
+          const topic = reqRow.dataset.topic;
+          try {
+            const res = await api('/api/idea/item/delete', {index: idx, topic});
+            const delItem = res.deleted;
+            setState(res);
+            renderCenter(true);
+            toast(`Requirement "${topic}" deleted`, {
+              label: 'Undo',
+              onClick: async () => {
+                if (delItem) {
+                  try {
+                    const undoRes = await api('/api/idea/item', {topic: delItem.topic, text: delItem.text});
+                    setState(undoRes);
+                    renderCenter(true);
+                    toast(`Restored "${delItem.topic}"`);
+                  } catch (e) { toast('Could not restore requirement'); }
+                }
+              }
+            });
+          } catch (err) {
+            toast(err.message || 'Error deleting requirement');
+          }
+        }
+        return;
+      }
+      case 'move-req-up': {
+        const reqRow = el.closest('.req-row');
+        if (reqRow) {
+          const idx = parseInt(reqRow.dataset.index, 10);
+          if (idx > 0) {
+            try {
+              const res = await api('/api/idea/item/move', {from: idx, to: idx - 1});
+              setState(res);
+              renderCenter(true);
+            } catch (err) { toast(err.message || 'Error moving requirement'); }
+          }
+        }
+        return;
+      }
+      case 'move-req-down': {
+        const reqRow = el.closest('.req-row');
+        if (reqRow) {
+          const idx = parseInt(reqRow.dataset.index, 10);
+          try {
+            const res = await api('/api/idea/item/move', {from: idx, to: idx + 1});
+            setState(res);
+            renderCenter(true);
+          } catch (err) { toast(err.message || 'Error moving requirement'); }
+        }
+        return;
+      }
+      case 'show-add-req': {
+        const addRow = el.closest('.req-add-row');
+        if (addRow) {
+          el.hidden = true;
+          const form = addRow.querySelector('.req-add-form');
+          if (form) {
+            form.hidden = false;
+            form.querySelector('.req-add-topic')?.focus();
+          }
+        }
+        return;
+      }
+      case 'cancel-add-req': {
+        const addRow = el.closest('.req-add-row');
+        if (addRow) {
+          const form = addRow.querySelector('.req-add-form');
+          const btn = addRow.querySelector('.req-add-toggle-btn');
+          if (form) form.hidden = true;
+          if (btn) btn.hidden = false;
+        }
+        return;
+      }
+      case 'create-req': {
+        const addRow = el.closest('.req-add-row');
+        if (addRow) {
+          const topic = (addRow.querySelector('.req-add-topic')?.value || '').trim();
+          const text = (addRow.querySelector('.req-add-text')?.value || '').trim();
+          if (!topic || topic.length > 60 || !text || text.length > 1000) {
+            toast('Topic (1-60 chars) and text (1-1000 chars) required');
+            return;
+          }
+          try {
+            const res = await api('/api/idea/item', {topic, text});
+            setState(res);
+            renderCenter(true);
+            toast(`Requirement "${topic}" added`);
+          } catch (err) {
+            toast(err.message || 'Error adding requirement');
+          }
+        }
+        return;
+      }
       case 'reset-layout': resetLayout(); toast('Layout reset to default'); return;
       case 'ask-anchor': if (d.anchor) openPart(d.anchor); return;
       case 'clear-sch-anchor': schAnchor = null; renderCenter(true); return;
@@ -4567,6 +4874,75 @@ function initResize() {
   applyLayout();
 }
 initResize();
+// Inline requirement keyboard & drag listeners
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches && e.target.matches('.req-edit-text')) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const saveBtn = e.target.closest('.req-row')?.querySelector('[data-act="save-req"]');
+      if (saveBtn) saveBtn.click();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const cancelBtn = e.target.closest('.req-row')?.querySelector('[data-act="cancel-req"]');
+      if (cancelBtn) cancelBtn.click();
+    }
+  } else if (e.target.matches && e.target.matches('.req-edit-topic')) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const saveBtn = e.target.closest('.req-row')?.querySelector('[data-act="save-req"]');
+      if (saveBtn) saveBtn.click();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const cancelBtn = e.target.closest('.req-row')?.querySelector('[data-act="cancel-req"]');
+      if (cancelBtn) cancelBtn.click();
+    }
+  } else if (e.target.matches && e.target.matches('.req-add-topic, .req-add-text')) {
+    if (e.key === 'Enter' && !e.shiftKey && e.target.matches('.req-add-text')) {
+      e.preventDefault();
+      const addBtn = e.target.closest('.req-add-row')?.querySelector('[data-act="create-req"]');
+      if (addBtn) addBtn.click();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      const cancelBtn = e.target.closest('.req-add-row')?.querySelector('[data-act="cancel-add-req"]');
+      if (cancelBtn) cancelBtn.click();
+    }
+  }
+});
+document.addEventListener('dragstart', (e) => {
+  const row = e.target.closest ? e.target.closest('.req-row') : null;
+  if (row && e.dataTransfer) {
+    e.dataTransfer.setData('text/plain', row.dataset.index);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+});
+document.addEventListener('dragover', (e) => {
+  const row = e.target.closest ? e.target.closest('.req-row') : null;
+  if (row && e.dataTransfer) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    row.classList.add('drag-over');
+  }
+});
+document.addEventListener('dragleave', (e) => {
+  const row = e.target.closest ? e.target.closest('.req-row') : null;
+  if (row) row.classList.remove('drag-over');
+});
+document.addEventListener('drop', async (e) => {
+  const row = e.target.closest ? e.target.closest('.req-row') : null;
+  if (row && e.dataTransfer) {
+    e.preventDefault();
+    row.classList.remove('drag-over');
+    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+    const toIdx = parseInt(row.dataset.index, 10);
+    if (!isNaN(fromIdx) && !isNaN(toIdx) && fromIdx !== toIdx) {
+      try {
+        const res = await api('/api/idea/item/move', {from: fromIdx, to: toIdx});
+        setState(res);
+        renderCenter(true);
+      } catch (err) { toast(err.message || 'Error moving requirement'); }
+    }
+  }
+});
 
 /* ---------- start ---------- */
 (async function start() {

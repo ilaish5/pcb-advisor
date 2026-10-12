@@ -176,7 +176,7 @@ def _agent_may_set_library(changes):
     return {k: v for k, v in (changes or {}).items() if k in allowed}
 
 
-def apply_actions(project, actions, sess=None, last_user=""):
+def apply_actions(project, actions, sess=None, last_user="", meta=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused)."""
     applied, proposals, refused = [], [], []
@@ -207,6 +207,14 @@ def apply_actions(project, actions, sess=None, last_user=""):
                                                 sources=a.get("sources", []), session=sess)
                 proposals.append(rec["id"])
                 applied.append("idea.diagram")
+            elif kind == "idea.diagram.edit":
+                ops = a.get("ops")
+                if not isinstance(ops, list):
+                    raise ValueError("ops list required")
+                res = store.apply_diagram_edit(project, ops)
+                applied.append("idea.diagram.edit")
+                if meta is not None and isinstance(res, dict) and res.get("touched"):
+                    meta.setdefault("diagram_touched", []).extend(res["touched"])
             elif kind == "netlist.write" and a.get("sheet") and isinstance(a.get("data"), dict):
                 res = store.write_sheet(project, a["sheet"], a["data"])
                 if res["ok"]:
@@ -758,12 +766,15 @@ class Handler(BaseHTTPRequestHandler):
                     ask = ("[this conversation is about one part; its context]\n"
                            f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
             res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND)
-            applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text)
+            chat_meta = {}
+            applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta)
             if res.get("reply") or refused:
                 reply = res.get("reply") or ""
                 if refused:
                     reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
                 rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
+                if chat_meta.get("diagram_touched"):
+                    rec["diagram_touched"] = chat_meta["diagram_touched"]
                 if res.get("tools"):
                     rec["tools"] = res["tools"]
                 if proposals:
@@ -772,6 +783,8 @@ class Handler(BaseHTTPRequestHandler):
             compact_if_due(proj, sess)
             out = state()
             out["last_actions"] = applied
+            if chat_meta.get("diagram_touched"):
+                out["diagram_touched"] = chat_meta["diagram_touched"]
             return self._send(200, out)
 
         # ---- the student decides
@@ -896,6 +909,16 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, SystemExit) as exc:
                 return self._send(400, {"error": str(exc)})
 
+        if path == "/api/idea/diagram/undo":
+            try:
+                diag = store.undo_diagram(proj)
+                out = state()
+                out["ok"] = True
+                out["diagram"] = diag
+                return self._send(200, out)
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
         if path == "/api/idea/diagram":
             diag = data.get("diagram") if "diagram" in data else data
             try:
@@ -927,8 +950,82 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/idea/item":
             if not data.get("topic") or not data.get("text"):
                 return self._send(400, {"error": "topic and text required"})
-            store.propose_idea(proj, data["topic"], data["text"], by="student")
-            return self._send(200, state())
+            try:
+                store.propose_idea(proj, data["topic"], data["text"], by="student")
+                return self._send(200, state())
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
+        if path == "/api/idea/item/update":
+            index = data.get("index")
+            if index is not None:
+                try:
+                    index = int(index)
+                except (ValueError, TypeError):
+                    return self._send(400, {"error": "invalid index"})
+            old_topic = data.get("old_topic")
+            topic = data.get("topic")
+            text = data.get("text")
+            if index is None and not old_topic:
+                return self._send(400, {"error": "index or old_topic required"})
+            if not topic or not text:
+                return self._send(400, {"error": "topic and text required"})
+            try:
+                store.update_idea_item(proj, index=index, old_topic=old_topic, topic=topic, text=text)
+                return self._send(200, state())
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
+        if path == "/api/idea/item/delete":
+            index = data.get("index")
+            if index is not None:
+                try:
+                    index = int(index)
+                except (ValueError, TypeError):
+                    return self._send(400, {"error": "invalid index"})
+            topic = data.get("topic")
+            if index is None and not topic:
+                return self._send(400, {"error": "index or topic required"})
+            try:
+                deleted = store.delete_idea_item(proj, index=index, topic=topic)
+                out = state()
+                out["deleted"] = deleted
+                return self._send(200, out)
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
+        if path == "/api/idea/item/confirm":
+            index = data.get("index")
+            if index is not None:
+                try:
+                    index = int(index)
+                except (ValueError, TypeError):
+                    return self._send(400, {"error": "invalid index"})
+            topic = data.get("topic")
+            try:
+                store.confirm_idea_item(proj, index=index, topic=topic)
+                return self._send(200, state())
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
+        if path == "/api/idea/item/move":
+            from_idx = data.get("from") if "from" in data else data.get("from_index")
+            to_idx = data.get("to") if "to" in data else data.get("to_index")
+            if from_idx is None or to_idx is None:
+                return self._send(400, {"error": "from and to required"})
+            try:
+                from_idx = int(from_idx)
+                to_idx = int(to_idx)
+                store.move_idea_item(proj, from_idx, to_idx)
+                return self._send(200, state())
+            except (ValueError, TypeError) as exc:
+                return self._send(400, {"error": str(exc)})
 
         if path == "/api/placement/plan":
             import preview_pcb

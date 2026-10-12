@@ -183,7 +183,7 @@
   const ID_REGEX = /^[A-Za-z0-9_.:-]{1,64}$/;
   const COLOR_REGEX = /^(#[0-9A-Fa-f]{3,8}|rgba?\([0-9., %]+\)|[a-zA-Z]{1,20})$/;
   const VALID_SHAPE_TYPES = new Set([
-    'block', 'rectangle', 'ellipse', 'diamond', 'triangle',
+    'box', 'block', 'rectangle', 'ellipse', 'diamond', 'triangle',
     'rounded_rectangle', 'rounded-rectangle', 'pill',
     'cloud', 'star', 'arrow_right', 'arrow-right',
     'parallelogram', 'hexagon', 'octagon',
@@ -193,10 +193,10 @@
     'note_brace', 'note-brace', 'brace',
     'sticky', 'text'
   ]);
-  const VALID_STROKE_STYLES = new Set(['solid', 'dashed', 'dotted']);
+  const VALID_STROKE_STYLES = new Set(['solid', 'dashed', 'dotted', 'thick']);
   const VALID_ALIGN = new Set(['left', 'center', 'right']);
   const VALID_FONT_SIZES = new Set(['S', 'M', 'L']);
-  const VALID_CONNECT_ARROWS = new Set(['none', 'end', 'both', 'start']);
+  const VALID_CONNECT_ARROWS = new Set(['none', 'end', 'both', 'start', 'to']);
   const VALID_CONNECT_ROUTES = new Set(['straight', 'elbow', 'curved']);
   const VALID_ENDPOINT_SIDES = new Set(['top', 'bottom', 'left', 'right']);
   const VALID_DOMAINS = new Set([
@@ -207,7 +207,7 @@
   function normalizeShapeType(type) {
     if (!type) return 'rectangle';
     const t = String(type).toLowerCase();
-    if (t === 'block') return 'rectangle';
+    if (t === 'block' || t === 'box') return 'rectangle';
     if (t === 'pill' || t === 'rounded-rectangle') return 'rounded_rectangle';
     if (t === 'arrow-right') return 'arrow_right';
     if (t === 'double-arrow') return 'double_arrow';
@@ -732,9 +732,13 @@
       this.selectedConnectorIds = new Set();
       this.selectedFrameIds = new Set();
 
-      // Undo / Redo history
+      // Undo / Redo history & server sync
       this.history = [];
       this.historyIndex = -1;
+      this.isDirty = false;
+      this.canServerUndo = false;
+      this.pulsingShapeIds = null;
+      this.pulseTimer = null;
       this.saveHistory();
 
       // Interaction flags & cache
@@ -793,9 +797,103 @@
       return sanitizeModel(raw);
     }
 
-    updateData(newData) {
+    updateData(newData, touchedIds = []) {
       if (!newData) return;
-      this.data = sanitizeModel(newData);
+      const cleanServer = sanitizeModel(newData);
+      const touchedSet = new Set(touchedIds || []);
+
+      if (this.isDirty || this.saveDebounceTimer !== null) {
+        // Student has unsaved local edits: merge by ID
+        // agent-touched IDs take the server version; others keep local version
+        const serverShapeMap = new Map((cleanServer.shapes || []).map(s => [s.id, s]));
+        const localShapes = (this.data.shapes || []);
+        const mergedShapes = [];
+        const seenShapeIds = new Set();
+
+        for (const ls of localShapes) {
+          if (touchedSet.has(ls.id)) {
+            if (serverShapeMap.has(ls.id)) {
+              mergedShapes.push(clone(serverShapeMap.get(ls.id)));
+            }
+          } else {
+            mergedShapes.push(clone(ls));
+          }
+          seenShapeIds.add(ls.id);
+        }
+        for (const ss of (cleanServer.shapes || [])) {
+          if (!seenShapeIds.has(ss.id)) {
+            mergedShapes.push(clone(ss));
+            seenShapeIds.add(ss.id);
+          }
+        }
+
+        const serverConnMap = new Map((cleanServer.connectors || []).map(c => [c.id, c]));
+        const localConns = (this.data.connectors || []);
+        const mergedConns = [];
+        const seenConnIds = new Set();
+
+        for (const lc of localConns) {
+          if (touchedSet.has(lc.id)) {
+            if (serverConnMap.has(lc.id)) {
+              mergedConns.push(clone(serverConnMap.get(lc.id)));
+            }
+          } else {
+            mergedConns.push(clone(lc));
+          }
+          seenConnIds.add(lc.id);
+        }
+        for (const sc of (cleanServer.connectors || [])) {
+          if (!seenConnIds.has(sc.id)) {
+            mergedConns.push(clone(sc));
+            seenConnIds.add(sc.id);
+          }
+        }
+
+        const serverFrameMap = new Map((cleanServer.frames || []).map(f => [f.id, f]));
+        const localFrames = (this.data.frames || []);
+        const mergedFrames = [];
+        const seenFrameIds = new Set();
+
+        for (const lf of localFrames) {
+          if (touchedSet.has(lf.id)) {
+            if (serverFrameMap.has(lf.id)) {
+              mergedFrames.push(clone(serverFrameMap.get(lf.id)));
+            }
+          } else {
+            mergedFrames.push(clone(lf));
+          }
+          seenFrameIds.add(lf.id);
+        }
+        for (const sf of (cleanServer.frames || [])) {
+          if (!seenFrameIds.has(sf.id)) {
+            mergedFrames.push(clone(sf));
+            seenFrameIds.add(sf.id);
+          }
+        }
+
+        this.data = sanitizeModel({
+          shapes: mergedShapes,
+          connectors: mergedConns,
+          frames: mergedFrames
+        });
+      } else {
+        this.data = cleanServer;
+      }
+
+      if (touchedIds && touchedIds.length > 0) {
+        this.pulsingShapeIds = new Set(touchedIds);
+        this.canServerUndo = true;
+        clearTimeout(this.pulseTimer);
+        this.pulseTimer = setTimeout(() => {
+          this.pulsingShapeIds = null;
+          this.renderShapes();
+        }, 2000);
+      }
+
+      this.history = [JSON.stringify(this.data)];
+      this.historyIndex = 0;
+      this.updateUndoRedoButtons();
+
       this.render();
       this.updateEmptyState();
       if (!this.userHasPannedOrZoomed) {
@@ -818,6 +916,7 @@
       if (this.historyIndex >= 0 && this.history[this.historyIndex] === snap) {
         return;
       }
+      this.isDirty = true;
       this.history = this.history.slice(0, this.historyIndex + 1);
       this.history.push(snap);
       if (this.history.length > 50) this.history.shift();
@@ -825,7 +924,7 @@
       this.updateUndoRedoButtons();
     }
 
-    undo() {
+    async undo() {
       if (this.historyIndex > 0) {
         this.historyIndex--;
         this.data = sanitizeModel(JSON.parse(this.history[this.historyIndex]));
@@ -834,6 +933,32 @@
         this.triggerAutosave();
         this.updateUndoRedoButtons();
         this.updateEmptyState();
+      } else if (this.canServerUndo || (this.options && (this.options.onServerUndo || this.options.project))) {
+        try {
+          let undoneData = null;
+          if (this.options && this.options.onServerUndo) {
+            undoneData = await this.options.onServerUndo();
+          } else {
+            const url = '/api/idea/diagram/undo' + (this.options && this.options.project ? `?project=${encodeURIComponent(this.options.project)}` : '');
+            const res = await fetch(url, { method: 'POST' });
+            if (res.ok) {
+              const json = await res.json();
+              undoneData = json.diagram;
+            }
+          }
+          if (undoneData) {
+            this.canServerUndo = false;
+            this.data = sanitizeModel(undoneData);
+            this.history = [JSON.stringify(this.data)];
+            this.historyIndex = 0;
+            this.clearSelection();
+            this.render();
+            this.updateUndoRedoButtons();
+            this.updateEmptyState();
+          }
+        } catch (e) {
+          console.warn('Server diagram undo failed:', e);
+        }
       }
     }
 
@@ -852,7 +977,7 @@
     updateUndoRedoButtons() {
       const undoBtn = this.mountEl.querySelector('[data-tool="undo"]');
       const redoBtn = this.mountEl.querySelector('[data-tool="redo"]');
-      if (undoBtn) undoBtn.disabled = this.historyIndex <= 0;
+      if (undoBtn) undoBtn.disabled = this.historyIndex <= 0 && !this.canServerUndo;
       if (redoBtn) redoBtn.disabled = this.historyIndex >= this.history.length - 1;
     }
 
@@ -861,8 +986,11 @@
       this.saveDebounceTimer = setTimeout(async () => {
         try {
           await this.onSave(clone(this.data));
+          this.isDirty = false;
         } catch (e) {
           console.error('Diagram autosave failed:', e);
+        } finally {
+          this.saveDebounceTimer = null;
         }
       }, 600);
     }
@@ -1153,6 +1281,12 @@
 
           .diag-shape-node { cursor: pointer; }
           .diag-shape-node.is-selected { filter: drop-shadow(0 0 3px rgba(37,99,235,0.5)); }
+          @keyframes diagPulseAnim {
+            0% { filter: drop-shadow(0 0 1px rgba(37,99,235,0.8)); }
+            50% { filter: drop-shadow(0 0 9px rgba(37,99,235,1)); }
+            100% { filter: drop-shadow(0 0 1px rgba(37,99,235,0.8)); }
+          }
+          .diag-shape-node.diag-pulse { animation: diagPulseAnim 0.7s ease-in-out infinite; }
           .diag-port-dot { cursor: crosshair; fill: #ffffff; stroke: #2563eb; stroke-width: 2; transition: transform 0.1s; }
           .diag-port-dot:hover { transform: scale(1.35); fill: #2563eb; }
           .diag-handle { fill: #ffffff; stroke: #2563eb; stroke-width: 1.5; cursor: pointer; }
@@ -2514,9 +2648,9 @@
         }
 
         const strokeColor = isSel ? '#2563eb' : (c.stroke || '#64748b');
-        const strokeWidth = isSel ? 3 : 2;
+        const strokeWidth = isSel ? 3 : (c.style === 'thick' ? 3.5 : 2);
         const dashArray = c.style === 'dashed' ? '6 4' : (c.style === 'dotted' ? '2 3' : 'none');
-        const markerEnd = (c.arrows === 'end' || c.arrows === 'both') ? 'url(#diag-arrow-end)' : '';
+        const markerEnd = (c.arrows === 'end' || c.arrows === 'both' || c.arrows === 'to') ? 'url(#diag-arrow-end)' : '';
         const markerStart = (c.arrows === 'start' || c.arrows === 'both') ? 'url(#diag-arrow-start)' : '';
 
         const mx = (p1.x + p2.x) / 2;
@@ -2585,8 +2719,9 @@
           </g>
         ` : '';
 
+        const isPulse = !!(this.pulsingShapeIds && this.pulsingShapeIds.has(s.id));
         html += `
-          <g class="diag-shape-node ${isSel ? 'is-selected' : ''}" data-id="${escapeHtml(s.id)}" transform="translate(${s.x}, ${s.y})">
+          <g class="diag-shape-node ${isSel ? 'is-selected' : ''} ${isPulse ? 'diag-pulse' : ''}" data-id="${escapeHtml(s.id)}" transform="translate(${s.x}, ${s.y})">
             ${shapeSvg}
             <text text-anchor="${escapeHtml(textAnchor)}" style="pointer-events:none;">${textLinesSvg}</text>
             ${lockIcon}
