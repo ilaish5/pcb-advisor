@@ -34,13 +34,12 @@ description: Finds and checks the symbol, footprint and 3D model of a part, and 
    by the student. Say that a module footprint must also be checked against the maker's hardware design guide.
 
 ## Scripts
+- `python <repo>/scripts/library.py search <MPN>` - model search links across LCSC/EasyEDA, Ultra Librarian, and SnapEDA (link-and-return).
+- `python <repo>/scripts/library.py check-package <BOM_package> <JLC_package>` - package-variant check between BOM and manufacturer part.
 - `python <repo>/scripts/skills/verify_part.py <project> <line>` - exists today. Compares the pin numbers and names of the part with its
   datasheet text; lists what it cannot find. Result `pass` does not mean accepted.
 - `python <repo>/scripts/sources.py get <project> <url> [name]` - fetches a datasheet, records url and sha256.
   `python <repo>/scripts/sources.py list` lists what is stored.
-- (planned, stage I8) `scripts/models.py` - model search by LCSC code, link-and-return filing, EasyEDA/KiCad fetch. Until it exists, give
-  the student the link and file the returned zip by hand with them.
-- (planned, stage I8) the package-variant check inside `verify_part.py`. Until then compare the ordering code with the footprint by reading.
 
 ## References
 - `<repo>/shared/reference/course/ad20-essentials/m26-schematic-library.en.md` - symbol creation, pins, installing a library.

@@ -402,7 +402,7 @@ const URLQ = new URLSearchParams(location.search);
 let S = null;                 // the whole project, from /api/state
 let PROJECT = URLQ.get('project') || null;
 let SESSION = URLQ.get('session') || null;
-let PROJECTS = [], SKILLS = null, CONFIG = null, ALTIUM_DATA = null;
+let PROJECTS = [], SKILLS = null, CONFIG = null, ALTIUM_DATA = null, RULES_DATA = null;
 let page = 'workspace', tab = 'bom', sel = null, hitSrc = null, sheetId = null;
 let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null, altsCard = null;
 let svgCache = {key: '', text: ''};
@@ -438,6 +438,12 @@ async function loadAltium() {
   try {
     ALTIUM_DATA = await api('/api/altium', undefined, {soft: true});
     if (page === 'settings') renderCenter(true);
+  } catch (e) { /* error toasted */ }
+}
+async function loadRules() {
+  try {
+    RULES_DATA = await api('/api/rules', undefined, {soft: true});
+    if (page === 'workspace' && tab === 'rules') renderCenter(true);
   } catch (e) { /* error toasted */ }
 }
 
@@ -634,7 +640,7 @@ function renderNav() {
     <div class="ngroup"><div class="nlabel">${esc(S.title)}</div>
       <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
       ${ni('workspace', 'ws', 'Workspace')}
-      <div class="nsub">${[['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic']].map(([id, l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
+      <div class="nsub">${[['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic'], ['rules', 'Rules']].map(([id, l]) => `<button data-tab="${id}" aria-current="${page === 'workspace' && tab === id}">${l}</button>`).join('')}</div>
       ${ni('library', 'lib', 'Altium library', libCount)}
       ${ni('sources', 'src', 'Sources', (S.sources || []).length)}
       ${ni('skills', 'sk', 'Skills', SKILLS ? SKILLS.filter(s => s.available).length : null)}
@@ -653,6 +659,7 @@ function wheadHTML() {
     ['idea', '1', 'Idea', S.idea.confirmed ? `<span class="st ok">Confirmed</span>` : `<span class="st dim">Open</span>`],
     ['bom', '2', 'BOM', t.out_of_stock ? `<span class="st bad">${t.out_of_stock} out of stock</span>` : t.to_verify ? `<span class="st warn">${t.to_verify} to review</span>` : t.checking ? `<span class="st dim">checking</span>` : t.lines ? `<span class="st ok">Ready</span>` : `<span class="st dim">Empty</span>`],
     ['sch', '3', 'Schematic', `<span class="st dim">${S.sheets.length} sheet${S.sheets.length === 1 ? '' : 's'}</span>`],
+    ['rules', '4', 'Rules', RULES_DATA ? `<span class="st ok">${RULES_DATA.preset?.rules?.length || 7} preset</span>` : `<span class="st dim">JLC preset</span>`],
   ];
   return `<div class="tabs" role="tablist">${items.map(([id, n, label, st]) => `<button class="tab" role="tab" data-tab="${id}" aria-selected="${tab === id}"><span class="n">${n}</span>${label}${st}</button>`).join('')}</div>`;
 }
@@ -990,16 +997,212 @@ function detailHTML() {
     ${l.note ? `<div class="dsec"><h4>Note</h4><div class="dnote">${esc(l.note)}</div></div>` : ''}
   </div>`;
 }
+function rulesHTML() {
+  const rd = RULES_DATA;
+  if (!rd) {
+    loadRules();
+    return '<div class="dnote" style="margin:20px">Loading design rules and diff…</div>';
+  }
+  const p = rd.preset?.rules || [];
+  const extra = rd.extra || [];
+  const diff = rd.diff || [];
+  const linked = rd.linked_pcb;
+
+  return `<div class="vhead">
+    <div>
+      <h2>Design Rules & Calculators</h2>
+      <p>JLC PCB capabilities preset, read-back diff against the linked PcbDoc, and engineering calculators.</p>
+    </div>
+    <div class="vacts">
+      <a class="btn pri" href="/api/rules/export?${q()}" download="${esc(PROJECT)}-rules.RUL">Download .RUL</a>
+    </div>
+  </div>
+
+  <div class="howto">
+    <b>How to Import .RUL in Altium Designer (AD20 Essentials Module 19 § 19.3)</b>
+    <ol style="margin:6px 0 0;padding-left:18px;display:grid;gap:4px">
+      <li>Open your PCB document (<b>.PcbDoc</b>) in Altium Designer.</li>
+      <li>Open the PCB Rules and Constraints Editor via <b>Design » Rules</b> (shortcut <span class="m">D » R</span>).</li>
+      <li>In the tree on the left, right-click on <b>Design Rules</b> and select <b>Import Rules...</b>.</li>
+      <li>Select the downloaded <span class="m">.RUL</span> file, click <b>Open</b>, and choose <b>No</b> when asked to clear existing rules (preserves your custom rules).</li>
+    </ol>
+  </div>
+
+  <div class="sgroup" style="margin-top:18px">
+    <div class="sgh">
+      <h3>JLC Preset Design Rules</h3>
+      <p>Source: <a class="lnk" href="${esc(rd.preset?.capabilities_url || 'https://jlcpcb.com/capabilities/pcb-capabilities')}" target="_blank" rel="noopener">JLC PCB Capabilities</a></p>
+    </div>
+    <div class="tblwrap">
+      <table class="libt">
+        <thead><tr><th>Rule Name</th><th>Kind</th><th>Constraints</th><th>Scope</th><th>Description</th></tr></thead>
+        <tbody>
+          ${p.map(r => `<tr>
+            <td class="m"><b>${esc(r.name)}</b></td>
+            <td><span class="kind">${esc(r.kind)}</span></td>
+            <td class="m">${esc(r.value || '—')}</td>
+            <td>${esc(r.scope1 || 'All')}</td>
+            <td>${esc(r.description || '')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="sgroup" style="margin-top:18px">
+    <div class="sgh">
+      <h3>Diff vs Linked PcbDoc</h3>
+      <p>${linked ? `Comparing with <b class="m">${esc(linked)}</b>` : `No PcbDoc linked · Link one in <button class="btn" data-page="settings">Settings</button> to see live diff`}</p>
+    </div>
+    ${diff.length ? `
+      <div class="tblwrap">
+        <table class="libt">
+          <thead><tr><th>Rule</th><th>Kind</th><th>Board Value</th><th>Preset Value</th><th>Status</th></tr></thead>
+          <tbody>
+            ${diff.map(d => {
+              const st = d.status || d.Status;
+              const badge = st === 'match' ? '<span class="tag ok">Match</span>' :
+                            st === 'differs' ? '<span class="tag warn">Differs</span>' :
+                            st === 'missing_on_board' ? '<span class="tag bad">Missing on board</span>' :
+                            '<span class="tag" style="background:var(--accent-soft);color:var(--accent)">Extra on board</span>';
+              return `<tr>
+                <td class="m"><b>${esc(d.rule || d.Rule || '')}</b></td>
+                <td><span class="kind">${esc(d.kind || d.Kind || '')}</span></td>
+                <td class="m">${esc(d['board value'] || d.board_value || '—')}</td>
+                <td class="m">${esc(d['preset value'] || d.preset_value || '—')}</td>
+                <td>${badge}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>` : '<div class="dnote">No rules found on board.</div>'}
+  </div>
+
+  <div class="sgroup" style="margin-top:18px">
+    <div class="sgh">
+      <h3>Extra Rules (Editable)</h3>
+      <p>Custom rules included in the exported .RUL file</p>
+    </div>
+    ${extra.length ? `
+      <div class="tblwrap" style="margin-bottom:10px">
+        <table class="libt">
+          <thead><tr><th>Rule Name</th><th>Kind</th><th>Scope</th><th>Value / Constraint</th></tr></thead>
+          <tbody>
+            ${extra.map(r => `<tr>
+              <td class="m"><b>${esc(r.name)}</b></td>
+              <td><span class="kind">${esc(r.kind)}</span></td>
+              <td>${esc(r.scope1 || 'All')}</td>
+              <td class="m">${esc(r.value || '')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>` : '<div class="dnote" style="margin-bottom:10px">No extra rules defined yet.</div>'}
+
+    <div class="card" style="padding:14px;max-width:580px;display:grid;gap:8px">
+      <b>Add Extra Rule</b>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="font-size:11.5px;color:var(--dim)">Name</label><input class="inp" id="er-name" placeholder="PowerNets_Width" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+        <div><label style="font-size:11.5px;color:var(--dim)">Kind</label>
+          <select class="inp" id="er-kind" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px">
+            <option value="Width">Width</option>
+            <option value="Clearance">Clearance</option>
+            <option value="RoutingVias">RoutingVias</option>
+            <option value="ComponentClearance">ComponentClearance</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div><label style="font-size:11.5px;color:var(--dim)">Scope</label><input class="inp" id="er-scope" placeholder="InNetClass('PowerNets')" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+        <div><label style="font-size:11.5px;color:var(--dim)">Value / Constraint</label><input class="inp" id="er-val" placeholder="20mil" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+      </div>
+      <div><button class="btn pri" data-act="add-extra-rule">+ Add Extra Rule</button></div>
+    </div>
+  </div>
+
+  <div class="sgroup" style="margin-top:24px">
+    <div class="sgh">
+      <h3>Calculators</h3>
+      <p>Deterministic calculators returning value, formula, and standard citations</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(360px, 1fr));gap:14px">
+
+      <!-- Trace Width IPC-2152 -->
+      <div class="card" style="padding:14px;display:grid;gap:8px">
+        <b>Trace Width (IPC-2152)</b>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:11px;color:var(--dim)">Current (A)</label><input type="number" step="0.1" id="calc-tw-i" value="1.5" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div><label style="font-size:11px;color:var(--dim)">Temp Rise (°C)</label><input type="number" step="1" id="calc-tw-dt" value="10" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:11px;color:var(--dim)">Copper (oz)</label><input type="number" step="0.5" id="calc-tw-oz" value="1.0" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div style="display:flex;align-items:flex-end"><button class="btn pri" style="width:100%" data-calc="tw">Calculate</button></div>
+        </div>
+        <div id="res-tw" class="sidecar" style="display:none;margin-top:4px"></div>
+      </div>
+
+      <!-- Voltage Divider -->
+      <div class="card" style="padding:14px;display:grid;gap:8px">
+        <b>Voltage Divider (E24 Selection)</b>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:11px;color:var(--dim)">Vin (V)</label><input type="number" step="0.1" id="calc-div-vin" value="5.0" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div><label style="font-size:11px;color:var(--dim)">Target Vout (V)</label><input type="number" step="0.1" id="calc-div-vout" value="3.3" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+        </div>
+        <div><button class="btn pri" style="width:100%" data-calc="div">Find Resistors</button></div>
+        <div id="res-div" class="sidecar" style="display:none;margin-top:4px"></div>
+      </div>
+
+      <!-- LED Resistor -->
+      <div class="card" style="padding:14px;display:grid;gap:8px">
+        <b>LED Series Resistor</b>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+          <div><label style="font-size:11px;color:var(--dim)">Vsupply (V)</label><input type="number" step="0.1" id="calc-led-vs" value="5.0" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div><label style="font-size:11px;color:var(--dim)">Vf (V)</label><input type="number" step="0.1" id="calc-led-vf" value="2.0" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div><label style="font-size:11px;color:var(--dim)">If (mA)</label><input type="number" step="1" id="calc-led-if" value="20" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+        </div>
+        <div><button class="btn pri" style="width:100%" data-calc="led">Calculate</button></div>
+        <div id="res-led" class="sidecar" style="display:none;margin-top:4px"></div>
+      </div>
+
+      <!-- Via Current -->
+      <div class="card" style="padding:14px;display:grid;gap:8px">
+        <b>Via Current Capacity</b>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:11px;color:var(--dim)">Drill Hole (mm)</label><input type="number" step="0.05" id="calc-via-d" value="0.3" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div><label style="font-size:11px;color:var(--dim)">Temp Rise (°C)</label><input type="number" step="1" id="calc-via-dt" value="10" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+        </div>
+        <div><button class="btn pri" style="width:100%" data-calc="via">Calculate Capacity</button></div>
+        <div id="res-via" class="sidecar" style="display:none;margin-top:4px"></div>
+      </div>
+
+      <!-- Microstrip Impedance IPC-2141 -->
+      <div class="card" style="padding:14px;display:grid;gap:8px">
+        <b>Microstrip Impedance (IPC-2141)</b>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:11px;color:var(--dim)">Width w (mm)</label><input type="number" step="0.05" id="calc-ms-w" value="0.3" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div><label style="font-size:11px;color:var(--dim)">Height h (mm)</label><input type="number" step="0.05" id="calc-ms-h" value="0.2" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div><label style="font-size:11px;color:var(--dim)">Dielectric Er</label><input type="number" step="0.1" id="calc-ms-er" value="4.4" class="inp" style="width:100%;padding:4px 8px;border:1px solid var(--line);border-radius:6px"></div>
+          <div style="display:flex;align-items:flex-end"><button class="btn pri" style="width:100%" data-calc="ms">Calculate Z0</button></div>
+        </div>
+        <div id="res-ms" class="sidecar" style="display:none;margin-top:4px"></div>
+      </div>
+
+    </div>
+  </div>`;
+}
+
 function renderCenter(force) {
   const active = document.activeElement;
   if (!force && active && active.closest && active.closest('#view') && /INPUT|TEXTAREA|SELECT/.test(active.tagName)) return;   // do not eat an edit in progress
   $('#whead').innerHTML = wheadHTML();
   const v = $('#view');
   const top = v.scrollTop;
-  v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : ideaHTML())
+  v.innerHTML = page === 'workspace' ? (tab === 'bom' ? bomHTML() : tab === 'sch' ? schHTML() : tab === 'rules' ? rulesHTML() : ideaHTML())
     : page === 'library' ? libHTML() : page === 'sources' ? sourcesHTML() : page === 'skills' ? skillsHTML() : settingsHTML();
   v.scrollTop = top;
   if (page === 'workspace' && tab === 'sch' && S.sheets.length) loadSheet();
+  if (page === 'workspace' && tab === 'rules' && !RULES_DATA) loadRules();
   if (page === 'settings' && !ALTIUM_DATA) loadAltium();
   if (page === 'sources' && hitSrc) { const r = document.getElementById('src-' + hitSrc.replace(/[^\w-]/g, '_')); if (r) r.scrollIntoView({block: 'center'}); hitSrc = null; }
   renderDetail();
@@ -1315,6 +1518,60 @@ document.addEventListener('click', async e => {
     if (d.show) { select(d.show, true); return; }
     if (d.chat) { openPart(d.chat); return; }
     if (d.sheet) { sheetId = d.sheet; svgCache = {key: '', text: ''}; render(true); return; }
+    if (d.calc) {
+      if (d.calc === 'tw') {
+        const cur = parseFloat($('#calc-tw-i').value) || 1.0;
+        const rise = parseFloat($('#calc-tw-dt').value) || 10.0;
+        const oz = parseFloat($('#calc-tw-oz').value) || 1.0;
+        const res = await api(`/api/calc?type=trace_width&current=${cur}&rise=${rise}&oz=${oz}`);
+        const box = $('#res-tw');
+        box.style.display = 'block';
+        box.innerHTML = `<b>Width: ${res.width_mm} mm (${res.width_mil} mil)</b><br><small style="color:var(--dim)">Formula: ${esc(res.formula)}<br>Source: ${esc(res.source)}</small>`;
+      } else if (d.calc === 'div') {
+        const vin = parseFloat($('#calc-div-vin').value) || 5.0;
+        const vout = parseFloat($('#calc-div-vout').value) || 3.3;
+        const res = await api(`/api/calc?type=divider&vin=${vin}&vout=${vout}`);
+        const box = $('#res-div');
+        box.style.display = 'block';
+        box.innerHTML = `<b>Recommended E24: R1 = ${res.r1} Ω, R2 = ${res.r2} Ω</b><br>Actual Vout: <b>${res.vout} V</b> (error ${res.error_pct}%)<br><small style="color:var(--dim)">Formula: ${esc(res.formula)}<br>Source: ${esc(res.source)}</small>`;
+      } else if (d.calc === 'led') {
+        const vs = parseFloat($('#calc-led-vs').value) || 5.0;
+        const vf = parseFloat($('#calc-led-vf').value) || 2.0;
+        const if_ma = parseFloat($('#calc-led-if').value) || 20.0;
+        const res = await api(`/api/calc?type=led&v_supply=${vs}&v_forward=${vf}&i_forward_ma=${if_ma}`);
+        const box = $('#res-led');
+        box.style.display = 'block';
+        box.innerHTML = `<b>Standard E24 Resistor: ${res.r_standard_ohm} Ω</b> (exact: ${res.r_exact_ohm} Ω)<br>Power dissipation: <b>${res.power_w} W</b><br><small style="color:var(--dim)">Formula: ${esc(res.formula)}<br>Source: ${esc(res.source)}</small>`;
+      } else if (d.calc === 'via') {
+        const drill = parseFloat($('#calc-via-d').value) || 0.3;
+        const rise = parseFloat($('#calc-via-dt').value) || 10.0;
+        const res = await api(`/api/calc?type=via&drill_mm=${drill}&rise=${rise}`);
+        const box = $('#res-via');
+        box.style.display = 'block';
+        box.innerHTML = `<b>Max current: ${res.current_a} A</b> (barrel area ${res.barrel_area_mil2} mil²)<br><small style="color:var(--dim)">Formula: ${esc(res.formula)}<br>Source: ${esc(res.source)}</small>`;
+      } else if (d.calc === 'ms') {
+        const w = parseFloat($('#calc-ms-w').value) || 0.3;
+        const h = parseFloat($('#calc-ms-h').value) || 0.2;
+        const er = parseFloat($('#calc-ms-er').value) || 4.4;
+        const res = await api(`/api/calc?type=microstrip&width_mm=${w}&height_mm=${h}&er=${er}`);
+        const box = $('#res-ms');
+        box.style.display = 'block';
+        box.innerHTML = `<b>Impedance Z0: ${res.z0_ohm} Ω</b><br><small style="color:var(--dim)">Formula: ${esc(res.formula)}<br>Source: ${esc(res.source)}</small>`;
+      }
+      return;
+    }
+    if (d.act === 'add-extra-rule') {
+      const name = ($('#er-name')?.value || '').trim();
+      const kind = $('#er-kind')?.value || 'Width';
+      const scope1 = ($('#er-scope')?.value || 'All').trim();
+      const val = ($('#er-val')?.value || '').trim();
+      if (!name || !val) { toast('Please specify rule name and value'); return; }
+      await api('/api/rules/extra', {rule: {name, kind, scope1, value: val}});
+      toast('Extra rule added');
+      await loadRules();
+      render(true);
+      return;
+    }
     switch (d.act) {
       case 'closeviewer': closeViewer(); return;
       case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); applyFocus(); return;

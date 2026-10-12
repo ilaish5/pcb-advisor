@@ -30,9 +30,7 @@ description: Plans and explains the single project library (one library with eve
 10. Record the library state with `library.add` per non-standard part (what exists, source, issues). Never mark parts verified.
 
 ## Scripts
-- (planned, stage I8) `scripts/library_build.py` - writes the library manifest and the one Altium script that builds the SchLib, PcbLib,
-  links and 3D models. Until it exists, say the build is not automated yet and walk the student through the manual steps in
-  `ad20-essentials` m26-m29 (SchLib, PcbLib, link, integrated library).
+- `python <repo>/scripts/library.py build-script <project> [--out exports]` - writes the Altium build script and README to compile an IntLib.
 - `python <repo>/scripts/skills/verify_part.py <project> <line>` - exists today; pins against the datasheet text for one part.
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` - exists today; the BOM with the LCSC column. Shows which lines lack the code.
 - (planned, stage I8) a library check that reports links to missing footprints, symbols with no footprint, duplicate footprint names,

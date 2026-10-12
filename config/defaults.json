@@ -111,5 +111,139 @@
     "cache_hours": 6,
     "build_qty": 5,
     "extended_fee_usd": 3.0
+  },
+  "jlc_rules": {
+    "_comment": "JLC PCB capabilities standard preset. Source: https://jlcpcb.com/capabilities/pcb-capabilities (checked 2026-10-09)",
+    "capabilities_url": "https://jlcpcb.com/capabilities/pcb-capabilities",
+    "rules": [
+      {
+        "name": "Clearance",
+        "kind": "Clearance",
+        "scope1": "All",
+        "scope2": "All",
+        "value": "6mil",
+        "value_mm": 0.1524,
+        "description": "Clearance constraint (fab min 0.09mm / safe start 0.15mm)",
+        "attributes": {
+          "NAME": "Clearance",
+          "RULEKIND": "Clearance",
+          "SCOPE1EXPRESSION": "All",
+          "SCOPE2EXPRESSION": "All",
+          "GAP": "6mil",
+          "GENERICCLEARANCE": "6mil",
+          "ENABLED": "TRUE",
+          "PRIORITY": "1"
+        }
+      },
+      {
+        "name": "Width",
+        "kind": "Width",
+        "scope1": "All",
+        "value": "Min: 5mil, Pref: 8mil, Max: 40mil",
+        "min_mm": 0.127,
+        "pref_mm": 0.2032,
+        "max_mm": 1.016,
+        "description": "Trace width constraint",
+        "attributes": {
+          "NAME": "Width",
+          "RULEKIND": "Width",
+          "SCOPE1EXPRESSION": "All",
+          "MINLIMIT": "5mil",
+          "PREFEREDWIDTH": "8mil",
+          "MAXLIMIT": "40mil",
+          "ENABLED": "TRUE",
+          "PRIORITY": "1"
+        }
+      },
+      {
+        "name": "RoutingVias",
+        "kind": "RoutingVias",
+        "scope1": "All",
+        "value": "Hole: 12mil, Dia: 24mil",
+        "hole_mm": 0.3048,
+        "dia_mm": 0.6096,
+        "description": "Routing via drill and diameter",
+        "attributes": {
+          "NAME": "RoutingVias",
+          "RULEKIND": "RoutingVias",
+          "SCOPE1EXPRESSION": "All",
+          "MINHOLEWIDTH": "12mil",
+          "HOLEWIDTH": "12mil",
+          "MAXHOLEWIDTH": "40mil",
+          "MINWIDTH": "24mil",
+          "WIDTH": "24mil",
+          "MAXWIDTH": "60mil",
+          "ENABLED": "TRUE",
+          "PRIORITY": "1"
+        }
+      },
+      {
+        "name": "MinimumAnnularRing",
+        "kind": "MinimumAnnularRing",
+        "scope1": "All",
+        "value": "6mil",
+        "value_mm": 0.1524,
+        "description": "Minimum annular ring (fab min 0.15mm)",
+        "attributes": {
+          "NAME": "MinimumAnnularRing",
+          "RULEKIND": "MinimumAnnularRing",
+          "SCOPE1EXPRESSION": "All",
+          "MINIMUM": "6mil",
+          "ENABLED": "TRUE",
+          "PRIORITY": "1"
+        }
+      },
+      {
+        "name": "HoleSize",
+        "kind": "HoleSize",
+        "scope1": "All",
+        "value": "Min: 12mil, Max: 250mil",
+        "min_mm": 0.3048,
+        "max_mm": 6.35,
+        "description": "Drill hole size range",
+        "attributes": {
+          "NAME": "HoleSize",
+          "RULEKIND": "HoleSize",
+          "SCOPE1EXPRESSION": "All",
+          "MINLIMIT": "12mil",
+          "MAXLIMIT": "250mil",
+          "ENABLED": "TRUE",
+          "PRIORITY": "1"
+        }
+      },
+      {
+        "name": "SilkToSolderMaskClearance",
+        "kind": "SilkToSolderMaskClearance",
+        "scope1": "All",
+        "value": "6mil",
+        "value_mm": 0.1524,
+        "description": "Silkscreen to solder mask clearance (fab min 0.15mm)",
+        "attributes": {
+          "NAME": "SilkToSolderMaskClearance",
+          "RULEKIND": "SilkToSolderMaskClearance",
+          "SCOPE1EXPRESSION": "All",
+          "MINSILKSCREENTOMASKGAP": "6mil",
+          "CLEARANCETOEXPOSEDCOPPER": "TRUE",
+          "ENABLED": "TRUE",
+          "PRIORITY": "1"
+        }
+      },
+      {
+        "name": "SolderMaskExpansion",
+        "kind": "SolderMaskExpansion",
+        "scope1": "All",
+        "value": "2mil",
+        "value_mm": 0.0508,
+        "description": "Solder mask expansion (fab standard 0.05mm)",
+        "attributes": {
+          "NAME": "SolderMaskExpansion",
+          "RULEKIND": "SolderMaskExpansion",
+          "SCOPE1EXPRESSION": "All",
+          "EXPANSION": "2mil",
+          "ENABLED": "TRUE",
+          "PRIORITY": "1"
+        }
+      }
+    ]
   }
 }

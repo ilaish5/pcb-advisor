@@ -36,13 +36,14 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
 9. Add layout practices that are not rules (stitching vias, decaps at the pins, hot-loop size) as a plain list for the layout stage.
 
 ## Scripts
+- `python <repo>/scripts/rules.py diff <pcbdoc>` - diff of a PcbDoc's rules vs the JLC preset (table with rule, kind, board value, preset value, status).
+- `python <repo>/scripts/rules.py export <output.RUL>` - export preset design rules to an Altium .RUL file.
+- `python <repo>/scripts/calc.py trace-width <amps> [--rise <C>] [--oz <n>]` - IPC-2152 trace width in mm and mil.
+- `python <repo>/scripts/calc.py divider <vin> <vout>` - voltage divider resistor calculation with standard E24 values.
+- `python <repo>/scripts/calc.py led <v_supply> <v_forward> <i_ma>` - LED series resistor and power rating.
+- `python <repo>/scripts/calc.py via <drill_mm> [--rise <C>]` - via barrel current-carrying capacity.
+- `python <repo>/scripts/calc.py microstrip <width_mm> <height_mm> [--er <val>]` - microstrip impedance (IPC-2141 approx).
 - `python <repo>/scripts/trace_width.py <amps> --layer external|internal --rise <C> --oz <n>` - IPC-2221 width in mm and mil.
-- (planned, stage I7) `<repo>/scripts/calcs.py` - IPC-2152 width, microstrip/CPWG/differential impedance, divider.
-  Until then: for impedance give the stack (dielectric height, Er, copper) and the fab's calculator link from
-  `references/jlc-limits.md`; for a divider show `Vout = Vref x (1 + R1/R2)` with E24 values and the resulting error in percent.
-- (planned, stage I7) `<repo>/scripts/rules_rul.py` - rules model, JLC preset, `.RUL` writer, read-back diff from the PcbDoc.
-  Until then: give the rule table and the manual path (Design > Rules) and say the file export and diff are not automated yet.
-- `<repo>/docs/feasibility/feas_rul.py` - proof that the .RUL format and the PcbDoc rules are readable (developer reference).
 
 ## References
 - `references/jlc-limits.md` - capability numbers with source and date, JLC stack-ups, rule catalogue with typical values.
