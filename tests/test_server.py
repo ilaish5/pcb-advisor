@@ -269,3 +269,63 @@ def test_the_agent_prompt_survives_a_context_card_in_the_history(home, lte, monk
     m = model.build(project=lte, session=sid)
     out = agent.respond(m, "why OE?", m["chat"], backend="claude_code")
     assert out["reply"] == "fine" and "why OE?" in seen["prompt"]
+
+
+def test_rules_endpoints(server, lte):
+    # GET /api/rules
+    code, res = get(server, "/api/rules", lte)
+    assert code == 200
+    assert "preset" in res
+    assert len(res["preset"]["rules"]) >= 7
+    assert "diff" in res
+
+    # POST /api/rules/extra
+    code, res = post(server, "/api/rules/extra", {
+        "rule": {"name": "PowerNet_Width", "kind": "Width", "scope1": "InNet('12V')", "value": "30mil"}
+    }, lte)
+    assert code == 200 and res.get("ok") is True
+
+    # GET /api/rules/export
+    code, raw = get(server, "/api/rules/export", lte, raw=True)
+    assert code == 200
+    assert b"\xb6\r\n" in raw
+    assert b"PowerNet_Width" in raw
+
+
+def test_calc_endpoints(server, lte):
+    # GET /api/calc (trace width)
+    code, res = get(server, "/api/calc?type=trace_width&current=2.0", lte)
+    assert code == 200
+    assert "value" in res and "formula" in res and "source" in res
+
+    # POST /api/calc (divider)
+    code, res = post(server, "/api/calc", {"type": "divider", "vin": 5.0, "vout": 3.3}, lte)
+    assert code == 200
+    assert "value" in res and "formula" in res and "source" in res
+
+    # POST /api/calc (led)
+    code, res = post(server, "/api/calc", {"type": "led", "v_supply": 5.0, "v_forward": 2.0, "i_ma": 20}, lte)
+    assert code == 200
+    assert "value" in res and "formula" in res and "source" in res
+
+    # POST /api/calc (microstrip)
+    code, res = post(server, "/api/calc", {"type": "microstrip", "w": 0.3, "h": 0.2}, lte)
+    assert code == 200
+    assert "value" in res and "formula" in res and "source" in res
+
+
+def test_library_endpoints(server, lte):
+    # GET /api/library/search
+    code, res = get(server, "/api/library/search?mpn=NE555P", lte)
+    assert code == 200
+    assert "links" in res and "LCSC" in res["links"]
+
+    # POST /api/library/check_package
+    code, res = post(server, "/api/library/check_package", {"bom_pkg": "LQFP-48", "jlc_pkg": "LQFP-48"}, lte)
+    assert code == 200
+    assert res.get("match") is True
+
+    # POST /api/library/build_script
+    code, res = post(server, "/api/library/build_script", {}, lte)
+    assert code == 200
+    assert res.get("ok") is True

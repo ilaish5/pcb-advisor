@@ -354,6 +354,9 @@ class Handler(BaseHTTPRequestHandler):
     def query(self, key):
         return (parse_qs(urlparse(self.path).query).get(key) or [None])[0]
 
+    def queries(self):
+        return {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+
     def _send(self, code, body, ctype="application/json; charset=utf-8", extra=None):
         if isinstance(body, (dict, list)):
             body = json.dumps(body, ensure_ascii=False)
@@ -530,6 +533,118 @@ class Handler(BaseHTTPRequestHandler):
                             "url": f"/api/export/{f.name}",
                         })
             return self._send(200, {"exports": files})
+        if path == "/api/rules":
+            proj = self.project()
+            import rules as rules_mod
+            preset = rules_mod.get_jlc_preset()
+            rules_file = model.project_dir(proj) / "rules.json"
+            extra = []
+            if rules_file.is_file():
+                try:
+                    extra = json.loads(rules_file.read_text(encoding="utf-8"))
+                except Exception:
+                    extra = []
+            linked_pcb = None
+            board_rules = []
+            try:
+                link = project_mod.altium_link(proj)
+                pcb_name = link.get("pcb_file")
+                prj_file = link.get("project_file")
+                if pcb_name:
+                    pcb_path = pathlib.Path(pcb_name)
+                    if not pcb_path.is_file() and prj_file:
+                        pcb_path = pathlib.Path(prj_file).parent / pcb_name
+                    if pcb_path.is_file():
+                        from altium import read_pcbdoc
+                        doc = read_pcbdoc(pcb_path)
+                        board_rules = doc.get("rules", [])
+                        linked_pcb = pcb_path.name
+            except Exception:
+                pass
+            diff = rules_mod.diff_rules(board_rules)
+            return self._send(200, {
+                "preset": preset,
+                "extra": extra,
+                "diff": diff,
+                "linked_pcb": linked_pcb,
+            })
+        if path == "/api/rules/export":
+            proj = self.project()
+            import rules as rules_mod
+            records = rules_mod.get_preset_rule_records()
+            rules_file = model.project_dir(proj) / "rules.json"
+            if rules_file.is_file():
+                try:
+                    extra = json.loads(rules_file.read_text(encoding="utf-8"))
+                    for r in extra:
+                        attrs = r.get("attributes")
+                        if attrs:
+                            records.append(attrs)
+                        elif r.get("name") and r.get("kind"):
+                            records.append({
+                                "NAME": r["name"],
+                                "RULEKIND": r["kind"],
+                                "SCOPE1EXPRESSION": r.get("scope1", "All"),
+                                "GAP": r.get("value", "10mil"),
+                            })
+                except Exception:
+                    pass
+            b = rules_mod.format_rul_bytes(records)
+            return self._send(200, b, "application/octet-stream",
+                              {"Content-Disposition": f'attachment; filename="{proj}-rules.RUL"'})
+        if path == "/api/calc":
+            import calc
+            q = self.queries()
+            t = q.get("type", "")
+            try:
+                if t == "trace_width":
+                    res = calc.trace_width_ipc2152(
+                        float(q.get("current", q.get("amps", 1.0))),
+                        float(q.get("rise", 10.0)),
+                        float(q.get("oz", 1.0)),
+                        q.get("internal", "").lower() in ("true", "1"),
+                    )
+                elif t == "divider":
+                    vin = float(q["vin"])
+                    vout = float(q["vout"]) if q.get("vout") else None
+                    r1 = float(q["r1"]) if q.get("r1") else None
+                    r2 = float(q["r2"]) if q.get("r2") else None
+                    res = calc.voltage_divider(vin, vout=vout, r1=r1, r2=r2)
+                elif t == "led":
+                    res = calc.led_resistor(
+                        float(q["v_supply"]),
+                        float(q["v_forward"]),
+                        float(q.get("i_forward_ma", q.get("i_ma", 20.0))),
+                    )
+                elif t == "via":
+                    res = calc.via_current(
+                        float(q.get("drill_mm", q.get("drill", 0.3))),
+                        float(q.get("rise", 10.0)),
+                        float(q.get("plating_um", 25.0)),
+                    )
+                elif t == "microstrip":
+                    res = calc.microstrip_impedance(
+                        float(q.get("width_mm", q.get("w", 0.3))),
+                        float(q.get("height_mm", q.get("h", 0.2))),
+                        float(q.get("copper_mm", 0.035)),
+                        float(q.get("er", 4.4)),
+                    )
+                else:
+                    return self._send(400, {"error": f"unknown calc type {t!r}"})
+                return self._send(200, res)
+            except Exception as exc:
+                return self._send(400, {"error": str(exc)})
+        if path == "/api/library/search":
+            mpn = self.query("mpn")
+            if not mpn:
+                return self._send(400, {"error": "mpn required"})
+            import library as lib_mod
+            return self._send(200, lib_mod.model_search_links(mpn))
+        if path == "/api/library/check_package":
+            bom_pkg = self.query("bom_pkg")
+            jlc_pkg = self.query("jlc_pkg")
+            import library as lib_mod
+            return self._send(200, lib_mod.check_package_variant(bom_pkg, jlc_pkg))
         return self._send(404, {"error": "not found"})
 
     # ---------------------------------------------------------------- write
@@ -930,6 +1045,93 @@ class Handler(BaseHTTPRequestHandler):
             from skills.export_cpl import export_cpl
             res = export_cpl(proj)
             return self._send(200, res)
+        if path == "/api/rules/extra":
+            rule = data.get("rule") or data
+            if not rule or not rule.get("name") or not rule.get("kind"):
+                return self._send(400, {"error": "rule name and kind are required"})
+            rules_file = model.project_dir(proj) / "rules.json"
+            extra = []
+            if rules_file.is_file():
+                try:
+                    extra = json.loads(rules_file.read_text(encoding="utf-8"))
+                except Exception:
+                    extra = []
+            idx = next((i for i, r in enumerate(extra) if r.get("name") == rule["name"]), None)
+            clean_rule = {
+                "name": rule["name"],
+                "kind": rule["kind"],
+                "scope1": rule.get("scope1", "All"),
+                "value": rule.get("value", ""),
+                "description": rule.get("description", "Custom rule"),
+                "attributes": rule.get("attributes", {
+                    "NAME": rule["name"],
+                    "RULEKIND": rule["kind"],
+                    "SCOPE1EXPRESSION": rule.get("scope1", "All"),
+                    "GAP": rule.get("value", "10mil"),
+                }),
+            }
+            if idx is not None:
+                extra[idx] = clean_rule
+            else:
+                extra.append(clean_rule)
+            rules_file.parent.mkdir(parents=True, exist_ok=True)
+            rules_file.write_text(json.dumps(extra, indent=2), encoding="utf-8")
+            return self._send(200, {"ok": True, "extra": extra})
+
+        if path == "/api/calc":
+            import calc
+            t = data.get("type", "")
+            try:
+                if t == "trace_width":
+                    res = calc.trace_width_ipc2152(
+                        float(data.get("current", data.get("amps", 1.0))),
+                        float(data.get("rise", 10.0)),
+                        float(data.get("oz", 1.0)),
+                        bool(data.get("internal", False)),
+                    )
+                elif t == "divider":
+                    vin = float(data["vin"])
+                    vout = float(data["vout"]) if data.get("vout") not in (None, "") else None
+                    r1 = float(data["r1"]) if data.get("r1") not in (None, "") else None
+                    r2 = float(data["r2"]) if data.get("r2") not in (None, "") else None
+                    res = calc.voltage_divider(vin, vout=vout, r1=r1, r2=r2)
+                elif t == "led":
+                    res = calc.led_resistor(
+                        float(data["v_supply"]),
+                        float(data["v_forward"]),
+                        float(data.get("i_forward_ma", data.get("i_ma", 20.0))),
+                    )
+                elif t == "via":
+                    res = calc.via_current(
+                        float(data.get("drill_mm", data.get("drill", 0.3))),
+                        float(data.get("rise", 10.0)),
+                        float(data.get("plating_um", 25.0)),
+                    )
+                elif t == "microstrip":
+                    res = calc.microstrip_impedance(
+                        float(data.get("width_mm", data.get("w", 0.3))),
+                        float(data.get("height_mm", data.get("h", 0.2))),
+                        float(data.get("copper_mm", 0.035)),
+                        float(data.get("er", 4.4)),
+                    )
+                else:
+                    return self._send(400, {"error": f"unknown calc type {t!r}"})
+                return self._send(200, res)
+            except Exception as exc:
+                return self._send(400, {"error": str(exc)})
+
+        if path == "/api/library/build_script":
+            import library as lib_mod
+            exports_dir = model.project_dir(proj) / "exports"
+            res = lib_mod.write_library_build_package(exports_dir, proj)
+            return self._send(200, {"ok": True, "files": res})
+
+        if path == "/api/library/check_package":
+            bom_pkg = data.get("bom_pkg", "")
+            jlc_pkg = data.get("jlc_pkg")
+            ds_text = data.get("datasheet_text")
+            import library as lib_mod
+            return self._send(200, lib_mod.check_package_variant(bom_pkg, jlc_pkg, ds_text))
 
         return self._send(404, {"error": "not found"})
 

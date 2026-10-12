@@ -166,8 +166,8 @@ Cross-cutting:
 | I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); interactive parts tab (§3a: edit/replace, availability indicator, role line, chat per part with datasheet); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ✅ |
 | I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; UI spaces "Altium outputs" and "Final manufacturer checks" (§3a: upload results, discuss); skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ✅ |
 | I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ✅ |
-| I7 | **Rules and calcs** (cap 7). Rules tab (JLC preset + extra rules), `.RUL` writer, read-back diff from the PcbDoc, calculators; skill rules-and-calcs | `.RUL` round-trip test; diff test on a changed fixture; one import in Altium listed for the user | ⬜ |
-| I8 | **Library** (caps 3, 4). Model search + link-and-return, package-variant check vs datasheet, one-script library build for Altium; skills part-models + project-library | incident 1 caught | ⬜ |
+| I7 | **Rules and calcs** (cap 7). Rules tab (JLC preset + extra rules), `.RUL` writer, read-back diff from the PcbDoc, calculators; skill rules-and-calcs | `.RUL` round-trip test; diff test on a changed fixture; one import in Altium listed for the user | ✅ |
+| I8 | **Library** (caps 3, 4). Model search + link-and-return, package-variant check vs datasheet, one-script library build for Altium; skills part-models + project-library | incident 1 caught | ✅ |
 | I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ⬜ |
 | I10 | **Idea, Altium help, project keeping** (caps 1, 11, 12). Requirement questions + editable block diagram (§3a), stage guidance in every tab, how-to answers from the AD20 manual, decision log, change impact, final file organization | incident 8 caught at the idea stage; Q&A eval target met | ⬜ |
 | I11 | **Wrap-up.** Full benchmark, README + ENGINES + docs current, English UI check, clean tree, final summary for the user | 12/12 or the gaps explained | ⬜ |
@@ -211,14 +211,15 @@ them in the project (`checks/`), and give the engine the slices to read (image i
 `runtime/skills/manufacturer-and-dfm/references/jlcdfm-report.md`. Sample: the user's device report (local only,
 untrusted copy in %TEMP%\dfm-untrusted; not committed).
 
-**Stage A done (2026-10-12)**, **stage B done (2026-10-12)** - see section 8. Edge and two idle Claude Code sessions were
+**Stage A done (2026-10-12)**, **stage B done**, **stage C done (2026-10-12)** - see section 8. Edge and two idle Claude Code sessions were
 closed on the user's request to free memory. On the user's request C and D run in parallel with agy, each in its own
 git worktree (`../pcb-advisor-wt-c` on branch stage-c, `../pcb-advisor-wt-d` on branch stage-d, .venv junctioned);
 Claude Code verifies each, commits it on its branch and merges into this branch, then removes the worktrees.
 
 **Next: merge C and D, then I11** (full benchmark only with the user's OK, docs, English UI check, final summary).
 
-**Waiting for the user:** nothing.
+**Waiting for the user:** import the JLC rules once in Altium (Rules tab -> export .RUL -> the 4-step import guide
+shown there) and say whether the rules appear as expected.
 
 ## 8. Stage summaries (10 lines each, newest last)
 
@@ -310,3 +311,20 @@ Claude Code verifies each, commits it on its branch and merges into this branch,
 8. Built by agy (one run stopped for low memory, resumed from the partial tree); risky spots read by Claude Code.
 9. Tests: 253 green, skills lint ok. No benchmark run (incidents 6-12 to be measured in I11 with the user's OK).
 10. Open: the new UI spaces were not opened in a browser (no GUI).
+
+### Stage C (I7 rules and calculations, I8 library), 2026-10-12
+1. `scripts/rules.py`: JLC capability preset (config `jlc_rules`), `.RUL` writer (latin-1, `¶
+`), round trip
+   with the I3 reader, diff of the board's rules against the preset; CLI `pcb.py rules`.
+2. `scripts/calc.py`: IPC-2152 trace width, divider, LED resistor, via current, microstrip impedance; each answer
+   carries the formula and its source. CLI `pcb.py calc`.
+3. `scripts/library.py`: model search links, package mismatch check (BOM vs JLC vs datasheet), IntLib build script +
+   README into `exports/`. CLI `pcb.py library`.
+4. UI Rules tab: preset table, extra rules, board diff, .RUL export with the AD20 import steps, calculators.
+5. Skills rules-and-calcs, part-models, project-library list the new commands. Runtime pack synced.
+6. Built by agy in its own worktree in parallel with B and D; merged by Claude Code (serve.py blocks kept from both,
+   UI tabs combined: Idea, BOM, Schematic, Rules, Altium outputs, Final manufacturer checks).
+7. Risky spots read: writes only under the project (exports/) or a CLI-given path; no network.
+8. Tests green after the merge, skills lint ok. No benchmark run.
+9. Waiting for the user: one real .RUL import in Altium (section 7).
+10. Open: the Rules tab was not opened in a browser; no JS syntax checker on this PC (node missing).

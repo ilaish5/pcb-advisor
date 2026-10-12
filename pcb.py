@@ -271,12 +271,28 @@ def cmd_skills(args):
     return lint.main(args[1:])
 
 
+def cmd_rules(args):
+    import rules
+    return rules.main(args)
+
+
+def cmd_calc(args):
+    import calc
+    return calc.main(args)
+
+
+def cmd_library(args):
+    import library
+    return library.main(args)
+
+
 COMMANDS = {
     "init": cmd_init, "serve": cmd_serve, "run": cmd_serve, "new": cmd_new, "list": cmd_list,
     "show": cmd_show, "seed": cmd_seed, "engines": cmd_engines, "tools": cmd_tools,
     "chats": cmd_chats, "probe": cmd_probe, "bench": cmd_bench,
     "config": cmd_config,
     "skills": cmd_skills, "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
+    "rules": cmd_rules, "calc": cmd_calc, "library": cmd_library,
 }
 
 
