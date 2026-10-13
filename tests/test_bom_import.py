@@ -413,6 +413,26 @@ def test_apply_appends_one_event_per_line_and_says_where_they_came_from(empty):
         ["C5", "R7", "J9", "U9"]                                      # bom.json follows the log
     md = (store.pdir(empty) / "checks" / "bom-import.md").read_text(encoding="utf-8")
     assert md.startswith(f"# BOM import - {empty}") and "Imported at" in md
+    # no Altium project linked: nothing says which symbol and footprint a line uses
+    assert report["library_lines"] == 0 and store.library_parts(empty) == {}
+
+
+def test_library_entries_take_the_symbol_from_the_schematic_and_the_footprint_from_the_board():
+    entries = [{"line": "U9", "changes": {"refs": ["U9"]}},
+               {"line": "R7", "changes": {"refs": ["R7", "R8"]}},
+               {"line": "J9", "changes": {"refs": ["J9"]}},
+               {"line": "C5", "changes": {"refs": ["C5"]}}]
+    altium = {"sch": {"U9": {"lib_ref": "W25Q128JVEIQ", "footprint": "WSON-8"},
+                      "R8": {"lib_ref": "RES", "footprint": "R0603"},
+                      "C5": {"lib_ref": "", "footprint": "C0805"}},
+              "pcb": {"U9": {"pattern": "WSON-8_8x6"}, "R7": {"pattern": ""}}}
+    got = {e["line"]: e["changes"] for e in bom_import.library_entries(entries, altium)}
+    assert got["U9"]["symbol"] == "W25Q128JVEIQ" and got["U9"]["footprint"] == "WSON-8_8x6"   # the board wins
+    assert got["R7"]["footprint"] == "R0603"                       # no board pattern: the schematic's
+    assert "J9" not in got and "C5" not in got                      # not on the schematic / no symbol
+    assert {(c["verify"], c["accepted"], c["model_source"]) for c in got.values()} == \
+        {("unchecked", False, "Altium project")}
+    assert bom_import.library_entries(entries, None) == []
 
 
 def test_apply_is_refused_into_a_bom_that_has_lines(empty):
@@ -453,6 +473,11 @@ def test_apply_with_a_linked_project_compares_and_records_the_sheet(empty, tmp_p
     assert report["by_kind"]["missing_in_schematic"] == 4 and report["by_severity"]["error"] >= 4
     lines = {l["key"]: l for l in store.bom_lines(empty)}
     assert lines["C5"]["sheet"] == "Processor_Interface" and "sheet" not in lines["U9"]
+    # a line the schematic and the board name is in the library, to review - not missing
+    lib = store.library_parts(empty)
+    assert report["library_lines"] == len(lib) >= 1 and "C5" in lib and "U9" not in lib
+    status = {l["key"]: l["library"] for l in store.bom(empty, write=False)}
+    assert status["C5"] == "review" and status["U9"] == "missing"
 
 
 def test_a_broken_pcbdoc_is_a_finding_not_a_crash(empty, tmp_path):

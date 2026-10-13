@@ -6,7 +6,8 @@ Import the BOM of an existing Altium project, and say where the files disagree.
 The default is a dry run: it reads the BOM CSV, reads every SchDoc of the PrjPcb and
 the PcbDoc, compares the three and writes projects/<project>/checks/bom-import.json
 and bom-import.md. With --apply it also appends one bom-log event per line
-(by=import). Import works into an EMPTY BOM only.
+(by=import), and one library-log event per line whose symbol and footprint the
+project names (verify=unchecked). Import works into an EMPTY BOM only.
 
 The source files are never "fixed": a disagreement is a finding, and the imported
 line keeps what the CSV says. An LCSC code in the CSV is stored as a declared code
@@ -516,6 +517,26 @@ def build_lines(csv_lines, altium=None):
     return out
 
 
+def library_entries(entries, altium):
+    """A finished project's parts already have a symbol and a footprint: the ones the
+    schematic and the PcbDoc use. Recorded as in the library and unchecked - nothing
+    here compares a footprint with its datasheet, so the student still reviews them."""
+    sch = (altium or {}).get("sch") or {}
+    pcb = (altium or {}).get("pcb") or {}
+    out = []
+    for e in entries:
+        refs = e["changes"]["refs"]
+        part = next((sch[r] for r in refs if r in sch), {})
+        symbol = part.get("lib_ref", "")
+        footprint = next((pcb[r]["pattern"] for r in refs if pcb.get(r, {}).get("pattern")), "") \
+            or part.get("footprint", "")
+        if symbol and footprint:
+            out.append({"line": e["line"], "changes": {
+                "symbol": symbol, "footprint": footprint, "model_source": "Altium project",
+                "verify": "unchecked", "accepted": False, "issues": ""}})
+    return out
+
+
 # ---------------------------------------------------------------- one run
 
 def _altium_paths(project, prjpcb, pcb):
@@ -611,7 +632,11 @@ def apply(project, csv_path, prjpcb=None, pcb=None):
     for e in entries:
         store.append(project, "bom-log.jsonl", {"ts": ts, "by": "import", "line": e["line"],
                                                 "changes": e["changes"], "reason": reason})
-    report.update(applied=True, imported_lines=len(entries), bom_empty=False)
+    lib = library_entries(entries, altium)
+    for e in lib:
+        store.append(project, "library-log.jsonl", {"ts": ts, "by": "import", "line": e["line"],
+                                                    "changes": e["changes"], "reason": reason})
+    report.update(applied=True, imported_lines=len(entries), library_lines=len(lib), bom_empty=False)
     write_report(project, report)
     store.bom(project)                    # bom.json follows the log
     project_mod.touch(project)

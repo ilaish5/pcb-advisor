@@ -955,6 +955,23 @@ function status(l) {
 }
 const money = p => p == null ? '—' : '$' + (p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2));
 const num = n => (n ?? 0).toLocaleString('en-US');
+// "C3, C4, C5, C8" -> "C3–C5, C8": only refs that really follow each other become a range
+function refRuns(refs) {
+  const split = r => { const m = /^(.*?)(\d+)$/.exec(r); return m ? [m[1], +m[2]] : [r, null]; };
+  const sorted = [...refs].sort((a, b) => { const [pa, na] = split(a), [pb, nb] = split(b);
+    return pa < pb ? -1 : pa > pb ? 1 : (na ?? -1) - (nb ?? -1); });
+  const runs = [];
+  for (const r of sorted) {
+    const [p, n] = split(r), last = runs.at(-1);
+    if (last && n != null && last.p === p && last.n + 1 === n) { last.n = n; last.refs.push(r); }
+    else runs.push({p, n, refs: [r]});
+  }
+  return runs.map(x => x.refs.length > 2 ? x.refs[0] + '–' + x.refs.at(-1) : x.refs.join(', '));
+}
+function refsLabel(refs) {
+  const runs = refRuns(refs);
+  return runs.length > 3 ? `${runs.slice(0, 3).join(', ')} … (${refs.length})` : runs.join(', ');
+}
 const LIBTXT = {std: 'Altium default', ok: 'In library · verified', review: 'In library · to review', missing: 'Missing'};
 const FIELD = {mpn: 'MPN', manufacturer: 'Manufacturer', package: 'Package', value: 'Value', description: 'Description',
   note: 'Note', datasheet: 'Datasheet', dnp: 'Not fitted', nobuy: 'Not bought', refs: 'Designators', role: 'Role'};
@@ -2366,7 +2383,7 @@ function bomHTML(container) {
       const risks = l.risk || [];
       return `<tr data-key="${esc(l.key)}" class="${sel === l.key ? 'sel' : ''}">
         <td><span class="dot ${dotCls}" title="${esc(dotTip)}"></span></td>
-        <td class="refs">${esc(refs.length > 3 ? refs[0] + '–' + refs.at(-1) : refs.join(', '))}</td>
+        <td class="refs" title="${esc(refs.join(', '))}">${esc(refsLabel(refs))}</td>
         <td class="role"><input class="role-input" value="${esc(l.role || '')}" placeholder="Role in circuit" aria-label="Role ${esc(l.key)}" data-edit="role" data-line="${esc(l.key)}"></td>
         <td class="m">${esc(l.value)}</td><td>${esc(l.description)}</td>
         <td class="mpn"><input value="${esc(l.mpn)}" aria-label="MPN ${esc(l.key)}" data-edit="mpn" data-line="${esc(l.key)}"></td>

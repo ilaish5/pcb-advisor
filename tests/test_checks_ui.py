@@ -131,6 +131,13 @@ def test_outjob_and_cpl_and_exports_api(server, lte):
     assert any(n.endswith(".OutJob") for n in names)
     assert any("cpl" in n.lower() for n in names)
 
+    # the state the Outputs tab renders from carries the same name and a size
+    status, st = get(server, "/api/state", lte)
+    assert status == 200
+    by_name = {f["name"]: f for f in st["exports"]}
+    assert set(by_name) == set(names)
+    assert all(f["size"] > 0 for f in by_name.values())
+
     # download export
     outjob_name = next(n for n in names if n.endswith(".OutJob"))
     status, content = get(server, f"/api/export/{outjob_name}", lte, raw=True)

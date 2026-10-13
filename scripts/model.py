@@ -188,7 +188,8 @@ def build(project=None, session=None):
     exports_list = []
     exp_dir = pdir / "exports"
     if exp_dir.is_dir():
-        exports_list = [f.name for f in sorted(exp_dir.iterdir()) if f.is_file()]
+        exports_list = [{"name": f.name, "size": f.stat().st_size}
+                        for f in sorted(exp_dir.iterdir()) if f.is_file()]
 
     import preview_pcb
     placement_plan = preview_pcb.load_placement_plan(project)
