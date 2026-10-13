@@ -86,6 +86,38 @@ def test_keeping_file_organization(tmp_path, monkeypatch):
     assert "JLC BOM" in missing_names
 
 
+def test_outputs_are_found_in_the_linked_altium_folder_and_flagged_when_older(tmp_path, monkeypatch):
+    """Altium writes outputs next to the project, not into exports/. A Gerber older than the last
+    board save is listed with older_than; copies in History/ never count."""
+    import os
+    import project as project_mod
+    monkeypatch.setattr("workspace.project_dir", lambda name=None: tmp_path / (name or "demo"))
+    (tmp_path / "demo").mkdir()
+    alt = tmp_path / "alt"
+    (alt / "Outputs" / "Assembly").mkdir(parents=True)
+    (alt / "History").mkdir()
+    (alt / "a.PrjPcb").write_text("", encoding="utf-8")
+    (alt / "b.SchDoc").write_text("", encoding="utf-8")
+    gerber = alt / "Outputs" / "Board-Gerber.zip"
+    gerber.write_bytes(b"x")
+    cpl = alt / "Outputs" / "Assembly" / "CPL-JLC.csv"
+    cpl.write_text("x", encoding="utf-8")
+    (alt / "History" / "old_Schematics.pdf").write_bytes(b"x")
+    pcb = alt / "board.PcbDoc"
+    pcb.write_bytes(b"x")
+    os.utime(gerber, (1_000_000, 1_000_000))
+    os.utime(pcb, (2_000_000, 2_000_000))
+    os.utime(cpl, (3_000_000, 3_000_000))
+    monkeypatch.setattr(project_mod, "altium_link", lambda name: {
+        "project_file": str(alt / "a.PrjPcb"), "pcb_file": str(pcb), "outputs_dir": str(alt / "Outputs")})
+
+    rep = keeping.file_organization("demo")
+    found = {p["name"]: p for p in rep["present"]}
+    assert found["Gerber files"]["older_than"] == "board.PcbDoc"
+    assert "older_than" not in found["CPL / Pick & Place"]
+    assert "Schematic (PDF)" in [m["name"] for m in rep["missing"]]
+
+
 def test_preview_sch_render(tmp_path):
     fixtures_dir = pathlib.Path(__file__).parent / "fixtures" / "altium"
     schdoc_path = fixtures_dir / "project" / "CAN_Interface.SchDoc"

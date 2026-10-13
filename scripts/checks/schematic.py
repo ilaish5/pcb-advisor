@@ -3,16 +3,33 @@ Schematic netlist builder and review checks.
 
 Extracts netlists:
 1. From PcbDoc pads (pad_net_map)
-2. From SchDoc wire/label/port geometry join
+2. From SchDoc wire/label/port geometry join (one sheet, a list of sheets, a folder
+   or a .PrjPcb)
 
 Checks performed:
-1. Single-pin nets
+1. Single-pin nets (a pin with a No ERC marker is intentionally unconnected and is
+   reported once, as an info count)
 2. Unconnected IC power pins
-3. Nets only by label on one sheet
+3. Net labels that connect nothing, ports without a partner on another sheet
 4. Pins whose name indicates VCC/VDD/GND but net differs
+5. Optional: compare the schematic connectivity with the pad nets of a PcbDoc
+   made from it (compare_with_board / --board)
 
 JSON findings schema:
     [{"id": str, "severity": "error"|"warning"|"info", "refs": list[str], "message": str, "evidence": str}]
+
+How the schematic netlist is joined (what Altium does, minus its sheet symbols):
+- a pin connects at its hot spot (pin location + length along the pin direction);
+  the pin records of a SchDoc are already in sheet coordinates, so component
+  rotation/mirroring is not applied again
+- everything that touches the same point is one node: wire vertices, junctions,
+  pin hot spots, net labels, power ports, port ends. A point lying on the inside of
+  a wire segment joins that wire (pin end, label, power port, a wire end that makes
+  a T). Two wires that merely cross are not joined unless a junction sits there.
+- names join nodes: all objects named N (power ports and ports project wide, net
+  labels project wide or per sheet depending on the net identifier scope) are one net
+- of the pins of a multi-part component only those of the placed part exist
+- a hidden power pin joins the net named like the pin
 """
 import argparse
 import collections
@@ -26,11 +43,15 @@ REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 import oscompat  # noqa: E402
 from altium.pcbdoc import pad_net_map, read_pcbdoc  # noqa: E402
+from altium.prjpcb import read_prjpcb  # noqa: E402
 from altium.schdoc import read_schdoc  # noqa: E402
 
 POWER_PIN_RE = re.compile(r"^(?:VCC|VDD|VIN|VBAT|VREF|VDDA|VSS|VSSA|GND|AGND|DGND|3V3|5V|12V)\b", re.I)
 GND_RE = re.compile(r"GND|VSS|0V|AGND|DGND", re.I)
 VCC_RE = re.compile(r"VCC|VDD|VIN|VBAT|VDDA|3V3|5V|12V|\+3V3|\+5V", re.I)
+
+ELECTRICAL_POWER = 7  # Altium pin electrical type "Power"
+_CELL = 50  # spatial hash cell (sheet units) for the point-on-wire lookups
 
 
 class UnionFind:
@@ -41,9 +62,12 @@ class UnionFind:
         if i not in self.parent:
             self.parent[i] = i
             return i
-        if self.parent[i] != i:
-            self.parent[i] = self.find(self.parent[i])
-        return self.parent[i]
+        root = i
+        while self.parent[root] != root:
+            root = self.parent[root]
+        while self.parent[i] != root:  # path compression, iterative
+            self.parent[i], i = root, self.parent[i]
+        return root
 
     def union(self, i, j):
         root_i = self.find(i)
@@ -52,10 +76,20 @@ class UnionFind:
             self.parent[root_i] = root_j
 
 
-def pin_hot_spot(pin: dict[str, Any]) -> tuple[int, int]:
+def _norm(v) -> "int | float":
+    """Snap a coordinate within 0.02 unit of a whole number to that int, else round to 3 decimals."""
+    r = round(v)
+    return int(r) if abs(v - r) < 0.02 else round(float(v), 3)
+
+
+def _pt(x, y) -> tuple:
+    return (_norm(x), _norm(y))
+
+
+def pin_hot_spot(pin: dict[str, Any]) -> tuple:
     """Calculate the electrical connection hot spot of a schematic pin."""
-    x, y = int(pin.get("x", 0)), int(pin.get("y", 0))
-    length = int(pin.get("length", 0))
+    x, y = pin.get("x", 0), pin.get("y", 0)
+    length = pin.get("length", 0)
     ori = int(pin.get("orientation", 0)) & 3
     if ori == 0:
         return (x + length, y)
@@ -68,7 +102,7 @@ def pin_hot_spot(pin: dict[str, Any]) -> tuple[int, int]:
     return (x, y)
 
 
-def point_on_segment(pt: tuple[int, int], p1: tuple[int, int], p2: tuple[int, int]) -> bool:
+def point_on_segment(pt: tuple, p1: tuple, p2: tuple) -> bool:
     """Return True if point pt lies on the line segment between p1 and p2."""
     x, y = pt
     x1, y1 = p1
@@ -77,6 +111,194 @@ def point_on_segment(pt: tuple[int, int], p1: tuple[int, int], p2: tuple[int, in
         # Collinear check: (x - x1) * (y2 - y1) == (y - y1) * (x2 - x1)
         return (x - x1) * (y2 - y1) == (y - y1) * (x2 - x1)
     return False
+
+
+def _placed_pins(comp: dict[str, Any]):
+    """Pins that exist on the sheet: for a multi-part component only those of the placed part
+    (the SchDoc component record lists the pins of every part; part -1/0 = common to all)."""
+    cur = int(comp.get("current_part_id") or 1)
+    for p in comp.get("pins", []):
+        if int(p.get("part_id", cur)) in (cur, 0, -1):
+            yield p
+
+
+def _sheet_geometry(sheet_doc: dict[str, Any], unannotated: "collections.Counter | None" = None) -> dict[str, Any]:
+    """Join one sheet by geometry. Returns the pins and the groups of touching objects:
+    {"all_pins": [...], "groups": {root: {"pins": [...], "labels": [...], "power_ports": [...],
+    "ports": [...], "hidden_power": [...]}}, "labels"/"power_ports"/"ports": [text, ...]}."""
+    uf = UnionFind()
+    grid: dict[tuple, list[tuple]] = collections.defaultdict(list)  # cell -> segments whose bbox covers it
+
+    for w in sheet_doc.get("wires", []):
+        pts = [_pt(*p) for p in w.get("points", [])]
+        for p in pts:
+            uf.find(p)
+        for a, b in zip(pts, pts[1:]):
+            uf.union(a, b)
+            for cx in range(int(min(a[0], b[0]) // _CELL), int(max(a[0], b[0]) // _CELL) + 1):
+                for cy in range(int(min(a[1], b[1]) // _CELL), int(max(a[1], b[1]) // _CELL) + 1):
+                    grid[(cx, cy)].append((a, b))
+
+    def touch(pt: tuple) -> tuple:
+        """Make pt a node and join it to every wire segment it lies on."""
+        uf.find(pt)
+        for a, b in grid.get((int(pt[0] // _CELL), int(pt[1] // _CELL)), ()):
+            if point_on_segment(pt, a, b):
+                uf.union(pt, a)
+        return pt
+
+    # A wire end (or any vertex) that lands inside another wire makes a T connection.
+    for v in list(uf.parent):
+        touch(v)
+    # Junctions join every wire that passes through them (also plain crossings).
+    for j in sheet_doc.get("junctions", []):
+        touch(_pt(j.get("x", 0), j.get("y", 0)))
+
+    no_erc = {_pt(m.get("x", 0), m.get("y", 0)) for m in sheet_doc.get("no_erc", []) if m.get("active", True)}
+
+    all_pins = []
+    attach: list[tuple[tuple, str, str]] = []  # (node, kind, text)
+    for c in sheet_doc.get("components", []):
+        ref = c.get("ref", "")
+        if unannotated is not None and "?" in ref:
+            # every "R?" is a different part: keep their pin tags apart
+            unannotated[ref] += 1
+            ref = f"{ref}#{unannotated[ref]}"
+        for p in _placed_pins(c):
+            hs = touch(_pt(*pin_hot_spot(p)))
+            number = p.get("number", "")
+            info = {
+                "ref": ref,
+                "number": number,
+                "name": p.get("name", ""),
+                "tag": f"{ref}-{number}",
+                "hotspot": hs,
+                "electrical": p.get("electrical", 0),
+                "hidden": bool(p.get("hidden", False)),
+                "no_erc": hs in no_erc,
+            }
+            all_pins.append(info)
+            if info["hidden"] and info["electrical"] == ELECTRICAL_POWER and info["name"]:
+                attach.append((hs, "hidden_power", info["name"]))
+
+    for pp in sheet_doc.get("power_ports", []):
+        attach.append((touch(_pt(pp.get("x", 0), pp.get("y", 0))), "power_ports", pp.get("text") or pp.get("name", "")))
+    for nl in sheet_doc.get("net_labels", []):
+        attach.append((touch(_pt(nl.get("x", 0), nl.get("y", 0))), "labels", nl.get("text") or nl.get("name", "")))
+    for port in sheet_doc.get("ports", []):
+        x, y = port.get("x", 0), port.get("y", 0)
+        w = port.get("width", 0) or 0
+        ends = [(x, y), (x, y + w), (x, y - w)] if port.get("vertical") else [(x, y), (x + w, y)]
+        text = port.get("name") or port.get("text", "")
+        for k, (ex, ey) in enumerate(ends):
+            # the port is counted once (first end); every end joins the wire it touches
+            attach.append((touch(_pt(ex, ey)), "ports" if k == 0 else "ports_end", text))
+
+    groups: dict[Any, dict[str, list]] = collections.defaultdict(
+        lambda: {"pins": [], "labels": [], "power_ports": [], "ports": [], "ports_end": [], "hidden_power": []})
+    for info in all_pins:
+        groups[uf.find(info["hotspot"])]["pins"].append(info)
+    for node, kind, text in attach:
+        groups[uf.find(node)][kind].append(text)
+
+    return {
+        "all_pins": all_pins,
+        "groups": groups,
+        "labels": [t for _, k, t in attach if k == "labels"],
+        "power_ports": [t for _, k, t in attach if k == "power_ports"],
+        "ports": [t for _, k, t in attach if k == "ports"],
+    }
+
+
+def _auto_net_name(pin: dict[str, Any], idx: int) -> str:
+    return f"Net{pin['ref']}_{pin['number']}" if pin["ref"] else f"Net_auto_{idx}"
+
+
+def _join_sheets(sheet_docs: list[dict[str, Any]], labels_global: bool = True) -> dict[str, Any]:
+    """Geometry-join every sheet, then join the groups across sheets by name."""
+    unannotated: collections.Counter = collections.Counter()
+    geo = [_sheet_geometry(s, unannotated) for s in sheet_docs]
+    names = [s.get("file", f"Sheet{i + 1}") for i, s in enumerate(sheet_docs)]
+    uf = UnionFind()
+
+    for si, sg in enumerate(geo):
+        sheet_power = {t for g in sg["groups"].values() for t in g["power_ports"] + g["hidden_power"]}
+        for root, g in sg["groups"].items():
+            gk = ("g", si, root)
+            uf.find(gk)
+            for t in g["power_ports"] + g["hidden_power"] + g["ports"] + g["ports_end"]:
+                uf.union(gk, ("n", t))
+            for t in g["labels"]:
+                if labels_global or t in sheet_power:
+                    uf.union(gk, ("n", t))
+                else:
+                    uf.union(gk, ("n", si, t))
+
+    comp: dict[Any, dict[str, list]] = collections.defaultdict(
+        lambda: {"pins": [], "labels": [], "power_ports": [], "ports": [], "sheets": [], "hidden_power": []})
+    for si, sg in enumerate(geo):
+        for root, g in sg["groups"].items():
+            c = comp[uf.find(("g", si, root))]
+            for k in ("pins", "labels", "power_ports", "ports", "hidden_power"):
+                c[k].extend(g[k])
+            c["sheets"].append(si)
+
+    nets: dict[str, list[str]] = {}
+    pin_net: dict[str, str] = {}
+    auto_nets: list[str] = []
+    labels_by_sheet: dict[str, set[str]] = collections.defaultdict(set)
+    ports_by_net: dict[str, set[str]] = collections.defaultdict(set)
+    power_ports_by_net: dict[str, set[str]] = collections.defaultdict(set)
+    net_of_group: dict[Any, str] = {}
+    auto_idx = 1
+    for root, c in comp.items():
+        if not c["pins"]:
+            continue
+        explicit = c["power_ports"] + c["hidden_power"] + c["labels"] + c["ports"]
+        if explicit:
+            name = explicit[0]
+        else:
+            name = _auto_net_name(c["pins"][0], auto_idx)
+            auto_idx += 1
+            auto_nets.append(name)
+        if name in nets:  # same name kept apart on purpose (sheet-local label): disambiguate
+            name = f"{name}@{names[c['sheets'][0]]}"
+        nets[name] = [p["tag"] for p in c["pins"]]
+        net_of_group[root] = name
+        for p in c["pins"]:
+            pin_net[p["tag"]] = name
+        for si in c["sheets"]:
+            if c["labels"]:
+                labels_by_sheet[name].add(names[si])
+            if c["ports"]:
+                ports_by_net[name].add(names[si])
+            if c["power_ports"]:
+                power_ports_by_net[name].add(names[si])
+
+    all_pins = [p for sg in geo for p in sg["all_pins"]]
+    # Per object records (label/port/power port) for the label checks: where it is and what net it names
+    objects = []
+    for si, sg in enumerate(geo):
+        for root, g in sg["groups"].items():
+            net = net_of_group.get(uf.find(("g", si, root)))
+            n_pins = len(nets[net]) if net else 0
+            for kind in ("labels", "ports", "power_ports"):
+                for t in g[kind]:
+                    objects.append({"kind": kind, "text": t, "sheet": names[si], "net": net, "pins_on_net": n_pins})
+
+    return {
+        "nets": {k: sorted(v) for k, v in nets.items()},
+        "pin_net_map": pin_net,
+        "auto_nets": auto_nets,
+        "labels_by_sheet": {k: sorted(v) for k, v in labels_by_sheet.items()},
+        "ports_by_net": {k: sorted(v) for k, v in ports_by_net.items()},
+        "power_ports_by_net": {k: sorted(v) for k, v in power_ports_by_net.items()},
+        "objects": objects,
+        "no_erc_pins": sorted(p["tag"] for p in all_pins if p["no_erc"]),
+        "unannotated": sorted({r for p in all_pins for r in [p["ref"]] if "?" in r}),
+        "all_pins": all_pins,
+        "sheet_names": names,
+    }
 
 
 def build_schdoc_sheet_netlist(sheet_doc: dict[str, Any]) -> dict[str, Any]:
@@ -91,257 +313,258 @@ def build_schdoc_sheet_netlist(sheet_doc: dict[str, Any]) -> dict[str, Any]:
             "ports": {net_name: list_of_ports},
             "components": sheet_doc.get("components", []),
             "sheet_name": sheet_doc.get("file", "Sheet"),
+            ... (also "all_pins", "auto_nets", "no_erc_pins")
         }
     """
-    sheet_name = sheet_doc.get("file", "Sheet")
-    uf = UnionFind()
-    wire_segments = []
-
-    # 1. Register wire vertices and segments
-    for w in sheet_doc.get("wires", []):
-        pts = [tuple(p) for p in w.get("points", [])]
-        for i in range(len(pts) - 1):
-            p1, p2 = pts[i], pts[i + 1]
-            wire_segments.append((p1, p2))
-            uf.union(p1, p2)
-
-    # 2. Pins to wires / hot spots
-    pins_by_hotspot: dict[tuple[int, int], list[dict[str, Any]]] = collections.defaultdict(list)
-    all_pins = []
-    for c in sheet_doc.get("components", []):
-        ref = c.get("ref", "")
-        for p in c.get("pins", []):
-            hs = pin_hot_spot(p)
-            pin_info = {
-                "ref": ref,
-                "number": p.get("number", ""),
-                "name": p.get("name", ""),
-                "tag": f"{ref}-{p.get('number', '')}",
-                "hotspot": hs,
-                "electrical": p.get("electrical", 0),
-            }
-            all_pins.append(pin_info)
-            pins_by_hotspot[hs].append(pin_info)
-
-    for hs in pins_by_hotspot:
-        # Check if hs touches any wire segment
-        for p1, p2 in wire_segments:
-            if point_on_segment(hs, p1, p2):
-                uf.union(hs, p1)
-                break
-
-    # 3. Power ports
-    power_ports_by_root: dict[Any, list[str]] = collections.defaultdict(list)
-    for pp in sheet_doc.get("power_ports", []):
-        pt = (int(pp.get("x", 0)), int(pp.get("y", 0)))
-        text = pp.get("text") or pp.get("name", "")
-        for p1, p2 in wire_segments:
-            if point_on_segment(pt, p1, p2):
-                uf.union(pt, p1)
-                break
-        if pt in pins_by_hotspot:
-            uf.union(pt, pt)
-        root = uf.find(pt)
-        power_ports_by_root[root].append(text)
-
-    # 4. Net labels
-    labels_by_root: dict[Any, list[str]] = collections.defaultdict(list)
-    for nl in sheet_doc.get("net_labels", []):
-        pt = (int(nl.get("x", 0)), int(nl.get("y", 0)))
-        text = nl.get("text") or nl.get("name", "")
-        for p1, p2 in wire_segments:
-            if point_on_segment(pt, p1, p2):
-                uf.union(pt, p1)
-                break
-        if pt in pins_by_hotspot:
-            uf.union(pt, pt)
-        root = uf.find(pt)
-        labels_by_root[root].append(text)
-
-    # 5. Ports (RECORD=18)
-    ports_by_root: dict[Any, list[str]] = collections.defaultdict(list)
-    for port in sheet_doc.get("ports", []):
-        x = int(port.get("x", 0))
-        y = int(port.get("y", 0))
-        w = int(port.get("width", 0))
-        name = port.get("name") or port.get("text", "")
-        candidate_pts = [(x + w, y), (x, y), (x - w, y)]
-        matched_pt = None
-        for pt in candidate_pts:
-            for p1, p2 in wire_segments:
-                if point_on_segment(pt, p1, p2):
-                    matched_pt = pt
-                    uf.union(pt, p1)
-                    break
-            if matched_pt:
-                break
-        if matched_pt:
-            root = uf.find(matched_pt)
-            ports_by_root[root].append(name)
-
-    # Group pins by UF root
-    pins_by_root: dict[Any, list[dict[str, Any]]] = collections.defaultdict(list)
-    for p in all_pins:
-        hs = p["hotspot"]
-        root = uf.find(hs)
-        pins_by_root[root].append(p)
-
-    # Derive net names
-    nets: dict[str, list[str]] = collections.defaultdict(list)
-    pin_net_map_res: dict[str, str] = {}
-    net_labels_res: dict[str, list[str]] = collections.defaultdict(list)
-    power_ports_res: dict[str, list[str]] = collections.defaultdict(list)
-    ports_res: dict[str, list[str]] = collections.defaultdict(list)
-
-    auto_idx = 1
-    for root, plist in pins_by_root.items():
-        pps = power_ports_by_root.get(root, [])
-        nls = labels_by_root.get(root, [])
-        pts = ports_by_root.get(root, [])
-
-        if pps:
-            net_name = pps[0]
-        elif nls:
-            net_name = nls[0]
-        elif pts:
-            net_name = pts[0]
-        else:
-            first_pin = plist[0]
-            net_name = f"Net{first_pin['ref']}_{first_pin['number']}" if first_pin['ref'] else f"Net_auto_{auto_idx}"
-            auto_idx += 1
-
-        for p in plist:
-            nets[net_name].append(p["tag"])
-            pin_net_map_res[p["tag"]] = net_name
-
-        if nls:
-            net_labels_res[net_name].extend(nls)
-        if pps:
-            power_ports_res[net_name].extend(pps)
-        if pts:
-            ports_res[net_name].extend(pts)
-
+    res = _join_sheets([sheet_doc])
+    net_labels: dict[str, list[str]] = collections.defaultdict(list)
+    power_ports: dict[str, list[str]] = collections.defaultdict(list)
+    ports: dict[str, list[str]] = collections.defaultdict(list)
+    target = {"labels": net_labels, "power_ports": power_ports, "ports": ports}
+    for o in res["objects"]:
+        if o["net"] and o["kind"] in target:
+            target[o["kind"]][o["net"]].append(o["text"])
     return {
-        "sheet_name": sheet_name,
-        "nets": {k: sorted(v) for k, v in nets.items()},
-        "pin_net_map": pin_net_map_res,
-        "net_labels": dict(net_labels_res),
-        "power_ports": dict(power_ports_res),
-        "ports": dict(ports_res),
-        "all_pins": all_pins,
+        "sheet_name": sheet_doc.get("file", "Sheet"),
+        "nets": res["nets"],
+        "pin_net_map": res["pin_net_map"],
+        "net_labels": dict(net_labels),
+        "power_ports": dict(power_ports),
+        "ports": dict(ports),
+        "all_pins": res["all_pins"],
+        "auto_nets": res["auto_nets"],
+        "no_erc_pins": res["no_erc_pins"],
         "components": sheet_doc.get("components", []),
     }
 
 
-def build_multisheet_schdoc_netlist(sheet_docs: list[dict[str, Any]]) -> dict[str, Any]:
+def net_scope_of(prj: "dict | None", sheet_docs: list[dict[str, Any]]) -> str:
+    """'global' (net labels and ports join across sheets) or 'sheet' (net labels stay on their
+    sheet). The project's NetIdentifierScope wins when it says so; Automatic (the default and what
+    a project file without the key means) is global when the project has no sheet symbols
+    (record 15) and hierarchical, labels local, when it has."""
+    setting = str(((prj or {}).get("settings") or {}).get("NETIDENTIFIERSCOPE", "")).strip().lower()
+    if setting.startswith("global"):
+        return "global"
+    if setting.startswith(("hier", "strict", "flat")):
+        return "sheet"
+    has_symbols = any(int((s.get("record_counts") or {}).get("15", 0) or 0) for s in sheet_docs)
+    return "sheet" if has_symbols else "global"
+
+
+def build_multisheet_schdoc_netlist(sheet_docs: list[dict[str, Any]], net_scope: str = "global") -> dict[str, Any]:
     """Merge single-sheet netlists into a complete multi-sheet project netlist."""
-    sheet_results = [build_schdoc_sheet_netlist(s) for s in sheet_docs]
+    res = _join_sheets(sheet_docs, labels_global=(net_scope != "sheet"))
+    res["sheet_results"] = [build_schdoc_sheet_netlist(s) for s in sheet_docs]
+    res["net_scope"] = net_scope
+    res["hierarchical"] = any(int((s.get("record_counts") or {}).get("15", 0) or 0) for s in sheet_docs)
+    return res
 
-    # Global merge by net name for power ports and ports
-    merged_nets: dict[str, set[str]] = collections.defaultdict(set)
-    labels_by_sheet: dict[str, set[str]] = collections.defaultdict(set)
-    ports_by_net: dict[str, set[str]] = collections.defaultdict(set)
-    all_pins = []
 
-    for sr in sheet_results:
-        s_name = sr["sheet_name"]
-        for net, pins in sr["nets"].items():
-            merged_nets[net].update(pins)
+# ---------------------------------------------------------------------------
+# Compare the schematic netlist with the pad nets of the PcbDoc made from it
+# ---------------------------------------------------------------------------
+def _board_groups(pcb_doc: dict[str, Any]) -> dict[str, "str | None"]:
+    """{"REF-PAD": board net or None} from a read_pcbdoc() dict (pads without a ref are skipped)."""
+    out: dict[str, "str | None"] = {}
+    for pad in pcb_doc.get("pads", []):
+        ref = pad.get("ref")
+        if not ref:
+            continue
+        tag = f"{ref}-{pad.get('name', '')}"
+        net = pad.get("net") or None
+        if tag not in out or (out[tag] is None and net):
+            out[tag] = net
+    return out
 
-        for net in sr["net_labels"]:
-            labels_by_sheet[net].add(s_name)
 
-        for net in sr["ports"]:
-            ports_by_net[net].add(s_name)
+def compare_with_board(sch_netlist: dict[str, Any], pcb_doc: dict[str, Any]) -> dict[str, Any]:
+    """Compare the schematic connectivity with the pad nets of the PcbDoc made from it.
 
-        all_pins.extend(sr["all_pins"])
+    sch_netlist: a build_*_netlist() result (or {net: [pins]}); every pin that is in a net counts,
+    a pin alone in its net is unconnected. pcb_doc: read_pcbdoc() dict (pads: ref, name, net).
+    Nets are compared as groups of pins, not by name: auto-named nets (NetU2_4) may be named
+    differently by Altium. Only pins that exist in both are compared.
+
+    Returns {"mismatches": [...], "compared_pins", "only_in_schematic", "only_in_board",
+    "matching_pins"}. One mismatch per pin: {"pin", "kind", "schematic_net", "board_net",
+    "together_in_schematic_only": [pins], "together_in_board_only": [pins]} with kind one of
+    "unconnected_in_schematic" (schematic has the pin alone, the board connects it),
+    "unconnected_in_board" and "different_nets" (both connect it, to different pin sets).
+    """
+    nets = sch_netlist.get("nets", sch_netlist) if isinstance(sch_netlist, dict) else {}
+    sch_net_of: dict[str, str] = {}
+    for net, pins in nets.items():
+        for pin in pins:
+            sch_net_of[pin] = net
+    board_net_of = _board_groups(pcb_doc)
+
+    shared = sorted(set(sch_net_of) & set(board_net_of))
+    shared_set = set(shared)
+    sch_members: dict[str, set[str]] = collections.defaultdict(set)
+    board_members: dict[str, set[str]] = collections.defaultdict(set)
+    for tag in shared:
+        sch_members[sch_net_of[tag]].add(tag)
+        if board_net_of[tag]:
+            board_members[board_net_of[tag]].add(tag)
+
+    mismatches = []
+    for tag in shared:
+        s_net, b_net = sch_net_of[tag], board_net_of[tag]
+        s_peers = sch_members[s_net] - {tag}
+        b_peers = (board_members[b_net] - {tag}) if b_net else set()
+        if s_peers == b_peers:
+            continue
+        if not s_peers:
+            kind = "unconnected_in_schematic"
+        elif not b_peers:
+            kind = "unconnected_in_board"
+        else:
+            kind = "different_nets"
+        mismatches.append({
+            "pin": tag,
+            "kind": kind,
+            "schematic_net": s_net,
+            "board_net": b_net,
+            "together_in_schematic_only": sorted(s_peers - b_peers)[:8],
+            "together_in_board_only": sorted(b_peers - s_peers)[:8],
+        })
 
     return {
-        "nets": {k: sorted(v) for k, v in merged_nets.items()},
-        "labels_by_sheet": {k: sorted(v) for k, v in labels_by_sheet.items()},
-        "ports_by_net": {k: sorted(v) for k, v in ports_by_net.items()},
-        "all_pins": all_pins,
-        "sheet_results": sheet_results,
+        "mismatches": mismatches,
+        "compared_pins": len(shared_set),
+        "matching_pins": len(shared_set) - len(mismatches),
+        "only_in_schematic": sorted(set(sch_net_of) - set(board_net_of)),
+        "only_in_board": sorted(set(board_net_of) - set(sch_net_of)),
     }
 
 
-def check_schematic(source: Any) -> dict[str, Any]:
+def _board_findings(cmp: dict[str, Any]) -> list[dict[str, Any]]:
+    """One board_netlist_mismatch error per (kind, schematic net, board net) cluster of pins."""
+    clusters: dict[tuple, list[dict[str, Any]]] = collections.OrderedDict()
+    for m in cmp["mismatches"]:
+        clusters.setdefault((m["kind"], m["schematic_net"], m["board_net"]), []).append(m)
+    out = []
+    for (kind, s_net, b_net), ms in clusters.items():
+        pins = [m["pin"] for m in ms]
+        refs = sorted({p.rsplit("-", 1)[0] for p in pins})
+        shown = ", ".join(pins[:8]) + (f" (+{len(pins) - 8} more)" if len(pins) > 8 else "")
+        only_s = sorted({p for m in ms for p in m["together_in_schematic_only"]})
+        only_b = sorted({p for m in ms for p in m["together_in_board_only"]})
+        what = {
+            "unconnected_in_schematic": f"the schematic leaves {shown} unconnected (net '{s_net}') but the board has them on '{b_net}'",
+            "unconnected_in_board": f"the board has {shown} unconnected but the schematic puts them on '{s_net}'",
+            "different_nets": f"{shown} (schematic net '{s_net}', board net '{b_net}') differ in what they connect to"
+                              + (f": only the schematic joins {_max_list(only_s, 6)}" if only_s else "")
+                              + (f"{';' if only_s else ':'} only the board joins {_max_list(only_b, 6)}" if only_b else ""),
+        }[kind]
+        out.append({
+            "id": "board_netlist_mismatch",
+            "severity": "error",
+            "refs": refs,
+            "message": f"Schematic and board disagree: {what}.",
+            "evidence": f"{len(pins)} pin(s), kind {kind}; schematic net '{s_net}' vs board net '{b_net}'",
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Source loading
+# ---------------------------------------------------------------------------
+def _sheet_paths(folder: pathlib.Path) -> "tuple[list[pathlib.Path], dict | None]":
+    """The SchDocs of a folder: the sheets of its .PrjPcb when there is exactly one, else every .SchDoc."""
+    prjs = sorted(f for f in folder.iterdir() if f.is_file() and f.suffix.lower() == ".prjpcb")
+    if len(prjs) == 1:
+        paths, prj = _prjpcb_sheets(prjs[0])
+        if paths:
+            return paths, prj
+    return sorted(f for f in folder.iterdir() if f.is_file() and f.suffix.lower() == ".schdoc"), None
+
+
+def _prjpcb_sheets(prj_path: pathlib.Path) -> "tuple[list[pathlib.Path], dict]":
+    prj = read_prjpcb(prj_path)
+    paths = []
+    for rel in prj["sheets"]:
+        f = prj_path.parent / pathlib.Path(rel.replace("\\", "/"))
+        if f.is_file() and f.suffix.lower() == ".schdoc":
+            paths.append(f)
+    return paths, prj
+
+
+def _pcb_details(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    out = {}
+    for pad in doc.get("pads", []):
+        ref = pad.get("ref", "")
+        tag = f"{ref}-{pad.get('name', '')}"
+        out[tag] = {"ref": ref, "number": pad.get("name", ""), "name": pad.get("name", ""), "tag": tag, "net": pad.get("net")}
+    return out
+
+
+def _max_list(items: list, n: int = 12) -> str:
+    return ", ".join(items[:n]) + (f" (+{len(items) - n} more)" if len(items) > n else "")
+
+
+def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
     """
     Run schematic review checks on SchDoc(s) or PcbDoc.
-    Source can be a path to .SchDoc/.PcbDoc, list of paths, or parsed dict.
+    Source can be a path to .SchDoc/.PcbDoc/.PrjPcb or a folder, a list of paths/dicts,
+    or a parsed dict. board (a PcbDoc path or read_pcbdoc dict) also compares the schematic
+    connectivity with the pad nets of that board: board_mismatches and board_netlist_mismatch errors.
     """
-    findings = []
+    findings: list[dict[str, Any]] = []
     netlist: dict[str, list[str]] = {}
     pin_details: dict[str, dict[str, Any]] = {}
-    labels_by_sheet: dict[str, list[str]] = {}
-    ports_by_net: dict[str, list[str]] = {}
-
+    sch: dict[str, Any] = {}
+    n_sheets = 0
     is_pcb = False
 
     # 1. Determine source type and extract netlist
+    sheet_docs: list[dict[str, Any]] = []
+    prj = None
     if isinstance(source, (str, pathlib.Path)):
         p = pathlib.Path(source)
         if p.is_dir():
-            sch_files = list(p.glob("*.SchDoc"))
-            if sch_files:
-                docs = [read_schdoc(f) for f in sch_files]
-                res = build_multisheet_schdoc_netlist(docs)
-                netlist = res["nets"]
-                labels_by_sheet = res["labels_by_sheet"]
-                ports_by_net = res["ports_by_net"]
-                for p_info in res["all_pins"]:
-                    pin_details[p_info["tag"]] = p_info
+            paths, prj = _sheet_paths(p)
+            if paths:
+                sheet_docs = [read_schdoc(f) for f in paths]
             else:
-                pcb_files = list(p.glob("*.PcbDoc"))
+                pcb_files = sorted(p.glob("*.PcbDoc"))
                 if pcb_files:
                     doc = read_pcbdoc(pcb_files[0])
                     is_pcb = True
                     netlist = pad_net_map(doc)
-                    for pad in doc.get("pads", []):
-                        ref = pad.get("ref", "")
-                        tag = f"{ref}-{pad.get('name', '')}"
-                        pin_details[tag] = {"ref": ref, "number": pad.get("name", ""), "name": pad.get("name", ""), "tag": tag, "net": pad.get("net")}
+                    pin_details = _pcb_details(doc)
+        elif p.suffix.lower() == ".prjpcb":
+            paths, prj = _prjpcb_sheets(p)
+            sheet_docs = [read_schdoc(f) for f in paths]
         elif p.suffix.lower() == ".pcbdoc":
             doc = read_pcbdoc(p)
             is_pcb = True
             netlist = pad_net_map(doc)
-            for pad in doc.get("pads", []):
-                ref = pad.get("ref", "")
-                tag = f"{ref}-{pad.get('name', '')}"
-                pin_details[tag] = {"ref": ref, "number": pad.get("name", ""), "name": pad.get("name", ""), "tag": tag, "net": pad.get("net")}
+            pin_details = _pcb_details(doc)
         elif p.suffix.lower() == ".schdoc":
-            doc = read_schdoc(p)
-            res = build_schdoc_sheet_netlist(doc)
-            netlist = res["nets"]
-            for nl, sheets in res["net_labels"].items():
-                labels_by_sheet[nl] = [doc.get("file", "Sheet")]
-            ports_by_net = {k: [doc.get("file", "Sheet")] for k in res["ports"]}
-            for p_info in res["all_pins"]:
-                pin_details[p_info["tag"]] = p_info
+            sheet_docs = [read_schdoc(p)]
     elif isinstance(source, list):
-        docs = [read_schdoc(f) if isinstance(f, (str, pathlib.Path)) else f for f in source]
-        res = build_multisheet_schdoc_netlist(docs)
-        netlist = res["nets"]
-        labels_by_sheet = res["labels_by_sheet"]
-        ports_by_net = res["ports_by_net"]
-        for p_info in res["all_pins"]:
-            pin_details[p_info["tag"]] = p_info
+        sheet_docs = [read_schdoc(f) if isinstance(f, (str, pathlib.Path)) else f for f in source]
     elif isinstance(source, dict):
         if "pads" in source and "components" in source:  # PcbDoc dict
             is_pcb = True
             netlist = pad_net_map(source)
-            for pad in source.get("pads", []):
-                ref = pad.get("ref", "")
-                tag = f"{ref}-{pad.get('name', '')}"
-                pin_details[tag] = {"ref": ref, "number": pad.get("name", ""), "name": pad.get("name", ""), "tag": tag, "net": pad.get("net")}
+            pin_details = _pcb_details(source)
         elif "wires" in source and "components" in source:  # Single SchDoc dict
-            res = build_schdoc_sheet_netlist(source)
-            netlist = res["nets"]
-            for nl in res["net_labels"]:
-                labels_by_sheet[nl] = [source.get("file", "Sheet")]
-            ports_by_net = {k: [source.get("file", "Sheet")] for k in res["ports"]}
-            for p_info in res["all_pins"]:
-                pin_details[p_info["tag"]] = p_info
+            sheet_docs = [source]
+
+    scope = "global"
+    if sheet_docs:
+        n_sheets = len(sheet_docs)
+        scope = net_scope_of(prj, sheet_docs)
+        sch = build_multisheet_schdoc_netlist(sheet_docs, scope)
+        netlist = sch["nets"]
+        for p_info in sch["all_pins"]:
+            pin_details[p_info["tag"]] = p_info
+
+    auto_nets = set(sch.get("auto_nets", []))
+    no_erc = set(sch.get("no_erc_pins", []))
 
     # Invert netlist: pin_tag -> net
     pin_to_net = {}
@@ -349,33 +572,58 @@ def check_schematic(source: Any) -> dict[str, Any]:
         for pin in pins:
             pin_to_net[pin] = net
 
-    # Check 1: Single-pin nets
+    # Check 1: Single-pin nets (a No ERC pin is left open on purpose: counted once, below)
     single_pin_nets = []
     for net, pins in netlist.items():
         if len(pins) == 1:
-            single_pin_nets.append(net)
             tag = pins[0]
+            if tag in no_erc:
+                continue
+            single_pin_nets.append(net)
             ref = tag.split("-")[0]
+            alone = net in auto_nets
             findings.append({
                 "id": "single_pin_net",
                 "severity": "warning",
                 "refs": [ref],
-                "message": f"Net '{net}' has only one connected pin ({tag}).",
+                "message": (f"Pin {tag} is not connected to anything (no wire, label or port on it)." if alone
+                            else f"Net '{net}' has only one connected pin ({tag})."),
                 "evidence": f"Netlist pin count for '{net}': 1 ({tag})",
             })
+    unannotated = sch.get("unannotated", [])
+    if unannotated:
+        findings.append({
+            "id": "unannotated_components",
+            "severity": "warning",
+            "refs": list(dict.fromkeys(r.split("#")[0] for r in unannotated))[:12],
+            "message": f"{len(unannotated)} component(s) still have a '?' designator (not annotated); "
+                       f"their pins are listed as REF#n-PIN.",
+            "evidence": _max_list(unannotated),
+        })
+    open_marked = [t for t in sorted(no_erc) if len(netlist.get(pin_to_net.get(t, ""), [])) == 1]
+    if open_marked:
+        refs = sorted({t.rsplit("-", 1)[0] for t in open_marked})
+        findings.append({
+            "id": "no_erc_unused_pins",
+            "severity": "info",
+            "refs": refs,
+            "message": f"{len(open_marked)} unused pin(s) on {len(refs)} component(s) carry a No ERC marker "
+                       f"(intentionally unconnected).",
+            "evidence": _max_list(open_marked),
+        })
 
     # Check 2: Unconnected IC power pins
     for tag, p_info in pin_details.items():
         ref = p_info.get("ref", "")
-        if ref.startswith(("U", "IC")):
+        if ref.startswith(("U", "IC")) and tag not in no_erc:
             p_name = p_info.get("name", "")
             if POWER_PIN_RE.search(p_name):
                 assigned_net = pin_to_net.get(tag)
-                # Unconnected if no net, or net connects only this single pin and has no power port
-                is_unconnected = (
-                    not assigned_net
-                    or (assigned_net in single_pin_nets and not POWER_PIN_RE.search(assigned_net))
-                )
+                # Unconnected: no net, or alone on a net that no power port names. A pin on a named
+                # power rail is connected even when it is the only pin the project puts there.
+                alone = assigned_net is not None and len(netlist.get(assigned_net, [])) == 1
+                has_power_port = bool(assigned_net and assigned_net in sch.get("power_ports_by_net", {}))
+                is_unconnected = not assigned_net or (alone and not has_power_port and not POWER_PIN_RE.search(assigned_net))
                 if is_unconnected:
                     findings.append({
                         "id": "unconnected_ic_power",
@@ -385,24 +633,40 @@ def check_schematic(source: Any) -> dict[str, Any]:
                         "evidence": f"Pin {tag} ({p_name}) has no circuit net connection (net '{assigned_net or 'None'}')",
                     })
 
-    # Check 3: Nets only by label on one sheet
-    for net, sheets in labels_by_sheet.items():
-        if len(sheets) == 1 and net not in ports_by_net and not GND_RE.search(net) and not VCC_RE.search(net):
-            pins = netlist.get(net, [])
-            refs = list({p.split("-")[0] for p in pins if "-" in p})
-            findings.append({
-                "id": "net_only_by_label_on_one_sheet",
-                "severity": "info",
-                "refs": refs,
-                "message": f"Net '{net}' is connected only by net label on a single sheet ('{sheets[0]}') with no inter-sheet port.",
-                "evidence": f"Net label '{net}' on sheet '{sheets[0]}'",
-            })
+    # Check 3: net labels that connect nothing and ports without a partner on another sheet.
+    # Using a label inside a sheet to name a net is normal and is not reported.
+    if sch:
+        name_count = collections.Counter(o["text"] for o in sch["objects"])
+        for o in sch["objects"]:
+            text, net = o["text"], o["net"]
+            if o["kind"] == "power_ports" or name_count[text] != 1 or GND_RE.search(text) or VCC_RE.search(text):
+                continue
+            pins = netlist.get(net, []) if net else []
+            refs = sorted({p.rsplit("-", 1)[0] for p in pins})
+            if o["kind"] == "labels" and len(pins) <= 1:
+                findings.append({
+                    "id": "net_only_by_label_on_one_sheet",
+                    "severity": "info",
+                    "refs": refs,
+                    "message": f"Net label '{text}' on sheet '{o['sheet']}' appears once in the project and "
+                               f"joins {'one pin' if pins else 'no pin'}: it connects nothing by name.",
+                    "evidence": f"Net label '{text}' on sheet '{o['sheet']}', pins on its net: {len(pins)}",
+                })
+            elif o["kind"] == "ports" and n_sheets > 1 and not sch.get("hierarchical"):
+                findings.append({
+                    "id": "net_only_by_label_on_one_sheet",
+                    "severity": "info",
+                    "refs": refs,
+                    "message": f"Port '{text}' on sheet '{o['sheet']}' has no port or net label of the same name "
+                               f"on another sheet.",
+                    "evidence": f"Port '{text}' on sheet '{o['sheet']}', {len(pins)} pin(s) on its net",
+                })
 
     # Check 4: Pins whose name says VCC/VDD/GND but net differs
     for tag, p_info in pin_details.items():
         p_name = p_info.get("name", "")
         assigned_net = pin_to_net.get(tag)
-        if not assigned_net:
+        if not assigned_net or tag in no_erc or assigned_net in auto_nets:
             continue
         ref = p_info.get("ref", "")
         num = p_info.get("number", "")
@@ -426,12 +690,33 @@ def check_schematic(source: Any) -> dict[str, Any]:
                 "evidence": f"Pin name '{p_name}' vs ground net '{assigned_net}'",
             })
 
+    # Check 5: the board made from these sheets must have the same connectivity
+    board_cmp = None
+    if board is not None and sch:
+        pcb_doc = board if isinstance(board, dict) else read_pcbdoc(board)
+        board_cmp = compare_with_board(sch, pcb_doc)
+        findings.extend(_board_findings(board_cmp))
+        missing = board_cmp["only_in_schematic"]
+        if missing:
+            findings.append({
+                "id": "board_pins_missing",
+                "severity": "warning",
+                "refs": sorted({t.rsplit("-", 1)[0] for t in missing})[:12],
+                "message": f"{len(missing)} schematic pin(s) have no pad on the board (board not updated from the "
+                           f"schematic, or different designators); they were not compared.",
+                "evidence": _max_list(missing),
+            })
+
     return {
         "findings": findings,
         "net_count": len(netlist),
         "pin_count": len(pin_details),
         "single_pin_nets": single_pin_nets,
         "netlist": netlist,
+        "no_erc_pins": sorted(no_erc),
+        "net_scope": scope,
+        "board_mismatches": board_cmp["mismatches"] if board_cmp else [],
+        "board_compare": ({k: v for k, v in board_cmp.items() if k != "mismatches"} if board_cmp else None),
     }
 
 
@@ -599,11 +884,12 @@ def check_swap_requirements(netlist: dict, parts: dict, facts: dict, swap_text: 
 def main(argv=None):
     oscompat.utf8_stdio()
     ap = argparse.ArgumentParser(description="Schematic netlist and review checks")
-    ap.add_argument("source", help="Path to .SchDoc/.PcbDoc or folder of SchDocs")
+    ap.add_argument("source", help="Path to .SchDoc/.PcbDoc/.PrjPcb or a folder of SchDocs")
+    ap.add_argument("--board", help="PcbDoc made from these sheets: compare its pad nets with the schematic")
     ap.add_argument("--json", action="store_true", help="Print JSON findings")
     args = ap.parse_args(argv)
 
-    res = check_schematic(args.source)
+    res = check_schematic(args.source, board=args.board)
     print(json.dumps(res, ensure_ascii=False, indent=2))
 
 

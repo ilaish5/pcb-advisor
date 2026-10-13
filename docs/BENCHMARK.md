@@ -1,14 +1,14 @@
 # Benchmark: device replay
 
-- date: 2026-10-13 22:36
-- commit: bd68c2e
+- date: 2026-10-13 23:02
+- commit: c39bc9c
 - mode: engine:claude_code
 
 ## Scores
 
 | # | Incident | Reality | Target | Det | Engine | Earlier | Errors |
 |--:|---|:-:|:-:|:-:|:-:|:-:|---|
-| 1 | U4 footprint is A7670C, not A7670G | F | C | yes | no | yes |  |
+| 1 | U4 footprint is A7670C, not A7670G | F | C | yes | yes | yes |  |
 | 2 | 11 BOM lines have no match at JLC | F | B | yes | yes | yes |  |
 | 3 | U9 external flash costs $19.4 (Extended) | F | B | yes | yes | yes |  |
 | 4 | U7 TPS3823A-33DBVR is out of stock at JLC | F | B | yes | yes | yes |  |
@@ -21,12 +21,12 @@
 | 11 | Board outline (Mechanical 1) plotted into every Gerber layer | F | F | yes | yes | no |  |
 | 12 | CPL rotations disagree with the JLC 3D models (29 alerts) | F | F | yes | yes | no |  |
 
-**deterministic caught 12/12, engine caught 11/12, earlier than reality 7**
+**deterministic caught 12/12, engine caught 12/12, earlier than reality 7**
 
 ## Evals
 
-- qa: score 0.89 over 25
-- behaviour: score 0.54 over 13
+- qa: score 0.90 over 25
+- behaviour: score 0.69 over 13
 
 ## History
 
@@ -40,10 +40,4 @@
 - 2026-10-13 22:10 bd68c2e engine:claude_code: deterministic caught 0/0, engine caught 0/0, earlier than reality 0
 - 2026-10-13 22:22 bd68c2e engine:claude_code: deterministic caught 12/12, engine caught 12/12, earlier than reality 7
 - 2026-10-13 22:36 bd68c2e engine:claude_code: deterministic caught 12/12, engine caught 11/12, earlier than reality 7
-  - note (Claude Code): evals of the three Claude Code runs: qa 0.73 -> 0.84 -> 0.89, behaviour 0.08 -> 0.31 -> 0.54.
-    Changes between them: a word limit in AGENTS.md; 13 scripts AGENTS.md names were not in Claude Code's
-    allowed list (jlc.py stock lookups were blocked), added. Grader fixes after the last run (no new engine
-    call): keywords ignore Markdown emphasis (incident 1's answer said "A7670**C**" -> caught, 12/12), stock
-    tool pattern accepts jlc.py, package names (SOT-23-6, TO-252, PT100) are not MPNs. Regraded behaviour
-    from the saved answers: 7/13; left: answers over the word limit (5), unflagged MPNs (2), a script run not
-    listed in the tools block (1). The 22:10 "0/0" row was an evals-only run (`--only 0`).
+- 2026-10-13 23:02 c39bc9c engine:claude_code: deterministic caught 12/12, engine caught 12/12, earlier than reality 7

@@ -30,6 +30,7 @@ import oscompat  # noqa: E402
 import workspace  # noqa: E402
 
 SLICE_HEIGHT = 1400
+KINDS = ("pcb", "smt", "both")
 ALLOWED_VERDICTS = {"real", "model", "by design", "unknown"}
 
 
@@ -92,11 +93,11 @@ def slice_image(img: Image.Image, out_dir: pathlib.Path, slice_height: int = SLI
 def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | None = None, kind: str = "pcb") -> dict[str, Any]:
     """
     Ingest a JLCDFM report PDF, extract image, slice it, and write index.json + triage.json.
-    kind must be 'pcb' or 'smt'. Defaults to 'pcb'.
+    kind is 'pcb', 'smt' or 'both' (one JLCDFM report can cover the bare board and the assembly). Defaults to 'pcb'.
     """
     kind = (kind or "pcb").lower().strip()
-    if kind not in ("pcb", "smt"):
-        raise ValueError(f"Invalid report kind: '{kind}'. Expected 'pcb' or 'smt'")
+    if kind not in KINDS:
+        raise ValueError(f"Invalid report kind: '{kind}'. Expected 'pcb', 'smt' or 'both'")
 
     if name is None:
         if isinstance(pdf_input, (str, pathlib.Path)):
@@ -153,7 +154,7 @@ def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | 
 
 
 def list_checks(project: str, kind: str | None = None) -> list[dict[str, Any]]:
-    """List all check reports for a project. Optionally filter by kind ('pcb' | 'smt')."""
+    """List all check reports for a project. Optionally filter by kind ('pcb' | 'smt'); a 'both' report is in either."""
     pdir = workspace.project_dir(project)
     checks_root = pdir / "checks"
     if not checks_root.is_dir():
@@ -170,7 +171,7 @@ def list_checks(project: str, kind: str | None = None) -> list[dict[str, Any]]:
             except Exception:
                 idx = {}
             report_kind = idx.get("kind", "pcb")
-            if kind and report_kind != kind:
+            if kind and report_kind not in (kind, "both"):
                 continue
             triage_file = d / "triage.json"
             triage_rows = []
@@ -257,7 +258,7 @@ def main(argv=None):
     ingest_p = sub.add_parser("ingest")
     ingest_p.add_argument("project", help="Project name")
     ingest_p.add_argument("pdf", help="Path to JLCDFM PDF report")
-    ingest_p.add_argument("--kind", choices=["pcb", "smt"], default="pcb",
+    ingest_p.add_argument("--kind", choices=list(KINDS), default="pcb",
                           help="Report kind: 'pcb' (bare board) or 'smt' (assembly), default 'pcb'")
 
     list_p = sub.add_parser("list")

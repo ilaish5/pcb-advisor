@@ -56,7 +56,12 @@ class ClaudeCodeProvider(Provider):
             if isinstance(value, (list, tuple)):
                 # "Bash({python} scripts/x.py *)" becomes python3 on a Mac and
                 # python or py on Windows - whatever the engine's shell will type
-                value = ",".join(oscompat.py(str(v)) for v in value)
+                rules = [oscompat.py(str(v)) for v in value]
+                # On Windows the engine also has a PowerShell tool that Bash(...) rules do
+                # not cover; without the twin a script run through it is denied.
+                rules += [f"PowerShell({r[5:]}" for r in rules
+                          if r.startswith("Bash(") and f"PowerShell({r[5:]}" not in rules]
+                value = ",".join(rules)
             argv += [flag, str(value)]
         return argv
 

@@ -11,7 +11,10 @@ def read_prjpcb(path) -> dict:
     if not p.is_file():
         raise AltiumReadError(str(path), "file not found")
     try:
-        content = p.read_bytes().decode("latin-1")
+        raw = p.read_bytes()
+        if raw.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM before [Design]
+            raw = raw[3:]
+        content = raw.decode("latin-1")
     except Exception as exc:
         raise AltiumReadError(str(path), f"cannot read project file: {exc}") from exc
 
@@ -49,9 +52,12 @@ def read_prjpcb(path) -> dict:
         if not target.exists():
             missing.append(d)
 
+    design = next((d for n, d in doc_sections if n.lower() == "design"), {})
+
     return {
         "file": p.name,
         "name": p.stem,
+        "settings": dict(design),  # [Design] section, upper-case keys (e.g. NETIDENTIFIERSCOPE when set)
         "documents": documents,
         "sheets": sheets,
         "pcbs": pcbs,

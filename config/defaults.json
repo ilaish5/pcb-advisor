@@ -137,6 +137,8 @@
         "value": "6mil",
         "value_mm": 0.1524,
         "description": "Clearance constraint (fab min 0.09mm / safe start 0.15mm)",
+        "fab_min_mm": 0.09,
+        "fab_min_source": "https://jlcpcb.com/capabilities/pcb-capabilities",
         "attributes": {
           "NAME": "Clearance",
           "RULEKIND": "Clearance",
@@ -157,6 +159,7 @@
         "pref_mm": 0.2032,
         "max_mm": 1.016,
         "description": "Trace width constraint",
+        "fab_min_mm": null,
         "attributes": {
           "NAME": "Width",
           "RULEKIND": "Width",
@@ -176,6 +179,7 @@
         "hole_mm": 0.3048,
         "dia_mm": 0.6096,
         "description": "Routing via drill and diameter",
+        "fab_min_mm": null,
         "attributes": {
           "NAME": "RoutingVias",
           "RULEKIND": "RoutingVias",
@@ -197,6 +201,8 @@
         "value": "6mil",
         "value_mm": 0.1524,
         "description": "Minimum annular ring (fab min 0.15mm)",
+        "fab_min_mm": 0.15,
+        "fab_min_source": "https://jlcpcb.com/capabilities/pcb-capabilities",
         "attributes": {
           "NAME": "MinimumAnnularRing",
           "RULEKIND": "MinimumAnnularRing",
@@ -214,6 +220,7 @@
         "min_mm": 0.3048,
         "max_mm": 6.35,
         "description": "Drill hole size range",
+        "fab_min_mm": null,
         "attributes": {
           "NAME": "HoleSize",
           "RULEKIND": "HoleSize",
@@ -231,6 +238,8 @@
         "value": "6mil",
         "value_mm": 0.1524,
         "description": "Silkscreen to solder mask clearance (fab min 0.15mm)",
+        "fab_min_mm": 0.15,
+        "fab_min_source": "https://jlcpcb.com/capabilities/pcb-capabilities",
         "attributes": {
           "NAME": "SilkToSolderMaskClearance",
           "RULEKIND": "SilkToSolderMaskClearance",
@@ -248,6 +257,7 @@
         "value": "2mil",
         "value_mm": 0.0508,
         "description": "Solder mask expansion (fab standard 0.05mm)",
+        "fab_min_mm": null,
         "attributes": {
           "NAME": "SolderMaskExpansion",
           "RULEKIND": "SolderMaskExpansion",

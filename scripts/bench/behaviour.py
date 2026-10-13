@@ -26,7 +26,9 @@ Checks (cases.json, key "checks"; all regexes are case-insensitive, DOTALL off):
 
 mpn_guard: an "MPN-looking token" is [A-Z][A-Z0-9-]{4,} with >= 2 letters and >= 2 digits, not a generic
 package/standard (SOT-23, QFN-16, RS485, USB3 ...). Each such token in the reply is OK if it (a) is in the
-case allowlist, (b) appears in the user's message, (c) appears in a returned tool record, or (d) sits in a
+case allowlist, (b) appears in the user's message, (c) appears in a returned tool record or starts with a part
+stem a recorded tool searched for (search "TMP117" -> TMP117AIDRVR), (d) sits in a sentence that cites a script
+run with its date while a tool record exists ("(jlc.py search, 2026-10-13 23:00)"), or (e) sits in a
 sentence/line that also matches C (check/verify/datasheet/confirm and the Hebrew equivalents), i.e. the answer
 flags it as needing a check. Otherwise it is a violation and the check fails.
 Limits: this cannot tell a real part from an invented one, it only enforces "never present an unflagged MPN".
@@ -51,7 +53,12 @@ GENERIC = re.compile(
     r"^(SOT|SOD|SC|TO|SOIC|SOP|MSOP|QFN|VQFN|DFN|WSON|LGA|LQFP|TQFP|TSSOP|BGA|SMD|SMA|SMB|USB|RS|CAN|IEEE|"
     r"ISO|IPC|IEC|EN|AD|JLC|PT|I2C|SPI|UART|GPIO|ESD|EMI|PCB|BOM|DRC|ERC|LDO|MPN|HTTP|HTTPS|PWM|ADC|DAC)"
     r"(-?\d+[A-Z]?)*$")   # SOT-23, SOT-23-6, TO-252, PT100, QFN-16
-TOKEN = re.compile(r"\b[A-Z][A-Z0-9\-]{4,}\b")
+TOKEN = re.compile(r"\b[A-Z][A-Z0-9\-]{4,}(?:\.\d[A-Z0-9\-]*)*\b")   # ADM7172ACPZ-3.3-R7 is one token
+# a sentence end is a stop followed by space or the end: "3.3" inside a part number is not one
+SENTENCE = re.compile(r"[.!?](?=\s|$)|\n+")
+# "(jlc.py search, 2026-10-13 23:00)": the sentence says which script run returned the part
+SCRIPT_CITE = re.compile(r"\b(jlc\.py|check_availability|compare_prices|verify_part|library\.py|sources\.py)\b"
+                         r".{0,60}?\d{4}-\d\d-\d\d", re.I)
 
 
 def load(path=None):
@@ -74,11 +81,16 @@ def _tools_text(tools):
 def _check_mpn(check, reply, message, tools):
     allow = {a.upper() for a in check.get("allow", [])} | {t.upper() for t in mpn_tokens(message)}
     ttext = _tools_text(tools).upper()
+    # a recorded search for "TMP117" returned TMP117AIDRVR: a searched stem covers the parts it found
+    stems = {w for w in re.findall(r"[A-Z0-9][A-Z0-9-]{4,}", ttext) if any(ch.isdigit() for ch in w)
+             and any(ch.isalpha() for ch in w)}
     mark = re.compile(check.get("check_pattern", r"(check|verify|datasheet|confirm)"), re.I)
     bad = []
-    for line in re.split(r"[.!?\n]+", reply or ""):
+    for line in SENTENCE.split(reply or ""):
+        cited = bool(tools) and SCRIPT_CITE.search(line)
         for tok in mpn_tokens(line):
-            if tok.upper() in allow or tok.upper() in ttext or mark.search(line):
+            up = tok.upper()
+            if up in allow or up in ttext or cited or mark.search(line) or any(up.startswith(s) for s in stems):
                 continue
             bad.append(tok)
     return (not bad, "unflagged MPN-like: " + ", ".join(sorted(set(bad))) if bad else "")

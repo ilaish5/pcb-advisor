@@ -55,6 +55,44 @@ def test_pcbdoc_pad_net_map():
     assert pnm["RELAY2"] == ["J4-31", "U1-6"]
 
 
+def test_pcbdoc_footprint_geometry():
+    """geometry=True adds per-component 3D body and outline boxes (mm); the default output stays as it was."""
+    plain = read_pcbdoc(FIXTURES / "finished-board.PcbDoc")
+    assert "body_bbox_mm" not in plain["components"][0] and "outline_bbox_mm" not in plain["components"][0]
+
+    geo = read_pcbdoc(FIXTURES / "finished-board.PcbDoc", geometry=True)
+    assert geo["pads"] == plain["pads"] and geo["nets"] == plain["nets"]
+    assert [{k: v for k, v in c.items() if k not in ("body_bbox_mm", "outline_bbox_mm")} for c in geo["components"]] \
+        == plain["components"]
+    by = {c["ref"]: c for c in geo["components"]}
+    assert sum(1 for c in geo["components"] if c["body_bbox_mm"]) == 43
+    assert sum(1 for c in geo["components"] if c["outline_bbox_mm"]) == 50
+
+    # the body of a 0603 cap is a 1.75 x 0.95 mm box around its two pads
+    body = by["C9"]["body_bbox_mm"]
+    assert body == pytest.approx([111.2152, 53.0428, 112.9652, 53.9928], abs=1e-3)
+    for p in (p for p in geo["pads"] if p["ref"] == "C9"):
+        assert body[0] <= p["x_mm"] <= body[2] and body[1] <= p["y_mm"] <= body[3]
+
+    # a pin header has no 3D body: its silkscreen outline is the fallback, centred on its two pads
+    p1 = by["P1"]
+    assert p1["body_bbox_mm"] is None
+    assert p1["outline_bbox_mm"] == pytest.approx([26.6954, 91.2622, 29.2354, 96.3422], abs=1e-3)
+
+
+def test_pcbdoc_arc_extent():
+    from altium.pcbdoc import _arc_extent_points
+
+    def box(*args):
+        pts = _arc_extent_points(*args)
+        return ([round(min(x for x, _ in pts), 3), round(min(y for _, y in pts), 3)],
+                [round(max(x for x, _ in pts), 3), round(max(y for _, y in pts), 3)])
+
+    assert box(10.0, 20.0, 2.0, 0.0, 90.0) == ([10.0, 20.0], [12.0, 22.0])         # quarter arc
+    assert box(0.0, 0.0, 1.0, 270.0, 90.0) == ([0.0, -1.0], [1.0, 1.0])            # right half, through 0 deg
+    assert box(0.0, 0.0, 1.0, 0.0, 360.0) == ([-1.0, -1.0], [1.0, 1.0])            # full circle
+
+
 def test_schdoc_fixtures_parse():
     """Verify all five SchDoc fixtures parse with components, pins, wires, and labels."""
     expected = {
@@ -175,3 +213,46 @@ def test_dump_cli_net():
     assert '"J4-29", "U1-3"' in proc.stdout
     proc = subprocess.run(cmd[:-1] + ["NO_SUCH_NET"], capture_output=True, text=True)
     assert proc.returncode == 2
+
+
+def test_schdoc_reads_no_erc_markers_pin_flags_and_port_width():
+    """Fields the schematic checker needs: No ERC markers (record 22), hidden-pin flag, component
+    orientation, port width."""
+    can = read_schdoc(PROJECT / "CAN_Interface.SchDoc")
+    assert can["no_erc"], "CAN_Interface has No ERC markers"
+    assert all(set(m) == {"x", "y", "active", "symbol"} for m in can["no_erc"])
+    assert all(m["active"] is True and m["symbol"] for m in can["no_erc"])
+    for c in can["components"]:
+        assert isinstance(c["orientation"], int) and 0 <= c["orientation"] <= 3
+        assert isinstance(c["mirrored"], bool)
+        for pin in c["pins"]:
+            assert isinstance(pin["hidden"], bool)
+    assert any(c["orientation"] for c in can["components"]), "fixture has a rotated part"
+    dig = read_schdoc(PROJECT / "Digital_IO.SchDoc")
+    assert dig["ports"] and all(p["width"] > 0 for p in dig["ports"])
+    assert all(isinstance(p["vertical"], bool) for p in dig["ports"])
+    # a sheet without markers has an empty list
+    assert read_schdoc(PROJECT / "Power Supply.SchDoc")["no_erc"] == []
+
+
+def test_schdoc_coordinate_fractions_snap_to_the_grid():
+    """X_FRAC is 1/100000 unit. Altium writes 129 + 0.9921 for a point meant as 130."""
+    from altium.schdoc import _num
+    assert _num({"X1": "129", "X1_FRAC": "99210"}, "X1") == 130
+    assert _num({"X1": "130", "X1_FRAC": "790"}, "X1") == 130
+    assert _num({"LOCATION.X": "1247", "LOCATION.X_FRAC": "50000"}, "LOCATION.X") == 1247.5
+    assert _num({"LOCATION.X": "-5"}, "LOCATION.X") == -5
+    assert _num({}, "LOCATION.X") == 0
+    assert isinstance(_num({"X1": "129", "X1_FRAC": "99210"}, "X1"), int)
+
+
+def test_prjpcb_exposes_design_settings_even_with_a_bom(tmp_path):
+    """The [Design] section is the first line of a file Altium saves with a UTF-8 BOM."""
+    prj = tmp_path / "p.PrjPcb"
+    prj.write_bytes(b"\xef\xbb\xbf[Design]\r\nVersion=1.0\r\nNetIdentifierScope=Global\r\nHierarchyMode=3\r\n\r\n"
+                    b"[Document1]\r\nDocumentPath=a.SchDoc\r\n")
+    doc = read_prjpcb(prj)
+    assert doc["settings"]["NETIDENTIFIERSCOPE"] == "Global"
+    assert doc["settings"]["HIERARCHYMODE"] == "3"
+    assert doc["sheets"] == ["a.SchDoc"]
+    assert "NETIDENTIFIERSCOPE" not in read_prjpcb(PROJECT / "WCTopping.PrjPcb")["settings"]

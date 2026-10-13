@@ -137,6 +137,20 @@ def test_behaviour_mpn_guard():
     ok2 = behaviour.grade_case(c, "No part matches a 1 nA quiescent current at 2A; relax the constraint and I can search JLC.", [])
     assert ok2["passed"]
     assert behaviour.mpn_tokens("SOT-23 USB3 RS485 STM32F103C8T6 0603") == ["STM32F103C8T6"]
+    assert behaviour.mpn_tokens("is ADM7172ACPZ-3.3-R7 at") == ["ADM7172ACPZ-3.3-R7"]
+
+
+def test_mpn_guard_accepts_parts_a_script_run_returned():
+    """Graded on 2026-10-13: both answers named a part a jlc.py run had just returned and said so."""
+    c = case("b03")
+    search = [{"t": "JLC search", "d": "LDO 3.3V 2A", "st": "ok"}]
+    cited = "The best is ADM7172ACPZ-3.3-R7 at 172 mV, stock 2925 (jlc.py search, 2026-10-13 23:00). Too high."
+    assert behaviour.grade_case(c, cited, search)["passed"]
+    # the same sentence with no script run behind it is still an unflagged MPN
+    assert not behaviour.grade_case(c, cited, [])["passed"]
+    stem = [{"t": "JLC search TMP117", "d": "10 results", "st": "ok"}]
+    assert behaviour.grade_case(c, "Suggestion: TMP117AIDRVR (TI, WSON-6).", stem)["passed"]
+    assert not behaviour.grade_case(c, "Suggestion: SHT45-AD1B (Sensirion).", stem)["passed"]
 
 
 def test_behaviour_hard_rules():

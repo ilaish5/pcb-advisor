@@ -4,9 +4,17 @@ Board-level DRC and physical layout checks on Altium PcbDoc files.
 Checks performed:
 1. Components near outline/edge:
    - Connectors: checks whether opening/wire entry faces the nearest board edge or inward toward center.
+     The opening direction is the explicit spec (connector_specs: wire_entry_dir_at_rot0) when there is one,
+     else it is derived from the footprint: a right-angle / edge connector's body overhangs toward its mating
+     face, so the vector from the pads' centroid to the 3D body centre (or the silk/courtyard outline centre
+     when the part has no body) is the opening. A part whose body is centred on its pads (pin header, U.FL,
+     test point) has no direction and no finding. When nothing can be derived the result is an info finding,
+     never an error from a guess. Only a derived or specified direction pointing inward is an error.
    - Outline clearance: components closer than 0.5 mm to any board edge.
 2. Decoupling capacitors distance:
-   - For each decoupling cap on a power net, measures distance to the nearest IC power pin on the same net.
+   - A decoupling cap is a small ceramic cap (0402-1206 pad span, not electrolytic/tantalum) with one pad on a
+     ground net and the other on a power rail net. Its distance is measured to the nearest pad on that rail of a
+     non-passive part (IC, connector). Debounce/filter caps (signal net to GND) and bulk caps are not decaps.
 3. CPL rotation sanity list:
    - Identifies polarized/IC components and packages known to need 3D model orientation verification.
 
@@ -29,11 +37,32 @@ from altium.pcbdoc import read_pcbdoc  # noqa: E402
 CONNECTOR_PATTERNS = re.compile(r"HDR|CONN|TERM|PHOENIX|MOLEX|USB|SMA|BARREL|JACK|HEADER|JST|WURTH", re.I)
 POLAR_PATTERNS = re.compile(r"SOT|SOIC|SOP|TSSOP|QFP|LQFP|QFN|DFN|SMA|SMB|SMC|SOD|DIODE|ELECTRO|TANT", re.I)
 
+# Opening direction derived from the footprint: the body centre must sit at least this far from the pad centroid
+# (absolute, and as a fraction of the body size along that axis) or the part has no direction. 1 mm / 20% keeps a
+# U.FL receptacle (0.5 mm = 16%) and a centred terminal block (0.3-0.5 mm) direction-less while right-angle
+# parts overhang their pads by 3-6 mm (35-50%).
+OPENING_MIN_OFFSET_MM = 1.0
+OPENING_MIN_OFFSET_FRAC = 0.2
+
+# Decoupling caps
+DECAP_MAX_DIST_MM = 5.0        # cap rail pad to the nearest supplied pad; matches the "Recommended" text
+DECAP_MAX_PAD_SPAN_MM = 4.0    # pad centre to centre: 0402 ~1 mm, 0805 ~2 mm, 1206 ~3.2 mm; electrolytic/tantalum >= 6 mm
+GROUND_NET = re.compile(r"GND|VSS|GROUND", re.I)
+# +3V3 3V3 +3V3A +3V8 +12V +12V_RLY 5V 1V8 | VDD VCC VDDA AVDD VBAT VBUS VCAP1 VREF VIN VSYS, also as a suffix
+# (SIM_VDD, USB_VBUS, MDM_USB_VBUS). Signal nets (BTN1, TC_P, NRST, OSC_IN, RF_ANT) do not match.
+POWER_NET = re.compile(r"^[+-]?\d+V\d*[A-Z0-9_]*$|(?:^|_)[+-]?(?:[ADP]?V(?:DD|CC)|VBATT?|VBUS|VCAP|VREF|VIN|VSYS)", re.I)
+POLARIZED_CAP = re.compile(r"ELEC|ELCO|TANT|POLAR|CPOL|ALUM|RADIAL|SUPERCAP|EEE", re.I)
+# Parts that never supply a rail: the decap distance is measured to the nearest pad of anything else.
+PASSIVE_REF = re.compile(r"^(?:R|C|L|D|FB|TP|LED|F|RN|RV)\d", re.I)
+CAP_REF = re.compile(r"^C[A-Za-z]*\d")   # C1, CC2, Co2, COSC1
+
 
 def is_connector(comp: dict[str, Any]) -> bool:
     ref = comp.get("ref", "")
     pattern = comp.get("pattern", "")
     lib_ref = comp.get("lib_ref", "")
+    if re.match(r"^D\d", ref, re.I):  # diode, even in an SMA package
+        return False
     if re.match(r"^(?:J|P|CON|TERM)\d*", ref, re.I):
         return True
     if CONNECTOR_PATTERNS.search(pattern) or CONNECTOR_PATTERNS.search(lib_ref):
@@ -62,12 +91,60 @@ def compute_board_bounds(doc: dict[str, Any], outline_mm: list[float] | None = N
     return pad_min_x - margin, pad_min_y - margin, pad_max_x + margin, pad_max_y + margin
 
 
+def _box(value) -> list[float] | None:
+    """A [x1, y1, x2, y2] bounding box from a PcbDoc component dict, or None when absent or malformed."""
+    try:
+        x1, y1, x2, y2 = (float(v) for v in value)
+    except (TypeError, ValueError):
+        return None
+    return [x1, y1, x2, y2] if all(math.isfinite(v) for v in (x1, y1, x2, y2)) else None
+
+
+def derive_opening_direction(comp: dict[str, Any], pads: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Direction a connector opens (mating face / wire entry), in board coordinates, from its footprint.
+
+    A right-angle or edge connector's body overhangs the pads toward its mating face, so the opening is the
+    direction from the pads' centroid to the centre of the component body (comp["body_bbox_mm"], the union of its
+    3D bodies), or failing that of its silk/courtyard outline (comp["outline_bbox_mm"]). Board coordinates already
+    include the placement rotation. Returns None when it cannot be derived (no pads, no body and no outline);
+    otherwise {"dir": (dx, dy) unit vector or None, "offset_mm", "source", "pad_centroid", "body_centre"} where
+    dir is None for a part without a direction (the body is centred on its pads: pin header, U.FL, test point)."""
+    pts = [(float(p["x_mm"]), float(p["y_mm"])) for p in pads if "x_mm" in p and "y_mm" in p]
+    if not pts:
+        return None
+    px = sum(x for x, _ in pts) / len(pts)
+    py = sum(y for _, y in pts) / len(pts)
+    for source, key in (("3D body", "body_bbox_mm"), ("outline", "outline_bbox_mm")):
+        box = _box(comp.get(key))
+        if box is None:
+            continue
+        bx, by = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+        dx, dy = bx - px, by - py
+        offset = math.hypot(dx, dy)
+        along, extent = (dx, box[2] - box[0]) if abs(dx) >= abs(dy) else (dy, box[3] - box[1])
+        direction = None
+        if abs(along) >= max(OPENING_MIN_OFFSET_MM, OPENING_MIN_OFFSET_FRAC * extent):
+            direction = (dx / offset, dy / offset)
+        return {"dir": direction, "offset_mm": offset, "source": source,
+                "pad_centroid": (px, py), "body_centre": (bx, by)}
+    return None
+
+
 def check_edge_components(doc: dict[str, Any], bounds: tuple[float, float, float, float], connector_specs: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-    """Check components near board outline, especially connector opening orientation."""
+    """Check components near board outline, especially connector opening orientation.
+
+    connector_specs {ref: {"wire_entry_dir_at_rot0": [x, y]}} gives an explicit opening direction (at rotation 0,
+    rotated by the component's rotation). A connector without one has its direction derived from the footprint
+    (see derive_opening_direction); when that is impossible it is listed in one info finding, never guessed."""
     min_x, min_y, max_x, max_y = bounds
     findings = []
     comps = doc.get("components", [])
     specs = connector_specs or {}
+    pads_by_ref: dict[str, list[dict[str, Any]]] = {}
+    for p in doc.get("pads", []):
+        if p.get("ref"):
+            pads_by_ref.setdefault(p["ref"], []).append(p)
+    unknown: list[str] = []
 
     for c in comps:
         ref = c.get("ref")
@@ -102,72 +179,108 @@ def check_edge_components(doc: dict[str, Any], bounds: tuple[float, float, float
 
         # Connector check
         if is_connector(c):
-            spec = specs.get(ref, {})
-            # Direction of wire entry at rotation 0: default is (0, -1) (down) or from spec
-            entry_at_0 = spec.get("wire_entry_dir_at_rot0", [0.0, -1.0])
-            theta = math.radians(rot_deg)
-            # Standard 2D rotation of entry vector
-            entry_x = math.cos(theta) * entry_at_0[0] - math.sin(theta) * entry_at_0[1]
-            entry_y = math.sin(theta) * entry_at_0[0] + math.cos(theta) * entry_at_0[1]
+            spec_entry = (specs.get(ref) or {}).get("wire_entry_dir_at_rot0")
+            derived = None
+            if spec_entry is not None:
+                # Explicit spec: direction of wire entry at rotation 0, rotated by the component rotation
+                theta = math.radians(rot_deg)
+                entry_x = math.cos(theta) * spec_entry[0] - math.sin(theta) * spec_entry[1]
+                entry_y = math.sin(theta) * spec_entry[0] + math.cos(theta) * spec_entry[1]
+            else:
+                derived = derive_opening_direction(c, pads_by_ref.get(ref, []))
+                if derived is None:
+                    unknown.append(ref)
+                    continue
+                if derived["dir"] is None:
+                    continue  # body centred on its pads: no opening direction, nothing to check
+                entry_x, entry_y = derived["dir"]
 
             # Dot product with outward normal of nearest edge
             dot = entry_x * outward_normal[0] + entry_y * outward_normal[1]
 
             # If dot < -0.1, the opening points away from the nearest edge (toward the inside of the board)
             if dot < -0.1:
+                if derived is None:
+                    how = ""
+                    evidence = f"PcbDoc position ({x:.2f}, {y:.2f}), rotation {rot_deg:.0f} deg, facing vector ({entry_x:.2f}, {entry_y:.2f}) vs outward normal {outward_normal}"
+                else:
+                    how = f" (direction derived from the {derived['source']} geometry; verify it in the 3D view)"
+                    bdx = derived["body_centre"][0] - derived["pad_centroid"][0]
+                    bdy = derived["body_centre"][1] - derived["pad_centroid"][1]
+                    evidence = (f"PcbDoc position ({x:.2f}, {y:.2f}); {derived['source']} centre is ({bdx:+.2f}, {bdy:+.2f}) mm "
+                                f"from the pad centroid, so the opening faces ({entry_x:.2f}, {entry_y:.2f}) vs outward normal {outward_normal}")
                 findings.append({
                     "id": "connector_faces_inward",
                     "severity": "error",
                     "refs": [ref],
-                    "message": f"Connector {ref} opening faces inward toward the board center instead of the nearest ({nearest_edge}) edge.",
-                    "evidence": f"PcbDoc position ({x:.2f}, {y:.2f}), rotation {rot_deg:.0f} deg, facing vector ({entry_x:.2f}, {entry_y:.2f}) vs outward normal {outward_normal}",
+                    "message": f"Connector {ref} opening faces inward toward the board center instead of the nearest ({nearest_edge}) edge.{how}",
+                    "evidence": evidence,
                 })
+
+    if unknown:
+        findings.append({
+            "id": "connector_direction_unknown",
+            "severity": "info",
+            "refs": unknown,
+            "message": f"The opening direction of {len(unknown)} connector(s) could not be derived (no 3D body or outline in the PcbDoc, no spec): verify the opening direction in the 3D view.",
+            "evidence": "PcbDoc component has no body_bbox_mm / outline_bbox_mm and connector_specs gives no wire_entry_dir_at_rot0",
+        })
 
     return findings
 
 
-def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = 12.0) -> list[dict[str, Any]]:
-    """Check distance between decoupling caps and nearest IC power pin on the same net."""
+def _is_passive(comp: dict[str, Any], n_pads: int) -> bool:
+    """R/C/L/FB/D/LED/TP/fuse by designator, or a non-connector with at most two pads whose custom designator
+    starts with one of those letters (RL2, DI1, Co2, Crst1). Never a supplied load."""
+    ref = comp.get("ref", "")
+    return bool(PASSIVE_REF.match(ref)) or (ref[:1].upper() in "RCLDFT" and n_pads <= 2 and not is_connector(comp))
+
+
+def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DIST_MM,
+                          max_pad_span_mm: float = DECAP_MAX_PAD_SPAN_MM) -> list[dict[str, Any]]:
+    """Distance from each decoupling cap to the part it decouples.
+
+    A decoupling cap is a small ceramic cap (two pads at most max_pad_span_mm apart: 0402..1206, not electrolytic
+    or tantalum) with one pad on a ground net and the other on a power rail net. The distance runs from its rail
+    pad to the nearest pad on that rail of a part that is not a passive (IC, or a connector supplying a card).
+    Caps from a signal net to ground (button debounce, input filters, crystal loads) are not decaps."""
     findings = []
-    pads = doc.get("pads", [])
-    comps_by_ref = {c["ref"]: c for c in doc.get("components", []) if c.get("ref")}
-
-    # Group pads by net
+    comps = [c for c in doc.get("components", []) if c.get("ref")]
+    comps_by_ref = {c["ref"]: c for c in comps}
+    pads_by_ref: dict[str, list[dict[str, Any]]] = {}
     net_pads: dict[str, list[dict[str, Any]]] = {}
-    for p in pads:
-        net = p.get("net")
-        if net:
-            net_pads.setdefault(net, []).append(p)
+    for p in doc.get("pads", []):
+        if p.get("ref"):
+            pads_by_ref.setdefault(p["ref"], []).append(p)
+        if p.get("net"):
+            net_pads.setdefault(p["net"], []).append(p)
 
-    for net, plist in net_pads.items():
-        net_upper = net.upper()
-        # Skip ground net (GND return path is usually plane/pour, decap check focuses on power rails)
-        if "GND" in net_upper or "VSS" in net_upper:
+    for c in comps:
+        c_ref = c["ref"]
+        if not CAP_REF.match(c_ref) or is_connector(c) or POLARIZED_CAP.search(f"{c.get('pattern', '')} {c.get('lib_ref', '')}"):
             continue
-
-        c_pads = [p for p in plist if p.get("ref", "").startswith("C")]
-        ic_pads = [p for p in plist if p.get("ref", "").startswith("U") or p.get("ref", "").startswith("IC")]
-
-        if not c_pads or not ic_pads:
+        cpads = pads_by_ref.get(c_ref, [])
+        if len(cpads) != 2 or math.hypot(cpads[0]["x_mm"] - cpads[1]["x_mm"], cpads[0]["y_mm"] - cpads[1]["y_mm"]) > max_pad_span_mm:
             continue
-
-        for cp in c_pads:
-            c_ref = cp.get("ref", "")
-            dists = []
-            for ip in ic_pads:
-                d = math.hypot(cp["x_mm"] - ip["x_mm"], cp["y_mm"] - ip["y_mm"])
-                dists.append((d, ip.get("ref", ""), ip.get("name", "")))
-            dists.sort()
-            min_dist, nearest_ic, pin_name = dists[0]
-
-            if min_dist > max_dist_mm:
-                findings.append({
-                    "id": "decap_distance_excessive",
-                    "severity": "warning",
-                    "refs": [c_ref, nearest_ic],
-                    "message": f"Decoupling cap {c_ref} on net '{net}' is {min_dist:.1f} mm away from nearest IC power pin ({nearest_ic}-{pin_name}). Recommended: <= 5 mm.",
-                    "evidence": f"PcbDoc pad distance: {c_ref} ({cp['x_mm']}, {cp['y_mm']}) to {nearest_ic}-{pin_name} on net {net}",
-                })
+        ground = [p for p in cpads if GROUND_NET.search(p.get("net") or "")]
+        rail = [p for p in cpads if p.get("net") and not GROUND_NET.search(p["net"]) and POWER_NET.search(p["net"])]
+        if len(ground) != 1 or len(rail) != 1:
+            continue
+        cp = rail[0]
+        net = cp["net"]
+        loads = [q for q in net_pads.get(net, []) if q.get("ref") in comps_by_ref
+                 and not _is_passive(comps_by_ref[q["ref"]], len(pads_by_ref.get(q["ref"], [])))]
+        if not loads:
+            continue
+        min_dist, load = min(((math.hypot(cp["x_mm"] - q["x_mm"], cp["y_mm"] - q["y_mm"]), q) for q in loads), key=lambda t: t[0])
+        if min_dist > max_dist_mm:
+            findings.append({
+                "id": "decap_distance_excessive",
+                "severity": "warning",
+                "refs": [c_ref, load["ref"]],
+                "message": f"Decoupling cap {c_ref} on net '{net}' is {min_dist:.1f} mm away from the nearest supplied pad ({load['ref']}-{load.get('name', '')}). Recommended: <= {max_dist_mm:g} mm.",
+                "evidence": f"PcbDoc pad distance: {c_ref} ({cp['x_mm']}, {cp['y_mm']}) to {load['ref']}-{load.get('name', '')} on net {net}",
+            })
 
     return findings
 
@@ -212,17 +325,20 @@ def check_cpl_rotation_sanity(doc: dict[str, Any]) -> list[dict[str, Any]]:
     return findings
 
 
-def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: list[float] | None = None, connector_specs: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Run all board checks on a PcbDoc."""
+def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: list[float] | None = None,
+                connector_specs: dict[str, Any] | None = None,
+                decap_max_dist_mm: float = DECAP_MAX_DIST_MM) -> dict[str, Any]:
+    """Run all board checks on a PcbDoc (a path, or a read_pcbdoc dict; footprint geometry comes from
+    read_pcbdoc(path, geometry=True), i.e. body_bbox_mm / outline_bbox_mm on each component)."""
     if isinstance(doc_or_path, (str, pathlib.Path)):
-        doc = read_pcbdoc(doc_or_path)
+        doc = read_pcbdoc(doc_or_path, geometry=True)
     else:
         doc = doc_or_path
 
     bounds = compute_board_bounds(doc, outline_mm=outline_mm)
     findings = []
     findings.extend(check_edge_components(doc, bounds, connector_specs=connector_specs))
-    findings.extend(check_decoupling_caps(doc))
+    findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm))
     findings.extend(check_cpl_rotation_sanity(doc))
 
     return {
@@ -292,9 +408,10 @@ def main(argv=None):
     ap.add_argument("pcb", help="Path to .PcbDoc file")
     ap.add_argument("--outline", nargs=4, type=float, metavar=("X1", "Y1", "X2", "Y2"), help="Board outline min_x min_y max_x max_y (mm)")
     ap.add_argument("--json", action="store_true", help="Print JSON findings")
+    ap.add_argument("--decap-max-mm", type=float, default=DECAP_MAX_DIST_MM, help=f"Max decoupling cap distance to the supplied pad (default {DECAP_MAX_DIST_MM:g} mm)")
     args = ap.parse_args(argv)
 
-    res = check_board(args.pcb, outline_mm=args.outline)
+    res = check_board(args.pcb, outline_mm=args.outline, decap_max_dist_mm=args.decap_max_mm)
     if args.json or True:
         print(json.dumps(res, ensure_ascii=False, indent=2))
 

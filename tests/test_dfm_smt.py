@@ -131,6 +131,17 @@ def test_dfm_cli_kind(tmp_path, monkeypatch, capsys):
         dfm.ingest_pdf(pdf, proj, kind="invalid_kind")
 
 
+def test_a_report_of_both_kinds_lists_under_pcb_and_smt(tmp_path, monkeypatch):
+    """JLCDFM's PCB+SMT report (a real one, 2026-10-12) holds both analyses in one PDF."""
+    monkeypatch.setattr(workspace, "home", lambda: tmp_path / "ws")
+    proj = "demo"
+    dfm.ingest_pdf(make_test_pdf(tmp_path, "both.pdf"), proj, kind="both")
+    dfm.ingest_pdf(make_test_pdf(tmp_path, "bare.pdf"), proj, kind="pcb")
+    assert sorted(c["stem"] for c in dfm.list_checks(proj, kind="pcb")) == ["bare", "both"]
+    assert [c["stem"] for c in dfm.list_checks(proj, kind="smt")] == ["both"]
+    assert dfm.list_checks(proj, kind="smt")[0]["kind"] == "both"
+
+
 def test_serve_upload_validates_kind(test_server, tmp_path):
     """Upload endpoint validates kind: accepts pcb/smt, rejects invalid with 400."""
     proj = "demo"

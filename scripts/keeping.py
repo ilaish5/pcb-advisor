@@ -233,10 +233,35 @@ def change_impact(project: str, item: str) -> list[dict]:
     return impacts
 
 
+# Folders that hold old copies, not outputs: a match in there would hide a missing output.
+_SKIP_DIRS = {"history", "__previews", ".git", ".venv", "_legacy", "__pycache__"}
+
+
+def _find_outputs(roots, patterns):
+    """Newest file under any root whose lower-case name matches a pattern (searched in order)."""
+    import fnmatch
+    for pat in patterns:
+        hits = []
+        for root in roots:
+            for f in root.rglob("*"):
+                rel = f.relative_to(root).parts[:-1]
+                if f.is_file() and not _SKIP_DIRS & {p.lower() for p in rel} and fnmatch.fnmatch(f.name.lower(), pat):
+                    hits.append(f)
+        if hits:
+            return max(hits, key=lambda f: f.stat().st_mtime)
+    return None
+
+
 def file_organization(project: str) -> dict:
-    """Report present and missing files for the final project submission."""
+    """Report present and missing files for the final project submission.
+
+    Outputs are looked for in the project's exports/ and, for a linked Altium project, in its Outputs
+    folder and its own folder (libraries): that is where Altium writes them. An output older than the
+    document it is made from is listed with `older_than`, so a Gerber from before the last board save
+    does not pass as current."""
     pdir = workspace.project_dir(project)
     exports_dir = pdir / "exports"
+    link = project_mod.altium_link(project)
 
     # Core files
     core_files = [
@@ -246,15 +271,25 @@ def file_organization(project: str) -> dict:
         ("project.json", "Project metadata & links", pdir / "project.json"),
     ]
 
-    # Expected exports
+    pcb = pathlib.Path(link["pcb_file"]) if link.get("pcb_file") else None
+    prj = pathlib.Path(link["project_file"]) if link.get("project_file") else None
+    sch = sorted(prj.parent.glob("*.SchDoc"), key=lambda f: f.stat().st_mtime)[-1:] if prj and prj.is_file() else []
+    sch = sch[0] if sch else None
+    # label, description, patterns (lower case, in order of preference), the document it is made from
     export_patterns = [
-        ("JLC BOM", "JLCPCB SMT bill of materials (CSV)", ["*jlc*bom*.csv", "*bom*.csv", "*BOM*.csv"]),
-        ("Generic BOM", "Generic bill of materials (CSV)", ["*generic*bom*.csv", "*altium*bom*.csv"]),
-        ("CPL / Pick & Place", "SMT component placement list", ["*cpl*.csv", "*pick*.csv", "*placement*.csv"]),
-        ("Gerber files", "PCB fabrication gerber archive", ["*gerber*.zip", "*Gerber*.zip", "*fab*.zip"]),
-        ("Schematic (PDF)", "Printable schematic document", ["*.pdf", "*schematic*.pdf"]),
-        ("Altium library", "Project integrated library package", ["*library*.zip", "*.IntLib"]),
+        ("JLC BOM", "JLCPCB SMT bill of materials (CSV)", ["*jlc*bom*.csv", "*bom*jlc*.csv", "*bom*.csv"], sch),
+        ("Generic BOM", "Generic bill of materials (CSV)", ["*generic*bom*.csv", "*altium*bom*.csv", "*bom*full*.csv"], sch),
+        ("CPL / Pick & Place", "SMT component placement list", ["*cpl*.csv", "*pick*place*.csv", "*placement*.csv"], pcb),
+        ("Gerber files", "PCB fabrication gerber archive", ["*gerber*.zip", "*fab*.zip"], pcb),
+        ("Schematic (PDF)", "Printable schematic document", ["*schematic*.pdf", "*sch*.pdf"], sch),
+        ("Altium library", "Project integrated library package", ["*.intlib", "*library*.zip"], None),
     ]
+    roots = [exports_dir]
+    if link.get("outputs_dir"):
+        roots.append(pathlib.Path(link["outputs_dir"]))
+    if prj:
+        roots.append(prj.parent / "Libraries")
+    roots = [r for r in roots if r.is_dir()]
 
     present = []
     missing = []
@@ -265,23 +300,18 @@ def file_organization(project: str) -> dict:
         else:
             missing.append({"name": name, "description": desc, "expected_path": str(path)})
 
-    if exports_dir.is_dir():
-        for label, desc, patterns in export_patterns:
-            found = False
-            for pat in patterns:
-                matches = list(exports_dir.glob(pat))
-                if matches:
-                    found = True
-                    present.append({"name": label, "description": desc, "path": str(matches[0])})
-                    break
-            if not found:
-                missing.append({"name": label, "description": desc, "expected_path": f"exports/{patterns[0]}"})
-    else:
-        for label, desc, patterns in export_patterns:
+    for label, desc, patterns, source in export_patterns:
+        hit = _find_outputs(roots, patterns)
+        if not hit:
             missing.append({"name": label, "description": desc, "expected_path": f"exports/{patterns[0]}"})
+            continue
+        row = {"name": label, "description": desc, "path": str(hit),
+               "saved": dt.datetime.fromtimestamp(hit.stat().st_mtime).isoformat(timespec="seconds")}
+        if source and source.is_file() and source.stat().st_mtime > hit.stat().st_mtime:
+            row["older_than"] = source.name
+        present.append(row)
 
     # Check linked Altium files if any
-    link = project_mod.altium_link(project)
     if link.get("project_file"):
         pf = pathlib.Path(link["project_file"])
         if pf.is_file():
@@ -354,7 +384,9 @@ def main(argv=None):
         print(f"File Organization Report for {args.project}:")
         print(f"  Present: {rep['total_present']} files")
         for item in rep["present"]:
-            print(f"    ✓ {item['name']}: {item.get('path', '')}")
+            old = f"  (older than {item['older_than']}: re-export or confirm nothing changed)" \
+                if item.get("older_than") else ""
+            print(f"    {'!' if old else '✓'} {item['name']}: {item.get('path', '')}{old}")
         print(f"  Missing: {rep['total_missing']} files")
         for item in rep["missing"]:
             print(f"    ✗ {item['name']} ({item['description']})")

@@ -90,6 +90,10 @@ def test_the_tool_policy_is_passed_to_the_cli(home, monkeypatch):
     assert any(a.startswith("Edit(//") and a.endswith("/projects/*/BOM.md)") for a in allowed)
     assert not {"Write", "Edit"} & set(allowed)
     assert not [a for a in allowed if "sketch.json" in a or "decisions" in a]
+    # every script rule also covers the PowerShell tool (Windows engines use it as often as Bash)
+    bash = [a for a in allowed if a.startswith("Bash(")]
+    assert bash and all("PowerShell(" + a[5:] in allowed for a in bash)
+    assert not [a for a in allowed if a.startswith("PowerShell(") and "Bash(" + a[11:] not in allowed]
 
 
 def test_claude_add_dirs_are_flags_that_no_variadic_flag_can_swallow(home, monkeypatch):
