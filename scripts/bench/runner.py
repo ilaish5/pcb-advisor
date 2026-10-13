@@ -82,10 +82,11 @@ def run_incidents(items, engine=None, repo=None, runs_dir=None, today=None):
                 row["errors"].append(f"engine: {type(exc).__name__}: {exc}")
         row["earlier"] = earlier(inc, row["det"] or row["engine"])
         rows.append(row)
-    return {"rows": rows, "provider": prov_id, "errors": errors_global}
+    return {"rows": rows, "provider": prov_id, "errors": errors_global, "out_dir": out_dir}
 
 
-def run_evals(provider):
+def run_evals(provider, out_dir=None):
+    """out_dir: the incidents' folder, so a run that passes midnight stays in one folder."""
     out = []
     here = pathlib.Path(__file__).resolve().parent
     for name in EVAL_MODULES:
@@ -93,7 +94,7 @@ def run_evals(provider):
             continue
         try:
             mod = importlib.import_module(f"{__package__}.{name}")
-            out.append(mod.run(provider))
+            out.append(mod.run(provider, out_dir=out_dir))
         except ImportError:
             continue
         except Exception as exc:                       # noqa: BLE001
@@ -172,7 +173,7 @@ def run(fixtures=None, engine=None, evals=False, only=None, out_md=None, runs_di
     if only:
         items = [i for i in items if i["id"] in set(only)]
     result = run_incidents(items, engine, repo, runs_dir, today)
-    eval_res = run_evals(result["provider"]) if evals else []
+    eval_res = run_evals(result["provider"], result["out_dir"]) if evals else []
     mode = f"engine:{result['provider']}" if engine else "deterministic"
     out_md = pathlib.Path(out_md or DOCS / "BENCHMARK.md")
     when = now or datetime.datetime.now().strftime("%Y-%m-%d %H:%M")

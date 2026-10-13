@@ -161,10 +161,24 @@ def test_evals_missing_modules_are_fine(tmp_path, monkeypatch):
 
 def test_evals_summary_included(tmp_path, monkeypatch):
     make_incident(tmp_path / "fx", 1)
-    monkeypatch.setattr(runner, "run_evals", lambda p: [
+    monkeypatch.setattr(runner, "run_evals", lambda p, d=None: [
         {"name": "qa", "score": 0.5, "total": 4, "rows": [], "needs_engine": True}])
     res = runner.run(fixtures=tmp_path / "fx", out_md=tmp_path / "B.md", evals=True)
     assert "- qa: score 0.50 over 4 (needs an engine)" in res["text"]
+
+
+def test_evals_write_into_the_incidents_folder_even_after_midnight(tmp_path, monkeypatch):
+    # the incidents ran on 01-02; the evals must not pick a new folder from the clock
+    make_incident(tmp_path / "fx", 1)
+    monkeypatch.setattr(gateway, "route", lambda r, n=None: gateway.Result(text="ok", provider="claude_code"))
+    seen = []
+    monkeypatch.setattr(runner, "EVAL_MODULES", ("qa_eval",))
+    import bench.qa_eval as qa_eval
+    monkeypatch.setattr(qa_eval, "run", lambda p, out_dir=None: seen.append(out_dir) or
+                        {"name": "qa", "score": 1.0, "total": 1, "rows": [], "needs_engine": True})
+    runner.run(fixtures=tmp_path / "fx", engine="claude_code", evals=True, out_md=tmp_path / "B.md",
+               runs_dir=tmp_path / "runs", repo=tmp_path, today="2026-01-02")
+    assert seen == [tmp_path / "runs" / "2026-01-02-claude_code"]
 
 
 def test_missing_fixtures_folder_is_reported(tmp_path):

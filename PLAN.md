@@ -231,6 +231,11 @@ The .RUL import was done in AD26 by Claude Code on a temp copy of the rules-boar
 Engine benchmark with Claude Code done 2026-10-13 (see §8 I11 item 9, `docs/BENCHMARK.md`). Open: agy engine run;
 behaviour evals 7/13 (length, unflagged MPNs).
 
+**Device onboarding done (2026-10-13/14)** - see section 8. Plan: `docs/next-tasks/device-project-import.md`; status
+file: `docs/STATUS-2026-10-14.md`. User decisions: Altium 365 is ignored (the disk copy is the truth); the device is a
+finished project (review mode, no new design); Sonnet subagents for parallel tasks. Project data lives in
+`projects/real-project/` (git-ignored); the review is `checks/device-review.md`.
+
 Done 2026-10-12 (read-only, with the user's OK): device previews rendered for all 4 sheets + the PcbDoc
 (fixed a missing `import store` in preview_sch.py). Board preview is correct; on the schematic, the 64-pin MCU's
 pin names and top/bottom net labels crowd and get cut to one letter (known limit, readable when zoomed).
@@ -393,3 +398,23 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
    negatives. Connectors end on the outline of every shape; the server kept dropping `point` on load (fixed);
    view jumped when a label box opened (fixed). agy engine run not done.
 10. The device folder was not touched (no git, no writes); all Altium work on `%TEMP%` copies, deleted afterwards.
+
+### Device onboarding - a real finished board as a project (2026-10-13/14) ✅
+1. `projects/real-project`: manifest of which device files are current (`checks/device-manifest.md`), BOM imported
+   from `Outputs/Assembly/BOM-full.csv` by the new `scripts/bom_import.py` (60 lines, 127 parts; API + BOM tab).
+2. Checkers run on the real board and fixed until no false alarm was left: schematic T-joins/No ERC (558/558 pins
+   match the board), connector direction, decap distance, board shape from Board6 (100x80 mm, was 177x127 default).
+3. Exports equal the hand-made device files: JLC BOM identical; CPL positions equal on all 127 parts (CPL origin fix),
+   12 rotations differ = the deliberate ROT_FIX parts. Board-aware .RUL (74 rules), rules verdicts in the UI.
+4. JLCDFM PCB+SMT report triaged against the files: 1 real error, cosmetic (silk-to-mask 0.127 mm < JLC 0.15 mm).
+5. Part findings: F1's LCSC code is another maker's part (new `code_mpn_mismatch` check), U9 lib ref still the NAND
+   part, stale U6 links, broken J8/J11 manufacturer, stock tight for J11/U4/Y1; 41.37 USD/board.
+6. Idea, 18 agreed items, 35 requirements, 16-shape diagram and 20 decisions drafted from the device docs (subagent B).
+7. Datasheets: 24/27 in Sources with url + sha256; sources.py refuses HTML-as-PDF and replacing a different file.
+8. Browser check of every tab on the real project found 3 UI bugs, fixed: blank Outputs rows, "C3-C66" ref ranges
+   that were not runs, imported parts shown as "missing" from the library (now "in library, to review").
+9. Benchmark: Claude Code incidents 12/12, Q&A 0.90, behaviour 11/13 (grader fixed); agy: incidents 7/12 (3 timeouts
+   at 300 s), Q&A 0.93, behaviour 13/13. A run that passed midnight split into two folders (fixed). Caveat: the
+   engines could read the device project (repo add-dir); no answer cites it.
+10. Sonnet subagents A-G in parallel, all verified by Claude Code; 663 tests green, deterministic bench 12/12.
+    The device folder was never written (`.git/index` unchanged since 10-11).

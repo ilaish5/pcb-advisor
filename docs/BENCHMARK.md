@@ -1,32 +1,32 @@
 # Benchmark: device replay
 
-- date: 2026-10-13 23:02
-- commit: c39bc9c
-- mode: engine:claude_code
+- date: 2026-10-14 00:20
+- commit: 2190551
+- mode: engine:antigravity
 
 ## Scores
 
 | # | Incident | Reality | Target | Det | Engine | Earlier | Errors |
 |--:|---|:-:|:-:|:-:|:-:|:-:|---|
 | 1 | U4 footprint is A7670C, not A7670G | F | C | yes | yes | yes |  |
-| 2 | 11 BOM lines have no match at JLC | F | B | yes | yes | yes |  |
+| 2 | 11 BOM lines have no match at JLC | F | B | yes | no | yes | engine: timed out after 300s |
 | 3 | U9 external flash costs $19.4 (Extended) | F | B | yes | yes | yes |  |
 | 4 | U7 TPS3823A-33DBVR is out of stock at JLC | F | B | yes | yes | yes |  |
-| 5 | U4 is "Standard only" for JLC assembly | F | B | yes | yes | yes |  |
+| 5 | U4 is "Standard only" for JLC assembly | F | B | yes | no | yes |  |
 | 6 | 1 uF on the VCC pin of MP2315, above the 0.22 uF maximum | D | D | yes | yes | no |  |
-| 7 | TC_FAULT: is the MAX31856 FAULT pin push-pull or open-drain? | D | D | yes | yes | no |  |
+| 7 | TC_FAULT: is the MAX31856 FAULT pin push-pull or open-drain? | D | D | yes | no | no |  |
 | 8 | Flashing over USB is impossible with the STM32F103 (no USB DFU in ROM) | E | A | yes | yes | yes |  |
-| 9 | F411 swap: VCAP_1 capacitor missing and R82 D+ pull-up now redundant | E | D | yes | yes | yes |  |
+| 9 | F411 swap: VCAP_1 capacitor missing and R82 D+ pull-up now redundant | E | D | yes | no | yes | engine: timed out after 300s |
 | 10 | J1 power connector is placed facing the board centre | E | E | yes | yes | no |  |
 | 11 | Board outline (Mechanical 1) plotted into every Gerber layer | F | F | yes | yes | no |  |
-| 12 | CPL rotations disagree with the JLC 3D models (29 alerts) | F | F | yes | yes | no |  |
+| 12 | CPL rotations disagree with the JLC 3D models (29 alerts) | F | F | yes | no | no | engine: timed out after 300s |
 
-**deterministic caught 12/12, engine caught 12/12, earlier than reality 7**
+**deterministic caught 12/12, engine caught 7/12, earlier than reality 7**
 
 ## Evals
 
-- qa: score 0.90 over 25
-- behaviour: score 0.69 over 13
+- qa: score 0.93 over 25
+- behaviour: score 1.00 over 13
 
 ## History
 
@@ -40,4 +40,5 @@
 - 2026-10-13 22:10 bd68c2e engine:claude_code: deterministic caught 0/0, engine caught 0/0, earlier than reality 0
 - 2026-10-13 22:22 bd68c2e engine:claude_code: deterministic caught 12/12, engine caught 12/12, earlier than reality 7
 - 2026-10-13 22:36 bd68c2e engine:claude_code: deterministic caught 12/12, engine caught 11/12, earlier than reality 7
-- 2026-10-13 23:02 c39bc9c engine:claude_code: deterministic caught 12/12, engine caught 12/12, earlier than reality 7
+- 2026-10-13 23:02 c39bc9c engine:claude_code: deterministic caught 12/12, engine caught 12/12, earlier than reality 7; qa 0.90, behaviour 9/13 (11/13 after the grader fix in 0212505)
+- 2026-10-14 00:20 2190551 engine:antigravity: deterministic caught 12/12, engine caught 7/12, earlier than reality 7; qa 0.93, behaviour 13/13 (same with the current grader). Started 23:04 on c39bc9c plus work in progress (the commit field is the hash at the end). Incidents 2, 9, 12 timed out at 300 s; 5, 7 answered without the expected point. Both engines could read the whole repo (add-dir), including projects/real-project; no answer cites a file from it
