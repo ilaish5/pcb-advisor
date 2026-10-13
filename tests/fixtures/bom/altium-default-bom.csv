@@ -1,0 +1,3 @@
+Comment,Description,Designator,Footprint,LibRef,Quantity
+100nF 50V,Capacitor 100nF,"C6, C5",0603C_L,Cap100nF_50V_0603,2
+10µF,Ceramic capacitor,C10,0805,Cap10uF_25V_0805,1

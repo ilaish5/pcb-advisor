@@ -232,6 +232,19 @@ def part(mpn, transport=None):
     return out
 
 
+def part_by_code(code, transport=None):
+    """The part with this LCSC code, or None. The search is by keyword, so a code also
+    returns look-alikes (C94355 finds MIC94355-...): only the exact code counts."""
+    code_str = (code or "").strip().upper()
+    if not re.fullmatch(r"C\d{2,}", code_str):
+        return None
+    pick = next((c for c in search(code_str, n=10, transport=transport)
+                 if (c.get("code") or "").upper() == code_str), None)
+    if not pick:
+        return None
+    return {**pick, "exact": True}
+
+
 def _norm_pkg(p):
     return (p or "").lower().replace(" ", "").replace("-", "").replace("_", "")
 

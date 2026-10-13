@@ -376,6 +376,14 @@ table.libt{min-width:740px} table.srct{min-width:780px}
 .issue{font-size:12px;color:var(--warn);white-space:normal;max-width:300px}
 .howto{position:relative}
 .howto .x{position:absolute;top:4px;right:6px}
+.imp-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
+.imp-row select{flex:1 1 280px;min-width:0;font:inherit;font-size:12.5px;border:1px solid var(--line);border-radius:7px;padding:4px 8px;background:var(--panel);color:var(--ink)}
+.imp-tags{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px}
+.imp-tbl{margin-top:6px;max-height:320px;overflow:auto;background:var(--panel)}
+table.imp{border-collapse:collapse;width:100%;font-size:12.5px}
+.imp th{position:sticky;top:0;background:var(--panel2);text-align:left;font-weight:600;padding:4px 8px;white-space:nowrap}
+.imp td{padding:4px 8px;border-top:1px solid var(--line2);vertical-align:top}
+.imp td.m{white-space:nowrap}.imp td.msg{overflow-wrap:anywhere}
 .howto ul{margin:6px 0 0;padding-left:18px}
 .form{display:grid;gap:12px;max-width:520px}
 .form label{display:grid;gap:3px;font-size:13px;font-weight:600}
@@ -614,6 +622,7 @@ let SESSION = URLQ.get('session') || null;
 let PROJECTS = [], SKILLS = null, CONFIG = null, ALTIUM_DATA = null, RULES_DATA = null;
 let page = 'workspace', tab = 'bom', sel = null, hitSrc = null, sheetId = null;
 let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null, altsCard = null;
+let impInfo = null, impFor = null, impSel = '', impReport = null, impBusy = false;   // import a BOM from Altium
 let outjobBanner = null, curCheckStem = null, curPcbCheckStem = null, curSmtCheckStem = null, uploadDfmKind = 'pcb', schAnchor = null;
 let triageMap = {}, triageLoading = {}, indexMap = {}, indexLoading = {};
 let svgCache = {key: '', text: ''};
@@ -2148,6 +2157,7 @@ function renderGroupContent(group, container, force) {
     }
     if (activeTab.stage === 'sch' && S && S.sheets && S.sheets.length) loadSheet(container);
     if (activeTab.stage === 'rules' && !RULES_DATA) loadRules();
+    if (activeTab.stage === 'bom') loadImportInfo();
     if (activeTab.stage === 'pcb') loadPcb(container);
   } else if (activeTab.kind === 'page') {
     renderPage(activeTab.page, container);
@@ -2289,6 +2299,44 @@ function altsHTML() {
     }
   </div>`;
 }
+const CODE_RISK = 'LCSC code is another part';    // store.CODE_RISK
+async function loadImportInfo(force) {
+  if (!force && impFor === PROJECT) return;
+  impFor = PROJECT;
+  try {
+    const r = await api('/api/bom/import/candidates', undefined, {soft: true});
+    impInfo = r && !r.error ? r : null;
+  } catch (e) { impInfo = null; }
+  const cs = impInfo ? impInfo.candidates : [];
+  if (!cs.some(c => c.path === impSel)) impSel = cs.length ? cs[0].path : '';
+  renderCenter(true);
+}
+function importHTML() {
+  if (!impInfo || !impInfo.linked) return '';
+  const empty = !lines().length, cs = impInfo.candidates || [];
+  const label = c => `${c.folder.split(/[\\/]/).slice(-1)[0]}/${c.name} · ${c.rows} rows${c.has_lcsc ? ' · LCSC' : ''} · ${c.mtime.replace('T', ' ').slice(0, 16)}`;
+  return `<div class="howto"><b>Import BOM from Altium</b> <span style="color:var(--dim)">Reads a BOM CSV exported from your Altium project and compares it with the schematic and the board. The files are never changed.</span>
+    ${cs.length ? `<div class="imp-row"><select id="imp-csv" aria-label="BOM file">${cs.map(c => `<option value="${esc(c.path)}" ${c.path === impSel ? 'selected' : ''}>${esc(label(c))}</option>`).join('')}</select>
+      <button class="btn" data-act="imp-scan" title="Look for BOM files again">Rescan</button>
+      <button class="btn" data-act="imp-preview" ${impBusy ? 'disabled' : ''}>Preview</button>
+      <button class="btn pri" data-act="imp-apply" ${empty && !impBusy ? '' : 'disabled'} ${empty ? '' : 'title="Import works into an empty BOM"'}>Import</button></div>`
+      : `<div class="imp-row"><span class="dnote">No BOM CSV (a file with "bom" in its name) found in the Altium project. Export one from Altium (Reports, Bill of Materials), then rescan.</span>
+      <button class="btn" data-act="imp-scan">Rescan</button></div>`}
+    ${impReport ? importReportHTML(impReport) : ''}</div>`;
+}
+function importReportHTML(r) {
+  const src = r.sources.find(s => s.role === 'bom_csv') || {}, sev = r.by_severity, pl = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+  const cls = s => s === 'error' ? 'bad' : s === 'warn' ? 'warn' : 'plan';
+  const kinds = Object.entries(r.by_kind).sort((a, b) => b[1] - a[1]);
+  return `<div class="imp-rep">
+    <div style="margin-top:8px">${r.applied ? `<b>Imported ${r.imported_lines} lines</b>` : '<b>Preview</b>, nothing imported yet'} from ${esc(src.name)}: ${pl(r.csv.lines, 'line')}, ${pl(r.csv.refs, 'designator')}.
+      ${pl(sev.error, 'error')}, ${pl(sev.warn, 'warning')}, ${pl(sev.info, 'note')}.</div>
+    ${kinds.length ? `<div class="imp-tags">${kinds.map(([k, n]) => `<span class="tag plan">${esc(k)} ${n}</span>`).join('')}</div>
+    <div class="tblwrap imp-tbl"><table class="imp"><thead><tr><th>Severity</th><th>Kind</th><th>Refs</th><th>Message</th></tr></thead><tbody>
+      ${r.findings.map(f => `<tr><td><span class="tag ${cls(f.severity)}">${esc(f.severity)}</span></td><td class="m">${esc(f.kind)}</td><td class="m">${esc(f.refs.slice(0, 4).join(', '))}${f.refs.length > 4 ? ' +' + (f.refs.length - 4) : ''}</td><td class="msg">${esc(f.message)}</td></tr>`).join('')}
+    </tbody></table></div>` : '<div class="dnote" style="margin-top:6px">The files agree.</div>'}
+    <div style="margin-top:4px;color:var(--dim);font-size:12px">A finding is for you to decide: the imported lines keep what the BOM CSV says. Report: <span class="path">projects/${esc(PROJECT)}/checks/bom-import.md</span></div></div>`;
+}
 function bomHTML(container) {
   const t = S.totals, at = checkedAt();
   const uncheck = lines().filter(l => l.availability === 'unchecked' || l.supply == null).length;
@@ -2298,6 +2346,7 @@ function bomHTML(container) {
     <div class="vacts"><button class="btn pri" data-act="check-all">Check all</button><button class="btn" data-act="check">Check stock</button><button class="btn" data-act="compare">Compare prices</button>
     <button class="btn" data-act="export" data-fmt="jlc">Export JLC</button><button class="btn" data-act="export" data-fmt="pcbway">Export PCBWay</button></div></div>
     ${compareCard ? compareHTML() : ''}${exportCard ? exportHTML() : ''}${altsCard ? altsHTML() : ''}
+    ${importHTML()}
     <div class="kpis">
       <div class="kpi"><b>${t.lines}</b><span>lines</span></div>
       <div class="kpi"><b>${t.parts}</b><span>parts to place</span></div>
@@ -2312,7 +2361,7 @@ function bomHTML(container) {
       const refs = l.refs || [];
       const avail = l.availability || (status(l) === 'bad' ? 'none' : status(l) === 'warn' ? 'low' : status(l) === 'ok' ? 'ok' : 'unchecked');
       const dotCls = avail === 'ok' ? 'ok' : avail === 'low' ? 'warn' : avail === 'none' ? 'bad' : 'dim';
-      const dotTip = `Availability: ${avail}${l.risk && l.risk.length ? ' · ' + l.risk.join(', ') : ''}`;
+      const dotTip = `Availability: ${avail}${l.risk && l.risk.length ? ' · ' + l.risk.join(', ') : ''}${l.supply?.LCSC?.code_mismatch ? ' · ' + l.supply.LCSC.code_mismatch : ''}`;
       const lineCost = l.cost_per_board != null ? l.cost_per_board : (b ? b.price * q : null);
       const risks = l.risk || [];
       return `<tr data-key="${esc(l.key)}" class="${sel === l.key ? 'sel' : ''}">
@@ -2327,7 +2376,7 @@ function bomHTML(container) {
         <td class="n ${avail === 'none' ? 'stock bad' : ''}">${q === 0 ? '—' : l.supply == null ? 'checking' : b ? `${num(b.stock)} <small>${b.s}</small>` : '0'}</td>
         <td class="n">${b ? money(b.price) : '—'}</td>
         <td class="n">${money(lineCost)}</td>
-        <td>${risks.length ? risks.map(r => `<span class="tag ${r === 'out of stock' ? 'bad' : (r === 'low stock' || r === 'Extended fee') ? 'warn' : 'plan'}">${esc(r)}</span>`).join(' ') : '<span class="tag ok">ok</span>'}</td>
+        <td>${risks.length ? risks.map(r => `<span class="tag ${r === 'out of stock' ? 'bad' : (r === 'low stock' || r === 'Extended fee' || r === CODE_RISK) ? 'warn' : 'plan'}"${r === CODE_RISK ? ` title="${esc(l.supply?.LCSC?.code_mismatch || '')}"` : ''}>${esc(r)}</span>`).join(' ') : '<span class="tag ok">ok</span>'}</td>
         <td>${l.datasheet ? chip(l.datasheet, '') : `<button class="btn" data-act="get-datasheet" data-line="${esc(l.key)}">Get datasheet</button>`}</td>
         <td><button class="btn" data-chat="${esc(l.key)}">Discuss</button> <button class="btn" data-act="alts" data-line="${esc(l.key)}">Alternatives</button></td>
         <td class="note"><input value="${esc(l.note)}" placeholder="Add a note" aria-label="Note ${esc(l.key)}" data-edit="note" data-line="${esc(l.key)}"></td></tr>`; }).join('')}
@@ -2427,8 +2476,9 @@ function outputsHTML(container) {
 }
 function checksHTML(container) {
   const checks = S.checks || [];
-  const pcbChecks = checks.filter(c => (c.kind || 'pcb') === 'pcb');
-  const smtChecks = checks.filter(c => c.kind === 'smt');
+  // one JLCDFM report can cover the bare board and the assembly (kind 'both'): it is in either card
+  const pcbChecks = checks.filter(c => ['pcb', 'both'].includes(c.kind || 'pcb'));
+  const smtChecks = checks.filter(c => ['smt', 'both'].includes(c.kind));
 
   if (!curPcbCheckStem && pcbChecks.length) curPcbCheckStem = pcbChecks[0].stem;
   if (!curSmtCheckStem && smtChecks.length) curSmtCheckStem = smtChecks[0].stem;
@@ -2489,6 +2539,7 @@ function checksHTML(container) {
         </div>
         ${list.length ? `
           <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            ${curCheck && curCheck.kind === 'both' ? '<span class="tag plan" title="One JLCDFM report that covers the bare board and the assembly: it is listed in both cards">PCB + SMT in one report</span>' : ''}
             <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600">
               Report:
               <select class="check-stem-select" data-kind="${kind}" style="font-size:12px;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel2)">
@@ -3186,9 +3237,11 @@ function rulesHTML(container) {
     ${diff.length ? `
       <div class="tblwrap">
         <table class="libt">
-          <thead><tr><th>Rule</th><th>Kind</th><th>Board Value</th><th>Preset Value</th><th>Status</th></tr></thead>
+          <thead><tr><th>Rule</th><th>Kind</th><th>Board Value</th><th>Preset Value</th><th>Status</th><th>Verdict</th></tr></thead>
           <tbody>
             ${diff.map(d => {
+              const VERDICT = {same: ['ok', 'Same'], safer: ['ok', 'Safer'], tighter_ok: ['warn', 'Tighter, within fab limit'], below_fab_min: ['bad', 'Below fab min'], unknown: ['plan', 'Not judged']};
+              const [vc, vl] = VERDICT[d.verdict] || VERDICT.unknown;
               const st = d.status || d.Status;
               const badge = st === 'match' ? '<span class="tag ok">Match</span>' :
                             st === 'differs' ? '<span class="tag warn">Differs</span>' :
@@ -3200,6 +3253,7 @@ function rulesHTML(container) {
                 <td class="m">${esc(d['board value'] || d.board_value || '—')}</td>
                 <td class="m">${esc(d['preset value'] || d.preset_value || '—')}</td>
                 <td>${badge}</td>
+                <td title="${esc(d.detail || '')}" style="white-space:normal;min-width:240px;max-width:380px"><span class="tag ${vc}">${vl}</span>${d.detail ? `<div class="dnote" style="margin-top:4px">${esc(d.detail)}</div>` : ''}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -3342,7 +3396,7 @@ function render(force) {
   document.title = S.title + ' · PCB Advisor';
   renderNav();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, S.exports, S.checks, page, tab, sel, compareCard, exportCard, libExport, sheetId, altsCard, outjobBanner, curCheckStem, schAnchor]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, S.exports, S.checks, page, tab, sel, compareCard, exportCard, libExport, sheetId, altsCard, outjobBanner, curCheckStem, schAnchor, impInfo, impSel, impReport, impBusy]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
 function go(p, t) {
@@ -4152,6 +4206,19 @@ document.addEventListener('click', async e => {
       case 'pcb-zoom-fit': resetZoom('pcbwrap', pcbZoom); return;
       case 'close': sel = null; renderDetail(); document.querySelectorAll('#view tr.sel').forEach(r => r.classList.remove('sel')); applyFocus(); return;
       case 'closecard': compareCard = exportCard = libExport = altsCard = null; render(true); return;
+      case 'imp-scan': await loadImportInfo(true); toast('Looked for BOM files again'); return;
+      case 'imp-preview': case 'imp-apply': {
+        const pick = $('#imp-csv'), csv = pick ? pick.value : impSel, apply = d.act === 'imp-apply';
+        if (!csv) { toast('Pick a BOM file first'); return; }
+        impSel = csv; impBusy = true; render(true);
+        try {
+          const r = await api('/api/bom/import', {csv, apply});
+          impReport = r;
+          if (r.state) setState(r.state);
+          toast(apply ? `Imported ${r.imported_lines} lines from ${csv.split(/[\\/]/).pop()}` : 'Preview ready');
+        } finally { impBusy = false; render(true); }
+        return;
+      }
       case 'convs': convsOpen = !convsOpen; renderConvs(); return;
       case 'check-all': toast('Checking stock with JLC…'); { const r = await api('/api/parts/check', {}); setState(r); render(true); toast('Stock checked for all lines'); } return;
       case 'ask-sch': {
@@ -4346,6 +4413,7 @@ document.addEventListener('click', async e => {
   if (el.classList.contains('sug')) { send(el.textContent); return; }
 });
 document.addEventListener('change', async e => {
+  if (e.target.id === 'imp-csv') { impSel = e.target.value; impReport = null; renderCenter(true); return; }
   if (e.target.id === 'altium-pcb-select' || e.target.id === 'altium-outdir') {
     if (!ALTIUM_DATA || !ALTIUM_DATA.linked || !ALTIUM_DATA.linked.project_file) return;
     const pcbEl = $('#altium-pcb-select');

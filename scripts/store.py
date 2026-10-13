@@ -65,9 +65,11 @@ DOMAIN_COLORS = {
 }
 
 BOM_FIELDS = ("refs", "value", "description", "mpn", "manufacturer", "package",
-              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role")
+              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role", "lcsc")
+# `lcsc` is a code the student or an import declared for the line; what LCSC answered is in supply-log
 # a change to one of these makes the old stock/price answer stale
 SUPPLY_KEYS = ("mpn",)
+CODE_RISK = "LCSC code is another part"       # the risk tag for a supply answer with `code_mismatch`
 SUPPLIERS = ("LCSC", "Mouser", "DigiKey")
 
 
@@ -132,7 +134,7 @@ def supply_for(project):
             "qty_break": ev.get("qty_break"), "checked_at": ev.get("ts"),
             "source": ev.get("source"),
         }
-        for opt_key in ("library_type", "package", "code", "datasheet_url", "exact"):
+        for opt_key in ("library_type", "package", "code", "datasheet_url", "exact", "code_mismatch"):
             if opt_key in ev:
                 item[opt_key] = ev[opt_key]
         out.setdefault(ev["line"], {})[ev["supplier"]] = item
@@ -209,6 +211,8 @@ def line_availability_and_risk(line, best=None, build_qty=5):
     exact_flags = [s.get("exact") for s in supply.values() if s.get("exact") is not None]
     if exact_flags and not all(exact_flags):
         risk.append("no exact MPN match")
+    if any(s.get("code_mismatch") for s in supply.values()):
+        risk.append(CODE_RISK)
 
     return availability, lib_type, cost_per_board, risk
 
@@ -900,7 +904,8 @@ def decide(project, pid, decision):
         else:
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
             append(project, "bom-log.jsonl", {
-                "ts": now(), "by": "agent-approved", "line": prop["line"], "changes": prop["changes"],
+                "ts": now(), "by": "agent-approved", "line": prop["line"],
+                "changes": _drop_stale_lcsc(project, prop["line"], dict(prop["changes"])),
                 "before": prop.get("before"), "reason": prop.get("reason"),
                 "sources": prop.get("sources"), "proposal": pid})
             if prop.get("library"):
@@ -910,6 +915,15 @@ def decide(project, pid, decision):
     else:
         append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
     return prop
+
+
+def _drop_stale_lcsc(project, line, changes):
+    """A declared LCSC code belongs to the part it was declared for: a new MPN voids it."""
+    if "mpn" in changes and "lcsc" not in changes:
+        cur = next((l for l in bom_lines(project) if l["key"] == line), None)
+        if cur and cur.get("lcsc") and cur.get("mpn") != changes["mpn"]:
+            changes["lcsc"] = ""
+    return changes
 
 
 def edit_bom(project, line, field, value):
@@ -924,13 +938,14 @@ def edit_bom(project, line, field, value):
     changes = {field: value}
     if field == "mpn":
         changes["manufacturer"] = "—"      # unknown until a check answers for the new MPN
+        _drop_stale_lcsc(project, line, changes)
     return append(project, "bom-log.jsonl", {
         "ts": now(), "by": "student", "line": line, "changes": changes,
         "before": {field: existing[line].get(field)}})
 
 
 def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, source="skill",
-               library_type=None, package=None, code=None, datasheet_url=None, exact=None):
+               library_type=None, package=None, code=None, datasheet_url=None, exact=None, code_mismatch=None):
     rec = {
         "ts": now(), "line": line, "mpn": mpn, "supplier": supplier, "stock": stock,
         "unit_price": unit_price, "qty_break": qty_break, "source": source,
@@ -940,6 +955,7 @@ def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, so
     if code is not None: rec["code"] = code
     if datasheet_url is not None: rec["datasheet_url"] = datasheet_url
     if exact is not None: rec["exact"] = exact
+    if code_mismatch: rec["code_mismatch"] = code_mismatch      # the declared code is another part than the MPN
     return append(project, "supply-log.jsonl", rec)
 
 

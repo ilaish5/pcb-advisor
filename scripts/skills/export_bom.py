@@ -6,7 +6,8 @@ Export the BOM for a manufacturer.
 Writes projects/<project>/exports/<project>_BOM_<format>.csv. Lines that are not
 fitted (DNP) or not bought (test pads) are left out and listed in the output, so
 nothing disappears silently. JLC needs an LCSC part number: it comes from the last
-availability check; a line without one is listed under "needs_lcsc".
+availability check, else from the code declared on the line (an import from Altium);
+a line without one is listed under "needs_lcsc".
 """
 import csv
 import json
@@ -26,14 +27,15 @@ FORMATS = {
 }
 
 
-def lcsc_code(project, key):
+def lcsc_code(project, key, line=None):
+    """The code of the last stock check; failing that, the one declared on the line."""
     code = ""
     for ev in store.read_jsonl(store.pdir(project) / "supply-log.jsonl"):
         if ev.get("line") == key and ev.get("supplier") == "LCSC":
             m = re.search(r"C\d{3,}", ev.get("source") or "")
             if m:
                 code = m.group(0)
-    return code
+    return code or (line or {}).get("lcsc") or ""
 
 
 def export(project, fmt="generic"):
@@ -53,7 +55,7 @@ def export(project, fmt="generic"):
                 continue
             refs = ", ".join(l["refs"])
             if fmt == "jlc":
-                code = lcsc_code(project, l["key"])
+                code = lcsc_code(project, l["key"], l)
                 if not code:
                     needs.append(l["key"])
                 w.writerow([l.get("value") or l.get("mpn"), refs, l.get("package", ""), code])

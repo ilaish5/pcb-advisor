@@ -420,6 +420,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, _public_config())
         if path == "/api/altium":
             return self._send(200, _altium_state(self.project()))
+        if path == "/api/bom/import/candidates":
+            proj = self.project()
+            if not project_mod.exists(proj):
+                return self._send(404, {"error": f"no such project: {proj}"})
+            import bom_import
+            linked = bool(project_mod.altium_link(proj).get("project_file"))
+            return self._send(200, {"linked": linked, "bom_empty": not store.bom_lines(proj),
+                                    "candidates": bom_import.candidates(proj) if linked else []})
         if path == "/api/altium/file":
             req_path = self.query("path")
             if not req_path:
@@ -618,6 +626,7 @@ class Handler(BaseHTTPRequestHandler):
                     extra = []
             linked_pcb = None
             board_rules = []
+            doc = None
             try:
                 link = project_mod.altium_link(proj)
                 pcb_name = link.get("pcb_file")
@@ -633,7 +642,7 @@ class Handler(BaseHTTPRequestHandler):
                         linked_pcb = pcb_path.name
             except Exception:
                 pass
-            diff = rules_mod.diff_rules(board_rules)
+            diff = rules_mod.diff_rules(board_rules, board_geom=doc)
             return self._send(200, {
                 "preset": preset,
                 "extra": extra,
@@ -836,12 +845,33 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": str(exc)})
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
-            if rec and data.get("field") == "mpn":
+            if rec and data.get("field") in ("mpn", "lcsc"):
                 recheck_async(proj, data["line"])
             if rec:
                 redraw(proj)
                 project_mod.touch(proj)
             return self._send(200, state())
+
+        if path == "/api/bom/import":
+            import bom_import
+            target = workspace.safe_name(data["project"]) if data.get("project") else proj
+            if not project_mod.exists(target):
+                return self._send(404, {"error": f"no such project: {target}"})
+            try:
+                csv_path = bom_import.resolve_csv(target, data.get("csv"))     # inside the Altium project or ours
+                report = (bom_import.apply if data.get("apply") else bom_import.preview)(target, csv_path)
+            except bom_import.PathRefused as exc:
+                return self._send(403, {"error": str(exc)})
+            except bom_import.BomNotEmpty as exc:
+                return self._send(409, {"error": str(exc)})
+            except bom_import.BomImportError as exc:
+                return self._send(400, {"error": str(exc)})
+            except Exception as exc:
+                return self._send(500, {"error": f"import failed: {exc}"})
+            if report["applied"]:
+                redraw(target)
+                report["state"] = model.build(project=target, session=self.session(target))
+            return self._send(200, report)
 
         if path == "/api/parts/check":
             target_line = data.get("line")
@@ -1243,16 +1273,16 @@ class Handler(BaseHTTPRequestHandler):
             blob = data.get("data_b64")
             if not blob:
                 return self._send(400, {"error": "data_b64 required"})
+            import dfm
             kind = data.get("kind", "pcb")
-            if kind not in ("pcb", "smt"):
-                return self._send(400, {"error": f"invalid kind '{kind}': must be 'pcb' or 'smt'"})
+            if kind not in dfm.KINDS:
+                return self._send(400, {"error": f"invalid kind '{kind}': must be 'pcb', 'smt' or 'both'"})
             try:
                 raw = base64.b64decode(blob)
             except Exception as exc:
                 return self._send(400, {"error": f"invalid base64: {exc}"})
             if name.lower().endswith(".pdf") and not raw.startswith(b"%PDF-"):
                 return self._send(400, {"error": "This file is not a valid PDF (it may be empty or damaged). Upload it again."})
-            import dfm
             try:
                 res = dfm.ingest_pdf(raw, proj, name=name, kind=kind)
                 return self._send(200, res)
