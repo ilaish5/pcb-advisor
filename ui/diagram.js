@@ -199,12 +199,11 @@
   const VALID_CONNECT_ARROWS = new Set(['none', 'end', 'both', 'start', 'to']);
   const VALID_CONNECT_ROUTES = new Set(['straight', 'elbow', 'curved']);
   const VALID_ENDPOINT_SIDES = new Set(['top', 'bottom', 'left', 'right']);
-  // Connection points: 4 side midpoints (all shapes) + 4 corners (rectangles only)
+  // Connection points: 4 sides + 4 corners, all on the drawn outline (see anchorPoint)
   const VALID_ENDPOINT_POINTS = new Set([
     'top', 'right', 'bottom', 'left',
     'top-left', 'top-right', 'bottom-right', 'bottom-left'
   ]);
-  const RECT_POINT_TYPES = new Set(['rectangle', 'process', 'sticky']);
   // Screen-pixel radii for connector end snapping / detaching
   const SNAP_RADIUS_PX = 16;
   const DETACH_RADIUS_PX = 24;
@@ -224,6 +223,69 @@
     if (t === 'database') return 'cylinder';
     if (t === 'brace' || t === 'note-brace' || t === 'note') return 'note_brace';
     return t;
+  }
+
+  /**
+   * Pure geometry: anchor points ON the drawn outline of a shape (not its bounding box).
+   * Point names: top, right, bottom, left, top-left, top-right, bottom-right, bottom-left.
+   * Shapes with fewer natural points map the missing names to the nearest outline point.
+   * Never throws; unknown names resolve to 'right'. Values are plain numbers.
+   */
+  const ANCHOR_NAMES = ['top', 'right', 'bottom', 'left', 'top-left', 'top-right', 'bottom-right', 'bottom-left'];
+  const C45 = Math.SQRT1_2;
+  // Fractions [fx, fy] of the box, in ANCHOR_NAMES order, for polygon-like shapes (matching renderShapeSvg)
+  const ANCHOR_FRACTIONS = {
+    rectangle: [[.5, 0], [1, .5], [.5, 1], [0, .5], [0, 0], [1, 0], [1, 1], [0, 1]],
+    diamond: [[.5, 0], [1, .5], [.5, 1], [0, .5], [.25, .25], [.75, .25], [.75, .75], [.25, .75]],
+    triangle: [[.5, 0], [.75, .5], [.5, 1], [.25, .5], [.375, .25], [.625, .25], [1, 1], [0, 1]],
+    parallelogram: [[.6, 0], [.9, .5], [.4, 1], [.1, .5], [.2, 0], [1, 0], [.8, 1], [0, 1]],
+    hexagon: [[.5, 0], [1, .5], [.5, 1], [0, .5], [.22, 0], [.78, 0], [.78, 1], [.22, 1]],
+    octagon: [[.5, 0], [1, .5], [.5, 1], [0, .5], [.14, .14], [.86, .14], [.86, .86], [.14, .86]],
+    arrow_right: [[.5, .25], [1, .5], [.5, .75], [0, .5], [0, .25], [.6, 0], [.6, 1], [0, .75]],
+    double_arrow: [[.5, .25], [1, .5], [.5, .75], [0, .5], [.28, 0], [.72, 0], [.72, 1], [.28, 1]],
+    cloud: [[.55, .0925], [.95, .52], [.5, .89], [.08, .5], [.35, .22], [.75, .22], [.8, .8], [.2, .8]],
+    note_brace: [[.3, 0], [.92, .5], [.3, 1], [0, .5], [.12, .38], [.92, .3], [.92, .7], [.12, .62]]
+  };
+
+  function anchorPoint(shape, pointName) {
+    const sh = shape || {};
+    const x = Number(sh.x) || 0, y = Number(sh.y) || 0;
+    const w = Number(sh.w) || 0, h = Number(sh.h) || 0;
+    const type = normalizeShapeType(sh.type);
+    let idx = ANCHOR_NAMES.indexOf(pointName);
+    if (idx < 0) idx = 1; // unknown / missing name -> 'right' (on the outline)
+    let fx, fy;
+    if (type === 'ellipse') {
+      const t = [[.5, 0], [1, .5], [.5, 1], [0, .5],
+        [.5 - .5 * C45, .5 - .5 * C45], [.5 + .5 * C45, .5 - .5 * C45],
+        [.5 + .5 * C45, .5 + .5 * C45], [.5 - .5 * C45, .5 + .5 * C45]][idx];
+      fx = t[0]; fy = t[1];
+    } else if (type === 'rounded_rectangle' || type === 'speech_callout') {
+      const bh = type === 'speech_callout' ? 0.76 * h : h;
+      const r = type === 'speech_callout' ? Math.min(6, w / 2, bh / 2) : Math.min(w, h) / 2;
+      const d = r * (1 - C45);
+      const px = [w / 2, w, w / 2, 0, d, w - d, w - d, d][idx];
+      const py = [0, bh / 2, bh, bh / 2, d, d, bh - d, bh - d][idx];
+      if (type === 'speech_callout' && idx === 7) return { x: x + 0.15 * w, y: y + h }; // tail tip
+      return { x: x + px, y: y + py };
+    } else if (type === 'cylinder') {
+      const ry = 0.18 * h;
+      const t = [[.5, 0], [1, .5], [.5, 1], [0, .5],
+        [.5 - .5 * C45, ry * (1 - C45) / (h || 1)], [.5 + .5 * C45, ry * (1 - C45) / (h || 1)],
+        [.5 + .5 * C45, 1 - ry * (1 - C45) / (h || 1)], [.5 - .5 * C45, 1 - ry * (1 - C45) / (h || 1)]][idx];
+      fx = t[0]; fy = t[1];
+    } else if (type === 'star') {
+      // outer tips (angles -90, -18, 54, 126, 198) and inner notches (18, 90, 162) as in renderShapeSvg
+      const rx = w / 2, ry = h / 2, irx = rx * 0.42, iry = ry * 0.42;
+      const rad = a => a * Math.PI / 180;
+      const tip = a => ({ x: x + rx + rx * Math.cos(rad(a)), y: y + ry + ry * Math.sin(rad(a)) });
+      const notch = a => ({ x: x + rx + irx * Math.cos(rad(a)), y: y + ry + iry * Math.sin(rad(a)) });
+      return [tip(-90), notch(18), notch(90), notch(162), tip(198), tip(-18), tip(54), tip(126)][idx];
+    } else {
+      const t = (ANCHOR_FRACTIONS[type] || ANCHOR_FRACTIONS.rectangle)[idx];
+      fx = t[0]; fy = t[1];
+    }
+    return { x: x + fx * w, y: y + fy * h };
   }
 
   function sanitizeModel(raw) {
@@ -2182,22 +2244,10 @@
     /* ---------------- Connectors ---------------- */
 
     getConnectionPoints(shape) {
-      const x = shape.x, y = shape.y, w = shape.w, h = shape.h;
-      const pts = [
-        { name: 'top', x: x + w / 2, y: y },
-        { name: 'right', x: x + w, y: y + h / 2 },
-        { name: 'bottom', x: x + w / 2, y: y + h },
-        { name: 'left', x: x, y: y + h / 2 }
-      ];
-      if (RECT_POINT_TYPES.has(normalizeShapeType(shape.type))) {
-        pts.push(
-          { name: 'top-left', x: x, y: y },
-          { name: 'top-right', x: x + w, y: y },
-          { name: 'bottom-right', x: x + w, y: y + h },
-          { name: 'bottom-left', x: x, y: y + h }
-        );
-      }
-      return pts;
+      return ANCHOR_NAMES.map(name => {
+        const p = anchorPoint(shape, name);
+        return { name, x: p.x, y: p.y };
+      });
     }
 
     snapFreePos(pos) {
@@ -2396,17 +2446,7 @@
     getShapePortPosition(shapeId, point) {
       const s = this.data.shapes.find(x => x.id === shapeId);
       if (!s) return { x: 0, y: 0 };
-      switch (point) {
-        case 'top': return { x: s.x + s.w / 2, y: s.y };
-        case 'right': return { x: s.x + s.w, y: s.y + s.h / 2 };
-        case 'bottom': return { x: s.x + s.w / 2, y: s.y + s.h };
-        case 'left': return { x: s.x, y: s.y + s.h / 2 };
-        case 'top-left': return { x: s.x, y: s.y };
-        case 'top-right': return { x: s.x + s.w, y: s.y };
-        case 'bottom-right': return { x: s.x + s.w, y: s.y + s.h };
-        case 'bottom-left': return { x: s.x, y: s.y + s.h };
-        default: return { x: s.x + s.w / 2, y: s.y + s.h / 2 };
-      }
+      return anchorPoint(s, point);
     }
 
     /** Attached ends are recomputed from the shape every render, so they follow move/resize/undo/agent edits. */
@@ -2747,8 +2787,11 @@
       overlay.style.textAlign = align;
       overlay.style.display = 'block';
 
-      overlay.focus();
+      // preventScroll: focusing an overlay near the edge would scroll the overflow:hidden wrap = a view jump
+      overlay.focus({ preventScroll: true });
       overlay.select();
+      this.canvasWrap.scrollTop = 0;
+      this.canvasWrap.scrollLeft = 0;
     }
 
     commitTextEdit() {
@@ -3351,9 +3394,11 @@
     }
   }
 
+  DiagramEditor.anchorPoint = anchorPoint;
   DiagramEditor.attachPanHelper = attachPanHelper;
   DiagramEditor.sanitizeModel = sanitizeModel;
   if (typeof window !== 'undefined') {
+    window.anchorPoint = anchorPoint;
     window.attachPanHelper = attachPanHelper;
     window.sanitizeModel = sanitizeModel;
   }

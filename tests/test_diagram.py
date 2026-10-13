@@ -480,6 +480,21 @@ def test_agent_proposal_flow(lte):
     assert any(s.get("id") == "prop_mcu" for s in shapes_after)
 
 
+def test_point_ends_survive_save_and_load(empty):
+    shape = {"type": "ellipse", "x": 0.0, "y": 0.0, "w": 160.0, "h": 80.0, "text": ""}
+    idea = store.load_idea(empty)
+    idea["diagram"] = {
+        "shapes": [dict(shape, id="a"), dict(shape, id="b", x=300.0)],
+        "connectors": [{"id": "c1", "from": {"shape": "a", "point": "bottom"},
+                        "to": {"shape": "b", "point": "top-left"}}],
+        "frames": [],
+    }
+    store.save_idea(empty, idea)
+    c = store.load_idea(empty)["diagram"]["connectors"][0]
+    assert c["from"] == {"shape": "a", "point": "bottom"}
+    assert c["to"] == {"shape": "b", "point": "top-left"}
+
+
 def test_proposals_in_the_same_millisecond_get_distinct_ids(lte, monkeypatch):
     import datetime as real_dt
     fixed = real_dt.datetime(2026, 10, 13, 21, 0, 0, 123456)
@@ -744,8 +759,8 @@ def test_snap_radius_points_and_highlight_present():
     assert re.search(r"SNAP_RADIUS_PX\s*=\s*16\b", js)
     assert re.search(r"DETACH_RADIUS_PX\s*=\s*24\b", js)
     assert "findSnapTarget" in js and "getConnectionPoints" in js
-    # 4 side midpoints for every shape, corners for rectangles
-    assert "RECT_POINT_TYPES" in js
+    # 4 side midpoints + 4 corners for every shape, all on the outline (anchorPoint)
+    assert "ANCHOR_NAMES" in js
     for p in ("top-left", "top-right", "bottom-right", "bottom-left"):
         assert f"'{p}'" in js
     # nearest point highlighted
@@ -811,3 +826,27 @@ def test_validation_rejects_bad_point_and_unknown_shape():
             "shapes": shapes,
             "connectors": [{"id": "c1", "from": {"shape": "ghost", "point": "top"}, "to": {"x": 1, "y": 1}}],
         })
+
+
+# ---------------------------------------------------------------- anchor geometry (static: no JS runtime)
+
+def test_anchor_point_covers_every_palette_shape_on_outline():
+    js = (REPO / "ui" / "diagram.js").read_text(encoding="utf-8")
+    assert "function anchorPoint(shape, pointName)" in js
+    palette = re.findall(r"\{ type: '([a-z_]+)', name:", js[js.index("const SHAPES_16"):])
+    assert len(palette) == 16
+    body = js[js.index("function anchorPoint(shape, pointName)"):js.index("function sanitizeModel")]
+    frac_keys = set(re.findall(r"^\s{4}([a-z_]+): \[\[", js, re.M))
+    handled = frac_keys | set(re.findall(r"type === '([a-z_]+)'", body))
+    # process and sticky intentionally use the rectangle fractions (their outline is the box)
+    for t in palette:
+        assert t in handled or t in ("process",), f"anchorPoint must handle shape type {t}"
+    # connection points / port positions use the pure function, not the bounding box
+    assert "return anchorPoint(s, point);" in js
+    assert "ANCHOR_NAMES.map" in js
+    # all 8 point names stay resolvable for every shape
+    for n in ("top", "right", "bottom", "left", "top-left", "top-right", "bottom-right", "bottom-left"):
+        assert f"'{n}'" in js.split("const ANCHOR_NAMES")[1].split("\n")[0]
+    # fraction table rows each carry all 8 points
+    for row in re.findall(r"^\s{4}[a-z_]+: (\[\[.*\]\]),?$", js, re.M):
+        assert row.count("], [") == 7

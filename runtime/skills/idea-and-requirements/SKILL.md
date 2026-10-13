@@ -29,6 +29,8 @@ description: Turns a rough project idea into a short list of open requirements q
 Question list (pick, do not ask all):
 - Power: source (USB, battery, adapter, 12 V), highest and lowest voltage, peak current, battery life target, charging.
 - Flashing and debug: how is the first firmware loaded and how is it debugged? ROM USB DFU (which pins), UART boot, or an SWD header.
+  When an MCU is named, look its family up in `references/mcu-bootloaders.json` and cite its `source` field (not
+  memory); a family not listed there is "unknown".
 - Cables: which cables leave the board, on which edge, which way the plug enters, any enclosure or panel hole.
 - UI: buttons, LEDs, display, buzzer. What the user touches, and where.
 - Memory: how much data and code, how often written. A smaller part is usually enough and much cheaper.

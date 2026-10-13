@@ -228,7 +228,8 @@ with the user's OK; (4) close I11 (section 8 summary, Hebrew report). Hourly cro
 
 **I11 done (2026-10-13)** - see section 8. Status file: `docs/STATUS-2026-10-13.md`.
 The .RUL import was done in AD26 by Claude Code on a temp copy of the rules-board fixture (not the device).
-**Waiting for the user:** OK for the engine benchmark (`pcb.py bench --engine ...`, heavy; close Altium and Edge first).
+Engine benchmark with Claude Code done 2026-10-13 (see §8 I11 item 9, `docs/BENCHMARK.md`). Open: agy engine run;
+behaviour evals 7/13 (length, unflagged MPNs).
 
 Done 2026-10-12 (read-only, with the user's OK): device previews rendered for all 4 sheets + the PcbDoc
 (fixed a missing `import store` in preview_sch.py). Board preview is correct; on the schematic, the 64-pin MCU's
@@ -386,5 +387,9 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 7. Browser check in Edge: picker, shape at cursor, connector snap + follow. Stray lte-tracker blocks removed.
 8. Built by Sonnet subagents in parallel (diagram, 3 x detectors, picker, .RUL fix); Altium work and review by
    Claude Code. 422 tests green, skills lint ok, runtime pack synced.
-9. Not run: engine benchmark (heavy; needs the user's OK). Non-rectangle shapes snap to their bounding box.
+9. Follow-up (user: continue with what is open): engine benchmark with Claude Code: incidents 12/12 (7 earlier),
+   Q&A 0.63 -> 0.89, behaviour 0.23 -> 7/13 (left: answers too long, unflagged MPNs). Fixed on the way: Claude Code
+   could not run 13 scripts AGENTS.md names (allow-list + test), word limit in AGENTS.md, three grader false
+   negatives. Connectors end on the outline of every shape; the server kept dropping `point` on load (fixed);
+   view jumped when a label box opened (fixed). agy engine run not done.
 10. The device folder was not touched (no git, no writes); all Altium work on `%TEMP%` copies, deleted afterwards.

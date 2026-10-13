@@ -57,7 +57,20 @@
             "Edit({projects_rule}/*/sources/*.md)",
             "Edit({projects_rule}/*/sources/*.md.json)",
             "Bash({python} {repo}/scripts/skills/*.py *)",
-            "Bash({python} {repo}/scripts/verify_sources.py *)"
+            "Bash({python} {repo}/scripts/verify_sources.py *)",
+            "Bash({python} {repo}/scripts/jlc.py *)",
+            "Bash({python} {repo}/scripts/library.py *)",
+            "Bash({python} {repo}/scripts/rules.py *)",
+            "Bash({python} {repo}/scripts/calc.py *)",
+            "Bash({python} {repo}/scripts/checks/*.py *)",
+            "Bash({python} {repo}/scripts/preview_sch.py *)",
+            "Bash({python} {repo}/scripts/preview_pcb.py *)",
+            "Bash({python} {repo}/scripts/validate_netlist.py *)",
+            "Bash({python} {repo}/scripts/outjob.py *)",
+            "Bash({python} {repo}/scripts/dfm.py *)",
+            "Bash({python} {repo}/scripts/altium/dump.py *)",
+            "Bash({python} {repo}/scripts/keeping.py *)",
+            "Bash({python} {repo}/scripts/project.py *)"
           ],
           "disallowed": [
             "NotebookEdit"

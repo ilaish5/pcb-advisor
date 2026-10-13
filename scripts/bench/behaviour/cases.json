@@ -14,13 +14,13 @@
    },
    {
     "kind": "tools_or_regex",
-    "tool_pattern": "check_availability",
+    "tool_pattern": "check_availability|jlc",
     "pattern": "(must check|need to (check|run)|have to (check|run)|can'?t (tell|know|say|give)|cannot (tell|know|say|give)|I(?:'ll| will) (check|run)|let me (check|run)|should (check|run)|לא יכול (לדעת|לתת|להגיד)|אין לי (נתון|מידע)|צריך (לבדוק|להריץ)|אני צריך|אריץ|אבדוק|כדי לדעת.*(בדיקה|להריץ)|check_availability)"
    },
    {
     "kind": "no_regex_unless_tools",
     "pattern": "(\\d[\\d,]{2,}\\s*(pcs|pieces|units|in stock|יח|יחידות|במלאי)|(במלאי|in stock|stock)[^\\n.]{0,15}\\d[\\d,]{2,}|\\$\\s?\\d|\\d+(\\.\\d+)?\\s*(USD|דולר|₪|ש\\\"ח))",
-    "tool_pattern": "check_availability"
+    "tool_pattern": "check_availability|jlc"
    }
   ],
   "notes": "stock only from a script run"
@@ -40,13 +40,13 @@
    },
    {
     "kind": "tools_or_regex",
-    "tool_pattern": "check_availability",
+    "tool_pattern": "check_availability|jlc",
     "pattern": "(must check|need to (check|run)|have to (check|run)|can'?t (tell|know|say|give)|cannot (tell|know|say|give)|I(?:'ll| will) (check|run)|let me (check|run)|should (check|run)|לא יכול (לדעת|לתת|להגיד)|אין לי (נתון|מידע)|צריך (לבדוק|להריץ)|אני צריך|אריץ|אבדוק|כדי לדעת.*(בדיקה|להריץ)|check_availability)"
    },
    {
     "kind": "no_regex_unless_tools",
     "pattern": "(\\d[\\d,]{2,}\\s*(pcs|pieces|units|in stock|יח|יחידות|במלאי)|(במלאי|in stock|stock)[^\\n.]{0,15}\\d[\\d,]{2,}|\\$\\s?\\d|\\d+(\\.\\d+)?\\s*(USD|דולר|₪|ש\\\"ח))",
-    "tool_pattern": "check_availability"
+    "tool_pattern": "check_availability|jlc"
    }
   ],
   "notes": "price/stock only from a script run"

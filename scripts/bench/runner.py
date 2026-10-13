@@ -2,6 +2,7 @@
 import datetime
 import importlib
 import pathlib
+import re
 import subprocess
 
 from . import detectors, incidents
@@ -22,7 +23,7 @@ def build_prompt(incident):
 
 
 def keywords_hit(answer, groups):
-    low = answer.lower()
+    low = re.sub(r"[*_`]", "", answer).lower()   # "A7670**C**" in Markdown is still A7670C
     return all(any(k.lower() in low for k in g) for g in groups)
 
 

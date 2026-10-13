@@ -214,3 +214,17 @@ def test_the_real_pack_syncs_clean(engine_home):
     assert (engine_home / ".agents" / "skills" / "altium-help" / "SKILL.md").is_file()
     assert runtime_pack.SKILL_CODE in (engine_home / ".claude" / "skills" / "altium-help" / "SKILL.md").read_text(encoding="utf-8")
     assert runtime_pack.AGENTS_CODE in (engine_home / "AGENTS.md").read_text(encoding="utf-8")
+
+
+def test_every_script_agents_md_names_is_allowed_for_claude_code():
+    """A script AGENTS.md tells the engine to run but Claude Code may not run = a blocked answer."""
+    import fnmatch
+    repo = pathlib.Path(__file__).resolve().parents[1]
+    cfg = json.loads((repo / "config" / "defaults.json").read_text(encoding="utf-8"))
+    allowed = cfg["agent"]["providers"]["claude_code"]["tools"]["allowed"]
+    patterns = [m.group(1) for a in allowed if (m := re.match(r"Bash\(\{python\} \{repo\}/(\S+) \*\)$", a))]
+    text = (repo / "runtime" / "AGENTS.md").read_text(encoding="utf-8")
+    named = sorted(set(re.findall(r"python <repo>/(scripts/\S+\.py)", text)))
+    assert named, "no scripts found in AGENTS.md"
+    missing = [s for s in named if not any(fnmatch.fnmatch(s, p) for p in patterns)]
+    assert not missing, f"not in claude_code tools.allowed: {missing}"

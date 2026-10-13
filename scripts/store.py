@@ -773,6 +773,8 @@ def migrate_idea_diagram(idea):
                     safe_sh = id_map.get(raw_sh, raw_sh)
                     if not ID_RE.match(safe_sh):
                         safe_sh = shapes[0]["id"] if shapes else "shape_0"
+                    if ep.get("point") in VALID_ENDPOINT_POINTS:
+                        return {"shape": safe_sh, "point": ep["point"]}
                     side = ep.get("side", "right")
                     if side not in VALID_ENDPOINT_SIDES:
                         side = "right"

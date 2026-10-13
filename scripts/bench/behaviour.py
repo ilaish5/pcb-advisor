@@ -48,8 +48,9 @@ import qa_eval as common  # noqa: E402  (shared helpers: lang, words, Session, s
 DATA = HERE / "behaviour" / "cases.json"
 
 GENERIC = re.compile(
-    r"^(SOT|SOIC|SOP|QFN|DFN|LQFP|TQFP|TSSOP|BGA|SMD|SMA|SMB|USB|RS|CAN|IEEE|ISO|IPC|IEC|EN|AD|JLC|"
-    r"I2C|SPI|UART|GPIO|ESD|EMI|PCB|BOM|DRC|ERC|LDO|MPN|HTTP|HTTPS|PWM|ADC|DAC)[-]?\d*[A-Z]?$")
+    r"^(SOT|SOD|SC|TO|SOIC|SOP|MSOP|QFN|VQFN|DFN|WSON|LGA|LQFP|TQFP|TSSOP|BGA|SMD|SMA|SMB|USB|RS|CAN|IEEE|"
+    r"ISO|IPC|IEC|EN|AD|JLC|PT|I2C|SPI|UART|GPIO|ESD|EMI|PCB|BOM|DRC|ERC|LDO|MPN|HTTP|HTTPS|PWM|ADC|DAC)"
+    r"(-?\d+[A-Z]?)*$")   # SOT-23, SOT-23-6, TO-252, PT100, QFN-16
 TOKEN = re.compile(r"\b[A-Z][A-Z0-9\-]{4,}\b")
 
 
