@@ -50,7 +50,8 @@ Altium design rule types and "what values": `unit3-pcb-layout.en.md` [25]-[26]. 
 ## .RUL file facts (verified on AD26 and read on AD20 projects)
 - Plain text, latin-1, one rule per line, each line a `|KEY=VALUE|...` record exactly as stored in the PcbDoc, line ends with
   the pilcrow character (0xB6) then CRLF. Altium's export skips the default SilkToBoardRegionClearance rule.
-- Import: Design > Rules, right-click > Import Rules; answer No to "clear existing rules". A single-rule file came in as written.
+- Import (AD26): Design > Rules, right-click "Default Rule Set" > Import Rules... > "Select Design Rules" > Import > "Rule Set Already Exists": "Merge with existing rules" (duplicate names become `Name_1` at priority 2) or "Replace existing rules" (removes the board's rules). Values in mil are kept; the leading `|` and trailing `|¶` are accepted.
+- Annular ring key is `MINIMUMRING` (not `MINIMUM`).
 - Keys that matter: `RULEKIND`, `NAME`, `SCOPE1EXPRESSION` (for example `InNet('NAME')`), `MINLIMIT`/`MAXLIMIT`/`PREFEREDWIDTH`,
   `PRIORITY`, `UNIQUEID` (8 chars, must be unique). Proof script: `<repo>/docs/feasibility/feas_rul.py`.
 

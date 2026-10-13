@@ -114,3 +114,66 @@ def test_rules_cli_diff():
     assert proc.returncode == 0
     assert "Clearance" in proc.stdout
     assert "differs" in proc.stdout
+
+
+from rules import board_rul_records  # noqa: E402
+
+PRESET_KINDS = ("Clearance", "Width", "RoutingVias", "MinimumAnnularRing", "HoleSize",
+                "SilkToSolderMaskClearance", "SolderMaskExpansion")
+
+
+def test_board_aware_export_roundtrip(tmp_path):
+    board_path = FIXTURES / "rules-board.PcbDoc"
+    board = read_pcbdoc(board_path)["rules"]
+    preset = get_preset_rule_records()
+    recs = board_rul_records(board_path, preset)
+    board_kinds = {r["RULEKIND"] for r in board}
+    scope_all = {r["RULEKIND"] for r in board
+                 if r.get("SCOPE1EXPRESSION") == "All" and r.get("SCOPE2EXPRESSION") == "All"}
+    added = [p for p in preset if p["RULEKIND"] not in scope_all]
+    assert len(recs) == len(board) + len(added)
+    out = write_rul(recs, tmp_path / "b.RUL")
+    back = read_rul(out)
+    assert len(back) == len(recs)
+    by_uid = {r["UNIQUEID"]: r for r in back}
+    assert len(by_uid) == len(back)
+    for b in board:  # names and UNIQUEIDs preserved
+        assert by_uid[b["UNIQUEID"]]["NAME"] == b["NAME"]
+    clr = by_uid["NCKWLEIT"]
+    assert clr["GAP"] == "6mil" and clr["GENERICCLEARANCE"] == "6mil" and clr["PRIORITY"] == "1"
+    assert clr["NETSCOPE"] == "DifferentNets"
+    ring = next(r for r in back if r["RULEKIND"] == "MinimumAnnularRing")
+    assert ring["MINIMUMRING"] == "6mil" and "MINIMUM" not in ring
+    assert by_uid["TORKYMCQ"]["HOLEWIDTH"] == "12mil"
+    # the IsPad-scoped silk rule is untouched; the preset rule is added at lowest priority
+    assert by_uid["FNWDUPRT"]["MINSILKSCREENTOMASKGAP"] == "10mil"
+    silk = [r for r in back if r["RULEKIND"] == "SilkToSolderMaskClearance" and r["UNIQUEID"] != "FNWDUPRT"]
+    assert len(silk) == 1 and silk[0]["MINSILKSCREENTOMASKGAP"] == "6mil" and silk[0]["PRIORITY"] == "2"
+
+
+def test_diff_uses_effective_priority():
+    board = [
+        {"NAME": "Clearance", "RULEKIND": "Clearance", "SCOPE1EXPRESSION": "All", "SCOPE2EXPRESSION": "All",
+         "PRIORITY": "1", "GAP": "10mil"},
+        {"NAME": "Clearance_1", "RULEKIND": "Clearance", "SCOPE1EXPRESSION": "All", "SCOPE2EXPRESSION": "All",
+         "PRIORITY": "2", "GAP": "6mil"},
+    ]
+    row = next(r for r in diff_rules(board) if r["kind"] == "Clearance" and r["status"] != "extra_on_board")
+    assert row["status"] == "differs" and row["board value"] == "10mil"
+    board[1]["PRIORITY"], board[0]["PRIORITY"] = "1", "2"  # JLC rule raised to the top
+    row = next(r for r in diff_rules(board) if r["kind"] == "Clearance" and r["status"] != "extra_on_board")
+    assert row["status"] == "match" and row["rule"] == "Clearance_1"
+
+
+def test_preset_keys_exist_in_altium_records():
+    fixture_keys = {}
+    for f in FIXTURES.glob("*.PcbDoc"):
+        for r in read_pcbdoc(f)["rules"]:
+            fixture_keys.setdefault(r["RULEKIND"], set()).update(r)
+    for rec in get_preset_rule_records():
+        kind = rec["RULEKIND"]
+        if kind not in fixture_keys:  # MinimumAnnularRing: key read back from an AD26-saved PcbDoc
+            assert kind == "MinimumAnnularRing" and "MINIMUMRING" in rec and "MINIMUM" not in rec
+            continue
+        for k in rec:
+            assert k in fixture_keys[kind], (kind, k)

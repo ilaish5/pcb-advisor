@@ -170,7 +170,7 @@ Cross-cutting:
 | I8 | **Library** (caps 3, 4). Model search + link-and-return, package-variant check vs datasheet, one-script library build for Altium; skills part-models + project-library | incident 1 caught | ✅ |
 | I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ✅ (fixture; device preview by the user) |
 | I10 | **Idea, Altium help, project keeping** (caps 1, 11, 12). Requirement questions + editable block diagram (§3a), stage guidance in every tab, how-to answers from the AD20 manual, decision log, change impact, final file organization | incident 8 caught at the idea stage; Q&A eval target met | ✅ (built; measured in I11) |
-| I11 | **Wrap-up.** Full benchmark, README + ENGINES + docs current, English UI check, clean tree, final summary for the user | 12/12 or the gaps explained | ⬜ |
+| I11 | **Wrap-up.** Full benchmark, README + ENGINES + docs current, English UI check, clean tree, final summary for the user | 12/12 or the gaps explained | ✅ (deterministic 12/12; engine run waits for the user's OK) |
 
 ## 7. Now
 
@@ -226,8 +226,9 @@ with the user's OK; (4) close I11 (section 8 summary, Hebrew report). Hourly cro
 **Note:** the UI server does not reload Python; restart it after serve.py/store.py changes (a stale server made
 "Ask about this file" look broken on 2026-10-12).
 
-**Waiting for the user:** import the JLC rules once in Altium (Rules tab -> export .RUL -> the 4-step import guide
-shown there) and say whether the rules appear as expected.
+**I11 done (2026-10-13)** - see section 8. Status file: `docs/STATUS-2026-10-13.md`.
+The .RUL import was done in AD26 by Claude Code on a temp copy of the rules-board fixture (not the device).
+**Waiting for the user:** OK for the engine benchmark (`pcb.py bench --engine ...`, heavy; close Altium and Edge first).
 
 Done 2026-10-12 (read-only, with the user's OK): device previews rendered for all 4 sheets + the PcbDoc
 (fixed a missing `import store` in preview_sch.py). Board preview is correct; on the schematic, the 64-pin MCU's
@@ -370,3 +371,20 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 8. Review fixes by Claude Code: test-only bypass removed from upload; flaky chat test stubbed (was calling the model).
 9. Later the same day: attributes escaped + bypasses removed, right-drag pan, icon toolbars, agent live edits, editable requirements.
 10. 382 tests green, Edge screenshots ok. No benchmark run. Open: off-cursor shape creation, connector snapping.
+
+### I11 - Wrap-up (2026-10-13) ✅
+1. Diagram: shapes are created under the cursor (screen -> diagram coordinates through the viewport matrix);
+   connectors snap to points on the shape (sides + corners), follow it when it moves; old files still load.
+2. Deterministic checks wired for all 12 incidents (`scripts/bench/checks_{parts,schematic,board,idea}.py` over real
+   functions in jlc/library/checks/outjob); no hard-coded refs. `pcb.py bench`: **12/12 caught, 7 earlier than reality**.
+3. New `checks/idea.py` flashing plan + `mcu-bootloaders.json` (11 MCU families, sourced), linked from the Idea skill.
+4. .RUL tested in AD26 on a fixture copy: found annular ring key `MINIMUMRING` (was `MINIMUM`) and that Merge adds
+   `*_1` rules at priority 2 that never apply. Fixed: board-aware export (board rules with JLC values, use Replace);
+   the diff reads the effective (highest-priority) rule. Re-import with Replace: all 7 JLC rules match.
+5. UI: project picker is a dropdown menu; Rules tab offers the full-board .RUL and "Preset only", real AD26 steps.
+6. Fixed a flaky test that was a real bug: two proposals in the same millisecond got the same id.
+7. Browser check in Edge: picker, shape at cursor, connector snap + follow. Stray lte-tracker blocks removed.
+8. Built by Sonnet subagents in parallel (diagram, 3 x detectors, picker, .RUL fix); Altium work and review by
+   Claude Code. 422 tests green, skills lint ok, runtime pack synced.
+9. Not run: engine benchmark (heavy; needs the user's OK). Non-rectangle shapes snap to their bounding box.
+10. The device folder was not touched (no git, no writes); all Altium work on `%TEMP%` copies, deleted afterwards.

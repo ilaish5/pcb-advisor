@@ -70,7 +70,7 @@ def rule_display_value(rule: dict[str, str]) -> str:
         dia = rule.get("WIDTH", rule.get("MINWIDTH", ""))
         return f"Hole: {hole}, Dia: {dia}"
     elif kind == "MinimumAnnularRing":
-        return rule.get("MINIMUM", rule.get("ANNULARRING", ""))
+        return rule.get("MINIMUMRING", rule.get("MINIMUM", ""))
     elif kind == "HoleSize":
         min_h = rule.get("MINLIMIT", "")
         max_h = rule.get("MAXLIMIT", "")
@@ -91,7 +91,7 @@ def rule_display_value(rule: dict[str, str]) -> str:
         return rule.get("CLEARANCE", "")
     else:
         # Generic fallback
-        for key in ("GAP", "CLEARANCE", "WIDTH", "EXPANSION", "MINIMUM"):
+        for key in ("GAP", "CLEARANCE", "WIDTH", "EXPANSION", "MINIMUMRING"):
             if key in rule:
                 return rule[key]
         return "—"
@@ -102,6 +102,79 @@ def _normalize_val(val: str) -> str:
     if not val:
         return ""
     return "".join(val.lower().split())
+
+
+def _prio(r: dict) -> int:
+    try:
+        return int(r.get("PRIORITY", "9999"))
+    except ValueError:
+        return 9999
+
+
+def _scope_all(r: dict) -> bool:
+    return (r.get("SCOPE1EXPRESSION", "All").strip().lower() in ("all", "")
+            and r.get("SCOPE2EXPRESSION", "All").strip().lower() in ("all", ""))
+
+
+def _effective_index(rules, kind, skip=()):
+    """Index of the highest-priority enabled scope-All rule of a kind, or None."""
+    best = None
+    for i, r in enumerate(rules):
+        if i in skip or r.get("RULEKIND") != kind or not _scope_all(r):
+            continue
+        if r.get("ENABLED", "TRUE").upper() == "FALSE":
+            continue
+        if best is None or _prio(r) < _prio(rules[best]):
+            best = i
+    return best
+
+
+_CONTROL_KEYS = {"NAME", "RULEKIND", "SCOPE1EXPRESSION", "SCOPE2EXPRESSION", "ENABLED", "PRIORITY"}
+
+
+def _uid(name: str) -> str:
+    import hashlib
+    h = hashlib.sha1(name.encode("utf-8")).digest()
+    return "".join(chr(65 + b % 26) for b in h[:8])
+
+
+def board_rul_records(pcbdoc_path, preset=None) -> list[dict[str, str]]:
+    """Full rule set for Altium "Replace existing rules": the board's rules
+    unchanged, except that per preset kind the effective scope-All rule gets
+    the JLC values (NAME, UNIQUEID, PRIORITY and other keys kept). Preset
+    kinds with no scope-All rule are appended at the lowest priority of that
+    kind (so scoped board rules keep winning inside their scope)."""
+    if preset is None:
+        preset = get_preset_rule_records()
+    board = [dict(r) for r in read_pcbdoc(pcbdoc_path).get("rules", [])]
+    names = {r.get("NAME") for r in board}
+    for pr in preset:
+        kind = pr.get("RULEKIND")
+        values = {k: v for k, v in pr.items() if k not in _CONTROL_KEYS}
+        idx = _effective_index(board, kind)
+        if idx is not None:
+            board[idx].update(values)
+            continue
+        same = [r for r in board if r.get("RULEKIND") == kind]
+        name = pr.get("NAME", kind)
+        while name in names:
+            name += "_JLC"
+        names.add(name)
+        rec = {
+            "LAYER": "TOP", "LOCKED": "FALSE", "POLYGONOUTLINE": "FALSE",
+            "USERROUTED": "TRUE", "KEEPOUT": "FALSE", "UNIONINDEX": "0",
+            "RULEKIND": kind,
+            "NETSCOPE": "DifferentNets" if kind == "Clearance" else "AnyNet",
+            "LAYERKIND": "SameLayer",
+            "SCOPE1EXPRESSION": "All", "SCOPE2EXPRESSION": "All",
+            "NAME": name, "ENABLED": "TRUE",
+            "PRIORITY": str(max((_prio(r) for r in same), default=0) + 1),
+            "COMMENT": "JLC preset", "UNIQUEID": _uid(name),
+            "DEFINEDBYLOGICALDOCUMENT": "FALSE",
+        }
+        rec.update(values)
+        board.append(rec)
+    return board
 
 
 def diff_rules(board_rules: list[dict[str, str]], preset_rules: list[dict] = None) -> list[dict]:
@@ -131,21 +204,12 @@ def diff_rules(board_rules: list[dict[str, str]], preset_rules: list[dict] = Non
             p_val = rule_display_value(pr["attributes"])
         p_val = p_val or "—"
 
-        # Match by name first, then by kind if unique or default
-        matched_idx = None
-        for i, br in enumerate(board_rules):
-            if i in matched_board_indices:
-                continue
-            if br.get("NAME") == p_name and br.get("RULEKIND") == p_kind:
-                matched_idx = i
-                break
-
+        # Effective rule per kind: highest priority (lowest PRIORITY number)
+        # among enabled scope-All rules; fall back to a same-name rule.
+        matched_idx = _effective_index(board_rules, p_kind, matched_board_indices)
         if matched_idx is None:
-            # Try matching by rule kind if scope is default/All
             for i, br in enumerate(board_rules):
-                if i in matched_board_indices:
-                    continue
-                if br.get("RULEKIND") == p_kind and br.get("SCOPE1EXPRESSION", "").lower() in ("all", ""):
+                if i not in matched_board_indices and br.get("NAME") == p_name and br.get("RULEKIND") == p_kind:
                     matched_idx = i
                     break
 
@@ -213,6 +277,7 @@ def main(argv=None):
 
     exp_p = sub.add_parser("export", help="Export JLC preset rules to .RUL file")
     exp_p.add_argument("output", help="Output .RUL file path")
+    exp_p.add_argument("--board", help="PcbDoc: write the board's full rule set with JLC values (use Replace existing rules)")
 
     sub.add_parser("preset", help="Print JLC preset design rules")
 
@@ -230,9 +295,14 @@ def main(argv=None):
         return 0
 
     elif args.cmd == "export":
-        records = get_preset_rule_records()
-        out = write_rul(records, args.output)
-        print(f"Exported {len(records)} preset rules to {out}")
+        if args.board:
+            records = board_rul_records(args.board)
+            out = write_rul(records, args.output)
+            print(f"Exported {len(records)} board-aware rules to {out} (import with 'Replace existing rules')")
+        else:
+            records = get_preset_rule_records()
+            out = write_rul(records, args.output)
+            print(f"Exported {len(records)} preset rules to {out} (import with 'Merge', then raise *_1 rules in Priorities)")
         return 0
 
     elif args.cmd == "preset":

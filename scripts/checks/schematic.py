@@ -435,6 +435,167 @@ def check_schematic(source: Any) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Datasheet-fact rules (pure functions: netlist + parts + facts dict).
+# netlist: {net: ["U1-7", "C4-1", ...]}; parts: {ref: {"value":..., ...}};
+# facts: datasheet_facts.json ({"part": "U1 MPN", "facts": [{"page","pin","text","source"}], ...}).
+# Shared by the product and by scripts/bench/checks_schematic.py.
+# ---------------------------------------------------------------------------
+_CAP_RE = re.compile(r"(\d+(?:[.,]\d+)?)\s*([pnuµμm])\s*F\b", re.I)
+_CAP_UNIT = {"p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "μ": 1e-6, "m": 1e-3}
+
+
+def parse_capacitance(text: Any) -> "float | None":
+    """'1uF' / '100nF' / '0.22 uF' / '100uF 25V' -> farads, else None."""
+    m = _CAP_RE.search(str(text or ""))
+    if not m:
+        return None
+    return float(m.group(1).replace(",", ".")) * _CAP_UNIT[m.group(2).lower()]
+
+
+def _fmt_cap(f: float) -> str:
+    for unit, k in (("uF", 1e-6), ("nF", 1e-9), ("pF", 1e-12)):
+        if f >= k * 0.9999:
+            return f"{f / k:g} {unit}"
+    return f"{f:g} F"
+
+
+def net_of_pin(netlist: dict, pin: str) -> "str | None":
+    for net, pins in netlist.items():
+        if pin in pins:
+            return net
+    return None
+
+
+def _tag_ref(tag: str) -> str:
+    return tag.rsplit("-", 1)[0]
+
+
+def _fact_src(fact: dict, facts: dict) -> str:
+    bits = [str(facts.get("datasheet") or "")]
+    if fact.get("page") is not None:
+        bits.append(f"p.{fact['page']}")
+    if fact.get("source"):
+        bits.append(f"({fact['source']})")
+    return " ".join(b for b in bits if b).strip() or "datasheet_facts"
+
+
+def _facts_part_ref(facts: dict) -> "str | None":
+    m = re.match(r"\s*([A-Za-z]+\d+)\b", str(facts.get("part") or ""))
+    return m.group(1) if m else None
+
+
+_MAXWORD_RE = re.compile(r"no more than|not more than|maximum|max\.?|at most|not exceed", re.I)
+
+
+def check_pin_capacitance_max(netlist: dict, parts: dict, facts: dict) -> list:
+    """Fact with a "pin" ('7 VCC') and a capacitance maximum: the total capacitance on that
+    pin's net must not exceed it. One finding per over-limit pin."""
+    out = []
+    ref = _facts_part_ref(facts)
+    for fact in facts.get("facts", []):
+        pin_txt, text = str(fact.get("pin") or ""), str(fact.get("text") or "")
+        pm = re.match(r"\s*(\w+)", pin_txt)
+        mw = _MAXWORD_RE.search(text)
+        if not (ref and pm and mw):
+            continue
+        limit = parse_capacitance(text[mw.end():])
+        net = net_of_pin(netlist, f"{ref}-{pm.group(1)}") if limit is not None else None
+        if net is None:
+            continue
+        caps = []
+        for tag in netlist[net]:
+            cref = _tag_ref(tag)
+            val = parse_capacitance((parts.get(cref) or {}).get("value")) if re.match(r"C\d", cref) else None
+            if val is not None and cref not in [c[0] for c in caps]:
+                caps.append((cref, val))
+        total = sum(v for _, v in caps)
+        if total > limit * 1.0001:
+            names = ", ".join(f"{c} {_fmt_cap(v)}" for c, v in caps)
+            src = _fact_src(fact, facts)
+            out.append({"id": "pin_capacitance_over_max", "refs": [c for c, _ in caps] + [ref, net],
+                        "message": f"{ref} pin {pin_txt}: {names} on net {net} = {_fmt_cap(total)}, "
+                                   f"above the datasheet maximum {_fmt_cap(limit)} ({src}).",
+                        "source": src})
+    return out
+
+
+def check_output_type_unverified(netlist: dict, parts: dict, facts: dict) -> list:
+    """facts["output_type"] says the datasheet does not state push-pull/open-drain, and a pin
+    described as an output ('Pin 13 FAULT: ... output') drives a net shared with other pins and
+    with no resistor on it: the pull direction/need cannot be decided, so ask."""
+    ot = str(facts.get("output_type") or "")
+    if not re.search(r"not stated|unknown|unclear|unspecified", ot, re.I):
+        return []
+    ref = _facts_part_ref(facts)
+    out = []
+    for fact in facts.get("facts", []):
+        m = re.match(r"\s*Pin\s+(\d+)\s+(\w+)\s*:.*\boutput\b", str(fact.get("text") or ""), re.I)
+        if not (ref and m):
+            continue
+        net = net_of_pin(netlist, f"{ref}-{m.group(1)}")
+        if net is None or len(netlist[net]) < 2:
+            continue
+        if any(re.match(r"R\d", _tag_ref(t)) for t in netlist[net]):
+            continue
+        src = _fact_src(fact, facts)
+        out.append({"id": "output_type_unverified", "refs": [ref, net],
+                    "message": f"{ref} pin {m.group(1)} ({m.group(2)}) is an output on net {net} "
+                               f"({len(netlist[net]) - 1} other pins, no pull resistor), but the datasheet "
+                               f"does not state its type ({ot}); verify push-pull vs open-drain "
+                               f"before choosing a pull-up/pull-down ({src}).",
+                    "source": src})
+    return out
+
+
+def swap_target_ref(swap_text: str) -> "str | None":
+    m = re.search(r"Replace\s+([A-Za-z]+\d+)\b", swap_text or "")
+    return m.group(1) if m else None
+
+
+def check_swap_requirements(netlist: dict, parts: dict, facts: dict, swap_text: str) -> list:
+    """Part swap: (a) a pin the facts say needs an external capacitor ('X needs a ... capacitor',
+    pin from 'pin N is X') must sit on a dedicated net of capacitor(s) only; a signal net there
+    means the cap is missing. (b) a resistor the facts name as redundant ('internal ... pull-up ...
+    external ... (R82) ... not needed') that is still in the netlist is flagged."""
+    ref = swap_target_ref(swap_text)
+    if not ref:
+        return []
+    out = []
+    pinmap = {}
+    for fact in facts.get("facts", []):
+        for m in re.finditer(r"pin\s+(\d+)\s+is\s+(\w+)", str(fact.get("text") or ""), re.I):
+            pinmap[m.group(2)] = m.group(1)
+    for fact in facts.get("facts", []):
+        text = str(fact.get("text") or "")
+        src = _fact_src(fact, facts)
+        m = re.match(r"\s*(\w+)\s+needs\s+an?\s+(?:\w+\s+)?capacitor", text, re.I)
+        if m and m.group(1) in pinmap:
+            name, pin = m.group(1), f"{ref}-{pinmap[m.group(1)]}"
+            net = net_of_pin(netlist, pin)
+            others = [t for t in (netlist.get(net) or []) if t != pin]
+            dedicated = bool(others) and all(
+                re.match(r"C\d", _tag_ref(t)) and
+                parse_capacitance((parts.get(_tag_ref(t)) or {}).get("value")) is not None
+                for t in others)
+            if not dedicated:
+                where = f"its net {net} carries {', '.join(others)}" if net else "it is unconnected"
+                out.append({"id": "swap_pin_cap_missing", "refs": [ref, pin] + ([net] if net else []),
+                            "message": f"After the swap {name} is {pin} and needs an external capacitor "
+                                       f"to GND, but {where} and has no dedicated capacitor ({src}).",
+                            "source": src})
+        m = re.search(r"internal\s+[\w+ ]*?pull-up.*?external[^()]*\((R\d+)\)[^.;]*not needed", text, re.I)
+        if m:
+            rref = m.group(1)
+            net = next((n for n, ps in netlist.items() if any(_tag_ref(t) == rref for t in ps)), None)
+            if net:
+                out.append({"id": "swap_pullup_redundant", "refs": [rref, ref, net],
+                            "message": f"{rref} ({(parts.get(rref) or {}).get('value', '?')}) on net {net} is a "
+                                       f"pull-up that the new part makes redundant ({src}).",
+                            "source": src})
+    return out
+
+
 def main(argv=None):
     oscompat.utf8_stdio()
     ap = argparse.ArgumentParser(description="Schematic netlist and review checks")

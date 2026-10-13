@@ -113,6 +113,22 @@ def check_package_variant(
     }
 
 
+def footprint_variant_conflict(ordered_mpn: str, footprint_name: str):
+    """A footprint name that carries a sibling variant of the ordered part's family.
+
+    Family = leading letters + >=3 digits of the MPN (A7670G-LABE -> A7670, variant G). If the
+    footprint name holds the same family followed by a different variant letter (A7670C-LASS),
+    returns {family, ordered_variant, footprint_variant}; otherwise None."""
+    m = re.match(r"([A-Za-z]+\d{3,})([A-Za-z])", (ordered_mpn or "").strip())
+    if not m or not footprint_name:
+        return None
+    fam, var = m.group(1).upper(), m.group(2).upper()
+    for hit in re.finditer(re.escape(fam) + r"([A-Za-z])", footprint_name.upper()):
+        if hit.group(1) != var:
+            return {"family": fam, "ordered_variant": var, "footprint_variant": hit.group(1)}
+    return None
+
+
 def generate_library_build_script(
     project_name: str,
     schlib: str = None,

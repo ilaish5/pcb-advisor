@@ -199,6 +199,15 @@
   const VALID_CONNECT_ARROWS = new Set(['none', 'end', 'both', 'start', 'to']);
   const VALID_CONNECT_ROUTES = new Set(['straight', 'elbow', 'curved']);
   const VALID_ENDPOINT_SIDES = new Set(['top', 'bottom', 'left', 'right']);
+  // Connection points: 4 side midpoints (all shapes) + 4 corners (rectangles only)
+  const VALID_ENDPOINT_POINTS = new Set([
+    'top', 'right', 'bottom', 'left',
+    'top-left', 'top-right', 'bottom-right', 'bottom-left'
+  ]);
+  const RECT_POINT_TYPES = new Set(['rectangle', 'process', 'sticky']);
+  // Screen-pixel radii for connector end snapping / detaching
+  const SNAP_RADIUS_PX = 16;
+  const DETACH_RADIUS_PX = 24;
   const VALID_DOMAINS = new Set([
     'power', 'sensing', 'sensors', 'mcu', 'comms', 'rf',
     'drive', 'io', 'ui', 'sticky', 'white', 'none'
@@ -280,6 +289,9 @@
         if (ep.shape != null) {
           const rawShapeId = String(ep.shape);
           const mappedShapeId = idMap[rawShapeId] || rawShapeId;
+          if (typeof ep.point === 'string' && VALID_ENDPOINT_POINTS.has(ep.point)) {
+            return { shape: safeId(mappedShapeId, 'shape'), point: ep.point };
+          }
           return {
             shape: safeId(mappedShapeId, 'shape'),
             side: safeEnum(ep.side, VALID_ENDPOINT_SIDES, defaultSide)
@@ -769,7 +781,9 @@
       this.isConnecting = false;
       this.connectingFrom = null;
       this.connectingCurrent = { x: 0, y: 0 };
-      this.hoveredPort = null;
+      this.connectSnap = null; // { target, nearShapeIds } while a connector end is being drawn/dragged
+      this.draggingConnEnd = null; // { id, end } while dragging an end handle of a connector
+      this.lastPointerClient = null; // last pointer position (client px), used for paste-at-cursor
       this.hoveredShapeId = null;
 
       this.clipboard = null;
@@ -1000,22 +1014,50 @@
       return Math.round(val / this.gridSize) * this.gridSize;
     }
 
-    screenToCanvas(clientX, clientY) {
+    /**
+     * The ONE client -> diagram coordinate conversion. Uses the inverse screen CTM of the
+     * pan/zoom group, so it is right at any zoom/pan, scroll, pane resize or svg letterboxing.
+     */
+    clientToDiagram(clientX, clientY) {
+      try {
+        const ctm = this.viewportEl.getScreenCTM();
+        if (ctm) {
+          const pt = this.svgEl.createSVGPoint();
+          pt.x = clientX;
+          pt.y = clientY;
+          const p = pt.matrixTransform(ctm.inverse());
+          return { x: p.x, y: p.y };
+        }
+      } catch (_) { /* fall through (e.g. detached/hidden svg) */ }
       const rect = this.svgEl.getBoundingClientRect();
-      const sx = clientX - rect.left;
-      const sy = clientY - rect.top;
       return {
-        x: (sx - this.panX) / this.scale,
-        y: (sy - this.panY) / this.scale
+        x: (clientX - rect.left - this.panX) / this.scale,
+        y: (clientY - rect.top - this.panY) / this.scale
       };
     }
 
-    canvasToScreen(cx, cy) {
+    /** Inverse of clientToDiagram (diagram coords -> client coords). */
+    diagramToClient(cx, cy) {
+      try {
+        const ctm = this.viewportEl.getScreenCTM();
+        if (ctm) {
+          const pt = this.svgEl.createSVGPoint();
+          pt.x = cx;
+          pt.y = cy;
+          const p = pt.matrixTransform(ctm);
+          return { x: p.x, y: p.y };
+        }
+      } catch (_) { /* fall through */ }
       const rect = this.svgEl.getBoundingClientRect();
       return {
         x: rect.left + this.panX + cx * this.scale,
         y: rect.top + this.panY + cy * this.scale
       };
+    }
+
+    /** Screen pixels -> diagram units at the current zoom. */
+    pxToDiagram(px) {
+      return px / (this.scale || 1);
     }
 
     /* ---------------- DOM & Layout ---------------- */
@@ -1064,8 +1106,7 @@
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'diag-svg');
       svg.setAttribute('id', 'diag-svg');
-      svg.setAttribute('viewBox', '0 0 860 520');
-      svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      // No viewBox: user units == CSS px, so pan/zoom maths and clientToDiagram() agree exactly.
       svg.setAttribute('role', 'img');
       svg.setAttribute('aria-label', 'Interactive Block diagram');
       svg.setAttribute('width', '100%');
@@ -1662,13 +1703,21 @@
 
     onMouseDown(e) {
       if (e.button === 2 || e.button === 1 || this.spacePressed || this.tool === 'hand') return;
-      const canvasPos = this.screenToCanvas(e.clientX, e.clientY);
+      const canvasPos = this.clientToDiagram(e.clientX, e.clientY);
+
+      // Connector end handle -> drag the end (re-attach / detach)
+      const endHandleEl = e.target.closest('.diag-conn-end-handle');
+      if (endHandleEl) {
+        e.stopPropagation();
+        this.startDraggingConnEnd(endHandleEl.dataset.connId, endHandleEl.dataset.end);
+        return;
+      }
 
       // Port click -> start connecting
       const portEl = e.target.closest('.diag-port-dot');
       if (portEl) {
         e.stopPropagation();
-        this.startConnecting(portEl.dataset.shapeId, portEl.dataset.side);
+        this.startConnecting(portEl.dataset.shapeId, portEl.dataset.point);
         return;
       }
 
@@ -1702,8 +1751,9 @@
 
       // Connector tool
       if (this.tool === 'connector') {
-        if (shapeEl) {
-          this.startConnecting(shapeEl.dataset.id, 'right');
+        const startSnap = this.findSnapTarget(canvasPos).target;
+        if (startSnap) {
+          this.startConnecting(startSnap.shape, startSnap.point);
         } else {
           this.startFreeConnecting(canvasPos.x, canvasPos.y);
         }
@@ -1766,7 +1816,8 @@
     }
 
     onMouseMove(e) {
-      const canvasPos = this.screenToCanvas(e.clientX, e.clientY);
+      this.lastPointerClient = { x: e.clientX, y: e.clientY };
+      const canvasPos = this.clientToDiagram(e.clientX, e.clientY);
 
       if (this.isPanning) {
         this.userHasPannedOrZoomed = true;
@@ -1783,13 +1834,13 @@
 
       if (this.isConnecting) {
         this.connectingCurrent = { x: canvasPos.x, y: canvasPos.y };
-        const portEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('.diag-port-dot');
-        if (portEl) {
-          this.hoveredPort = { shape: portEl.dataset.shapeId, side: portEl.dataset.side };
-        } else {
-          this.hoveredPort = null;
-        }
+        this.connectSnap = this.findSnapTarget(canvasPos);
         this.renderConnectingPreview();
+        return;
+      }
+
+      if (this.draggingConnEnd) {
+        this.doDragConnEnd(canvasPos);
         return;
       }
 
@@ -1818,7 +1869,7 @@
     }
 
     onMouseUp(e) {
-      const canvasPos = this.screenToCanvas(e.clientX, e.clientY);
+      const canvasPos = this.clientToDiagram(e.clientX, e.clientY);
 
       if (this.isPanning) {
         this.isPanning = false;
@@ -1835,6 +1886,10 @@
         this.finishConnecting(canvasPos);
         this.isConnecting = false;
         this.setTool('select');
+      }
+
+      if (this.draggingConnEnd) {
+        this.finishDragConnEnd(canvasPos);
       }
 
       if (this.isResizing) {
@@ -1860,7 +1915,7 @@
     }
 
     onDoubleClick(e) {
-      const canvasPos = this.screenToCanvas(e.clientX, e.clientY);
+      const canvasPos = this.clientToDiagram(e.clientX, e.clientY);
 
       // Shape double-click -> inline edit
       const shapeEl = e.target.closest('.diag-shape-node');
@@ -1889,8 +1944,7 @@
       // Empty canvas double-click -> add new block at click point, offset until free, caret in inline edit
       const shapeType = this.lastUsedShapeType || 'rectangle';
       const w = 160, h = 68;
-      const free = this.findFreePosition(canvasPos.x - w / 2, canvasPos.y - h / 2, w, h);
-      this.createShapeAt(shapeType, free.x, free.y, w, h, true);
+      this.createShapeAt(shapeType, canvasPos.x - w / 2, canvasPos.y - h / 2, w, h, true);
     }
 
     onKeyDown(e) {
@@ -1914,7 +1968,7 @@
         if (key === 'b') {
           // B shortcut: place block at centre of view, offset until free, caret in inline edit
           const rect = this.canvasWrap.getBoundingClientRect();
-          const center = this.screenToCanvas(rect.left + rect.width / 2, rect.top + rect.height / 2);
+          const center = this.clientToDiagram(rect.left + rect.width / 2, rect.top + rect.height / 2);
           const w = 160, h = 68;
           const free = this.findFreePosition(center.x - w / 2, center.y - h / 2, w, h);
           this.createShapeAt(this.lastUsedShapeType || 'rectangle', free.x, free.y, w, h, true);
@@ -1999,7 +2053,7 @@
       return { x: curX, y: curY };
     }
 
-    createShapeAt(type, x, y, w = null, h = null, autoEdit = false) {
+    getDefaultSize(type) {
       const defaultSizes = {
         rectangle: { w: 160, h: 68 },
         block: { w: 160, h: 68 },
@@ -2023,8 +2077,13 @@
         frame: { w: 320, h: 220 }
       };
 
+      const nt = normalizeShapeType(type);
+      return defaultSizes[nt] || defaultSizes[type] || { w: 150, h: 70 };
+    }
+
+    createShapeAt(type, x, y, w = null, h = null, autoEdit = false) {
       const normType = normalizeShapeType(type);
-      const sz = defaultSizes[normType] || defaultSizes[type] || { w: 150, h: 70 };
+      const sz = this.getDefaultSize(type);
       const finalW = w ? Math.max(30, w) : sz.w;
       const finalH = h ? Math.max(25, h) : sz.h;
 
@@ -2105,60 +2164,189 @@
       this.overlayLayer.innerHTML = '';
       const w = Math.abs(pos.x - this.drawStart.x);
       const h = Math.abs(pos.y - this.drawStart.y);
-      const x = Math.min(this.drawStart.x, pos.x);
-      const y = Math.min(this.drawStart.y, pos.y);
 
       if (w < 10 && h < 10) {
-        const free = this.findFreePosition(this.drawStart.x, this.drawStart.y, 160, 68);
-        this.createShapeAt(this.drawShapeType, free.x, free.y, null, null, true);
+        // Click: shape centred on the cursor
+        const sz = this.getDefaultSize(this.drawShapeType);
+        this.createShapeAt(this.drawShapeType, pos.x - sz.w / 2, pos.y - sz.h / 2, null, null, true);
       } else {
-        this.createShapeAt(this.drawShapeType, x, y, w, h, true);
+        // Drag: spans exactly from press point to release point (both ends snapped, not the size)
+        const x0 = this.snap(Math.min(this.drawStart.x, pos.x));
+        const y0 = this.snap(Math.min(this.drawStart.y, pos.y));
+        const x1 = this.snap(Math.max(this.drawStart.x, pos.x));
+        const y1 = this.snap(Math.max(this.drawStart.y, pos.y));
+        this.createShapeAt(this.drawShapeType, x0, y0, x1 - x0, y1 - y0, true);
       }
     }
 
     /* ---------------- Connectors ---------------- */
 
-    startConnecting(shapeId, side) {
+    getConnectionPoints(shape) {
+      const x = shape.x, y = shape.y, w = shape.w, h = shape.h;
+      const pts = [
+        { name: 'top', x: x + w / 2, y: y },
+        { name: 'right', x: x + w, y: y + h / 2 },
+        { name: 'bottom', x: x + w / 2, y: y + h },
+        { name: 'left', x: x, y: y + h / 2 }
+      ];
+      if (RECT_POINT_TYPES.has(normalizeShapeType(shape.type))) {
+        pts.push(
+          { name: 'top-left', x: x, y: y },
+          { name: 'top-right', x: x + w, y: y },
+          { name: 'bottom-right', x: x + w, y: y + h },
+          { name: 'bottom-left', x: x, y: y + h }
+        );
+      }
+      return pts;
+    }
+
+    snapFreePos(pos) {
+      return { x: this.snap(pos.x), y: this.snap(pos.y) };
+    }
+
+    /**
+     * Magnet: find the connection point to snap a connector end to.
+     * Within SNAP_RADIUS_PX (screen px) of a shape its points are shown (nearShapeIds) and the
+     * nearest point wins. Inside a shape without a specific point -> its nearest side midpoint.
+     */
+    findSnapTarget(pos) {
+      const snapR = this.pxToDiagram(SNAP_RADIUS_PX);
+      const nearShapeIds = new Set();
+      const sorted = [...this.data.shapes].sort((a, b) => (b.z || 0) - (a.z || 0));
+      let best = null;
+      let inside = null;
+      for (const s of sorted) {
+        const inExpanded = pos.x >= s.x - snapR && pos.x <= s.x + s.w + snapR &&
+                           pos.y >= s.y - snapR && pos.y <= s.y + s.h + snapR;
+        if (!inExpanded) continue;
+        nearShapeIds.add(s.id);
+        for (const p of this.getConnectionPoints(s)) {
+          const d = Math.hypot(p.x - pos.x, p.y - pos.y);
+          if (d <= snapR && (!best || d < best.dist)) {
+            best = { shape: s.id, point: p.name, x: p.x, y: p.y, dist: d };
+          }
+        }
+        if (!inside && pos.x >= s.x && pos.x <= s.x + s.w && pos.y >= s.y && pos.y <= s.y + s.h) {
+          inside = s;
+        }
+      }
+      if (!best && inside) {
+        best = this.nearestSidePoint(inside, pos);
+      }
+      return { target: best, nearShapeIds };
+    }
+
+    nearestSidePoint(shape, pos) {
+      let best = null;
+      for (const p of this.getConnectionPoints(shape)) {
+        if (!VALID_ENDPOINT_SIDES.has(p.name)) continue;
+        const d = Math.hypot(p.x - pos.x, p.y - pos.y);
+        if (!best || d < best.dist) {
+          best = { shape: shape.id, point: p.name, x: p.x, y: p.y, dist: d };
+        }
+      }
+      return best;
+    }
+
+    /**
+     * Endpoint to store when a connector end is dropped at pos.
+     * keepNear: when dragging an existing end, a drop within DETACH_RADIUS_PX of a shape
+     * still attaches (nearest side midpoint); only a drop further away detaches.
+     */
+    resolveEndForDrop(pos, keepNear) {
+      const sr = this.findSnapTarget(pos);
+      if (sr.target) return { shape: sr.target.shape, point: sr.target.point };
+      if (keepNear) {
+        const dr = this.pxToDiagram(DETACH_RADIUS_PX);
+        let near = null;
+        for (const s of this.data.shapes) {
+          const dx = Math.max(s.x - pos.x, 0, pos.x - (s.x + s.w));
+          const dy = Math.max(s.y - pos.y, 0, pos.y - (s.y + s.h));
+          const d = Math.hypot(dx, dy);
+          if (d <= dr && (!near || d < near.d)) near = { s, d };
+        }
+        if (near) {
+          const sp = this.nearestSidePoint(near.s, pos);
+          if (sp) return { shape: sp.shape, point: sp.point };
+        }
+      }
+      const f = this.snapFreePos(pos);
+      return { x: f.x, y: f.y };
+    }
+
+    /** SVG markup (numbers only) showing connection points of nearby shapes, nearest highlighted. */
+    connectionPointsHtml(snapRes) {
+      if (!snapRes) return '';
+      const r = this.pxToDiagram(4.5);
+      const rHi = this.pxToDiagram(7);
+      const sw = this.pxToDiagram(1.5);
+      let html = '';
+      for (const sid of snapRes.nearShapeIds) {
+        const s = this.data.shapes.find(x => x.id === sid);
+        if (!s) continue;
+        for (const p of this.getConnectionPoints(s)) {
+          const hi = !!(snapRes.target && snapRes.target.shape === sid && snapRes.target.point === p.name);
+          html += `<circle class="diag-conn-point${hi ? ' is-snap' : ''}" cx="${p.x}" cy="${p.y}" r="${hi ? rHi : r}" fill="${hi ? '#22c55e' : '#ffffff'}" stroke="${hi ? '#15803d' : '#2563eb'}" stroke-width="${sw}" pointer-events="none"/>`;
+        }
+      }
+      return html;
+    }
+
+    /** Small end marker: filled when attached to a shape, hollow circle when loose. */
+    endMarkerHtml(pos, attached, color) {
+      const r = this.pxToDiagram(4.5);
+      const sw = this.pxToDiagram(1.8);
+      return attached
+        ? `<circle cx="${pos.x}" cy="${pos.y}" r="${r}" fill="${color}" pointer-events="none"/>`
+        : `<circle class="diag-conn-free-end" cx="${pos.x}" cy="${pos.y}" r="${r}" fill="#ffffff" stroke="${color}" stroke-width="${sw}" pointer-events="none"/>`;
+    }
+
+    startConnecting(shapeId, point) {
       this.isConnecting = true;
-      this.connectingFrom = { shape: shapeId, side };
-      this.connectingCurrent = this.getShapePortPosition(shapeId, side);
+      this.connectingFrom = { shape: shapeId, point: point };
+      this.connectingCurrent = this.getShapePortPosition(shapeId, point);
+      this.connectSnap = null;
     }
 
     startFreeConnecting(x, y) {
+      const f = this.snapFreePos({ x, y });
       this.isConnecting = true;
-      this.connectingFrom = { x, y };
+      this.connectingFrom = { x: f.x, y: f.y };
       this.connectingCurrent = { x, y };
+      this.connectSnap = null;
     }
 
     renderConnectingPreview() {
-      const fromPos = this.connectingFrom.shape
-        ? this.getShapePortPosition(this.connectingFrom.shape, this.connectingFrom.side)
-        : this.connectingFrom;
-      const toPos = this.hoveredPort
-        ? this.getShapePortPosition(this.hoveredPort.shape, this.hoveredPort.side)
-        : this.connectingCurrent;
-
+      const from = this.connectingFrom;
+      const fromPos = this.getEndpointCoords(from);
+      const sr = this.connectSnap;
+      const target = sr && sr.target;
+      const toPos = target ? { x: target.x, y: target.y } : this.snapFreePos(this.connectingCurrent);
       const pathD = `M ${fromPos.x} ${fromPos.y} L ${toPos.x} ${toPos.y}`;
-      this.overlayLayer.innerHTML = `
-        <path d="${pathD}" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 5" fill="none" marker-end="url(#diag-arrow-end)"/>
-        <circle cx="${fromPos.x}" cy="${fromPos.y}" r="4" fill="#2563eb"/>
-        <circle cx="${toPos.x}" cy="${toPos.y}" r="4" fill="#2563eb"/>
-      `;
+      this.overlayLayer.innerHTML =
+        `<path d="${pathD}" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 5" fill="none" pointer-events="none"/>` +
+        this.connectionPointsHtml(sr) +
+        this.endMarkerHtml(fromPos, !!from.shape, '#2563eb') +
+        this.endMarkerHtml(toPos, !!target, '#2563eb');
     }
 
     finishConnecting(pos) {
       this.overlayLayer.innerHTML = '';
-      let toEndpoint = null;
-      if (this.hoveredPort) {
-        toEndpoint = { shape: this.hoveredPort.shape, side: this.hoveredPort.side };
-      } else {
-        toEndpoint = { x: this.snap(pos.x), y: this.snap(pos.y) };
+      this.connectSnap = null;
+      const to = this.resolveEndForDrop(pos, false);
+      const from = this.connectingFrom;
+      const fromPos = this.getEndpointCoords(from);
+      const toPos = this.getEndpointCoords(to);
+      const sameEnd = from.shape && to.shape && from.shape === to.shape && (from.point || from.side) === to.point;
+      if (sameEnd || Math.hypot(fromPos.x - toPos.x, fromPos.y - toPos.y) < this.pxToDiagram(6)) {
+        this.render();
+        return;
       }
 
       const conn = {
         id: uid('conn'),
-        from: this.connectingFrom,
-        to: toEndpoint,
+        from: from,
+        to: to,
         label: '',
         stroke: '#64748b',
         style: 'solid',
@@ -2174,22 +2362,82 @@
       this.updateEmptyState();
     }
 
-    getShapePortPosition(shapeId, side) {
-      const s = this.data.shapes.find(x => x.id === shapeId);
-      if (!s) return { x: 0, y: 0 };
-      if (side === 'top') return { x: s.x + s.w / 2, y: s.y };
-      if (side === 'right') return { x: s.x + s.w, y: s.y + s.h / 2 };
-      if (side === 'bottom') return { x: s.x + s.w / 2, y: s.y + s.h };
-      if (side === 'left') return { x: s.x, y: s.y + s.h / 2 };
-      return { x: s.x + s.w / 2, y: s.y + s.h / 2 };
+    /* Dragging one end handle of the selected connector */
+    startDraggingConnEnd(connId, end) {
+      if (end !== 'from' && end !== 'to') return;
+      this.draggingConnEnd = { id: connId, end };
+      this.connectSnap = null;
     }
 
+    doDragConnEnd(pos) {
+      const d = this.draggingConnEnd;
+      const c = d && this.data.connectors.find(x => x.id === d.id);
+      if (!c) return;
+      this.connectSnap = this.findSnapTarget(pos);
+      const t = this.connectSnap.target;
+      c[d.end] = t ? { shape: t.shape, point: t.point } : this.snapFreePos(pos);
+      this.render();
+      this.overlayLayer.insertAdjacentHTML('beforeend', this.connectionPointsHtml(this.connectSnap));
+    }
+
+    finishDragConnEnd(pos) {
+      const d = this.draggingConnEnd;
+      this.draggingConnEnd = null;
+      this.connectSnap = null;
+      const c = d && this.data.connectors.find(x => x.id === d.id);
+      if (c) {
+        c[d.end] = this.resolveEndForDrop(pos, true);
+      }
+      this.saveHistory();
+      this.triggerAutosave();
+      this.render();
+    }
+
+    getShapePortPosition(shapeId, point) {
+      const s = this.data.shapes.find(x => x.id === shapeId);
+      if (!s) return { x: 0, y: 0 };
+      switch (point) {
+        case 'top': return { x: s.x + s.w / 2, y: s.y };
+        case 'right': return { x: s.x + s.w, y: s.y + s.h / 2 };
+        case 'bottom': return { x: s.x + s.w / 2, y: s.y + s.h };
+        case 'left': return { x: s.x, y: s.y + s.h / 2 };
+        case 'top-left': return { x: s.x, y: s.y };
+        case 'top-right': return { x: s.x + s.w, y: s.y };
+        case 'bottom-right': return { x: s.x + s.w, y: s.y + s.h };
+        case 'bottom-left': return { x: s.x, y: s.y + s.h };
+        default: return { x: s.x + s.w / 2, y: s.y + s.h / 2 };
+      }
+    }
+
+    /** Attached ends are recomputed from the shape every render, so they follow move/resize/undo/agent edits. */
     getEndpointCoords(ep) {
       if (!ep) return { x: 0, y: 0 };
       if (ep.shape) {
-        return this.getShapePortPosition(ep.shape, ep.side || 'right');
+        return this.getShapePortPosition(ep.shape, ep.point || ep.side || 'right');
       }
       return { x: Number(ep.x) || 0, y: Number(ep.y) || 0 };
+    }
+
+    /** Exit direction of an end: 'v' for top/bottom, 'h' for left/right, null for corners/free ends. */
+    endpointDir(ep) {
+      const p = ep && ep.shape ? (ep.point || ep.side) : null;
+      if (p === 'top' || p === 'bottom') return 'v';
+      if (p === 'left' || p === 'right') return 'h';
+      return null;
+    }
+
+    buildConnectorPath(c, p1, p2) {
+      if (c.route === 'straight') {
+        return `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
+      }
+      const dir = this.endpointDir(c.from) || this.endpointDir(c.to) ||
+        (Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y) ? 'h' : 'v');
+      if (dir === 'v') {
+        const midY = (p1.y + p2.y) / 2;
+        return `M ${p1.x} ${p1.y} V ${midY} H ${p2.x} V ${p2.y}`;
+      }
+      const midX = (p1.x + p2.x) / 2;
+      return `M ${p1.x} ${p1.y} H ${midX} V ${p2.y} H ${p2.x}`;
     }
 
     /* ---------------- Dragging & Movement ---------------- */
@@ -2399,26 +2647,44 @@
       }
     }
 
-    pasteClipboard() {
+    pasteClipboard(atCursor = true) {
       if (!this.clipboard) return;
       this.clearSelection();
       const sanitized = sanitizeModel({
         shapes: this.clipboard.shapes || [],
         frames: this.clipboard.frames || []
       });
+      // Paste at cursor: centre the pasted group's bounding box on the pointer (when it is over the canvas)
+      let offX = 24, offY = 24;
+      const lp = this.lastPointerClient;
+      if (atCursor && lp) {
+        const r = this.svgEl.getBoundingClientRect();
+        if (lp.x >= r.left && lp.x <= r.right && lp.y >= r.top && lp.y <= r.bottom) {
+          const items = [...(sanitized.shapes || []), ...(sanitized.frames || [])];
+          if (items.length) {
+            const bx0 = Math.min(...items.map(i => i.x));
+            const by0 = Math.min(...items.map(i => i.y));
+            const bx1 = Math.max(...items.map(i => i.x + i.w));
+            const by1 = Math.max(...items.map(i => i.y + i.h));
+            const cur = this.clientToDiagram(lp.x, lp.y);
+            offX = this.snap(cur.x - (bx1 - bx0) / 2) - bx0;
+            offY = this.snap(cur.y - (by1 - by0) / 2) - by0;
+          }
+        }
+      }
       (sanitized.shapes || []).forEach(orig => {
         const copy = clone(orig);
         copy.id = uid('shape');
-        copy.x += 24;
-        copy.y += 24;
+        copy.x += offX;
+        copy.y += offY;
         this.data.shapes.push(copy);
         this.selectedShapeIds.add(copy.id);
       });
       (sanitized.frames || []).forEach(orig => {
         const copy = clone(orig);
         copy.id = uid('frame');
-        copy.x += 24;
-        copy.y += 24;
+        copy.x += offX;
+        copy.y += offY;
         this.data.frames.push(copy);
         this.selectedFrameIds.add(copy.id);
       });
@@ -2429,7 +2695,7 @@
 
     duplicateSelected() {
       this.copySelected();
-      this.pasteClipboard();
+      this.pasteClipboard(false);
     }
 
     /* ---------------- Inline Text Editing ---------------- */
@@ -2442,7 +2708,7 @@
         const s = this.data.shapes.find(x => x.id === id);
         if (!s) return;
         text = s.text || '';
-        const sp = this.canvasToScreen(s.x, s.y);
+        const sp = this.diagramToClient(s.x, s.y);
         bounds = { x: sp.x, y: sp.y, w: s.w * this.scale, h: s.h * this.scale };
         fontSz = s.fontSize === 'S' ? 12 : (s.fontSize === 'L' ? 17 : 14);
         isBold = s.bold;
@@ -2453,14 +2719,14 @@
         text = c.label || '';
         const p1 = this.getEndpointCoords(c.from);
         const p2 = this.getEndpointCoords(c.to);
-        const mid = this.canvasToScreen((p1.x + p2.x) / 2 - 60, (p1.y + p2.y) / 2 - 16);
+        const mid = this.diagramToClient((p1.x + p2.x) / 2 - 60, (p1.y + p2.y) / 2 - 16);
         bounds = { x: mid.x, y: mid.y, w: 120 * this.scale, h: 32 * this.scale };
         fontSz = 12;
       } else if (type === 'frame') {
         const f = this.data.frames.find(x => x.id === id);
         if (!f) return;
         text = f.title || '';
-        const sp = this.canvasToScreen(f.x + 10, f.y + 6);
+        const sp = this.diagramToClient(f.x + 10, f.y + 6);
         bounds = { x: sp.x, y: sp.y, w: Math.min(220, f.w) * this.scale, h: 32 * this.scale };
         fontSz = 13;
         isBold = true;
@@ -2639,13 +2905,7 @@
         const p2 = this.getEndpointCoords(c.to);
         const isSel = this.selectedConnectorIds.has(c.id);
 
-        let d = '';
-        if (c.route === 'straight') {
-          d = `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
-        } else {
-          const midX = (p1.x + p2.x) / 2;
-          d = `M ${p1.x} ${p1.y} H ${midX} V ${p2.y} H ${p2.x}`;
-        }
+        const d = this.buildConnectorPath(c, p1, p2);
 
         const strokeColor = isSel ? '#2563eb' : (c.stroke || '#64748b');
         const strokeWidth = isSel ? 3 : (c.style === 'thick' ? 3.5 : 2);
@@ -2674,6 +2934,8 @@
             <path d="${escapeHtml(d)}" stroke="${escapeHtml(strokeColor)}" stroke-width="${strokeWidth}"
                   stroke-dasharray="${escapeHtml(dashArray)}" fill="none"
                   marker-end="${escapeHtml(markerEnd)}" marker-start="${escapeHtml(markerStart)}"/>
+            ${c.from && c.from.shape ? '' : this.endMarkerHtml(p1, false, escapeHtml(strokeColor))}
+            ${c.to && c.to.shape ? '' : this.endMarkerHtml(p2, false, escapeHtml(strokeColor))}
             ${labelHtml}
           </g>
         `;
@@ -2732,38 +2994,47 @@
     }
 
     renderPorts() {
+      if (this.isConnecting || this.draggingConnEnd) return;
+      this.overlayLayer.querySelectorAll('.diag-port-dot').forEach(p => p.remove());
       if (!this.hoveredShapeId || this.isDraggingItems || this.isResizing) {
-        if (!this.isConnecting) {
-          const oldPorts = this.overlayLayer.querySelectorAll('.diag-port-dot');
-          oldPorts.forEach(p => p.remove());
-        }
         return;
       }
       const s = this.data.shapes.find(x => x.id === this.hoveredShapeId);
       if (!s) return;
 
-      const ports = [
-        { side: 'top', x: s.x + s.w / 2, y: s.y },
-        { side: 'right', x: s.x + s.w, y: s.y + s.h / 2 },
-        { side: 'bottom', x: s.x + s.w / 2, y: s.y + s.h },
-        { side: 'left', x: s.x, y: s.y + s.h / 2 },
-      ];
-
+      const r = this.pxToDiagram(4.5);
       let html = '';
-      ports.forEach(p => {
-        html += `<circle class="diag-port-dot" cx="${p.x}" cy="${p.y}" r="4.5"
-                         data-shape-id="${escapeHtml(s.id)}" data-side="${escapeHtml(p.side)}"/>`;
+      this.getConnectionPoints(s).forEach(p => {
+        html += `<circle class="diag-port-dot" cx="${p.x}" cy="${p.y}" r="${r}" fill="#ffffff" stroke="#2563eb" stroke-width="${this.pxToDiagram(1.5)}"
+                         data-shape-id="${escapeHtml(s.id)}" data-point="${escapeHtml(p.name)}"/>`;
       });
-
-      const tmpDiv = document.createElement('div');
-      tmpDiv.innerHTML = html;
-      while (tmpDiv.firstChild) {
-        this.overlayLayer.appendChild(tmpDiv.firstChild);
-      }
+      this.overlayLayer.insertAdjacentHTML('beforeend', html);
     }
 
     renderSelectionHandles() {
+      // render() redraws the overlay from scratch (a drag-preview overlay is added after render by its caller)
+      this.overlayLayer.innerHTML = '';
       const totalSel = this.selectedShapeIds.size + this.selectedFrameIds.size;
+
+      // One selected connector: two end handles (hollow when loose, filled when attached)
+      if (totalSel === 0 && this.selectedConnectorIds.size === 1) {
+        const cid = [...this.selectedConnectorIds][0];
+        const c = this.data.connectors.find(x => x.id === cid);
+        if (c) {
+          const er = this.pxToDiagram(6);
+          const ew = this.pxToDiagram(2);
+          let endsSvg = '';
+          [['from', c.from], ['to', c.to]].forEach(([end, ep]) => {
+            const pos = this.getEndpointCoords(ep);
+            const attached = !!(ep && ep.shape);
+            endsSvg += `<circle class="diag-conn-end-handle" cx="${pos.x}" cy="${pos.y}" r="${er}"
+                          fill="${attached ? '#2563eb' : '#ffffff'}" stroke="#2563eb" stroke-width="${ew}" style="cursor:move"
+                          data-conn-id="${escapeHtml(c.id)}" data-end="${escapeHtml(end)}"/>`;
+          });
+          this.overlayLayer.insertAdjacentHTML('beforeend', endsSvg);
+        }
+        return;
+      }
       if (totalSel !== 1) return;
 
       let item = null, type = 'shape';
@@ -2803,11 +3074,7 @@
         `;
       });
 
-      const tmp = document.createElement('div');
-      tmp.innerHTML = handlesSvg;
-      while (tmp.firstChild) {
-        this.overlayLayer.appendChild(tmp.firstChild);
-      }
+      this.overlayLayer.insertAdjacentHTML('beforeend', handlesSvg);
     }
 
     renderContextToolbar() {
@@ -2847,7 +3114,7 @@
         }
       });
 
-      const midScreen = this.canvasToScreen((minX + maxX) / 2, minY);
+      const midScreen = this.diagramToClient((minX + maxX) / 2, minY);
       const wrapRect = this.canvasWrap.getBoundingClientRect();
       const topPos = midScreen.y - wrapRect.top - 46;
       const leftPos = midScreen.x - wrapRect.left;

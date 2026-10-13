@@ -480,6 +480,23 @@ def test_agent_proposal_flow(lte):
     assert any(s.get("id") == "prop_mcu" for s in shapes_after)
 
 
+def test_proposals_in_the_same_millisecond_get_distinct_ids(lte, monkeypatch):
+    import datetime as real_dt
+    fixed = real_dt.datetime(2026, 10, 13, 21, 0, 0, 123456)
+
+    class FrozenDatetime(real_dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed
+
+    monkeypatch.setattr(store.dt, "datetime", FrozenDatetime)
+    first = store.propose_idea_diagram(lte, {"diagram": {"shapes": [], "connectors": [], "frames": []}})
+    second = store.propose_idea_diagram(lte, {"diagram": {"shapes": [], "connectors": [], "frames": []}})
+    assert first["id"] != second["id"]
+    store.decide(lte, first["id"], "rejected")
+    store.decide(lte, second["id"], "approved")
+
+
 @pytest.mark.parametrize("bad_field,bad_val", [
     ("fill", '#fff" onmouseover="alert(1)'),
     ("stroke", '#000<script>alert(1)</script>'),
@@ -674,3 +691,123 @@ def test_validation_accepts_16_shape_types_and_rejects_unknown():
                 "shapes": [{"id": "s_bad", "type": bad, "x": 0, "y": 0, "w": 100, "h": 50}]
             })
 
+
+
+# ---------------------------------------------------------------- coordinates + connection points
+
+def _diagram_js():
+    return (REPO / "ui" / "diagram.js").read_text(encoding="utf-8")
+
+
+def _method_body(content, name):
+    """Source text of a class method `name(...) {` up to the next 4-space-indented method."""
+    m = re.search(r"\n    (?:async )?" + re.escape(name) + r"\([^)]*\) \{\n(.*?)\n    \}\n", content, re.DOTALL)
+    assert m, f"method {name} not found in diagram.js"
+    return m.group(1)
+
+
+def test_single_client_to_diagram_conversion_helper():
+    js = _diagram_js()
+    body = _method_body(js, "clientToDiagram")
+    assert "createSVGPoint" in body
+    assert "getScreenCTM" in body and ".inverse()" in body
+    assert "viewportEl" in body, "must use the pan/zoom group's CTM"
+    # the old ad-hoc converter must be gone and the helper defined exactly once
+    assert "screenToCanvas" not in js
+    assert len(re.findall(r"\n    clientToDiagram\(", js)) == 1
+    # the unconverted svg viewBox (letterboxing) was the cause of the cursor offset
+    assert "setAttribute('viewBox', '0 0 860 520')" not in js
+
+
+def test_all_pointer_paths_use_the_helper():
+    js = _diagram_js()
+    for name in ("onMouseDown", "onMouseMove", "onMouseUp", "onDoubleClick"):
+        assert "this.clientToDiagram(" in _method_body(js, name), f"{name} must convert via clientToDiagram"
+    assert "this.clientToDiagram(" in _method_body(js, "pasteClipboard"), "paste at cursor must use the helper"
+    # create (click centred on cursor / drag press-to-release), marquee, drag and connector paths take helper output
+    finish = _method_body(js, "finishDrawingShape")
+    assert "pos.x - sz.w / 2" in finish and "pos.y - sz.h / 2" in finish, "click-create must centre on the cursor"
+    assert "this.drawStart" in finish and "Math.max(this.drawStart.x, pos.x)" in finish
+    assert "canvasPos" in _method_body(js, "onMouseDown")
+    assert "this.marqueeStart = { x: canvasPos.x, y: canvasPos.y }" in js
+    assert "this.doDragItems(canvasPos)" in js
+    assert "this.doDragConnEnd(canvasPos)" in js
+    assert "this.finishConnecting(canvasPos)" in js
+    # no other client->canvas maths on the mount/wrapper rect
+    for name in ("onMouseDown", "onMouseMove", "onMouseUp", "onDoubleClick", "finishDrawingShape", "createShapeAt"):
+        assert "getBoundingClientRect" not in _method_body(js, name)
+    assert "mountEl.getBoundingClientRect" not in js
+
+
+def test_snap_radius_points_and_highlight_present():
+    js = _diagram_js()
+    assert re.search(r"SNAP_RADIUS_PX\s*=\s*16\b", js)
+    assert re.search(r"DETACH_RADIUS_PX\s*=\s*24\b", js)
+    assert "findSnapTarget" in js and "getConnectionPoints" in js
+    # 4 side midpoints for every shape, corners for rectangles
+    assert "RECT_POINT_TYPES" in js
+    for p in ("top-left", "top-right", "bottom-right", "bottom-left"):
+        assert f"'{p}'" in js
+    # nearest point highlighted
+    assert "is-snap" in js and "connectionPointsHtml" in js
+    # inside a shape -> nearest side midpoint
+    assert "nearestSidePoint" in _method_body(js, "findSnapTarget")
+    # release stores {shape, point}
+    assert "point: sr.target.point" in _method_body(js, "resolveEndForDrop")
+    assert "this.draggingConnEnd" in js and "diag-conn-end-handle" in js
+    # loose ends are hollow circles
+    assert "diag-conn-free-end" in js
+
+
+def test_attached_ends_recompute_on_move():
+    js = _diagram_js()
+    # ends are derived from the shape on every render, never cached
+    body = _method_body(js, "getEndpointCoords")
+    assert "getShapePortPosition" in body and "ep.point || ep.side" in body
+    assert "getEndpointCoords" in _method_body(js, "renderConnectors")
+    assert "this.render()" in _method_body(js, "doDragItems")
+    assert "this.render()" in _method_body(js, "doResize")
+    assert "buildConnectorPath" in _method_body(js, "renderConnectors")
+
+
+def test_sanitize_model_keeps_point_and_legacy_side():
+    js = _diagram_js()
+    assert "VALID_ENDPOINT_POINTS" in js
+    assert "ep.point" in js and "ep.side" in js  # new {shape, point} and old {shape, side} both load
+    assert "escapeHtml(" in _method_body(js, "renderPorts")
+
+
+def test_validation_accepts_shape_point_endpoints():
+    shapes = [
+        {"id": "a", "type": "block", "x": 0, "y": 0, "w": 100, "h": 50},
+        {"id": "b", "type": "ellipse", "x": 300, "y": 0, "w": 100, "h": 50},
+    ]
+    for pt in ("top", "right", "bottom", "left", "top-left", "top-right", "bottom-right", "bottom-left"):
+        res = store.validate_diagram({
+            "shapes": shapes,
+            "connectors": [{"id": "c1", "from": {"shape": "a", "point": pt}, "to": {"shape": "b", "point": "left"}}],
+        })
+        assert res["connectors"][0]["from"] == {"shape": "a", "point": pt}
+        assert res["connectors"][0]["to"] == {"shape": "b", "point": "left"}
+    # legacy side-style and free ends still load
+    res = store.validate_diagram({
+        "shapes": shapes,
+        "connectors": [{"id": "c2", "from": {"shape": "a", "side": "right"}, "to": {"x": 5, "y": 6}}],
+    })
+    assert res["connectors"][0]["from"] == {"shape": "a", "side": "right"}
+    assert res["connectors"][0]["to"] == {"x": 5.0, "y": 6.0}
+
+
+def test_validation_rejects_bad_point_and_unknown_shape():
+    shapes = [{"id": "a", "type": "block", "x": 0, "y": 0, "w": 100, "h": 50}]
+    for bad in ("middle", "TOP", "", None, 5, "top-center"):
+        with pytest.raises(ValueError, match="invalid point"):
+            store.validate_diagram({
+                "shapes": shapes,
+                "connectors": [{"id": "c1", "from": {"shape": "a", "point": bad}, "to": {"x": 1, "y": 1}}],
+            })
+    with pytest.raises(ValueError, match="unknown shape"):
+        store.validate_diagram({
+            "shapes": shapes,
+            "connectors": [{"id": "c1", "from": {"shape": "ghost", "point": "top"}, "to": {"x": 1, "y": 1}}],
+        })

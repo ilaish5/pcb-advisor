@@ -1,0 +1,16 @@
+{
+  "what": "ROM (system-memory) bootloader interfaces per MCU family, used by scripts/checks/idea.py. usb_dfu_rom: yes | no | unknown. Only facts with a named source; everything else stays unknown.",
+  "rows": [
+    {"family": "STM32F103", "match": "STM32F103", "usb_dfu_rom": "no", "rom_interfaces": ["USART1"], "alternatives": ["USART1 boot (BOOT0 high)", "SWD with ST-Link"], "source": "ST AN2606, STM32F10xxx (non-connectivity) system-memory bootloader: USART1 only"},
+    {"family": "STM32F105/F107", "match": "STM32F10[57]", "usb_dfu_rom": "yes", "rom_interfaces": ["USART1", "USB DFU"], "alternatives": [], "source": "ST AN2606, STM32F10xxx connectivity line bootloader"},
+    {"family": "STM32F411", "match": "STM32F411", "usb_dfu_rom": "yes", "rom_interfaces": ["USART1", "USART2", "I2C", "SPI", "USB DFU"], "alternatives": [], "source": "ST AN2606, STM32F411xx bootloader"},
+    {"family": "STM32F072", "match": "STM32F072", "usb_dfu_rom": "yes", "rom_interfaces": ["USART", "I2C", "CAN", "USB DFU"], "alternatives": [], "source": "ST AN2606, STM32F072xx bootloader"},
+    {"family": "STM32G0B1", "match": "STM32G0B1", "usb_dfu_rom": "yes", "rom_interfaces": ["USART", "I2C", "SPI", "USB DFU"], "alternatives": [], "source": "ST AN2606, STM32G0B1xx bootloader"},
+    {"family": "STM32L4 with USB (L412/L422/L432/L442/L452/L462/L475/L476/L486/L496/L4A6)", "match": "STM32L4(?:12|22|32|42|52|62|75|76|86|96|A6)", "usb_dfu_rom": "yes", "rom_interfaces": ["USART", "I2C", "SPI", "USB DFU"], "alternatives": [], "source": "ST AN2606, STM32L4 bootloader tables (parts with a USB peripheral)"},
+    {"family": "ESP32-S2", "match": "ESP32-?S2", "usb_dfu_rom": "yes", "rom_interfaces": ["UART0", "USB (CDC download)"], "alternatives": [], "source": "Espressif ESP32-S2 Technical Reference Manual / esptool docs (boot mode selection)"},
+    {"family": "ESP32-S3", "match": "ESP32-?S3", "usb_dfu_rom": "yes", "rom_interfaces": ["UART0", "USB Serial/JTAG"], "alternatives": [], "source": "Espressif ESP32-S3 Technical Reference Manual, USB Serial/JTAG controller; esptool docs"},
+    {"family": "ESP32 (classic)", "match": "ESP32(?!-?[SCH]\\d)", "usb_dfu_rom": "no", "rom_interfaces": ["UART0"], "alternatives": ["USB-UART bridge chip", "UART header"], "source": "Espressif ESP32 datasheet: no native USB peripheral; esptool docs (serial download)"},
+    {"family": "RP2040", "match": "RP2040", "usb_dfu_rom": "yes", "rom_interfaces": ["USB mass storage (BOOTSEL)", "USB PICOBOOT"], "alternatives": [], "source": "Raspberry Pi RP2040 datasheet, section 2.8 Bootrom (USB boot)"},
+    {"family": "ATmega328P", "match": "ATMEGA328P?", "usb_dfu_rom": "no", "rom_interfaces": [], "alternatives": ["ISP header (6-pin)", "USB-UART bridge with a serial bootloader burned in via ISP"], "source": "Microchip ATmega328P datasheet: no USB peripheral and no factory ROM bootloader (bootloader section is user flash)"}
+  ]
+}

@@ -201,6 +201,34 @@ EnableReload3=0
 """
 
 
+# Altium V7 layer ids: Mechanical 1..16 are 16908289..16908304.
+_MECH_BASE = 16908289
+
+
+def _mech_name(layer_id: int) -> str | None:
+    n = layer_id - _MECH_BASE + 1
+    return f"Mechanical{n}" if 1 <= n <= 16 else None
+
+
+def check_gerber_plot_config(config_text: str, contaminated_files: list[str] | None = None) -> list[dict[str, Any]]:
+    """Check a Gerber output configuration line of an OutJob. A mechanical layer (usually Mechanical 1,
+    the board outline) in AddToAllPlots is drawn into EVERY Gerber (copper, mask, silk, paste), which
+    puts a line on the board edge in each layer and makes fabrication DFM report trace-to-edge errors.
+    `contaminated_files` (optional) are Gerber files known to contain such a line, for the message."""
+    import re
+    m = re.search(r"AddToAllPlots\.Set=([^|]*)", config_text)
+    if not m:
+        return []
+    layers = [n for n in (_mech_name(int(i)) for i, v in re.findall(r"(\d+)~(\d+)", m.group(1)) if v != "0") if n]
+    if not layers:
+        return []
+    extra = f" {len(contaminated_files)} Gerber file(s) contain it." if contaminated_files else ""
+    return [{"id": "outline_in_all_gerber_layers", "severity": "error", "refs": layers,
+             "message": f"{', '.join(layers)} is in AddToAllPlots, so it is plotted into every Gerber layer "
+                        f"(copper, mask, silk, paste).{extra} Keep outline layers only in their own plot.",
+             "evidence": "OutJob Gerber configuration AddToAllPlots.Set"}]
+
+
 def generate_outjob(project: str, filename: str | None = None, out_dir: pathlib.Path | None = None) -> dict[str, Any]:
     """
     Generate an Altium OutJob text file into the project's exports directory.

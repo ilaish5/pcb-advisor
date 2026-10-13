@@ -235,6 +235,57 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
     }
 
 
+def parse_placement_csv(text: str) -> list[dict[str, Any]]:
+    """Parse an Altium Pick Place / CPL csv (Designator,Mid X,Mid Y,Layer,Rotation; values may carry 'mm')
+    into component dicts {ref, x_mm, y_mm, layer, rotation} (the shape check_edge_components reads)."""
+    import csv
+    import io
+
+    def num(v: str) -> float:
+        return float(str(v).strip().lower().replace("mm", "") or 0.0)
+
+    rows = []
+    for r in csv.DictReader(io.StringIO(text.lstrip("﻿"))):
+        key = {k.strip().lower(): v for k, v in r.items() if k}
+        ref = (key.get("designator") or key.get("ref") or "").strip()
+        if not ref:
+            continue
+        rows.append({"ref": ref, "x_mm": num(key.get("mid x", key.get("x", "0"))),
+                     "y_mm": num(key.get("mid y", key.get("y", "0"))),
+                     "layer": (key.get("layer") or "").strip(),
+                     "rotation": num(key.get("rotation", "0"))})
+    return rows
+
+
+def check_connectors_from_placement(placement: list[dict[str, Any]], outline_mm: list[float],
+                                    connector_specs: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Pure entry point of the connector-opening check for data that does not come from a PcbDoc:
+    placement rows (see parse_placement_csv), board outline [x1, y1, x2, y2] in mm and per-connector
+    specs {ref: {"wire_entry_dir_at_rot0": [x, y]}}. Returns only connector_faces_inward findings."""
+    bounds = compute_board_bounds({}, outline_mm=outline_mm)
+    res = check_edge_components({"components": placement}, bounds, connector_specs=connector_specs)
+    return [f for f in res if f["id"] == "connector_faces_inward"]
+
+
+def check_cpl_vs_model_rotation(cpl: list[dict[str, Any]], model_offsets: dict[str, float]) -> list[dict[str, Any]]:
+    """Compare CPL rotations with the JLC 3D-model orientation. `model_offsets` maps designator to the
+    angle (deg) by which JLC's model differs from our footprint. Any offset that is not a multiple of 360
+    means the raw CPL rotation puts that part wrong in JLC's assembly preview, so it needs a correction.
+    Returns one cpl_rotation_mismatch finding listing every such part present in the CPL."""
+    by_ref = {c["ref"]: c for c in cpl}
+    bad = []
+    for ref, off in model_offsets.items():
+        if ref in by_ref and abs(((float(off) + 180.0) % 360.0) - 180.0) > 0.01:
+            bad.append((ref, float(by_ref[ref].get("rotation", 0.0)), float(off) % 360.0))
+    if not bad:
+        return []
+    shown = ", ".join(f"{r} (CPL {c:.0f}, model offset {o:.0f})" for r, c, o in bad[:6])
+    return [{"id": "cpl_rotation_mismatch", "severity": "error", "refs": [r for r, _, _ in bad],
+             "message": f"{len(bad)} CPL rotation(s) disagree with the JLC 3D model orientation: {shown}"
+                        + (" ..." if len(bad) > 6 else "") + ".",
+             "evidence": "CPL rotation vs JLC model offset per part"}]
+
+
 def main(argv=None):
     oscompat.utf8_stdio()
     ap = argparse.ArgumentParser(description="PcbDoc physical board review checks")

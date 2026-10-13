@@ -19,8 +19,8 @@ import importlib
 
 REGISTRY = []          # [(code, fn)]
 
-# Stage modules to import; each registers its detectors. Empty in the baseline.
-STAGE_MODULES = []
+# Stage modules to import; each registers its detectors (empty in the I1 baseline).
+STAGE_MODULES = ["bench.checks_parts", "bench.checks_schematic", "bench.checks_board", "bench.checks_idea"]
 
 
 def register(code):

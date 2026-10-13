@@ -29,15 +29,19 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
    rounded UP. State that IPC-2221 and IPC-2152 differ and which one was used.
 6. Build the rule table: `Rule | Scope | Min/Pref/Max | Why | Source`. Specific rules get higher priority than the board default
    (Altium rule priorities: course m19 19.3.2).
-7. Produce the `.RUL` when the tool supports it (see Scripts). Tell the student the import path in Altium: Design > Rules, then
-   right-click > Import Rules; answer No to "clear existing rules" so their own rules stay. Say it is the AD20 path.
+7. Produce the `.RUL` when the tool supports it (see Scripts). Tell the student the import path in Altium (verified AD26): Design > Rules, right-click
+   "Default Rule Set" > Import Rules... > pick the file > "Select Design Rules" (leave all ticked) > Import. In "Rule Set Already
+   Exists": with a board-aware file (`export --board <PcbDoc>`, carries all the board's rules with JLC values) choose
+   "Replace existing rules"; with the plain preset file choose "Merge with existing rules", then open "Priorities..." and raise the
+   imported `*_1` rules to the top (or delete the old rules of the same kind). Then re-run the read-back diff.
 8. Read-back: when the student says they edited rules, read the PcbDoc rules and list `only in plan / only in board / value differs`.
    Ask "update the plan from the board?" before changing anything.
 9. Add layout practices that are not rules (stitching vias, decaps at the pins, hot-loop size) as a plain list for the layout stage.
 
 ## Scripts
 - `python <repo>/scripts/rules.py diff <pcbdoc>` - diff of a PcbDoc's rules vs the JLC preset (table with rule, kind, board value, preset value, status).
-- `python <repo>/scripts/rules.py export <output.RUL>` - export preset design rules to an Altium .RUL file.
+- `python <repo>/scripts/rules.py export <output.RUL> [--board <PcbDoc>]` - export the preset to a .RUL file.
+  With --board it is the full board rule set with JLC values (import with "Replace existing rules").
 - `python <repo>/scripts/calc.py trace-width <amps> [--rise <C>] [--oz <n>]` - IPC-2152 trace width in mm and mil.
 - `python <repo>/scripts/calc.py divider <vin> <vout>` - voltage divider resistor calculation with standard E24 values.
 - `python <repo>/scripts/calc.py led <v_supply> <v_forward> <i_ma>` - LED series resistor and power rating.
@@ -65,7 +69,8 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
   can take and neck down, and route the wide part by hand.
 - Priorities: Altium applies the first matching rule by priority; a new rule lands at priority 1 and can silently override the
   board default. Check the order after import.
-- Import with "clear existing rules" = No, or the student's own rules are lost. Altium's export skips one default rule; a diff will
+- Merge import renames same-named rules (`Clearance_1`) at priority 2, so the old rule still wins
+  until the order is fixed. Replace removes the board's rules, so use it only with the board-aware file. Altium's export skips one default rule; a diff will
   show it as missing; that is expected.
 - Auto-generated net names (from ECO) are not the schematic names; a rule scoped to a name that does not exist applies to nothing.
   Check each scope name against the board's net list.

@@ -328,6 +328,21 @@ table.libt{min-width:740px} table.srct{min-width:780px}
 .toast{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;padding:8px 16px;border-radius:9px;font-size:13px;box-shadow:var(--shadow);z-index:20;max-width:calc(100% - 32px)}
 .mobile-only{display:none}
 
+.ngroup.projects{overflow:visible}
+.pcur .pcaret{flex:none;font-size:11px;color:var(--nav-dim)}
+.pcur[aria-expanded="true"]{background:var(--panel2)}
+.pcur .pini{display:none;font-weight:600}
+.pmenu{position:fixed;z-index:30;min-width:200px;max-width:320px;max-height:60vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:4px;display:grid;gap:2px}
+.pmenu[hidden]{display:none}
+.pmitem{display:flex;align-items:center;gap:10px;border:0;background:none;color:var(--ink);text-align:left;padding:7px 8px;border-radius:8px;font-size:13.5px;min-width:0;width:100%}
+.pmitem .lbl{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pmitem .pdot{width:8px;height:8px;border-radius:50%;background:var(--nav-dim);flex:none;opacity:.4}
+.pmitem[aria-current="true"]{font-weight:600}
+.pmitem[aria-current="true"] .pdot{background:var(--ok);opacity:1}
+.pmitem:hover,.pmitem:focus-visible{background:var(--panel2)}
+.psep{height:1px;background:var(--line2);margin:2px 4px}
+.nav.compact .pcur .pdot,.nav.compact .pcur .pcaret{display:none}
+.nav.compact .pcur .pini{display:inline}
 .nav.compact{padding:12px 6px;align-items:center}
 .nav.compact .lbl,.nav.compact .cnt,.nav.compact .nlabel,.nav.compact .nsub,.nav.compact .mock,.nav.compact .brand span{display:none}
 .nav.compact .nitem{justify-content:center;width:44px;padding:9px}
@@ -1114,8 +1129,13 @@ function renderNav() {
   $('#nav').innerHTML = `
     <div class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="12" height="14" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2 9h4M2 15h4M18 9h4M18 15h4" stroke="currentColor" stroke-width="1.8"/></svg><span>PCB Advisor</span></div>
     <div class="ngroup projects"><div class="nlabel">Projects</div>
-      ${PROJECTS.map(p => `<button class="nitem" data-proj="${esc(p.name)}" aria-current="${p.name === PROJECT}"><span class="pdot"></span><span class="lbl">${esc(p.title)}</span></button>`).join('')}
-      <button class="nitem" data-act="newproj"><span class="pdot" style="opacity:.4"></span><span class="lbl">+ New project</span></button>
+      ${(() => { const cur = PROJECTS.find(p => p.name === PROJECT) || {name: PROJECT, title: PROJECT}; const ct = String(cur.title || cur.name || '');
+        return `<button type="button" class="nitem pcur" id="projbtn" data-act="projmenu" aria-haspopup="menu" aria-expanded="false" aria-controls="projmenu" title="${esc(ct)}"><span class="pdot"></span><span class="pini">${esc(ct.charAt(0).toUpperCase())}</span><span class="lbl">${esc(ct)}</span><span class="pcaret" aria-hidden="true">&#9662;</span></button>
+      <div class="pmenu" id="projmenu" role="menu" aria-label="Projects" hidden>
+        ${PROJECTS.map(p => `<button type="button" class="pmitem" role="menuitem" tabindex="-1" data-proj="${esc(p.name)}" aria-current="${p.name === PROJECT}"><span class="pdot"></span><span class="lbl">${esc(p.title)}</span></button>`).join('')}
+        <div class="psep"></div>
+        <button type="button" class="pmitem" role="menuitem" tabindex="-1" data-act="newproj"><span class="lbl">+ New project</span></button>
+      </div>`; })()}
     </div>
     <div class="ngroup"><div class="nlabel">${esc(S.title)}</div>
       <button class="nitem mobile-only" data-view="chat" title="Chat">${ICON.chat}<span class="lbl">Chat</span></button>
@@ -1129,6 +1149,44 @@ function renderNav() {
     </div>
     <div class="nfoot">${ni('settings', 'set', 'Settings')}</div>`;
 }
+
+/* ---------- project picker dropdown ---------- */
+function toggleProjMenu(open) {
+  const btn = document.getElementById('projbtn'), menu = document.getElementById('projmenu');
+  if (!btn || !menu) return;
+  const want = open === undefined ? menu.hidden : !!open;
+  menu.hidden = !want;
+  btn.setAttribute('aria-expanded', String(want));
+  if (want) {
+    const r = btn.getBoundingClientRect();
+    menu.style.left = Math.max(4, r.left) + 'px';
+    menu.style.top = (r.bottom + 4) + 'px';
+    const cur = menu.querySelector('[aria-current="true"]') || menu.querySelector('[role="menuitem"]');
+    if (cur) cur.focus();
+  }
+}
+function closeProjMenu(refocus) {
+  const menu = document.getElementById('projmenu');
+  if (!menu || menu.hidden) return;
+  toggleProjMenu(false);
+  if (refocus) { const b = document.getElementById('projbtn'); if (b) b.focus(); }
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#projmenu, #projbtn') || e.target.closest('#projmenu [role="menuitem"]')) closeProjMenu(false);
+}, true);
+document.addEventListener('keydown', e => {
+  const menu = document.getElementById('projmenu');
+  if (!menu || menu.hidden) return;
+  if (e.key === 'Escape') { closeProjMenu(true); return; }
+  if (e.key === 'Tab') { closeProjMenu(false); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+    if (!items.length) return;
+    e.preventDefault();
+    const i = items.indexOf(document.activeElement);
+    items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus();
+  }
+});
 
 /* ---------- stage guidance ---------- */
 function stageGuidance(targetTab) {
@@ -3082,17 +3140,20 @@ function rulesHTML(container) {
       <p>JLC PCB capabilities preset, read-back diff against the linked PcbDoc, and engineering calculators.</p>
     </div>
     <div class="vacts">
-      <a class="btn pri" href="/api/rules/export?${q()}" download="${esc(PROJECT)}-rules.RUL">Download .RUL</a>
+      <a class="btn pri" href="/api/rules/export?${q()}" download="${esc(PROJECT)}-rules${linked ? '-board' : ''}.RUL">${linked ? 'Download .RUL (full board rule set)' : 'Download .RUL'}</a>
+      ${linked ? `<a class="btn" href="/api/rules/export?${q()}&plain=1" download="${esc(PROJECT)}-rules.RUL">Preset only</a>` : ''}
     </div>
   </div>
 
   <div class="howto">
-    <b>How to Import .RUL in Altium Designer (AD20 Essentials Module 19 § 19.3)</b>
+    <b>How to import the .RUL in Altium Designer</b>
     <ol style="margin:6px 0 0;padding-left:18px;display:grid;gap:4px">
-      <li>Open your PCB document (<b>.PcbDoc</b>) in Altium Designer.</li>
-      <li>Open the PCB Rules and Constraints Editor via <b>Design » Rules</b> (shortcut <span class="m">D » R</span>).</li>
-      <li>In the tree on the left, right-click on <b>Design Rules</b> and select <b>Import Rules...</b>.</li>
-      <li>Select the downloaded <span class="m">.RUL</span> file, click <b>Open</b>, and choose <b>No</b> when asked to clear existing rules (preserves your custom rules).</li>
+      <li>Open your <b>.PcbDoc</b>, then <b>Design &raquo; Rules</b>.</li>
+      <li>Right-click <b>Default Rule Set</b> and choose <b>Import Rules...</b>, pick the downloaded <span class="m">.RUL</span>, leave all rules ticked in <b>Select Design Rules</b> and click <b>Import</b>.</li>
+      ${linked
+        ? `<li>In <b>Rule Set Already Exists</b> choose <b>Replace existing rules</b>. This file carries all of the board's rules with the JLC values filled in, so nothing is lost.</li>`
+        : `<li>In <b>Rule Set Already Exists</b> choose <b>Merge with existing rules</b>. Altium names the imported rules <span class="m">Clearance_1</span> etc. at a lower priority than your old ones, so afterwards open <b>Priorities...</b> and move each imported <span class="m">*_1</span> rule to the top (or delete the old rule of the same kind). Linking the PcbDoc in Settings gives a file you can import with <b>Replace</b> instead.</li>`}
+      <li>Come back here and reload this tab: the diff reads the rules back from the PcbDoc and shows the effective (highest-priority) rule per kind.</li>
     </ol>
   </div>
 
@@ -3724,6 +3785,7 @@ document.addEventListener('click', async e => {
     if (d.accept) { setState(await api('/api/library/accept', {line: d.accept})); render(true); toast('Accepted'); return; }
     if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast('Result: ' + r.result.verify); return; }
     if (d.thread !== undefined && el.dataset.thread !== undefined) { if (d.thread) switchSession(d.thread); return; }
+    if (d.act === 'projmenu') { toggleProjMenu(); return; }
     if (d.proj) { ALTIUM_DATA = null; const u = new URL(location.href); u.searchParams.set('project', d.proj); u.searchParams.delete('session'); location.href = u; return; }
     if (d.act === 'scroll-tabs-left' || el.matches('[aria-label="Scroll tabs left"]')) { scrollTabsBy(-1); return; }
     if (d.act === 'scroll-tabs-right' || el.matches('[aria-label="Scroll tabs right"]')) { scrollTabsBy(1); return; }

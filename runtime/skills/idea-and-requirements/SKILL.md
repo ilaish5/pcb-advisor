@@ -47,6 +47,7 @@ Question list (pick, do not ask all):
 - `<repo>/shared/reference/course/altium-education/unit2-schematics-libraries.en.md` - [15]-[19], [22] component choice, supply chain.
 - `references/question-bank.md` - why-it-matters text and follow-ups per question (in this skill folder).
 - `references/diagram-ops.md` - operations and examples for live diagram editing (in this skill folder).
+- `references/mcu-bootloaders.json` - which MCU families have a ROM USB DFU bootloader, with sources (in this skill folder).
 
 ## Pitfalls
 - Flashing is the classic late question. Some MCU families have a ROM USB DFU boot mode, only on fixed USB pins; others only

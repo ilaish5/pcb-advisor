@@ -44,6 +44,7 @@ VALID_STROKE_STYLES = {"solid", "dashed", "dotted", "thick"}
 VALID_CONNECT_ARROWS = {"none", "end", "both", "start", "to"}
 VALID_CONNECT_ROUTES = {"straight", "elbow", "curved"}
 VALID_ENDPOINT_SIDES = {"top", "bottom", "left", "right"}
+VALID_ENDPOINT_POINTS = VALID_ENDPOINT_SIDES | {"top-left", "top-right", "bottom-right", "bottom-left"}
 VALID_ALIGN = {"left", "center", "right"}
 VALID_FONT_SIZES = {"S", "M", "L"}
 VALID_DOMAINS = {
@@ -324,13 +325,23 @@ def proposals(project):
     return list(rows.values())
 
 
+def _new_proposal_id(project):
+    """Time-ordered id; a suffix keeps two proposals in the same millisecond apart."""
+    base = "p" + dt.datetime.now().strftime("%Y%m%d%H%M%S%f")[:17]
+    taken = {p["id"] for p in proposals(project)}
+    pid, n = base, 1
+    while pid in taken:
+        pid, n = f"{base}-{n}", n + 1
+    return pid
+
+
 def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False):
     """Record a proposal. Nothing about the BOM changes until the student approves."""
     existing = {l["key"]: l for l in bom_lines(project)}
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
     before = {k: existing.get(line, {}).get(k) for k in changes}
-    pid = "p" + dt.datetime.now().strftime("%Y%m%d%H%M%S%f")[:17]
+    pid = _new_proposal_id(project)
     rec = {"id": pid, "ts": now(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),
            "library": library or None, "session": session, "status": "pending"}
@@ -440,6 +451,7 @@ def validate_diagram(data):
             clean_s["role"] = s["role"]
         valid_shapes.append(clean_s)
 
+    shape_ids = {s["id"] for s in valid_shapes}
     valid_connectors = []
     for c in connectors:
         if not isinstance(c, dict):
@@ -454,6 +466,14 @@ def validate_diagram(data):
             if "shape" in ep:
                 if not isinstance(ep["shape"], str) or not ID_RE.match(ep["shape"]):
                     raise ValueError(f"connector {cid} {name} shape invalid")
+                if "point" in ep:
+                    point = ep["point"]
+                    if not isinstance(point, str) or point not in VALID_ENDPOINT_POINTS:
+                        raise ValueError(f"connector {cid} {name} invalid point: {point!r}")
+                    # new-style attached end: the shape must exist (legacy side-style ends stay lenient)
+                    if ep["shape"] not in shape_ids:
+                        raise ValueError(f"connector {cid} {name} references unknown shape: {ep['shape']!r}")
+                    return {"shape": ep["shape"], "point": point}
                 side = ep.get("side", "right")
                 if side not in VALID_ENDPOINT_SIDES:
                     raise ValueError(f"connector {cid} {name} invalid side: {side}")
@@ -828,7 +848,7 @@ def migrate_idea_diagram(idea):
 
 def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
     """Record a proposal to update the idea block diagram."""
-    pid = "p" + dt.datetime.now().strftime("%Y%m%d%H%M%S%f")[:17]
+    pid = _new_proposal_id(project)
     existing = load_idea(project)
     before = {
         "blocks": existing.get("blocks", []),
@@ -1401,6 +1421,10 @@ def apply_diagram_edit(project, ops):
                         sh = raw["shape"]
                         if not any(s["id"] == sh for s in shapes):
                             raise ValueError(f"connector {cid} {name} shape {sh!r} not found")
+                        if "point" in raw:
+                            if raw["point"] not in VALID_ENDPOINT_POINTS:
+                                raise ValueError(f"invalid point: {raw['point']!r}")
+                            return {"shape": sh, "point": raw["point"]}
                         side = raw.get("side", def_side)
                         if side not in VALID_ENDPOINT_SIDES:
                             raise ValueError(f"invalid side: {side}")

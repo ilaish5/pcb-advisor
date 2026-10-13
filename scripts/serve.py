@@ -644,6 +644,21 @@ class Handler(BaseHTTPRequestHandler):
             proj = self.project()
             import rules as rules_mod
             records = rules_mod.get_preset_rule_records()
+            board_aware = False
+            if not self.query("plain"):
+                try:
+                    link = project_mod.altium_link(proj)
+                    pcb_name = link.get("pcb_file")
+                    prj_file = link.get("project_file")
+                    if pcb_name:
+                        pcb_path = pathlib.Path(pcb_name)
+                        if not pcb_path.is_file() and prj_file:
+                            pcb_path = pathlib.Path(prj_file).parent / pcb_name
+                        if pcb_path.is_file():
+                            records = rules_mod.board_rul_records(pcb_path, records)
+                            board_aware = True
+                except Exception:
+                    pass
             rules_file = model.project_dir(proj) / "rules.json"
             if rules_file.is_file():
                 try:
@@ -663,7 +678,7 @@ class Handler(BaseHTTPRequestHandler):
                     pass
             b = rules_mod.format_rul_bytes(records)
             return self._send(200, b, "application/octet-stream",
-                              {"Content-Disposition": f'attachment; filename="{proj}-rules.RUL"'})
+                              {"Content-Disposition": f'attachment; filename="{proj}-rules{"-board" if board_aware else ""}.RUL"'})
         if path == "/api/calc":
             import calc
             q = self.queries()

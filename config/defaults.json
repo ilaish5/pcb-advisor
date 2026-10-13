@@ -188,7 +188,7 @@
           "NAME": "MinimumAnnularRing",
           "RULEKIND": "MinimumAnnularRing",
           "SCOPE1EXPRESSION": "All",
-          "MINIMUM": "6mil",
+          "MINIMUMRING": "6mil",
           "ENABLED": "TRUE",
           "PRIORITY": "1"
         }

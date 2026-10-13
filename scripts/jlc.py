@@ -287,6 +287,37 @@ def alternatives(line, n=5, transport=None):
     return candidates[:n]
 
 
+# ---- pure snapshot rules (no network); shared by the product and bench/checks_parts.py
+
+EXPENSIVE_SHARE = 0.25     # an Extended line costing >= this share of the board's parts cost
+EXPENSIVE_MIN_COST = 5.0   # ... and at least this many USD per board
+
+
+def stock_shortfall(stock, qty_per_board, boards):
+    """Units missing to build `boards` boards, or 0. `stock` None means unknown -> 0."""
+    if stock is None:
+        return 0
+    return max(0, int(qty_per_board) * int(boards) - int(stock))
+
+
+def is_standard_only(assembly):
+    """True when a JLC assembly note says the part can only go on Standard (not Economic) assembly."""
+    return "standard only" in str(assembly or "").lower()
+
+
+def expensive_extended_lines(lines, share=EXPENSIVE_SHARE, min_cost=EXPENSIVE_MIN_COST):
+    """lines: [{refs, qty, unit_price, library_type}]. Returns the Extended lines whose cost per
+    board is >= `share` of the total priced cost and >= `min_cost` USD. Each result gets
+    cost_per_board and share."""
+    priced = [(l, (l.get("unit_price") or 0.0) * (l.get("qty") or 0)) for l in lines]
+    total = sum(c for _, c in priced)
+    out = []
+    for l, c in priced:
+        if total > 0 and l.get("library_type") == "Extended" and c >= min_cost and c / total >= share:
+            out.append({**l, "cost_per_board": round(c, 4), "share": round(c / total, 3)})
+    return out
+
+
 if __name__ == "__main__":
     import oscompat
     oscompat.utf8_stdio()
