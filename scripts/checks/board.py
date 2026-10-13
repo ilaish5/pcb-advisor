@@ -325,18 +325,40 @@ def check_cpl_rotation_sanity(doc: dict[str, Any]) -> list[dict[str, Any]]:
     return findings
 
 
+def outline_bbox_containing_parts(path, doc: dict[str, Any], findings: list) -> list[float] | None:
+    """The board shape's bbox from the PcbDoc, used only when it holds the parts: a file whose shape was never
+    set keeps Altium's default rectangle, and the pad estimate is the better guess there."""
+    import preview_pcb
+    pts = preview_pcb.get_board_outline(path)
+    comps = [c for c in doc.get("components", []) if "x_mm" in c]
+    if not pts or not comps:
+        return None
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    box = [min(xs), min(ys), max(xs), max(ys)]
+    inside = sum(box[0] <= c["x_mm"] <= box[2] and box[1] <= c["y_mm"] <= box[3] for c in comps)
+    if inside >= 0.9 * len(comps):
+        return box
+    findings.append({
+        "id": "board_shape_does_not_hold_parts", "severity": "info", "refs": [],
+        "message": f"Only {inside} of {len(comps)} parts lie inside the board shape; edge checks use the pad "
+                   "extent instead. Set the board shape (Design > Board Shape) before the edge checks mean much.",
+        "evidence": f"board shape bbox {[round(v, 2) for v in box]} mm"})
+    return None
+
 def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: list[float] | None = None,
                 connector_specs: dict[str, Any] | None = None,
                 decap_max_dist_mm: float = DECAP_MAX_DIST_MM) -> dict[str, Any]:
     """Run all board checks on a PcbDoc (a path, or a read_pcbdoc dict; footprint geometry comes from
     read_pcbdoc(path, geometry=True), i.e. body_bbox_mm / outline_bbox_mm on each component)."""
+    findings = []
     if isinstance(doc_or_path, (str, pathlib.Path)):
         doc = read_pcbdoc(doc_or_path, geometry=True)
+        if outline_mm is None:
+            outline_mm = outline_bbox_containing_parts(doc_or_path, doc, findings)
     else:
         doc = doc_or_path
 
     bounds = compute_board_bounds(doc, outline_mm=outline_mm)
-    findings = []
     findings.extend(check_edge_components(doc, bounds, connector_specs=connector_specs))
     findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm))
     findings.extend(check_cpl_rotation_sanity(doc))

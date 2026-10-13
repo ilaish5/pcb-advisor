@@ -29,11 +29,46 @@ def esc(s: str) -> str:
     return html.escape(str(s or ""), quote=True)
 
 
+def _mil(v) -> float:
+    s = str(v or "0").strip().lower().removesuffix("mil")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def board6_outline(rec: dict) -> list[tuple[float, float]] | None:
+    """Board shape from the Board6 record: VXn/VYn vertices, KINDn 1 = arc (CXn, CYn, Rn, SAn..EAn degrees).
+    On a real board (2026-10-13) this was the shape in the Gerbers while BoardRegions still held the
+    7000 x 5000 mil default, so it is read first."""
+    pts = []
+    i = 0
+    while f"VX{i}" in rec and f"VY{i}" in rec:
+        if str(rec.get(f"KIND{i}", "0")).strip() == "1" and _mil(rec.get(f"R{i}")) > 0:
+            cx, cy, r = _mil(rec.get(f"CX{i}")), _mil(rec.get(f"CY{i}")), _mil(rec.get(f"R{i}"))
+            sa, ea = float(rec.get(f"SA{i}", 0)), float(rec.get(f"EA{i}", 0))
+            span = (ea - sa) % 360 or 360
+            for k in range(9):
+                a = math.radians(sa + span * k / 8)
+                pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+        else:
+            pts.append((_mil(rec[f"VX{i}"]), _mil(rec[f"VY{i}"])))
+        i += 1
+    if len(pts) < 3 or len({p for p in pts}) < 3:
+        return None
+    return [(round(x * 0.0254, 4), round(y * 0.0254, 4)) for x, y in pts]
+
+
 def get_board_outline(pcbdoc_path) -> list[tuple[float, float]] | None:
-    """Attempt to extract board outline polygon vertices (in mm) from PcbDoc BoardRegions."""
+    """Board outline polygon vertices (in mm): the Board6 shape, else the first BoardRegions record."""
     try:
         p = pathlib.Path(pcbdoc_path)
         with open_doc(p) as ole:
+            if ole.exists("Board6/Data"):
+                recs = text_records(stream(ole, "Board6/Data"), prefix=0)
+                pts = board6_outline(recs[0]) if recs else None
+                if pts:
+                    return pts
             if ole.exists("BoardRegions/Data"):
                 recs = text_records(stream(ole, "BoardRegions/Data"), prefix=0)
                 if recs:

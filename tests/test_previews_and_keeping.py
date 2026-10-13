@@ -228,3 +228,18 @@ def test_server_previews_and_keeping(server, lte):
         res = json.loads(r.read())
         assert "present" in res
         assert "missing" in res
+
+
+def test_board_shape_comes_from_board6():
+    """A real board kept the 7000 x 5000 mil default in BoardRegions while Board6 held the 100 x 80 mm shape."""
+    rec = {"VX0": "1000mil", "VY0": "1000mil", "VX1": "4937.0079mil", "VY1": "1000mil",
+           "VX2": "4937.0079mil", "VY2": "4149.6063mil", "VX3": "1000mil", "VY3": "4149.6063mil",
+           "VX4": "1000mil", "VY4": "1000mil"}
+    pts = preview_pcb.board6_outline(rec)
+    xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+    assert (min(xs), min(ys), round(max(xs), 1), round(max(ys), 1)) == (25.4, 25.4, 125.4, 105.4)
+    arc = {"VX0": "0mil", "VY0": "0mil", "KIND0": "1", "CX0": "0mil", "CY0": "0mil", "R0": "1000mil",
+           "SA0": "0", "EA0": "90", "VX1": "0mil", "VY1": "1000mil"}
+    pts = preview_pcb.board6_outline(arc)
+    assert len(pts) == 10 and pts[0] == (25.4, 0.0) and abs(pts[8][0]) < 1e-3 and pts[8][1] == 25.4
+    assert preview_pcb.board6_outline({"VX0": "0mil", "VY0": "0mil"}) is None

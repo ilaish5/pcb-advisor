@@ -9,17 +9,25 @@ The important function here is verify(): a stored quote must be findable,
 verbatim, in the fetched document.  That turns "trust me" into a test.
 """
 import hashlib
+import http.client
 import json
 import pathlib
 import re
 import shutil
 import sys
+import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import workspace  # noqa: E402
 
 UA = "Mozilla/5.0 (compatible; pcb-advisor/0.1; educational use)"
+
+
+class SourceError(Exception):
+    """A document that cannot be added: the download failed, the server sent
+    something other than what the name says, or the name is taken. The message
+    is written for the person at the terminal; the CLI prints it as one line."""
 
 
 def cache():
@@ -35,15 +43,50 @@ def _meta_path(path):
     return path.with_suffix(path.suffix + ".json")
 
 
+def _read_meta(path):
+    """The sidecar of a cached document as a dict; {} if there is none."""
+    try:
+        meta = json.loads(_meta_path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _download(url, timeout):
+    """The bytes at a url. Every way a download fails comes out as SourceError
+    with a one-line reason, so no caller has to know urllib's exception zoo."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise SourceError(f"{url}: HTTP {exc.code} {exc.reason}") from exc
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
+        raise SourceError(f"{url}: {getattr(exc, 'reason', None) or exc}") from exc
+
+
+def _check_kind(url, name, blob):
+    """A name ending in .pdf must hold a PDF. A vendor site that suspects a bot
+    answers 200 with an HTML challenge page, and saved under a .pdf name that
+    is a citation nothing can verify. The header may follow a little junk (a
+    BOM, blank lines), so look in the first KB, the way PDF readers do."""
+    head = blob[:1024]
+    if not name.lower().endswith(".pdf") or b"%PDF-" in head:
+        return
+    low = head.lower()
+    what = "an HTML page" if b"<html" in low or b"<!doctype html" in low else "something that is not a PDF"
+    raise SourceError(f"{url}: the server returned {what}, not a PDF. Download it by hand in a "
+                      f"browser and add it from the Sources tab (Upload file).")
+
+
 def fetch(url, name=None, timeout=45):
-    """Download into the shared cache. Returns the metadata dict."""
-    cache().mkdir(parents=True, exist_ok=True)
+    """Download into the shared cache. Returns the metadata dict. Raises
+    SourceError when the download fails, is not what the name says, or would
+    replace a different document already cached under that name."""
     name = _safe(name or url.rstrip("/").split("/")[-1] or "document.pdf")
     path = cache() / name
-    req = urllib.request.Request(url, headers={"User-Agent": UA})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        blob = resp.read()
-    path.write_bytes(blob)
+    blob = _download(url, timeout)
+    _check_kind(url, name, blob)
     # The sidecar describes the DOCUMENT - what it is, where it came from, what
     # it hashes to. All of that is the same on every machine, which is why the
     # file can be tracked in git at all.
@@ -53,18 +96,36 @@ def fetch(url, name=None, timeout=45):
         "sha256": hashlib.sha256(blob).hexdigest(),
         "bytes": len(blob),
     }
+    # The cache is shared: other projects cite a document by its name, so a name
+    # already holding a different document is not ours to reuse. With no file on
+    # disk (a fresh clone before `restore`) the tracked sidecar is the record,
+    # unless it names this very url, which is `restore` bringing it back.
+    old = _read_meta(path)
+    have = None
+    if path.exists():
+        have = hashlib.sha256(path.read_bytes()).hexdigest()
+    elif old.get("url") != url:
+        have = old.get("sha256")
+    if have not in (None, meta["sha256"]):
+        raise SourceError(
+            f"{name} is already in the shared library as a different file (url "
+            f"{old.get('url') or 'unknown'}, sha256 {have[:12]}...). Not replacing it: other "
+            f"projects may cite it. Save this one under another name, e.g. "
+            f"get <project> {url} <other-name>")
+    if not path.exists():
+        cache().mkdir(parents=True, exist_ok=True)
+        path.write_bytes(blob)
     # When the document is unchanged, leave the sidecar alone. `restore` warms
     # the cache on every fresh clone, and writing a new timestamp each time made
     # a tracked file dirty as a side effect of setting the project up - so
     # `git status` was never clean and nobody could see their own changes.
-    old_path = _meta_path(path)
-    if old_path.exists():
-        try:
-            if json.loads(old_path.read_text(encoding="utf-8")) == meta:
-                return meta
-        except json.JSONDecodeError:
-            pass
-    old_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+    # The first recorded origin wins, so the same file arriving from a mirror
+    # does not rewrite it either.
+    if old.get("sha256") == meta["sha256"]:
+        return {**meta, **old}
+    # bytes, not write_text: on Windows that turns every "\n" into "\r\n", and the
+    # tracked sidecars are LF, so git would show a change that is only line endings
+    _meta_path(path).write_bytes((json.dumps(meta, indent=2) + "\n").encode("utf-8"))
     return meta
 
 
@@ -220,17 +281,22 @@ if __name__ == "__main__":
     if cmd == "restore":
         # a setup step that prints FAIL and exits 0 is one no script can check
         raise SystemExit(1 if restore() else 0)
-    if cmd == "fetch":
-        print(json.dumps(fetch(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None), indent=2))
-    elif cmd == "verify":
-        print(json.dumps(verify(sys.argv[2], sys.argv[3]), indent=2, ensure_ascii=False))
-    elif cmd == "get":
-        print(json.dumps(get(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None), indent=2))
-    elif cmd == "use":
-        print(use(sys.argv[2], sys.argv[3]))
-    elif cmd == "unuse":
-        print(json.dumps(unuse(sys.argv[2], sys.argv[3])))
-    else:
-        for f in sorted(cache().glob("*")):
-            if f.suffix not in (".json", ".txt"):
-                print(f.name, f.stat().st_size)
+    try:
+        if cmd == "fetch":
+            print(json.dumps(fetch(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None), indent=2))
+        elif cmd == "verify":
+            print(json.dumps(verify(sys.argv[2], sys.argv[3]), indent=2, ensure_ascii=False))
+        elif cmd == "get":
+            print(json.dumps(get(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None), indent=2))
+        elif cmd == "use":
+            print(use(sys.argv[2], sys.argv[3]))
+        elif cmd == "unuse":
+            print(json.dumps(unuse(sys.argv[2], sys.argv[3])))
+        else:
+            for f in sorted(cache().glob("*")):
+                if f.suffix not in (".json", ".txt"):
+                    print(f.name, f.stat().st_size)
+    except SourceError as exc:
+        # one line a person (or the agent) can act on, not a traceback
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1)

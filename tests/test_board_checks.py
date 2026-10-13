@@ -291,3 +291,14 @@ def test_passives_are_not_loads():
 ])
 def test_power_rail_name_pattern(net, rail):
     assert bool(board.POWER_NET.search(net)) is rail
+
+
+def test_edge_checks_use_the_board_shape_only_when_it_holds_the_parts():
+    fixtures = pathlib.Path(__file__).parent / "fixtures" / "altium"
+    fin = board.check_board(fixtures / "finished-board.PcbDoc")
+    assert fin["bounds_mm"] == (25.4, 25.4, 127.127, 127.0)
+    assert not [f for f in fin["findings"] if f["id"] == "board_shape_does_not_hold_parts"]
+    # rules-board still has Altium's default shape and parts far outside it: fall back, and say so
+    rb = board.check_board(fixtures / "rules-board.PcbDoc")
+    assert [f for f in rb["findings"] if f["id"] == "board_shape_does_not_hold_parts"]
+    assert rb["bounds_mm"][2] > 200
