@@ -1,73 +1,114 @@
-/* PCB Advisor UI - Altium outputs view. */
+/* PCB Advisor UI - Outputs view: the files the tool wrote into the project's exports folder (OutJob, BOM, pick and place),
+   and the actions that write them. The BOM export itself is the `export` act in bom.js (one handler, one toast).
+   Names here start with out* because every ui/js file shares one global scope. */
 
+const OUT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const OUT_NEW_MS = 12000;                     // a file written this recently flashes once when it shows up
+const OUT_OUTJOB = 'The OutJob makes Gerber RS-274X, NC drill, BOM, pick and place (CPL) and a schematic PDF.';
+
+let outTimes = {};                            // file name -> when it was written (ISO), from /api/exports; the state has only the size
+let outTimesFor = '';                         // the project and file list outTimes was read for
+let outTimesBusy = false;
+const outFlashed = new Set();                 // 'name|written' of the files that have flashed already
+
+function outSize(n) {                         // 7467 -> "7.3 KB"
+  n = Number(n) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+function outAgo(iso) {                        // "just now", "5 min ago", "2 h ago", "3 days ago", then the date
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 45) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+  if (s < 7 * 86400) return `${Math.round(s / 86400)} days ago`;
+  const d = new Date(t);
+  return `${d.getDate()} ${OUT_MONTHS[d.getMonth()]}`;
+}
+const outFull = iso => (iso || '').replace('T', ' ').slice(0, 16);
+const outUrl = name => `/api/export/${encodeURIComponent(name)}?${q()}`;
+
+// the state lists each file with its size; when it was written comes from /api/exports, read when the list changes
+async function loadExportTimes(force) {
+  const sig = PROJECT + '|' + (S.exports || []).map(f => `${f.name}:${f.size}`).join(',');
+  if (outTimesBusy || (!force && sig === outTimesFor)) return;
+  outTimesFor = sig;
+  outTimesBusy = true;
+  let next = outTimes;
+  try {
+    const r = await api('/api/exports', undefined, {soft: true});
+    if (r && Array.isArray(r.exports)) next = Object.fromEntries(r.exports.map(f => [f.name, f.modified]));
+  } catch (err) { /* the column stays as it was */ }
+  outTimesBusy = false;
+  if (JSON.stringify(next) !== JSON.stringify(outTimes)) {
+    outTimes = next;
+    if (mainView() === 'outputs' || sideView() === 'outputs') renderCenter();
+  }
+}
+
+function outHeader(files) {
+  if (!files.length) return viewHeader({title: 'Outputs'});
+  const actions = menu({label: 'Export', iconAfter: 'chev'}, outExportItems());
+  const primary = btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB});
+  const meta = metaLine([{n: files.length, label: files.length === 1 ? 'file' : 'files'}, {label: 'in exports/', always: true}]);
+  return viewHeader({title: 'Outputs', meta, actions, primary});
+}
+const outExportItems = () => [
+  {label: BOM_EXPORTS.jlc, act: 'export', attrs: {fmt: 'jlc'}},
+  {label: BOM_EXPORTS.generic, act: 'export', attrs: {fmt: 'generic'}},
+  {label: 'Pick and place (CPL)', act: 'gen-cpl'},
+];
+function outRow(f, showTimes) {
+  const at = outTimes[f.name], key = f.name + '|' + at;
+  const fresh = !!at && !outFlashed.has(key) && Date.now() - new Date(at).getTime() < OUT_NEW_MS;
+  if (at) outFlashed.add(key);
+  return `<tr data-file="${esc(f.name)}"${fresh ? ' class="flash"' : ''}>
+    <td class="out-n"><button type="button" class="out-open" data-act="view-export" data-name="${esc(f.name)}" title="Open ${esc(f.name)} beside this sheet">${esc(f.name)}</button></td>
+    ${showTimes ? `<td class="muted c-mod" title="${esc(outFull(at))}">${at ? `<time datetime="${esc(at)}" data-ago>${esc(outAgo(at))}</time>` : ''}</td>` : ''}
+    <td class="num">${esc(outSize(f.size))}</td>
+    <td><div class="row-acts"><a class="btn icon sm out-dl" href="${esc(outUrl(f.name))}" download="${esc(f.name)}" title="Download ${esc(f.name)}" aria-label="Download ${esc(f.name)}">${icon('download')}</a></div></td></tr>`;
+}
 function outputsHTML(container) {
-  const exports = S.exports || [];
-  return `<div class="vhead">
-    <div>
-      <h2>Altium outputs</h2>
-      <p>Fabrication and production files. Linked project directory is read-only; exports are generated in <span class="path">projects/${esc(PROJECT)}/exports/</span>. Copy them to your Altium outputs folder.</p>
-    </div>
-    <div class="vacts">
-      <button class="btn pri" data-act="gen-outjob">Generate OutJob</button>
-      <button class="btn" data-act="export" data-fmt="jlc">Export JLC BOM</button>
-      <button class="btn" data-act="export" data-fmt="pcbway">Export Generic BOM</button>
-      <button class="btn" data-act="gen-cpl">Export CPL</button>
-    </div>
-  </div>
-  ${outjobBanner ? `<div class="howto"><b>OutJob ready</b> <button class="x" data-act="close-outjob-banner" aria-label="Close">×</button>
-    <p style="margin:4px 0">${esc(outjobBanner.instruction || '')}</p>
-    <code>${esc(outjobBanner.path || '')}</code>
-    <div style="margin-top:6px"><a class="btn pri" href="/api/export/${encodeURIComponent((outjobBanner.path || '').split(/[\\/]/).pop())}?${q()}" download>Download OutJob</a></div>
-  </div>` : ''}
-  <div class="howto" style="margin-bottom:16px">
-    <b>Fabrication workflow</b>
-    <p style="margin:4px 0 0">1. Generate the ready OutJob file containing Gerber RS-274X, NC Drill, JLC BOM, Pick and Place CPL, and Schematic PDF.<br>
-    2. Download the OutJob or copy it from <span class="path">projects/${esc(PROJECT)}/exports/</span> into your Altium project folder.<br>
-    3. Export JLC BOM and Pick and Place CPL (CSV) ready for assembly ordering.</p>
-  </div>
-  <div class="sgroup">
-    <div class="sgh">
-      <h3>Generated export files (${exports.length})</h3>
-      <p>Stored in <span class="path">projects/${esc(PROJECT)}/exports/</span></p>
-    </div>
-    ${exports.length ? `
-      <div class="tblwrap"><table class="srct">
-        <thead><tr><th>File name</th><th style="text-align:right">Size</th><th>Actions</th></tr></thead>
-        <tbody>
-          ${exports.map(f => `
-            <tr>
-              <td class="fname"><b>${esc(f.name)}</b></td>
-              <td class="n">${num(f.size)} B</td>
-              <td>
-                <a class="lnk" href="/api/export/${encodeURIComponent(f.name)}?${q()}" download style="display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:5px">Download</a>
-                <button class="btn" data-act="view-export" data-name="${esc(f.name)}" style="margin-left:6px">View</button>
-              </td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table></div>` : `
-      <div class="dnote">No files in exports yet. Click Generate OutJob, Export JLC BOM, or Export CPL above.</div>`}
-  </div>`;
+  const files = S.exports || [];
+  loadExportTimes();
+  if (!files.length) {
+    return viewHeader({title: 'Outputs'}) + emptyState('Nothing exported yet', 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+      btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB}) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()));
+  }
+  const showTimes = files.some(f => outTimes[f.name]);
+  return `${outHeader(files)}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
+    <tbody>${files.map(f => outRow(f, showTimes)).join('')}</tbody></table></div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
-onAct('gen-outjob', async (el, d, e) => {
-  toast('Generating Altium OutJob…');
-  outjobBanner = await api('/api/outjob/generate', {});
+// the BOM exports (`export`) are in bom.js; the OutJob and the pick and place file say what they wrote the same way:
+// refresh the list, then a toast with a Download action
+async function outWrote(message, file) {
   await refresh(true);
-  toast('OutJob generated in exports/');
+  loadExportTimes(true);
+  toast(message, file ? {label: 'Download', onClick: () => bomDownload(file)} : undefined);
+}
+onAct('gen-outjob', async (el, d, e) => {
+  const r = await api('/api/outjob/generate', {});
+  await outWrote('OutJob generated. Copy it into your Altium project folder.', r.file || String(r.path || '').split(/[\\/]/).pop());
   return;
 });
-onAct('close-outjob-banner', async (el, d, e) => {
-  outjobBanner = null; renderCenter(true); return;
-});
 onAct('gen-cpl', async (el, d, e) => {
-  toast('Exporting CPL…');
   const r = await api('/api/cpl/export', {});
-  await refresh(true);
-  toast('Exported ' + r.count + ' parts to CPL');
+  await outWrote('Pick and place (CPL) exported', r.name);
   return;
 });
 onAct('view-export', async (el, d, e) => {
-  openViewerExport(d.name); return;
+  openFileAsTab({name: d.name, path: d.name, fileType: 'export'});
+  return;
 });
+document.addEventListener('click', e => {       // a click anywhere on the row opens the file; the name and the download keep their own
+  const tr = e.target.closest && e.target.closest('.out-tbl tbody tr[data-file]');
+  if (tr && !e.target.closest('button, a')) openFileAsTab({name: tr.dataset.file, path: tr.dataset.file, fileType: 'export'});
+});
+setInterval(() => {                              // "5 min ago" keeps counting while the view stays open
+  document.querySelectorAll('.out-tbl time[data-ago]').forEach(t => { t.textContent = outAgo(t.getAttribute('datetime')); });
+}, 30000);

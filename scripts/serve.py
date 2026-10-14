@@ -632,7 +632,8 @@ class Handler(BaseHTTPRequestHandler):
             if not stem:
                 return self._send(400, {"error": "stem query param required"})
             import dfm
-            return self._send(200, {"stem": stem, "triage": dfm.load_triage(self.project(), stem)})
+            rows = dfm.load_triage(self.project(), stem)
+            return self._send(200, {"stem": stem, "triage": rows, "sig": dfm.triage_sig(rows)})
         if path == "/api/checks/index":
             stem = self.query("stem")
             if not stem:
@@ -1349,7 +1350,7 @@ class Handler(BaseHTTPRequestHandler):
             import dfm
             try:
                 saved = dfm.save_triage(proj, stem, rows)
-                return self._send(200, {"ok": True, "stem": stem, "triage": saved})
+                return self._send(200, {"ok": True, "stem": stem, "triage": saved, "sig": dfm.triage_sig(saved)})
             except Exception as exc:
                 return self._send(400, {"error": str(exc)})
 

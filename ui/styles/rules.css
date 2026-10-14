@@ -1,1 +1,65 @@
-/* rules.css: Rules view. The view currently has no CSS of its own (it uses the shared classes in core.css). */
+/* rules.css: the Rules view (diff, disclosures, calculators). Tokens only. The shared pieces (.tbl, .tag, .seg, .field,
+   .in, details.disc, .note ...) are in base.css. */
+
+.rules-vb{max-width:1040px}
+.rules-seg{margin:4px 0 20px}
+.rules-seg+.sec,.rules-seg+.note{margin-top:0}
+
+/* the diff and the preset: tables fill the width, long text wraps (no sideways scroll) */
+.rules-tbl td{vertical-align:top;overflow-wrap:break-word}
+.rules-tbl td:first-child{white-space:nowrap}
+.rules-tbl td.val{color:var(--ink-2);font-variant-numeric:tabular-nums}
+.rules-diff td.val{white-space:nowrap}
+.rules-tbl .rn{font-weight:500;color:var(--ink)}
+.rules-tbl .sub{white-space:normal;max-width:none}
+.rules-tbl td.res{min-width:200px}
+.rules-tbl .why{display:block;margin-top:3px;font-size:12px;line-height:1.4;color:var(--ink-3);white-space:normal}
+.rules-tbl .wrapcell{white-space:normal;max-width:340px}
+.rules-tbl td:has(>.row-acts){width:1%;padding-left:0}
+.rules-tbl .row-acts{display:flex;justify-content:flex-end}
+.rules-tbl .res .tag+.why{margin-top:5px}
+
+/* three disclosures under the result, separated by one hairline */
+.rules-discs{display:grid;gap:4px;margin-top:30px;padding-top:12px;border-top:1px solid var(--line)}
+.rules-dbody{display:grid;gap:12px;padding:8px 0 12px;font-size:13px;min-width:0}
+.rules-dbody .muted{font-size:12.5px}
+.rules-steps{margin:0;padding-left:20px;display:grid;gap:5px;color:var(--ink-2)}
+.rules-steps li{padding-left:2px}
+.rules-src{margin-top:2px}
+.rules-add{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
+.rules-add .field:nth-child(1){width:190px}
+.rules-add .field:nth-child(2){width:170px}
+.rules-add .field:nth-child(3){width:220px}
+.rules-add .field:nth-child(4){width:110px}
+.rules-add .in{width:100%}
+
+/* calculators: plain sections, two columns when the sheet is wide enough */
+.rules-calcs{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:30px 44px}
+.rules-calcs .sec{margin-top:0;min-width:0}
+.calc-in{display:flex;flex-wrap:wrap;gap:12px}
+.calc-in .in{width:104px}
+.calc-out{margin-top:12px;min-height:58px;font-size:13px}
+.calc-out p{margin:0}
+.calc-main{font-size:var(--t-lg)}
+.calc-main b{font-weight:600;font-variant-numeric:tabular-nums}
+.calc-main .muted{font-size:var(--t-md)}
+.calc-src{margin-top:4px !important;font-size:12px;line-height:1.45}
+
+/* a narrow sheet (the side sheet): the diff becomes a list, one rule per block, instead of a table that scrolls sideways */
+.rules-vb .sec-h{flex-wrap:wrap;row-gap:2px}
+.rules-vb .sec-h .meta{min-width:0;overflow-wrap:anywhere}
+.rules-vb .check{white-space:nowrap}
+@container (max-width:760px){
+  .rules-add .field:nth-child(n){width:calc(50% - 6px)}
+}
+@container (max-width:640px){
+  .rules-diff thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  .rules-diff,.rules-diff tbody{display:block}
+  .rules-diff tr{position:relative;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);column-gap:12px;row-gap:2px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .rules-diff tbody tr:last-child{border-bottom:0}
+  .rules-diff td{display:block;padding:0;border:0;min-width:0}
+  .rules-diff td:first-child{grid-column:1/-1;padding-right:34px;white-space:normal}
+  .rules-diff td.val::before{content:attr(data-label);display:block;font-size:var(--t-xs);color:var(--ink-3)}
+  .rules-diff td.res{grid-column:1/-1;margin-top:6px;min-width:0}
+  .rules-diff td:has(>.row-acts){position:absolute;top:6px;right:0;width:auto;padding:0}
+}

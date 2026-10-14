@@ -135,9 +135,11 @@ function stageStatus(id) {
       const diff = Array.isArray(rd.diff) ? rd.diff : [];
       if (!rd.linked_pcb) return {tone: '', title: 'No board linked, so nothing to compare', hint: ''};
       if (!diff.length) return none;
-      const below = diff.filter(d => d.verdict === 'below_fab_min').length;
-      const differ = diff.filter(d => d.status === 'differs' || d.status === 'missing_on_board').length;
-      if (below) return {tone: 'bad', title: `${plural(below, 'rule')} below the JLC minimum` + (differ > below ? `, ${differ} differ from the board` : ''), hint: String(below)};
+      // the Rules view's own count (rules.js), so the nav and the view's header never disagree
+      const sm = typeof rulesSummary === 'function' ? rulesSummary(rd) : null;
+      const below = sm ? sm.below : diff.filter(d => d.verdict === 'below_fab_min').length;
+      const differ = sm ? sm.differ : diff.filter(d => d.status === 'differs' || d.status === 'missing_on_board').length;
+      if (below) return {tone: 'bad', title: `${plural(below, 'rule')} below the JLC minimum` + (differ > (sm ? 0 : below) ? `, ${sm ? differ : differ - below} more differ from the board` : ''), hint: String(below)};
       if (differ) return {tone: 'warn', title: `${plural(differ, 'rule')} differ from the board`, hint: String(differ)};
       return {tone: 'ok', title: 'Matches the board', hint: ''};
     }
@@ -150,6 +152,8 @@ function stageStatus(id) {
       if (!cs.length) return {tone: '', title: 'No reports yet', hint: ''};
       let real = 0, open = 0, known = 0;
       for (const c of cs) {
+        // the server counts each report's triage (the same numbers the DFM view's header shows)
+        if (c.triage_open != null && c.triage_real != null) { known++; real += c.triage_real; open += c.triage_open; continue; }
         const rows = triageMap[c.stem] || (c.triage_count === 0 ? [] : null);
         if (!rows) continue;
         known++;

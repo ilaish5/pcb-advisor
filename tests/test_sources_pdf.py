@@ -85,17 +85,37 @@ def test_checks_upload_broken_pdf_rejected(server, lte):
     assert body.get("error") == expected_msg
 
 
+VIEWER_JS = (REPO / "ui" / "js" / "viewer.js").read_text(encoding="utf-8")
+PAGES_JS = (REPO / "ui" / "js" / "views" / "pages.js").read_text(encoding="utf-8")
+
+
 def test_viewer_pdf_validation_static_ui():
-    content = read_html()
-
-    # Viewer checks for %PDF- before embedding iframe
-    assert "%PDF-" in content
+    # The viewer checks the first bytes for %PDF- before it embeds the iframe, and says why when it is not a PDF
+    assert "%PDF-" in VIEWER_JS
     expected_msg = "This file is not a valid PDF (it may be empty or damaged). Upload it again."
-    assert expected_msg in content
+    assert expected_msg in VIEWER_JS
+    check = VIEWER_JS.index("startsWith('%PDF-')")
+    frame = VIEWER_JS.index("<iframe")
+    assert check < frame, "the PDF is checked before the iframe is built"
+    assert "errorLine('open this PDF'" in VIEWER_JS, "a bad PDF is an error line, not an empty frame"
 
-    # Viewer header contains 'Ask about this file' button
-    assert "Ask about this file" in content
-    assert 'data-act="ask-file"' in content
+
+def test_viewer_header_asks_about_the_file():
+    # One Ask icon in the document header: an icon-only button needs its title, and the handler goes through askAbout
+    assert "Ask about this file" in VIEWER_JS
+    assert "act: 'ask-file'" in VIEWER_JS
+    handler = re.search(r"onAct\('ask-file'.*?\n\}\);", VIEWER_JS, re.S)
+    assert handler and "askAbout({kind: 'file'" in handler.group(0)
+    # the chat owns its own context chip: the viewer must not set it behind the chat's back
+    assert not re.search(r"activeFileChip\s*=", VIEWER_JS)
+
+
+def test_viewer_has_no_legacy_viewer_left():
+    # The old fixed-position viewer (closeViewer, the viewer overlay, the file-badge table) was dead code; it stays gone
+    for dead in ("closeViewer", "closeviewer", "FILE_BADGES", "viewer-overlay", "fname-btn", "ext-lnk", "prompt("):
+        assert dead not in VIEWER_JS, dead
+    for state in ("loadingLine(", "errorLine(", "emptyState("):
+        assert state in VIEWER_JS, f"the viewer needs its {state} state"
 
 
 def test_ask_about_file_chat_integration(server, lte, monkeypatch):
@@ -107,12 +127,12 @@ def test_ask_about_file_chat_integration(server, lte, monkeypatch):
         seen["ask"] = ask
         return {"reply": "500 mA.", "actions": []}
     monkeypatch.setattr(agent, "respond", fake_respond)
-    # 1. The composer holds the context chip (one chip for part, net, file, ...); its x clears it,
-    #    and the file the viewer picked still reaches it through activeFileChip
+    # 1. The composer holds the context chip (one chip for part, net, file, ...) and its x clears it;
+    #    the viewer's Ask icon hands the file to it through askAbout
     content = read_html()
     assert 'id="chat-chip"' in content
     assert 'data-act="clear-chip"' in content
-    assert "activeFileChip" in content
+    assert "askAbout({kind: 'file'" in content
 
     # 2. Upload a valid text or pdf source to ask about
     sample_text = "Operating Voltage: 3.3V, Maximum Current: 500mA."

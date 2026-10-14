@@ -112,6 +112,49 @@ def test_checks_dfm_api(server, lte):
     assert trg2["triage"][0]["verdict"] == "real"
 
 
+def _row(check, verdict, section="PCB DFM>Silkscreen layer analysis"):
+    return {"section": section, "check": check, "worst": "", "level": "Danger", "danger": 1, "warning": 0, "good": 0,
+            "layer": "GTO", "verdict": verdict, "fix": "", "evidence": ""}
+
+
+def test_the_state_and_the_triage_endpoints_carry_what_the_dfm_header_needs(server, lte):
+    """The DFM header counts findings still to review and real issues, and sees a table the agent changed, from the
+    state alone: triage_open, triage_real and triage_sig, the same sig the triage endpoints return."""
+    status, res = post(server, "/api/checks/upload", {"name": "dfm_report.pdf", "data_b64": _synthetic_pdf_b64()}, lte)
+    assert status == 200
+    stem = res["stem"]
+
+    def report():
+        status, st = get(server, "/api/state", lte)
+        assert status == 200
+        return next(c for c in st["checks"] if c["stem"] == stem)
+
+    empty = report()
+    assert (empty["triage_count"], empty["triage_open"], empty["triage_real"]) == (0, 0, 0)
+    status, trg = get(server, f"/api/checks/triage?stem={stem}", lte)
+    assert status == 200 and trg["sig"] == empty["triage_sig"]
+
+    rows = [_row("Silkscreen to pad", "real"), _row("Silkscreen line width", "unknown"),
+            _row("Pad spacing", "by design"), _row("Pin outer edge", "model"), _row("Odd one", "nonsense")]
+    status, saved = post(server, "/api/checks/triage", {"stem": stem, "rows": rows}, lte)
+    assert status == 200 and saved["ok"] is True and saved["sig"] != empty["triage_sig"]
+    now = report()
+    # a verdict the server does not know is still to review, and "model" (JLC's model is off) is judged
+    assert (now["triage_count"], now["triage_open"], now["triage_real"]) == (5, 2, 1)
+    assert now["triage_sig"] == saved["sig"]
+    status, trg = get(server, f"/api/checks/triage?stem={stem}", lte)
+    assert trg["sig"] == saved["sig"] and len(trg["triage"]) == 5
+
+    # saving the same table again changes nothing; judging one more finding does
+    status, again = post(server, "/api/checks/triage", {"stem": stem, "rows": saved["triage"]}, lte)
+    assert again["sig"] == saved["sig"]
+    saved["triage"][1]["verdict"] = "by design"
+    status, judged = post(server, "/api/checks/triage", {"stem": stem, "rows": saved["triage"]}, lte)
+    assert judged["sig"] != saved["sig"]
+    now = report()
+    assert (now["triage_open"], now["triage_real"]) == (1, 1) and now["triage_sig"] == judged["sig"]
+
+
 def test_outjob_and_cpl_and_exports_api(server, lte):
     # OutJob generation
     status, res = post(server, "/api/outjob/generate", {}, lte)
@@ -130,6 +173,9 @@ def test_outjob_and_cpl_and_exports_api(server, lte):
     names = [f["name"] for f in exp["exports"]]
     assert any(n.endswith(".OutJob") for n in names)
     assert any("cpl" in n.lower() for n in names)
+    # the Outputs view shows when each file was written: the state has only the size, this list has the time
+    assert all(len(f["modified"]) == 19 and f["modified"][10] == "T" for f in exp["exports"])
+    assert all(f["url"] == f"/api/export/{f['name']}" for f in exp["exports"])
 
     # the state the Outputs tab renders from carries the same name and a size
     status, st = get(server, "/api/state", lte)

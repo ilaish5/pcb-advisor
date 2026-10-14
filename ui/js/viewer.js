@@ -1,162 +1,246 @@
-/* PCB Advisor UI - file viewer drawer and file tabs (sources, Altium files, DFM slices, exports). */
+/* PCB Advisor UI - documents. A document opens in the side sheet (shell.js openFileAsTab) and is drawn once by
+   renderFileTabContent: PDF, image, DFM slice, CSV, text, or the summary of an Altium file.
+   Header: the file name, an Ask icon and a menu (Download, Open in new tab). Errors use errorLine, loading uses loadingLine.
+   Globals other files call: openViewerSource (chips, palette), openViewerAltium (links to Altium files), openViewerExport (palette),
+   fileDownload (a Download button or toast). A DFM slice opens through openFileAsTab({stem, slice, fileType: 'dfm'}). */
 
+const DOC_PDF_BAD = 'This file is not a valid PDF (it may be empty or damaged). Upload it again.';
+const DOC_IMG_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+const DOC_ALTIUM = ['sch', 'pcb', 'prj', 'rul', 'altium'];      // the fileType values shell.js gives an Altium document
+const DOC_CSV_ROWS = 500;
+const DOC_TEXT_CHARS = 300000;                                    // a text file is shown up to here; the rest is in Download
+
+const docExt = n => (String(n).includes('.') ? '.' + String(n).split('.').pop() : '').toLowerCase();
+const docBase = p => String(p || '').split(/[\\/]/).pop();
+function docBytes(n) {
+  return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+function docHost(url) {
+  try { return new URL(url).hostname; } catch (e) { return url; }
+}
+/* start a download of a URL (a menu item is a button, so it cannot be a link) */
+function fileDownload(url, name) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name || '';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+/* The first bytes of a response, without reading the whole file: enough to tell a PDF from something else. */
+async function docFirstBytes(res, n) {
+  if (!res.body || !res.body.getReader) return new Uint8Array(await res.arrayBuffer()).subarray(0, n);
+  const reader = res.body.getReader();
+  let got = new Uint8Array(0);
+  while (got.length < n) {
+    const {value, done} = await reader.read();
+    if (done) break;
+    const next = new Uint8Array(got.length + value.length);
+    next.set(got);
+    next.set(value, got.length);
+    got = next;
+  }
+  reader.cancel();
+  return got.subarray(0, n);
+}
+
+/* ---------- header ---------- */
+function docHeader(o) {
+  const items = [
+    o.download && {label: 'Download', icon: 'download', act: 'doc-download', attrs: {url: o.download, name: o.name}},
+    o.open && {label: 'Open in new tab', icon: 'ext', act: 'doc-open', attrs: {url: o.open}},
+  ].filter(Boolean);
+  const acts = btn('', {icon: 'chat', size: 'sm', title: 'Ask about this file', act: 'ask-file', file: o.name}) +
+    (items.length ? menu({icon: 'more', size: 'sm', title: 'More'}, items) : '');
+  return `<header class="doc-h"><div class="doc-t"><h2 class="m" title="${esc(o.title || o.name)}">${esc(o.name)}</h2>${o.sub ? `<div class="doc-sub">${o.sub}</div>` : ''}</div><div class="acts">${acts}</div></header>`;
+}
+/* what we know about a source: where it sits, its size, where it came from, its hash, and whether the agent can read its text */
+function docSourceSub(name, where) {
+  const s = srcByName(name), parts = [];
+  if (s) {
+    parts.push(`<span>${s.scope === 'shared' ? 'Shared' : 'Project'}</span>`);
+    if (s.size && s.size !== '—') parts.push(`<span>${esc(s.size)}</span>`);
+    if (s.url && /^https?:\/\//i.test(s.url)) parts.push(`<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.url)}">${esc(docHost(s.url))}</a>`);
+    else if (s.origin) parts.push(`<span>${esc(s.origin)}</span>`);
+    if (s.sha256 && s.sha256 !== '—') parts.push(`<span title="The start of the file's sha256">sha256 <span class="m">${esc(s.sha256)}</span></span>`);
+    if (s.text) parts.push('<span>Text extracted</span>');
+    else if (docExt(name) === '.pdf') parts.push('<span class="warn-t" title="The agent cannot quote this document">No text extracted</span>');
+  }
+  if (where) parts.push(`<span>${esc(where)}</span>`);
+  return parts.join('');
+}
+
+/* ---------- one document ---------- */
 async function renderFileTabContent(tabObj, container) {
   const name = tabObj.name || tabObj.path || 'file';
   const path = tabObj.path || name;
-  const ext = (name.includes('.') ? '.' + name.split('.').pop() : '').toLowerCase();
-  const fType = tabObj.fileType || 'txt';
-  const rawBadge = (FILE_BADGES[fType] || fType || 'TXT').toUpperCase();
-  const badgeText = ['PDF', 'SCH', 'PCB', 'IMG', 'TXT'].includes(rawBadge) ? rawBadge : (rawBadge === 'PNG' || rawBadge === 'JPG' ? 'IMG' : 'TXT');
-  const badgeClass = badgeText.toLowerCase();
+  const ext = docExt(name);
+  const ft = tabObj.fileType || 'txt';
+  const token = container.dataset.docKey;                      // a later document in the same pane makes this one stale
+  const stale = () => container.dataset.docKey !== token;
+  const body = () => container.querySelector('.doc-b');
+  const paint = (cls, html) => { container.innerHTML = html.head + `<div class="doc-b${cls ? ' ' + cls : ''}">${html.body}</div>`; };
 
-  const qDownload = q({ download: '1' });
-  const downloadUrl = (tabObj.stem && tabObj.slice)
-    ? `/api/checks/slice?stem=${encodeURIComponent(tabObj.stem)}&slice=${encodeURIComponent(tabObj.slice)}&${qDownload}`
-    : `/api/source/${encodeURIComponent(name)}?${qDownload}`;
-  const rawUrl = (tabObj.stem && tabObj.slice)
-    ? `/api/checks/slice?stem=${encodeURIComponent(tabObj.stem)}&slice=${encodeURIComponent(tabObj.slice)}&${q()}`
-    : `/api/source/${encodeURIComponent(name)}?${q()}`;
+  const isSlice = !!(tabObj.stem && tabObj.slice) || ft === 'dfm';
+  const isExport = ft === 'export';
+  const isAltium = DOC_ALTIUM.includes(ft) && !isExport && (path !== name || !srcByName(name));
+  const enc = encodeURIComponent;
+  let raw, download, open;
+  if (isSlice) {
+    raw = `/api/checks/slice?stem=${enc(tabObj.stem || '')}&slice=${enc(tabObj.slice || name)}&${q()}`;
+    download = open = raw;
+  } else if (isExport) {
+    raw = download = `/api/export/${enc(name)}?${q()}`;       // the server sends an export as a download, so there is no tab to open
+  } else {
+    raw = `/api/source/${enc(name)}?${q()}`;
+    download = `/api/source/${enc(name)}?${q({download: '1'})}`;
+    open = raw;
+  }
 
-  if (fType === 'dfm' || tabObj.slice) {
-    const sliceName = tabObj.slice || name;
-    const stem = tabObj.stem || '';
-    container.innerHTML = `
-      <div class="viewer-h">
-        <div class="vtitle"><span class="badge ${badgeClass}">${badgeText}</span><span title="${esc(sliceName)}">${esc(stem ? stem + ' / ' : '')}${esc(sliceName)}</span></div>
-        <div class="vacts">
-          <button type="button" class="btn" data-act="ask-file" data-file="${esc(sliceName)}">Ask about this file</button>
-          <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
-        </div>
-      </div>
-      <div class="viewer-b" style="align-items:center;justify-content:flex-start;background:var(--panel2);overflow:auto">
-        <img src="${esc(rawUrl)}" alt="${esc(sliceName)}" style="max-width:100%;height:auto;border-radius:4px;box-shadow:var(--shadow)">
-      </div>`;
+  if (isSlice) {
+    const slice = tabObj.slice || name;
+    paint('doc-img', {head: docHeader({name: slice, sub: tabObj.stem ? `<span>${esc(tabObj.stem)}</span>` : '', download, open}),
+      body: `<img src="${esc(raw)}" alt="${esc(slice)}">`});
     return;
   }
 
-  if (fType === 'pdf' || ext === '.pdf') {
-    let iframeUrl = rawUrl;
-    const m = (tabObj.where || '').match(/\b(?:p\.?|page)\s*(\d+)\b/i);
-    if (m) iframeUrl += '#page=' + m[1];
-    container.innerHTML = `
-      <div class="viewer-h">
-        <div class="vtitle"><span class="badge ${badgeClass}">${badgeText}</span><span title="${esc(name)}">${esc(name)}${m ? ` (p. ${m[1]})` : ''}</span></div>
-        <div class="vacts">
-          <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
-          <a class="lnk" href="${esc(iframeUrl)}" target="_blank" rel="noopener">Open in tab</a>
-        </div>
-      </div>
-      <div class="viewer-b" style="padding:0">
-        <iframe src="${esc(iframeUrl)}" style="width:100%;height:100%;border:0;flex:1;min-height:0" title="${esc(name)}"></iframe>
-      </div>`;
-    return;
-  }
-
-  if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext) || fType === 'img') {
-    container.innerHTML = `
-      <div class="viewer-h">
-        <div class="vtitle"><span class="badge ${badgeClass}">${badgeText}</span><span title="${esc(name)}">${esc(name)}</span></div>
-        <div class="vacts">
-          <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
-          <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
-        </div>
-      </div>
-      <div class="viewer-b" style="align-items:center;justify-content:center;background:var(--panel2)">
-        <img src="${esc(rawUrl)}" alt="${esc(name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px">
-      </div>`;
-    return;
-  }
-
-  if (['.schdoc', '.pcbdoc', '.prjpcb', '.rul'].includes(ext) || fType === 'altium' || fType === 'sch' || fType === 'pcb') {
-    container.innerHTML = `
-      <div class="viewer-h">
-        <div class="vtitle"><span class="badge ${badgeClass}">${badgeText}</span><span title="${esc(path)}">${esc(name)}</span></div>
-        <div class="vacts">
-          <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-        </div>
-      </div>
-      <div class="viewer-b"><div class="dnote">Loading Altium summary…</div></div>`;
+  if (isAltium) {
+    const head = docHeader({name, title: path, sub: `<span class="m" title="${esc(path)}">${esc(path).replace(/([\\/])/g, '$1<wbr>')}</span>`});
+    paint('', {head, body: loadingLine('Reading the file')});
+    let html;
     try {
-      const data = await api('/api/altium/file?path=' + encodeURIComponent(path), undefined, { soft: true });
-      const bodyEl = container.querySelector('.viewer-b');
-      if (!bodyEl) return;
-      if (data.error) {
-        bodyEl.innerHTML = `<div class="warnbox"><b>Cannot read file:</b><div style="margin-top:4px">${esc(data.error)}</div></div>`;
-        return;
-      }
-      let contentHtml = `<div><b>Path:</b> <span class="m path" style="word-break:break-all">${esc(path)}</span></div>`;
-      if (ext === '.schdoc') {
-        contentHtml += `
-          <div class="kpis" style="margin-top:12px">
-            <div class="kpi"><b>${data.components ?? 0}</b><span>components</span></div>
-            <div class="kpi"><b>${data.wires ?? 0}</b><span>wires</span></div>
-            <div class="kpi"><b>${data.net_labels ?? 0}</b><span>net labels</span></div>
-            <div class="kpi"><b>${data.power_ports ?? 0}</b><span>power ports</span></div>
-            <div class="kpi"><b>${data.ports ?? 0}</b><span>ports</span></div>
-            <div class="kpi"><b>${data.junctions ?? 0}</b><span>junctions</span></div>
-          </div>`;
-      } else if (ext === '.pcbdoc') {
-        contentHtml += `
-          <div class="kpis" style="margin-top:12px">
-            <div class="kpi"><b>${data.components ?? 0}</b><span>components</span></div>
-            <div class="kpi"><b>${data.nets ?? 0}</b><span>nets</span></div>
-            <div class="kpi"><b>${data.pads ?? 0}</b><span>pads</span></div>
-            <div class="kpi"><b>${data.rules ?? 0}</b><span>rules</span></div>
-            <div class="kpi"><b>${data.classes ?? 0}</b><span>classes</span></div>
-          </div>`;
-      } else {
-        contentHtml += `<pre class="viewer-pre" style="margin-top:12px">${esc(JSON.stringify(data, null, 2))}</pre>`;
-      }
-      bodyEl.innerHTML = contentHtml;
+      const data = await api('/api/altium/file?path=' + enc(path), undefined, {soft: true});
+      html = data.error ? errorLine('read ' + name, data.error) : docAltiumHTML(path, ext, data);
     } catch (err) {
-      const bodyEl = container.querySelector('.viewer-b');
-      if (bodyEl) bodyEl.innerHTML = `<div class="warnbox"><b>Failed to load Altium summary:</b> ${esc(err.message)}</div>`;
+      html = errorLine('read ' + name, err.message);
     }
+    if (!stale() && body()) body().innerHTML = html;
     return;
   }
 
-  const exportUrl = (fType === 'export') ? `/api/export/${encodeURIComponent(name)}?${q()}` : rawUrl;
-  container.innerHTML = `
-    <div class="viewer-h">
-      <div class="vtitle"><span class="badge ${badgeClass}">${badgeText}</span><span title="${esc(name)}">${esc(name)}</span></div>
-      <div class="vacts">
-        <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-        <a class="lnk" href="${esc(exportUrl)}" download>Download</a>
-        <a class="lnk" href="${esc(exportUrl)}" target="_blank" rel="noopener">Open in tab</a>
-      </div>
-    </div>
-    <div class="viewer-b"><div class="dnote">Loading…</div></div>`;
+  if (!isExport && (ft === 'pdf' || ext === '.pdf')) {
+    const m = (tabObj.where || '').match(/\b(?:p\.?|page)\s*(\d+)\b/i);
+    const frame = raw + (m ? '#page=' + m[1] : '');
+    const head = docHeader({name, sub: docSourceSub(name, m ? `Page ${m[1]}` : ''), download, open: frame});
+    paint('', {head, body: loadingLine('Checking the PDF')});
+    let bad = null;
+    try {
+      const res = await fetch(raw);
+      if (!res.ok) bad = res.status === 404 ? 'It is not in this project or the shared sources.' : 'The server answered ' + res.status + '.';
+      else if (String.fromCharCode.apply(null, await docFirstBytes(res, 8)).startsWith('%PDF-') === false) bad = DOC_PDF_BAD;
+    } catch (e) {
+      bad = e.message || 'The server did not answer.';
+    }
+    if (stale() || !body()) return;
+    if (bad) { body().innerHTML = errorLine('open this PDF', bad); return; }
+    body().classList.add('bleed');
+    body().innerHTML = `<iframe class="doc-pdf" src="${esc(frame)}" title="${esc(name)}"></iframe>`;
+    return;
+  }
+
+  if (!isExport && (DOC_IMG_EXT.includes(ext) || ft === 'img')) {
+    paint('doc-img', {head: docHeader({name, sub: docSourceSub(name), download, open}), body: `<img src="${esc(raw)}" alt="${esc(name)}">`});
+    return;
+  }
+
+  // CSV, text, and anything else: read it, and say so when it is not text
+  paint('', {head: docHeader({name, sub: isExport ? docExportSub(name) : docSourceSub(name), download, open: isExport ? '' : open}), body: loadingLine('Loading')});
+  let html;
   try {
-    const res = await fetch(exportUrl);
-    const text = await res.text();
-    const bodyEl = container.querySelector('.viewer-b');
-    if (!bodyEl) return;
-    if (ext === '.csv') {
-      const lns = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-      const rows = lns.map(l => parseCsvLine(l));
-      if (rows.length) {
-        bodyEl.innerHTML = `<div class="tblwrap"><table class="viewer-tbl"><thead><tr>${rows[0].map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(1).map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-      } else {
-        bodyEl.innerHTML = '<div class="dnote">Empty CSV</div>';
-      }
+    const res = await fetch(raw);
+    if (!res.ok) throw new Error(res.status === 404 ? 'It is not in this project.' : 'The server answered ' + res.status + '.');
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.subarray(0, 4096).includes(0)) {
+      html = emptyState('No preview for this file', 'Download it to open it in another program.', btn('Download', {kind: 'line', icon: 'download', act: 'doc-download', url: download, name}));
     } else {
-      bodyEl.innerHTML = `<pre class="viewer-pre">${esc(text)}</pre>`;
+      const text = new TextDecoder().decode(buf);
+      html = ext === '.csv' ? docCsvHTML(text) : docTextHTML(text);
     }
   } catch (err) {
-    const b = container.querySelector('.viewer-b');
-    if (b) b.innerHTML = `<div class="dnote">Error: ${esc(err.message)}</div>`;
+    html = errorLine('open ' + name, err.message);
   }
+  if (!stale() && body()) body().innerHTML = html;
+}
+function docExportSub(name) {
+  const f = (S.exports || []).find(x => x.name === name);
+  return `<span>Export</span>${f && f.size != null ? `<span>${esc(docBytes(f.size))}</span>` : ''}`;
+}
+function docTextHTML(text) {
+  const cut = text.length > DOC_TEXT_CHARS;
+  return `<pre class="doc-pre">${esc(cut ? text.slice(0, DOC_TEXT_CHARS) : text)}</pre>` +
+    (cut ? `<p class="doc-more">Showing the first ${num(DOC_TEXT_CHARS)} of ${num(text.length)} characters.</p>` : '');
+}
+function docCsvHTML(text) {
+  const lns = text.split(/\r?\n/).filter(l => l.trim().length > 0);
+  if (!lns.length) return '<p class="muted">This file is empty.</p>';
+  const head = parseCsvLine(lns[0]);
+  const rows = lns.slice(1, DOC_CSV_ROWS + 1).map(parseCsvLine);
+  const total = lns.length - 1;
+  return `<div class="tbl-wrap"><table class="tbl dense"><thead><tr>${head.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>` +
+    `<tbody>${rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` +
+    (total > DOC_CSV_ROWS ? `<p class="doc-more">Showing ${DOC_CSV_ROWS} of ${num(total)} rows.</p>` : '');
 }
 
-/* ---------- file viewer ---------- */
-function closeViewer() {
-  const v = $('#viewer');
-  if (v && !v.hidden) {
-    v.hidden = true;
-    v.innerHTML = '';
+/* ---------- an Altium file: one line of counts, then the lists that help ---------- */
+function docAltiumHTML(path, ext, data) {
+  const pl = (n, one, many) => ({n: n ?? 0, label: n === 1 ? one : (many || one + 's')});
+  const sample = (n, shown) => (shown < n ? `First ${shown} of ${num(n)}` : '');
+  const fileBtn = rel => {
+    const dir = path.replace(/[\\/][^\\/]+$/, ''), sepc = path.includes('\\') ? '\\' : '/';
+    const abs = (rel.includes(':') || rel.startsWith('/') || !dir) ? rel : dir + sepc + rel.replace(/[\\/]/g, sepc);
+    return `<li><button type="button" class="btn link m" data-altium-path="${esc(abs)}" title="${esc(abs)}">${esc(docBase(rel))}</button></li>`;
+  };
+  let meta = '', out = '';
+  if (ext === '.schdoc') {
+    meta = metaLine([pl(data.components, 'component'), pl(data.wires, 'wire'), pl(data.net_labels, 'net label'), pl(data.power_ports, 'power port'),
+      pl(data.ports, 'port'), pl(data.junctions, 'junction')]);
+    const cs = data.components_sample || [];
+    if (cs.length) {
+      out += section('Components', `<div class="tbl-wrap"><table class="tbl dense"><thead><tr><th>Designator</th><th>Library part</th><th class="num">Pins</th></tr></thead>` +
+        `<tbody>${cs.map(c => `<tr><td class="ref">${esc(c.ref)}</td><td><span class="m">${esc(c.lib_ref)}</span>${c.footprint ? `<span class="sub m">${esc(c.footprint)}</span>` : ''}</td><td class="num">${esc(c.pins)}</td></tr>`).join('')}</tbody></table></div>`,
+        {meta: esc(sample(data.components, cs.length))});
+    }
+    const rc = Object.entries(data.record_counts || {});
+    if (rc.length) {
+      out += `<details class="disc doc-rc"><summary>Record types (${rc.length})</summary><div class="tbl-wrap"><table class="tbl dense"><thead><tr><th>Record</th><th class="num">Count</th></tr></thead>` +
+        `<tbody>${rc.map(([k, n]) => `<tr><td class="m">${esc(k)}</td><td class="num">${esc(n)}</td></tr>`).join('')}</tbody></table></div></details>`;
+    }
+  } else if (ext === '.pcbdoc') {
+    meta = metaLine([pl(data.components, 'component'), pl(data.nets, 'net'), pl(data.pads, 'pad'), pl(data.rules, 'rule'), pl(data.classes, 'class', 'classes')]);
+    const pairs = [['Components', data.components_sample], ['Nets', data.nets_sample], ['Pads', data.pads_sample]]
+      .filter(p => p[1] && p[1].length).map(([k, v]) => [k, `<span class="m">${esc(v.join(', '))}</span>`, true]);
+    if (pairs.length) out += section('First few', kv(pairs));
+  } else if (ext === '.prjpcb') {
+    const sheets = data.sheets || [], pcbs = data.pcbs || [], jobs = data.outjobs || [], gone = data.missing || [];
+    meta = metaLine([pl(data.documents, 'document'), pl(sheets.length, 'sheet'), pl(pcbs.length, 'PCB')]);
+    if (sheets.length) out += section('Sheets', `<ul class="doc-list">${sheets.map(fileBtn).join('')}</ul>`);
+    if (pcbs.length) out += section('PCBs', `<ul class="doc-list">${pcbs.map(fileBtn).join('')}</ul>`);
+    if (jobs.length) out += section('OutJobs', `<ul class="doc-list">${jobs.map(o => `<li class="m">${esc(docBase(o))}</li>`).join('')}</ul>`);
+    if (gone.length) out += `<div class="note warn doc-gone" title="${esc(gone.join('\n'))}"><span>${gone.length === 1 ? '1 document is' : gone.length + ' documents are'} missing: ${esc(gone.slice(0, 3).map(docBase).join(', '))}${gone.length > 3 ? ` and ${gone.length - 3} more` : ''}</span></div>`;
+  } else if (ext === '.rul') {
+    meta = metaLine([pl(data.rules, 'rule')]);
+    const rs = data.rules_sample || [];
+    if (rs.length) out += section('Rules', `<ul class="doc-list">${rs.map(r => `<li class="m">${esc(r)}</li>`).join('')}</ul>`, {meta: esc(sample(data.rules, rs.length))});
   }
+  return `${meta ? `<div class="meta doc-meta">${meta}</div>` : ''}${out || '<p class="muted">Nothing to list for this file.</p>'}`;
+}
+
+/* ---------- opening documents: every caller (chips, tables, the palette) comes through one of these ---------- */
+async function openViewerSource(name, where) {
+  setView('work');
+  openFileAsTab({name, path: name, where});
+}
+async function openViewerAltium(path) {
+  setView('work');
+  const fileName = docBase(path), ext = docExt(fileName);
+  const fileType = ext === '.pcbdoc' ? 'pcb' : ext === '.prjpcb' ? 'prj' : ext === '.rul' ? 'rul' : 'sch';
+  openFileAsTab({name: fileName, path, fileType});
+}
+async function openViewerExport(name) {
+  setView('work');
+  openFileAsTab({name, path: name, fileType: 'export'});
 }
 function parseCsvLine(line) {
   const cells = [];
@@ -175,339 +259,14 @@ function parseCsvLine(line) {
   cells.push(cur.trim());
   return cells;
 }
-async function openViewerSource(name, where) {
-  setView('work');
-  openFileAsTab({ name, path: name, where });
-  return;
-  const known = srcByName(name);
-  const size = (known && known.size) ? known.size : '';
-  const ext = (name.includes('.') ? '.' + name.split('.').pop() : '').toLowerCase();
-  const qDownload = q({download: '1'});
-  const downloadUrl = `/api/source/${encodeURIComponent(name)}?${qDownload}`;
-  const rawUrl = `/api/source/${encodeURIComponent(name)}?${q()}`;
 
-  if (['.schdoc', '.pcbdoc', '.prjpcb', '.rul'].includes(ext)) {
-    let resolved = null;
-    if (ALTIUM_DATA && ALTIUM_DATA.linked) {
-      const l = ALTIUM_DATA.linked;
-      const allDocs = [...(l.sheets || []), l.pcb_file, l.project_file].filter(Boolean);
-      resolved = allDocs.find(p => p.toLowerCase().endsWith(name.toLowerCase()));
-    }
-    if (resolved) {
-      return openViewerAltium(resolved);
-    }
-  }
-
-  if (ext === '.pdf') {
-    let iframeUrl = rawUrl;
-    const m = (where || '').match(/\b(?:p\.?|page)\s*(\d+)\b/i);
-    if (m) iframeUrl += '#page=' + m[1];
-    v.innerHTML = `
-      <div class="viewer-h">
-        <div class="vtitle"><span class="badge">PDF</span><span title="${esc(name)}">${esc(name)}${m ? ` (p. ${m[1]})` : ''}</span></div>
-        <div class="vacts">
-          <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
-          <a class="lnk" href="${esc(iframeUrl)}" target="_blank" rel="noopener">Open in tab</a>
-          <button class="x" data-act="closeviewer" aria-label="Close">×</button>
-        </div>
-      </div>
-      <div class="viewer-b" style="padding:0">
-        <div class="dnote" style="margin:16px">Checking PDF…</div>
-      </div>`;
-    try {
-      const checkRes = await fetch(rawUrl);
-      const buf = new Uint8Array(await checkRes.arrayBuffer());
-      const headerStr = String.fromCharCode.apply(null, buf.subarray(0, 8));
-      if (!headerStr.startsWith('%PDF-')) {
-        const bodyEl = v.querySelector('.viewer-b');
-        if (bodyEl) {
-          bodyEl.style.padding = '14px';
-          bodyEl.innerHTML = `<div class="warnbox" style="margin:14px"><b>Invalid PDF:</b> This file is not a valid PDF (it may be empty or damaged). Upload it again.</div>`;
-        }
-        return;
-      }
-    } catch (e) {
-      // In case of error, continue or show error
-    }
-    const bodyEl = v.querySelector('.viewer-b');
-    if (bodyEl) {
-      bodyEl.style.padding = '0';
-      bodyEl.innerHTML = `<iframe src="${esc(iframeUrl)}" style="width:100%;height:100%;border:0;flex:1;min-height:0" title="${esc(name)}"></iframe>`;
-    }
-    return;
-  }
-
-  if (['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext)) {
-    v.innerHTML = `
-      <div class="viewer-h">
-        <div class="vtitle"><span class="badge">IMAGE</span><span title="${esc(name)}">${esc(name)}</span></div>
-        <div class="vacts">
-          <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
-          <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
-          <button class="x" data-act="closeviewer" aria-label="Close">×</button>
-        </div>
-      </div>
-      <div class="viewer-b" style="align-items:center;justify-content:center;background:var(--panel2)">
-        <img src="${esc(rawUrl)}" alt="${esc(name)}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px">
-      </div>`;
-    return;
-  }
-
-  if (['.txt', '.text', '.md', '.markdown', '.csv', '.json'].includes(ext) || (known && known.text)) {
-    v.innerHTML = `
-      <div class="viewer-h">
-        <div class="vtitle"><span class="badge">${esc(ext ? ext.slice(1).toUpperCase() : 'TEXT')}</span><span title="${esc(name)}">${esc(name)}</span></div>
-        <div class="vacts">
-          <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-          <a class="lnk" href="${esc(downloadUrl)}" download>Download</a>
-          <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
-          <button class="x" data-act="closeviewer" aria-label="Close">×</button>
-        </div>
-      </div>
-      <div class="viewer-b"><div class="dnote">Loading text…</div></div>`;
-    try {
-      const res = await fetch(rawUrl);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = await res.text();
-      const bodyEl = v.querySelector('.viewer-b');
-      if (!bodyEl) return;
-      if (ext === '.csv') {
-        const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-        const maxRows = 500;
-        const rows = [];
-        for (let i = 0; i < Math.min(lines.length, maxRows); i++) {
-          rows.push(parseCsvLine(lines[i]));
-        }
-        if (rows.length) {
-          const head = rows[0];
-          const bodyRows = rows.slice(1);
-          bodyEl.innerHTML = `<div class="tblwrap"><table class="viewer-tbl">` +
-            `<thead><tr>${head.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>` +
-            `<tbody>${bodyRows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>` +
-            `</table></div>` +
-            (lines.length > maxRows ? `<div class="dnote" style="margin-top:8px">Showing 500 of ${lines.length} rows</div>` : '');
-        } else {
-          bodyEl.innerHTML = `<div class="dnote">Empty CSV file</div>`;
-        }
-      } else {
-        bodyEl.innerHTML = `<pre class="viewer-pre">${esc(text)}</pre>`;
-      }
-    } catch (err) {
-      const bodyEl = v.querySelector('.viewer-b');
-      if (bodyEl) bodyEl.innerHTML = `<div class="warnbox"><b>Failed to load text:</b> ${esc(err.message)}</div>`;
-    }
-    return;
-  }
-
-  // Anything else: name, size and a "Download" link
-  v.innerHTML = `
-    <div class="viewer-h">
-      <div class="vtitle"><span class="badge">FILE</span><span title="${esc(name)}">${esc(name)}</span></div>
-      <div class="vacts">
-        <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
-      </div>
-    </div>
-    <div class="viewer-b">
-      <div class="card" style="padding:16px;display:grid;gap:12px">
-        <div><b>File name:</b> <span class="m">${esc(name)}</span></div>
-        ${size ? `<div><b>Size:</b> ${esc(size)}</div>` : ''}
-        <div><a class="btn pri" href="${esc(downloadUrl)}" download>Download</a></div>
-      </div>
-    </div>`;
-}
-async function openViewerAltium(path) {
-  setView('work');
-  const fileName = path.split(/[\\/]/).pop();
-  const ext = (fileName.includes('.') ? '.' + fileName.split('.').pop() : '').toLowerCase();
-  const fileType = ext === '.schdoc' ? 'sch' : ext === '.pcbdoc' ? 'pcb' : ext === '.prjpcb' ? 'prj' : ext === '.rul' ? 'rul' : 'sch';
-  openFileAsTab({ name: fileName, path, fileType });
-  return;
-  v.innerHTML = `
-    <div class="viewer-h">
-      <div class="vtitle"><span class="badge">ALTIUM</span><span title="${esc(path)}">${esc(fileName)}</span></div>
-      <div class="vacts">
-        <button type="button" class="btn" data-act="ask-file" data-file="${esc(fileName)}">Ask about this file</button>
-        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
-      </div>
-    </div>
-    <div class="viewer-b"><div class="dnote">Loading Altium summary…</div></div>`;
-
-  try {
-    const data = await api('/api/altium/file?path=' + encodeURIComponent(path), undefined, {soft: true});
-    const bodyEl = v.querySelector('.viewer-b');
-    if (!bodyEl) return;
-    if (data.error) {
-      bodyEl.innerHTML = `<div class="warnbox"><b>Cannot read file:</b><div style="margin-top:4px">${esc(data.error)}</div></div>`;
-      return;
-    }
-
-    let contentHtml = `<div><b>Path:</b> <span class="m path" style="word-break:break-all">${esc(path)}</span></div>`;
-
-    if (ext === '.schdoc') {
-      contentHtml += `
-        <div class="kpis" style="margin-top:12px">
-          <div class="kpi"><b>${data.components ?? 0}</b><span>components</span></div>
-          <div class="kpi"><b>${data.wires ?? 0}</b><span>wires</span></div>
-          <div class="kpi"><b>${data.net_labels ?? 0}</b><span>net labels</span></div>
-          <div class="kpi"><b>${data.power_ports ?? 0}</b><span>power ports</span></div>
-          <div class="kpi"><b>${data.ports ?? 0}</b><span>ports</span></div>
-          <div class="kpi"><b>${data.junctions ?? 0}</b><span>junctions</span></div>
-        </div>`;
-      if (data.components_sample && data.components_sample.length) {
-        contentHtml += `<div class="dsec" style="margin-top:14px"><h4>Components sample (${data.components_sample.length} of ${data.components})</h4>
-          <div class="tblwrap"><table class="viewer-tbl">
-            <thead><tr><th>Designator</th><th>Library Ref</th><th>Footprint</th><th>Pins</th></tr></thead>
-            <tbody>${data.components_sample.map(c => `<tr><td class="m refs">${esc(c.ref)}</td><td class="m">${esc(c.lib_ref)}</td><td class="m">${esc(c.footprint)}</td><td class="n">${c.pins}</td></tr>`).join('')}</tbody>
-          </table></div></div>`;
-      }
-      if (data.record_counts && Object.keys(data.record_counts).length) {
-        const counts = Object.entries(data.record_counts);
-        contentHtml += `<div class="dsec" style="margin-top:14px"><h4>Record counts (${counts.length})</h4>
-          <div class="tblwrap"><table class="viewer-tbl">
-            <thead><tr><th>Record Type</th><th>Count</th></tr></thead>
-            <tbody>${counts.map(([k, count]) => `<tr><td class="m">${esc(k)}</td><td class="n">${count}</td></tr>`).join('')}</tbody>
-          </table></div></div>`;
-      }
-    } else if (ext === '.pcbdoc') {
-      contentHtml += `
-        <div class="kpis" style="margin-top:12px">
-          <div class="kpi"><b>${data.components ?? 0}</b><span>components</span></div>
-          <div class="kpi"><b>${data.nets ?? 0}</b><span>nets</span></div>
-          <div class="kpi"><b>${data.pads ?? 0}</b><span>pads</span></div>
-          <div class="kpi"><b>${data.rules ?? 0}</b><span>rules</span></div>
-          <div class="kpi"><b>${data.classes ?? 0}</b><span>classes</span></div>
-        </div>`;
-      const samples = [
-        ['Components sample', (data.components_sample || []).join(', ')],
-        ['Nets sample', (data.nets_sample || []).join(', ')],
-        ['Pads sample', (data.pads_sample || []).join(', ')],
-      ];
-      contentHtml += `<div class="card" style="margin-top:12px;padding:12px;display:grid;gap:8px">` +
-        samples.filter(s => s[1]).map(([title, val]) => `<div><b>${title}:</b> <span class="m">${esc(val)}</span></div>`).join('') +
-        `</div>`;
-    } else if (ext === '.prjpcb') {
-      const prjDir = path.replace(/[\\/][^\\/]+$/, '');
-      const prjSep = path.includes('\\') ? '\\' : '/';
-      const toAbs = rel => (rel.includes(':') || rel.startsWith('/') || !prjDir) ? rel : (prjDir + prjSep + rel.replace(/[\\/]/g, prjSep));
-      contentHtml += `
-        <div class="kpis" style="margin-top:12px">
-          <div class="kpi"><b>${data.documents ?? 0}</b><span>documents</span></div>
-          <div class="kpi"><b>${(data.sheets || []).length}</b><span>sheets</span></div>
-          <div class="kpi"><b>${(data.pcbs || []).length}</b><span>PCBs</span></div>
-        </div>`;
-      if (data.sheets && data.sheets.length) {
-        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>Sheets (${data.sheets.length})</h4>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">` +
-          data.sheets.map(s => `<button type="button" class="btn" data-altium-path="${esc(toAbs(s))}"><span class="m">${esc(s.split(/[\\/]/).pop())}</span></button>`).join('') +
-          `</div></div>`;
-      }
-      if (data.pcbs && data.pcbs.length) {
-        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>PCBs (${data.pcbs.length})</h4>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">` +
-          data.pcbs.map(p => `<button type="button" class="btn" data-altium-path="${esc(toAbs(p))}"><span class="m">${esc(p.split(/[\\/]/).pop())}</span></button>`).join('') +
-          `</div></div>`;
-      }
-      if (data.outjobs && data.outjobs.length) {
-        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>Output Jobs (${data.outjobs.length})</h4>
-          <div>${data.outjobs.map(o => `<span class="m">${esc(o)}</span>`).join(', ')}</div></div>`;
-      }
-      if (data.missing && data.missing.length) {
-        contentHtml += `<div class="warnbox" style="margin-top:12px"><b>Missing documents (${data.missing.length}):</b><ul>${data.missing.map(m => `<li>${esc(m)}</li>`).join('')}</ul></div>`;
-      }
-    } else if (ext === '.rul') {
-      contentHtml += `
-        <div class="kpis" style="margin-top:12px">
-          <div class="kpi"><b>${data.rules ?? 0}</b><span>rules</span></div>
-        </div>`;
-      if (data.rules_sample && data.rules_sample.length) {
-        contentHtml += `<div class="dsec" style="margin-top:12px"><h4>Rules sample</h4>
-          <ul>${data.rules_sample.map(r => `<li class="m">${esc(r)}</li>`).join('')}</ul></div>`;
-      }
-    } else {
-      contentHtml += `<pre class="viewer-pre" style="margin-top:12px">${esc(JSON.stringify(data, null, 2))}</pre>`;
-    }
-
-    bodyEl.innerHTML = contentHtml;
-  } catch (err) {
-    const bodyEl = v.querySelector('.viewer-b');
-    if (bodyEl) bodyEl.innerHTML = `<div class="warnbox"><b>Failed to load Altium summary:</b> ${esc(err.message)}</div>`;
-  }
-}
-function openViewerSlice(stem, sliceName) {
-  setView('work');
-  openFileAsTab({ name: sliceName, stem, slice: sliceName, fileType: 'dfm' });
-  return;
-  const v = $('#viewer');
-  if (!v) return;
-  setView('work');
-  v.hidden = false;
-  const rawUrl = `/api/checks/slice?stem=${encodeURIComponent(stem)}&slice=${encodeURIComponent(sliceName)}&${q()}`;
-  v.innerHTML = `
-    <div class="viewer-h">
-      <div class="vtitle"><span class="badge">DFM SLICE</span><span title="${esc(sliceName)}">${esc(stem)} / ${esc(sliceName)}</span></div>
-      <div class="vacts">
-        <button type="button" class="btn" data-act="ask-file" data-file="${esc(sliceName)}">Ask about this file</button>
-        <a class="lnk" href="${esc(rawUrl)}" target="_blank" rel="noopener">Open in tab</a>
-        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
-      </div>
-    </div>
-    <div class="viewer-b" style="align-items:center;justify-content:flex-start;background:var(--panel2);overflow:auto">
-      <img src="${esc(rawUrl)}" alt="${esc(sliceName)}" style="max-width:100%;height:auto;border-radius:4px;box-shadow:var(--shadow)">
-    </div>`;
-}
-async function openViewerExport(name) {
-  setView('work');
-  openFileAsTab({ name, path: name, fileType: 'export' });
-  return;
-  const v = $('#viewer');
-  if (!v) return;
-  setView('work');
-  v.hidden = false;
-  const rawUrl = `/api/export/${encodeURIComponent(name)}?${q()}`;
-  const ext = (name.includes('.') ? '.' + name.split('.').pop() : '').toLowerCase();
-  v.innerHTML = `
-    <div class="viewer-h">
-      <div class="vtitle"><span class="badge">EXPORT</span><span title="${esc(name)}">${esc(name)}</span></div>
-      <div class="vacts">
-        <button type="button" class="btn" data-act="ask-file" data-file="${esc(name)}">Ask about this file</button>
-        <a class="lnk" href="${esc(rawUrl)}" download>Download</a>
-        <button class="x" data-act="closeviewer" aria-label="Close">×</button>
-      </div>
-    </div>
-    <div class="viewer-b"><div class="dnote">Loading…</div></div>`;
-  try {
-    const res = await fetch(rawUrl);
-    const text = await res.text();
-    const bodyEl = v.querySelector('.viewer-b');
-    if (ext === '.csv') {
-      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-      const rows = lines.map(l => parseCsvLine(l));
-      if (rows.length) {
-        bodyEl.innerHTML = `<div class="tblwrap"><table class="viewer-tbl"><thead><tr>${rows[0].map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(1).map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
-      } else { bodyEl.innerHTML = '<div class="dnote">Empty CSV</div>'; }
-    } else {
-      bodyEl.innerHTML = `<pre class="viewer-pre">${esc(text)}</pre>`;
-    }
-  } catch (err) {
-    const b = v.querySelector('.viewer-b'); if (b) b.innerHTML = `<div class="dnote">Error: ${esc(err.message)}</div>`;
-  }
-}
-
-/* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
-onAct('closeviewer', async (el, d, e) => {
-  closeViewer(); return;
-});
+/* ---------- action handlers (dispatched by the delegates in core.js) ---------- */
 onAct('ask-file', async (el, d, e) => {
-  const f = el.dataset.file;
-  if (f) {
-    activeFileChip = f;
-    renderChatChip();
-    const inp = $('#input');
-    if (inp) inp.focus();
-    setView('chat');
-  }
-  return;
+  if (d.file) askAbout({kind: 'file', id: d.file, label: d.file});
+});
+onAct('doc-download', async (el, d, e) => {
+  if (d.url) fileDownload(d.url, d.name);
+});
+onAct('doc-open', async (el, d, e) => {
+  if (d.url) window.open(d.url, '_blank', 'noopener');
 });

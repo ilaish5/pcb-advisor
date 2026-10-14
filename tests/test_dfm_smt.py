@@ -165,29 +165,28 @@ def test_serve_upload_validates_kind(test_server, tmp_path):
     assert res["kind"] == "pcb"
 
 
-def test_ui_has_both_cards_and_status_line():
-    """Verify that the UI source includes both PCB and SMT DFM cards and status line."""
+def test_dfm_view_has_a_segment_an_upload_menu_and_the_right_host():
+    """The DFM view: Bare board / Assembly segments, one Upload report menu, and JLCDFM's real address."""
+    checks = (REPO / "ui" / "js" / "views" / "checks.js").read_text(encoding="utf-8")
     html = ui_all()
 
-    # Two clear cards
-    assert "PCB DFM (bare board)" in html
-    assert "SMT DFM (assembly)" in html
+    # JLCDFM lives at jlcdfm.com; dfm.jlcdfm.com does not resolve
+    assert "https://jlcdfm.com" in checks
+    assert "dfm.jlcdfm.com" not in html
 
-    # Mentions what they check and source from dfm.jlcdfm.com
-    assert "dfm.jlcdfm.com" in html
-    assert "trace/space, annular ring, drill, solder mask, silkscreen" in html
-    assert "pad/footprint vs part, component spacing, polarity/pin 1" in html
+    # one report can cover both: the segment, not two cards, picks what is shown
+    assert "DFM_SEGS = [{value: 'pcb', label: 'Bare board'}, {value: 'smt', label: 'Assembly'}]" in checks
+    assert "act: 'dfm-seg'" in checks and "onAct('dfm-seg'" in checks
+    for gone in ("PCB DFM (bare board)", "SMT DFM (assembly)", "dfm-cards-grid", "before ordering assembly",
+                 "Upload JLCDFM report", "discuss-dfm"):
+        assert gone not in html, gone
 
-    # Status line indicating which report is missing before ordering assembly
-    assert "Missing both PCB DFM (bare board) and SMT DFM (assembly) reports before ordering assembly." in html
-    assert "Missing SMT DFM (assembly) report before ordering assembly." in html
-    assert "Missing PCB DFM (bare board) report before ordering assembly." in html
-    assert "before ordering assembly" in html
+    # a single Upload report menu, with the three kinds the server accepts
+    assert "label: 'Upload report'" in checks
+    for kind, label in (("pcb", "Bare board"), ("smt", "Assembly"), ("both", "Both in one report")):
+        assert f"{{label: '{label}', act: 'upload-dfm', attrs: {{kind: '{kind}'}}}}" in checks, kind
+    assert "uploadDfmKind = el.dataset.kind || d.kind || 'pcb'" in checks
 
-    # Grid / wrap layout
-    assert "dfm-cards-grid" in html
-
-    # Single upload button per card (no top-level duplicate upload button in header)
-    assert 'data-act="upload-dfm" data-kind=' in html
-    # The old standalone top button 'Upload JLCDFM report' should not be present in vhead
-    assert '<button class="btn pri" data-act="upload-dfm">Upload JLCDFM report</button>' not in html
+    # empty state: what to do, and where the report comes from
+    assert "emptyState('No DFM report yet'" in checks
+    assert "Upload the PDF report from jlcdfm.com" in checks

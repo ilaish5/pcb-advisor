@@ -80,6 +80,10 @@ def test_reset_layout_handler_forgets_the_saved_layout():
     assert "lsDel(LAYOUT_KEY)" in body.group(1)
     assert "lsDel(SIDE_KEY + PROJECT)" in body.group(1)
     assert "chatWidth = CHAT_DEFAULT" in body.group(1)
+    # the link itself is drawn by Settings (pages.js), as a link at the bottom and not a second primary button
+    pages = (UI / "js" / "views" / "pages.js").read_text(encoding="utf-8")
+    assert re.search(r"btn\('Reset layout',\s*\{kind: 'link',\s*act: 'reset-layout'", pages)
+    assert "onAct('reset-layout'" not in pages, "the frame owns the handler, Settings only draws the link"
 
 
 def test_old_nav_splitter_compact_mode_and_hidden_centre_are_gone():

@@ -15,6 +15,7 @@ CLI:
 """
 import argparse
 import datetime as dt
+import hashlib
 import io
 import json
 import pathlib
@@ -188,8 +189,32 @@ def list_checks(project: str, kind: str | None = None) -> list[dict[str, Any]]:
                 "created_at": idx.get("created_at"),
                 "header_info": idx.get("header_info", {}),
                 "triage_count": len(triage_rows),
+                **triage_summary(triage_rows),
             })
     return results
+
+
+def verdict_of(row: Any) -> str:
+    """The verdict a triage row counts as: anything that is not a known verdict is still to review."""
+    v = str(row.get("verdict", "unknown") if isinstance(row, dict) else "unknown").strip().lower()
+    return v if v in ALLOWED_VERDICTS else "unknown"
+
+
+def triage_sig(rows: list[dict[str, Any]]) -> str:
+    """A short fingerprint of a triage table. The state carries it, so the UI sees that the agent or a script changed a
+    table the UI already loaded, without a reload."""
+    raw = json.dumps(rows, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+
+
+def triage_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the DFM header needs from a table without loading it: findings still to review, real issues, the fingerprint."""
+    verdicts = [verdict_of(r) for r in rows]
+    return {
+        "triage_open": verdicts.count("unknown"),
+        "triage_real": verdicts.count("real"),
+        "triage_sig": triage_sig(rows),
+    }
 
 
 def load_index(project: str, stem: str) -> dict[str, Any]:

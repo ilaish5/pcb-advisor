@@ -1,7 +1,56 @@
-/* checks.css: Checks view (triage table, DFM cards). */
+/* checks.css: the DFM view (findings list, report slices). Tokens only. The shared pieces (.tbl, .seg, .dot, .in, .field,
+   .empty, .sec, .note) are in base.css. The sheet is a container (core.css), so columns drop with its width, not the window's. */
 
-.triage-tbl{border-collapse:collapse;width:100%;font-size:12px}
-.triage-tbl th,.triage-tbl td{padding:4px 6px;border:1px solid var(--line2);text-align:left}
-.triage-tbl th{background:var(--panel2);font-weight:600;color:var(--dim);white-space:nowrap}
-.triage-tbl input,.triage-tbl select{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:4px;padding:3px 5px;background:var(--panel2);color:var(--ink);width:100%;box-sizing:border-box}
-.triage-tbl input:focus,.triage-tbl select:focus{border-color:var(--accent);background:var(--panel)}
+.dfm-bar{display:flex;align-items:center;flex-wrap:wrap;gap:6px 14px;padding:4px 0 10px}
+.dfm-bar select{max-width:320px}
+.dfm-rep{max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--ink-3)}
+
+/* findings: one flat table, grouped by the report's sections */
+.dfm-tbl thead th{width:1%;white-space:nowrap}
+.dfm-tbl thead th.ck-h{width:auto}
+.dfm-tbl td.lv,.dfm-tbl th.lv{width:22px;padding-right:0}
+.dfm-tbl .ck .main{font-weight:500;overflow-wrap:break-word}
+.dfm-tbl td.ly{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-3);font-size:12.5px}
+.dfm-tbl td.num{width:64px}
+.dfm-tbl td.num.z{color:var(--ink-3)}
+.dfm-tbl tbody tr.grp td{padding:22px 10px 6px;font-weight:600;color:var(--ink-2);cursor:default}
+.dfm-tbl.rows tbody tr.grp:hover td{background:transparent}
+.dfm-tbl tr.grp .n{margin-left:8px;font-weight:400;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.dfm-tbl tbody tr.dfm-r:focus-visible{outline-offset:-2px}
+.dfm-tbl tr.dfm-r.open td{border-bottom-color:transparent}
+.dfm-tbl tr.done .main{color:var(--ink-2);font-weight:400}
+.dfm-tbl tr.done .dot{opacity:.4}
+.dfm-tbl tr.done td.num{color:var(--ink-3)}
+
+/* the verdict: a quiet select that reads as text; colour only says "to review" or "real" */
+.dfm-v{width:124px;font-size:13px}
+.dfm-tbl select.dfm-v.in{padding-right:20px;background-repeat:no-repeat;background-size:5px 5px,5px 5px;background-position:calc(100% - 11px) 50%,calc(100% - 6px) 50%}
+.dfm-tbl tr:hover select.dfm-v.in,.dfm-tbl select.dfm-v.in:focus{background-image:linear-gradient(45deg,transparent 50%,var(--ink-3) 50%),linear-gradient(135deg,var(--ink-3) 50%,transparent 50%)}
+.dfm-v option{color:var(--ink);font-weight:400}
+.dfm-v.v-open{color:var(--warn)}
+.dfm-v.v-real{color:var(--bad);font-weight:600}
+.dfm-v.v-done{color:var(--ink-3)}
+
+/* a finding that is open: its fix and evidence, editable, then the report's own numbers and Remove */
+.dfm-tbl.rows tbody tr.dfm-x:hover td{background:transparent}
+.dfm-tbl tr.dfm-x td{padding:2px 10px 18px;cursor:default}
+.dfm-xb{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 24px;align-items:start}
+.dfm-xb .field>span{display:flex;align-items:baseline;gap:8px;padding-left:6px}
+.dfm-xb .saved{font-size:var(--t-xs);font-weight:400;color:var(--ok)}
+.dfm-xb textarea.in{height:auto;min-height:60px;width:100%;padding:6px;resize:none;field-sizing:content;font-size:var(--t-md);line-height:1.5}
+.dfm-xf{grid-column:1/-1;display:flex;align-items:center;gap:12px;font-size:12.5px;color:var(--ink-3)}
+.dfm-xf .btn{margin-left:auto}
+
+.dfm-none{padding:8px 0 0}
+.dfm-end{margin-top:10px}
+
+/* report slices: a strip of thumbnails, each opens in the side sheet */
+.dfm-strip{display:flex;gap:12px;overflow-x:auto;padding:2px 0 12px}
+.dfm-th{flex:none;display:grid;gap:5px;justify-items:start;border-radius:var(--r-sm);font-size:var(--t-xs);color:var(--ink-3)}
+.dfm-th img{display:block;width:176px;height:102px;object-fit:cover;object-position:top left;border-radius:var(--r-sm);background:var(--sunk);box-shadow:0 0 0 1px var(--line)}
+.dfm-th:hover img{box-shadow:0 0 0 2px var(--sig-line)}
+.dfm-th:hover{color:var(--ink)}
+
+/* a narrow sheet (the side sheet open, a small window) drops what can be read in the report itself */
+@container (max-width:780px){.dfm-tbl .c-good{display:none}.dfm-xb{grid-template-columns:minmax(0,1fr)}}
+@container (max-width:620px){.dfm-tbl .c-layer,.dfm-tbl .c-warn,.dfm-tbl .c-ask{display:none}}

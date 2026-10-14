@@ -1,17 +1,30 @@
-/* viewer.css: the file viewer. */
+/* viewer.css: a document in the side sheet (viewer.js). Tokens only. A document fills its sheet: header on top, then one
+   scrolling body (.doc-b); a PDF takes the whole body (.bleed). */
 
-.viewer{position:absolute;top:0;right:0;bottom:0;width:min(680px,100%);border-left:1px solid var(--line);background:var(--panel);box-shadow:-10px 0 28px rgba(20,26,38,.12);z-index:7;display:flex;flex-direction:column;min-width:0}
-.viewer[hidden]{display:none}
-.viewer-h{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line2);background:var(--panel2);flex:none}
-.viewer-h .vtitle{font-weight:600;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
-.viewer-h .vtitle .badge{font-family:var(--f-mono);font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 6px;flex:none}
-.viewer-h .vacts{display:flex;align-items:center;gap:8px;flex:none}
-.viewer-b{padding:14px;overflow-y:auto;overflow-x:auto;flex:1;min-height:0;display:flex;flex-direction:column}
-.viewer-tbl{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
-.viewer-tbl th,.viewer-tbl td{padding:5px 8px;border:1px solid var(--line2);text-align:left}
-.viewer-tbl th{background:var(--panel2);font-weight:600;color:var(--dim)}
-.viewer-pre{margin:0;padding:12px;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;overflow:auto;flex:1;white-space:pre-wrap;word-break:break-word;font-size:12px;font-family:var(--f-mono);color:var(--ink2)}
-.fname-btn{font-family:var(--f-mono);font-size:12.5px;font-weight:500;text-align:left;border:0;background:none;padding:0;color:var(--accent);cursor:pointer}
-.fname-btn:hover{text-decoration:underline}
-.ext-lnk{font-size:12px;color:var(--dim);text-decoration:none;margin-left:4px;padding:1px 4px;border-radius:3px;display:inline-block}
-.ext-lnk:hover{color:var(--accent);background:var(--panel2)}
+.doc-h{display:flex;align-items:flex-start;gap:12px;padding:14px 12px 10px 20px;flex:none}
+.doc-t{flex:1;min-width:0;display:grid;gap:3px}
+.doc-t h2{font-size:var(--t-lg);line-height:1.3;overflow-wrap:anywhere}
+/* the side sheet's own header already names the document: the name stays for screen readers only */
+#view-side .doc-t h2{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.doc-sub{display:flex;flex-wrap:wrap;column-gap:14px;font-size:12.5px;color:var(--ink-3)}
+.doc-sub .m{font-size:12px;overflow-wrap:anywhere}
+.doc-sub a{color:var(--ink-3);text-decoration:underline;text-underline-offset:2px}
+.doc-sub a:hover{color:var(--sig)}
+.doc-b{flex:1;min-height:0;overflow:auto;padding:0 20px 24px;display:flex;flex-direction:column}
+.doc-b.bleed{padding:0;overflow:hidden}
+.doc-b>.empty{margin:auto}
+.doc-pdf{flex:1;width:100%;min-height:0;border:0;display:block;background:var(--sunk)}
+.doc-img{align-items:center;background:var(--canvas)}
+.doc-img img{max-width:100%;max-height:100%;object-fit:contain;margin:auto 0;border-radius:var(--r-sm)}
+.doc-b.doc-img{padding:16px}
+.doc-pre{margin:0;padding:12px 14px;background:var(--sunk);border-radius:var(--r-md);overflow:auto;white-space:pre-wrap;word-break:break-word;
+  font:12.5px/1.55 var(--f-mono);color:var(--ink-2)}
+.doc-more{margin:10px 0 0;font-size:12.5px;color:var(--ink-3)}
+.doc-b .tbl-wrap{overflow:visible}
+.doc-meta{margin-bottom:4px}
+.doc-list{list-style:none;margin:0;padding:0;display:grid;gap:3px;font-size:12.5px}
+.doc-list .btn.link{height:auto;font-size:12.5px}
+.doc-gone{margin-top:18px;font-size:12.5px}
+.doc-rc{margin-top:18px}
+.doc-rc .tbl-wrap{margin-top:6px}
+.doc-b>.note{margin-top:4px}
