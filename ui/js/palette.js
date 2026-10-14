@@ -34,10 +34,15 @@ function palNets() {
       }
     }
   }
+  // A project linked to Altium draws its schematic from the SchDoc, so its sheets carry no parts: the nets then come
+  // from the layout's pads (the inspector parses the PCB drawing once it is loaded).
+  const pads = typeof inspPadMap === 'function' ? inspPadMap() : null;
+  if (pads) for (const net of pads.keys()) if (net && !sheetsOf.has(net)) sheetsOf.set(net, new Set());
   return [...sheetsOf].map(([name, ids]) => ({g: 'Nets', cls: 'netn', label: name, d: [...ids].slice(0, 2).join(', '), fields: [[name, 1]], run: () => palShowNet(name, [...ids])}));
 }
-// go to the schematic (unless it is already showing), then light the net once the drawing is there
+// open the net in the inspector, go to the schematic (unless it is already showing), then light the net there
 function palShowNet(name, sheetIds) {
+  if (typeof pickNet === 'function') pickNet(name);
   if (mainView() !== 'sch' && sideView() !== 'sch') go('workspace', 'sch');
   if (sheetIds.length && !sheetIds.includes(sheetId || (S.sheets[0] && S.sheets[0].id))) {
     sheetId = sheetIds[0];
@@ -46,7 +51,10 @@ function palShowNet(name, sheetIds) {
   }
   let tries = 40;
   const lit = () => {
-    if (document.querySelector('#schwrap svg')) { if (typeof highlightNet === 'function') highlightNet(name); return; }
+    if (document.querySelector('#schwrap svg')) {
+      if (typeof revealNet === 'function') revealNet(name); else if (typeof highlightNet === 'function') highlightNet(name);
+      return;
+    }
     if (--tries > 0) setTimeout(lit, 100);
   };
   lit();
@@ -120,9 +128,12 @@ function palSearch(q, all) {
     if (!toks.length && g !== 'Go to' && g !== 'Actions') continue;   // an empty box shows where to go and what to do
     const rows = all.filter(it => it.g === g).map((it, i) => ({it, i, s: toks.length ? palScore(it, toks) : 1})).filter(r => r.s > 0);
     rows.sort((a, b) => b.s - a.s || a.i - b.i);
-    if (rows.length) groups.push([g, rows.slice(0, PAL_MAX).map(r => r.it)]);
+    if (rows.length) groups.push([g, rows.slice(0, PAL_MAX).map(r => r.it), rows[0].s]);
   }
-  return groups;
+  // the group with the best hit comes first ("gnd" is a net before it is a word in some part's description);
+  // an empty box keeps the fixed order
+  if (toks.length) groups.sort((a, b) => b[2] - a[2]);
+  return groups.map(([g, items]) => [g, items]);
 }
 
 /* ---------- the box ---------- */
@@ -189,6 +200,14 @@ function openPalette() {
   });
   palDraw();
   pal.input.focus();
+  // the layout drawing holds the nets of a linked project: load it once, then add its nets to an open palette
+  if (typeof pcbText === 'function' && !(pcbSvgCache && pcbSvgCache.text)) {
+    pcbText().then(() => {
+      if (!pal) return;
+      pal.all = [...palGoTo(), ...palParts(), ...palNets(), ...palFiles(), ...palActions()];
+      palDraw();
+    }).catch(() => {});
+  }
 }
 function closePalette() {
   if (!pal) return;

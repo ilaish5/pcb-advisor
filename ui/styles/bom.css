@@ -14,7 +14,7 @@
 .bom-tbl tr.off td{color:var(--ink-3)}
 .bom-tbl .clip{display:inline-block;max-width:100px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 .bom-tbl .main,.bom-tbl .sub{display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis}
-.bom-tbl td.bom-ref{max-width:150px;white-space:normal;font-family:var(--f-mono);font-weight:600}
+.bom-tbl td.bom-ref{max-width:170px;overflow:hidden;text-overflow:ellipsis;font-family:var(--f-mono);font-weight:600}
 .bom-tbl td.tags .tag{margin-right:4px}
 .bom-tbl .row-acts{display:flex;gap:2px;justify-content:flex-end}
 

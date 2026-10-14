@@ -57,15 +57,18 @@ def test_the_table_scrolls_inside_the_sheet_with_its_head_pinned():
     assert ".bom-scroll{flex:1;min-height:0;overflow:auto" in CSS
     assert '<div class="bom-scroll">' in _fn("bomHTML")
     assert "scrollTop" in _fn("bomHTML")                  # a re-render (a stock check, an edit) keeps the scroll position
-    # nothing in a cell wraps onto a second line except the designators, so a row keeps its height
+    # nothing in a cell wraps onto a second line (long designator lists end in an ellipsis, the full list is the
+    # cell's title), so a row keeps its height
     assert ".bom-tbl td{white-space:nowrap}" in CSS
 
 
 def test_the_tag_column_names_problems_only():
     problems = _fn("bomProblems")
-    for text in ("Out of stock", "Low stock", "Code is another part", "No exact match", "Not checked", "To verify"):
+    for text in ("Out of stock", "Low stock", "Code is another part", "No exact match", "Not checked", "No model"):
         assert f"text: '{text}'" in problems, text
     assert "text: 'Extended'" not in problems and "Basic" not in problems and "Preferred" not in problems
+    # a model still to review is the normal state of a new BOM (the meta line counts it): no tag on every row
+    assert "text: 'To verify'" not in problems
     assert "if (!q) return [];" in problems                # a line that is not fitted has nothing to flag
     # the library type is a tooltip on the part, and the meta line sums the fee
     assert "l.library_type" in _fn("bomRow")

@@ -51,7 +51,9 @@ function bomProblems(l, q, b) {
   }
   if (risks.includes(CODE_RISK)) out.push({rank: 1, text: 'Code is another part', tone: 'warn', title: l.supply?.LCSC?.code_mismatch || ''});
   if (risks.includes('no exact MPN match')) out.push({rank: 2, text: 'No exact match', tone: 'warn', title: 'No supplier lists exactly this MPN'});
-  if (l.library === 'review' || l.library === 'missing') out.push({rank: 6, text: 'To verify', title: LIBTXT[l.library]});
+  // A model still to review is the normal state of a new or imported BOM: the meta line counts those, the Library page
+  // lists them. Only a missing model is a problem worth a tag on the row.
+  if (l.library === 'missing') out.push({rank: 4, text: 'No model', tone: 'warn', title: LIBTXT.missing});
   return out.sort((a, c) => a.rank - c.rank);
 }
 function bomTags(ps) {      // the worst problem; the others are counted, and named in the tooltip, so a row keeps its height

@@ -121,7 +121,7 @@ function stageStatus(id) {
       if (wrong) parts.push(`${wrong} with the wrong LCSC code`);
       if (review) parts.push(`${review} to review in the library`);
       if (unchecked) parts.push(`${unchecked} not checked yet`);
-      if (bad) return {tone: 'bad', title: parts.join(', '), hint: String(bad + warn)};
+      if (bad) return {tone: 'bad', title: parts.join(', '), hint: String(bad)};   // the number counts what the colour says
       if (warn) return {tone: 'warn', title: parts.join(', '), hint: String(warn)};
       return {tone: 'ok', title: `${plural(total, 'part line')}, all in stock`, hint: ''};
     }
@@ -137,7 +137,7 @@ function stageStatus(id) {
       if (!diff.length) return none;
       const below = diff.filter(d => d.verdict === 'below_fab_min').length;
       const differ = diff.filter(d => d.status === 'differs' || d.status === 'missing_on_board').length;
-      if (below) return {tone: 'bad', title: `${plural(below, 'rule')} below the JLC minimum` + (differ > below ? `, ${differ} differ from the board` : ''), hint: String(Math.max(below, differ))};
+      if (below) return {tone: 'bad', title: `${plural(below, 'rule')} below the JLC minimum` + (differ > below ? `, ${differ} differ from the board` : ''), hint: String(below)};
       if (differ) return {tone: 'warn', title: `${plural(differ, 'rule')} differ from the board`, hint: String(differ)};
       return {tone: 'ok', title: 'Matches the board', hint: ''};
     }
@@ -155,7 +155,7 @@ function stageStatus(id) {
         known++;
         for (const r of rows) { if (r.verdict === 'real') real++; else if (!r.verdict || r.verdict === 'unknown') open++; }
       }
-      if (real) return {tone: 'bad', title: plural(real, 'real issue') + (open ? `, ${open} to review` : ''), hint: String(real + open)};
+      if (real) return {tone: 'bad', title: plural(real, 'real issue') + (open ? `, ${open} to review` : ''), hint: String(real)};
       if (known < cs.length) return {tone: '', title: plural(cs.length, 'report'), hint: ''};
       if (open) return {tone: 'warn', title: `${open} to review`, hint: String(open)};
       return {tone: 'ok', title: 'All reviewed', hint: ''};
