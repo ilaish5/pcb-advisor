@@ -2719,18 +2719,39 @@
       return null;
     }
 
+    /** The shape of an elbow route: 'hv' / 'vh' when the ends leave on different axes (a side to a top or bottom:
+     *  one bend, out along the start's axis and in along the end's), else 'h' / 'v' (two bends, a middle leg). */
+    elbowKind(c, p1, p2) {
+      const d1 = this.endpointDir(c.from), d2 = this.endpointDir(c.to);
+      if (d1 && d2 && d1 !== d2) return d1 === 'h' ? 'hv' : 'vh';
+      const dir = d1 || d2 || (Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y) ? 'h' : 'v');
+      return dir === 'v' ? 'v' : 'h';
+    }
+
     buildConnectorPath(c, p1, p2) {
       if (c.route === 'straight') {
         return `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
       }
-      const dir = this.endpointDir(c.from) || this.endpointDir(c.to) ||
-        (Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y) ? 'h' : 'v');
-      if (dir === 'v') {
+      const k = this.elbowKind(c, p1, p2);
+      if (k === 'hv') return `M ${p1.x} ${p1.y} H ${p2.x} V ${p2.y}`;
+      if (k === 'vh') return `M ${p1.x} ${p1.y} V ${p2.y} H ${p2.x}`;
+      if (k === 'v') {
         const midY = (p1.y + p2.y) / 2;
         return `M ${p1.x} ${p1.y} V ${midY} H ${p2.x} V ${p2.y}`;
       }
       const midX = (p1.x + p2.x) / 2;
       return `M ${p1.x} ${p1.y} H ${midX} V ${p2.y} H ${p2.x}`;
+    }
+
+    /** Where a connector's label sits: on the path, in the middle of its longest leg for a one-bend route. */
+    connectorLabelPoint(c, p1, p2) {
+      if (c.route !== 'straight') {
+        const k = this.elbowKind(c, p1, p2);
+        const dx = Math.abs(p2.x - p1.x), dy = Math.abs(p2.y - p1.y);
+        if (k === 'hv') return dx >= dy ? { x: (p1.x + p2.x) / 2, y: p1.y } : { x: p2.x, y: (p1.y + p2.y) / 2 };
+        if (k === 'vh') return dy >= dx ? { x: p1.x, y: (p1.y + p2.y) / 2 } : { x: (p1.x + p2.x) / 2, y: p2.y };
+      }
+      return { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
     }
 
     /* ---------------- Dragging & Movement ---------------- */
@@ -3009,7 +3030,8 @@
         text = c.label || '';
         const p1 = this.getEndpointCoords(c.from);
         const p2 = this.getEndpointCoords(c.to);
-        const mid = this.diagramToClient((p1.x + p2.x) / 2 - 60, (p1.y + p2.y) / 2 - 16);
+        const lp = this.connectorLabelPoint(c, p1, p2);    // the editor opens where the label is drawn
+        const mid = this.diagramToClient(lp.x - 60, lp.y - 16);
         bounds = { x: mid.x, y: mid.y, w: 120 * this.scale, h: 32 * this.scale };
         fontSz = 12;
       } else if (type === 'frame') {
@@ -3207,8 +3229,7 @@
         const markerEnd = (c.arrows === 'end' || c.arrows === 'both' || c.arrows === 'to') ? this.markerEndRef : '';
         const markerStart = (c.arrows === 'start' || c.arrows === 'both') ? this.markerStartRef : '';
 
-        const mx = (p1.x + p2.x) / 2;
-        const my = (p1.y + p2.y) / 2;
+        const { x: mx, y: my } = this.connectorLabelPoint(c, p1, p2);
         let labelHtml = '';
         if (c.label) {
           const lw = Math.max(c.label.length * 7.5 + 16, 32);

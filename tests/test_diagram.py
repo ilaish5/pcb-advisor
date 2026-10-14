@@ -786,6 +786,19 @@ def test_attached_ends_recompute_on_move():
     assert "buildConnectorPath" in _method_body(js, "renderConnectors")
 
 
+def test_elbow_route_with_ends_on_different_axes_takes_one_bend_and_its_label_sits_on_it():
+    js = _diagram_js()
+    # A side to a top or bottom (e.g. a STOP line into a driver's bottom): out along the start's axis, in along the
+    # end's, one bend. Before, the route always used the start's axis and ran its last leg along the box edge.
+    kind = _method_body(js, "elbowKind")
+    assert "d1 && d2 && d1 !== d2" in kind and "'hv'" in kind and "'vh'" in kind
+    path = _method_body(js, "buildConnectorPath")
+    assert "H ${p2.x} V ${p2.y}" in path and "V ${p2.y} H ${p2.x}" in path
+    # the label is drawn, and edited, on the path: the middle of the longest leg of a one-bend route
+    assert "connectorLabelPoint" in _method_body(js, "renderConnectors")
+    assert "connectorLabelPoint" in js[js.index("type === 'connector'"):][:600]
+
+
 def test_sanitize_model_keeps_point_and_legacy_side():
     js = _diagram_js()
     assert "VALID_ENDPOINT_POINTS" in js
