@@ -7,6 +7,13 @@ pins, wires and labels that meet on the grid share one coordinate; real
 half-grid values stay floats. Records come from the FileHeader stream. The first
 text record is the sheet header; OWNERINDEX of child records refers to the
 0-based index of the owner among records after the sheet header.
+
+What the picture needs to match Altium is read too: a pin's LOCATION is the end that
+meets the symbol body and its connection point (hot spot) is PINLENGTH away from it,
+in the pin's direction; PINCONGLOMERATE also says whether the name and the number are
+shown. A component keeps its body drawing (rectangles, lines, polylines, polygons, arcs,
+text) and where the designator and the comment sit (location, justification, font); the
+sheet header's font table is returned as "fonts".
 """
 import collections
 import pathlib
@@ -29,6 +36,67 @@ def _num(r: dict, key: str, default: int = 0):
 
 def _flag(r: dict, key: str) -> bool:
     return r.get(key, "").upper() == "T"
+
+
+# Direction a pin points in from the body to its connection point, per rotation (0 right, 1 up, 2 left, 3 down)
+PIN_DIRECTION = {0: (1, 0), 1: (0, 1), 2: (-1, 0), 3: (0, -1)}
+
+
+def pin_tip(pin: dict):
+    """The connection point (hot spot) of a pin: PINLENGTH from its location, in its direction."""
+    dx, dy = PIN_DIRECTION[pin.get("orientation", 0) & 3]
+    length = pin.get("length", 0)
+    return (pin.get("x", 0) + dx * length, pin.get("y", 0) + dy * length)
+
+
+def _points(r: dict) -> list:
+    return [(_num(r, f"X{j}"), _num(r, f"Y{j}")) for j in range(1, int(r.get("LOCATIONCOUNT", "0")) + 1)]
+
+
+def _text(r: dict) -> dict:
+    """A text record (designator, parameter, label): the text, its anchor, justification (0 bottom-left, 1 bottom-centre,
+    2 bottom-right, 3-5 the same on the centre line, 6-8 on the top line), rotation (quarter turns, anticlockwise), font id."""
+    return {
+        "text": r.get("TEXT", ""),
+        "x": _num(r, "LOCATION.X"),
+        "y": _num(r, "LOCATION.Y"),
+        "justification": int(r.get("JUSTIFICATION", "0")) % 9,
+        "orientation": int(r.get("ORIENTATION", "0")) & 3,
+        "font": int(r.get("FONTID", "1")),
+        "hidden": _flag(r, "ISHIDDEN"),
+    }
+
+
+def _graphic(r: dict):
+    """One drawing primitive of a component body (rectangle, line, polyline, polygon, arc, text), or None."""
+    kind = r.get("RECORD")
+    g = {"part_id": int(r.get("OWNERPARTID", "1"))}
+    if kind in ("14", "10"):
+        g.update(kind="rect", x1=_num(r, "LOCATION.X"), y1=_num(r, "LOCATION.Y"), x2=_num(r, "CORNER.X"), y2=_num(r, "CORNER.Y"),
+                 solid=_flag(r, "ISSOLID"))
+    elif kind == "13":
+        g.update(kind="polyline", points=[(_num(r, "LOCATION.X"), _num(r, "LOCATION.Y")), (_num(r, "CORNER.X"), _num(r, "CORNER.Y"))])
+    elif kind == "6":
+        g.update(kind="polyline", points=_points(r))
+    elif kind == "7":
+        g.update(kind="polygon", points=_points(r), solid=_flag(r, "ISSOLID"))
+    elif kind == "12":
+        g.update(kind="arc", x=_num(r, "LOCATION.X"), y=_num(r, "LOCATION.Y"), radius=_num(r, "RADIUS"),
+                 start=float(r.get("STARTANGLE", "0")), end=float(r.get("ENDANGLE", "360")))
+    elif kind == "4":
+        g.update(kind="text", **_text(r))
+    else:
+        return None
+    return g
+
+
+def _fonts(sheet: dict) -> dict:
+    """The sheet header's font table: id -> size, name, bold, italic."""
+    out = {}
+    for i in range(1, int(sheet.get("FONTIDCOUNT", "0")) + 1):
+        out[i] = {"size": int(sheet.get(f"SIZE{i}", "10")), "name": sheet.get(f"FONTNAME{i}", ""),
+                  "bold": _flag(sheet, f"BOLD{i}"), "italic": _flag(sheet, f"ITALIC{i}")}
+    return out
 
 
 def read_schdoc(path) -> dict:
@@ -68,6 +136,8 @@ def read_schdoc(path) -> dict:
             # Designator (RECORD=34)
             des_recs = [cr for _, cr in children if cr.get("RECORD") == "34"]
             ref = des_recs[0].get("TEXT", "") if des_recs else r.get("SOURCEDESIGNATOR", "")
+            # the Comment parameter (RECORD=41), drawn where the designer put it unless ISHIDDEN
+            comment_recs = [cr for _, cr in children if cr.get("RECORD") == "41" and cr.get("NAME") == "Comment"]
 
             # Parameters (RECORD=41)
             params = {cr.get("NAME"): cr.get("TEXT", "") for _, cr in children if cr.get("RECORD") == "41" and cr.get("NAME")}
@@ -101,6 +171,9 @@ def read_schdoc(path) -> dict:
                     # applied, the pin's own X/Y are sheet coordinates), bit 2 = hidden pin
                     "orientation": int(pin.get("PINCONGLOMERATE", "0")) & 3,
                     "hidden": bool(int(pin.get("PINCONGLOMERATE", "0")) & 4),
+                    # bits 3 and 4: the name and the number are drawn
+                    "show_name": bool(int(pin.get("PINCONGLOMERATE", "0")) & 8),
+                    "show_number": bool(int(pin.get("PINCONGLOMERATE", "0")) & 16),
                     "part_id": int(pin.get("OWNERPARTID", "1")),
                 })
 
@@ -118,13 +191,14 @@ def read_schdoc(path) -> dict:
                 "orientation": int(r.get("ORIENTATION", "0")) & 3,
                 "mirrored": _flag(r, "ISMIRRORED"),
                 "pins": pins,
+                "graphics": [g for g in (_graphic(cr) for _, cr in children) if g],
+                "designator_text": _text(des_recs[0]) if des_recs else None,
+                "comment_text": _text(comment_recs[0]) if comment_recs else None,
             })
 
         elif rec_kind == "27":
             # Wire
-            n_pts = int(r.get("LOCATIONCOUNT", "0"))
-            pts = [(_num(r, f"X{j}"), _num(r, f"Y{j}")) for j in range(1, n_pts + 1)]
-            wires.append({"points": pts})
+            wires.append({"points": _points(r)})
 
         elif rec_kind == "25":
             # Net label
@@ -134,6 +208,8 @@ def read_schdoc(path) -> dict:
                 "name": text,
                 "x": _num(r, "LOCATION.X"),
                 "y": _num(r, "LOCATION.Y"),
+                "orientation": int(r.get("ORIENTATION", "0")) & 3,
+                "font": int(r.get("FONTID", "1")),
             })
 
         elif rec_kind == "17":
@@ -145,6 +221,10 @@ def read_schdoc(path) -> dict:
                 "x": _num(r, "LOCATION.X"),
                 "y": _num(r, "LOCATION.Y"),
                 "style": int(r.get("STYLE", "0")),
+                # the way the symbol points from the connection point (0 right, 1 up, 2 left, 3 down)
+                "orientation": int(r.get("ORIENTATION", "0")) & 3,
+                "show_name": _flag(r, "SHOWNETNAME"),
+                "font": int(r.get("FONTID", "1")),
             })
 
         elif rec_kind == "18":
@@ -189,5 +269,7 @@ def read_schdoc(path) -> dict:
         "ports": ports,
         "junctions": junctions,
         "no_erc": no_erc,
+        "fonts": _fonts(recs[1]) if len(recs) > 1 else {},
+        "system_font": int(recs[1].get("SYSTEMFONT", "1")) if len(recs) > 1 else 1,
         "record_counts": record_counts,
     }
