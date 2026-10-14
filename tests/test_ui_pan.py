@@ -110,31 +110,61 @@ def test_pcb_empty_state_text_html_centered():
     assert "align-items:center" in rule.replace(" ", "")
 
 
+IDEA_CSS_PATH = REPO / "ui" / "styles" / "idea.css"
+
+
+def idea_rule(selector: str) -> str:
+    """The declarations of every top-level rule in idea.css whose selector list names `selector` exactly (spaces removed)."""
+    css = IDEA_CSS_PATH.read_text(encoding="utf-8")
+    bodies = [
+        m.group(2)
+        for m in re.finditer(r"(?m)^([^{}@/\s][^{}]*)\{([^}]*)\}", css)
+        if selector in [part.strip() for part in m.group(1).split(",")]
+    ]
+    assert bodies, f"idea.css must have a rule for {selector}"
+    return "".join(bodies).replace(" ", "")
+
+
 def test_idea_tab_layout_no_vertical_scroll():
-    """Verify Idea tab does not scroll: requirements card is compact, canvas flex: 1, min-height: 0."""
-    h_content = read_html()
-    # .idea-layout flex column, min-height: 0, flex: 1
-    assert re.search(r"\.idea-layout\s*\{[^}]*display\s*:\s*flex", h_content)
-    assert re.search(r"\.idea-layout\s*\{[^}]*flex-direction\s*:\s*column", h_content)
-    assert re.search(r"\.idea-layout\s*\{[^}]*min-height\s*:\s*0", h_content)
-    assert re.search(r"\.idea-layout\s*\{[^}]*flex\s*:\s*1", h_content)
+    """The Idea sheet never scrolls as a whole: the header and the capped list take their height, the canvas takes the rest."""
+    # the view hands its whole height to the sheet and clips it; the pieces inside shrink instead of overflowing
+    assert "overflow:hidden" in idea_rule(".view:has(>.idea-view)")
+    assert "padding:0" in idea_rule(".view:has(>.idea-view)")
+    view = idea_rule(".idea-view")
+    assert "display:flex" in view and "flex-direction:column" in view and "height:100%" in view and "min-height:0" in view
+    body = idea_rule(".idea-body")
+    assert "display:flex" in body and "flex-direction:column" in body and "flex:1" in body and "min-height:0" in body
 
-    # Diagram card flex: 1, min-height: 0
-    assert re.search(r"\.diagram-card\s*\{[^}]*flex\s*:\s*1", h_content)
-    assert re.search(r"\.diagram-card\s*\{[^}]*min-height\s*:\s*0", h_content)
+    # the list is capped and scrolls inside itself (a long list never pushes the canvas off the sheet)
+    assert re.search(r"max-height:\d+%", idea_rule(".idea-reqs"))
+    assert "overflow-y:auto" in idea_rule(".req-scroll")
+    assert "min-height:0" in idea_rule(".req-scroll")
 
-    # Compact requirements card
-    assert re.search(r"\.agreed-card\s*\{[^}]*max-height\s*:\s*130px", h_content) or re.search(r"agreed-card.*max-height", h_content)
+    # the canvas takes what is left, and the editor inside it fills the canvas
+    canvas = idea_rule(".idea-canvas")
+    assert "flex:110" in canvas, "flex: 1 1 0 so the canvas takes what the list leaves, whatever its content"
+    assert re.search(r"min-height:\d+px", canvas), "a short window still leaves the canvas a usable height"
+    assert "overflow:hidden" in canvas
+    mount = idea_rule(".diagram-mount-point")
+    assert "flex:1" in mount and "min-height:0" in mount
 
-    # Tab body view with idea stage does not scroll
-    assert re.search(r"\.stage-idea[^{]*\{[^}]*overflow\s*:\s*hidden", h_content) or re.search(r"has\(\.idea-layout\)[^{]*\{[^}]*overflow\s*:\s*hidden", h_content)
+    # the interim rules and the old card classes are gone
+    html = read_html()
+    for dead in (".idea-layout", ".stage-idea", ".diagram-card", ".agreed-card"):
+        assert dead not in html, f"{dead} belongs to the old Idea layout"
 
 
-def test_diagram_toolbar_compact_one_or_two_rows():
-    """Verify diagram toolbar fits in one or two rows (row-gap, compact button styling, hidden SVG labels)."""
+def test_diagram_toolbar_is_a_compact_floating_icon_bar():
+    """The toolbar floats over the canvas as one row of icon buttons and wraps to a second row only when the canvas is narrow."""
+    rail = idea_rule(".diag-rail")
+    assert "position:absolute" in rail and "flex-wrap:wrap" in rail
+    assert re.search(r"max-width:calc\(100%-\d+px\)", rail), "the bar stays inside the canvas"
+    assert "height:30px" in idea_rule(".diag-rail-btn") and "min-width:30px" in idea_rule(".diag-rail-btn")
+    # the bar is built by the editor from kit-style icons; nothing is injected as a stylesheet any more
     d_content = read_diagram()
-    assert "row-gap" in d_content, "Toolbar must specify row-gap for clean 1-2 row wrapping"
-    assert re.search(r"\.diag-tb-btn\s+svg\s*\+\s*span\s*\{\s*display\s*:\s*none", d_content), "SVG icon button label spans should be hidden to fit toolbar in 1-2 rows"
+    assert "diag-rail-btn" in d_content and "getIconSvg(" in d_content
+    assert ".diag-tb-btn" not in d_content, "the old toolbar markup is gone"
+    assert "createElement('style')" not in d_content and 'createElement("style")' not in d_content, "the editor's styles live in ui/styles/idea.css"
 
 
 def test_right_nav_no_horizontal_scroll():

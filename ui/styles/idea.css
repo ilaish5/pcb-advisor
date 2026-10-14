@@ -1,65 +1,175 @@
-/* idea.css: Idea view (requirements, block diagram). */
+/* idea.css: the Idea view. Header, the agreed requirements (a flat list), the block diagram canvas and the editor's
+   floating tools. Tokens only; the one set of literal colours is diagram.js's data (stored block colours). */
 
-.idea{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start}
-@container (max-width:720px){
-  .idea{grid-template-columns:minmax(0,1fr)}
-  .agreed div{grid-template-columns:minmax(0,1fr);gap:4px}
-}
+/* ---------- the sheet: header on top, then the list, then the canvas filling what is left ---------- */
+.view:has(>.idea-view){padding:0;overflow:hidden}
+.idea-view{display:flex;flex-direction:column;height:100%;min-height:0}
+.idea-view>.vh{flex:none}
+.idea-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 24px}
 
-.agreed{margin:0}
-.agreed div{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:8px 14px;border-bottom:1px solid var(--line2)}
-.agreed div:last-child{border-bottom:0}
-.agreed dt{font-weight:600;font-size:13px}
-.agreed dd{margin:0;font-size:13px;color:var(--ink2)}
-.agreed small{display:block;color:var(--dim);font-size:11.5px}
-.reqs{list-style:none;margin:0;padding:8px 14px 6px;display:grid;gap:6px;font-size:13px}
-.reqs li{display:flex;gap:8px;align-items:baseline}
-.reqs .ic{font-weight:700;width:14px;flex:none}
-svg.blocks{display:block;width:100%;height:auto}
-.blocks rect{fill:var(--panel2);stroke:var(--line);stroke-width:1.4}
-.blocks .cur rect{fill:var(--accent-soft);stroke:var(--accent)}
-.blocks .open rect{stroke-dasharray:5 4}
-.blocks text{font-family:var(--f-mono);font-size:12px;fill:var(--ink)}
-.blocks .s{fill:var(--dim);font-size:10.5px}
-.blocks path{stroke:var(--dim);stroke-width:1.5;fill:none}
-.blocks .pl{fill:var(--sch-pwr);font-size:10px;font-weight:600}
-.blocks g.cur{cursor:pointer}
+/* requirements: a capped list that scrolls inside itself; the add row stays outside the scroll region */
+.idea-reqs{flex:0 1 auto;display:flex;flex-direction:column;min-height:0;max-height:30%}
+.idea-reqs:not(:has(.idea-split)){margin-bottom:12px}
+.idea-reqs:has(.req-add-form:not([hidden])),.idea-reqs:has(.req-edit-form:not([hidden])){max-height:55%}
+.req-scroll{flex:0 1 auto;min-height:0;overflow-y:auto;margin:0 -24px;padding:0 24px}
+.req-list{list-style:none;margin:0;padding:0}
+.req-empty{padding:2px 0 4px;font-size:13px;color:var(--ink-3)}
 
-@media (max-width:1280px){
-  .idea{grid-template-columns:minmax(0,1fr)}
-}
+.req-row{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:start;
+  padding:9px 0;border-top:1px solid var(--line)}
+.req-row:first-child{border-top:0}
+.req-row:focus-visible{outline-offset:-2px;border-radius:var(--r-sm)}
+.req-row.drag-over{box-shadow:inset 0 2px 0 var(--sig)}
+.req-main{min-width:0}
+.req-line{font-size:13px;line-height:19px;color:var(--ink-2);overflow-wrap:anywhere;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.req-line .tag{height:18px;margin-right:4px;vertical-align:1px}
+.req-topic{font-weight:600;color:var(--ink);cursor:text}
+.req-text{cursor:text}
 
-/* Block Diagram Interactive */
-.diag-wrap{position:relative;border:1px solid var(--line);border-radius:10px;background:#f8fafc;overflow:hidden}
-.diag-toolbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line2);flex-wrap:wrap}
-svg.diag-svg{display:block;width:100%;height:auto;user-select:none}
-.diag-block{cursor:grab;transition:filter .15s}
-.diag-block:hover{filter:drop-shadow(0 2px 6px rgba(0,0,0,.15))}
-.diag-block.dragging{cursor:grabbing;filter:drop-shadow(0 4px 12px rgba(0,0,0,.25))}
-.diag-block.linking rect{stroke:#2563eb !important;stroke-width:2.5 !important;animation:pulse 1s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-.diag-btn{font-size:11px;padding:2px 7px;border-radius:4px;border:1px solid var(--line);background:var(--panel);cursor:pointer}
-.diag-btn:hover{background:var(--panel2);border-color:var(--accent)}
-
-.editor-group-body > .view.stage-idea,
-.editor-group-body > .view[data-active-tab-id="idea"],
-.editor-group-body > .view:has(.idea-layout){display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;padding:12px 14px}
-.idea-layout{display:flex;flex-direction:column;flex:1;min-height:0;height:100%;gap:8px;width:100%;overflow:hidden}
-.idea-layout .agreed-card{flex:none;min-height:0;max-height:220px;overflow:hidden}
-.idea-layout .diagram-card{flex:1;min-height:0;display:flex;flex-direction:column;height:100%;padding:0;position:relative;overflow:hidden}
-.diagram-mount-point{flex:1;min-height:0;width:100%;height:100%;position:relative;display:flex;flex-direction:column}
-.req-row{display:flex;align-items:flex-start;gap:6px;padding:5px 6px;border-bottom:1px solid var(--line2);border-radius:4px;transition:background .1s}
-.req-row:hover{background:var(--subtle,#f8fafc)}
-.req-row.drag-over{border-top:2px solid var(--accent);background:rgba(33,72,201,.06)}
-.req-row .req-actions{opacity:0;transition:opacity .15s}
-.req-row:hover .req-actions, .req-row:focus-within .req-actions{opacity:1}
-.req-actions .btn-icon{width:24px;height:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--dim)}
-.req-actions .btn-icon:hover{border-color:var(--line);color:var(--ink);background:var(--panel)}
-.req-actions .req-del-btn:hover{color:#ef4444}
-.req-actions .req-confirm-btn:hover{color:#10b981}
-.req-drag-handle{cursor:grab;color:var(--dim);user-select:none;padding:2px 4px;font-size:13px;line-height:1}
+/* the grip hangs in the sheet's side padding, so the text lines up with the title above */
+.req-drag-handle{position:absolute;left:-22px;top:9px;width:20px;height:19px;display:grid;place-items:center;
+  color:var(--ink-4);cursor:grab;opacity:0;transition:opacity .12s;user-select:none;touch-action:none}
 .req-drag-handle:active{cursor:grabbing}
-.req-topic{cursor:pointer;font-weight:600;color:var(--ink)}
-.req-topic:hover{text-decoration:underline}
-.req-text{cursor:pointer}
-.req-text:hover{background:rgba(0,0,0,0.02)}
+.req-row:hover .req-drag-handle,.req-row:focus-within .req-drag-handle{opacity:1}
+
+.req-acts{display:flex;align-items:center;gap:2px;min-height:19px;margin:-3px 0 -4px}
+.req-row:not(.is-proposed) .req-acts{opacity:0;transition:opacity .12s}
+.req-row:not(.is-proposed):hover .req-acts,.req-row:not(.is-proposed):focus-within .req-acts{opacity:1}
+.req-acts .btn.icon{color:var(--ink-3)}
+.req-acts .btn.icon:hover{color:var(--ink)}
+.req-acts .btn[data-act="delete-req"].icon:hover{color:var(--bad)}
+.req-row.is-editing .req-acts{display:none}
+
+.req-edit-form,.req-add-form{display:grid;gap:6px;max-width:720px}
+.req-edit-form .in,.req-add-form .in{width:100%}
+.req-edit-text,.req-add-text{min-height:64px;max-height:200px;field-sizing:content}   /* grows with what is typed, where the browser can */
+.req-edit-form .acts,.req-add-form .acts{gap:6px}
+.req-edit-form{grid-column:1/-1}
+.req-row.is-editing{grid-template-columns:minmax(0,1fr)}
+
+.req-add-row{flex:none;padding:6px 0 0}
+.req-add-row>.btn{color:var(--ink-3)}
+.req-add-row>.btn:hover{color:var(--ink)}
+.req-add-form{padding:4px 0 2px}
+
+/* the handle between the list and the canvas: a quiet pill that shows when it can be used */
+.idea-split{flex:none;position:relative;height:12px;cursor:row-resize;touch-action:none}
+.idea-split::before{content:"";position:absolute;left:50%;top:50%;width:32px;height:4px;margin:-2px 0 0 -16px;border-radius:2px;
+  background:var(--line-2);opacity:0;transition:opacity .12s,background .12s}
+.idea-reqs.is-capped .idea-split::before{opacity:.7}
+.idea-split:hover::before,.idea-split:focus-visible::before,.idea-split.is-drag::before{opacity:1;background:var(--sig)}
+.idea-split:focus-visible{outline:none}
+
+/* ---------- the canvas ---------- */
+.idea-canvas{flex:1 1 0;min-height:160px;margin:0 0 24px;border-radius:var(--r-md);background:var(--canvas);overflow:hidden;
+  display:flex;flex-direction:column;position:relative}
+.idea-prop{flex:none;display:flex;align-items:center;gap:8px;padding:6px 8px 6px 12px;background:var(--sheet);
+  border-bottom:1px solid var(--line);font-size:13px;color:var(--ink)}
+.idea-prop-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.idea-prop .acts{margin-left:auto;flex:none}
+.diagram-mount-point{position:relative;flex:1;min-height:0;width:100%}
+.diagram-mount-point>svg{display:block;width:100%;height:100%}
+
+/* a narrow sheet: the proposal bar lets its buttons wrap under the message */
+@container (max-width:760px){
+  .idea-prop{flex-wrap:wrap}
+}
+
+/* ---------- the diagram editor (ui/diagram.js builds the markup) ---------- */
+.miro-diagram-editor{position:relative;overflow:hidden;background:var(--canvas);user-select:none;font-family:inherit}
+.diag-canvas-container{position:absolute;inset:0;overflow:hidden}
+.diagram-mount-point svg.diag-svg{display:block;width:100%;height:100%}
+.diag-dot{fill:var(--canvas-dot)}
+.is-panning,.is-panning *{cursor:grabbing !important}
+
+/* floating surfaces: the toolbar, the selection bar, the zoom cluster and the popovers all look like a kit menu */
+.diag-rail,.diag-context-toolbar,.diag-zoom-cluster,.diag-popover{background:var(--sheet);border:1px solid var(--line);border-radius:10px}
+.diag-rail,.diag-zoom-cluster{box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.diag-context-toolbar,.diag-popover{box-shadow:var(--float)}
+.diag-rail,.diag-zoom-cluster,.diag-context-toolbar{display:flex;align-items:center;gap:2px;padding:3px}
+.diag-rail{position:absolute;top:12px;left:12px;z-index:10;flex-wrap:wrap;max-width:calc(100% - 24px)}
+.diag-zoom-cluster{position:absolute;right:12px;bottom:12px;z-index:20}
+.diag-context-toolbar{position:absolute;display:none;z-index:25}
+.diag-sep{flex:none;width:1px;height:18px;margin:0 3px;background:var(--line)}
+
+.diag-rail-btn,.diag-ctx-btn,.diag-zoom-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;flex:none;height:30px;min-width:30px;
+  padding:0 6px;border-radius:7px;color:var(--ink-2);transition:background .12s,color .12s}
+.diag-rail-btn:hover,.diag-ctx-btn:hover,.diag-zoom-btn:hover{background:var(--hover);color:var(--ink)}
+.diag-rail-btn:active,.diag-ctx-btn:active,.diag-zoom-btn:active{background:var(--press)}
+.diag-rail-btn.active,.diag-rail-btn[aria-pressed="true"],.diag-ctx-btn.active,.diag-ctx-btn[aria-pressed="true"]{background:var(--press);color:var(--ink)}
+.diag-rail-btn:disabled{opacity:.38;pointer-events:none}
+.diag-ctx-btn.danger{color:var(--bad)}
+.diag-ctx-text{font-size:13px;font-weight:600}
+.diag-ctx-text small{font-size:10.5px;font-weight:600;color:var(--ink-3)}
+.diag-zoom-val{min-width:46px;font-size:12px;font-weight:600;font-variant-numeric:tabular-nums}
+.diag-fit-btn span{font-size:12px;font-weight:500}
+
+.diag-swatch-circle,.diag-swatch-ring{display:inline-block;border-radius:50%}
+.diag-swatch-circle{width:16px;height:16px;box-shadow:inset 0 0 0 1px var(--line-2)}
+.diag-swatch-ring{width:15px;height:15px;border:3px solid;background:transparent}
+.diag-swatch-none{background:linear-gradient(135deg,transparent 44%,var(--bad) 45%,var(--bad) 55%,transparent 56%);border-color:var(--line-2)}
+
+/* popovers and menus */
+.diag-popover{position:absolute;display:none;z-index:35;padding:6px}
+.diag-menu{min-width:190px;padding:4px}
+.diag-menu-item{display:flex;align-items:center;gap:10px;width:100%;min-height:30px;padding:5px 10px;border-radius:6px;text-align:left;font-size:13px;color:var(--ink)}
+.diag-menu-item:hover,.diag-menu-item:focus-visible{background:var(--hover);outline:none}
+.diag-menu-item>svg:first-child{color:var(--ink-3)}
+.diag-menu .diag-check{margin-left:auto;display:inline-flex;opacity:0;color:var(--ink)}
+.diag-menu [aria-checked="true"] .diag-check{opacity:1}
+.diag-menu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+
+.diag-shape-grid{display:grid;grid-template-columns:repeat(4,34px);gap:2px}
+.diag-shape-grid-btn{display:grid;place-items:center;width:34px;height:34px;border-radius:6px;color:var(--ink-2)}
+.diag-shape-grid-btn:hover{background:var(--hover);color:var(--ink)}
+.diag-shape-grid-btn.is-current{background:var(--press);color:var(--ink)}
+
+.diag-palette-popover{width:204px}
+.diag-pal-label{margin:2px 2px 6px;font-size:var(--t-xs);font-weight:600;color:var(--ink-3)}
+.diag-pal-grid{display:grid;grid-template-columns:repeat(7,22px);gap:4px;margin-bottom:10px}
+.diag-palette-swatch-btn{width:22px;height:22px;padding:0;border-radius:5px;box-shadow:inset 0 0 0 1px var(--line-2)}
+.diag-palette-swatch-btn:hover{box-shadow:inset 0 0 0 1px var(--ink-4)}
+.diag-palette-swatch-btn.is-current{box-shadow:0 0 0 2px var(--sheet),0 0 0 3.5px var(--sig)}
+.diag-pal-domains{display:grid;grid-template-columns:repeat(2,1fr);gap:4px}
+.diag-domain-swatch-btn{height:24px;padding:0 6px;border:1.5px solid;border-radius:6px;font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.diag-domain-swatch-btn:hover{filter:brightness(.96)}
+
+.diag-text-overlay{position:absolute;display:none;z-index:40;padding:4px 6px;border:1.5px solid var(--sig);border-radius:6px;background:var(--sheet);color:var(--ink);
+  box-shadow:var(--float);font-family:inherit;font-size:13px;line-height:1.3;resize:none;outline:none;user-select:text}
+
+/* nothing drawn yet: one line of help and one button, no card */
+.diag-empty-state{position:absolute;inset:0;z-index:5;display:none;align-content:center;justify-items:center;gap:6px;padding:0 24px;text-align:center;pointer-events:none}
+.diag-empty-title{font-size:var(--t-md);font-weight:500;color:var(--ink-2)}
+.diag-empty-sub{font-size:13px;color:var(--ink-3)}
+.diag-start-template-btn{margin-top:8px;pointer-events:auto}
+
+/* drawing: blocks, lines, frames and the helpers drawn over them */
+.diag-shape-node{cursor:pointer}
+.diag-shape-node.is-selected{filter:drop-shadow(0 0 3px var(--sig-line))}
+.diag-shape-node.diag-pulse{animation:diagPulseAnim .7s ease-in-out infinite}
+@keyframes diagPulseAnim{0%,100%{filter:drop-shadow(0 0 1px var(--sig))}50%{filter:drop-shadow(0 0 9px var(--sig))}}
+.diag-shape-node.is-changed,.diag-connector-node.is-changed{filter:drop-shadow(0 0 4px var(--sig))}
+.diag-frame-node.is-changed .diag-frame-fill{stroke:var(--sig)}
+.diag-frame-fill{fill:var(--sunk)}
+.diag-conn-label-box{fill:var(--sheet)}
+.diag-lock rect{fill:var(--ink-3)}
+.diag-lock path{fill:none;stroke:var(--ink-3)}
+.diag-draw-preview,.diag-marquee{fill:var(--sig-soft);stroke:var(--sig);stroke-width:1.5;stroke-dasharray:4 4}
+.diag-marquee{stroke-width:1.2;stroke-dasharray:4 3}
+.diag-conn-preview{fill:none;stroke:var(--sig);stroke-width:2;stroke-dasharray:5 5}
+.diag-conn-point{fill:var(--sheet);stroke:var(--sig)}
+.diag-conn-point.is-snap{fill:var(--ok);stroke:var(--ok)}
+.diag-port-dot{cursor:crosshair;fill:var(--sheet);stroke:var(--sig)}
+.diag-port-dot:hover{fill:var(--sig)}
+.diag-handle{fill:var(--sheet);stroke:var(--sig);stroke-width:1.5}
+.diag-sel-box{fill:none;stroke:var(--sig);stroke-width:1.2;stroke-dasharray:3 3}
+.diag-conn-end-handle{fill:var(--sheet);stroke:var(--sig)}
+.diag-conn-end-handle.is-attached{fill:var(--sig)}
+.diag-conn-free-end{fill:var(--sheet)}
+
+/* a proposed diagram on show: read-only, outlined, the tools put away */
+.miro-diagram-editor.is-preview .diag-rail,
+.miro-diagram-editor.is-preview .diag-context-toolbar,
+.miro-diagram-editor.is-preview .diag-popover{display:none !important}
+.miro-diagram-editor.is-preview::after{content:"";position:absolute;inset:0;z-index:50;border-radius:inherit;box-shadow:inset 0 0 0 2px var(--sig-line);pointer-events:none}

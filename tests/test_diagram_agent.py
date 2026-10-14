@@ -459,7 +459,10 @@ def test_static_ui_checks():
     assert "req-edit-btn" in index_html or "edit-req" in index_html  # ✎
     assert "req-del-btn" in index_html or "delete-req" in index_html  # 🗑
     assert "req-confirm-btn" in index_html or "confirm-req" in index_html  # ✓
-    assert "req-move-up" in index_html and "req-move-down" in index_html  # ↑ / ↓
+    # A requirement moves by its grip (drag) or from the keyboard: Alt+Up / Alt+Down on the focused row (no arrow buttons)
+    idea_js = (REPO / "ui" / "js" / "views" / "idea.js").read_text(encoding="utf-8")
+    assert "moveReq(" in idea_js and "e.altKey" in idea_js and "'ArrowUp'" in idea_js and "'ArrowDown'" in idea_js
+    assert "req-move-up" not in idea_js and "req-move-down" not in idea_js, "the row has one grip and the keyboard, not arrow buttons"
     assert "req-drag-handle" in index_html
     assert "+ Add requirement" in index_html
     assert "/api/idea/item/update" in index_html

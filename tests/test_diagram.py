@@ -647,8 +647,9 @@ def test_rail_buttons_aria_labels_and_no_visible_text_labels():
     for b in buttons:
         assert 'aria-label="' in b, f"Rail button must have aria-label: {b}"
         assert 'title="' in b, f"Rail button must have title: {b}"
-        # Strip SVGs and tags to check for any visible text
+        # Strip the icons (an inline <svg>, or a ${getIconSvg('name', size)} call that draws one) and tags to check for any visible text
         stripped = re.sub(r'<svg.*?</svg>', '', b, flags=re.DOTALL)
+        stripped = re.sub(r'\$\{getIconSvg\([^)]*\)\}', '', stripped)
         text_content = re.sub(r'<[^>]+>', '', stripped).strip()
         assert not text_content, f"Rail button must not contain visible text label: {text_content!r}"
 

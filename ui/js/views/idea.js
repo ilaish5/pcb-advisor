@@ -1,297 +1,402 @@
-/* PCB Advisor UI - Idea view: requirements, block diagram mount, legacy diag-* handlers, requirement keyboard/drag. */
+/* PCB Advisor UI - Idea view: the agreed requirements (a flat list), the block diagram (ui/diagram.js) and the agent's
+   diagram proposals. Shell hooks: ideaHTML(container), updateIdeaContent(container), mountDiagramEditor(container). */
 
-let isDraggingDiag = false, dragBlockId = null, dragStartX = 0, dragStartY = 0, blockOrigX = 0, blockOrigY = 0;
+const ideaEditors = new Set();   // live DiagramEditors; one per Idea sheet on screen, destroyed when their canvas leaves the page
+let ideaPreviewPid = '';         // id of the diagram proposal shown on the canvas ('' = none)
+let ideaForce = false;           // set around my own redraws: the list is redrawn even while a form is open
+let ideaSplit = null;            // cap on the requirements list, percent of the sheet body (0 = the default); null = not read yet
+let ideaSplitDrag = null;
+const IDEA_SPLIT_KEY = 'pcb_advisor_idea_split';
+const IDEA_SPLIT_MIN = 12, IDEA_SPLIT_MAX = 70, IDEA_SPLIT_STEP = 3;
 
-const DOMAINS = {
-  power: {id: 'power', name: 'Power', border: '#e67e22', fill: '#fef3e2', text: '#b45309'},
-  sensing: {id: 'sensing', name: 'Sensing', border: '#27ae60', fill: '#e8f8f0', text: '#15803d'},
-  mcu: {id: 'mcu', name: 'MCU', border: '#2980b9', fill: '#ebf5fb', text: '#1d4ed8'},
-  comms: {id: 'comms', name: 'Comms', border: '#8e44ad', fill: '#f3ebf9', text: '#6c3483'},
-  drive: {id: 'drive', name: 'Drive / Actuation', border: '#c0392b', fill: '#fdedec', text: '#b91c1c'},
-  ui: {id: 'ui', name: 'UI / Indicators', border: '#7f8c8d', fill: '#f2f4f4', text: '#4b5563'},
-};
-const DOMAIN_KEYS = Object.keys(DOMAINS);
+/* ---------- small helpers ---------- */
+const ideaDiagram = () => (S && S.idea && S.idea.diagram) || {shapes: [], connectors: [], frames: []};
+const ideaItems = () => (S && S.idea && S.idea.agreed) || [];
+function pendingDiagramProposal() {
+  return ((S && S.proposals) || []).find(p => p.kind === 'idea_diagram' && p.status === 'pending') || null;
+}
+function proposalDiagram(p) {
+  return p && p.changes && p.changes.diagram && typeof p.changes.diagram === 'object' ? p.changes.diagram : null;
+}
+function ideaDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || isNaN(d)) return '';
+  const o = {day: 'numeric', month: 'short'};
+  if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
+  return d.toLocaleDateString(undefined, o);
+}
+function loadIdeaSplit() {
+  try {
+    const v = parseFloat(localStorage.getItem(IDEA_SPLIT_KEY));
+    return v >= IDEA_SPLIT_MIN && v <= IDEA_SPLIT_MAX ? v : 0;
+  } catch (e) {
+    return 0;   // storage blocked: the default split
+  }
+}
+function saveIdeaSplit(pct) {
+  try {
+    if (pct) localStorage.setItem(IDEA_SPLIT_KEY, String(Math.round(pct * 10) / 10));
+    else localStorage.removeItem(IDEA_SPLIT_KEY);
+  } catch (e) {
+    /* storage blocked: the split lasts for this page only */
+  }
+}
+function ideaSplitPct() {
+  if (ideaSplit === null) ideaSplit = loadIdeaSplit();
+  return ideaSplit;
+}
+// A call that changes the project: the new state replaces S. api() has already toasted an error answer; only a dead server is left to say.
+async function ideaPost(url, body) {
+  try {
+    const res = await api(url, body);
+    setState(res);
+    return res;
+  } catch (e) {
+    if (e instanceof TypeError) toast("Couldn't reach the server");
+    return null;
+  }
+}
+function ideaRedraw() {
+  ideaForce = true;
+  try { render(true); } finally { ideaForce = false; }
+}
 
-/* ---------- block diagram ---------- */
-function mountDiagramEditor(container) {
-  const mountEl = container ? container.querySelector('.diagram-mount-point') : document.querySelector('.diagram-mount-point');
-  if (!mountEl) return;
-  function doMount() {
-    if (typeof DiagramEditor !== 'undefined' && DiagramEditor.mount) {
-      if (mountEl._diagramEditor) {
-        mountEl._diagramEditor.updateData((S && S.idea && S.idea.diagram) || {shapes: [], connectors: [], frames: []});
-        return;
-      }
-      mountEl._diagramEditor = DiagramEditor.mount(mountEl, {
-        project: PROJECT,
-        session: SESSION,
-        data: (S && S.idea && S.idea.diagram) || {shapes: [], connectors: [], frames: []},
-        onSave: async (diagData) => {
-          if (S && S.idea) S.idea.diagram = diagData;
-          await api('/api/idea/diagram', {diagram: diagData});
-        },
-        onServerUndo: async () => {
-          const res = await api('/api/idea/diagram/undo', {});
-          if (res && res.diagram) {
-            setState(res);
-            return res.diagram;
-          }
-        }
-      });
+/* ---------- the diagram editor: one per canvas, destroyed with it ---------- */
+function releaseIdeaEditors(container) {
+  for (const ed of [...ideaEditors]) {
+    if (!ed.mountEl.isConnected || (container && container.contains(ed.mountEl))) {
+      ed.destroy();
+      ideaEditors.delete(ed);
     }
   }
+}
+// The proposal on the canvas, if there is one and it is still pending; otherwise the live diagram.
+function syncIdeaCanvas() {
+  const p = pendingDiagramProposal();
+  const prev = p && ideaPreviewPid === p.id ? proposalDiagram(p) : null;
+  if (!prev) ideaPreviewPid = '';
+  for (const ed of ideaEditors) ed.setPreview(prev);
+}
+function mountDiagramEditor(container) {
+  const mountEl = (container || document).querySelector('.diagram-mount-point');
+  if (!mountEl) return;
+  releaseIdeaEditors(null);
+  if (mountEl._diagramEditor) return;
   if (typeof DiagramEditor === 'undefined') {
     const sc = document.createElement('script');
     sc.src = '/ui/diagram.js';
-    sc.onload = doMount;
+    sc.onload = () => mountDiagramEditor(container);
     document.head.appendChild(sc);
-  } else {
-    doMount();
-  }
-}
-
-function agreedRequirementsHTML() {
-  const I = (S && S.idea) || {}, items = I.agreed || [];
-  const st = i => i.status === 'confirmed' ? ((i.by === 'student' ? 'From you' : "Agent's proposal") + ' · confirmed') : "Agent's proposal · not confirmed yet";
-
-  const rowsHtml = items.map((i, idx) => `
-    <div class="req-row" data-index="${idx}" data-topic="${esc(i.topic)}" draggable="true">
-      <span class="req-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">⠿</span>
-      <div class="req-content" style="flex:1;min-width:0">
-        <div class="req-view">
-          <div style="display:flex;align-items:center;gap:6px">
-            <strong class="req-topic" data-act="edit-req" title="Click to edit topic">${esc(i.topic)}</strong>
-            <span class="req-by-status" style="font-size:11px;color:var(--dim)">(${esc(st(i))})</span>
-          </div>
-          <div class="req-text" data-act="edit-req" title="Click to edit text" dir="auto" style="font-size:13px;white-space:pre-wrap;cursor:pointer;margin-top:2px">${esc(i.text)}</div>
-        </div>
-        <div class="req-edit-form" hidden style="margin-top:4px">
-          <input type="text" class="req-edit-topic" value="${esc(i.topic)}" maxlength="60" placeholder="Topic (max 60 chars)" style="width:100%;font-size:13px;padding:3px 6px;margin-bottom:4px;border:1px solid var(--line);border-radius:4px" />
-          <textarea class="req-edit-text" maxlength="1000" rows="3" placeholder="Requirement (Enter saves, Shift+Enter newline, Esc cancels)" style="width:100%;font-size:13px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;resize:vertical;font-family:inherit">${esc(i.text)}</textarea>
-          <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-            <button type="button" class="btn btn-sm pri req-save-btn" data-act="save-req">Save</button>
-            <button type="button" class="btn btn-sm req-cancel-btn" data-act="cancel-req">Cancel</button>
-            <span style="font-size:11px;color:var(--dim)">Enter saves, Shift+Enter newline, Esc cancels</span>
-          </div>
-        </div>
-      </div>
-      <div class="req-actions">
-        <button type="button" class="btn-icon req-edit-btn" data-act="edit-req" title="Edit requirement (✎)" aria-label="Edit requirement">✎</button>
-        ${i.status !== 'confirmed' ? `<button type="button" class="btn-icon req-confirm-btn" data-act="confirm-req" title="Confirm requirement (✓)" aria-label="Confirm requirement">✓</button>` : ''}
-        <button type="button" class="btn-icon req-del-btn" data-act="delete-req" title="Delete requirement (🗑)" aria-label="Delete requirement">🗑</button>
-        <button type="button" class="btn-icon req-move-btn req-move-up" data-act="move-req-up" title="Move up (↑)" aria-label="Move up" ${idx === 0 ? 'disabled' : ''}>↑</button>
-        <button type="button" class="btn-icon req-move-btn req-move-down" data-act="move-req-down" title="Move down (↓)" aria-label="Move down" ${idx === items.length - 1 ? 'disabled' : ''}>↓</button>
-      </div>
-    </div>
-  `).join('');
-
-  return `
-    <details class="card agreed-card" ${items.length ? '' : 'open'} style="flex:none;max-height:220px;min-height:0;display:flex;flex-direction:column;padding:6px 12px;overflow:hidden">
-      <summary style="font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px">
-        <span>Agreed requirements</span>
-        <span style="font-size:12px;color:var(--dim);font-weight:400">(${items.length} item${items.length === 1 ? '' : 's'})</span>
-      </summary>
-      <div class="agreed-items-list" style="overflow-y:auto;max-height:170px;margin-top:4px">
-        ${items.length ? rowsHtml : '<div class="dnote" style="margin:4px 0">Nothing agreed yet. Chat with the advisor or add a requirement below.</div>'}
-        <div class="req-add-row" style="padding:6px 0;margin-top:4px;border-top:1px dashed var(--line2)">
-          <button type="button" class="btn btn-sm req-add-toggle-btn" data-act="show-add-req" style="display:inline-flex;align-items:center;gap:4px">+ Add requirement</button>
-          <div class="req-add-form" hidden style="margin-top:6px;display:flex;flex-direction:column;gap:4px">
-            <input type="text" class="req-add-topic" maxlength="60" placeholder="Topic (max 60 chars)" style="width:100%;font-size:13px;padding:3px 6px;border:1px solid var(--line);border-radius:4px" />
-            <textarea class="req-add-text" maxlength="1000" rows="2" placeholder="Requirement (max 1000 chars)" style="width:100%;font-size:13px;padding:4px 6px;border:1px solid var(--line);border-radius:4px;resize:vertical;font-family:inherit"></textarea>
-            <div style="display:flex;gap:6px;align-items:center;margin-top:2px">
-              <button type="button" class="btn btn-sm pri req-create-btn" data-act="create-req">Add requirement</button>
-              <button type="button" class="btn btn-sm req-cancel-add-btn" data-act="cancel-add-req">Cancel</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </details>
-  `;
-}
-
-function updateIdeaContent(container) {
-  const card = container.querySelector('.agreed-card');
-  const active = document.activeElement;
-  const isEditing = active && card && card.contains(active) && /INPUT|TEXTAREA/.test(active.tagName);
-  if (card && !isEditing) {
-    const parent = card.parentElement;
-    if (parent) {
-      const temp = document.createElement('div');
-      temp.innerHTML = agreedRequirementsHTML();
-      const newCard = temp.firstElementChild;
-      if (newCard) {
-        newCard.open = card.open;
-        parent.replaceChild(newCard, card);
-      }
-    }
-  }
-  const mountEl = container.querySelector('.diagram-mount-point');
-  if (mountEl && mountEl._diagramEditor && S && S.idea && S.idea.diagram) {
-    mountEl._diagramEditor.updateData(S.idea.diagram);
-  }
-}
-
-function ideaHTML(container) {
-  const I = (S && S.idea) || {};
-  const diagProp = (S.proposals || []).find(p => p.kind === 'idea_diagram' && p.status === 'pending');
-  const propBanner = diagProp ? `
-    <div class="warnbox" style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:10px">
-      <div><b>Agent proposed block diagram update:</b> ${esc(diagProp.reason || 'New blocks and connections')}</div>
-      <div style="display:flex;gap:6px">
-        <button class="btn pri" data-pid="${esc(diagProp.id)}" data-decide="approved">Approve proposal</button>
-        <button class="btn" data-pid="${esc(diagProp.id)}" data-decide="rejected">Reject</button>
-      </div>
-    </div>` : '';
-
-  setTimeout(() => mountDiagramEditor(container), 0);
-
-  return `${guidanceBarHTML('idea')}
-    <div class="vhead" style="margin-bottom:8px;flex:none">
-      <div>
-        <h2>Idea & Architecture</h2>
-        <p>${esc(I.goal) || 'What you and the agent agreed on before choosing parts. Every line is a decision you can come back to.'}</p>
-      </div>
-      <div class="vacts">
-        <button class="btn" data-thread="${esc(((S.sessions || []).find(r => r.id === 'idea') || (S.sessions || []).find(r => !r.anchor) || {}).id || '')}">Open conversation</button>
-        ${I.confirmed ? `<button class="btn" data-tab="bom">Next: BOM</button>` : `<button class="btn pri" data-act="confirmidea">Confirm the idea</button>`}
-      </div>
-    </div>
-    ${propBanner}
-    <div class="idea-layout" style="display:flex;flex-direction:column;flex:1;min-height:0;gap:8px;width:100%;height:100%;overflow:hidden">
-      ${agreedRequirementsHTML()}
-      <div class="card diagram-card" style="flex:1;min-height:0;display:flex;flex-direction:column;width:100%;height:100%;padding:0;position:relative;overflow:hidden">
-        <div class="diagram-mount-point" style="width:100%;height:100%;flex:1;min-height:0;position:relative;display:flex;flex-direction:column">
-          <svg class="diag-svg" id="diag-svg" viewBox="0 0 860 520" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Interactive Block diagram"></svg>
-        </div>
-      </div>
-    </div>`;
-}
-
-/* ---------- diagram drag & inline edit ---------- */
-document.addEventListener('mousedown', e => {
-  const block = e.target.closest('g.diag-block');
-  if (!block) return;
-  if (e.target.closest('[data-act]')) return;
-  dragBlockId = block.dataset.bid;
-  const b = (S.idea.blocks || []).find(x => x.id === dragBlockId);
-  if (!b) return;
-  isDraggingDiag = true;
-  dragStartX = e.clientX;
-  dragStartY = e.clientY;
-  blockOrigX = b.x ?? 220;
-  blockOrigY = b.y ?? 100;
-  block.classList.add('dragging');
-});
-document.addEventListener('mousemove', e => {
-  if (!isDraggingDiag || !dragBlockId) return;
-  const b = (S.idea.blocks || []).find(x => x.id === dragBlockId);
-  if (!b) return;
-  const dx = e.clientX - dragStartX;
-  const dy = e.clientY - dragStartY;
-  b.x = Math.max(10, Math.round(blockOrigX + dx));
-  b.y = Math.max(10, Math.round(blockOrigY + dy));
-  const el = $(`g.diag-block[data-bid="${dragBlockId}"]`);
-  if (el) el.setAttribute('transform', `translate(${b.x}, ${b.y})`);
-});
-document.addEventListener('mouseup', async e => {
-  if (!isDraggingDiag) return;
-  isDraggingDiag = false;
-  const el = $(`g.diag-block[data-bid="${dragBlockId}"]`);
-  if (el) el.classList.remove('dragging');
-  dragBlockId = null;
-  try {
-    await api('/api/idea', {blocks: S.idea.blocks, links: S.idea.links || []});
-    renderCenter(true);
-  } catch (err) { /* toasted */ }
-});
-document.addEventListener('dblclick', async e => {
-  const block = e.target.closest('g.diag-block');
-  if (block) {
-    const bid = block.dataset.bid;
-    const b = (S.idea.blocks || []).find(x => x.id === bid);
-    if (!b) return;
-    const newLabel = prompt('Block name / part:', b.label || b.id);
-    if (newLabel === null) return;
-    const newRole = prompt('One-line role in circuit:', b.role || '') || '';
-    b.label = newLabel.trim() || b.id;
-    b.role = newRole.trim();
-    try {
-      await api('/api/idea', {blocks: S.idea.blocks, links: S.idea.links || []});
-      renderCenter(true);
-      toast('Block updated');
-    } catch (err) { /* toasted */ }
     return;
   }
-  const edge = e.target.closest('.diag-edge-label');
-  if (edge) {
-    const lidx = parseInt(edge.dataset.lidx, 10);
-    const links = S.idea.links || [];
-    const cur = links[lidx];
-    if (!cur) return;
-    const curLabel = Array.isArray(cur) ? (cur[2] || '') : (cur.label || '');
-    const newLabel = prompt('Link label (voltage or bus, blank to delete):', curLabel);
-    if (newLabel === null) return;
-    if (newLabel.trim() === '') {
-      links.splice(lidx, 1);
-    } else {
-      if (Array.isArray(cur)) {
-        cur[2] = newLabel.trim();
-        cur[3] = /safety/i.test(cur[2]);
-      } else {
-        cur.label = newLabel.trim();
-        cur.safety = /safety/i.test(cur.label);
+  const mountProject = PROJECT;
+  const ed = DiagramEditor.mount(mountEl, {
+    project: PROJECT,
+    session: SESSION,
+    data: ideaDiagram(),
+    onSave: async (diagData) => {
+      // a save flushed as the project is switched must not land in the project that is now open
+      if (PROJECT !== mountProject) return;
+      if (S && S.idea) S.idea.diagram = diagData;
+      await api('/api/idea/diagram', {diagram: diagData});
+    },
+    onServerUndo: async () => {
+      const res = await api('/api/idea/diagram/undo', {});
+      if (res && res.diagram) {
+        setState(res);
+        return res.diagram;
       }
+    },
+    // an editor that cleans up after itself (its canvas left the page) must not stay in the set
+    onDestroy: e => { ideaEditors.delete(e); },
+    // the editor left the preview by itself (the diagram changed under it): the bar must stop saying "previewing"
+    onPreview: on => {
+      if (on) return;
+      ideaPreviewPid = '';
+      const canvas = mountEl.closest('.idea-canvas');
+      if (canvas) refreshIdeaBar(canvas);
     }
-    try {
-      await api('/api/idea', {blocks: S.idea.blocks, links});
-      renderCenter(true);
-      toast('Link updated');
-    } catch (err) { /* toasted */ }
+  });
+  mountEl._diagramEditor = ed;
+  ideaEditors.add(ed);
+  syncIdeaCanvas();
+}
+
+/* ---------- pieces of the sheet ---------- */
+function ideaHeaderHTML() {
+  const I = (S && S.idea) || {}, items = ideaItems();
+  const proposed = items.filter(i => i.status !== 'confirmed').length;
+  const when = ideaDate(I.confirmed_at);
+  const meta = metaLine([
+    {n: items.length, label: items.length === 1 ? 'requirement' : 'requirements', title: I.goal || ''},
+    {n: proposed, label: 'proposed', tone: 'warn', title: 'The agent proposed these. Accept or dismiss each one.'},
+    I.confirmed ? 'confirmed' + (when ? ' ' + when : '') : ''
+  ]);
+  let primary;
+  if (I.confirmed) {
+    primary = btn('Next: BOM', {kind: 'pri', act: 'idea-next'});
+  } else {
+    const why = !items.length ? 'Add a requirement first' : (proposed ? 'Accept or dismiss the proposals first' : 'Mark the idea as agreed');
+    primary = btn('Confirm idea', {kind: 'pri', act: 'confirmidea', disabled: !items.length || proposed > 0, title: why});
   }
+  return viewHeader({title: 'Idea', meta, primary});
+}
+
+function reqRowHTML(i, idx) {
+  const proposed = i.status !== 'confirmed';
+  const by = i.by === 'student' ? 'Written by you' : 'Suggested by the agent';
+  const acts = proposed
+    ? btn('Accept', {size: 'sm', icon: 'check', act: 'confirm-req', title: 'Agree to this requirement'}) +
+      btn('Dismiss', {size: 'sm', act: 'delete-req', title: 'Remove this proposal'})
+    : btn('', {size: 'sm', icon: 'edit', act: 'edit-req', title: 'Edit requirement'}) +
+      btn('', {size: 'sm', icon: 'trash', act: 'delete-req', title: 'Delete requirement'});
+  return `<li class="req-row${proposed ? ' is-proposed' : ''}" tabindex="${idx === 0 ? 0 : -1}" data-index="${idx}" data-topic="${esc(i.topic)}" title="${esc(by)}">
+      <span class="req-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">${icon('grip')}</span>
+      <div class="req-main">
+        <div class="req-view"><p class="req-line" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : ''}<b class="req-topic">${esc(i.topic)}</b> <span class="req-text">${esc(i.text)}</span></p></div>
+        <div class="req-edit-form" hidden>
+          <input type="text" class="in req-edit-topic" value="${esc(i.topic)}" maxlength="60" placeholder="Topic" aria-label="Topic">
+          <textarea class="in req-edit-text" maxlength="1000" rows="3" placeholder="Requirement" aria-label="Requirement" title="Enter saves, Shift+Enter adds a line, Esc cancels" dir="auto">${esc(i.text)}</textarea>
+          <div class="acts">${btn('Save', {size: 'sm', kind: 'line', act: 'save-req'})}${btn('Cancel', {size: 'sm', act: 'cancel-req'})}</div>
+        </div>
+      </div>
+      <div class="req-acts">${acts}</div>
+    </li>`;
+}
+
+function requirementsHTML() {
+  const items = ideaItems(), cap = ideaSplitPct();
+  const body = items.length
+    ? `<ul class="req-list" aria-label="Requirements">${items.map(reqRowHTML).join('')}</ul>`
+    : `<p class="req-empty">Nothing agreed yet. Describe your idea in the chat, or add a requirement yourself.</p>`;
+  const split = items.length
+    ? `<div class="idea-split" role="separator" aria-orientation="horizontal" aria-label="Resize the requirements list" tabindex="0" aria-valuemin="${IDEA_SPLIT_MIN}" aria-valuemax="${IDEA_SPLIT_MAX}" aria-valuenow="${cap || 30}" title="Drag to resize, double-click to reset"></div>`
+    : '';
+  return `<section class="idea-reqs"${cap ? ` style="max-height:${cap}%"` : ''} aria-label="Agreed requirements">
+      <div class="req-scroll">${body}</div>
+      <div class="req-add-row">
+        <button type="button" class="btn sm" data-act="show-add-req">+ Add requirement</button>
+        <div class="req-add-form" hidden>
+          <input type="text" class="in req-add-topic" maxlength="60" placeholder="Topic" aria-label="Topic">
+          <textarea class="in req-add-text" maxlength="1000" rows="2" placeholder="Requirement" aria-label="Requirement" title="Enter adds it, Shift+Enter adds a line, Esc cancels" dir="auto"></textarea>
+          <div class="acts">${btn('Add', {size: 'sm', kind: 'line', act: 'create-req'})}${btn('Cancel', {size: 'sm', act: 'cancel-add-req'})}</div>
+        </div>
+      </div>
+      ${split}
+    </section>`;
+}
+
+// The agent's pending diagram proposal, as a slim bar on top of the canvas.
+function proposalBarHTML() {
+  const p = pendingDiagramProposal();
+  if (!p) return '';
+  const hasDiagram = !!proposalDiagram(p);
+  const previewing = hasDiagram && ideaPreviewPid === p.id;
+  const decide = (label, what, kind) => btn(label, {size: 'sm', kind, pid: p.id, decide: what});
+  const acts = previewing
+    ? decide('Apply', 'approved', 'line') + btn('Back', {size: 'sm', act: 'idea-review-back'})
+    : (hasDiagram ? btn('Review', {size: 'sm', kind: 'line', act: 'idea-review', pid: p.id}) : decide('Apply', 'approved', 'line')) + decide('Dismiss', 'rejected');
+  return `<div class="idea-prop" role="status" data-key="${esc(p.id)}:${previewing ? 'p' : 'n'}"${p.reason ? ` title="${esc(p.reason)}"` : ''}>
+      ${dot('warn')}<span class="idea-prop-msg">${previewing ? "Previewing the agent's changes" : 'The agent suggests changes to the diagram'}</span>
+      <span class="acts">${acts}</span>
+    </div>`;
+}
+function refreshIdeaBar(canvas) {
+  const bar = canvas.querySelector('.idea-prop');
+  const html = proposalBarHTML();
+  if (!html) { if (bar) bar.remove(); return; }
+  const key = (html.match(/data-key="([^"]*)"/) || [])[1];
+  if (bar && bar.getAttribute('data-key') === key) return;
+  if (bar) bar.outerHTML = html;
+  else canvas.insertAdjacentHTML('afterbegin', html);
+}
+// A list that scrolls shows its handle; one that fits has nothing to resize.
+function markIdeaCapped(container) {
+  const reqs = container.querySelector('.idea-reqs'), scroll = reqs && reqs.querySelector('.req-scroll');
+  if (reqs && scroll) reqs.classList.toggle('is-capped', scroll.scrollHeight > scroll.clientHeight + 1);
+}
+
+/* ---------- the shell hooks ---------- */
+function ideaHTML(container) {
+  if (container) releaseIdeaEditors(container);   // the canvas below replaces the old one
+  const head = ideaHeaderHTML(), reqs = requirementsHTML();
+  if (container) container._ideaSig = {head, reqs};
+  // the placeholder svg is what a test (and a slow script load) sees until DiagramEditor.mount() builds the editor in its place
+  return `<div class="idea-view">
+    ${head}
+    <div class="idea-body">
+      ${reqs}
+      <div class="idea-canvas">
+        ${proposalBarHTML()}
+        <div class="diagram-mount-point">
+          <svg class="diag-svg" id="diag-svg" viewBox="0 0 860 520" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Interactive block diagram"></svg>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// The poll and every action redraw only what changed; the canvas (and its pan, zoom and selection) stays.
+function updateIdeaContent(container) {
+  if (!container.querySelector('.idea-view')) return;
+  const sig = container._ideaSig || (container._ideaSig = {});
+  const head = ideaHeaderHTML();
+  if (head !== sig.head) {
+    sig.head = head;
+    const vh = container.querySelector('.idea-view > .vh');
+    if (vh) vh.outerHTML = head;
+  }
+  const reqs = requirementsHTML();
+  const open = container.querySelector('.req-edit-form:not([hidden]), .req-add-form:not([hidden])');   // never eat what is being typed
+  if (reqs !== sig.reqs && (!open || ideaForce)) {
+    sig.reqs = reqs;
+    const old = container.querySelector('.idea-reqs');
+    if (old) {
+      const top = (old.querySelector('.req-scroll') || {}).scrollTop || 0;
+      old.outerHTML = reqs;
+      const fresh = container.querySelector('.req-scroll');
+      if (fresh) fresh.scrollTop = top;
+    }
+  }
+  markIdeaCapped(container);
+  const canvas = container.querySelector('.idea-canvas');
+  if (canvas) refreshIdeaBar(canvas);
+  const mountEl = container.querySelector('.diagram-mount-point');
+  if (mountEl && mountEl._diagramEditor) {
+    mountEl._diagramEditor.updateData(ideaDiagram());
+    syncIdeaCanvas();
+  }
+}
+
+/* ---------- requirements: edit, add, delete, move ---------- */
+const reqRowOf = el => (el && el.closest ? el.closest('.req-row') : null);
+const reqIndex = row => parseInt(row.dataset.index, 10);
+function focusReq(idx) {
+  const row = document.querySelector(`.req-row[data-index="${idx}"]`);
+  if (row) row.focus();
+}
+function openReqEdit(row, field) {
+  const view = row.querySelector('.req-view'), form = row.querySelector('.req-edit-form');
+  if (!view || !form) return;
+  view.hidden = true;
+  form.hidden = false;
+  row.classList.add('is-editing');
+  const target = form.querySelector(field === 'topic' ? '.req-edit-topic' : '.req-edit-text');
+  if (!target) return;
+  target.focus();
+  const n = target.value.length;
+  target.setSelectionRange(field === 'topic' ? 0 : n, n);
+}
+function closeReqEdit(row) {
+  const view = row.querySelector('.req-view'), form = row.querySelector('.req-edit-form');
+  if (view) view.hidden = false;
+  if (form) form.hidden = true;
+  row.classList.remove('is-editing');
+  row.focus();
+}
+async function saveReq(row) {
+  const topic = (row.querySelector('.req-edit-topic')?.value || '').trim();
+  const text = (row.querySelector('.req-edit-text')?.value || '').trim();
+  if (!topic || !text) { toast('A requirement needs a topic and some text'); return; }
+  const idx = reqIndex(row);
+  if (await ideaPost('/api/idea/item/update', {index: idx, old_topic: row.dataset.topic, topic, text})) {
+    ideaRedraw();
+    focusReq(idx);
+  }
+}
+async function deleteReq(row) {
+  const idx = reqIndex(row), topic = row.dataset.topic, proposed = row.classList.contains('is-proposed');
+  const res = await ideaPost('/api/idea/item/delete', {index: idx, topic});
+  if (!res) return;
+  const gone = res.deleted;
+  ideaRedraw();
+  focusReq(Math.min(idx, ideaItems().length - 1));
+  toast((proposed ? 'Dismissed "' : 'Deleted "') + topic + '"', gone && {
+    label: 'Undo',
+    onClick: async () => {
+      const back = await ideaPost('/api/idea/item', {topic: gone.topic, text: gone.text});
+      if (!back) return;
+      const last = ideaItems().length - 1;
+      if (last !== idx) await ideaPost('/api/idea/item/move', {from: last, to: idx});   // back where it was
+      ideaRedraw();
+    }
+  });
+}
+async function moveReq(row, delta) {
+  const idx = reqIndex(row), to = idx + delta;
+  if (to < 0 || to >= ideaItems().length) return;
+  if (await ideaPost('/api/idea/item/move', {from: idx, to})) {
+    ideaRedraw();
+    focusReq(to);
+  }
+}
+async function createReq(addRow) {
+  const topic = (addRow.querySelector('.req-add-topic')?.value || '').trim();
+  const text = (addRow.querySelector('.req-add-text')?.value || '').trim();
+  if (!topic || !text) { toast('A requirement needs a topic and some text'); return; }
+  if (await ideaPost('/api/idea/item', {topic, text})) ideaRedraw();
+}
+function closeAddReq(addRow) {
+  const form = addRow.querySelector('.req-add-form'), btn0 = addRow.querySelector('[data-act="show-add-req"]');
+  if (form) form.hidden = true;
+  if (btn0) { btn0.hidden = false; btn0.focus(); }
+}
+
+// Keyboard: Enter saves (Shift+Enter is a new line), Esc cancels; on a row Enter edits, Delete removes, Alt+arrows move.
+document.addEventListener('keydown', e => {
+  const t = e.target;
+  if (!t || !t.matches || e.isComposing) return;
+  if (t.matches('.req-edit-text, .req-edit-topic')) {
+    const row = reqRowOf(t);
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (row) saveReq(row); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (row) closeReqEdit(row); }
+  } else if (t.matches('.req-add-topic, .req-add-text')) {
+    const addRow = t.closest('.req-add-row');
+    if (e.key === 'Enter' && !e.shiftKey && t.matches('.req-add-text')) { e.preventDefault(); if (addRow) createReq(addRow); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (addRow) closeAddReq(addRow); }
+  } else if (t.matches('.req-row')) {
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      e.stopPropagation();
+      moveReq(t, e.key === 'ArrowUp' ? -1 : 1);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = e.key === 'ArrowUp' ? t.previousElementSibling : t.nextElementSibling;
+      if (next) next.focus();
+    } else if (e.key === 'Enter' || e.key === 'F2') {
+      e.preventDefault();
+      openReqEdit(t, 'text');
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      e.stopPropagation();   // the diagram editor listens on window and must not delete a block as well
+      deleteReq(t);
+    }
+  } else if (t.matches('.idea-split')) {
+    splitKey(e, t);
+  }
+});
+document.addEventListener('focusin', e => {
+  const row = e.target.matches && e.target.matches('.req-row') ? e.target : null;
+  if (!row) return;
+  const list = row.parentElement;
+  list.querySelectorAll('.req-row[tabindex="0"]').forEach(r => { if (r !== row) r.tabIndex = -1; });   // one tab stop for the whole list
+  row.tabIndex = 0;
 });
 
-// Inline requirement keyboard & drag listeners
-document.addEventListener('keydown', (e) => {
-  if (e.target.matches && e.target.matches('.req-edit-text')) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      const saveBtn = e.target.closest('.req-row')?.querySelector('[data-act="save-req"]');
-      if (saveBtn) saveBtn.click();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      const cancelBtn = e.target.closest('.req-row')?.querySelector('[data-act="cancel-req"]');
-      if (cancelBtn) cancelBtn.click();
-    }
-  } else if (e.target.matches && e.target.matches('.req-edit-topic')) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const saveBtn = e.target.closest('.req-row')?.querySelector('[data-act="save-req"]');
-      if (saveBtn) saveBtn.click();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      const cancelBtn = e.target.closest('.req-row')?.querySelector('[data-act="cancel-req"]');
-      if (cancelBtn) cancelBtn.click();
-    }
-  } else if (e.target.matches && e.target.matches('.req-add-topic, .req-add-text')) {
-    if (e.key === 'Enter' && !e.shiftKey && e.target.matches('.req-add-text')) {
-      e.preventDefault();
-      const addBtn = e.target.closest('.req-add-row')?.querySelector('[data-act="create-req"]');
-      if (addBtn) addBtn.click();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      const cancelBtn = e.target.closest('.req-add-row')?.querySelector('[data-act="cancel-add-req"]');
-      if (cancelBtn) cancelBtn.click();
-    }
-  }
+// Reorder by dragging the grip (only the grip starts a drag, so the text stays selectable).
+document.addEventListener('pointerdown', e => {
+  const grip = e.target.closest ? e.target.closest('.req-drag-handle') : null;
+  const row = grip && reqRowOf(grip);
+  if (row) row.draggable = true;
 });
-document.addEventListener('dragstart', (e) => {
+document.addEventListener('dragstart', e => {
   const row = e.target.closest ? e.target.closest('.req-row') : null;
   if (row && e.dataTransfer) {
     e.dataTransfer.setData('text/plain', row.dataset.index);
     e.dataTransfer.effectAllowed = 'move';
   }
 });
-document.addEventListener('dragover', (e) => {
+document.addEventListener('dragover', e => {
   const row = e.target.closest ? e.target.closest('.req-row') : null;
   if (row && e.dataTransfer) {
     e.preventDefault();
@@ -299,293 +404,163 @@ document.addEventListener('dragover', (e) => {
     row.classList.add('drag-over');
   }
 });
-document.addEventListener('dragleave', (e) => {
+document.addEventListener('dragleave', e => {
   const row = e.target.closest ? e.target.closest('.req-row') : null;
   if (row) row.classList.remove('drag-over');
 });
-document.addEventListener('drop', async (e) => {
+document.addEventListener('dragend', () => {
+  document.querySelectorAll('.req-row[draggable="true"]').forEach(r => { r.draggable = false; r.classList.remove('drag-over'); });
+});
+document.addEventListener('drop', async e => {
   const row = e.target.closest ? e.target.closest('.req-row') : null;
-  if (row && e.dataTransfer) {
-    e.preventDefault();
-    row.classList.remove('drag-over');
-    const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
-    const toIdx = parseInt(row.dataset.index, 10);
-    if (!isNaN(fromIdx) && !isNaN(toIdx) && fromIdx !== toIdx) {
-      try {
-        const res = await api('/api/idea/item/move', {from: fromIdx, to: toIdx});
-        setState(res);
-        renderCenter(true);
-      } catch (err) { toast(err.message || 'Error moving requirement'); }
+  if (!row || !e.dataTransfer) return;
+  e.preventDefault();
+  row.classList.remove('drag-over');
+  const fromIdx = parseInt(e.dataTransfer.getData('text/plain'), 10);
+  const toIdx = reqIndex(row);
+  if (!isNaN(fromIdx) && !isNaN(toIdx) && fromIdx !== toIdx) {
+    if (await ideaPost('/api/idea/item/move', {from: fromIdx, to: toIdx})) {
+      ideaRedraw();
+      focusReq(toIdx);
     }
   }
 });
 
-/* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
-onAct('undo-diagram', async (el, d, e) => {
-  try {
-    toast('Undoing diagram change…');
-    const res = await api('/api/idea/diagram/undo', {});
-    if (res && res.diagram) {
-      setState(res);
-      const mountEl = document.querySelector('.diagram-mount-point');
-      if (mountEl && mountEl._diagramEditor) {
-        mountEl._diagramEditor.updateData(res.diagram);
-      }
-      render(true);
-      toast('Diagram change undone');
-    }
-  } catch (err) {
-    toast(err.message || 'Error undoing diagram change');
-  }
-  return;
+/* ---------- the split between the list and the canvas ---------- */
+function applyIdeaSplit(reqs, pct) {
+  reqs.style.maxHeight = pct ? pct + '%' : '';
+  const sp = reqs.querySelector('.idea-split');
+  if (sp) sp.setAttribute('aria-valuenow', String(Math.round(pct || 30)));
+}
+function ideaSplitNow(reqs) {   // the height the list has now, as a percent of the sheet body
+  const body = reqs.parentElement;
+  return body && body.clientHeight ? reqs.offsetHeight / body.clientHeight * 100 : 30;
+}
+function splitKey(e, sp) {
+  const reqs = sp.closest('.idea-reqs');
+  if (!reqs) return;
+  let pct = null;
+  if (e.key === 'ArrowUp') pct = ideaSplitNow(reqs) - IDEA_SPLIT_STEP;
+  else if (e.key === 'ArrowDown') pct = ideaSplitNow(reqs) + IDEA_SPLIT_STEP;
+  else if (e.key === 'Home') pct = IDEA_SPLIT_MIN;
+  else if (e.key === 'End') pct = IDEA_SPLIT_MAX;
+  else if (e.key === 'Enter') pct = 0;
+  else return;
+  e.preventDefault();
+  ideaSplit = pct ? Math.min(IDEA_SPLIT_MAX, Math.max(IDEA_SPLIT_MIN, pct)) : 0;
+  saveIdeaSplit(ideaSplit);
+  applyIdeaSplit(reqs, ideaSplit);
+}
+document.addEventListener('pointerdown', e => {
+  const sp = e.target.closest ? e.target.closest('.idea-split') : null;
+  const reqs = sp && sp.closest('.idea-reqs');
+  if (!reqs || e.button !== 0) return;
+  e.preventDefault();
+  const scroll = reqs.querySelector('.req-scroll'), add = reqs.querySelector('.req-add-row');
+  ideaSplitDrag = {sp, reqs, y: e.clientY, h: reqs.offsetHeight, bodyH: reqs.parentElement.clientHeight,
+    natural: scroll.scrollHeight + (add ? add.offsetHeight : 0)};   // a list never grows past its content
+  sp.classList.add('is-drag');
+  try { sp.setPointerCapture(e.pointerId); } catch (err) { /* the window listeners below still follow the pointer */ }
 });
-onAct('edit-req', async (el, d, e) => {
-  const reqRow = el.closest('.req-row');
-  if (reqRow) {
-    const v = reqRow.querySelector('.req-view');
-    const f = reqRow.querySelector('.req-edit-form');
-    if (v && f) {
-      v.hidden = true;
-      f.hidden = false;
-      const isTopic = el.classList.contains('req-topic');
-      const target = isTopic ? f.querySelector('.req-edit-topic') : f.querySelector('.req-edit-text');
-      if (target) {
-        target.focus();
-        if (target.select) target.select();
-      }
-    }
-  }
-  return;
+document.addEventListener('pointermove', e => {
+  const d = ideaSplitDrag;
+  if (!d) return;
+  const h = Math.min(Math.max(d.h + e.clientY - d.y, d.bodyH * IDEA_SPLIT_MIN / 100), Math.min(d.natural, d.bodyH * IDEA_SPLIT_MAX / 100));
+  ideaSplit = Math.round(h / d.bodyH * 1000) / 10;
+  applyIdeaSplit(d.reqs, ideaSplit);
 });
-onAct('cancel-req', async (el, d, e) => {
-  const reqRow = el.closest('.req-row');
-  if (reqRow) {
-    const v = reqRow.querySelector('.req-view');
-    const f = reqRow.querySelector('.req-edit-form');
-    if (v && f) {
-      v.hidden = false;
-      f.hidden = true;
-    }
-  }
-  return;
+document.addEventListener('pointerup', () => {
+  const d = ideaSplitDrag;
+  if (!d) return;
+  ideaSplitDrag = null;
+  d.sp.classList.remove('is-drag');
+  saveIdeaSplit(ideaSplit);
+  const c = d.reqs.closest('#view, #view-side');
+  if (c) markIdeaCapped(c);
 });
-onAct('save-req', async (el, d, e) => {
-  const reqRow = el.closest('.req-row');
-  if (reqRow) {
-    const topic = (reqRow.querySelector('.req-edit-topic')?.value || '').trim();
-    const text = (reqRow.querySelector('.req-edit-text')?.value || '').trim();
-    const idx = parseInt(reqRow.dataset.index, 10);
-    const oldTopic = reqRow.dataset.topic;
-    if (!topic || topic.length > 60 || !text || text.length > 1000) {
-      toast('Topic (1-60 chars) and text (1-1000 chars) required');
-      return;
-    }
-    try {
-      const res = await api('/api/idea/item/update', {index: idx, old_topic: oldTopic, topic, text});
-      setState(res);
-      renderCenter(true);
-      toast(`Requirement "${topic}" updated`);
-    } catch (err) {
-      toast(err.message || 'Error updating requirement');
-    }
-  }
-  return;
+document.addEventListener('dblclick', e => {
+  const sp = e.target.closest ? e.target.closest('.idea-split') : null;
+  const reqs = sp && sp.closest('.idea-reqs');
+  if (!reqs) return;
+  ideaSplit = 0;
+  saveIdeaSplit(0);
+  applyIdeaSplit(reqs, 0);
+  const c = reqs.closest('#view, #view-side');
+  if (c) markIdeaCapped(c);
 });
-onAct('confirm-req', async (el, d, e) => {
-  const reqRow = el.closest('.req-row');
-  if (reqRow) {
-    const idx = parseInt(reqRow.dataset.index, 10);
-    const topic = reqRow.dataset.topic;
-    try {
-      const res = await api('/api/idea/item/confirm', {index: idx, topic});
-      setState(res);
-      renderCenter(true);
-      toast(`Requirement "${topic}" confirmed`);
-    } catch (err) {
-      toast(err.message || 'Error confirming requirement');
-    }
-  }
-  return;
+window.addEventListener('resize', () => {
+  document.querySelectorAll('#view, #view-side').forEach(c => { if (c.querySelector('.idea-reqs')) markIdeaCapped(c); });
 });
-onAct('delete-req', async (el, d, e) => {
-  const reqRow = el.closest('.req-row');
-  if (reqRow) {
-    const idx = parseInt(reqRow.dataset.index, 10);
-    const topic = reqRow.dataset.topic;
-    try {
-      const res = await api('/api/idea/item/delete', {index: idx, topic});
-      const delItem = res.deleted;
-      setState(res);
-      renderCenter(true);
-      toast(`Requirement "${topic}" deleted`, {
-        label: 'Undo',
-        onClick: async () => {
-          if (delItem) {
-            try {
-              const undoRes = await api('/api/idea/item', {topic: delItem.topic, text: delItem.text});
-              setState(undoRes);
-              renderCenter(true);
-              toast(`Restored "${delItem.topic}"`);
-            } catch (e) { toast('Could not restore requirement'); }
-          }
-        }
-      });
-    } catch (err) {
-      toast(err.message || 'Error deleting requirement');
-    }
-  }
-  return;
+
+/* ---------- action handlers (dispatched by the delegates in core.js) ---------- */
+onAct('confirmidea', async () => {
+  if (await ideaPost('/api/idea/confirm', {})) ideaRedraw();
 });
-onAct('move-req-up', async (el, d, e) => {
-  const reqRow = el.closest('.req-row');
-  if (reqRow) {
-    const idx = parseInt(reqRow.dataset.index, 10);
-    if (idx > 0) {
-      try {
-        const res = await api('/api/idea/item/move', {from: idx, to: idx - 1});
-        setState(res);
-        renderCenter(true);
-      } catch (err) { toast(err.message || 'Error moving requirement'); }
-    }
-  }
-  return;
+onAct('idea-next', () => go('workspace', 'bom'));
+onAct('idea-review', (el, d) => {
+  ideaPreviewPid = d.pid;
+  syncIdeaCanvas();
+  ideaRedraw();
 });
-onAct('move-req-down', async (el, d, e) => {
-  const reqRow = el.closest('.req-row');
-  if (reqRow) {
-    const idx = parseInt(reqRow.dataset.index, 10);
-    try {
-      const res = await api('/api/idea/item/move', {from: idx, to: idx + 1});
-      setState(res);
-      renderCenter(true);
-    } catch (err) { toast(err.message || 'Error moving requirement'); }
-  }
-  return;
+onAct('idea-review-back', () => {
+  ideaPreviewPid = '';
+  syncIdeaCanvas();
+  ideaRedraw();
 });
-onAct('show-add-req', async (el, d, e) => {
+onAct('undo-diagram', async () => {
+  const res = await ideaPost('/api/idea/diagram/undo', {});
+  if (!res || !res.diagram) return;
+  const mountEl = document.querySelector('.diagram-mount-point');
+  if (mountEl && mountEl._diagramEditor) mountEl._diagramEditor.updateData(res.diagram);
+  render(true);
+  toast('Diagram change undone');
+});
+onAct('edit-req', (el) => {
+  const row = reqRowOf(el);
+  if (row) openReqEdit(row, 'text');
+});
+// The words themselves are not buttons (the app's click handler only routes buttons), so a click on the topic or the text opens the edit.
+document.addEventListener('click', e => {
+  const words = e.target.closest ? e.target.closest('.req-topic, .req-text') : null;
+  const row = words && reqRowOf(words);
+  if (!row || row.classList.contains('is-editing')) return;
+  const sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed) return;   // dragging over the words to copy them is not an edit
+  openReqEdit(row, words.classList.contains('req-topic') ? 'topic' : 'text');
+});
+onAct('cancel-req', (el) => {
+  const row = reqRowOf(el);
+  if (row) closeReqEdit(row);
+});
+onAct('save-req', (el) => {
+  const row = reqRowOf(el);
+  if (row) return saveReq(row);
+});
+onAct('confirm-req', async (el) => {
+  const row = reqRowOf(el);
+  if (!row) return;
+  const idx = reqIndex(row);
+  if (await ideaPost('/api/idea/item/confirm', {index: idx, topic: row.dataset.topic})) {
+    ideaRedraw();
+    focusReq(idx);
+  }
+});
+onAct('delete-req', (el) => {
+  const row = reqRowOf(el);
+  if (row) return deleteReq(row);
+});
+onAct('show-add-req', (el) => {
+  const addRow = el.closest('.req-add-row'), form = addRow && addRow.querySelector('.req-add-form');
+  if (!form) return;
+  el.hidden = true;
+  form.hidden = false;
+  form.querySelector('.req-add-topic').focus();
+});
+onAct('cancel-add-req', (el) => {
   const addRow = el.closest('.req-add-row');
-  if (addRow) {
-    el.hidden = true;
-    const form = addRow.querySelector('.req-add-form');
-    if (form) {
-      form.hidden = false;
-      form.querySelector('.req-add-topic')?.focus();
-    }
-  }
-  return;
+  if (addRow) closeAddReq(addRow);
 });
-onAct('cancel-add-req', async (el, d, e) => {
+onAct('create-req', (el) => {
   const addRow = el.closest('.req-add-row');
-  if (addRow) {
-    const form = addRow.querySelector('.req-add-form');
-    const btn = addRow.querySelector('.req-add-toggle-btn');
-    if (form) form.hidden = true;
-    if (btn) btn.hidden = false;
-  }
-  return;
-});
-onAct('create-req', async (el, d, e) => {
-  const addRow = el.closest('.req-add-row');
-  if (addRow) {
-    const topic = (addRow.querySelector('.req-add-topic')?.value || '').trim();
-    const text = (addRow.querySelector('.req-add-text')?.value || '').trim();
-    if (!topic || topic.length > 60 || !text || text.length > 1000) {
-      toast('Topic (1-60 chars) and text (1-1000 chars) required');
-      return;
-    }
-    try {
-      const res = await api('/api/idea/item', {topic, text});
-      setState(res);
-      renderCenter(true);
-      toast(`Requirement "${topic}" added`);
-    } catch (err) {
-      toast(err.message || 'Error adding requirement');
-    }
-  }
-  return;
-});
-onAct('diag-add', async (el, d, e) => {
-  const name = prompt('Block name / MPN (e.g. ESP32-S3, TPS54302, USB-C):');
-  if (!name || !name.trim()) return;
-  const role = prompt('One-line role in circuit:', 'Controller / Power / Sensor') || '';
-  const domChoice = prompt('Domain (' + DOMAIN_KEYS.join(', ') + '):', 'mcu') || 'mcu';
-  const domain = DOMAINS[domChoice.toLowerCase()] ? domChoice.toLowerCase() : 'mcu';
-  const newId = 'b_' + Date.now().toString(36);
-  const blocks = S.idea.blocks || [];
-  blocks.push({
-    id: newId,
-    label: name.trim(),
-    role: role.trim(),
-    domain,
-    x: 220 + (blocks.length % 3) * 180,
-    y: 80 + Math.floor(blocks.length / 3) * 110
-  });
-  await api('/api/idea', {blocks, links: S.idea.links || []});
-  renderCenter(true);
-  toast('Block added');
-  return;
-});
-onAct('diag-del-block', async (el, d, e) => {
-  const bid = d.bid;
-  if (!confirm('Delete block ' + bid + '?')) return;
-  const blocks = (S.idea.blocks || []).filter(b => b.id !== bid);
-  const links = (S.idea.links || []).filter(l => {
-    const from = Array.isArray(l) ? l[0] : (l.from || l.a);
-    const to = Array.isArray(l) ? l[1] : (l.to || l.b);
-    return from !== bid && to !== bid;
-  });
-  await api('/api/idea', {blocks, links});
-  renderCenter(true);
-  toast('Block deleted');
-  return;
-});
-onAct('diag-cycle-domain', async (el, d, e) => {
-  const bid = d.bid;
-  const b = (S.idea.blocks || []).find(x => x.id === bid);
-  if (b) {
-    const idx = DOMAIN_KEYS.indexOf(b.domain || 'mcu');
-    b.domain = DOMAIN_KEYS[(idx + 1) % DOMAIN_KEYS.length];
-    await api('/api/idea', {blocks: S.idea.blocks, links: S.idea.links || []});
-    renderCenter(true);
-    toast('Domain set to ' + DOMAINS[b.domain].name);
-  }
-  return;
-});
-onAct('diag-link-start', async (el, d, e) => {
-  diagLinkingFrom = d.bid;
-  renderCenter(true);
-  toast('Click destination block to link');
-  return;
-});
-onAct('diag-cancel-link', async (el, d, e) => {
-  diagLinkingFrom = null;
-  renderCenter(true);
-  return;
-});
-onAct('diag-edit-edge', async (el, d, e) => {
-  const lidx = parseInt(d.lidx, 10);
-  const links = S.idea.links || [];
-  const cur = links[lidx];
-  if (!cur) return;
-  const curLabel = Array.isArray(cur) ? (cur[2] || '') : (cur.label || '');
-  const newLabel = prompt('Link label (voltage or bus, blank to delete):', curLabel);
-  if (newLabel === null) return;
-  if (newLabel.trim() === '') {
-    links.splice(lidx, 1);
-  } else {
-    if (Array.isArray(cur)) {
-      cur[2] = newLabel.trim();
-      cur[3] = /safety/i.test(cur[2]);
-    } else {
-      cur.label = newLabel.trim();
-      cur.safety = /safety/i.test(cur.label);
-    }
-  }
-  await api('/api/idea', {blocks: S.idea.blocks, links});
-  renderCenter(true);
-  toast('Link updated');
-  return;
-});
-onAct('confirmidea', async (el, d, e) => {
-  setState(await api('/api/idea/confirm', {})); render(true); toast('Idea confirmed'); return;
+  if (addRow) return createReq(addRow);
 });

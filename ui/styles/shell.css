@@ -24,8 +24,6 @@
 .pane.side .side-btn{display:none}   /* the button that opens the side sheet has no place inside it */
 .view.legacy{padding:14px 16px}      /* views that have not moved to the new header and body yet */
 .view.doc{display:flex;flex-direction:column;overflow:hidden}
-/* until the idea view is redrawn it fills the sheet by itself */
-.pane>.view.stage-idea,.pane>.view:has(.idea-layout){display:flex;flex-direction:column;overflow:hidden;padding:12px 14px}
 
 /* ---------- navigation ---------- */
 .nav{display:flex;flex-direction:column;gap:2px;padding:6px 10px 6px 12px;overflow-y:auto;overflow-x:hidden}

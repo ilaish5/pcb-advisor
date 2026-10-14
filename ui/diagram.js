@@ -1,18 +1,22 @@
 /**
- * Lucidchart-like Block Diagram Editor (Vanilla JS & SVG)
+ * Block Diagram Editor (Vanilla JS & SVG)
  *
  * Features:
- * - Slim vertical icon rail on the left of the canvas (NO text labels, aria-labels & tooltips, ~20px icons, 36px targets)
+ * - A small floating toolbar on the top edge of the canvas (icons only, aria-labels & tooltips, 32px targets)
  * - 4x4 Shapes Popover grid (16 shapes: rectangle, ellipse, diamond, triangle, rounded_rectangle, cloud,
  *   star, arrow_right, parallelogram, hexagon, octagon, double_arrow, speech_callout, cylinder, process, note_brace)
- * - Floating context bar above selection with icons only (fill/border palette, 3 line styles, 3 arrowheads, straight/elbow, text size T▾, bold, delete, overflow ⋯)
- * - Bottom-right zoom cluster (−, %, +, Fit) and rail bottom ⋯ more menu (Snap, Grid, Template)
+ * - Floating context bar above (or below) the selection with icons only (fill/border palette, 3 line styles, 3 arrowheads, straight/elbow, text size T▾, bold, delete, overflow ⋯)
+ * - Bottom-right zoom cluster (−, %, +, Fit) and a ⋯ more menu on the toolbar (Snap, Grid, Template)
  * - Infinite canvas with pan, zoom at cursor, dot grid, snap-to-grid, and fit
  * - Click or drag to place shapes/frames; multi-selection; resize handles; keyboard nudging & shortcuts
  * - Connectors with shape ports, following on move, straight/elbow routing, labels
  * - Frames with title at top-left, moving enclosed shapes, rendered behind shapes
- * - Debounced autosave (~600 ms) via /api/idea/diagram
+ * - Debounced autosave (~600 ms) via options.onSave
  * - Right-drag pan helper, sanitizeModel, undo/redo, empty-state logic
+ * - Read-only preview of a proposed diagram (setPreview), destroy() for a clean hand-over
+ *
+ * Look: every colour of the chrome comes from the app's CSS tokens (ui/styles/idea.css). The stored colours of
+ * blocks and lines are data; the dark theme only changes how they are drawn (see displayFill and friends).
  */
 
 (function (root, factory) {
@@ -179,6 +183,140 @@
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
   }
+
+  /* ---------- display colours ----------
+     The stored colours of a block, line or frame (fill, stroke, text) are data: they are saved, shown to the agent and
+     never rewritten. In the dark theme the editor changes only what it draws, so a pale block does not glow on a dark
+     canvas. The preset domains have hand-tuned pairs; every other colour goes through a lightness rule. */
+  const DARK_FILL = {
+    '#fef3e2': '#3a2c1b', '#ebf5fb': '#192b3b', '#e8f8f0': '#173024', '#f3ebf9': '#2b1f38',
+    '#fdedec': '#3a2123', '#f2f4f4': '#27292c', '#fef9c3': '#37321a', '#ffffff': '#232327'
+  };
+  const DARK_STROKE = {
+    '#e67e22': '#f0a35e', '#2980b9': '#6fb4e8', '#27ae60': '#5fd18f', '#8e44ad': '#bb8fd8', '#c0392b': '#ef7b72',
+    '#7f8c8d': '#a1adae', '#ca8a04': '#e6b94a', '#94a3b8': '#8493a8', '#64748b': '#94a3b8'
+  };
+  const DARK_TEXT = {
+    '#b45309': '#f4bd85', '#1d4ed8': '#9ec0f7', '#15803d': '#86dfae', '#6c3483': '#d3aee8', '#b91c1c': '#f4a29b',
+    '#4b5563': '#c5ccd4', '#854d0e': '#efd07a', '#1e293b': '#e6e9ee', '#0f172a': '#f1f3f6'
+  };
+  const PALE_TEXT = '#eef2f7';
+  const INK_TEXT = '#0f172a';
+  const CANVAS_LUMA = { light: 0.93, dark: 0.009 };   // relative luminance of --canvas in each theme
+
+  function diagramIsDark() {
+    const root = typeof document !== 'undefined' ? document.documentElement : null;
+    const t = root && root.dataset ? root.dataset.theme : '';
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return !!(typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  }
+
+  // '#rgb' / '#rrggbb' / 'rgb(...)' -> {r, g, b}; null for 'none', 'transparent' and names we do not know
+  function parseColor(c) {
+    const s = String(c == null ? '' : c).trim().toLowerCase();
+    if (!s || s === 'none' || s === 'transparent') return null;
+    if (s === 'white') return { r: 255, g: 255, b: 255 };
+    if (s === 'black') return { r: 0, g: 0, b: 0 };
+    let m = /^#([0-9a-f]{3,8})$/.exec(s);
+    if (m) {
+      let h = m[1];
+      if (h.length === 3 || h.length === 4) h = h.split('').map(x => x + x).join('');
+      if (h.length !== 6 && h.length !== 8) return null;
+      return { r: parseInt(h.slice(0, 2), 16), g: parseInt(h.slice(2, 4), 16), b: parseInt(h.slice(4, 6), 16) };
+    }
+    m = /^rgba?\(([^)]+)\)$/.exec(s);
+    if (m) {
+      const p = m[1].split(/[\s,\/]+/).filter(Boolean).map(parseFloat);
+      if (p.length < 3 || p.slice(0, 3).some(isNaN)) return null;
+      return { r: p[0], g: p[1], b: p[2] };
+    }
+    return null;
+  }
+
+  function rgbToHsl({ r, g, b }) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    if (max === min) return [0, 0, l];
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let h;
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    return [h * 60, s, l];
+  }
+
+  function hslToHex(h, s, l) {
+    const a = s * Math.min(l, 1 - l);
+    const f = n => {
+      const k = (n + h / 30) % 12;
+      const v = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      return Math.round(v * 255).toString(16).padStart(2, '0');
+    };
+    return '#' + f(0) + f(8) + f(4);
+  }
+
+  function luminance({ r, g, b }) {
+    const ch = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
+  }
+
+  function contrastRatio(l1, l2) {
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }
+
+  function displayFill(c, dark) {
+    if (!dark) return c;
+    const hit = DARK_FILL[String(c).trim().toLowerCase()];
+    if (hit) return hit;
+    const rgb = parseColor(c);
+    if (!rgb) return c;
+    const [h, s, l] = rgbToHsl(rgb);
+    if (l > 0.55) return hslToHex(h, s * 0.55, Math.min(0.5, Math.max(0.12, 0.12 + (1 - l) * 0.9)));
+    if (l < 0.18) return hslToHex(h, s, 0.22);
+    return c;
+  }
+
+  function displayStroke(c, dark) {
+    if (!dark) return c;
+    const hit = DARK_STROKE[String(c).trim().toLowerCase()];
+    if (hit) return hit;
+    const rgb = parseColor(c);
+    if (!rgb) return c;
+    const [h, s, l] = rgbToHsl(rgb);
+    if (l < 0.3) return hslToHex(h, s, 0.78);
+    if (l < 0.6) return hslToHex(h, s, Math.min(0.7, l + 0.22));
+    return c;
+  }
+
+  function displayText(c, dark) {
+    if (!dark) return c;
+    const hit = DARK_TEXT[String(c).trim().toLowerCase()];
+    if (hit) return hit;
+    const rgb = parseColor(c);
+    if (!rgb) return c;
+    const [h, s, l] = rgbToHsl(rgb);
+    return l < 0.5 ? hslToHex(h, s * 0.6, 0.82) : c;
+  }
+
+  // Text must stay readable on what it sits on (the block's drawn fill, or the canvas for a block with no fill), in both themes.
+  function readableText(text, fill, dark) {
+    const raw = String(fill == null ? '' : fill).trim().toLowerCase();
+    let bgL;
+    const bg = parseColor(fill);
+    if (bg) bgL = luminance(bg);
+    else if (!raw || raw === 'none' || raw === 'transparent') bgL = dark ? CANVAS_LUMA.dark : CANVAS_LUMA.light;
+    else return text;   // a colour name we cannot measure: leave the text alone
+    const fg = parseColor(text);
+    if (fg && contrastRatio(luminance(fg), bgL) >= 4.5) return text;
+    const pale = contrastRatio(luminance(parseColor(PALE_TEXT)), bgL);
+    const ink = contrastRatio(luminance(parseColor(INK_TEXT)), bgL);
+    return pale >= ink ? PALE_TEXT : INK_TEXT;
+  }
+
+  let editorSeq = 0;   // ids of the svg defs are per editor, so two editors on one page do not share a grid or arrowheads
 
   const ID_REGEX = /^[A-Za-z0-9_.:-]{1,64}$/;
   const COLOR_REGEX = /^(#[0-9A-Fa-f]{3,8}|rgba?\([0-9., %]+\)|[a-zA-Z]{1,20})$/;
@@ -568,6 +706,8 @@
         return base(`<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>`);
       case 'label':
         return base(`<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1" fill="currentColor"/>`);
+      case 'check':
+        return base(`<path d="M5 12.5l4.5 4.5L19 7.5"/>`);
       case 'line-solid':
         return base(`<line x1="3" y1="12" x2="21" y2="12" stroke-width="2.2"/>`);
       case 'line-dashed':
@@ -764,7 +904,7 @@
       case 'sticky':
         return `
           <rect width="${w}" height="${h}" rx="2" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>
-          <path d="M ${w - 14} ${h} L ${w} ${h - 14} L ${w} ${h} Z" fill="rgba(0,0,0,0.15)"/>
+          <path d="M ${w - 14} ${h} L ${w} ${h - 14} L ${w} ${h} Z" fill="${stroke}" fill-opacity="0.35"/>
         `;
 
       case 'text':
@@ -782,9 +922,21 @@
       this.options = options;
       this.onSave = options.onSave || (async () => {});
       this.saveDebounceTimer = null;
+      this.destroyed = false;
+      this.iid = ++editorSeq;
+      this.dark = diagramIsDark();
+      this.listeners = [];          // [target, type, fn, options] of everything bound outside this editor's own DOM
+      this.kbActive = false;        // the last press was on this canvas, so keys with no focused element are ours
 
       // Diagram data
       this.data = this.normalizeData(options.data || {});
+      this.serverSnapshot = JSON.stringify(this.data);   // what the server last had; a poll that brings the same changes nothing
+
+      // Preview of a proposed diagram: read-only; the live data waits in `stash`
+      this.previewing = false;
+      this.stash = null;
+      this.previewSnap = '';
+      this.previewChanged = new Set();
 
       // Canvas view state
       this.panX = 0;
@@ -814,6 +966,7 @@
       this.pulsingShapeIds = null;
       this.pulseTimer = null;
       this.saveHistory();
+      this.isDirty = false;   // the first snapshot is the server's, not an edit
 
       // Interaction flags & cache
       this.isPanning = false;
@@ -861,22 +1014,146 @@
       // ResizeObserver to auto-fit if user hasn't panned/zoomed
       if (typeof ResizeObserver !== 'undefined' && this.mountEl) {
         this.resizeObserver = new ResizeObserver(() => {
+          if (!this.alive()) return;
           if (!this.userHasPannedOrZoomed) {
             this.fitContent();
           }
         });
         this.resizeObserver.observe(this.mountEl);
       }
+
+      // The theme changes what is drawn (not what is stored): redraw when it flips
+      this.onTheme = () => {
+        const dark = diagramIsDark();
+        if (dark === this.dark || !this.alive()) return;
+        this.dark = dark;
+        this.closeAllPopovers();
+        this.render();
+      };
+      if (typeof window !== 'undefined' && window.matchMedia) {
+        this.themeQuery = window.matchMedia('(prefers-color-scheme: dark)');
+        if (this.themeQuery.addEventListener) this.themeQuery.addEventListener('change', this.onTheme);
+      }
+      if (typeof MutationObserver !== 'undefined') {
+        this.themeObserver = new MutationObserver(this.onTheme);
+        this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      }
+    }
+
+    /** False once destroyed, or when the canvas has left the page without anyone saying so (then it cleans up itself). */
+    alive() {
+      if (this.destroyed) return false;
+      if (!this.mountEl.isConnected) {
+        this.destroy();
+        return false;
+      }
+      return true;
+    }
+
+    /** Bind outside this editor's own DOM; destroy() undoes every one of these. */
+    listen(target, type, fn, opts) {
+      target.addEventListener(type, fn, opts);
+      this.listeners.push([target, type, fn, opts]);
+    }
+
+    /** Let go of the page: send a pending edit, stop every listener, timer and observer. Safe to call twice. */
+    destroy() {
+      if (this.destroyed) return;
+      this.flushSave();
+      this.destroyed = true;
+      for (const [target, type, fn, opts] of this.listeners) target.removeEventListener(type, fn, opts);
+      this.listeners = [];
+      if (this.panHelper) this.panHelper.destroy();
+      if (this.resizeObserver) this.resizeObserver.disconnect();
+      if (this.themeObserver) this.themeObserver.disconnect();
+      if (this.themeQuery && this.themeQuery.removeEventListener) this.themeQuery.removeEventListener('change', this.onTheme);
+      clearTimeout(this.pulseTimer);
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = null;
+      if (this.mountEl) {
+        this.mountEl.classList.remove('miro-diagram-editor', 'is-preview');
+        this.mountEl._diagramEditor = null;
+      }
+      if (this.options && typeof this.options.onDestroy === 'function') this.options.onDestroy(this);
     }
 
     normalizeData(raw) {
       return sanitizeModel(raw);
     }
 
+    /** The diagram that belongs to the project: while a proposal is on show, it is the one set aside. */
+    liveData() {
+      return this.previewing && this.stash ? this.stash.data : this.data;
+    }
+
+    isPreviewing() {
+      return this.previewing;
+    }
+
+    /**
+     * Show a proposed diagram, read-only, in place of the live one (setPreview(null) puts the live one back).
+     * Blocks and lines that are new or different are marked so the change can be seen at a glance.
+     */
+    setPreview(proposed) {
+      if (this.destroyed) return;
+      if (!proposed) {
+        if (this.previewing) this.endPreview();
+        return;
+      }
+      const clean = sanitizeModel(proposed);
+      const snap = JSON.stringify(clean);
+      if (this.previewing && this.previewSnap === snap) return;
+      if (!this.previewing) {
+        this.commitTextEdit();
+        this.stash = { data: this.data, canServerUndo: this.canServerUndo };
+        this.clearSelection();
+        this.isDraggingItems = this.isResizing = this.isMarquee = this.isDrawingShape = this.isConnecting = false;
+        this.draggingConnEnd = null;
+      }
+      const live = this.stash.data;
+      const was = new Map();
+      for (const list of [live.shapes, live.connectors, live.frames]) for (const it of list) was.set(it.id, JSON.stringify(it));
+      this.previewChanged = new Set();
+      for (const list of [clean.shapes, clean.connectors, clean.frames]) {
+        for (const it of list) if (was.get(it.id) !== JSON.stringify(it)) this.previewChanged.add(it.id);
+      }
+      this.previewing = true;
+      this.previewSnap = snap;
+      this.data = clean;
+      this.mountEl.classList.add('is-preview');
+      this.render();
+      if (!this.userHasPannedOrZoomed) this.fitContent();
+      if (this.options.onPreview) this.options.onPreview(true);
+    }
+
+    endPreview() {
+      if (!this.previewing) return;
+      this.previewing = false;
+      this.previewSnap = '';
+      this.previewChanged = new Set();
+      if (this.stash) {
+        this.data = this.stash.data;
+        this.canServerUndo = this.stash.canServerUndo;
+      }
+      this.stash = null;
+      this.mountEl.classList.remove('is-preview');
+      this.clearSelection();
+      this.render();
+      if (!this.userHasPannedOrZoomed) this.fitContent();
+      if (this.options.onPreview) this.options.onPreview(false);
+    }
+
     updateData(newData, touchedIds = []) {
-      if (!newData) return;
+      if (!newData || this.destroyed) return;
       const cleanServer = sanitizeModel(newData);
       const touchedSet = new Set(touchedIds || []);
+      const snap = JSON.stringify(cleanServer);
+
+      // The same diagram the server had last time (the poll, an echo of our own save): nothing to do, and the
+      // undo history, the selection and the view stay as they are.
+      if (!touchedSet.size && snap === this.serverSnapshot) return;
+      this.serverSnapshot = snap;
+      if (this.previewing) this.endPreview();
 
       if (this.isDirty || this.saveDebounceTimer !== null) {
         // Student has unsaved local edits: merge by ID
@@ -977,16 +1254,6 @@
       }
     }
 
-    previewProposal(proposalData) {
-      if (!proposalData) return;
-      this.data = sanitizeModel(proposalData);
-      this.render();
-      this.updateEmptyState();
-      if (!this.userHasPannedOrZoomed) {
-        this.fitContent();
-      }
-    }
-
     saveHistory() {
       const snap = JSON.stringify(this.data);
       if (this.historyIndex >= 0 && this.history[this.historyIndex] === snap) {
@@ -1025,6 +1292,7 @@
           if (undoneData) {
             this.canServerUndo = false;
             this.data = sanitizeModel(undoneData);
+            this.serverSnapshot = JSON.stringify(this.data);
             this.history = [JSON.stringify(this.data)];
             this.historyIndex = 0;
             this.clearSelection();
@@ -1058,17 +1326,29 @@
     }
 
     triggerAutosave() {
+      if (this.previewing || this.destroyed) return;   // a preview is never saved
       clearTimeout(this.saveDebounceTimer);
-      this.saveDebounceTimer = setTimeout(async () => {
-        try {
-          await this.onSave(clone(this.data));
-          this.isDirty = false;
-        } catch (e) {
-          console.error('Diagram autosave failed:', e);
-        } finally {
-          this.saveDebounceTimer = null;
-        }
-      }, 600);
+      this.saveDebounceTimer = setTimeout(() => this.saveNow(), 600);
+    }
+
+    /** Send the live diagram to onSave. Not called while a preview is up unless a save was already waiting: the live one goes, never the preview. */
+    async saveNow() {
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = null;
+      const sent = clone(this.liveData());
+      try {
+        await this.onSave(sent);
+        this.isDirty = false;
+        this.serverSnapshot = JSON.stringify(sanitizeModel(sent));
+      } catch (e) {
+        console.error('Diagram autosave failed:', e);
+      }
+    }
+
+    /** A pending edit goes out now (the editor is about to go away). */
+    flushSave() {
+      if (this.saveDebounceTimer === null) return;
+      this.saveNow();
     }
 
     snap(val) {
@@ -1125,79 +1405,54 @@
     /* ---------------- DOM & Layout ---------------- */
 
     initDom() {
+      const iid = this.iid;
       this.mountEl.innerHTML = '';
-      this.mountEl.className = 'miro-diagram-editor';
-      this.mountEl.style.cssText = 'position:relative;width:100%;height:100%;display:flex;flex-direction:row;overflow:hidden;background:#f8fafc;user-select:none;font-family:inherit;';
+      // The mount point keeps its own class (the shell and the chat find the canvas by it); the look is in idea.css
+      this.mountEl.classList.add('miro-diagram-editor');
 
-      // 1. Slim Vertical Left Rail
-      const rail = document.createElement('div');
-      rail.className = 'diag-left-rail';
-      rail.setAttribute('role', 'toolbar');
-      rail.setAttribute('aria-label', 'Diagram tools');
-      rail.style.cssText = 'width:44px;flex:none;height:100%;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 4px;background:#ffffff;border-right:1px solid #d6dce8;z-index:10;box-shadow:1px 0 3px rgba(0,0,0,0.03);position:relative;';
-
-      rail.innerHTML = `
-        <button type="button" class="diag-rail-btn active" data-tool="select" title="Select (V)" aria-label="Select (V)" aria-pressed="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 3l15 11-7 1.5 3.5 6.5-2.5 1.5-3.5-6.5-5.5 5.5z" fill="currentColor"/></svg></button>
-        <button type="button" class="diag-rail-btn" data-tool="hand" title="Hand (H)" aria-label="Hand (H)" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v7M10 10.5V6a2 2 0 0 0-4 0v8a7 7 0 0 0 14 0v-4a2 2 0 0 0-4 0"/></svg></button>
-        <button type="button" class="diag-rail-btn" data-tool="text" title="Text (T)" aria-label="Text (T)" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5h14M12 5v14"/></svg></button>
-        <button type="button" class="diag-rail-btn" data-tool="sticky" title="Sticky note (N)" aria-label="Sticky note (N)" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h11l5 5v11H4z"/><path d="M15 4v5h5"/></svg></button>
-        <button type="button" class="diag-rail-btn diag-shapes-rail-btn" data-act="toggle-shapes-popover" title="Block / Shapes (B)" aria-label="Block (B)" aria-pressed="false" aria-haspopup="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/></svg></button>
-        <button type="button" class="diag-rail-btn" data-tool="connector" title="Connector (L)" aria-label="Connector (L)" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19L19 5M12 5h7v7"/></svg></button>
-        <button type="button" class="diag-rail-btn" data-tool="frame" title="Frame (F)" aria-label="Frame (F)" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3 3"/></svg></button>
-
-        <div class="diag-rail-sep" style="width:24px;height:1px;background:#e2e8f0;margin:4px 0"></div>
-
-        <button type="button" class="diag-rail-btn" data-tool="undo" title="Undo (Ctrl+Z)" aria-label="Undo (Ctrl+Z)" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h12a5 5 0 0 1 5 5v1a5 5 0 0 1-5 5H7"/><path d="M7 5L3 9l4 4"/></svg></button>
-        <button type="button" class="diag-rail-btn" data-tool="redo" title="Redo (Ctrl+Y)" aria-label="Redo (Ctrl+Y)" aria-pressed="false"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 9H9a5 5 0 0 0-5 5v1a5 5 0 0 0 5 5h10"/><path d="M17 5l4 4-4 4"/></svg></button>
-
-        <div style="margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:4px">
-          <button type="button" class="diag-rail-btn" data-act="toggle-more-menu" title="More options" aria-label="More options" aria-haspopup="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="1.5" fill="currentColor"/><circle cx="12" cy="12" r="1.5" fill="currentColor"/><circle cx="19" cy="12" r="1.5" fill="currentColor"/></svg></button>
-        </div>
-      `;
-      this.mountEl.appendChild(rail);
-      this.railEl = rail;
-
-      // 2. Canvas Container
+      // 1. Canvas container: the drawing, and everything that floats over it
       const canvasWrap = document.createElement('div');
       canvasWrap.className = 'diag-canvas-container';
-      canvasWrap.style.cssText = 'position:relative;flex:1;min-width:0;height:100%;overflow:hidden;background:#f8fafc;';
       this.mountEl.appendChild(canvasWrap);
       this.canvasWrap = canvasWrap;
 
-      // 3. SVG Canvas
+      // 2. SVG canvas
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'diag-svg');
       svg.setAttribute('id', 'diag-svg');
       // No viewBox: user units == CSS px, so pan/zoom maths and clientToDiagram() agree exactly.
       svg.setAttribute('role', 'img');
-      svg.setAttribute('aria-label', 'Interactive Block diagram');
+      svg.setAttribute('aria-label', 'Interactive block diagram');
       svg.setAttribute('width', '100%');
       svg.setAttribute('height', '100%');
-      svg.style.cssText = 'display:block;width:100%;height:100%;cursor:default;';
+      svg.style.cursor = 'default';
       canvasWrap.appendChild(svg);
       this.svgEl = svg;
 
-      // Defs (grid pattern, arrow markers)
+      // Defs (grid pattern, arrow markers); the ids are per editor
+      this.markerEndRef = `url(#diag-arrow-end-${iid})`;
+      this.markerStartRef = `url(#diag-arrow-start-${iid})`;
       const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
       defs.innerHTML = `
-        <pattern id="diag-grid-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
-          <circle cx="10" cy="10" r="1.1" fill="#94a3b8" opacity="0.6"/>
+        <pattern id="diag-grid-pattern-${iid}" width="20" height="20" patternUnits="userSpaceOnUse">
+          <circle class="diag-dot" cx="10" cy="10" r="1.1"/>
         </pattern>
-        <marker id="diag-arrow-end" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <marker id="diag-arrow-end-${iid}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
           <path d="M 0 1.5 L 9 5 L 0 8.5 z" fill="context-stroke"/>
         </marker>
-        <marker id="diag-arrow-start" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <marker id="diag-arrow-start-${iid}" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
           <path d="M 9 1.5 L 0 5 L 9 8.5 z" fill="context-stroke"/>
         </marker>
       `;
       svg.appendChild(defs);
+      this.gridPatternEl = defs.querySelector('pattern');
 
       // Grid background rect
       const gridRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
       gridRect.setAttribute('class', 'diag-bg-grid');
       gridRect.setAttribute('width', '100%');
       gridRect.setAttribute('height', '100%');
-      gridRect.setAttribute('fill', 'url(#diag-grid-pattern)');
+      gridRect.setAttribute('fill', `url(#diag-grid-pattern-${iid})`);
       svg.appendChild(gridRect);
       this.gridRect = gridRect;
 
@@ -1224,189 +1479,125 @@
       this.overlayLayer.setAttribute('class', 'diag-layer-overlay');
       viewport.appendChild(this.overlayLayer);
 
-      // 4. Floating Context Toolbar
+      // 3. The toolbar: a small floating bar on the top edge of the canvas (icons only; labels are tooltips)
+      const rail = document.createElement('div');
+      rail.className = 'diag-rail';
+      rail.setAttribute('role', 'toolbar');
+      rail.setAttribute('aria-label', 'Diagram tools');
+
+      rail.innerHTML = `
+        <button type="button" class="diag-rail-btn active" data-tool="select" title="Select (V)" aria-label="Select (V)" aria-pressed="true">${getIconSvg('select', 18)}</button>
+        <button type="button" class="diag-rail-btn" data-tool="hand" title="Hand (H)" aria-label="Hand (H)" aria-pressed="false">${getIconSvg('hand', 18)}</button>
+        <span class="diag-sep" aria-hidden="true"></span>
+        <button type="button" class="diag-rail-btn" data-tool="text" title="Text (T)" aria-label="Text (T)" aria-pressed="false">${getIconSvg('text', 18)}</button>
+        <button type="button" class="diag-rail-btn" data-tool="sticky" title="Sticky note (N)" aria-label="Sticky note (N)" aria-pressed="false">${getIconSvg('sticky', 18)}</button>
+        <button type="button" class="diag-rail-btn diag-shapes-rail-btn" data-act="toggle-shapes-popover" title="Block (B)" aria-label="Block (B)" aria-pressed="false" aria-haspopup="true">${getIconSvg('rectangle', 18)}</button>
+        <button type="button" class="diag-rail-btn" data-tool="connector" title="Connector (L)" aria-label="Connector (L)" aria-pressed="false">${getIconSvg('connector', 18)}</button>
+        <button type="button" class="diag-rail-btn" data-tool="frame" title="Frame (F)" aria-label="Frame (F)" aria-pressed="false">${getIconSvg('frame', 18)}</button>
+        <span class="diag-sep" aria-hidden="true"></span>
+        <button type="button" class="diag-rail-btn" data-tool="undo" title="Undo (Ctrl+Z)" aria-label="Undo (Ctrl+Z)">${getIconSvg('undo', 18)}</button>
+        <button type="button" class="diag-rail-btn" data-tool="redo" title="Redo (Ctrl+Y)" aria-label="Redo (Ctrl+Y)">${getIconSvg('redo', 18)}</button>
+        <span class="diag-sep" aria-hidden="true"></span>
+        <button type="button" class="diag-rail-btn" data-act="toggle-more-menu" title="More options" aria-label="More options" aria-haspopup="true">${getIconSvg('more', 18)}</button>
+      `;
+      canvasWrap.appendChild(rail);
+      this.railEl = rail;
+
+      // 4. Floating context toolbar (filled in by renderContextToolbar)
       const ctxToolbar = document.createElement('div');
       ctxToolbar.className = 'diag-context-toolbar';
       ctxToolbar.setAttribute('role', 'toolbar');
-      ctxToolbar.setAttribute('aria-label', 'Context actions');
-      ctxToolbar.style.cssText = 'position:absolute;display:none;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;padding:3px 6px;box-shadow:0 4px 14px rgba(0,0,0,0.1);z-index:25;align-items:center;pointer-events:auto;gap:3px;';
+      ctxToolbar.setAttribute('aria-label', 'Selection tools');
       canvasWrap.appendChild(ctxToolbar);
       this.ctxToolbarEl = ctxToolbar;
 
-      // 5. Shapes Popover (4x4 Grid)
+      // 5. Shapes popover (4x4 grid)
       const shapesPopover = document.createElement('div');
-      shapesPopover.className = 'diag-shapes-popover';
-      shapesPopover.style.cssText = 'position:absolute;display:none;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.12);z-index:35;padding:8px;pointer-events:auto;';
+      shapesPopover.className = 'diag-shapes-popover diag-popover';
       shapesPopover.innerHTML = `
-        <div style="display:grid;grid-template-columns:repeat(4, 36px);gap:4px;">
+        <div class="diag-shape-grid" role="group" aria-label="Shapes">
           ${SHAPES_16.map(s => `
-            <button type="button" class="diag-shape-grid-btn" data-shape-type="${s.type}" title="${escapeHtml(s.name)}${s.shortcut ? ' (' + s.shortcut + ')' : ''}" aria-label="${escapeHtml(s.name)}${s.shortcut ? ' (' + s.shortcut + ')' : ''}" style="width:36px;height:36px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:6px;cursor:pointer;padding:0;color:#334155;">
-              ${getIconSvg(s.type, 20)}
-            </button>
+            <button type="button" class="diag-shape-grid-btn" data-shape-type="${s.type}" title="${escapeHtml(s.name)}${s.shortcut ? ' (' + s.shortcut + ')' : ''}" aria-label="${escapeHtml(s.name)}${s.shortcut ? ' (' + s.shortcut + ')' : ''}">${getIconSvg(s.type, 20)}</button>
           `).join('')}
         </div>
       `;
       canvasWrap.appendChild(shapesPopover);
       this.shapesPopoverEl = shapesPopover;
 
-      // 6. Color Palette Popover
+      // 6. Colour palette popover (built when it opens: its swatches follow the theme and the selection)
       const palettePopover = document.createElement('div');
-      palettePopover.className = 'diag-palette-popover';
-      palettePopover.style.cssText = 'position:absolute;display:none;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.12);z-index:35;padding:8px;pointer-events:auto;width:196px;';
-      palettePopover.innerHTML = `
-        <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">PALETTE</div>
-        <div style="display:grid;grid-template-columns:repeat(7, 22px);gap:4px;margin-bottom:8px">
-          ${COLOR_SWATCHES.map(c => `
-            <button type="button" class="diag-palette-swatch-btn" data-color-val="${escapeHtml(c)}" title="${c === 'none' ? 'None' : escapeHtml(c)}" aria-label="${c === 'none' ? 'None' : escapeHtml(c)}" style="width:22px;height:22px;border-radius:4px;border:1px solid #cbd5e1;cursor:pointer;padding:0;background:${c === 'none' ? 'linear-gradient(45deg, #fff 40%, #ef4444 48%, #ef4444 52%, #fff 60%)' : escapeHtml(c)}"></button>
-          `).join('')}
-        </div>
-        <div style="font-size:11px;font-weight:600;color:#64748b;margin-bottom:6px">DOMAIN PRESETS</div>
-        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:4px;">
-          ${DOMAIN_PRESETS.filter(d => d.id !== 'none').map(d => `
-            <button type="button" class="diag-domain-swatch-btn" data-domain-id="${d.id}" title="${escapeHtml(d.name)}" aria-label="${escapeHtml(d.name)}" style="height:24px;border-radius:4px;border:1.5px solid ${escapeHtml(d.stroke)};background:${escapeHtml(d.fill)};cursor:pointer;font-size:10px;font-weight:600;color:${escapeHtml(d.text)};padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-              ${escapeHtml(d.name)}
-            </button>
-          `).join('')}
-        </div>
-      `;
+      palettePopover.className = 'diag-palette-popover diag-popover';
       canvasWrap.appendChild(palettePopover);
       this.palettePopoverEl = palettePopover;
 
-      // 7. Context Overflow Menu (⋯)
+      // 7. Context overflow menu
       const ctxOverflowMenu = document.createElement('div');
-      ctxOverflowMenu.className = 'diag-ctx-overflow-menu';
-      ctxOverflowMenu.style.cssText = 'position:absolute;display:none;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.12);z-index:35;padding:4px;pointer-events:auto;min-width:140px;';
+      ctxOverflowMenu.className = 'diag-ctx-overflow-menu diag-popover diag-menu';
+      ctxOverflowMenu.setAttribute('role', 'menu');
       ctxOverflowMenu.innerHTML = `
-        <button type="button" class="diag-menu-item" data-act="toggle-lock" style="width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:none;border-radius:6px;font-size:12.5px;cursor:pointer;color:#334155;">
-          ${getIconSvg('lock', 16)} <span>Lock / Unlock</span>
-        </button>
-        <button type="button" class="diag-menu-item" data-act="bring-front" style="width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:none;border-radius:6px;font-size:12.5px;cursor:pointer;color:#334155;">
-          ${getIconSvg('bring-front', 16)} <span>Bring to front</span>
-        </button>
-        <button type="button" class="diag-menu-item" data-act="send-back" style="width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:none;border-radius:6px;font-size:12.5px;cursor:pointer;color:#334155;">
-          ${getIconSvg('send-back', 16)} <span>Send to back</span>
-        </button>
+        <button type="button" class="diag-menu-item" role="menuitem" data-act="toggle-lock">${getIconSvg('lock', 16)}<span>Lock or unlock</span></button>
+        <button type="button" class="diag-menu-item" role="menuitem" data-act="bring-front">${getIconSvg('bring-front', 16)}<span>Bring to front</span></button>
+        <button type="button" class="diag-menu-item" role="menuitem" data-act="send-back">${getIconSvg('send-back', 16)}<span>Send to back</span></button>
       `;
       canvasWrap.appendChild(ctxOverflowMenu);
       this.ctxOverflowMenuEl = ctxOverflowMenu;
 
-      // 8. Rail Bottom More Menu (⋯)
+      // 8. Toolbar "more" menu
       const moreMenu = document.createElement('div');
-      moreMenu.className = 'diag-more-menu';
-      moreMenu.style.cssText = 'position:absolute;display:none;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,0.12);z-index:35;padding:4px;pointer-events:auto;min-width:170px;left:48px;bottom:10px;';
+      moreMenu.className = 'diag-more-menu diag-popover diag-menu';
+      moreMenu.setAttribute('role', 'menu');
       moreMenu.innerHTML = `
-        <button type="button" class="diag-menu-item" data-act="toggle-snap" title="Snap to grid" style="width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:none;border-radius:6px;font-size:12.5px;cursor:pointer;color:#334155;">
-          ${getIconSvg('snap', 16)} <span style="flex:1">Snap to grid</span> <span class="diag-check-snap" style="color:#2563eb;font-weight:700">✓</span>
-        </button>
-        <button type="button" class="diag-menu-item" data-act="toggle-grid" title="Show dot grid" style="width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:none;border-radius:6px;font-size:12.5px;cursor:pointer;color:#334155;">
-          ${getIconSvg('grid', 16)} <span style="flex:1">Dot grid</span> <span class="diag-check-grid" style="color:#2563eb;font-weight:700">✓</span>
-        </button>
-        <div style="height:1px;background:#e2e8f0;margin:4px 0"></div>
-        <button type="button" class="diag-menu-item" data-act="load-template" title="Start from template" style="width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:6px 10px;border:0;background:none;border-radius:6px;font-size:12.5px;cursor:pointer;color:#334155;">
-          ${getIconSvg('template', 16)} <span>Start from template</span>
-        </button>
+        <button type="button" class="diag-menu-item" role="menuitemcheckbox" aria-checked="true" data-act="toggle-snap">${getIconSvg('snap', 16)}<span>Snap to grid</span><span class="diag-check">${getIconSvg('check', 16)}</span></button>
+        <button type="button" class="diag-menu-item" role="menuitemcheckbox" aria-checked="true" data-act="toggle-grid">${getIconSvg('grid', 16)}<span>Dot grid</span><span class="diag-check">${getIconSvg('check', 16)}</span></button>
+        <hr>
+        <button type="button" class="diag-menu-item" role="menuitem" data-act="load-template">${getIconSvg('template', 16)}<span>Start from template</span></button>
       `;
       canvasWrap.appendChild(moreMenu);
       this.moreMenuEl = moreMenu;
 
-      // 9. Floating Zoom Cluster (Bottom-Right of Canvas)
+      // 9. Zoom cluster (bottom right of the canvas)
       const zoomCluster = document.createElement('div');
       zoomCluster.className = 'diag-zoom-cluster';
       zoomCluster.setAttribute('role', 'toolbar');
-      zoomCluster.setAttribute('aria-label', 'Zoom and view controls');
-      zoomCluster.style.cssText = 'position:absolute;bottom:14px;right:14px;display:flex;align-items:center;background:#ffffff;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.06);padding:2px 4px;z-index:20;gap:2px;';
+      zoomCluster.setAttribute('aria-label', 'Zoom and view');
       zoomCluster.innerHTML = `
-        <button type="button" class="diag-zoom-btn" data-act="zoom-out" title="Zoom Out" aria-label="Zoom Out" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:none;border:0;border-radius:5px;cursor:pointer;color:#334155;">${getIconSvg('zoom-out', 16)}</button>
-        <button type="button" class="diag-zoom-btn diag-zoom-val" data-act="zoom-reset" title="Click to reset zoom (100%)" aria-label="Reset zoom to 100%" style="min-width:44px;height:28px;padding:0 4px;font-family:monospace;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;background:none;border:0;border-radius:5px;cursor:pointer;color:#334155;">100%</button>
-        <button type="button" class="diag-zoom-btn" data-act="zoom-in" title="Zoom In" aria-label="Zoom In" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:none;border:0;border-radius:5px;cursor:pointer;color:#334155;">${getIconSvg('zoom-in', 16)}</button>
-        <div style="width:1px;height:16px;background:#e2e8f0;margin:0 2px"></div>
-        <button type="button" class="diag-zoom-btn" data-act="fit" title="Fit to view" aria-label="Fit to view" style="height:28px;padding:0 8px;display:flex;align-items:center;gap:4px;background:none;border:0;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600;color:#334155;">
-          ${getIconSvg('fit', 14)} <span>Fit</span>
-        </button>
+        <button type="button" class="diag-zoom-btn" data-act="zoom-out" title="Zoom out" aria-label="Zoom out">${getIconSvg('zoom-out', 16)}</button>
+        <button type="button" class="diag-zoom-btn diag-zoom-val" data-act="zoom-reset" title="Reset zoom to 100%" aria-label="Reset zoom to 100%">100%</button>
+        <button type="button" class="diag-zoom-btn" data-act="zoom-in" title="Zoom in" aria-label="Zoom in">${getIconSvg('zoom-in', 16)}</button>
+        <span class="diag-sep" aria-hidden="true"></span>
+        <button type="button" class="diag-zoom-btn diag-fit-btn" data-act="fit" title="Fit to view" aria-label="Fit to view">${getIconSvg('fit', 14)}<span>Fit</span></button>
       `;
       canvasWrap.appendChild(zoomCluster);
       this.zoomClusterEl = zoomCluster;
 
-      // 10. Inline Text Editing Overlay
+      // 10. Inline text editing overlay
       const textOverlay = document.createElement('textarea');
       textOverlay.className = 'diag-text-overlay';
-      textOverlay.style.cssText = 'position:absolute;display:none;z-index:40;background:#ffffff;border:1.5px solid #2563eb;border-radius:4px;padding:4px 6px;resize:none;outline:none;font-family:inherit;font-size:13px;line-height:1.3;box-shadow:0 2px 8px rgba(0,0,0,0.15);';
+      textOverlay.setAttribute('aria-label', 'Edit text');
       canvasWrap.appendChild(textOverlay);
       this.textOverlayEl = textOverlay;
 
-      // 11. Empty State Card
+      // 11. Empty state: a line of help and one button, no card
       const emptyState = document.createElement('div');
       emptyState.className = 'diag-empty-state';
-      emptyState.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;color:#64748b;z-index:5;pointer-events:none;background:rgba(255,255,255,0.94);padding:22px 30px;border-radius:12px;border:1px dashed #cbd5e1;box-shadow:0 4px 16px rgba(0,0,0,0.05);';
       emptyState.innerHTML = `
-        <div style="font-size:15px;font-weight:600;color:#334155;margin-bottom:4px">Double-click to add a block, or press B</div>
-        <div style="font-size:12px;color:#64748b;margin-bottom:14px">Use the toolbar to sketch blocks, connections, domains and notes</div>
-        <button type="button" class="btn pri diag-start-template-btn" style="pointer-events:auto;font-weight:600">+ Start from template</button>
+        <div class="diag-empty-title">Double-click to add a block</div>
+        <div class="diag-empty-sub">or press B. Connect blocks by dragging from their edge.</div>
+        <button type="button" class="btn line diag-start-template-btn" data-act="load-template">Start from template</button>
       `;
       canvasWrap.appendChild(emptyState);
       this.emptyStateEl = emptyState;
-
-      // Inject Global Styles
-      if (!document.getElementById('lucid-diagram-editor-styles')) {
-        const style = document.createElement('style');
-        style.id = 'lucid-diagram-editor-styles';
-        style.textContent = `
-          .diag-topbar { row-gap: 4px; }
-          .diag-tb-btn svg + span { display: none; }
-          .diag-rail-btn {
-            width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
-            border: 1px solid transparent; border-radius: 6px; background: transparent;
-            cursor: pointer; padding: 0; color: #334155; transition: background 0.12s, color 0.12s, border-color 0.12s;
-          }
-          .diag-rail-btn:hover { background: #f1f5f9; color: #0f172a; }
-          .diag-rail-btn.active, .diag-rail-btn[aria-pressed="true"] {
-            background: #eef2ff !important; color: #2563eb !important; border-color: #c7d2fe !important;
-          }
-          .diag-rail-btn:disabled { opacity: 0.35; cursor: default; }
-
-          .diag-ctx-btn {
-            width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;
-            border: 1px solid transparent; border-radius: 6px; background: transparent;
-            cursor: pointer; padding: 0; color: #334155; transition: background 0.12s, color 0.12s;
-          }
-          .diag-ctx-btn:hover { background: #f1f5f9; color: #0f172a; }
-          .diag-ctx-btn.active, .diag-ctx-btn[aria-pressed="true"] {
-            background: #eef2ff !important; color: #2563eb !important; border-color: #c7d2fe !important;
-          }
-          .diag-ctx-sep { width: 1px; height: 18px; background: #e2e8f0; margin: 0 2px; }
-
-          .diag-zoom-btn:hover { background: #f1f5f9; color: #0f172a; }
-          .diag-menu-item:hover { background: #f1f5f9; color: #0f172a; }
-          .diag-shape-grid-btn:hover { background: #f1f5f9; color: #2563eb; }
-
-          .diag-swatch-circle { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.15); display: inline-block; }
-          .diag-swatch-ring { width: 16px; height: 16px; border-radius: 50%; border-width: 3px; border-style: solid; display: inline-block; background: transparent; }
-
-          .diag-shape-node { cursor: pointer; }
-          .diag-shape-node.is-selected { filter: drop-shadow(0 0 3px rgba(37,99,235,0.5)); }
-          @keyframes diagPulseAnim {
-            0% { filter: drop-shadow(0 0 1px rgba(37,99,235,0.8)); }
-            50% { filter: drop-shadow(0 0 9px rgba(37,99,235,1)); }
-            100% { filter: drop-shadow(0 0 1px rgba(37,99,235,0.8)); }
-          }
-          .diag-shape-node.diag-pulse { animation: diagPulseAnim 0.7s ease-in-out infinite; }
-          .diag-port-dot { cursor: crosshair; fill: #ffffff; stroke: #2563eb; stroke-width: 2; transition: transform 0.1s; }
-          .diag-port-dot:hover { transform: scale(1.35); fill: #2563eb; }
-          .diag-handle { fill: #ffffff; stroke: #2563eb; stroke-width: 1.5; cursor: pointer; }
-
-          .is-panning, .is-panning * { cursor: grabbing !important; }
-        `;
-        document.head.appendChild(style);
-      }
     }
 
     /* ---------------- Event Listeners & Binding ---------------- */
 
     bindEvents() {
-      // Toolbar rail & buttons
+      // Toolbar and zoom buttons
       this.mountEl.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
         if (!btn) return;
+        // A preview is read-only: only the view controls work
+        if (this.previewing && !['zoom-in', 'zoom-out', 'zoom-reset', 'fit'].includes(btn.dataset.act)) return;
 
         const tool = btn.dataset.tool;
         if (tool) {
@@ -1445,18 +1636,19 @@
           return;
         }
         if (act === 'fit') {
+          this.userHasPannedOrZoomed = false;   // Fit means "keep it in view" again
           this.fitContent();
           return;
         }
         if (act === 'toggle-snap') {
           this.snapToGrid = !this.snapToGrid;
-          this.moreMenuEl.querySelector('.diag-check-snap').style.display = this.snapToGrid ? '' : 'none';
+          btn.setAttribute('aria-checked', String(this.snapToGrid));
           return;
         }
         if (act === 'toggle-grid') {
           this.showGrid = !this.showGrid;
           this.gridRect.style.display = this.showGrid ? '' : 'none';
-          this.moreMenuEl.querySelector('.diag-check-grid').style.display = this.showGrid ? '' : 'none';
+          btn.setAttribute('aria-checked', String(this.showGrid));
           return;
         }
         if (act === 'load-template' || e.target.closest('.diag-start-template-btn')) {
@@ -1531,6 +1723,7 @@
 
       // Canvas Zoom wheel
       this.canvasWrap.addEventListener('wheel', (e) => {
+        if (e.target.closest('.diag-popover')) return;   // a long popover scrolls itself
         e.preventDefault();
         this.userHasPannedOrZoomed = true;
         const rect = this.svgEl.getBoundingClientRect();
@@ -1544,7 +1737,7 @@
         this.updateTransform();
       }, { passive: false });
 
-      // Pan helper (Right-drag, middle-drag, space+left-drag, hand tool)
+      // Pan helper (Right-drag, middle-drag, space+left-drag, hand tool; any left-drag in a preview)
       this.panHelper = attachPanHelper(this.svgEl, {
         getPan: () => ({ x: this.panX, y: this.panY }),
         setPan: (x, y) => {
@@ -1555,25 +1748,29 @@
         },
         canPan: (e) => {
           if (e.button === 2 || e.button === 1) return true;
-          if (e.button === 0 && (this.spacePressed || this.tool === 'hand')) return true;
+          if (e.button === 0 && (this.spacePressed || this.tool === 'hand' || this.previewing)) return true;
           return false;
         },
         onDragStart: () => {
           this.userHasPannedOrZoomed = true;
         },
         onUp: () => {
-          this.svgEl.style.cursor = this.tool === 'hand' ? 'grab' : (this.tool === 'connector' || !['select', 'hand'].includes(this.tool) ? 'crosshair' : 'default');
+          this.svgEl.style.cursor = this.restCursor();
         }
       });
 
       // Mouse events
       this.svgEl.addEventListener('mousedown', (e) => this.onMouseDown(e));
-      window.addEventListener('mousemove', (e) => this.onMouseMove(e));
-      window.addEventListener('mouseup', (e) => this.onMouseUp(e));
+      this.listen(window, 'mousemove', (e) => { if (this.alive()) this.onMouseMove(e); });
+      this.listen(window, 'mouseup', (e) => { if (this.alive()) this.onMouseUp(e); });
       this.svgEl.addEventListener('dblclick', (e) => this.onDoubleClick(e));
 
+      // Keys belong to the canvas once it has been pressed, until something else is
+      this.listen(window, 'pointerdown', (e) => { this.kbActive = this.mountEl.contains(e.target); }, true);
+
       // Global click to close popovers when clicking outside
-      window.addEventListener('click', (e) => {
+      this.listen(window, 'click', (e) => {
+        if (!this.alive()) return;
         if (!e.target.closest('.diag-shapes-popover') &&
             !e.target.closest('.diag-palette-popover') &&
             !e.target.closest('.diag-ctx-overflow-menu') &&
@@ -1589,8 +1786,8 @@
       });
 
       // Keyboard shortcuts
-      window.addEventListener('keydown', (e) => this.onKeyDown(e));
-      window.addEventListener('keyup', (e) => this.onKeyUp(e));
+      this.listen(window, 'keydown', (e) => { if (this.alive()) this.onKeyDown(e); });
+      this.listen(window, 'keyup', (e) => { if (this.alive()) this.onKeyUp(e); });
 
       // Text Overlay commit
       this.textOverlayEl.addEventListener('blur', () => this.commitTextEdit());
@@ -1604,6 +1801,12 @@
       });
     }
 
+    /** The cursor of the canvas when nothing is being dragged. */
+    restCursor() {
+      if (this.previewing || this.tool === 'hand') return 'grab';
+      return this.tool === 'select' ? 'default' : 'crosshair';
+    }
+
     closeAllPopovers() {
       if (this.shapesPopoverEl) this.shapesPopoverEl.style.display = 'none';
       if (this.palettePopoverEl) this.palettePopoverEl.style.display = 'none';
@@ -1611,23 +1814,71 @@
       if (this.moreMenuEl) this.moreMenuEl.style.display = 'none';
     }
 
+    /** Show a popover just below its button, inside the canvas (above the button when there is no room below). */
+    placePopover(pop, anchorBtn) {
+      pop.style.display = 'block';
+      const a = anchorBtn.getBoundingClientRect();
+      const w = this.canvasWrap.getBoundingClientRect();
+      const pw = pop.offsetWidth, ph = pop.offsetHeight;
+      let left = a.left - w.left;
+      let top = a.bottom - w.top + 6;
+      if (left + pw > w.width - 8) left = w.width - pw - 8;
+      if (top + ph > w.height - 8) top = a.top - w.top - ph - 6;
+      pop.style.left = Math.max(8, left) + 'px';
+      pop.style.top = Math.max(8, top) + 'px';
+    }
+
     toggleShapesPopover(anchorBtn) {
       const isVisible = this.shapesPopoverEl.style.display === 'block';
       this.closeAllPopovers();
       if (isVisible) return;
-
-      const rect = anchorBtn.getBoundingClientRect();
-      const wrapRect = this.canvasWrap.getBoundingClientRect();
-      this.shapesPopoverEl.style.left = Math.max(10, rect.right - wrapRect.left + 6) + 'px';
-      this.shapesPopoverEl.style.top = Math.max(10, rect.top - wrapRect.top) + 'px';
-      this.shapesPopoverEl.style.display = 'block';
+      this.shapesPopoverEl.querySelectorAll('.diag-shape-grid-btn').forEach(b => {
+        b.classList.toggle('is-current', b.dataset.shapeType === this.lastUsedShapeType);
+      });
+      this.placePopover(this.shapesPopoverEl, anchorBtn);
     }
 
     toggleMoreMenu(anchorBtn) {
       const isVisible = this.moreMenuEl.style.display === 'block';
       this.closeAllPopovers();
       if (isVisible) return;
-      this.moreMenuEl.style.display = 'block';
+      this.placePopover(this.moreMenuEl, anchorBtn);
+    }
+
+    /** The stored colour the first selected item has for 'fill' or 'border' (lower case), to mark it in the palette. */
+    currentPaletteColour(type) {
+      const shape = this.data.shapes.find(x => this.selectedShapeIds.has(x.id));
+      let c = null;
+      if (type === 'fill') {
+        c = shape && shape.fill;
+      } else if (shape) {
+        c = shape.stroke;
+      } else {
+        const conn = this.data.connectors.find(x => this.selectedConnectorIds.has(x.id));
+        const frame = this.data.frames.find(x => this.selectedFrameIds.has(x.id));
+        c = (conn && conn.stroke) || (frame && frame.stroke);
+      }
+      return c ? String(c).toLowerCase() : '';
+    }
+
+    /** Palette markup: swatches for the fill or the border, and the domain presets. Swatches show how a colour is drawn in this theme. */
+    paletteHtml(type) {
+      const dark = this.dark;
+      const cur = this.currentPaletteColour(type);
+      const list = type === 'fill' ? COLOR_SWATCHES : STROKE_SWATCHES;
+      const drawn = c => (type === 'fill' ? displayFill(c, dark) : displayStroke(c, dark));
+      const swatches = list.map(c => {
+        const none = c === 'none';
+        const label = none ? 'No colour' : c;
+        return `<button type="button" class="diag-palette-swatch-btn${none ? ' diag-swatch-none' : ''}${c.toLowerCase() === cur ? ' is-current' : ''}" data-color-val="${escapeHtml(c)}" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}"${none ? '' : ` style="background:${escapeHtml(drawn(c))}"`}></button>`;
+      }).join('');
+      const domains = DOMAIN_PRESETS.filter(d => d.id !== 'none').map(d => {
+        const fill = displayFill(d.fill, dark);
+        const text = readableText(displayText(d.text, dark), fill, dark);
+        return `<button type="button" class="diag-domain-swatch-btn" data-domain-id="${d.id}" title="${escapeHtml(d.name)}" aria-label="${escapeHtml(d.name)}" style="background:${escapeHtml(fill)};border-color:${escapeHtml(displayStroke(d.stroke, dark))};color:${escapeHtml(text)}">${escapeHtml(d.name)}</button>`;
+      }).join('');
+      return `<div class="diag-pal-label">Colours</div><div class="diag-pal-grid">${swatches}</div>` +
+        `<div class="diag-pal-label">Domains</div><div class="diag-pal-domains">${domains}</div>`;
     }
 
     togglePalettePopover(anchorBtn, type) {
@@ -1636,23 +1887,15 @@
       if (isVisible) return;
 
       this.activePaletteTarget = type;
-      const rect = anchorBtn.getBoundingClientRect();
-      const wrapRect = this.canvasWrap.getBoundingClientRect();
-      this.palettePopoverEl.style.left = Math.max(10, rect.left - wrapRect.left) + 'px';
-      this.palettePopoverEl.style.top = Math.max(10, rect.bottom - wrapRect.top + 6) + 'px';
-      this.palettePopoverEl.style.display = 'block';
+      this.palettePopoverEl.innerHTML = this.paletteHtml(type);
+      this.placePopover(this.palettePopoverEl, anchorBtn);
     }
 
     toggleCtxOverflow(anchorBtn) {
       const isVisible = this.ctxOverflowMenuEl.style.display === 'block';
       this.closeAllPopovers();
       if (isVisible) return;
-
-      const rect = anchorBtn.getBoundingClientRect();
-      const wrapRect = this.canvasWrap.getBoundingClientRect();
-      this.ctxOverflowMenuEl.style.left = Math.max(10, rect.left - wrapRect.left) + 'px';
-      this.ctxOverflowMenuEl.style.top = Math.max(10, rect.bottom - wrapRect.top + 6) + 'px';
-      this.ctxOverflowMenuEl.style.display = 'block';
+      this.placePopover(this.ctxOverflowMenuEl, anchorBtn);
     }
 
     selectShapeFromPopover(shapeType) {
@@ -1738,7 +1981,7 @@
 
       // Update aria-pressed and active classes on rail buttons
       const isShapeTool = VALID_SHAPE_TYPES.has(tool) && tool !== 'sticky' && tool !== 'text';
-      this.mountEl.querySelectorAll('.diag-rail-btn[data-tool]').forEach(b => {
+      this.mountEl.querySelectorAll('.diag-rail-btn[data-tool]:not([data-tool="undo"]):not([data-tool="redo"])').forEach(b => {
         const active = b.dataset.tool === tool;
         b.classList.toggle('active', active);
         b.setAttribute('aria-pressed', active ? 'true' : 'false');
@@ -1750,21 +1993,13 @@
         shapesBtn.setAttribute('aria-pressed', isShapeTool ? 'true' : 'false');
       }
 
-      if (tool === 'hand') {
-        this.svgEl.style.cursor = 'grab';
-      } else if (tool === 'connector') {
-        this.svgEl.style.cursor = 'crosshair';
-      } else if (tool === 'select') {
-        this.svgEl.style.cursor = 'default';
-      } else {
-        this.svgEl.style.cursor = 'crosshair';
-      }
+      this.svgEl.style.cursor = this.restCursor();
     }
 
     /* ---------------- Mouse Interactions ---------------- */
 
     onMouseDown(e) {
-      if (e.button === 2 || e.button === 1 || this.spacePressed || this.tool === 'hand') return;
+      if (e.button === 2 || e.button === 1 || this.spacePressed || this.tool === 'hand' || this.previewing) return;
       const canvasPos = this.clientToDiagram(e.clientX, e.clientY);
 
       // Connector end handle -> drag the end (re-attach / detach)
@@ -1977,6 +2212,7 @@
     }
 
     onDoubleClick(e) {
+      if (this.previewing) return;
       const canvasPos = this.clientToDiagram(e.clientX, e.clientY);
 
       // Shape double-click -> inline edit
@@ -2009,8 +2245,27 @@
       this.createShapeAt(shapeType, canvasPos.x - w / 2, canvasPos.y - h / 2, w, h, true);
     }
 
+    /**
+     * Do keys belong to this canvas? Only when they come from inside it, or from nowhere in particular (the page
+     * itself) right after the canvas was pressed. Never from a text field: the requirements list, the chat and the
+     * canvas' own text overlay all have their own keys.
+     */
+    ownsKeys(e) {
+      const t = e.target;
+      if (t && t.nodeType === 1) {
+        const tag = t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return false;
+      }
+      if (!t || t === document.body || t === document.documentElement) return this.kbActive;
+      return this.mountEl.contains(t);
+    }
+
     onKeyDown(e) {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
+      if (!this.ownsKeys(e) || this.previewing) {
+        return;
+      }
+      // Space or Enter on a focused toolbar button presses that button
+      if ((e.code === 'Space' || e.key === 'Enter') && e.target.closest && e.target.closest('button')) {
         return;
       }
 
@@ -2048,8 +2303,9 @@
         }
       }
 
-      // Arrow keys nudge
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      // Arrow keys nudge what is selected (and leave the page's own arrow keys alone when nothing is)
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) &&
+          (this.selectedShapeIds.size || this.selectedFrameIds.size)) {
         e.preventDefault();
         const step = e.shiftKey ? (this.snapToGrid ? this.gridSize * 2 : 10) : (this.snapToGrid ? this.gridSize : 1);
         let dx = 0, dy = 0;
@@ -2084,10 +2340,10 @@
     }
 
     onKeyUp(e) {
-      if (e.code === 'Space') {
+      if (e.code === 'Space' && this.spacePressed) {
         this.spacePressed = false;
         if (!this.isPanning) {
-          this.svgEl.style.cursor = this.tool === 'hand' ? 'grab' : 'default';
+          this.svgEl.style.cursor = this.restCursor();
         }
       }
     }
@@ -2216,10 +2472,7 @@
       const w = Math.abs(pos.x - this.drawStart.x);
       const h = Math.abs(pos.y - this.drawStart.y);
 
-      this.overlayLayer.innerHTML = `
-        <rect x="${x}" y="${y}" width="${w}" height="${h}"
-              fill="rgba(37,99,235,0.08)" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4 4" rx="4"/>
-      `;
+      this.overlayLayer.innerHTML = `<rect class="diag-draw-preview" x="${x}" y="${y}" width="${w}" height="${h}" rx="4"/>`;
     }
 
     finishDrawingShape(pos) {
@@ -2336,7 +2589,7 @@
         if (!s) continue;
         for (const p of this.getConnectionPoints(s)) {
           const hi = !!(snapRes.target && snapRes.target.shape === sid && snapRes.target.point === p.name);
-          html += `<circle class="diag-conn-point${hi ? ' is-snap' : ''}" cx="${p.x}" cy="${p.y}" r="${hi ? rHi : r}" fill="${hi ? '#22c55e' : '#ffffff'}" stroke="${hi ? '#15803d' : '#2563eb'}" stroke-width="${sw}" pointer-events="none"/>`;
+          html += `<circle class="diag-conn-point${hi ? ' is-snap' : ''}" cx="${p.x}" cy="${p.y}" r="${hi ? rHi : r}" stroke-width="${sw}" pointer-events="none"/>`;
         }
       }
       return html;
@@ -2348,7 +2601,7 @@
       const sw = this.pxToDiagram(1.8);
       return attached
         ? `<circle cx="${pos.x}" cy="${pos.y}" r="${r}" fill="${color}" pointer-events="none"/>`
-        : `<circle class="diag-conn-free-end" cx="${pos.x}" cy="${pos.y}" r="${r}" fill="#ffffff" stroke="${color}" stroke-width="${sw}" pointer-events="none"/>`;
+        : `<circle class="diag-conn-free-end" cx="${pos.x}" cy="${pos.y}" r="${r}" stroke="${color}" stroke-width="${sw}" pointer-events="none"/>`;
     }
 
     startConnecting(shapeId, point) {
@@ -2374,10 +2627,10 @@
       const toPos = target ? { x: target.x, y: target.y } : this.snapFreePos(this.connectingCurrent);
       const pathD = `M ${fromPos.x} ${fromPos.y} L ${toPos.x} ${toPos.y}`;
       this.overlayLayer.innerHTML =
-        `<path d="${pathD}" stroke="#2563eb" stroke-width="2" stroke-dasharray="5 5" fill="none" pointer-events="none"/>` +
+        `<path class="diag-conn-preview" d="${pathD}" pointer-events="none"/>` +
         this.connectionPointsHtml(sr) +
-        this.endMarkerHtml(fromPos, !!from.shape, '#2563eb') +
-        this.endMarkerHtml(toPos, !!target, '#2563eb');
+        this.endMarkerHtml(fromPos, !!from.shape, 'var(--sig)') +
+        this.endMarkerHtml(toPos, !!target, 'var(--sig)');
     }
 
     finishConnecting(pos) {
@@ -2616,10 +2869,7 @@
       const w = Math.abs(this.marqueeEnd.x - this.marqueeStart.x);
       const h = Math.abs(this.marqueeEnd.y - this.marqueeStart.y);
 
-      this.overlayLayer.innerHTML = `
-        <rect x="${x}" y="${y}" width="${w}" height="${h}"
-              fill="rgba(37,99,235,0.08)" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="4 3"/>
-      `;
+      this.overlayLayer.innerHTML = `<rect class="diag-marquee" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
     }
 
     finishMarquee() {
@@ -2844,9 +3094,8 @@
       const matrix = `matrix(${this.scale}, 0, 0, ${this.scale}, ${this.panX}, ${this.panY})`;
       this.viewportEl.setAttribute('transform', matrix);
 
-      const pattern = this.mountEl.querySelector('#diag-grid-pattern');
-      if (pattern) {
-        pattern.setAttribute('patternTransform', `translate(${this.panX}, ${this.panY}) scale(${this.scale})`);
+      if (this.gridPatternEl) {
+        this.gridPatternEl.setAttribute('patternTransform', `translate(${this.panX}, ${this.panY}) scale(${this.scale})`);
       }
       this.renderContextToolbar();
       this.updateZoomIndicator();
@@ -2903,7 +3152,7 @@
 
       if (viewW <= 0 || viewH <= 0) {
         requestAnimationFrame(() => {
-          if (!this.userHasPannedOrZoomed) this.fitContent();
+          if (this.alive() && !this.userHasPannedOrZoomed) this.fitContent();
         });
         return;
       }
@@ -2913,10 +3162,13 @@
       const contentW = Math.max(1, maxX - minX + pad * 2);
       const contentH = Math.max(1, maxY - minY + pad * 2);
 
-      const scale = Math.min(viewW / contentW, viewH / contentH, 1.15);
+      // The toolbar floats on the top edge: when the canvas is tall enough, the drawing is fitted below it
+      const topInset = viewH >= 300 ? 44 : 0;
+      const fitH = viewH - topInset;
+      const scale = Math.min(viewW / contentW, fitH / contentH, 1.15);
       this.scale = Math.max(0.18, scale);
       this.panX = (viewW - (maxX - minX) * this.scale) / 2 - minX * this.scale;
-      this.panY = (viewH - (maxY - minY) * this.scale) / 2 - minY * this.scale;
+      this.panY = topInset + (fitH - (maxY - minY) * this.scale) / 2 - minY * this.scale;
       this.updateTransform();
     }
 
@@ -2924,17 +3176,15 @@
       let html = '';
       this.data.frames.forEach(f => {
         const isSel = this.selectedFrameIds.has(f.id);
-        const strokeColor = f.stroke || '#94a3b8';
+        const strokeColor = displayStroke(f.stroke || '#94a3b8', this.dark);
+        const changed = this.previewing && this.previewChanged.has(f.id);
         html += `
-          <g class="diag-frame-node ${isSel ? 'is-selected' : ''}" data-id="${escapeHtml(f.id)}" transform="translate(${f.x}, ${f.y})">
-            <rect width="${f.w}" height="${f.h}" rx="10"
-                  fill="rgba(241, 245, 249, 0.45)"
-                  stroke="${escapeHtml(isSel ? '#2563eb' : strokeColor)}"
+          <g class="diag-frame-node${isSel ? ' is-selected' : ''}${changed ? ' is-changed' : ''}" data-id="${escapeHtml(f.id)}" transform="translate(${f.x}, ${f.y})">
+            <rect class="diag-frame-fill" width="${f.w}" height="${f.h}" rx="10"
+                  stroke="${escapeHtml(isSel ? 'var(--sig)' : strokeColor)}"
                   stroke-width="${isSel ? 2.5 : 2}"
                   stroke-dasharray="8 6"/>
-            <text x="12" y="24" fill="${escapeHtml(strokeColor)}" font-size="12" font-weight="700" letter-spacing="0.04em">
-              ${escapeHtml(f.title.toUpperCase())}
-            </text>
+            <text x="12" y="24" fill="${escapeHtml(strokeColor)}" font-size="12" font-weight="600">${escapeHtml(f.title)}</text>
           </g>
         `;
       });
@@ -2947,14 +3197,15 @@
         const p1 = this.getEndpointCoords(c.from);
         const p2 = this.getEndpointCoords(c.to);
         const isSel = this.selectedConnectorIds.has(c.id);
+        const changed = this.previewing && this.previewChanged.has(c.id);
 
         const d = this.buildConnectorPath(c, p1, p2);
 
-        const strokeColor = isSel ? '#2563eb' : (c.stroke || '#64748b');
+        const strokeColor = isSel ? 'var(--sig)' : displayStroke(c.stroke || '#64748b', this.dark);
         const strokeWidth = isSel ? 3 : (c.style === 'thick' ? 3.5 : 2);
         const dashArray = c.style === 'dashed' ? '6 4' : (c.style === 'dotted' ? '2 3' : 'none');
-        const markerEnd = (c.arrows === 'end' || c.arrows === 'both' || c.arrows === 'to') ? 'url(#diag-arrow-end)' : '';
-        const markerStart = (c.arrows === 'start' || c.arrows === 'both') ? 'url(#diag-arrow-start)' : '';
+        const markerEnd = (c.arrows === 'end' || c.arrows === 'both' || c.arrows === 'to') ? this.markerEndRef : '';
+        const markerStart = (c.arrows === 'start' || c.arrows === 'both') ? this.markerStartRef : '';
 
         const mx = (p1.x + p2.x) / 2;
         const my = (p1.y + p2.y) / 2;
@@ -2963,7 +3214,7 @@
           const lw = Math.max(c.label.length * 7.5 + 16, 32);
           labelHtml = `
             <g class="diag-conn-label" transform="translate(${mx}, ${my})">
-              <rect x="${-lw / 2}" y="-11" width="${lw}" height="22" rx="5" fill="#ffffff" stroke="${escapeHtml(strokeColor)}" stroke-width="1.2"/>
+              <rect class="diag-conn-label-box" x="${-lw / 2}" y="-11" width="${lw}" height="22" rx="5" stroke="${escapeHtml(strokeColor)}" stroke-width="1.2"/>
               <text text-anchor="middle" y="4.5" font-size="11" font-weight="600" fill="${escapeHtml(strokeColor)}">
                 ${escapeHtml(c.label)}
               </text>
@@ -2972,7 +3223,7 @@
         }
 
         html += `
-          <g class="diag-connector-node ${isSel ? 'is-selected' : ''}" data-id="${escapeHtml(c.id)}">
+          <g class="diag-connector-node${isSel ? ' is-selected' : ''}${changed ? ' is-changed' : ''}" data-id="${escapeHtml(c.id)}">
             <path d="${escapeHtml(d)}" stroke="transparent" stroke-width="14" fill="none" style="cursor:pointer"/>
             <path d="${escapeHtml(d)}" stroke="${escapeHtml(strokeColor)}" stroke-width="${strokeWidth}"
                   stroke-dasharray="${escapeHtml(dashArray)}" fill="none"
@@ -2986,18 +3237,29 @@
       this.connectorsLayer.innerHTML = html;
     }
 
+    /** How a block is drawn in the current theme: fill, outline and text colours. The stored colours are not touched. */
+    shapeColors(s) {
+      const dark = this.dark;
+      const fill = displayFill(s.fill, dark);
+      const stroke = displayStroke(s.stroke || '#2980b9', dark);
+      const preset = s.domain ? DOMAIN_PRESETS.find(d => d.id === s.domain) : null;
+      const lightText = s.type === 'sticky' ? '#854d0e' : ((preset && preset.text) || '#1e293b');
+      return { fill, stroke, text: readableText(displayText(lightText, dark), fill, dark) };
+    }
+
     renderShapes() {
       let html = '';
       const sortedShapes = [...this.data.shapes].sort((a, b) => (a.z || 0) - (b.z || 0));
 
       sortedShapes.forEach(s => {
         const isSel = this.selectedShapeIds.has(s.id);
-        const strokeColor = isSel ? '#2563eb' : (s.stroke || '#2980b9');
+        const col = this.shapeColors(s);
+        const strokeColor = isSel ? 'var(--sig)' : col.stroke;
         const strokeWidth = isSel ? Math.max(s.strokeWidth, 2.5) : s.strokeWidth;
         const dashArray = s.strokeStyle === 'dashed' ? '6 4' : (s.strokeStyle === 'dotted' ? '2 3' : 'none');
         const fontSz = s.fontSize === 'S' ? 12 : (s.fontSize === 'L' ? 17 : 14);
 
-        const shapeSvg = renderShapeSvg(s, strokeColor, strokeWidth, dashArray);
+        const shapeSvg = renderShapeSvg(Object.assign({}, s, { fill: col.fill }), strokeColor, strokeWidth, dashArray);
 
         // Multiline centered text rendering
         const lines = (s.text || '').split('\n');
@@ -3010,23 +3272,23 @@
         const totalTextHeight = lines.length * lineHeight;
         const startY = (s.h - totalTextHeight) / 2 + fontSz * 0.9;
 
-        const textColor = s.type === 'sticky' ? '#854d0e' : (s.domain ? (DOMAIN_PRESETS.find(d => d.id === s.domain)?.text || '#1e293b') : '#1e293b');
         const textLinesSvg = lines.map((line, i) => `
-          <tspan x="${textX}" y="${startY + i * lineHeight}" font-size="${fontSz}" font-weight="${s.bold ? (i === 0 ? '700' : '500') : '400'}" fill="${escapeHtml(textColor)}">
+          <tspan x="${textX}" y="${startY + i * lineHeight}" font-size="${fontSz}" font-weight="${s.bold ? (i === 0 ? '700' : '500') : '400'}" fill="${escapeHtml(col.text)}">
             ${escapeHtml(line)}
           </tspan>
         `).join('');
 
         const lockIcon = s.locked ? `
-          <g transform="translate(${s.w - 18}, 6)">
-            <rect x="2" y="5" width="8" height="6" rx="1" fill="#64748b"/>
-            <path d="M4 5V3a2 2 0 0 1 4 0v2" fill="none" stroke="#64748b" stroke-width="1.2"/>
+          <g class="diag-lock" transform="translate(${s.w - 18}, 6)">
+            <rect x="2" y="5" width="8" height="6" rx="1"/>
+            <path d="M4 5V3a2 2 0 0 1 4 0v2" stroke-width="1.2"/>
           </g>
         ` : '';
 
         const isPulse = !!(this.pulsingShapeIds && this.pulsingShapeIds.has(s.id));
+        const changed = this.previewing && this.previewChanged.has(s.id);
         html += `
-          <g class="diag-shape-node ${isSel ? 'is-selected' : ''} ${isPulse ? 'diag-pulse' : ''}" data-id="${escapeHtml(s.id)}" transform="translate(${s.x}, ${s.y})">
+          <g class="diag-shape-node ${isSel ? 'is-selected' : ''} ${isPulse ? 'diag-pulse' : ''} ${changed ? 'is-changed' : ''}" data-id="${escapeHtml(s.id)}" transform="translate(${s.x}, ${s.y})">
             ${shapeSvg}
             <text text-anchor="${escapeHtml(textAnchor)}" style="pointer-events:none;">${textLinesSvg}</text>
             ${lockIcon}
@@ -3048,7 +3310,7 @@
       const r = this.pxToDiagram(4.5);
       let html = '';
       this.getConnectionPoints(s).forEach(p => {
-        html += `<circle class="diag-port-dot" cx="${p.x}" cy="${p.y}" r="${r}" fill="#ffffff" stroke="#2563eb" stroke-width="${this.pxToDiagram(1.5)}"
+        html += `<circle class="diag-port-dot" cx="${p.x}" cy="${p.y}" r="${r}" stroke-width="${this.pxToDiagram(1.5)}"
                          data-shape-id="${escapeHtml(s.id)}" data-point="${escapeHtml(p.name)}"/>`;
       });
       this.overlayLayer.insertAdjacentHTML('beforeend', html);
@@ -3070,8 +3332,8 @@
           [['from', c.from], ['to', c.to]].forEach(([end, ep]) => {
             const pos = this.getEndpointCoords(ep);
             const attached = !!(ep && ep.shape);
-            endsSvg += `<circle class="diag-conn-end-handle" cx="${pos.x}" cy="${pos.y}" r="${er}"
-                          fill="${attached ? '#2563eb' : '#ffffff'}" stroke="#2563eb" stroke-width="${ew}" style="cursor:move"
+            endsSvg += `<circle class="diag-conn-end-handle${attached ? ' is-attached' : ''}" cx="${pos.x}" cy="${pos.y}" r="${er}"
+                          stroke-width="${ew}" style="cursor:move"
                           data-conn-id="${escapeHtml(c.id)}" data-end="${escapeHtml(end)}"/>`;
           });
           this.overlayLayer.insertAdjacentHTML('beforeend', endsSvg);
@@ -3105,10 +3367,7 @@
         { pos: 'w', x, y: y + h / 2, cursor: 'ew-resize' },
       ];
 
-      let handlesSvg = `
-        <rect x="${x - 1}" y="${y - 1}" width="${w + 2}" height="${h + 2}"
-              fill="none" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="3 3"/>
-      `;
+      let handlesSvg = `<rect class="diag-sel-box" x="${x - 1}" y="${y - 1}" width="${w + 2}" height="${h + 2}"/>`;
       handles.forEach(hd => {
         handlesSvg += `
           <rect class="diag-handle" x="${hd.x - r}" y="${hd.y - r}" width="${r * 2}" height="${r * 2}"
@@ -3123,19 +3382,20 @@
     renderContextToolbar() {
       const tb = this.ctxToolbarEl;
       const totalSel = this.selectedShapeIds.size + this.selectedConnectorIds.size + this.selectedFrameIds.size;
-      if (totalSel === 0) {
+      if (totalSel === 0 || this.previewing) {
         tb.style.display = 'none';
         return;
       }
 
       // Calculate selection bounding box
-      let minX = Infinity, minY = Infinity, maxX = -Infinity;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       this.selectedShapeIds.forEach(id => {
         const s = this.data.shapes.find(x => x.id === id);
         if (s) {
           minX = Math.min(minX, s.x);
           minY = Math.min(minY, s.y);
           maxX = Math.max(maxX, s.x + s.w);
+          maxY = Math.max(maxY, s.y + s.h);
         }
       });
       this.selectedFrameIds.forEach(id => {
@@ -3144,6 +3404,7 @@
           minX = Math.min(minX, f.x);
           minY = Math.min(minY, f.y);
           maxX = Math.max(maxX, f.x + f.w);
+          maxY = Math.max(maxY, f.y + f.h);
         }
       });
       this.selectedConnectorIds.forEach(id => {
@@ -3154,102 +3415,121 @@
           minX = Math.min(minX, p1.x, p2.x);
           minY = Math.min(minY, p1.y, p2.y);
           maxX = Math.max(maxX, p1.x, p2.x);
+          maxY = Math.max(maxY, p1.y, p2.y);
         }
       });
-
-      const midScreen = this.diagramToClient((minX + maxX) / 2, minY);
-      const wrapRect = this.canvasWrap.getBoundingClientRect();
-      const topPos = midScreen.y - wrapRect.top - 46;
-      const leftPos = midScreen.x - wrapRect.left;
-
-      tb.style.left = Math.max(10, leftPos - 140) + 'px';
-      tb.style.top = Math.max(10, topPos) + 'px';
-      tb.style.display = 'flex';
+      if (!Number.isFinite(minX)) {
+        tb.style.display = 'none';
+        return;
+      }
 
       const isShapeOnly = this.selectedShapeIds.size > 0 && !this.selectedConnectorIds.size && !this.selectedFrameIds.size;
       const isFrameOnly = this.selectedFrameIds.size > 0 && !this.selectedShapeIds.size && !this.selectedConnectorIds.size;
       const isConnOnly = this.selectedConnectorIds.size > 0 && !this.selectedShapeIds.size && !this.selectedFrameIds.size;
+      const dark = this.dark;
+      const on = v => (v ? 'active' : '');
+      // swatches show how a colour is drawn in this theme; a colour of 'none' is a slashed swatch
+      const swatch = (kind, stored, drawn) => (!stored || stored === 'none')
+        ? `<span class="diag-swatch-${kind} diag-swatch-none"></span>`
+        : `<span class="diag-swatch-${kind}" style="${kind === 'circle' ? 'background' : 'border-color'}:${escapeHtml(drawn)}"></span>`;
+      let html;
 
       if (isShapeOnly) {
         const firstShape = this.data.shapes.find(s => this.selectedShapeIds.has(s.id));
-        const fillColor = firstShape?.fill === 'none' ? 'transparent' : (firstShape?.fill || '#ffffff');
-        const strokeColor = firstShape?.stroke === 'none' ? '#cbd5e1' : (firstShape?.stroke || '#2980b9');
+        const fill = firstShape ? firstShape.fill : '#ffffff';
+        const stroke = firstShape ? firstShape.stroke : '#2980b9';
+        const size = (firstShape && firstShape.fontSize) || 'M';
 
-        tb.innerHTML = `
+        html = `
           <button type="button" class="diag-ctx-btn" data-act="toggle-ctx-shapes" title="Change shape" aria-label="Change shape">${getIconSvg('change-shape')}</button>
-          <div class="diag-ctx-sep"></div>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn" data-act="toggle-fill-palette" title="Fill colour" aria-label="Fill colour">
-            <span class="diag-swatch-circle" style="background:${escapeHtml(fillColor)}"></span>
-          </button>
-          <button type="button" class="diag-ctx-btn" data-act="toggle-border-palette" title="Border colour" aria-label="Border colour">
-            <span class="diag-swatch-ring" style="border-color:${escapeHtml(strokeColor)}"></span>
-          </button>
-          <div class="diag-ctx-sep"></div>
+          <button type="button" class="diag-ctx-btn" data-act="toggle-fill-palette" title="Fill colour" aria-label="Fill colour">${swatch('circle', fill, displayFill(fill, dark))}</button>
+          <button type="button" class="diag-ctx-btn" data-act="toggle-border-palette" title="Border colour" aria-label="Border colour">${swatch('ring', stroke, displayStroke(stroke, dark))}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn ${firstShape?.strokeStyle === 'solid' ? 'active' : ''}" data-act="set-border-style" data-val="solid" title="Solid border" aria-label="Solid border">${getIconSvg('line-solid')}</button>
-          <button type="button" class="diag-ctx-btn ${firstShape?.strokeStyle === 'dashed' ? 'active' : ''}" data-act="set-border-style" data-val="dashed" title="Dashed border" aria-label="Dashed border">${getIconSvg('line-dashed')}</button>
-          <button type="button" class="diag-ctx-btn ${firstShape?.strokeStyle === 'dotted' ? 'active' : ''}" data-act="set-border-style" data-val="dotted" title="Dotted border" aria-label="Dotted border">${getIconSvg('line-dotted')}</button>
-          <div class="diag-ctx-sep"></div>
+          <button type="button" class="diag-ctx-btn ${on(firstShape?.strokeStyle === 'solid')}" data-act="set-border-style" data-val="solid" title="Solid border" aria-label="Solid border" aria-pressed="${firstShape?.strokeStyle === 'solid'}">${getIconSvg('line-solid')}</button>
+          <button type="button" class="diag-ctx-btn ${on(firstShape?.strokeStyle === 'dashed')}" data-act="set-border-style" data-val="dashed" title="Dashed border" aria-label="Dashed border" aria-pressed="${firstShape?.strokeStyle === 'dashed'}">${getIconSvg('line-dashed')}</button>
+          <button type="button" class="diag-ctx-btn ${on(firstShape?.strokeStyle === 'dotted')}" data-act="set-border-style" data-val="dotted" title="Dotted border" aria-label="Dotted border" aria-pressed="${firstShape?.strokeStyle === 'dotted'}">${getIconSvg('line-dotted')}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn" data-act="cycle-font-size" title="Text size: ${firstShape?.fontSize || 'M'}" aria-label="Text size: ${firstShape?.fontSize || 'M'}">
-            <span style="font-weight:700;font-size:13px;display:flex;align-items:center">T<span style="font-size:10px;margin-left:1px">▾</span></span>
-          </button>
-          <button type="button" class="diag-ctx-btn ${firstShape?.bold ? 'active' : ''}" data-act="toggle-bold" title="Bold" aria-label="Bold" aria-pressed="${!!firstShape?.bold}">${getIconSvg('bold')}</button>
-          <div class="diag-ctx-sep"></div>
+          <button type="button" class="diag-ctx-btn diag-ctx-text" data-act="cycle-font-size" title="Text size: ${escapeHtml(size)}" aria-label="Text size: ${escapeHtml(size)}"><span>T</span><small>${escapeHtml(size)}</small></button>
+          <button type="button" class="diag-ctx-btn ${on(firstShape?.bold)}" data-act="toggle-bold" title="Bold" aria-label="Bold" aria-pressed="${!!firstShape?.bold}">${getIconSvg('bold')}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn" data-act="delete-sel" title="Delete" aria-label="Delete" style="color:#ef4444">${getIconSvg('delete')}</button>
-          <div class="diag-ctx-sep"></div>
+          <button type="button" class="diag-ctx-btn danger" data-act="delete-sel" title="Delete" aria-label="Delete">${getIconSvg('delete')}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
           <button type="button" class="diag-ctx-btn" data-act="toggle-ctx-overflow" title="More options" aria-label="More options" aria-haspopup="true">${getIconSvg('more')}</button>
         `;
       } else if (isFrameOnly) {
         const firstFrame = this.data.frames.find(f => this.selectedFrameIds.has(f.id));
-        const strokeColor = firstFrame?.stroke || '#94a3b8';
+        const stroke = (firstFrame && firstFrame.stroke) || '#94a3b8';
 
-        tb.innerHTML = `
-          <button type="button" class="diag-ctx-btn" data-act="toggle-border-palette" title="Border colour" aria-label="Border colour">
-            <span class="diag-swatch-ring" style="border-color:${escapeHtml(strokeColor)}"></span>
-          </button>
-          <div class="diag-ctx-sep"></div>
+        html = `
+          <button type="button" class="diag-ctx-btn" data-act="toggle-border-palette" title="Border colour" aria-label="Border colour">${swatch('ring', stroke, displayStroke(stroke, dark))}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
           <button type="button" class="diag-ctx-btn" data-act="edit-frame-title" title="Edit label" aria-label="Edit label">${getIconSvg('label')}</button>
-          <div class="diag-ctx-sep"></div>
-          <button type="button" class="diag-ctx-btn" data-act="delete-sel" title="Delete" aria-label="Delete" style="color:#ef4444">${getIconSvg('delete')}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
+          <button type="button" class="diag-ctx-btn danger" data-act="delete-sel" title="Delete" aria-label="Delete">${getIconSvg('delete')}</button>
         `;
       } else if (isConnOnly) {
         const firstConn = this.data.connectors.find(c => this.selectedConnectorIds.has(c.id));
-        const strokeColor = firstConn?.stroke || '#64748b';
+        const stroke = (firstConn && firstConn.stroke) || '#64748b';
 
-        tb.innerHTML = `
-          <button type="button" class="diag-ctx-btn" data-act="toggle-border-palette" title="Line colour" aria-label="Line colour">
-            <span class="diag-swatch-ring" style="border-color:${escapeHtml(strokeColor)}"></span>
-          </button>
-          <div class="diag-ctx-sep"></div>
+        html = `
+          <button type="button" class="diag-ctx-btn" data-act="toggle-border-palette" title="Line colour" aria-label="Line colour">${swatch('ring', stroke, displayStroke(stroke, dark))}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn ${firstConn?.style === 'solid' ? 'active' : ''}" data-act="set-conn-style" data-val="solid" title="Solid line" aria-label="Solid line">${getIconSvg('line-solid')}</button>
-          <button type="button" class="diag-ctx-btn ${firstConn?.style === 'dashed' ? 'active' : ''}" data-act="set-conn-style" data-val="dashed" title="Dashed line" aria-label="Dashed line">${getIconSvg('line-dashed')}</button>
-          <button type="button" class="diag-ctx-btn ${firstConn?.style === 'dotted' ? 'active' : ''}" data-act="set-conn-style" data-val="dotted" title="Dotted line" aria-label="Dotted line">${getIconSvg('line-dotted')}</button>
-          <div class="diag-ctx-sep"></div>
+          <button type="button" class="diag-ctx-btn ${on(firstConn?.style === 'solid')}" data-act="set-conn-style" data-val="solid" title="Solid line" aria-label="Solid line" aria-pressed="${firstConn?.style === 'solid'}">${getIconSvg('line-solid')}</button>
+          <button type="button" class="diag-ctx-btn ${on(firstConn?.style === 'dashed')}" data-act="set-conn-style" data-val="dashed" title="Dashed line" aria-label="Dashed line" aria-pressed="${firstConn?.style === 'dashed'}">${getIconSvg('line-dashed')}</button>
+          <button type="button" class="diag-ctx-btn ${on(firstConn?.style === 'dotted')}" data-act="set-conn-style" data-val="dotted" title="Dotted line" aria-label="Dotted line" aria-pressed="${firstConn?.style === 'dotted'}">${getIconSvg('line-dotted')}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn ${firstConn?.arrows === 'none' ? 'active' : ''}" data-act="set-conn-arrows" data-val="none" title="No arrows" aria-label="No arrows">${getIconSvg('arrow-none')}</button>
-          <button type="button" class="diag-ctx-btn ${firstConn?.arrows === 'end' ? 'active' : ''}" data-act="set-conn-arrows" data-val="end" title="Arrow at end" aria-label="Arrow at end">${getIconSvg('arrow-end')}</button>
-          <button type="button" class="diag-ctx-btn ${firstConn?.arrows === 'both' ? 'active' : ''}" data-act="set-conn-arrows" data-val="both" title="Arrows both ends" aria-label="Arrows both ends">${getIconSvg('arrow-both')}</button>
-          <div class="diag-ctx-sep"></div>
+          <button type="button" class="diag-ctx-btn ${on(firstConn?.arrows === 'none')}" data-act="set-conn-arrows" data-val="none" title="No arrows" aria-label="No arrows" aria-pressed="${firstConn?.arrows === 'none'}">${getIconSvg('arrow-none')}</button>
+          <button type="button" class="diag-ctx-btn ${on(firstConn?.arrows === 'end')}" data-act="set-conn-arrows" data-val="end" title="Arrow at end" aria-label="Arrow at end" aria-pressed="${firstConn?.arrows === 'end'}">${getIconSvg('arrow-end')}</button>
+          <button type="button" class="diag-ctx-btn ${on(firstConn?.arrows === 'both')}" data-act="set-conn-arrows" data-val="both" title="Arrows both ends" aria-label="Arrows both ends" aria-pressed="${firstConn?.arrows === 'both'}">${getIconSvg('arrow-both')}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn ${firstConn?.route === 'straight' ? '' : 'active'}" data-act="toggle-conn-route" title="Toggle straight/elbow route" aria-label="Toggle straight/elbow route">${getIconSvg('route-elbow')}</button>
+          <button type="button" class="diag-ctx-btn ${on(firstConn?.route !== 'straight')}" data-act="toggle-conn-route" title="Switch between straight and elbow" aria-label="Switch between straight and elbow">${getIconSvg('route-elbow')}</button>
           <button type="button" class="diag-ctx-btn" data-act="edit-conn-label" title="Edit label" aria-label="Edit label">${getIconSvg('label')}</button>
-          <div class="diag-ctx-sep"></div>
+          <span class="diag-sep" aria-hidden="true"></span>
 
-          <button type="button" class="diag-ctx-btn" data-act="delete-sel" title="Delete" aria-label="Delete" style="color:#ef4444">${getIconSvg('delete')}</button>
+          <button type="button" class="diag-ctx-btn danger" data-act="delete-sel" title="Delete" aria-label="Delete">${getIconSvg('delete')}</button>
         `;
       } else {
         // Mixed selection: common controls only (delete)
-        tb.innerHTML = `
-          <button type="button" class="diag-ctx-btn" data-act="delete-sel" title="Delete" aria-label="Delete" style="color:#ef4444">${getIconSvg('delete')}</button>
+        html = `
+          <button type="button" class="diag-ctx-btn danger" data-act="delete-sel" title="Delete" aria-label="Delete">${getIconSvg('delete')}</button>
         `;
       }
 
-      // Bind context toolbar clicks
+      // Redrawn on every pan and zoom: only touch the buttons when they changed, so a focused button stays focused
+      if (tb._html !== html) {
+        tb.innerHTML = html;
+        tb._html = html;
+      }
       tb.onclick = (e) => this.onContextToolbarClick(e);
+      tb.style.display = 'flex';
+      this.placeContextToolbar(minX, minY, maxX, maxY);
+    }
+
+    /** Above the selection; below it when there is no room above (or when above would sit on the toolbar). */
+    placeContextToolbar(minX, minY, maxX, maxY) {
+      const tb = this.ctxToolbarEl;
+      const wrap = this.canvasWrap.getBoundingClientRect();
+      const topPt = this.diagramToClient((minX + maxX) / 2, minY);
+      const bottomPt = this.diagramToClient((minX + maxX) / 2, maxY);
+      const tw = tb.offsetWidth, th = tb.offsetHeight;
+      const left = Math.min(Math.max(8, topPt.x - wrap.left - tw / 2), Math.max(8, wrap.width - tw - 8));
+
+      let y = topPt.y - wrap.top - th - 10;
+      const rail = this.railEl.getBoundingClientRect();
+      const overRail = left < rail.right - wrap.left + 8 && left + tw > rail.left - wrap.left - 8;
+      const minTop = overRail ? rail.bottom - wrap.top + 8 : 8;
+      if (y < minTop) y = bottomPt.y - wrap.top + 10;
+      y = Math.max(minTop, Math.min(y, wrap.height - th - 8));
+      tb.style.left = left + 'px';
+      tb.style.top = y + 'px';
     }
 
     onContextToolbarClick(e) {
@@ -3376,7 +3656,7 @@
                       (!this.data.connectors || this.data.connectors.length === 0) &&
                       (!this.data.frames || this.data.frames.length === 0);
       if (this.emptyStateEl) {
-        this.emptyStateEl.style.display = isEmpty ? 'block' : 'none';
+        this.emptyStateEl.style.display = isEmpty && !this.previewing ? 'grid' : 'none';
       }
     }
 

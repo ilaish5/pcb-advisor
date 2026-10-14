@@ -117,13 +117,24 @@ def test_command_palette_result_scrolls_into_view():
 
 
 def test_idea_layout_responsive():
-    """Verify Idea tab two-column layout wraps on narrow center view."""
+    """The Idea sheet answers to the width and height of its own sheet (a container query), not to the window."""
     style = ui_css()
     assert style.strip(), "the stylesheets must exist"
+    idea = (UI / "styles" / "idea.css").read_text(encoding="utf-8")
+    flat = idea.replace(" ", "")
 
-    assert "container-type:inline-size" in style.replace(" ", "") or "@container" in style, (
-        "Expected container query support on center view"
+    # .view is the size container, so the rules below follow the sheet when one or two sheets share the window
+    assert "container-type:inline-size" in re.search(r"\.view\s*\{([^}]+)\}", style).group(1).replace(" ", "")
+    assert re.search(r"@container\(max-width:\d+px\)\{[^}]*\.idea-prop\{flex-wrap:wrap\}", flat), (
+        "a narrow sheet: the proposal bar wraps its buttons under the message"
     )
-    assert "auto-fit" in style or "@container" in style, (
-        "Expected auto-fit or container query wrapping for two-column layouts"
-    )
+
+    # a short window: the list gives way (a capped, scrolling list) and the canvas keeps a minimum height
+    assert re.search(r"\.idea-reqs\{[^}]*max-height:\d+%", flat)
+    assert re.search(r"\.idea-reqs:has\(\.req-add-form:not\(\[hidden\]\)\)[^{]*\{max-height:\d+%", flat), "an open form gets more room"
+    assert re.search(r"\.idea-canvas\{[^}]*min-height:\d+px", flat)
+
+    # the toolbar wraps to a second row inside a narrow canvas instead of overflowing it
+    assert re.search(r"\.diag-rail\{[^}]*flex-wrap:wrap", flat)
+    assert "overflow-x" not in re.search(r"\.req-scroll\{([^}]*)\}", flat).group(1), "long words wrap in a requirement; nothing scrolls sideways"
+    assert "overflow-wrap:anywhere" in flat
