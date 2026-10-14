@@ -66,7 +66,7 @@ def test_the_rules_view_keeps_its_contracts():
         assert old not in RULES_JS, old
 
 
-@pytest.mark.parametrize("cls", ["ok", "warn", "bad", "plan"])
+@pytest.mark.parametrize("cls", ["ok", "warn", "bad"])
 def test_the_verdict_tag_classes_exist(cls):
     assert re.search(rf"\.tag\.{cls}\{{", HTML), cls
 
@@ -78,7 +78,8 @@ def test_a_both_report_is_listed_in_both_dfm_segments():
     # the segment on show, not the report's own kind, decides which report and which findings are drawn
     assert "const kind = dfmSeg === 'smt' ? 'smt' : 'pcb';" in checks
     assert "dfmFindings(stem, kind)" in checks and "'data-kind': kind" in checks
-    assert "d.kind === 'smt' ? curSmtCheckStem : curPcbCheckStem" in HTML
+    assert "(kind === 'smt' ? curSmtCheckStem : curPcbCheckStem) || curPcbCheckStem || curSmtCheckStem" in HTML   # dfmStemFor
+    assert "curCheckStem" not in HTML, "one current report per segment, no third one"
     # a 'both' report holds the bare board analyses ('PCB DFM>...') and the assembly ones ('SMT DFM>...'): each segment
     # lists its own findings, and a finding with no section is a bare-board one
     rows = _body("dfmRows")

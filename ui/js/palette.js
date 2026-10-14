@@ -61,8 +61,8 @@ function palShowNet(name, sheetIds) {
 }
 function palFiles() {
   const out = [];
-  for (const s of (S.sources || [])) out.push({g: 'Files', cls: 'm', label: s.name, d: 'Source', fields: [[s.name, 1]], run: () => openViewerSource(s.name)});
-  for (const x of (S.exports || [])) out.push({g: 'Files', cls: 'm', label: x.name, d: 'Export', fields: [[x.name, 1]], run: () => openViewerExport(x.name)});
+  for (const s of (S.sources || [])) out.push({g: 'Files', cls: 'm', label: s.name, d: s.scope === 'shared' ? 'Shared source' : 'Source', fields: [[s.name, 1]], run: () => openFileAsTab({name: s.name, path: s.name})});
+  for (const x of (S.exports || [])) out.push({g: 'Files', cls: 'm', label: x.name, d: 'Export', fields: [[x.name, 1]], run: () => openFileAsTab({name: x.name, path: x.name, fileType: 'export'})});
   return out;
 }
 // an action in the registry, run the way a button would run it

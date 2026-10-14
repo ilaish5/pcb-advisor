@@ -183,6 +183,8 @@ def test_outjob_and_cpl_and_exports_api(server, lte):
     by_name = {f["name"]: f for f in st["exports"]}
     assert set(by_name) == set(names)
     assert all(f["size"] > 0 for f in by_name.values())
+    # ... and when it was written, so the Outputs view needs no second call: the same stamp /api/exports gives
+    assert all(by_name[f["name"]]["modified"] == f["modified"] for f in exp["exports"])
 
     # download export
     outjob_name = next(n for n in names if n.endswith(".OutJob"))

@@ -3,7 +3,7 @@
    What lives here: the stage trace and its status dots, what each sheet shows (mainItem / sideItem), go() and openSide(),
    the chat column (show, hide, resize, drawer and one-column modes) and the nav foot.
    Globals other files use: go, select (core.js), mainView, sideView, setView, showChat, hideChat, toggleChat, stageStatus,
-   openSide, closeSide, toggleSide, openFileAsTab, renderStage, renderPage, guidanceBarHTML, resetLayout, getActiveTab. */
+   openSide, closeSide, toggleSide, openFileAsTab, renderStage, renderPage, resetLayout. */
 
 if (typeof KIT_ICONS === 'object' && !KIT_ICONS.swap) KIT_ICONS.swap = '<path d="M3 8h17M16 4l4 4-4 4M21 16H4M8 12l-4 4 4 4"/>';
 
@@ -42,7 +42,6 @@ function lsJson(key) {
 const STAGES = [['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic'], ['pcb', 'Layout'], ['rules', 'Rules'], ['outputs', 'Outputs'], ['checks', 'DFM']];
 const STAGE_TITLES = Object.fromEntries(STAGES);
 const PAGE_TITLES = {library: 'Library', sources: 'Sources', skills: 'Skills', settings: 'Settings'};
-const FILE_BADGES = {pdf: 'PDF', sch: 'SCH', pcb: 'PCB', img: 'IMG', txt: 'TXT', csv: 'TXT', dfm: 'PDF', rul: 'TXT', prj: 'TXT', altium: 'SCH'};   // viewer.js reads this until the viewer is redrawn
 
 const stageItem = id => ({id: 'stage:' + id, kind: 'stage', stage: id, title: STAGE_TITLES[id] || id});
 const pageItem = id => ({id: 'page:' + id, kind: 'page', page: id, title: PAGE_TITLES[id] || id});
@@ -90,9 +89,6 @@ function syncPageTab() {
   else if (mainItem.kind === 'page') page = mainItem.page;
   else page = 'file';
 }
-// the inspector (views/inspector.js) still asks which view is active
-function getActiveTab() { return mainItem; }
-function guidanceBarHTML() { return ''; }   // the guidance banners are gone; views still call this
 
 /* ---------- stage status: the dot on each stage in the nav. Neutral when we do not know; never invented. ---------- */
 const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
@@ -270,20 +266,13 @@ function renderPage(pageId, container) {
   if (container) container.innerHTML = html;
   return html;
 }
-// Views that have not moved to the new header and body yet (wave B) keep a little padding of their own.
-function isLegacyView(c) {
-  const f = c.firstElementChild;
-  return !!f && f.matches('.vhead, .dnote, .kpis, .card, .howto, .warnbox, .form, .tblwrap, .guidance-bar, h2, h3, p, table');
-}
 function renderItem(item, container, force) {
   const key = itemKey(item);
   const changed = container.dataset.item !== key;
   container.dataset.item = key;
   const idea = item.kind === 'stage' && item.stage === 'idea';
-  container.classList.toggle('stage-idea', idea);
-  container.classList.toggle('doc', item.kind === 'file');
+  container.classList.toggle('doc', item.kind === 'file');   // a document fills the sheet and scrolls inside itself
   if (item.kind === 'file') {
-    container.classList.remove('legacy');
     const docKey = key + '|' + (item.where || '');
     if (container.dataset.docKey === docKey) return;   // a document is drawn once, so a poll never reloads a PDF
     container.dataset.docKey = docKey;
@@ -310,7 +299,6 @@ function renderItem(item, container, force) {
       hitSrc = null;
     }
   }
-  container.classList.toggle('legacy', isLegacyView(container));
   if (changed) container.scrollTop = 0;
 }
 function renderMain(force) {
@@ -328,7 +316,7 @@ function renderSide(force) {
       v.innerHTML = '';
       v.dataset.item = '';
       v.dataset.docKey = '';
-      v.classList.remove('doc', 'legacy', 'stage-idea');
+      v.classList.remove('doc');
     }
     lastSideHead = '';
     return;
@@ -442,13 +430,15 @@ function swapSheets() {
   saveSide();
   render(true);
 }
-// viewer.js opens every document through here: it appears in the side sheet, which opens if needed
-// info = {name, path?, where?, fileType?, stem?, slice?}
+// The one way to open a document (a chip, a table row, the palette, a DFM slice, a link to an Altium file): it appears
+// in the side sheet, which opens if needed, and the chat drawer or the narrow Chat view gives way to it.
+// info = {name, path?, where?, fileType?, stem?, slice?}; fileType follows from the extension unless it is given
 function openFileAsTab(info) {
   const it = fileItem(info);
   sideMemo.file = it;
-  if (itemKey(it) === mainKey()) { mainItem = it; render(true); return; }   // already the main sheet: only a new page may differ
-  openSide(it);
+  if (itemKey(it) === mainKey()) { mainItem = it; render(true); }   // already the main sheet: only a new page may differ
+  else openSide(it);
+  setView('work');
 }
 
 /* ---------- chat column: right of the sheets. Wide: resizable and collapsible. <=1100px: a drawer. <=860px: Work / Chat. ---------- */

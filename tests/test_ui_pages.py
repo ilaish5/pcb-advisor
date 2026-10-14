@@ -5,12 +5,16 @@ Static checks for the Library, Sources and Settings pages and the document viewe
 They pin the structure of the redesign: one primary button per view, empty, loading and error states, Settings that saves
 one field at a time, Sources with its two scopes, escaping of server values, and a viewer without the old dead code.
 """
+import pathlib
 import re
 
 from ui_source import UI, ui_js
 
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+
 PAGES = (UI / "js" / "views" / "pages.js").read_text(encoding="utf-8")
 VIEWER = (UI / "js" / "viewer.js").read_text(encoding="utf-8")
+SHELL = (UI / "js" / "shell.js").read_text(encoding="utf-8")
 PAGES_CSS = (UI / "styles" / "pages.css").read_text(encoding="utf-8")
 VIEWER_CSS = (UI / "styles" / "viewer.css").read_text(encoding="utf-8")
 SOURCES = {"pages.js": PAGES, "viewer.js": VIEWER}
@@ -126,6 +130,40 @@ def test_sources_has_two_scopes_and_adds_into_the_project():
     assert "'Missing'" in row
 
 
+def test_sources_lists_the_general_library_by_its_path_and_counts_the_two_scopes():
+    """A general document is named by its path under shared/reference, the name a citation uses: the folders are shown quieter."""
+    label = func_body(PAGES, "srcLabel")
+    assert "lastIndexOf('/')" in label and 'class="dir"' in label and label.count("esc(") == 2
+    row = func_body(PAGES, "srcRow")
+    assert "srcLabel(s.name)" in row and row.count("esc(s.name)") >= 1
+    assert ".src-name .dir{" in PAGES_CSS
+    assert re.search(r"\.src-name \.dir\{flex:0 1 auto\}", PAGES_CSS) and re.search(r"\.src-name \.file\{flex:none;max-width:100%\}", PAGES_CSS), \
+        "the folders give way first and the file name keeps its width, so it never gets a sub-pixel ellipsis"
+    assert re.search(r"\.src-tbl td\.src-n\{[^}]*max-width:0", PAGES_CSS), "the name column takes what the table leaves"
+    assert re.search(r"\.src-cell\{[^}]*container-type:inline-size", PAGES_CSS) and re.search(
+        r"@container \(max-width:\d+px\)\{\.src-name \.dir\{display:none\}\}", PAGES_CSS), \
+        "a narrow cell shows the file name only, never a sliver of a folder"
+    src = func_body(PAGES, "sourcesHTML")
+    assert "label: 'in this project'" in src and "label: 'shared'" in src, "the header counts the two scopes, not one file total"
+    assert "act: 'src-filter'" in src and "s.scope === srcFilter" in src
+    assert "s.name.includes('/')" in func_body(PAGES, "srcTip"), "a long path that is cut short is in the tooltip in full"
+
+
+def test_the_two_citations_in_the_ui_name_documents_of_the_library():
+    """Rules and Library cite a general document with a chip: its name must be one the Sources list has."""
+    import sys
+    sys.path.insert(0, str(REPO_ROOT / "scripts"))
+    import sources
+    names = set(sources.reference_files())
+    rules = (UI / "js" / "views" / "rules.js").read_text(encoding="utf-8")
+    cited = re.search(r"const RULES_SRC = '([^']+)'", rules).group(1)
+    assert cited == "jlc/pcb-capabilities.en.md" and cited in names
+    assert "chip(RULES_SRC)" in rules, "the citation is a chip that opens the document, not plain text"
+    course = re.search(r"const PG_COURSE_LIB = '([^']+)'", PAGES).group(1)
+    assert course in names
+    assert "chip(PG_COURSE_LIB, " in func_body(PAGES, "libExportHTML") and "AD20 Essentials Course Exercises.pdf" not in PAGES
+
+
 def test_server_values_are_escaped():
     """Names, paths and text from the server never go into markup raw."""
     for name, src in SOURCES.items():
@@ -171,14 +209,18 @@ def test_viewer_documents():
     assert "dataset.docKey" in func_body(VIEWER, "renderFileTabContent")
 
 
-def test_viewer_entry_points_still_exist_for_other_views():
-    """The palette, DFM, Outputs and the chips open documents through these globals."""
+def test_one_way_to_open_a_document():
+    """Chips, tables, the palette, links to Altium files, Outputs and DFM all open a document through openFileAsTab."""
     scripts = ui_js()
-    for fn in ("openViewerSource", "openViewerAltium", "openViewerExport", "fileDownload"):
-        assert re.search(r"function\s+" + fn + r"\s*\(", VIEWER), fn
-        assert len(re.findall(fn + r"\(", scripts)) > 1, f"{fn} has no caller any more: remove it"
-    # a DFM slice opens through the shell (checks.js), so the old wrapper is gone
-    assert "openViewerSlice" not in scripts
+    assert re.search(r"function\s+fileDownload\s*\(", VIEWER) and len(re.findall(r"fileDownload\(", scripts)) > 1
+    for gone in ("openViewerSource", "openViewerAltium", "openViewerExport", "openViewerSlice"):
+        assert gone not in scripts, f"{gone}: open documents with openFileAsTab"
+    for caller in ("core.js", "palette.js", "views/outputs.js", "views/checks.js"):
+        text = (UI / "js" / caller).read_text(encoding="utf-8")
+        assert "openFileAsTab(" in text, caller
+    assert "openFileAsTab({name: d.src, path: d.src, where: d.where})" in (UI / "js" / "core.js").read_text(encoding="utf-8")
+    body = func_body(SHELL, "openFileAsTab")
+    assert "setView('work')" in body, "a document opened from the chat drawer must close the drawer"
     assert "fileType: 'dfm'" in scripts and "stem" in func_body(VIEWER, "renderFileTabContent")
 
 

@@ -4,7 +4,7 @@
 
 const RULES_SEG_KEY = 'pcb_advisor_rules_seg';
 const RULES_FRESH_MS = 15000;           // the board may change in Altium: read it again when the view is drawn after this long
-const RULES_SRC = 'pcb-capabilities.en.md';    // shared/reference/jlc/: the general document the preset values come from
+const RULES_SRC = 'jlc/pcb-capabilities.en.md';    // a general source, named by its path under shared/reference: the document the preset values come from
 let RULES_AT = 0, RULES_P = null;       // when RULES_DATA was read, and the read in flight
 let rulesSeg = null;                    // 'rules' | 'calc', remembered as a UI preference
 let rulesAll = false;                   // "Show all": every row of the diff, not only the ones that need attention
@@ -78,7 +78,7 @@ function rulesHeader(rd) {
   if (!rd || rd.error) return viewHeader({title: 'Rules'});
   const linked = rd.linked_pcb, sm = rulesSummary(rd);
   const meta = metaLine([
-    {n: sm.preset, label: sm.preset === 1 ? 'JLC preset rule' : 'JLC preset rules'},
+    {n: sm.preset, label: `${(rd.preset && rd.preset.name) || 'JLC'} preset rule${sm.preset === 1 ? '' : 's'}`, title: 'Picked from this board\'s layer count, copper weight and mask colour'},
     !linked && {always: true, label: 'No board linked'},
     linked && {n: sm.differ, label: 'differ on your board', tone: 'warn', title: 'Missing from the board, or different from the preset with no JLC minimum to judge them by'},
     linked && {n: sm.below, label: 'below JLC minimum', tone: 'bad', title: 'The fab may reject or alter these'},
@@ -139,8 +139,7 @@ function rulesHowTo(linked) {
 }
 function rulesPresetTable(rd) {
   const p = (rd.preset && rd.preset.rules) || [];
-  const src = srcByName(RULES_SRC);
-  const cite = src ? btn(RULES_SRC, {kind: 'link', cls: 'm', src: RULES_SRC}) : `<span class="m">${RULES_SRC}</span>`;
+  const cite = chip(RULES_SRC);                 // opens the document in the side sheet; marked broken if Sources does not list it
   return `<table class="tbl dense rules-tbl"><thead><tr><th>Rule</th><th>Constraints</th><th>Scope</th><th>Description</th></tr></thead><tbody>
     ${p.map(r => `<tr><td><span class="rn">${esc(r.name)}</span></td><td class="val">${esc(r.value || '—')}</td><td>${esc(r.scope1 || 'All')}</td><td class="muted wrapcell">${esc(r.description || '')}</td></tr>`).join('')}
     </tbody></table><p class="muted rules-src">Values from JLC&rsquo;s capabilities page, summarised in ${cite}.</p>`;

@@ -17,10 +17,11 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
 - Not for: placement or routing order (`placement-and-routing-plan`); reading DRC results of a finished board (`board-review`).
 
 ## Steps
-1. Ask only what is theirs: layer count (2 or 4), board thickness and copper weight if they know, which nets carry high current,
+1. Ask only what is theirs: layer count (2 or 4), copper weight (1 or 2 oz) and mask colour if they know, board thickness, which nets carry high current,
    whether any net is impedance-controlled (USB high speed, RF), and any special net (analog, crystal, switcher node).
-2. Fix the capability limits from `references/jlc-limits.md`. Those numbers carry a check date. If older than a month or the
-   layer count is not covered, tell the student to open the JLC capabilities page and read the value, then write the date.
+2. Fix the capability limits from `references/jlc-limits.md`: the preset follows the project's layers, copper weight and mask colour
+   (name on the Rules page, e.g. "JLC 4-layer 1 oz"). Those numbers carry a check date. If older than a month, tell the student to open
+   the JLC capabilities page and read the value, then write the date.
 3. Design to a margin above the fab minimum, not at it. Default set: clearance and track a bit above the minimum, via size
    and hole inside the capability, annular ring at least the fab minimum, copper-to-edge >= the fab figure.
 4. Classify nets: power by current, sensitive (analog, crystal, feedback, reset), noisy (switch node, clocks, relay/coil), RF/high speed.
@@ -37,11 +38,15 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
 8. Read-back: when the student says they edited rules, read the PcbDoc rules and list `only in plan / only in board / value differs`.
    Ask "update the plan from the board?" before changing anything.
 9. Add layout practices that are not rules (stitching vias, decaps at the pins, hot-loop size) as a plain list for the layout stage.
+   JLCDFM also checks what Altium has no rule for (silk line width, slot width, via to PTH, PTH to trace); list them as manual
+   checks, mapping in `references/jlc-limits.md`.
 
 ## Scripts
-- `python <repo>/scripts/rules.py diff <pcbdoc>` - diff of a PcbDoc's rules vs the JLC preset (table with rule, kind, board value, preset value, status).
-- `python <repo>/scripts/rules.py export <output.RUL> [--board <PcbDoc>]` - export the preset to a .RUL file.
+- `python <repo>/scripts/rules.py diff <pcbdoc> [--project <name>]` - diff of a PcbDoc's rules vs the JLC preset
+  (rule, kind, board value, preset value, status, verdict).
+- `python <repo>/scripts/rules.py export <output.RUL> [--board <PcbDoc>] [--project <name>]` - export the preset to a .RUL file.
   With --board it is the full board rule set with JLC values (import with "Replace existing rules").
+- `python <repo>/scripts/rules.py preset [--project <name>]` - print the preset. `--layers <n>` and `--oz <n>` override the project's board.
 - `python <repo>/scripts/calc.py trace-width <amps> [--rise <C>] [--oz <n>]` - IPC-2152 trace width in mm and mil.
 - `python <repo>/scripts/calc.py divider <vin> <vout>` - voltage divider resistor calculation with standard E24 values.
 - `python <repo>/scripts/calc.py led <v_supply> <v_forward> <i_ma>` - LED series resistor and power rating.

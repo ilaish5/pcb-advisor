@@ -13,7 +13,11 @@
 .bom-tbl tbody tr:focus-visible{outline-offset:-2px}
 .bom-tbl tr.off td{color:var(--ink-3)}
 .bom-tbl .clip{display:inline-block;max-width:100px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
-.bom-tbl .main,.bom-tbl .sub{display:block;max-width:200px;overflow:hidden;text-overflow:ellipsis}
+/* The Part column takes the width the others leave and is cut with an ellipsis (the row's tooltip has the whole text), so the
+   table never needs more than its sheet: with a fixed 200px here it overflowed by 40px at 1600x1000 with the chat open, and
+   a thin scrollbar appeared under the table. */
+.bom-tbl .c-part{width:100%;max-width:0}
+.bom-tbl .main,.bom-tbl .sub{display:block;overflow:hidden;text-overflow:ellipsis}
 .bom-tbl td.bom-ref{max-width:170px;overflow:hidden;text-overflow:ellipsis;font-family:var(--f-mono);font-weight:600}
 .bom-tbl td.tags .tag{margin-right:4px}
 .bom-tbl .row-acts{display:flex;gap:2px;justify-content:flex-end}
@@ -47,17 +51,3 @@
 .imp-rep{display:grid;gap:10px;font-size:13px}
 .imp-rep td{white-space:normal;vertical-align:top;overflow-wrap:anywhere}
 .imp-rep .sub{max-width:none;white-space:normal}
-
-/* Rules below are not the BOM view's. Each still has a user outside it: delete a rule with its last user.
-   .refs .lib* .foot .y .nn .q: views/pages.js (library table, project folder line); .refs, .dsec: viewer.js;
-   .detail: the inspector's container (#detail in index.html), which belongs in inspector.css or shell.css. */
-.refs{font-family:var(--f-mono);font-weight:600;color:var(--net)}
-.lib{font-size:12px;border-radius:5px;padding:0 7px;white-space:nowrap}
-.lib.std{color:var(--dim);background:var(--panel2)} .lib.ok{color:var(--ok);background:var(--ok-soft)} .lib.review{color:var(--warn);background:var(--warn-soft)} .lib.missing{color:var(--bad);background:var(--bad-soft)}
-.foot{font-size:12px;color:var(--dim);margin-top:8px}
-.detail{position:absolute;top:0;right:0;bottom:0;width:320px;max-width:100%;border-left:1px solid var(--line);overflow-y:auto;background:var(--panel);box-shadow:-10px 0 28px rgba(20,26,38,.12);z-index:5}
-.dsec h4{margin:0 0 5px;font-size:11px;color:var(--dim);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
-.y{color:var(--ok)} .nn{color:var(--bad)} .q{color:var(--warn)}
-@media (max-width:860px){
-  .detail{width:100%}
-}

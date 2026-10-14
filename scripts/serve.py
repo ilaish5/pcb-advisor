@@ -232,6 +232,32 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                     applied.append(f"thread.open:{a['anchor']}")
                 else:
                     refused.append(f"thread.open: nothing to anchor to at {a['anchor']}")
+            elif kind == "jlc.gerber_zip":
+                import jlc_upload
+                try:
+                    res = jlc_upload.gerber_zip(project)
+                except jlc_upload.UploadError as exc:
+                    refused.append(f"jlc.gerber_zip: {exc}")
+                else:
+                    gaps = [m["layer"] for m in res["missing"] if m["level"] == "problem"]
+                    applied.append(f"jlc.gerber_zip:{res['zip']} ({len(res['files'])} files" + (f", missing {', '.join(gaps)}" if gaps else "") + ")")
+            elif kind == "jlc.pickup":
+                import jlc_upload
+                res = jlc_upload.pickup(project, kind=a.get("kind") or None, name=a.get("name") or None)
+                for f in res["found"]:
+                    applied.append(f"jlc.pickup:{f['stem']} ({f['kind']})")
+                for f in res["pending"]:
+                    refused.append(f"jlc.pickup: {f['name']} is not added yet; say pcb, smt or both with kind")
+                if not (res["found"] or res["pending"]):
+                    refused.append(f"jlc.pickup: no new JLCDFM report in {res['folder']}")
+            elif kind == "dfm.triage" and a.get("stem") and isinstance(a.get("rows"), list):
+                import dfm
+                try:
+                    res = dfm.merge_triage(project, a["stem"], a["rows"])
+                except FileNotFoundError:
+                    refused.append(f"dfm.triage: no report {a['stem']} in this project")
+                else:
+                    applied.append(f"dfm.triage:{a['stem']} ({res['added']} added, {res['updated']} updated)")
             else:
                 refused.append(f"{kind}: not a known action, or fields missing")
         except (ValueError, KeyError) as exc:
@@ -580,9 +606,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, keeping.file_organization(proj))
         if path.startswith("/api/source/"):
             name = unquote(path.split("/api/source/", 1)[1])
-            for base in (model.project_dir(self.project()) / "sources", workspace.datasheets_dir()):
-                f = base / pathlib.Path(name).name
-                if f.exists() and f.is_file():
+            # a plain name is a project or shared document; a name with a folder ('jlc/pcb-capabilities.en.md') is a
+            # reference document and only resolves through the reference listing, so a path can never leave the library
+            if "/" in name or "\\" in name:
+                found = [sources.reference_path(name)]
+            else:
+                found = [base / pathlib.Path(name).name for base in (model.project_dir(self.project()) / "sources", workspace.datasheets_dir())]
+                found.append(sources.reference_path(name))
+            for f in found:
+                if f is not None and f.exists() and f.is_file():
                     ctype = mimetypes.guess_type(f.name)[0] or "text/plain"
                     if ctype.startswith("text/") or "xml" in ctype or "html" in ctype:
                         ctype = "text/plain; charset=utf-8"  # never let an uploaded .html run in the UI origin
@@ -657,10 +689,13 @@ class Handler(BaseHTTPRequestHandler):
                             "url": f"/api/export/{f.name}",
                         })
             return self._send(200, {"exports": files})
+        if path == "/api/jlc/gerber-zip":            # the zip made last time (files, when written, what is missing); nothing is built
+            import jlc_upload
+            return self._send(200, jlc_upload.zip_info(self.project()))
         if path == "/api/rules":
             proj = self.project()
             import rules as rules_mod
-            preset = rules_mod.get_jlc_preset()
+            preset = rules_mod.get_jlc_preset(project_mod.board(proj))   # 2 or multilayer, copper weight, mask colour
             rules_file = model.project_dir(proj) / "rules.json"
             extra = []
             if rules_file.is_file():
@@ -686,7 +721,7 @@ class Handler(BaseHTTPRequestHandler):
                         linked_pcb = pcb_path.name
             except Exception:
                 pass
-            diff = rules_mod.diff_rules(board_rules, board_geom=doc)
+            diff = rules_mod.diff_rules(board_rules, preset.get("rules"), board_geom=doc)
             return self._send(200, {
                 "preset": preset,
                 "extra": extra,
@@ -696,7 +731,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/rules/export":
             proj = self.project()
             import rules as rules_mod
-            records = rules_mod.get_preset_rule_records()
+            records = rules_mod.get_preset_rule_records(project_mod.board(proj))
             board_aware = False
             if not self.query("plain"):
                 try:
@@ -1363,6 +1398,21 @@ class Handler(BaseHTTPRequestHandler):
             from skills.export_cpl import export_cpl
             res = export_cpl(proj)
             return self._send(200, res)
+
+        if path == "/api/jlc/gerber-zip":            # build exports/<p>_gerbers.zip from the linked Altium outputs (read only)
+            import jlc_upload
+            try:
+                return self._send(200, jlc_upload.gerber_zip(proj))
+            except jlc_upload.UploadError as exc:
+                return self._send(400, {"error": str(exc)})
+            except OSError as exc:
+                return self._send(500, {"error": f"could not write the Gerber zip: {exc}"})
+        if path == "/api/jlc/pickup":                # add the JLCDFM reports that are new in the Downloads folder
+            import jlc_upload
+            try:
+                return self._send(200, jlc_upload.pickup(proj, kind=data.get("kind") or None, name=data.get("name") or None))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
         if path == "/api/rules/extra":
             rule = data.get("rule") or data
             if not rule or not rule.get("name") or not rule.get("kind"):

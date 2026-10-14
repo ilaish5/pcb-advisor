@@ -328,6 +328,19 @@ def test_rules_endpoints(server, lte):
     assert b"PowerNet_Width" in raw
 
 
+def test_rules_preset_follows_the_project_board(server, lte):
+    import project
+    code, res = get(server, "/api/rules", lte)
+    assert code == 200 and res["preset"]["name"] == "JLC 2-layer 1 oz"
+    project.touch(lte, board={**project.board(lte), "layers": 4, "copper_oz": 2.0})
+    code, res = get(server, "/api/rules", lte)
+    assert res["preset"]["name"] == "JLC 4-layer 2 oz"
+    ring = next(r for r in res["preset"]["rules"] if r["name"] == "MinimumAnnularRing_PTH")
+    assert ring["scope1"] == "IsPad" and ring["fab_min_mm"] == 0.254
+    code, raw = get(server, "/api/rules/export?plain=1", lte, raw=True)
+    assert code == 200 and b"MinimumAnnularRing_PTH" in raw and b"SCOPE1EXPRESSION=IsVia" in raw
+
+
 def test_calc_endpoints(server, lte):
     # GET /api/calc (trace width)
     code, res = get(server, "/api/calc?type=trace_width&current=2.0", lte)

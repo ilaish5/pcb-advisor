@@ -317,22 +317,27 @@ def reference_verdict(c, m):
 
 
 def preset_verdict(c, m):
-    """What the advisor's JLC preset (config/defaults.json via scripts/rules.py) says about a rule as
+    """What the advisor's JLC preset (scripts/jlc_preset.py via scripts/rules.py, 2-layer 1 oz) says about a rule as
     tight as this coupon: worst of same/safer/tighter_ok/below_fab_min/unknown, or None (no rule)."""
     import rules
-    preset = {r["kind"]: r for r in rules.get_jlc_preset().get("rules", [])}
+    # one rule per kind, except the object-scoped ones (annular ring of pads / of vias, hole to hole of pads)
+    preset = {}
+    for r in rules.get_jlc_preset().get("rules", []):
+        src = rules._preset_source(r)
+        preset[r["kind"] if src is None else f"{r['kind']}:{src}"] = r
     k, checks = c["kind"], []
 
-    def judge(kind, attrs):
-        if kind in preset:
-            j = rules.judge_rule(kind, {a: f"{v:.4f}mm" for a, v in attrs.items()}, preset[kind])
+    def judge(kind, attrs, source=None):
+        key = kind if source is None else f"{kind}:{source}"
+        if key in preset:
+            j = rules.judge_rule(kind, {a: f"{v:.4f}mm" for a, v in attrs.items()}, preset[key])
             checks.append((kind, j["verdict"]))
 
     if k == "track_space":
         judge("Width", {"MINLIMIT": m["width_mm"]})
         judge("Clearance", {"GAP": m["space_mm"]})
     elif k in ("annular_ring", "via", "drill"):
-        judge("MinimumAnnularRing", {"MINIMUMRING": m["ring_mm"]})
+        judge("MinimumAnnularRing", {"MINIMUMRING": m["ring_mm"]}, "pad" if k == "annular_ring" else "via")
         if k != "annular_ring":
             judge("RoutingVias", {"HOLEWIDTH": m["drill_mm"], "WIDTH": m["dia_mm"]})
             judge("HoleSize", {"MINLIMIT": m["drill_mm"]})
@@ -340,6 +345,12 @@ def preset_verdict(c, m):
         judge("SilkToSolderMaskClearance", {"MINSILKSCREENTOMASKGAP": m["silk_to_mask_mm"]})
     elif k == "npth":
         judge("HoleSize", {"MINLIMIT": m["drill_mm"]})
+    elif k == "mask_dam":
+        judge("MinimumSolderMaskSliver", {"MINSOLDERMASKWIDTH": m["dam_mm"]})
+    elif k == "copper_to_edge":
+        judge("BoardOutlineClearance", {"GAP": m["edge_mm"]})
+    elif k == "hole_to_hole":
+        judge("HoleToHoleClearance", {"GAP": m["gap_mm"]}, None if c["nominal"].get("what") == "via-via" else "pad")
     if not checks:
         return None, []
     order = ("below_fab_min", "unknown", "tighter_ok", "same", "safer")

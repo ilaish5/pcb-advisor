@@ -116,7 +116,7 @@ def test_rules_cli_diff():
     assert "differs" in proc.stdout
 
 
-from rules import board_rul_records  # noqa: E402
+from rules import _preset_scopes, _rule_scopes, board_rul_records  # noqa: E402
 
 PRESET_KINDS = ("Clearance", "Width", "RoutingVias", "MinimumAnnularRing", "HoleSize",
                 "SilkToSolderMaskClearance", "SolderMaskExpansion")
@@ -127,10 +127,11 @@ def test_board_aware_export_roundtrip(tmp_path):
     board = read_pcbdoc(board_path)["rules"]
     preset = get_preset_rule_records()
     recs = board_rul_records(board_path, preset)
-    board_kinds = {r["RULEKIND"] for r in board}
-    scope_all = {r["RULEKIND"] for r in board
-                 if r.get("SCOPE1EXPRESSION") == "All" and r.get("SCOPE2EXPRESSION") == "All"}
-    added = [p for p in preset if p["RULEKIND"] not in scope_all]
+    # a preset rule is added unless the board already has a rule of that kind with the same scopes
+    have = {(r["RULEKIND"], _rule_scopes(r)) for r in board}
+    added = [p for p in preset if (p["RULEKIND"], _preset_scopes({"attributes": p})) not in have]
+    assert {p["NAME"] for p in added} == {"MinimumAnnularRing_PTH", "MinimumAnnularRing_Via", "SilkToSolderMaskClearance",
+                                          "BoardOutlineClearance", "HoleToHoleClearance_PTH", "ViasUnderSMD"}
     assert len(recs) == len(board) + len(added)
     out = write_rul(recs, tmp_path / "b.RUL")
     back = read_rul(out)
@@ -142,8 +143,19 @@ def test_board_aware_export_roundtrip(tmp_path):
     clr = by_uid["NCKWLEIT"]
     assert clr["GAP"] == "6mil" and clr["GENERICCLEARANCE"] == "6mil" and clr["PRIORITY"] == "1"
     assert clr["NETSCOPE"] == "DifferentNets"
-    ring = next(r for r in back if r["RULEKIND"] == "MinimumAnnularRing")
-    assert ring["MINIMUMRING"] == "6mil" and "MINIMUM" not in ring
+    rings = {r["NAME"]: r for r in back if r["RULEKIND"] == "MinimumAnnularRing"}
+    assert rings["MinimumAnnularRing_PTH"]["MINIMUMRING"] == "10mil" and "MINIMUM" not in rings["MinimumAnnularRing_PTH"]
+    assert rings["MinimumAnnularRing_PTH"]["SCOPE1EXPRESSION"] == "IsPad" and rings["MinimumAnnularRing_PTH"]["PRIORITY"] == "1"
+    assert rings["MinimumAnnularRing_Via"]["MINIMUMRING"] == "6mil"
+    assert rings["MinimumAnnularRing_Via"]["SCOPE1EXPRESSION"] == "IsVia" and rings["MinimumAnnularRing_Via"]["PRIORITY"] == "2"
+    # the board's own scope-All hole to hole rule takes the JLC value; the pad-to-pad rule goes above it
+    assert by_uid["TADLXEHF"]["GAP"] == "8mil" and by_uid["TADLXEHF"]["PRIORITY"] == "2"
+    h2h = next(r for r in back if r["NAME"] == "HoleToHoleClearance_PTH")
+    assert (h2h["GAP"], h2h["SCOPE1EXPRESSION"], h2h["SCOPE2EXPRESSION"], h2h["PRIORITY"]) == ("18mil", "IsPad", "IsPad", "1")
+    assert by_uid["JXRRNWRL"]["MINSOLDERMASKWIDTH"] == "6mil"          # sliver rule updated in place
+    outline = next(r for r in back if r["RULEKIND"] == "BoardOutlineClearance")
+    assert outline["GAP"] == outline["GENERICCLEARANCE"] == "12mil" and outline["NETSCOPE"] == "DifferentNets"
+    assert next(r for r in back if r["RULEKIND"] == "ViasUnderSMD")["ALLOWED"] == "FALSE"
     assert by_uid["TORKYMCQ"]["HOLEWIDTH"] == "12mil"
     # the IsPad-scoped silk rule is untouched; the preset rule is added at lowest priority
     assert by_uid["FNWDUPRT"]["MINSILKSCREENTOMASKGAP"] == "10mil"
@@ -172,8 +184,14 @@ def test_preset_keys_exist_in_altium_records():
             fixture_keys.setdefault(r["RULEKIND"], set()).update(r)
     for rec in get_preset_rule_records():
         kind = rec["RULEKIND"]
-        if kind not in fixture_keys:  # MinimumAnnularRing: key read back from an AD26-saved PcbDoc
-            assert kind == "MinimumAnnularRing" and "MINIMUMRING" in rec and "MINIMUM" not in rec
+        if kind not in fixture_keys:
+            # The fixtures have no such rule. The keys come from the real Altium export of the device board
+            # (real-project, AD26): MinimumAnnularRing uses MINIMUMRING; ViasUnderSMD uses ALLOWED.
+            assert kind in ("MinimumAnnularRing", "ViasUnderSMD"), kind
+            if kind == "MinimumAnnularRing":
+                assert "MINIMUMRING" in rec and "MINIMUM" not in rec
+            else:
+                assert rec["ALLOWED"] == "FALSE"
             continue
         for k in rec:
             assert k in fixture_keys[kind], (kind, k)
@@ -228,18 +246,27 @@ def test_values_same_is_unit_rounding_only():
 
 
 def test_preset_has_numeric_fab_minimums():
-    preset = get_jlc_preset()
-    by_kind = {r["kind"]: r for r in preset["rules"]}
-    assert by_kind["Clearance"]["fab_min_mm"] == 0.09
-    assert by_kind["MinimumAnnularRing"]["fab_min_mm"] == 0.15
-    assert by_kind["SilkToSolderMaskClearance"]["fab_min_mm"] == 0.15
-    for kind in ("Width", "RoutingVias", "HoleSize", "SolderMaskExpansion"):
-        assert "fab_min_mm" in by_kind[kind] and by_kind[kind]["fab_min_mm"] is None
-    for kind in ("Clearance", "MinimumAnnularRing", "SilkToSolderMaskClearance"):
-        assert by_kind[kind]["fab_min_source"] == preset["capabilities_url"]
+    """Fab floors are JLC's own minimums, read from its capabilities page (shared/reference/jlc/pcb-capabilities.en.md)."""
+    preset = get_jlc_preset()                       # no board given: 2 layers, 1 oz, green
+    by_name = {r["name"]: r for r in preset["rules"]}
+    assert by_name["Clearance"]["fab_min_mm"] == 0.10         # P1: 2-layer 1 oz track/space 0.10 mm (4 mil); was 0.09 (the multilayer value)
+    assert by_name["Width"]["fab_min_mm"] == 0.10             # was None: no floor was stored
+    assert by_name["MinimumAnnularRing_PTH"]["fab_min_mm"] == 0.18    # P1: 2-layer 1 oz PTH ring 0.18 mm; was 0.15 for pads and vias
+    assert by_name["MinimumAnnularRing_Via"]["fab_min_mm"] == 0.05    # P1: smallest via 0.15 / 0.25 mm, ring (0.25 - 0.15) / 2
+    assert by_name["RoutingVias"]["fab_min_mm"] == {"hole": 0.15, "dia": 0.25}       # P1; was None
+    assert by_name["HoleSize"]["fab_min_mm"] == {"min": 0.15}                        # P1 drills 0.15 to 6.3 mm; was None
+    assert by_name["SilkToSolderMaskClearance"]["fab_min_mm"] == 0.15                # P1 pad to silkscreen
+    assert by_name["MinimumSolderMaskSliver"]["fab_min_mm"] == 0.10                  # P1 mask bridge, 1 oz green
+    assert by_name["BoardOutlineClearance"]["fab_min_mm"] == 0.2                     # P1 copper to routed edge
+    assert by_name["HoleToHoleClearance_PTH"]["fab_min_mm"] == 0.45                  # P1 hole to hole, pad to pad
+    assert by_name["HoleToHoleClearance"]["fab_min_mm"] == 0.2                       # P1 hole to hole, via to via
+    assert by_name["SolderMaskExpansion"]["fab_min_mm"] is None and by_name["ViasUnderSMD"]["fab_min_mm"] is None
+    for r in preset["rules"]:
+        if r["fab_min_mm"] is not None:
+            assert r["fab_min_source"] == preset["capabilities_url"] and r["fab_min_basis"]
     # the numeric view of a preset rule agrees with its .RUL attributes
-    assert preset_values_mm(by_kind["Width"]) == pytest.approx({"min": 0.127, "pref": 0.2032, "max": 1.016})
-    assert preset_values_mm(by_kind["RoutingVias"]) == pytest.approx({"hole": 0.3048, "dia": 0.6096})
+    assert preset_values_mm(by_name["Width"]) == pytest.approx({"min": 0.127, "pref": 0.2032, "max": 1.016})
+    assert preset_values_mm(by_name["RoutingVias"]) == pytest.approx({"hole": 0.3048, "dia": 0.6096})
     # ... and falls back to the *_mm keys / display string when there are no attributes
     bare = {"kind": "Width", "value": "Min: 5mil, Pref: 8mil, Max: 40mil"}
     assert preset_values_mm(bare) == pytest.approx({"min": 0.127, "pref": 0.2032, "max": 1.016})
@@ -250,9 +277,10 @@ def test_preset_has_numeric_fab_minimums():
     ("5.9055mil", "same"),          # 0.15 mm vs 6 mil: unit rounding
     ("0.15mm", "same"),
     ("10mil", "safer"),
-    ("4mil", "tighter_ok"),         # 0.1016 mm: tighter than 0.1524, above the 0.09 fab minimum
-    ("0.09mm", "tighter_ok"),
-    ("3mil", "below_fab_min"),      # 0.0762 mm < 0.09 mm
+    ("4mil", "tighter_ok"),         # 0.1016 mm: tighter than 0.1524, above JLC's 0.10 mm 2-layer floor
+    ("0.1mm", "tighter_ok"),        # exactly JLC's floor
+    ("0.09mm", "below_fab_min"),    # was tighter_ok against the old 0.09 floor, which is the multilayer limit
+    ("3mil", "below_fab_min"),      # 0.0762 mm < 0.10 mm
 ])
 def test_verdict_clearance(gap, verdict):
     row = _row([_board("Clearance", GAP=gap, GENERICCLEARANCE=gap)], "Clearance")
@@ -260,7 +288,7 @@ def test_verdict_clearance(gap, verdict):
     assert row["status"] in ("match", "differs")   # the existing status is untouched
     assert row["decided_by"] == ["gap"] or verdict == "same"
     if verdict == "below_fab_min":
-        assert "0.09" in row["detail"] and "BELOW" in row["detail"]
+        assert "0.1 mm" in row["detail"] and "BELOW" in row["detail"]
 
 
 def test_verdict_width_min_decides_and_max_is_informational():
@@ -274,9 +302,12 @@ def test_verdict_width_min_decides_and_max_is_informational():
     row = _row(width("5mil", "8mil", "20mil"), "Width")
     assert row["verdict"] == "same"
     assert {b["name"]: b["verdict"] for b in row["bounds"]}["max"] == "safer"
-    # a min tighter than the preset with no stored fab minimum cannot be called ok
+    # a min tighter than the preset is ok down to JLC's floor (0.10 mm, 2-layer 1 oz) and below it is not;
+    # before, no floor was stored and any smaller value was "unknown"
     row = _row(width("4mil", "8mil", "40mil"), "Width")
-    assert row["verdict"] == "unknown" and "no fab minimum" in row["detail"]
+    assert row["verdict"] == "tighter_ok" and row["decided_by"] == ["min"]
+    row = _row(width("3mil", "8mil", "40mil"), "Width")
+    assert row["verdict"] == "below_fab_min" and "0.1 mm" in row["detail"]
     # a larger preferred width alone does not change the verdict
     assert _row(width("5mil", "20mil", "40mil"), "Width")["verdict"] == "same"
 
@@ -288,10 +319,13 @@ def test_verdict_routing_vias_hole_and_dia():
     row = _row(vias("16mil", "24mil"), "RoutingVias")
     assert row["verdict"] == "safer" and row["decided_by"] == ["hole"]
     assert _row(vias("28mil", "50mil"), "RoutingVias")["verdict"] == "safer"
-    row = _row(vias("12mil", "20mil"), "RoutingVias")      # smaller pad: no fab minimum stored
-    assert row["verdict"] == "unknown" and row["decided_by"] == ["dia"]
+    # a smaller pad is fine down to JLC's smallest via (0.15 / 0.25 mm, P1) and not below it
+    row = _row(vias("12mil", "20mil"), "RoutingVias")      # 0.508 mm pad
+    assert row["verdict"] == "tighter_ok" and row["decided_by"] == ["dia"]
+    assert _row(vias("12mil", "9mil"), "RoutingVias")["verdict"] == "below_fab_min"          # 0.2286 mm pad < 0.25 mm
+    assert _row(vias("5mil", "30mil"), "RoutingVias")["verdict"] == "below_fab_min"          # 0.127 mm hole < 0.15 mm
     # a smaller via is judged worse than a larger one even if the other bound is bigger
-    assert _row(vias("10mil", "30mil"), "RoutingVias")["verdict"] == "unknown"
+    assert _row(vias("10mil", "30mil"), "RoutingVias")["verdict"] == "tighter_ok"
 
 
 def test_verdict_hole_size_min_and_max_are_separate():
@@ -305,8 +339,10 @@ def test_verdict_hole_size_min_and_max_are_separate():
     row = _row(hole("12mil", "400mil"), "HoleSize")
     assert row["verdict"] == "same" and "higher maximum" in row["detail"]
     assert {b["name"]: b["verdict"] for b in row["bounds"]}["max"] == "unknown"
-    # a smaller minimum: tighter, no stored fab minimum
-    assert _row(hole("7.874mil", "250mil"), "HoleSize")["verdict"] == "unknown"
+    # a smaller minimum is fine down to JLC's smallest drill (0.15 mm, P1); the maximum is 6.3 mm, not 250 mil
+    assert _row(hole("7.874mil", "250mil"), "HoleSize")["verdict"] == "tighter_ok"          # was "unknown": no floor stored
+    row = _row(hole("5mil", "250mil"), "HoleSize")                                            # 0.127 mm
+    assert row["verdict"] == "below_fab_min" and "0.15" in row["detail"]
 
 
 def test_verdict_silk_and_mask():
@@ -366,18 +402,23 @@ def test_annular_ring_summary_synthetic():
     assert annular_ring_summary({}) is None
 
 
-def _ring_row(vias, pads=(), preset=None):
+def _ring_row(vias, pads=(), preset=None, which=None):
+    """The MinimumAnnularRing row for a board with no ring rule. The default preset has one rule for pads
+    (MinimumAnnularRing_PTH, scope IsPad) and one for vias (MinimumAnnularRing_Via, scope IsVia): pick with `which`."""
     doc = {"vias": vias, "drilled_pads": list(pads)}
-    return _row([], "MinimumAnnularRing", geom=doc, preset=preset)
+    rows = diff_rules([], preset, board_geom=doc)
+    rows = [r for r in rows if r["kind"] == "MinimumAnnularRing"]
+    return next(r for r in rows if which is None or r["rule"].endswith(which))
 
 
 @pytest.mark.parametrize("hole,dia,verdict", [
     (0.3, 0.6, "same"),             # ring 0.15 mm vs preset 6 mil: unit rounding
     (0.3, 0.8, "safer"),            # ring 0.25 mm
-    (0.3, 0.58, "below_fab_min"),   # ring 0.14 mm < 0.15 mm
+    (0.3, 0.58, "tighter_ok"),      # ring 0.14 mm: was below_fab_min against 0.15 mm; JLC's smallest via (0.15 / 0.25) has a 0.05 mm ring
+    (0.3, 0.38, "below_fab_min"),   # ring 0.04 mm < 0.05 mm
 ])
-def test_missing_annular_ring_rule_uses_actual_vias(hole, dia, verdict):
-    row = _ring_row([{"hole_mm": hole, "dia_mm": dia, "net": None, "x_mm": 0, "y_mm": 0}])
+def test_missing_via_ring_rule_uses_actual_vias(hole, dia, verdict):
+    row = _ring_row([{"hole_mm": hole, "dia_mm": dia, "net": None, "x_mm": 0, "y_mm": 0}], which="_Via")
     assert row["status"] == "missing_on_board"      # unchanged
     assert row["verdict"] == verdict
     assert "no rule on the board" in row["detail"] and "actual minimum ring" in row["detail"]
@@ -385,7 +426,25 @@ def test_missing_annular_ring_rule_uses_actual_vias(hole, dia, verdict):
     if verdict == "below_fab_min":
         assert "BELOW" in row["detail"]
     else:
-        assert "fab minimum" in row["detail"]
+        assert "fab min" in row["detail"]
+
+
+@pytest.mark.parametrize("hole,size,verdict", [
+    (1.0, 1.508, "same"),           # ring 0.254 mm = the 10 mil preset
+    (1.0, 1.6, "safer"),            # ring 0.3 mm
+    (1.0, 1.4, "tighter_ok"),       # ring 0.2 mm: tighter than 10 mil, above JLC's 0.18 mm (2-layer 1 oz)
+    (1.0, 1.3, "below_fab_min"),    # ring 0.15 mm < 0.18 mm; before this passed against 0.15 mm
+])
+def test_missing_pad_ring_rule_uses_plated_pads_only(hole, size, verdict):
+    pad = {"ref": "J1", "name": "2", "hole_mm": hole, "min_size_mm": size, "plated": True}
+    via = {"hole_mm": 0.3, "dia_mm": 0.8}           # ring 0.25: the pad rule must not look at it
+    row = _ring_row([via], pads=[pad], which="_PTH")
+    assert row["verdict"] == verdict and "J1-2" in row["detail"] and "1 plated pads" in row["detail"]
+    assert row["actual"]["min_ring_mm"] == pytest.approx((size - hole) / 2) and row["actual"]["via_count"] == 0
+    # an unplated mounting hole is not a pad ring
+    mount = {"ref": None, "name": "", "hole_mm": 3.2, "min_size_mm": 3.2, "plated": False}
+    assert _ring_row([via], pads=[mount], which="_PTH")["verdict"] == "unknown"
+    assert _ring_row([], pads=[pad], which="_Via")["verdict"] == "unknown"          # no vias: nothing to judge
 
 
 def test_missing_annular_ring_tighter_ok_and_unknown():
@@ -397,17 +456,35 @@ def test_missing_annular_ring_tighter_ok_and_unknown():
     assert _ring_row([], preset=preset)["verdict"] == "unknown"
     # no geometry passed at all (e.g. a caller that only has the rules)
     assert _row([], "MinimumAnnularRing")["verdict"] == "unknown"
-    # a pad can be the one that fails
-    row = _ring_row([{"hole_mm": 0.3, "dia_mm": 0.8}], pads=[{"ref": "J1", "name": "2", "hole_mm": 1.0,
-                                                              "min_size_mm": 1.2, "plated": True}])
+    # a rule with no scope looks at vias and pads together: a pad can be the one that fails
+    row = _ring_row([{"hole_mm": 0.3, "dia_mm": 0.8}], preset=preset,
+                    pads=[{"ref": "J1", "name": "2", "hole_mm": 1.0, "min_size_mm": 1.2, "plated": True}])
     assert row["verdict"] == "below_fab_min" and "J1-2" in row["detail"]
 
 
 def test_existing_annular_ring_rule_is_compared_and_shows_actual():
     geom = {"vias": [{"hole_mm": 0.3, "dia_mm": 0.6}], "drilled_pads": []}
-    row = _row([_board("MinimumAnnularRing", MINIMUMRING="4mil")], "MinimumAnnularRing", geom=geom)
-    assert row["status"] == "differs" and row["verdict"] == "below_fab_min"     # 0.1016 mm rule < 0.15 mm
-    assert "actual minimum ring 0.15" in row["detail"]
+    rows = diff_rules([_board("MinimumAnnularRing", MINIMUMRING="4mil")], board_geom=geom)
+    ring = {r["rule"]: r for r in rows if r["kind"] == "MinimumAnnularRing"}
+    # the board's one scope-All ring rule governs pads and vias: it is judged against both preset rules
+    assert set(ring) == {"MinimumAnnularRing_PTH", "MinimumAnnularRing_Via"}
+    assert all(r["status"] == "differs" for r in ring.values())
+    assert ring["MinimumAnnularRing_PTH"]["verdict"] == "below_fab_min"        # 0.1016 mm < 0.18 mm (pads, 2 layers)
+    assert ring["MinimumAnnularRing_Via"]["verdict"] == "tighter_ok"           # 0.1016 mm >= 0.05 mm (vias)
+    assert "actual minimum ring 0.15" in ring["MinimumAnnularRing_Via"]["detail"]
+    assert "(all objects) also applies" in ring["MinimumAnnularRing_Via"]["detail"]
+    assert not [r for r in rows if r["status"] == "extra_on_board" and r["kind"] == "MinimumAnnularRing"]
+
+
+def test_scoped_annular_ring_rules_match_by_scope():
+    board = [_board("MinimumAnnularRing", NAME="Ring_Pads", MINIMUMRING="10mil", SCOPE1EXPRESSION="IsPad"),
+             _board("MinimumAnnularRing", NAME="Ring_Vias", MINIMUMRING="4mil", SCOPE1EXPRESSION="IsVia", PRIORITY="2")]
+    rows = {r["rule"]: r for r in diff_rules(board)}
+    assert rows["Ring_Pads"]["status"] == "match" and rows["Ring_Pads"]["verdict"] == "same"
+    assert rows["Ring_Vias"]["verdict"] == "tighter_ok" and rows["Ring_Vias"]["status"] == "differs"
+    assert rows["Ring_Pads"]["kind"] == rows["Ring_Vias"]["kind"] == "MinimumAnnularRing"
+    assert not [r for r in rows.values() if r["status"] in ("extra_on_board", "missing_on_board")
+                and r["kind"] == "MinimumAnnularRing"]
 
 
 def test_pcbdoc_reader_exposes_vias_and_drilled_pads():
@@ -429,8 +506,10 @@ def test_pcbdoc_reader_exposes_vias_and_drilled_pads():
 def test_diff_pcbdoc_and_cli_json():
     rows = diff_pcbdoc(FIXTURES / "finished-board.PcbDoc")
     assert all(r["verdict"] in VERDICTS and isinstance(r["detail"], str) for r in rows)
-    ring = next(r for r in rows if r["kind"] == "MinimumAnnularRing")
-    assert ring["status"] == "missing_on_board" and ring["verdict"] == "safer"      # ring 0.178 mm
+    ring = {r["rule"]: r for r in rows if r["kind"] == "MinimumAnnularRing"}
+    assert all(r["status"] == "missing_on_board" for r in ring.values())
+    assert ring["MinimumAnnularRing_Via"]["verdict"] == "safer"          # via ring 0.178 mm vs 6 mil
+    assert ring["MinimumAnnularRing_PTH"]["verdict"] == "safer"          # pad ring 0.3 mm vs 10 mil
     cmd = [sys.executable, str(REPO / "scripts" / "rules.py"), "diff", "--json", str(FIXTURES / "finished-board.PcbDoc")]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     assert proc.returncode == 0
@@ -441,3 +520,246 @@ def test_diff_pcbdoc_and_cli_json():
     cmd = [sys.executable, str(REPO / "scripts" / "rules.py"), "diff", str(FIXTURES / "finished-board.PcbDoc")]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     assert proc.returncode == 0 and "Verdict" in proc.stdout and "safer" in proc.stdout
+
+
+# ---------------------------------------------------------------------------
+# the preset follows the board: layers, copper weight, mask colour (scripts/jlc_preset.py)
+# Evidence: JLC's capabilities page, shared/reference/jlc/pcb-capabilities.en.md ([P1] etc.), and
+# JLCDFM's own limits, docs/bench-runs/jlc-live-2026-10-14/jlcdfm_rules.json (read 2026-10-14).
+# ---------------------------------------------------------------------------
+import jlc_preset  # noqa: E402
+from rules import board_settings  # noqa: E402
+
+JLCDFM_FILE = REPO / "docs" / "bench-runs" / "jlc-live-2026-10-14" / "jlcdfm_rules.json"
+
+
+def _named(board=None):
+    return {r["name"]: r for r in get_jlc_preset(board)["rules"]}
+
+
+def _preset_for(board=None):
+    return get_jlc_preset(board)["rules"]
+
+
+def test_preset_name_and_floors_follow_layers_and_copper():
+    for unknown in (None, {}, {"layers": "abc"}, {"copper_oz": None}, "junk"):
+        assert get_jlc_preset(unknown)["name"] == "JLC 2-layer 1 oz"
+    two = _named({"layers": 2, "copper_oz": 1.0})
+    assert two["Clearance"]["fab_min_mm"] == 0.10 and two["MinimumAnnularRing_PTH"]["fab_min_mm"] == 0.18
+    assert two["Clearance"]["value"] == "6mil" and two["MinimumAnnularRing_PTH"]["value"] == "10mil"
+    # multilayer 1 oz: track/space 0.09 mm (3.5 mil), PTH ring 0.15 mm absolute / 0.20 mm recommended (8 mil) [P1]
+    p4 = get_jlc_preset({"layers": 4, "copper_oz": 1.0})
+    assert p4["name"] == "JLC 4-layer 1 oz"
+    four = {r["name"]: r for r in p4["rules"]}
+    assert four["Clearance"]["fab_min_mm"] == 0.09 and four["Width"]["fab_min_mm"] == 0.09
+    assert four["Clearance"]["value"] == "6mil"                    # JLCDFM rates 6 mil Good, 5.9 mil Warning
+    assert four["MinimumAnnularRing_PTH"]["fab_min_mm"] == 0.15 and four["MinimumAnnularRing_PTH"]["value"] == "8mil"
+    assert four["MinimumAnnularRing_Via"]["value"] == "6mil"
+    # 2 oz (P3): track/space 0.16 mm on any layer count, PTH ring >= 0.254 mm, mask bridge 0.20 mm
+    for layers in (2, 4):
+        p = get_jlc_preset({"layers": layers, "copper_oz": 2})
+        assert p["name"] == f"JLC {layers}-layer 2 oz"
+        n = {r["name"]: r for r in p["rules"]}
+        assert n["Clearance"]["fab_min_mm"] == n["Width"]["fab_min_mm"] == 0.16
+        assert n["Clearance"]["value"] == "8mil" and n["Width"]["value"].startswith("Min: 8mil")
+        assert n["MinimumAnnularRing_PTH"]["fab_min_mm"] == 0.254 and n["MinimumAnnularRing_PTH"]["value"] == "10mil"
+        assert n["MinimumSolderMaskSliver"]["fab_min_mm"] == 0.20 and n["MinimumSolderMaskSliver"]["value"] == "8mil"
+    # heavy copper exists on 2-layer boards only (2.5 / 3.5 / 4.5 oz: 0.20 / 0.25 / 0.30 mm)
+    for oz, floor in ((2.5, 0.20), (3.5, 0.25), (4.5, 0.30)):
+        assert _named({"layers": 2, "copper_oz": oz})["Clearance"]["fab_min_mm"] == floor
+    assert get_jlc_preset({"layers": 4, "copper_oz": 3.5})["name"] == "JLC 4-layer 2 oz"
+    # a project block holds strings sometimes
+    assert get_jlc_preset({"layers": "4", "copper_oz": "1 oz"})["name"] == "JLC 4-layer 1 oz"
+    # 1-layer boards: 0.3 mm smallest drill and via [P1]
+    one = _named({"layers": 1})
+    assert get_jlc_preset({"layers": 1})["name"] == "JLC 1-layer 1 oz"
+    assert one["HoleSize"]["fab_min_mm"] == {"min": 0.3} and one["RoutingVias"]["fab_min_mm"] == {"hole": 0.3, "dia": 0.5}
+
+
+def test_mask_colour_changes_the_mask_bridge_floor():
+    # P1: 1 oz mask bridge 0.10 mm for green, red, yellow, blue, purple; 0.13 mm for black and white; 2 oz 0.20 mm any colour
+    assert _named()["MinimumSolderMaskSliver"]["fab_min_mm"] == 0.10
+    for colour, floor in (("green", 0.10), ("Red", 0.10), ("black", 0.13), ("White", 0.13), ("matte black", 0.13)):
+        n = _named({"layers": 2, "copper_oz": 1, "mask_colour": colour})
+        assert n["MinimumSolderMaskSliver"]["fab_min_mm"] == floor, colour
+    assert _named({"layers": 2, "copper_oz": 2, "mask_colour": "black"})["MinimumSolderMaskSliver"]["fab_min_mm"] == 0.20
+    # a 0.10 mm sliver rule passes on green and is below the floor on black
+    board = [_board("MinimumSolderMaskSliver", MINSOLDERMASKWIDTH="0.1mm")]
+    assert _row(board, "MinimumSolderMaskSliver", preset=_preset_for())["verdict"] == "tighter_ok"
+    assert _row(board, "MinimumSolderMaskSliver", preset=_preset_for({"mask_colour": "black"}))["verdict"] == "below_fab_min"
+
+
+def test_preset_has_scoped_annular_ring_rules():
+    n = _named()
+    pth, via = n["MinimumAnnularRing_PTH"], n["MinimumAnnularRing_Via"]
+    assert (pth["kind"], pth["scope1"], pth["attributes"]["SCOPE1EXPRESSION"]) == ("MinimumAnnularRing", "IsPad", "IsPad")
+    assert (via["kind"], via["scope1"], via["attributes"]["SCOPE1EXPRESSION"]) == ("MinimumAnnularRing", "IsVia", "IsVia")
+    assert pth["attributes"]["PRIORITY"] == "1" and via["attributes"]["PRIORITY"] == "2"
+    assert pth["attributes"]["MINIMUMRING"] == "10mil" and via["attributes"]["MINIMUMRING"] == "6mil"
+    assert "MinimumAnnularRing" not in n          # no scope-All ring rule: pads and vias have different JLC limits
+
+
+def test_new_rule_kinds_use_altium_rul_syntax(tmp_path):
+    """The keys and scope strings are the ones in Altium's own export of the device board (real-project, AD26)
+    and in tests/fixtures/altium; write_rul / read_rul keep them."""
+    recs = get_preset_rule_records()
+    back = read_rul(write_rul(recs, tmp_path / "preset.RUL"))
+    assert back == recs
+    by_name = {r["NAME"]: r for r in back}
+    outline = by_name["BoardOutlineClearance"]
+    assert outline["GAP"] == "12mil" and outline["GENERICCLEARANCE"] == "12mil"
+    assert by_name["MinimumSolderMaskSliver"]["MINSOLDERMASKWIDTH"] == "6mil"
+    pad_pair = by_name["HoleToHoleClearance_PTH"]
+    assert (pad_pair["SCOPE1EXPRESSION"], pad_pair["SCOPE2EXPRESSION"], pad_pair["GAP"]) == ("IsPad", "IsPad", "18mil")
+    other = by_name["HoleToHoleClearance"]
+    assert (other["SCOPE1EXPRESSION"], other["SCOPE2EXPRESSION"], other["GAP"], other["PRIORITY"]) == ("All", "All", "8mil", "2")
+    assert by_name["ViasUnderSMD"]["ALLOWED"] == "FALSE"
+    assert by_name["MinimumAnnularRing_Via"]["SCOPE1EXPRESSION"] == "IsVia"
+    assert all(r["ENABLED"] == "TRUE" and r["SCOPE2EXPRESSION"] for r in back)
+
+
+def test_hole_size_maximum_is_jlcs_6_3_mm():
+    hs = _named()["HoleSize"]
+    assert hs["attributes"]["MAXLIMIT"] == "248.0315mil" and hs["attributes"]["MINLIMIT"] == "12mil"
+    assert to_mm("248.0315mil") == pytest.approx(6.3, abs=1e-4)           # P1: drills 0.15 to 6.3 mm; was 250 mil = 6.35 mm
+    assert preset_values_mm(hs)["max"] == pytest.approx(6.3, abs=1e-4)
+    assert hs["max_mm"] == 6.3
+
+
+def test_mask_expansion_description_does_not_invent_a_jlc_standard():
+    me = _named()["SolderMaskExpansion"]
+    # the old text said "fab standard 0.05mm"; JLC accepts 1:1 openings and recommends 0.1 mm (P1, P7)
+    assert "fab standard" not in me["description"].lower() and "standard 0.05" not in me["description"]
+    assert "1:1" in me["description"] and "0.1 mm" in me["description"] and "0.09" in me["description"]
+    assert me["value"] == "2mil" and me["fab_min_mm"] is None
+
+
+def test_dfm_limits_in_the_preset_are_the_ones_jlcdfm_serves():
+    if not JLCDFM_FILE.is_file():
+        pytest.skip("JLCDFM limits evidence file is not in this checkout")
+    served = {r["title"]: r["range_mil"] for r in json.loads(JLCDFM_FILE.read_text(encoding="utf-8"))["rules"].values()}
+    for title, rng in jlc_preset.DFM.items():
+        assert served[title] == rng, title
+
+
+@pytest.mark.parametrize("board", [None, {"layers": 4}, {"layers": 2, "copper_oz": 2}, {"layers": 4, "copper_oz": 2},
+                                   {"layers": 2, "copper_oz": 3.5}])
+def test_every_preset_value_is_good_in_jlcdfm(board):
+    """The preset values are chosen so JLCDFM (whole-mil limits) shows no Danger or Warning for them."""
+    rules_ = _preset_for(board)
+    for r in rules_:
+        vals = preset_values_mm(r)
+        for chk in r.get("jlcdfm") or []:
+            level = jlc_preset.dfm_level(next(iter(vals.values())), chk["range_mil"])
+            assert level in ("Good", "Not reported"), (r["name"], chk["check"], level)
+    n = {r["name"]: r for r in rules_}
+    # silk to pad in JLCDFM = silk to mask opening + mask expansion: Danger below 5 mil, Warning below 7 mil
+    silk_mm = preset_values_mm(n["SilkToSolderMaskClearance"])["gap"] + preset_values_mm(n["SolderMaskExpansion"])["expansion"]
+    assert jlc_preset.dfm_level(silk_mm, jlc_preset.DFM["Silkscreen to pad"]) in ("Good", "Not reported")
+
+
+def test_jlcdfm_levels_follow_its_whole_mil_limits():
+    rng = jlc_preset.DFM["Trace spacing"]                                  # 4 / 6 / 8 mil
+    assert jlc_preset.dfm_level(0.10, rng) == "Danger"                     # 3.94 mil: JLC's page accepts it, JLCDFM does not
+    assert jlc_preset.dfm_level(0.1016, rng) == "Warning"
+    assert jlc_preset.dfm_level(0.15, rng) == "Warning"                    # 5.9 mil
+    assert jlc_preset.dfm_level(0.1524, rng) == "Good"
+    assert jlc_preset.dfm_level(0.2032, rng) == "Not reported"
+
+
+def test_jlcdfm_note_is_added_to_the_detail_but_the_verdict_stays_the_fab_floor():
+    row = _row([_board("Clearance", GAP="5.9055mil", GENERICCLEARANCE="5.9055mil")], "Clearance")
+    assert row["verdict"] == "same"                                        # 0.15 mm against 6 mil: unit rounding
+    assert "JLCDFM Trace spacing: Warning (below 6 mil)" in row["detail"]
+    assert row["bounds"][0]["jlcdfm"] == "Warning"
+    row = _row([_board("Clearance", GAP="3.9370mil", GENERICCLEARANCE="3.9370mil")], "Clearance")   # 0.10 mm: JLC accepts it
+    assert row["verdict"] == "tighter_ok" and "Danger (below 4 mil)" in row["detail"]
+    assert "JLCDFM" not in _row([_board("Clearance", GAP="10mil", GENERICCLEARANCE="10mil")], "Clearance")["detail"]
+    # the missing ring rows say it too (a 5.9 mil via ring is a JLCDFM Warning)
+    ring = _ring_row([{"hole_mm": 0.3, "dia_mm": 0.6}], which="_Via")
+    assert ring["verdict"] == "same" and "JLCDFM Annular ring: Warning (below 6 mil)" in ring["detail"]
+
+
+@pytest.mark.parametrize("value,verdict", [
+    ("6mil", "same"),
+    ("10mil", "safer"),
+    ("4mil", "tighter_ok"),         # 0.1016 mm >= 0.10 mm
+    ("2.7559mil", "below_fab_min"), # 0.07 mm: the device's USB-C sliver rule
+])
+def test_verdict_mask_sliver(value, verdict):
+    assert _row([_board("MinimumSolderMaskSliver", MINSOLDERMASKWIDTH=value)], "MinimumSolderMaskSliver")["verdict"] == verdict
+
+
+@pytest.mark.parametrize("value,verdict", [
+    ("12mil", "same"),
+    ("11.811mil", "same"),          # 0.3 mm, the device
+    ("20mil", "safer"),
+    ("0.2mm", "tighter_ok"),        # JLC: copper to routed edge >= 0.2 mm
+    ("0.15mm", "below_fab_min"),
+])
+def test_verdict_board_outline_clearance(value, verdict):
+    row = _row([_board("BoardOutlineClearance", GAP=value, GENERICCLEARANCE=value)], "BoardOutlineClearance")
+    assert row["verdict"] == verdict
+
+
+def test_hole_to_hole_rules_pad_pair_and_everything_else():
+    # one scope-All rule on the board (as in the device, 10 mil = 0.254 mm) governs pad pairs too
+    rows = {r["rule"]: r for r in diff_rules([_board("HoleToHoleClearance", GAP="10mil")])}
+    pth, other = rows["HoleToHoleClearance_PTH"], rows["HoleToHoleClearance"]
+    assert pth["verdict"] == "below_fab_min" and "0.45" in pth["detail"]           # JLC pad to pad 0.45 mm [P1]
+    assert "(all objects) also applies" in pth["detail"]
+    assert other["verdict"] == "safer" and other["status"] == "differs"            # 0.254 mm vs 8 mil, JLC via to via 0.2 mm
+    assert not [r for r in rows.values() if r["status"] == "extra_on_board"]
+    # scoped board rules are matched to the preset rule with the same scopes
+    board = [_board("HoleToHoleClearance", NAME="H2H_pads", GAP="18mil", SCOPE1EXPRESSION="IsPad", SCOPE2EXPRESSION="IsPad"),
+             _board("HoleToHoleClearance", NAME="H2H_all", GAP="8mil", PRIORITY="2")]
+    rows = {r["rule"]: r for r in diff_rules(board)}
+    assert rows["H2H_pads"]["status"] == "match" and rows["H2H_all"]["status"] == "match"
+    assert len(rows) == len(_preset_for())
+
+
+def test_vias_under_smd_is_a_flag_not_a_number():
+    row = _row([_board("ViasUnderSMD", ALLOWED="FALSE")], "ViasUnderSMD")
+    assert (row["status"], row["verdict"], row["board value"]) == ("match", "same", "Not allowed")
+    row = _row([_board("ViasUnderSMD", ALLOWED="TRUE")], "ViasUnderSMD")
+    assert row["status"] == "differs" and row["verdict"] == "unknown" and "filled" in row["detail"]
+    assert _row([], "ViasUnderSMD")["status"] == "missing_on_board"
+
+
+def test_board_settings_and_project_board_pick_the_preset(empty):
+    import project
+    assert board_settings(layers=4, oz=2) == {"layers": 4, "copper_oz": 2}
+    assert board_settings() == {}
+    board = project.board(empty)
+    assert board["mask_colour"] == "green"                                   # config/defaults.json engineering_defaults
+    assert get_jlc_preset(project.board(empty))["name"] == "JLC 2-layer 1 oz"
+    project.touch(empty, board={**board, "layers": 4, "copper_oz": 2.0})
+    assert get_jlc_preset(project.board(empty))["name"] == "JLC 4-layer 2 oz"
+    assert get_jlc_preset(board_settings(empty, layers=2))["name"] == "JLC 2-layer 2 oz"      # the command line wins
+
+
+def test_rules_cli_takes_layers_and_copper(tmp_path):
+    script = str(REPO / "scripts" / "rules.py")
+    proc = subprocess.run([sys.executable, script, "preset", "--layers", "4", "--oz", "2"], capture_output=True, text=True)
+    assert proc.returncode == 0 and proc.stdout.startswith("JLC 4-layer 2 oz")
+    assert "MinimumAnnularRing_PTH" in proc.stdout and "[IsPad]" in proc.stdout
+    out = tmp_path / "four.RUL"
+    proc = subprocess.run([sys.executable, script, "export", str(out), "--layers", "4"], capture_output=True, text=True)
+    assert proc.returncode == 0 and "JLC 4-layer 1 oz" in proc.stdout
+    recs = {r["NAME"]: r for r in read_rul(out)}
+    assert recs["MinimumAnnularRing_PTH"]["MINIMUMRING"] == "8mil" and recs["Clearance"]["GAP"] == "6mil"
+    board = str(FIXTURES / "rules-board.PcbDoc")
+    proc = subprocess.run([sys.executable, script, "diff", "--json", board, "--layers", "4"], capture_output=True, text=True)
+    assert proc.returncode == 0 and json.loads(proc.stdout)["preset"] == "JLC 4-layer 1 oz"
+
+
+def test_jlc_live_coupons_are_judged_by_the_scoped_rule_of_their_object():
+    import jlc_live
+    v, checks = jlc_live.preset_verdict({"kind": "annular_ring"}, {"ring_mm": 0.15})            # pad ring: floor 0.18 mm
+    assert v == "below_fab_min" and checks == [("MinimumAnnularRing", "below_fab_min")]
+    v, checks = jlc_live.preset_verdict({"kind": "via", "nominal": {}}, {"ring_mm": 0.05, "drill_mm": 0.15, "dia_mm": 0.25})
+    assert v == "tighter_ok"                                                                    # JLC's smallest via
+    v, _ = jlc_live.preset_verdict({"kind": "hole_to_hole", "nominal": {"what": "pad-pad"}}, {"gap_mm": 0.40})
+    assert v == "below_fab_min"
+    v, _ = jlc_live.preset_verdict({"kind": "hole_to_hole", "nominal": {"what": "via-via"}}, {"gap_mm": 0.25})
+    assert v == "safer"

@@ -10,6 +10,8 @@ const DFM_VERDICTS = [
   ['by design', 'By design', 'The finding is true and intended'],
 ];
 const DFM_SEGS = [{value: 'pcb', label: 'Bare board'}, {value: 'smt', label: 'Assembly'}];
+// the report a segment shows; with nothing for its own kind, the other one's (a project with only an assembly report)
+const dfmStemFor = kind => (kind === 'smt' ? curSmtCheckStem : curPcbCheckStem) || curPcbCheckStem || curSmtCheckStem;
 const DFM_VCLASS = {'unknown': 'v-open', 'real': 'v-real', 'model': 'v-done', 'by design': 'v-done'};
 
 let dfmSeg = 'pcb';          // the segment on show: 'pcb' (bare board) or 'smt' (assembly)
@@ -23,7 +25,20 @@ let dfmSeen = {};            // stem -> the fingerprint the state carried last
 let dfmSaving = {};          // stem -> saves in flight
 let dfmQueue = {};           // stem -> the last save, so two saves of one table go out in order
 
-const dfmPl = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+// the JLC check done together: the guide, the Gerber zip, and finding the report the student exported
+let dfmGuide = false;        // the guide shows above the findings (header menu); with no report at all it is the whole view
+let dfmFor = null;           // the project the state below belongs to
+let dfmZip = null;           // the Gerber zip as it is on disk ({exists, files, missing, ...}); null until asked
+let dfmZipBusy = false;      // the zip is being made
+let dfmZipErr = '';          // why it could not be made
+let dfmZipAsked = false, dfmZipTried = null, dfmZipLoading = false;
+let dfmLooking = false;      // "Find my report" is running; the look when the window regains focus stays silent
+let dfmFindBusy = false, dfmFindAt = 0;
+let dfmPending = [];         // reports found whose header does not say what they cover: [{name, bytes, arrived}]
+let dfmFolder = '';          // the Downloads folder the last look used
+const DFM_JLC = 'https://jlcdfm.com';
+const DFM_FOCUS_MS = 4000;   // the look on focus runs at most this often
+
 const dfmVerdict = r => {
   const v = String((r && r.verdict) || 'unknown').toLowerCase();
   return DFM_VERDICTS.some(x => x[0] === v) ? v : 'unknown';
@@ -119,15 +134,105 @@ function dfmHeader(reports) {
     ready && {always: true, label: 'Ready to order', tone: 'ok', title: 'Every finding is judged and none is a real issue'},
     t.known && !t.n && {always: true, label: 'No findings listed yet', title: 'Add the findings of the report, or ask the agent to list them'},
   ]);
-  return viewHeader({title: 'DFM', meta, primary: dfmUpload({kind: 'pri'})});
+  const more = menu({icon: 'more', title: 'More'}, [{label: dfmGuide ? 'Hide how to check at JLC' : 'How to check at JLC', act: 'dfm-guide'}]);
+  return viewHeader({title: 'DFM', meta, actions: more, primary: dfmUpload({kind: 'pri'})});
 }
 function dfmUpload(trigger) {
-  if (dfmBusy) return btn('Uploading…', {kind: trigger.kind, disabled: true});
-  return menu(Object.assign({label: 'Upload report', icon: 'upload', iconAfter: 'chev', title: 'Upload the PDF report from jlcdfm.com'}, trigger), [
+  if (dfmBusy || dfmLooking) return btn(dfmLooking ? 'Looking…' : 'Uploading…', {kind: trigger.kind, disabled: true});
+  return menu(Object.assign({label: 'Upload report', icon: 'upload', iconAfter: 'chev', title: 'Add the PDF report from jlcdfm.com'}, trigger), [
+    {label: 'Find my report', hint: 'in Downloads', act: 'dfm-find'},
+    'sep',
+    {group: 'From a file'},
     {label: 'Bare board', act: 'upload-dfm', attrs: {kind: 'pcb'}},
     {label: 'Assembly', act: 'upload-dfm', attrs: {kind: 'smt'}},
     {label: 'Both in one report', act: 'upload-dfm', attrs: {kind: 'both'}},
   ]);
+}
+
+/* ---------- the guide: four steps, the zip, the report ---------- */
+function dfmProjectGuard() {       // the zip and the pending reports belong to one project
+  if (dfmFor === PROJECT) return;
+  dfmFor = PROJECT; dfmZip = null; dfmZipErr = ''; dfmZipAsked = false; dfmZipTried = null; dfmPending = []; dfmFolder = ''; dfmGuide = false;
+}
+function dfmZipSet(r) { dfmZip = r; dfmZipErr = ''; dfmZipAsked = true; }
+async function dfmZipLoad() {
+  const p = PROJECT;
+  dfmZipLoading = true;
+  try {
+    const r = await api('/api/jlc/gerber-zip', undefined, {soft: true});
+    if (p === PROJECT) dfmZip = r && !r.error ? r : {exists: false};
+  } catch (err) { if (p === PROJECT) dfmZip = {exists: false}; }
+  dfmZipLoading = false;
+  dfmRepaint();
+}
+// the zip step shows the zip as it is on disk: asked once, and again when its file changes (the agent can make it too)
+function dfmZipSync() {
+  const ex = (S.exports || []).find(f => /_gerbers\.zip$/i.test(f.name));
+  const mark = ex ? ex.modified || ex.name : '';
+  if (dfmZipLoading || (dfmZipAsked && mark === dfmZipTried)) return;
+  dfmZipTried = mark; dfmZipAsked = true;
+  dfmZipLoad();
+}
+// builds the zip from the Altium outputs; the one place that does it (the guide and Outputs > Export). Returns the result or null.
+async function dfmMakeZip() {
+  if (dfmZipBusy) return null;
+  const p = PROJECT;
+  dfmZipBusy = true; dfmZipErr = '';
+  if (dfmVisible()) renderCenter(true);
+  let r = null;
+  try { r = await api('/api/jlc/gerber-zip', {}, {soft: true}); } catch (err) { dfmFail(err); }
+  dfmZipBusy = false;
+  if (p !== PROJECT) return null;
+  if (r && !r.error) { dfmZipSet(r); await refresh(true); }
+  else dfmZipErr = (r && r.error) || 'no answer';
+  if (dfmVisible()) renderCenter(true);
+  return r && !r.error ? r : null;
+}
+const dfmNames = names => `<p class="dfm-files">${names.map(n => `<span class="m">${esc(n)}</span>`).join(' ')}</p>`;
+function dfmZipBody() {
+  if (dfmZipBusy) return loadingLine('Reading your Altium outputs');
+  const err = dfmZipErr ? errorLine('make the zip', dfmZipErr) : '';
+  const z = dfmZip;
+  if (!z) return err || loadingLine('Looking for the zip');
+  if (!z.exists) return err || '<p>Writes one zip with the newest Gerber and NC drill files of your Altium project. Altium\'s own folder is only read.</p>';
+  const gaps = z.missing || [], problems = gaps.filter(m => m.level === 'problem'), notes = gaps.filter(m => m.level !== 'problem');
+  const url = `/api/export/${encodeURIComponent(z.zip)}?${q()}`;
+  let out = err;
+  out += `<p class="dfm-zip"><span class="m">${esc(z.zip)}</span><span>${(z.files || []).length} files, written <time datetime="${esc(z.generated)}" title="${esc(outFull(z.generated))}">${esc(outAgo(z.generated))}</time></span>` +
+    `<a class="btn icon sm" href="${esc(url)}" download="${esc(z.zip)}" title="Download ${esc(z.zip)}" aria-label="Download ${esc(z.zip)}">${icon('download')}</a></p>`;
+  out += dfmNames((z.files || []).map(f => f.name));
+  out += problems.map(m => `<div class="note warn"><span><b>${esc(m.layer)}</b> (<span class="m">${esc(m.ext)}</span>) is missing. ${esc(m.why)}</span></div>`).join('');
+  out += (z.warnings || []).map(w => `<div class="note warn"><span>${esc(w)}</span></div>`).join('');
+  if (notes.length) out += `<p class="muted">${notes.map(m => `${esc(m.layer)} (<span class="m">${esc(m.ext)}</span>) is not in the set. ${esc(m.why)}`).join(' ')}</p>`;
+  const a = z.assembly || {};
+  out += a.bom && a.cpl
+    ? `<p>For assembly, also upload <span class="m">${esc(a.bom)}</span> and <span class="m">${esc(a.cpl)}</span> (Outputs).</p>`
+    : '<p>For assembly you also need the BOM and the pick and place file. Export them from Outputs.</p>';
+  return out;
+}
+const dfmStep = (title, actions, body) => `<li class="dfm-step"><div class="dfm-step-h"><h3>${esc(title)}</h3>${actions ? `<div class="acts">${actions}</div>` : ''}</div>` +
+  `${body ? `<div class="dfm-step-b">${body}</div>` : ''}</li>`;
+function dfmGuideHTML(empty) {
+  dfmZipSync();
+  const folder = dfmFolder ? `<span class="m">${esc(dfmFolder)}</span>` : 'your Downloads folder';
+  const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy});
+  const steps = [
+    dfmStep('Get the Gerber zip', zipBtn, dfmZipBody()),
+    dfmStep('Open jlcdfm.com and sign in', `<a class="btn line sm" href="${DFM_JLC}" target="_blank" rel="noopener"><span>Open jlcdfm.com</span>${icon('ext', 's')}</a>`,
+      '<p>Use your own JLCPCB account. The advisor never asks for your password.</p>'),
+    dfmStep('Upload and run the checks', '', '<p>Upload the zip and run PCB DFM. For assembly, also run SMT DFM with the BOM and CPL. Then export the PDF report.</p>'),
+    dfmStep('Find my report', btn('Find my report', {kind: 'line', size: 'sm', act: 'dfm-find', disabled: dfmLooking}),
+      `<p>Save the PDF in ${folder}. The advisor looks there when you come back to this window.</p>`),
+  ];
+  const ask = btn('Ask', {kind: 'line', size: 'sm', icon: 'chat', act: 'ask-jlc-upload', title: 'Ask the agent to walk you through the upload'});
+  const hide = empty ? '' : btn('Hide', {kind: 'line', size: 'sm', act: 'dfm-guide'});
+  const lead = empty ? '<p class="dfm-lead">No report yet. The advisor prepares the files and picks up the report; you sign in and upload at JLC.</p>' : '';
+  return section('How to check at JLC', `${lead}<ol class="dfm-steps">${steps.join('')}</ol>`, {id: 'dfm-guide', actions: ask + hide});
+}
+function dfmPendingHTML() {        // a report whose header does not say what it covers: ask, never guess
+  return dfmPending.map(p => `<div class="note"><span><span class="m">${esc(p.name)}</span> is in Downloads. What does it cover?</span><span class="acts">` +
+    [['pcb', 'Bare board'], ['smt', 'Assembly'], ['both', 'Both']].map(([k, l]) => btn(l, {kind: 'line', size: 'sm', act: 'dfm-kind', 'data-kind': k, 'data-file': p.name})).join('') +
+    '</span></div>').join('');
 }
 
 /* ---------- findings ---------- */
@@ -219,14 +324,11 @@ function checksHTML(container) {
   if (curSmtCheckStem && !smtChecks.some(c => c.stem === curSmtCheckStem)) {
     curSmtCheckStem = smtChecks.length ? smtChecks[0].stem : null;
   }
-  if (!curCheckStem && checks.length) {
-    curCheckStem = curPcbCheckStem || curSmtCheckStem || checks[0].stem;
-  }
   if (!dfmSegUser && !pcbChecks.length && smtChecks.length) dfmSeg = 'smt';    // only an assembly report so far
 
-  if (!checks.length) {
-    return viewHeader({title: 'DFM'}) + emptyState('No DFM report yet', 'Upload the PDF report from jlcdfm.com (bare board, assembly, or both).',
-      dfmUpload({kind: 'pri'}) + '<a class="btn link" href="https://jlcdfm.com" target="_blank" rel="noopener">Open jlcdfm.com</a>');
+  dfmProjectGuard();
+  if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
+    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -245,7 +347,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb"><div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
@@ -277,8 +379,29 @@ onAct('ask-dfm-report', async (el, d, e) => {
   askAbout({kind: 'dfm', id: d.stem, label: d.stem, text: 'List the findings of this report in the DFM table, then tell me which ones look real.'});
   return;
 });
+onAct('ask-jlc-upload', async (el, d, e) => {
+  askAbout({kind: 'dfm', id: 'jlc-upload', label: 'JLC upload', text: 'Walk me through the JLC DFM upload'});
+  return;
+});
+onAct('dfm-guide', async (el, d, e) => {
+  dfmGuide = !dfmGuide;
+  renderCenter(true);
+  return;
+});
+onAct('dfm-zip', async (el, d, e) => {
+  await dfmMakeZip();
+  return;
+});
+onAct('dfm-find', async (el, d, e) => {
+  await dfmFindReports(true);
+  return;
+});
+onAct('dfm-kind', async (el, d, e) => {           // the answer to "what does it cover?" for a report the header did not settle
+  await dfmFindReports(true, {name: d.file, kind: d.kind});
+  return;
+});
 onAct('add-triage-row', async (el, d, e) => {
-  const stem = d.stem || (d.kind === 'smt' ? curSmtCheckStem : curPcbCheckStem) || curCheckStem;
+  const stem = d.stem || dfmStemFor(d.kind);
   if (!stem || !triageMap[stem]) return;
   const kind = d.kind === 'smt' ? 'smt' : 'pcb';
   const name = await askText({title: 'Add finding', label: 'Check name', placeholder: kind === 'smt' ? 'Pin outer edge' : 'Silkscreen to pad', confirm: 'Add'});
@@ -294,7 +417,7 @@ onAct('add-triage-row', async (el, d, e) => {
   return;
 });
 onAct('del-triage-row', async (el, d, e) => {
-  const stem = d.stem || (d.kind === 'smt' ? curSmtCheckStem : curPcbCheckStem) || curCheckStem;
+  const stem = d.stem || dfmStemFor(d.kind);
   const idx = parseInt(d.idx, 10);
   if (!stem || isNaN(idx) || !triageMap[stem] || !triageMap[stem][idx]) return;
   const [gone] = triageMap[stem].splice(idx, 1);
@@ -318,24 +441,77 @@ onChange(t => t.id === 'dfmpick', async e => {
   try {
     const buf = new Uint8Array(await f.arrayBuffer()); let bin = ''; for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
     const r = await api('/api/checks/upload', {name: f.name, data_b64: btoa(bin), kind: kind});
-    for (const k of ['t:', 'i:']) { delete dfmTried[k + r.stem]; delete dfmErr[k + r.stem]; }
-    delete indexMap[r.stem]; delete triageMap[r.stem]; delete dfmSig[r.stem];
-    if (kind !== 'smt') curPcbCheckStem = r.stem;
-    if (kind !== 'pcb') curSmtCheckStem = r.stem;
-    curCheckStem = r.stem;
-    if (kind !== 'both') { dfmSeg = kind; dfmSegUser = true; }
-    dfmOpen = '';
+    dfmAdopt([{stem: r.stem, kind}]);
   } catch (err) { dfmFail(err); }
   dfmBusy = false;
   e.target.value = '';
   await refresh(true);
   return;
 });
+/* ---------- a report that came in (uploaded, or found in Downloads): show it, then keep looking when the student comes back ---------- */
+function dfmAdopt(found) {
+  for (const f of found) {
+    for (const k of ['t:', 'i:']) { delete dfmTried[k + f.stem]; delete dfmErr[k + f.stem]; }
+    delete indexMap[f.stem]; delete triageMap[f.stem]; delete dfmSig[f.stem];
+    if (f.kind !== 'smt') curPcbCheckStem = f.stem;
+    if (f.kind !== 'pcb') curSmtCheckStem = f.stem;
+  }
+  const last = found[found.length - 1];
+  if (last && last.kind !== 'both') { dfmSeg = last.kind; dfmSegUser = true; }
+  dfmOpen = '';
+}
+// pick = {name, kind} adds that one file of Downloads; with nothing, the reports that arrived since the last one.
+// manual: the student asked, so an empty result is said; the look on focus stays quiet unless it finds something.
+async function dfmFindReports(manual, pick) {
+  if (dfmFindBusy) return;
+  const p = PROJECT;
+  dfmFindBusy = true; dfmFindAt = Date.now();
+  if (manual) { dfmLooking = true; if (dfmVisible()) renderCenter(true); }
+  let r = null;
+  try { r = await api('/api/jlc/pickup', pick || {}, {soft: true}); } catch (err) { if (manual) dfmFail(err); }
+  dfmFindBusy = false; dfmLooking = false;
+  if (p !== PROJECT) return;
+  if (!r || r.error) {
+    if (manual && r) toast(r.error, null, {bad: true});
+    if (dfmVisible()) renderCenter(true);
+    return;
+  }
+  if (r.folder) dfmFolder = r.folder;
+  const pending = JSON.stringify(dfmPending);
+  const handled = new Set([...(r.pending || []), ...(r.found || []), ...(r.skipped || [])].map(x => x.name));
+  if (pick) handled.add(pick.name);                  // asked about by name: answered, or gone
+  // a report waits for its answer even when a later look no longer lists it (it is older than the report added meanwhile)
+  dfmPending = (r.pending || []).concat(dfmPending.filter(x => !handled.has(x.name)));
+  const found = r.found || [];
+  if (found.length) {
+    dfmAdopt(found);
+    await refresh(true);
+    toast(found.length === 1 ? `Found ${found[0].name}, added` : `Found ${found.length} reports, added`);
+    return;
+  }
+  if (manual && !dfmPending.length) {
+    const skipped = (r.skipped || []).find(s => !/already added/.test(s.reason));
+    const older = r.older_files || [];
+    if (!r.folder_exists) toast(`The folder ${r.folder} does not exist. Add the report from a file instead.`, null, {bad: true});
+    else if (skipped) toast(`${skipped.name}: ${skipped.reason}`);
+    else if ((r.skipped || []).length) toast('That report is already added.');
+    else if (older.length) toast(`No new JLCDFM report in Downloads. ${older.length === 1 ? 'An older one is' : 'Older ones are'} there.`,
+      {label: 'Add the newest', onClick: () => dfmFindReports(true, {name: older[0].name})});
+    else toast('No new JLCDFM report in Downloads yet.');
+  }
+  if (pending !== JSON.stringify(dfmPending) || manual) { if (dfmVisible()) renderCenter(true); }
+}
+function dfmLookOnFocus() {
+  if (!dfmVisible() || document.hidden || Date.now() - dfmFindAt < DFM_FOCUS_MS) return;
+  dfmFindReports(false);
+}
+addEventListener('focus', dfmLookOnFocus);
+document.addEventListener('visibilitychange', dfmLookOnFocus);
+
 onChange(t => t.classList.contains('check-stem-select') || t.id === 'check-stem-select', async e => {
   const kind = e.target.dataset.kind || 'pcb';
   if (kind === 'smt') curSmtCheckStem = e.target.value;
   else curPcbCheckStem = e.target.value;
-  curCheckStem = e.target.value;
   dfmOpen = '';
   renderCenter(true);
   return;
@@ -343,7 +519,7 @@ onChange(t => t.classList.contains('check-stem-select') || t.id === 'check-stem-
 // a verdict, a fix or an evidence text: the triage row is changed and the table saved; no toast per change
 onChange(t => t.closest && t.closest('[data-triage-field]'), async e => {
   const field = e.target.closest('[data-triage-field]');
-  const stem = field.dataset.stem || (field.dataset.kind === 'smt' ? curSmtCheckStem : curPcbCheckStem) || curCheckStem;
+  const stem = field.dataset.stem || dfmStemFor(field.dataset.kind);
   const idx = parseInt(field.dataset.idx, 10), name = field.dataset.triageField;
   const row = stem && triageMap[stem] && triageMap[stem][idx];
   if (!row || isNaN(idx) || row[name] === field.value) return;

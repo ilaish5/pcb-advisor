@@ -76,14 +76,6 @@
   --sch-pwr:#F0A24E; --sch-pwr3:#71CC79; --sch-gnd:#B79D8B; --sch-dash:#4A4A51;
 }
 
-/* ---------- aliases for older rules still being migrated (delete once no area uses them) ---------- */
-:root{
-  --bg:var(--frame); --panel:var(--sheet); --panel2:var(--sunk); --line2:var(--line); --ink2:var(--ink-2); --dim:var(--ink-3);
-  --accent:var(--sig); --accent-ink:var(--sheet); --accent-soft:var(--sig-soft);
-  --nav:var(--frame); --nav-ink:var(--ink); --nav-dim:var(--ink-3); --nav-sel:var(--sheet);
-  --hl:var(--sig-soft); --hl2:var(--hover); --shadow:none;
-}
-
 /* ---------- base ---------- */
 *,*::before,*::after{box-sizing:border-box}
 html,body{height:100%}
@@ -101,7 +93,7 @@ p{margin:0}
 .m,code,kbd{font-family:var(--f-mono)}
 .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 .muted{color:var(--ink-3)}
-.ok-t{color:var(--ok)} .warn-t{color:var(--warn)} .bad-t{color:var(--bad)} .net-t{color:var(--net)}
+.ok-t{color:var(--ok)} .warn-t{color:var(--warn)} .bad-t{color:var(--bad)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 [hidden]{display:none !important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}}
@@ -205,6 +197,8 @@ select.in{padding-right:28px;appearance:none;background-image:url("data:image/sv
 .tbl.rows tbody tr{cursor:pointer}
 .tbl.rows tbody tr:hover td{background:var(--hover)}
 .tbl tr.sel td{background:var(--sig-soft)}
+tr.flash td{animation:flash 1.6s ease-out}   /* a row that has just appeared (a new export, a source just added) */
+@keyframes flash{0%{background:var(--ok-soft)}100%{background:transparent}}
 .tbl td.num,.tbl th.num{text-align:right}
 .tbl .row-acts{opacity:0;transition:opacity .1s;text-align:right;white-space:nowrap}
 .tbl tr:hover .row-acts,.tbl tr:focus-within .row-acts,.tbl tr.sel .row-acts{opacity:1}
@@ -223,7 +217,14 @@ select.in{padding-right:28px;appearance:none;background-image:url("data:image/sv
 .note.warn{background:var(--warn-soft);color:var(--ink)}
 .note.bad{background:var(--bad-soft);color:var(--ink)}
 .note.ok{background:var(--ok-soft);color:var(--ink)}
+.note:has(>.acts){align-items:center}   /* actions on the right sit level with the text, not below its first line */
 .note .acts{margin-left:auto}
+/* a citation chip (core.js chip(), in the chat, Rules and Library): the document's name in mono, what was cited after it;
+   a name that Sources does not list is red. It opens the document in the side sheet. */
+button.src{color:var(--sig);font-size:var(--t-sm);text-align:left;border-radius:3px;text-underline-offset:2px}
+button.src:hover{text-decoration:underline}
+button.src b{font-family:var(--f-mono);font-weight:400;font-size:12px}
+button.src.broken{color:var(--bad)}
 .empty{display:grid;justify-items:center;text-align:center;gap:8px;padding:72px 24px;max-width:420px;margin:0 auto}
 .empty h2{font-size:var(--t-lg)}
 .empty p{color:var(--ink-3)}

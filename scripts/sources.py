@@ -1,7 +1,9 @@
 """
 The reference library.
 
-Two places. `shared/datasheets/` holds GENERAL documents only (application notes,
+Three places. `shared/reference/` is the course and JLC material that ships with the
+tool: read-only, listed in every project under its path relative to that folder
+(`jlc/pcb-capabilities.en.md`), the name a citation uses. `shared/datasheets/` holds GENERAL documents only (application notes,
 design guides, standards): everything there is visible in every project and its
 .json sidecars go to git. A project's own documents - the datasheets of ITS parts,
 what it uploads, what it cites - live in `projects/<name>/sources/` and never
@@ -39,6 +41,51 @@ class SourceError(Exception):
 def cache():
     """The shared document library: general documents, visible in every project."""
     return workspace.datasheets_dir()
+
+
+REFERENCE_TYPES = (".md", ".pdf")
+# Instructions, not sources: AGENTS.md tells the advisor how to find things and README.md points a person at it.
+# Neither holds a fact anyone cites (shared/reference/AGENTS.md "How to cite"), so neither is listed or served.
+REFERENCE_SKIP = ("agents.md", "readme.md")
+
+
+def reference_dir():
+    """The general reference library (course material, JLC pages): shared/reference/ of the install, git-tracked,
+    read-only. The advisor reads it from the same place (workspace.describe), so the UI shows what the agent reads."""
+    return workspace.REPO / "shared" / "reference"
+
+
+def reference_files():
+    """{name: path} of every general reference document. The name is the path relative to the reference folder with
+    forward slashes ('jlc/pcb-capabilities.en.md'): unique, and exactly how AGENTS.md tells the advisor to cite it.
+    Markdown and the PDFs that sit next to their extracted text; instructions are left out (REFERENCE_SKIP)."""
+    root = reference_dir()
+    if not root.is_dir():
+        return {}
+    out = {}
+    for f in sorted(root.rglob("*")):
+        if f.is_file() and f.suffix.lower() in REFERENCE_TYPES and f.name.lower() not in REFERENCE_SKIP:
+            out[f.relative_to(root).as_posix()] = f
+    return out
+
+
+def reference_path(name):
+    """The file of a reference name, or None. Only a name in the listing resolves, so '..', absolute paths and
+    names of other files find nothing: there is no path to sanitise."""
+    return reference_files().get(name)
+
+
+_sha_memo = {}
+
+
+def file_sha256(path):
+    """sha256 of a file, kept until the file changes (a size or a time that differs): the 4 s poll lists the reference
+    documents every time, and one of them is a 21 MB PDF."""
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime_ns)
+    if key not in _sha_memo:
+        _sha_memo[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return _sha_memo[key]
 
 
 def folder_of(project=None):
@@ -148,7 +195,13 @@ def fetch(url, name=None, timeout=45, project=None):
 
 def text_of(name, folder=None):
     """Plain text of a cached document, itself cached next to it. `folder` is a
-    project's sources/ directory, tried before the shared library."""
+    project's sources/ directory, tried before the shared library. A reference name
+    ('jlc/pcb-capabilities.en.md') reads the reference document itself, with no cache."""
+    ref = reference_path(name)
+    if ref is not None:
+        if ref.suffix.lower() == ".pdf":
+            raise FileNotFoundError(f"{name} is a PDF: its text is in the .md files beside it")
+        return ref.read_text(encoding="utf-8", errors="replace")
     path = cache() / _safe(name)
     if folder is not None and (pathlib.Path(folder) / _safe(name)).exists():
         path = pathlib.Path(folder) / _safe(name)
@@ -316,12 +369,16 @@ if __name__ == "__main__":
         elif cmd == "unuse":
             print(json.dumps(unuse(sys.argv[2], sys.argv[3])))
         else:
-            # list [project]: the shared library, then that project's own documents
-            places = [("shared", cache())] + ([("project", folder_of(sys.argv[2]))] if len(sys.argv) > 2 else [])
-            for scope, folder in places:
-                for f in sorted(folder.glob("*")):
-                    if f.suffix not in (".json", ".txt"):
-                        print(f"{scope:8s}{f.name} {f.stat().st_size}" if len(places) > 1 else f"{f.name} {f.stat().st_size}")
+            # list [project]: the shared library (downloaded documents, then the reference library by the name a
+            # citation uses), then that project's own documents
+            def own(folder):
+                return [(f.name, f.stat().st_size) for f in sorted(folder.glob("*")) if f.suffix not in (".json", ".txt")]
+            rows = [("shared", n, size) for n, size in own(cache())]
+            rows += [("shared", name, f.stat().st_size) for name, f in reference_files().items()]
+            if len(sys.argv) > 2:
+                rows += [("project", n, size) for n, size in own(folder_of(sys.argv[2]))]
+            for scope, name, size in rows:
+                print(f"{scope:8s}{name} {size}" if len(sys.argv) > 2 else f"{name} {size}")
     except SourceError as exc:
         # one line a person (or the agent) can act on, not a traceback
         print(f"error: {exc}", file=sys.stderr)

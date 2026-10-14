@@ -205,10 +205,14 @@ def test_a_part_datasheet_is_listed_under_its_project_only_and_a_general_one_und
         project.create(name)
     sources.fetch("https://ti.example/app-note.pdf", "app-note.pdf")                     # general: shared library
     sources.get("board", "https://vendor.example/mp2315.pdf", "MP2315_datasheet.pdf")    # a part of board
-    mine = {(r["name"], r["scope"]) for r in model.list_sources("board")}
-    theirs = {(r["name"], r["scope"]) for r in model.list_sources("other")}
-    assert mine == {("app-note.pdf", "shared"), ("MP2315_datasheet.pdf", "project")}
-    assert theirs == {("app-note.pdf", "shared")}
+    # the reference library is part of the install, not of this temp workspace: it is listed for every project
+    # (tests/test_sources_reference.py), so here only the documents this test downloaded are compared
+    def downloaded(project_name):
+        return {(r["name"], r["scope"]) for r in model.list_sources(project_name) if r["origin"] != "Reference library"}
+    assert downloaded("board") == {("app-note.pdf", "shared"), ("MP2315_datasheet.pdf", "project")}
+    assert downloaded("other") == {("app-note.pdf", "shared")}
+    assert {r["name"] for r in model.list_sources("board") if r["origin"] == "Reference library"} \
+        == {r["name"] for r in model.list_sources("other") if r["origin"] == "Reference library"} != set()
 
 
 def test_verify_searches_the_project_before_the_shared_library(home, monkeypatch):
@@ -240,9 +244,18 @@ def test_cli_verify_and_list_take_a_project(home, monkeypatch, capsys):
 
     assert json.loads(run("verify", "note.md", "keep the loop small", "board"))["ok"] is True
     assert json.loads(run("verify", "note.md", "keep the loop small"))["ok"] is False
-    assert run("list").split() == ["guide.md", str(len(b"A guide."))]
-    both = run("list", "board").splitlines()
-    assert [row.split()[:2] for row in both] == [["shared", "guide.md"], ["project", "note.md"]]
+    reference = set(sources.reference_files())      # the install's own library is listed too, after the downloads
+
+    def mine(out):
+        return [row for row in out.splitlines() if row.split()[0] not in reference and row.split()[1] not in reference]
+    plain = run("list").splitlines()
+    assert [row.split() for row in plain if row.split()[0] not in reference] == [["guide.md", str(len(b"A guide."))]]
+    assert {row.split()[0] for row in plain} - {"guide.md"} == reference
+    both = run("list", "board")
+    assert [row.split()[:2] for row in mine(both)] == [["shared", "guide.md"], ["project", "note.md"]]
+    assert {row.split()[1] for row in both.splitlines() if row.split()[0] == "shared"} - {"guide.md"} == reference
+    assert [row.split()[0] for row in both.splitlines()].index("project") > max(
+        i for i, row in enumerate(both.splitlines()) if row.split()[0] == "shared"), "the project's own come last"
 
 
 def test_the_agent_is_told_where_part_datasheets_live(home):

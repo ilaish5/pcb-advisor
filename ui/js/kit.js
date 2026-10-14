@@ -218,7 +218,3 @@ function applyTheme(v) {
   if (v === 'light' || v === 'dark') root.dataset.theme = v;
   else delete root.dataset.theme;
 }
-function currentTheme() {
-  const v = getThemePref();
-  return v !== 'system' ? v : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-}

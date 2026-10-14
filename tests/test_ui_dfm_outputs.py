@@ -134,7 +134,11 @@ def test_outputs_has_one_primary_a_files_table_and_no_banner():
         assert gone not in OUTPUTS, gone
     # a file's name opens it beside the sheet, and the list says when it was written
     assert "onAct('view-export'" in OUTPUTS and "fileType: 'export'" in OUTPUTS
-    assert "fetch" not in OUTPUTS and "api('/api/exports'" in OUTPUTS
+    # when: the state's own export items carry it (model.build), so the view makes no call of its own
+    assert "fetch" not in OUTPUTS and "api(" not in OUTPUTS.replace("await api('/api/outjob/generate', {})", "").replace("await api('/api/cpl/export', {})", "")
+    row = _block(OUTPUTS, "outRow")
+    assert "f.modified" in row and "f.modified" in OUTPUTS[OUTPUTS.index("function outputsHTML"):]
+    assert "/api/exports" not in OUTPUTS and "outTimes" not in OUTPUTS and "loadExportTimes" not in OUTPUTS
 
 
 def test_outputs_file_sizes_read_in_bytes_kb_and_mb():

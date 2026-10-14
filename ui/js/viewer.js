@@ -1,8 +1,10 @@
 /* PCB Advisor UI - documents. A document opens in the side sheet (shell.js openFileAsTab) and is drawn once by
-   renderFileTabContent: PDF, image, DFM slice, CSV, text, or the summary of an Altium file.
+   renderFileTabContent: PDF, image, DFM slice, CSV, text, markdown (js/markdown.js: the general reference documents), or the
+   summary of an Altium file.
    Header: the file name, an Ask icon and a menu (Download, Open in new tab). Errors use errorLine, loading uses loadingLine.
-   Globals other files call: openViewerSource (chips, palette), openViewerAltium (links to Altium files), openViewerExport (palette),
-   fileDownload (a Download button or toast). A DFM slice opens through openFileAsTab({stem, slice, fileType: 'dfm'}). */
+   Opening is not here: every caller (chips, tables, the palette, links to Altium files) uses shell.js openFileAsTab, with
+   fileType 'export' for a file the advisor wrote and {stem, slice, fileType: 'dfm'} for a DFM slice.
+   Globals other files call: fileDownload (a Download button or toast), docBase. */
 
 const DOC_PDF_BAD = 'This file is not a valid PDF (it may be empty or damaged). Upload it again.';
 const DOC_IMG_EXT = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
@@ -145,9 +147,10 @@ async function renderFileTabContent(tabObj, container) {
     return;
   }
 
-  // CSV, text, and anything else: read it, and say so when it is not text
-  paint('', {head: docHeader({name, sub: isExport ? docExportSub(name) : docSourceSub(name), download, open: isExport ? '' : open}), body: loadingLine('Loading')});
+  // CSV, text, markdown and anything else: read it, and say so when it is not text
+  paint('', {head: docHeader({name, sub: isExport ? docExportSub(name) : docSourceSub(name, tabObj.where), download, open: isExport ? '' : open}), body: loadingLine('Loading')});
   let html;
+  const md = ext === '.md' && !isExport;                       // a markdown source is read as a document, not as raw text
   try {
     const res = await fetch(raw);
     if (!res.ok) throw new Error(res.status === 404 ? 'It is not in this project.' : 'The server answered ' + res.status + '.');
@@ -156,21 +159,33 @@ async function renderFileTabContent(tabObj, container) {
       html = emptyState('No preview for this file', 'Download it to open it in another program.', btn('Download', {kind: 'line', icon: 'download', act: 'doc-download', url: download, name}));
     } else {
       const text = new TextDecoder().decode(buf);
-      html = ext === '.csv' ? docCsvHTML(text) : docTextHTML(text);
+      html = ext === '.csv' ? docCsvHTML(text) : md ? docMarkdownHTML(text) : docTextHTML(text);
     }
   } catch (err) {
     html = errorLine('open ' + name, err.message);
   }
-  if (!stale() && body()) body().innerHTML = html;
+  if (stale() || !body()) return;
+  body().innerHTML = html;
+  if (md) docReveal(body(), tabObj.where);
 }
 function docExportSub(name) {
   const f = (S.exports || []).find(x => x.name === name);
   return `<span>Export</span>${f && f.size != null ? `<span>${esc(docBytes(f.size))}</span>` : ''}`;
 }
+const docCut = text => (text.length > DOC_TEXT_CHARS ? text.slice(0, DOC_TEXT_CHARS) : text);
+const docMore = text => (text.length > DOC_TEXT_CHARS ? `<p class="doc-more">Showing the first ${num(DOC_TEXT_CHARS)} of ${num(text.length)} characters.</p>` : '');
 function docTextHTML(text) {
-  const cut = text.length > DOC_TEXT_CHARS;
-  return `<pre class="doc-pre">${esc(cut ? text.slice(0, DOC_TEXT_CHARS) : text)}</pre>` +
-    (cut ? `<p class="doc-more">Showing the first ${num(DOC_TEXT_CHARS)} of ${num(text.length)} characters.</p>` : '');
+  return `<pre class="doc-pre">${esc(docCut(text))}</pre>${docMore(text)}`;
+}
+function docMarkdownHTML(text) {
+  return `<article class="md">${mdToHTML(docCut(text))}</article>${docMore(text)}`;
+}
+/* a citation names a section or a page: scroll to it and mark it, so the reader sees what was quoted */
+function docReveal(box, where) {
+  const el = mdFindSection(box, where);
+  if (!el) return;
+  el.classList.add('md-hit');
+  el.scrollIntoView({block: 'start'});
 }
 function docCsvHTML(text) {
   const lns = text.split(/\r?\n/).filter(l => l.trim().length > 0);
@@ -227,21 +242,6 @@ function docAltiumHTML(path, ext, data) {
   return `${meta ? `<div class="meta doc-meta">${meta}</div>` : ''}${out || '<p class="muted">Nothing to list for this file.</p>'}`;
 }
 
-/* ---------- opening documents: every caller (chips, tables, the palette) comes through one of these ---------- */
-async function openViewerSource(name, where) {
-  setView('work');
-  openFileAsTab({name, path: name, where});
-}
-async function openViewerAltium(path) {
-  setView('work');
-  const fileName = docBase(path), ext = docExt(fileName);
-  const fileType = ext === '.pcbdoc' ? 'pcb' : ext === '.prjpcb' ? 'prj' : ext === '.rul' ? 'rul' : 'sch';
-  openFileAsTab({name: fileName, path, fileType});
-}
-async function openViewerExport(name) {
-  setView('work');
-  openFileAsTab({name, path: name, fileType: 'export'});
-}
 function parseCsvLine(line) {
   const cells = [];
   let cur = '', inQ = false;

@@ -19,17 +19,24 @@
 
 /* ---------- sources ---------- */
 .vb>.note{margin-bottom:12px}
-.vb>.note,.set-page .note{align-items:center}
 .vb>.note code{font-size:12.5px}
 .vb>.loading{padding:0 0 12px}
 .src-tbl td{white-space:nowrap}
 .src-tbl.slim{max-width:760px}
 .src-tbl td.muted{max-width:260px;overflow:hidden;text-overflow:ellipsis}
-.src-name{display:inline-block;max-width:min(46ch,100%);overflow:hidden;text-overflow:ellipsis;vertical-align:bottom;text-align:left;
-  font-family:var(--f-mono);font-size:12.5px;color:var(--ink)}
+/* the name takes the width that is left and is cut with an ellipsis (its tooltip has the whole path); Type and Size keep theirs */
+.src-tbl td.src-n{width:100%;max-width:0}
+.src-cell{display:flex;align-items:center;gap:6px;min-width:0;container-type:inline-size}
+.src-name{display:flex;min-width:0;max-width:100%;text-align:left;font-family:var(--f-mono);font-size:12.5px;color:var(--ink)}
+.src-name .dir,.src-name .file{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.src-name .dir{flex:0 1 auto}         /* the folders give way first ... */
+.src-name .file{flex:none;max-width:100%}   /* ... the file name keeps its width until it alone is longer than the cell */
+@container (max-width:400px){.src-name .dir{display:none}}   /* a narrow cell (the list beside an open document) shows the file name only; the tooltip has the path */
 button.src-name:hover{color:var(--sig);text-decoration:underline}
+button.src-name:hover .dir{color:inherit}
 .src-name.off{color:var(--ink-3)}
-.src-tbl .tag{margin-left:6px}
+.src-name .dir{color:var(--ink-3)}
+.src-tbl .tag{flex:none}
 
 /* ---------- settings ---------- */
 .set-page{max-width:720px}

@@ -14,16 +14,13 @@ let PROJECT = URLQ.get('project') || null;
 let SESSION = URLQ.get('session') || null;
 let PROJECTS = [], SKILLS = null, CONFIG = null, ALTIUM_DATA = null, RULES_DATA = null;
 let page = 'workspace', tab = 'bom', sel = null, hitSrc = null, sheetId = null;
-let convsOpen = false, pending = false, compareCard = null, exportCard = null, libExport = null, altsCard = null;
+let convsOpen = false, pending = false, libExport = null;
 let impInfo = null, impFor = null, impSel = '', impReport = null, impBusy = false;   // import a BOM from Altium
-let outjobBanner = null, curCheckStem = null, curPcbCheckStem = null, curSmtCheckStem = null, uploadDfmKind = 'pcb', schAnchor = null;
+let curPcbCheckStem = null, curSmtCheckStem = null, uploadDfmKind = 'pcb';
 let triageMap = {}, triageLoading = {}, indexMap = {}, indexLoading = {};
 let svgCache = {key: '', text: ''};
 let pcbSvgCache = {key: '', text: ''};
 let pcbLayers = {top: true, bottom: true, plan: true};
-let schSel = null, pcbSel = null;
-let compPanel = null;
-let activeFileChip = null;
 let schZoom = {scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, didDrag: false, downX: 0, downY: 0};
 let pcbZoom = {scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, didDrag: false, downX: 0, downY: 0};
 
@@ -173,7 +170,7 @@ function render(force) {
   document.title = S.title + ' · PCB Advisor';
   renderNav();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, outjobBanner, curCheckStem, schAnchor, impInfo, impSel, impReport, impBusy]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
 // go('workspace', 'bom') or go('bom') shows a stage in the main sheet; go('library') a page. See shell.js.
@@ -250,7 +247,7 @@ function askText(o) {
 //   onAct('name', async (el, d, e) => { ... })      el = the matched button/row/svg group, d = el.dataset, e = the event
 //   onChange(t => bool, async e => { ... })         first registered test that accepts e.target wins
 // The generic data-* routes below (decide, accept, verify, thread, proj, tab, page, view, src, altiumPath, ref, show,
-// chat, sheet, calc) run first and win over a data-act on the same element, exactly as the old if-chain did.
+// chat, sheet) run first and win over a data-act on the same element, exactly as the old if-chain did.
 const ACTIONS = Object.create(null);
 function onAct(name, fn) { ACTIONS[name] = fn; }
 const CHANGE_HANDLERS = [];
@@ -278,24 +275,17 @@ document.addEventListener('click', async e => {
     if (d.tab) { go('workspace', d.tab); return; }
     if (d.page) { go(d.page); return; }
     if (d.view) { setView(d.view); return; }
-    if (d.src) { hitSrc = d.src; openViewerSource(d.src, el.dataset.where); return; }
-    if (d.altiumPath) { openViewerAltium(d.altiumPath); return; }
+    if (d.src) { openFileAsTab({name: d.src, path: d.src, where: d.where}); return; }
+    if (d.altiumPath) { openFileAsTab({name: docBase(d.altiumPath), path: d.altiumPath}); return; }
     if (d.ref) { const l = lineOfRef(d.ref); if (l) select(l.key); return; }
     if (d.show) { select(d.show, true); return; }
     if (d.chat) { openPart(d.chat); return; }
     if (d.sheet) { sheetId = d.sheet; svgCache = {key: '', text: ''}; render(true); return; }
-    if (d.calc) { await runCalculator(d); return; }
   } catch (err) { /* api() already toasted */ }
   if (el.classList.contains('sug')) { send(el.textContent); return; }
 });
 document.addEventListener('change', async e => {
   for (const h of CHANGE_HANDLERS) {
     if (h.test(e.target)) { await h.fn(e); return; }
-  }
-});
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') {
-    if (typeof closeViewer === 'function') closeViewer();
-    if (typeof closeCompPanel === 'function') closeCompPanel();
   }
 });

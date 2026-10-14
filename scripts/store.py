@@ -273,7 +273,9 @@ def best_offer(line, supply=None):
 
 
 def totals(lines):
-    ext_fee_usd = float(workspace.get("jlc.extended_fee_usd", 3.0))
+    # 3.07 USD: Economic assembly "Feeder Loading" per Extended part, https://jlcpcb.com/help/article/pcb-assembly-price
+    # (page dated Sep 09 2026, read 2026-10-14). Standard assembly charges 1.53 for Basic and Extended alike.
+    ext_fee_usd = float(workspace.get("jlc.extended_fee_usd", 3.07))
     t = {"lines": len(lines), "parts": 0, "cost": 0.0, "buy": 0, "in_stock": 0,
          "out_of_stock": 0, "checking": 0, "to_verify": 0,
          "cost_per_board": 0.0, "extended_fee": 0.0}

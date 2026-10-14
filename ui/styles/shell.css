@@ -22,7 +22,6 @@
 .side-h .menu-anchor{display:block;min-width:0;margin-right:auto}
 .side-h .side-pick{font-weight:600;color:var(--ink)}
 .pane.side .side-btn{display:none}   /* the button that opens the side sheet has no place inside it */
-.view.legacy{padding:14px 16px}      /* views that have not moved to the new header and body yet */
 .view.doc{display:flex;flex-direction:column;overflow:hidden}
 
 /* ---------- navigation ---------- */

@@ -87,6 +87,16 @@ def test_a_placeholder_dash_is_not_shown_as_an_mpn():
     assert "const real = v =>" in row and "real(l.mpn)" in row and "real(l.manufacturer)" in row
 
 
+def test_the_part_column_takes_what_is_left_so_the_table_never_outgrows_its_sheet():
+    """Bug: with a fixed 200px for the part name the table needed 973px in a 930px sheet (1600x1000, chat open): a thin
+    horizontal scrollbar. The column that is cut with an ellipsis must be the one that gives way."""
+    flat = CSS.replace(" ", "")
+    assert ".bom-tbl.c-part{width:100%;max-width:0}" in flat
+    main = re.search(r"\.bom-tbl \.main,\.bom-tbl \.sub\{([^}]*)\}", CSS).group(1)
+    assert "max-width" not in main and "text-overflow:ellipsis" in main
+    assert '<th class="c-part">Part</th>' in _fn("bomHTML") and '<td class="c-part"' in _fn("bomRow")
+
+
 def test_a_narrow_sheet_drops_the_columns_that_can_be_read_elsewhere():
     assert "@container (max-width:920px){.bom-tbl .c-unit{display:none}}" in CSS
     assert "@container (max-width:850px){.bom-tbl .c-pkg{display:none}}" in CSS
@@ -217,9 +227,10 @@ def test_the_inspector_fields_match_the_handler():
 # ---------------------------------------------------------------- the stylesheet
 
 def test_the_bom_stylesheet_uses_tokens_not_hex_colours():
-    # every colour in the view's own rules comes from a token (the legacy block at the end holds one shadow)
-    own = CSS[:CSS.index("/* Rules below are not the BOM view's")]
-    assert not re.search(r"#[0-9a-fA-F]{3,8}\b(?![\w-])", own.replace("#imp-csv", ""))
-    assert "rgb" not in own
+    # every colour in the view's stylesheet comes from a token
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b(?![\w-])", CSS.replace("#imp-csv", ""))
+    assert "rgb" not in CSS
+    for legacy in (".refs{", ".lib{", ".foot{", ".dsec", ".detail{", ".y{", ".nn{"):
+        assert legacy not in CSS, f"{legacy} was left over from the old frame, it is not the BOM's"
     for old in (".kpi", ".bom .mpn", ".role-input", ".imp-card", ".imp-tbl", "table.bom"):
         assert old not in CSS, old

@@ -4,6 +4,7 @@ The model: the project's logs -> one dict the UI and the agent both read.
 Nothing here decides anything. store.py folds the logs; this file puts the
 pieces side by side (idea, BOM, sheets, library, sources, conversations).
 """
+import datetime as dt
 import hashlib
 import json
 import pathlib
@@ -13,6 +14,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import project as project_mod  # noqa: E402
 import session as session_mod  # noqa: E402
+import sources                 # noqa: E402
 import store                   # noqa: E402
 import workspace               # noqa: E402
 
@@ -68,8 +70,27 @@ def _host(url):
     return parts[2] if len(parts) > 2 else ""
 
 
+def _used_for(used):
+    return f"{len(used)} citation{'s' if len(used) != 1 else ''}" + (f" · {used[0]}" if used[0] else "") if used else "—"
+
+
+def reference_sources(cites):
+    """The general reference library (shared/reference/) as source rows: scope shared, read-only, named by the path
+    relative to that folder ('jlc/pcb-capabilities.en.md'), which is how a citation names them."""
+    rows = []
+    for name, path in sources.reference_files().items():
+        # a PDF of the library sits beside the .md files that hold its text
+        text = path.suffix.lower() == ".md" or any(path.parent.glob("*.md"))
+        rows.append({
+            "name": name, "scope": "shared", "kind": _kind(name), "present": True, "size": _size(path.stat().st_size),
+            "origin": "Reference library", "url": None, "sha256": sources.file_sha256(path)[:8], "text": text,
+            "used_for": _used_for(cites.get(name, [])),
+        })
+    return rows
+
+
 def list_sources(project):
-    """Shared library + project sources. A document is a file with a .json sidecar
+    """Shared library + shared reference + project sources. A document is a file with a .json sidecar
     (url, sha256, bytes); a sidecar alone still lists, flagged as not present."""
     cites = citations(project)
     rows = []
@@ -102,9 +123,11 @@ def list_sources(project):
                 "origin": meta.get("origin") or _host(meta.get("url")) or "uploaded",
                 "url": meta.get("url"), "sha256": sha[:8] if sha else "—",
                 "text": (d / (name + ".txt")).exists() or (path.suffix in (".md", ".txt") and present),
-                "used_for": f"{len(used)} citation{'s' if len(used) != 1 else ''}" + (f" · {used[0]}" if used and used[0] else "") if used else "—",
+                "used_for": _used_for(used),
             })
-    return rows
+    # shared datasheets, then the shared reference library, then the project's own documents
+    return ([r for r in rows if r["scope"] == "shared"] + reference_sources(cites)
+            + [r for r in rows if r["scope"] == "project"])
 
 
 # ---------------------------------------------------------------- anchors, sheets
@@ -188,7 +211,8 @@ def build(project=None, session=None):
     exports_list = []
     exp_dir = pdir / "exports"
     if exp_dir.is_dir():
-        exports_list = [{"name": f.name, "size": f.stat().st_size}
+        exports_list = [{"name": f.name, "size": f.stat().st_size,
+                         "modified": dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")}
                         for f in sorted(exp_dir.iterdir()) if f.is_file()]
 
     import preview_pcb

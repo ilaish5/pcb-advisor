@@ -23,15 +23,10 @@ let chatLead = null;                      // while the thread is drawn: the one 
 
 function chatSetChip(ctx) {
   askCtx = ctx;
-  activeFileChip = ctx && ctx.kind === 'file' ? ctx.id : null;      // viewer.js still reads and writes the old file chip
   renderChatChip();
   chatSugs();
 }
-function chatChip() {
-  if (activeFileChip && !(askCtx && askCtx.kind === 'file' && askCtx.id === activeFileChip)) askCtx = {kind: 'file', id: activeFileChip, label: activeFileChip};
-  else if (!activeFileChip && askCtx && askCtx.kind === 'file') askCtx = null;
-  return askCtx;
-}
+function chatChip() { return askCtx; }
 function renderChatChip() {
   const el = $('#chat-chip');
   if (!el) return;

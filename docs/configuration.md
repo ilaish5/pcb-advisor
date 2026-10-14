@@ -35,6 +35,7 @@ config file should not fail silently.
 | `shared_dir` | `shared` | the document cache, shared by every project |
 | `templates_dir` | `templates` | what `pcb.py new` copies |
 | `ui_dir` | `ui` | the browser UI |
+| `downloads_dir` | empty = `~/Downloads` | where "Find my report" looks for a JLCDFM report PDF the user exported (only report-named PDFs are opened) |
 
 A relative path resolves against the **workspace home**; an absolute one is used
 as-is, so `projects_dir` can point at Dropbox or a git repo of your own.
@@ -89,7 +90,13 @@ to the CLI's own settings. See [gateway.md](gateway.md).
 
 The starting point for a new board: `layers`, `copper_oz`, `trace_layer`,
 `ambient_c`, `max_temp_rise_c`, `min_track_mm`, `min_clearance_mm`,
-`min_via_drill_mm`, `board_finish`, `assembly`.
+`min_via_drill_mm`, `board_finish`, `mask_colour`, `assembly`.
+
+`layers`, `copper_oz` and `mask_colour` also pick the JLC design-rule preset
+(`scripts/jlc_preset.py`): 1-2 layers use JLC's 2-layer limits, 3 or more its
+multilayer ones; 1 and 2 oz (and 2.5, 3.5, 4.5 oz on 2 layers) each have their
+own; `black` and `white` mask need a wider mask bridge than the other colours.
+An unknown value falls back to 2 layers, 1 oz, green.
 
 These are **copied** into `project.json` when a project is created, and the copy
 is what the project uses from then on. Changing a default later does not rewrite

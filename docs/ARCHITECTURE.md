@@ -113,7 +113,8 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | `scripts/skills/export_cpl.py` | JLC CPL export from linked PcbDoc with BOM fallback | I5 |
 | `scripts/dfm.py` | JLC DFM PDF report ingest, slice extractor, and triage table | I5 |
 | `scripts/checks/schematic.py` | schematic checks: wire netlist, single-pin nets, unconnected IC power, rail mismatch | I6 |
-| `scripts/rules.py` | rules model, JLC preset, .RUL writer, read-back diff against PcbDoc | I7 |
+| `scripts/rules.py` | rules model, .RUL writer, read-back diff against PcbDoc | I7 |
+| `scripts/jlc_preset.py` | the JLC preset numbers by layer count, copper weight and mask colour: fab floors, JLCDFM limits | |
 | `scripts/calc.py` | IPC-2152 trace width, voltage divider, LED resistor, via current, microstrip impedance | I7 |
 | `scripts/library.py` | model search links, package variant check vs datasheet, IntLib build script | I8 |
 | `scripts/preview_sch.py` | SchDoc to interactive SVG preview with click-to-ask anchors | I9 |

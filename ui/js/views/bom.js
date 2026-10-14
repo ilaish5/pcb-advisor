@@ -74,7 +74,7 @@ function bomRow(l) {
   const picked = sel === l.key || (bomDrawer && bomDrawer.line === l.key);
   return `<tr data-key="${esc(l.key)}" tabindex="0" class="${picked ? 'sel' : ''}${q ? '' : ' off'}">
     <td class="bom-ref" title="${esc(refs.join(', '))}">${esc(label)}</td>
-    <td title="${esc([l.description, mpn, maker, l.library_type].filter(Boolean).join(' · '))}"><span class="main">${esc(main)}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</td>
+    <td class="c-part" title="${esc([l.description, mpn, maker, l.library_type].filter(Boolean).join(' · '))}"><span class="main">${esc(main)}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</td>
     <td class="c-pkg"><span class="clip" title="${esc(l.package)}">${esc(l.package)}</span></td>
     <td class="num">${l.dnp ? 'DNP' : q || '—'}</td>
     <td class="num${noStock ? ' bad-t' : ''}"${b ? ` title="${esc(b.s)}"` : ''}>${stock}</td>
@@ -120,7 +120,7 @@ function bomHTML(container) {
     body = emptyState('No parts yet', bomLinked() ? 'Import the BOM you exported from Altium, or describe your idea in the chat.' : 'Describe your idea in the chat and the agent will propose parts.',
       bomLinked() ? btn('Import from Altium', {kind: 'pri', act: 'imp-open'}) : '');
   } else {
-    body = `<div class="bom-scroll"><table class="tbl rows bom-tbl"><thead><tr><th>Ref</th><th>Part</th><th class="c-pkg">Package</th>
+    body = `<div class="bom-scroll"><table class="tbl rows bom-tbl"><thead><tr><th>Ref</th><th class="c-part">Part</th><th class="c-pkg">Package</th>
       <th class="num">Qty</th><th class="num">Stock</th><th class="num c-unit" title="Cheapest offer with enough stock, at qty 10">Unit</th><th class="num">Per board</th>
       <th><span class="sr">Problems</span></th><th><span class="sr">Actions</span></th></tr></thead>
       <tbody>${lines().map(bomRow).join('')}</tbody></table></div>${bomFoot()}`;
@@ -258,9 +258,6 @@ document.addEventListener('click', e => {      // picking a row hands the slot b
 }, true);
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
-onAct('closecard', async (el, d, e) => {      // the Library export card (pages.js) still closes with this
-  libExport = null; render(true); return;
-});
 onAct('bom-drawer-close', async (el, d, e) => {
   closeBomDrawer(); return;
 });

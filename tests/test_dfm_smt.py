@@ -187,6 +187,6 @@ def test_dfm_view_has_a_segment_an_upload_menu_and_the_right_host():
         assert f"{{label: '{label}', act: 'upload-dfm', attrs: {{kind: '{kind}'}}}}" in checks, kind
     assert "uploadDfmKind = el.dataset.kind || d.kind || 'pcb'" in checks
 
-    # empty state: what to do, and where the report comes from
-    assert "emptyState('No DFM report yet'" in checks
-    assert "Upload the PDF report from jlcdfm.com" in checks
+    # empty state: the guide to getting a report (tests/test_jlc_upload.py pins its steps), with the link to where it comes from
+    assert "dfmGuideHTML(true)" in checks and "No report yet." in checks
+    assert 'href="${DFM_JLC}" target="_blank" rel="noopener"' in checks

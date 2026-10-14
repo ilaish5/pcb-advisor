@@ -84,8 +84,8 @@ def test_the_sheets_can_shrink_so_wide_content_never_pushes_the_chat_out():
 
 
 def test_wide_tables_scroll_inside_their_own_wrapper():
-    core = (UI / "styles" / "core.css").read_text(encoding="utf-8").replace(" ", "")
-    assert ".tblwrap{overflow-x:auto}" in core
+    base = (UI / "styles" / "base.css").read_text(encoding="utf-8").replace(" ", "")
+    assert ".tbl-wrap{overflow:auto;min-width:0}" in base
 
 
 def test_nav_scrolls_when_the_window_is_short_and_never_sideways():

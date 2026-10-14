@@ -43,10 +43,6 @@
 
 .chat .ref{font-family:var(--f-mono);font-weight:600;color:var(--ink);border-radius:3px;text-align:left}
 .chat .ref:hover{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}
-.chat .src{color:var(--sig);font-size:var(--t-sm);text-align:left;border-radius:3px;text-underline-offset:2px}
-.chat .src:hover{text-decoration:underline}
-.chat .src b{font-family:var(--f-mono);font-weight:400;font-size:12px}
-.chat .src.broken{color:var(--bad)}
 
 /* what the agent ran: one muted line that opens to its steps */
 .runs{font-size:var(--t-sm);color:var(--ink-3)}

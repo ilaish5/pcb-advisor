@@ -160,8 +160,8 @@ def test_cost_per_board_and_extended_fee_totals(server, parts_project):
     # cost_per_board = R1 (0.01) + U1 (2.00) + U2 (1.50) + C1 (0.02) = 3.53
     assert totals["cost_per_board"] == pytest.approx(3.53, 0.001)
 
-    # Distinct Extended parts = 1 (U2) * $3.00 = 3.00
-    assert totals["extended_fee"] == 3.00
+    # Distinct Extended parts = 1 (U2) * $3.07 = 3.07 (JLC Economic assembly Feeder Loading fee, checked 2026-10-14)
+    assert totals["extended_fee"] == 3.07
 
 
 def test_alternatives_endpoint_with_monkeypatched_jlc(server, parts_project, monkeypatch):

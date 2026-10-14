@@ -78,7 +78,7 @@ no `&&`, no pipe (`| head`), no `2>&1`: any other form is blocked. Long output i
 - `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project> [--plan <plan.json>]` render PcbDoc to SVG with placement plan overlay
 - `python <repo>/scripts/checks/board.py <pcb_file>` board layout checks: connector opening, decap distance, CPL rotation
 - `python <repo>/scripts/outjob.py <project> [output_dir]` write ready Altium OutJob file
-- `python <repo>/scripts/dfm.py ingest <project> <pdf_path>` ingest JLCDFM report PDF, extract slices, build triage table
+- `python <repo>/scripts/dfm.py ingest <project> <pdf> [--kind pcb|smt|both|auto]` | `gerber-zip <project>` | `pickup <project> [--kind K]` add a JLCDFM report PDF, make the Gerber zip, add the new report from Downloads
 - `python <repo>/scripts/altium/dump.py <file> [--full] [--net NAME]` read-only inspector for SchDoc, PcbDoc pads+nets+rules, PrjPcb, .RUL
 - `python <repo>/scripts/keeping.py <project> log|decisions|impact|report` decision log, change impact, file organization
 - `python <repo>/scripts/model.py <project>` print derived project state (idea, BOM, requirements, sheets)
@@ -105,8 +105,7 @@ Prose for the student, then one fenced json block (omit it if there is nothing t
 ```
 `tools` lists the script runs you actually did this turn (`st`: ok | warn). List only what you ran. If you ran
 any script, the json block with `tools` is required: a number from a script without it counts as unsourced.
-- `{"type": "idea.propose", "topic": "Power", "text": "1S Li-ion, +3V8 for the modem"}` an agreed item; it stays
-  "proposed" until the student confirms.
+- `{"type": "idea.propose", "topic": "Power", "text": "1S Li-ion, +3V8 for the modem"}` an agreed item; "proposed" until confirmed.
 - `{"type": "idea.confirm", "student_said": "<words quoted from the student's last message>"}` only after the
   student said yes in chat; the quote must appear in their last message or it is refused.
 - `{"type": "idea.diagram.edit", "ops": [{"op": "add_shape", "id": "chg", "text": "Charger\\nBQ24075", "domain": "power"}, {"op": "add_connector", "from": "usb", "to": "chg", "label": "5V"}], "reason": "Add charger"}` edit diagram directly and live without waiting for student approval.
@@ -115,11 +114,12 @@ any script, the json block with `tools` is required: a number from a script with
   "reason": "...", "sources": ["file.pdf"], "new": false, "library": {"symbol": true, "footprint": true,
   "step": true, "model_source": "Ultra Librarian"}}` shows a diff card with Approve and Reject. `new: true`
   proposes a new line. `library` is optional and applied on approval; `verify` and `accepted` in it are dropped.
-- `{"type": "netlist.write", "sheet": "03", "data": {...}}` one sheet: sections, parts with pins, notes. Every ref
-  must be in the BOM and every pin needs a net or `NC`, otherwise the server refuses and tells you why.
+- `{"type": "netlist.write", "sheet": "03", "data": {...}}` one sheet: sections, parts with pins, notes. Every ref must be in the BOM and every pin needs a net or `NC`, else the server refuses and says why.
 - `{"type": "library.add", "line": "U4", "changes": {"symbol": true, "footprint": true, "step": false,
   "model_source": "...", "issues": "..."}}` says what exists for a non-standard part.
 - `{"type": "thread.open", "anchor": "U5"}` opens a conversation about one part (refdes or BOM line key).
+- `{"type": "jlc.gerber_zip"}` writes `exports/<project>_gerbers.zip` from the linked Altium outputs (read only); `{"type": "jlc.pickup"}` adds the JLCDFM report PDFs new in the student's Downloads, only after they say they exported it (`"kind": "pcb|smt|both"` only when told, `"name"` for one file). Neither logs in or uploads.
+- `{"type": "dfm.triage", "stem": "<report>", "rows": [{"section": "..", "check": "..", "worst": "..", "level": "..", "danger": 0, "warning": 1, "good": 3, "layer": "..", "fix": "..", "evidence": ".."}]}` lists findings you read from the slices; rows start unknown, the verdict is the student's.
 
 # THE THREE STAGES
 1. Idea: ask what you need (what it does, how often, how long on a charge, size, flashing and

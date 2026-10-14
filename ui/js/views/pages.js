@@ -8,6 +8,7 @@ const pgPl = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
 const pgBase = p => String(p || '').split(/[\\/]/).pop();
 const PG_LANGS = [['auto', 'Auto'], ['en', 'English'], ['he', '&#1506;&#1489;&#1512;&#1497;&#1514;']];   // labels are markup: the Hebrew name is an entity
 const PG_RESTORE = 'python scripts/sources.py restore';
+const PG_COURSE_LIB = 'course/ad20-essentials/m29-integrated-library.en.md';   // a general source: its name is its path under shared/reference
 
 let srcFilter = 'all', srcBusy = '';        // Sources: which scope is shown, and what is being added right now
 let libBusy = false;
@@ -71,12 +72,12 @@ function libRow(r) {
 function libExportHTML() {
   if (!libExport) return '';
   const w = libExport.warnings || [];
-  const course = srcByName('AD20 Essentials Course Exercises.pdf');
+  const course = srcByName(PG_COURSE_LIB);
   return `<details class="disc lib-how"><summary>How to install in Altium</summary><div class="lib-how-b">
     <ol><li>Unzip <span class="m">${esc(libExport.file)}</span>. Its <span class="m">library/</span> folder holds the SchLib, PcbLib and STEP files.</li>
     <li>In Altium, add them to an Integrated Library package and compile it. Compiling needs Altium on Windows.</li>
     <li>Open the Components panel menu, then File-based Libraries Preferences, Installed, Install, and pick the IntLib.</li></ol>
-    ${course ? `<p class="muted">See ${chip('AD20 Essentials Course Exercises.pdf', 'Module 29, Integrated Library')}</p>` : ''}
+    ${course ? `<p class="muted">See ${chip(PG_COURSE_LIB, 'Module 29, Integrated Library')}</p>` : ''}
     ${w.length ? `<h3>Still unverified (${w.length})</h3><ul>${w.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div></details>`;
 }
 function libHTML(container) {
@@ -94,16 +95,22 @@ function libHTML(container) {
 
 /* ================================ Sources ================================ */
 function srcTip(s) {
-  return [s.url ? 'Origin: ' + s.url : (s.origin ? 'Origin: ' + s.origin : ''), s.sha256 && s.sha256 !== '—' ? 'sha256 ' + s.sha256 : '', s.text ? 'Text extracted' : 'No extracted text']
+  return [s.name.includes('/') ? s.name : '', s.url ? 'Origin: ' + s.url : (s.origin ? 'Origin: ' + s.origin : ''), s.sha256 && s.sha256 !== '—' ? 'sha256 ' + s.sha256 : '', s.text ? 'Text extracted' : 'No extracted text']
     .filter(Boolean).join('\n');
+}
+// a general document is named by its path under shared/reference (the name a citation uses): the folders are shown quieter,
+// and in a narrow sheet they give way first, so the file's own name stays readable
+function srcLabel(name) {
+  const cut = String(name).lastIndexOf('/') + 1;
+  return (cut ? `<span class="dir">${esc(name.slice(0, cut))}</span>` : '') + `<span class="file">${esc(name.slice(cut))}</span>`;
 }
 function srcRow(s, showScope, cols) {
   const id = 'src-' + String(s.name).replace(/[^\w-]/g, '_');
   const name = s.present
-    ? `<button type="button" class="src-name" data-src="${esc(s.name)}">${esc(s.name)}</button>`
-    : `<span class="src-name off">${esc(s.name)}</span> ${tag('Missing', 'warn', 'Not on this machine')}`;
-  return `<tr id="${esc(id)}" class="${hitSrc === s.name ? 'hit flash' : ''}" title="${esc(srcTip(s))}">
-    <td>${name}${showScope && s.scope === 'shared' ? ' ' + tag('Shared', '', 'Shared with every project') : ''}</td>
+    ? `<button type="button" class="src-name" data-src="${esc(s.name)}">${srcLabel(s.name)}</button>`
+    : `<span class="src-name off">${srcLabel(s.name)}</span>${tag('Missing', 'warn', 'Not on this machine')}`;
+  return `<tr id="${esc(id)}" class="${hitSrc === s.name ? 'flash' : ''}" title="${esc(srcTip(s))}">
+    <td class="src-n"><div class="src-cell">${name}${showScope && s.scope === 'shared' ? tag('Shared', '', 'Shared with every project') : ''}</div></td>
     ${cols.type ? `<td class="muted">${esc(s.kind || '')}</td>` : ''}
     <td class="num">${esc(s.size)}</td>
     ${cols.used ? `<td class="muted">${s.used_for && s.used_for !== '—' ? esc(s.used_for) : ''}</td>` : ''}</tr>`;
@@ -113,7 +120,8 @@ function sourcesHTML(container) {
   const missing = all.filter(s => !s.present).length;
   const shown = all.filter(s => srcFilter === 'all' || s.scope === srcFilter);
   if (srcFilter === 'all') shown.sort((a, b) => (a.scope === b.scope ? 0 : a.scope === 'project' ? -1 : 1));   // this project's documents first
-  const meta = metaLine([{n: all.length, label: all.length === 1 ? 'file' : 'files'}, {n: missing, label: 'missing', tone: 'warn', title: 'Listed by a sidecar but not on this machine'}]);
+  const mine = all.filter(s => s.scope === 'project').length;
+  const meta = metaLine([{n: mine, label: 'in this project'}, {n: all.length - mine, label: 'shared', title: 'General reference material every project sees'}, {n: missing, label: 'missing', tone: 'warn', title: 'Listed by a sidecar but not on this machine'}]);
   const actions = seg([{value: 'all', label: 'All'}, {value: 'shared', label: 'Shared', title: 'General reference material every project sees'},
     {value: 'project', label: 'Project', title: 'The documents of this project'}], srcFilter, {act: 'src-filter', label: 'Show'});
   const primary = menu({label: 'Add', kind: 'pri', icon: 'plus', iconAfter: 'chev'}, [

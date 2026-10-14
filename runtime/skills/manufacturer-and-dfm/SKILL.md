@@ -1,6 +1,6 @@
 ---
 name: manufacturer-and-dfm
-description: Prepares the manufacturing package for JLC and walks the student through the JLC DFM and assembly preview, then triages every red item as real or false alarm with a fix. Use when the student asks for "gerbers", "OutJob", "BOM and CPL for JLC", "pre-upload check", "run JLC DFM", "DFM shows red", "CPL rotation wrong", "pick and place", "files for the factory", "quote" (Hebrew - "קבצי ייצור", "גרברים", "DFM אדום", "סיבוב רכיבים").
+description: Prepares the manufacturing package for JLC and walks the student through the JLC DFM and assembly preview (Gerber zip, upload at jlcdfm.com, finding the exported report), then triages every red item as real or false alarm with a fix. Use when the student asks for "gerbers", "OutJob", "BOM and CPL for JLC", "pre-upload check", "upload to JLC", "run JLC DFM", "I exported the report", "DFM shows red", "CPL rotation wrong", "pick and place", "files for the factory", "quote" (Hebrew - "קבצי ייצור", "גרברים", "DFM אדום", "סיבוב רכיבים").
 ---
 
 # Manufacturer files and JLC DFM
@@ -29,12 +29,23 @@ description: Prepares the manufacturing package for JLC and walks the student th
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
 4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
    its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in (same package) for the student to approve.
-5. PCB DFM at JLC: the student uploads the Gerber zip to JLC DFM (jlcdfm.com), runs the bare-board PCB DFM, and
-   uploads the report PDF. Ingest it with `scripts/dfm.py ingest <project> <pdf> --kind pcb` to slice into ~1400 px images
-   and review bare-board items (trace/space, drill, mask, silk) in the triage table (`references/jlcdfm-report.md`).
-6. SMT DFM and assembly preview: the student runs SMT DFM on jlcdfm.com and uploads the assembly report PDF. Ingest it
-   with `scripts/dfm.py ingest <project> <pdf> --kind smt`. Review footprint vs lead, part spacing, polarity, and rotation
-   (`references/jlcdfm-smt.md`). In the JLC assembly flow Component Placements view, check pin 1 mark and body outlines.
+5. The JLC check, done with the student at the end. The account is theirs: never log in, never ask for a password,
+   never upload for them. Go one step at a time, as the DFM view lists them (header menu, "How to check at JLC"):
+   a. The Gerber zip: action `jlc.gerber_zip` (the same as Outputs > Export > Gerber zip for JLC). It reads the newest
+      Gerber and NC drill set of the linked Altium project and writes `exports/<project>_gerbers.zip`. Say what its line
+      reports: files, when they were written, what is missing. No outline, no drill file or no top mask is a fix in Altium
+      (OutJob, Generate content) before any upload. For assembly the BOM and CPL are in Outputs (checked in step 3).
+   b. The student opens jlcdfm.com and signs in.
+   c. They upload the zip, run PCB DFM (and SMT DFM with the BOM and CPL), and export the PDF report.
+   d. When they say the report is exported: `jlc.pickup`. It adds the JLCDFM PDFs that arrived in Downloads since the last
+      report (the DFM view also finds them when the student comes back to the window). Refused with "no new report":
+      ask them to export it again, or name the file with `name`. `kind` only if the header was unclear.
+   An action is applied after your reply. When you need the result in this turn run `scripts/dfm.py gerber-zip <project>`
+   or `scripts/dfm.py pickup <project>`: they print it.
+6. Read the new report: its slices are listed under `dfm_checks` in the project state. View them, list what you read
+   with `dfm.triage` (rows start unknown, the verdict is the student's), and explain any step or finding when asked:
+   screens and levels in `jlcdfm.en.md`, files and rotation in `files-and-formats.en.md`, SMT items in `references/jlcdfm-smt.md`.
+   In the JLC assembly flow Component Placements view, check pin 1 mark and body outlines.
 7. Triage each item. Real: outline on every layer, silk narrower than the JLC minimum, copper too near the edge, wrong
    footprint, a rotated part. Probably false: JLC DFM reads Gerbers with no nets, so same-net spacing, NPTH annular ring,
    connector slots, tiny mask dams and silk over tented vias are often by design. Prove "false" with a measurement or a
@@ -48,8 +59,10 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - `python <repo>/scripts/skills/check_availability.py ...` stock and price from JLC, with query time. Quote the time.
 - `python <repo>/scripts/outjob.py <project> [output_dir]` writes an Altium OutJob text file (Gerber, NC drill, JLC BOM, CPL, schematic PDF).
 - `python <repo>/scripts/checks/board.py <pcb_file>` checks outline clearances, connector orientation, decap distances, and CPL rotation sanity.
-- `python <repo>/scripts/dfm.py ingest <project> <pdf_path> [--kind pcb|smt]` ingests a JLCDFM report PDF, extracts slices, and builds the triage table.
-- Never run Altium or log in to JLC for the student.
+- `python <repo>/scripts/dfm.py gerber-zip <project>` builds the Gerber + drill zip from the linked Altium outputs (read only); prints the files and gaps.
+- `python <repo>/scripts/dfm.py pickup <project> [--kind pcb|smt|both] [--name FILE]` adds the new JLCDFM report PDFs from Downloads.
+- `python <repo>/scripts/dfm.py ingest <project> <pdf_path> [--kind pcb|smt|both|auto]` ingests a PDF the student gave you by path.
+- Never run Altium, never log in to JLC and never ask for the student's password.
 
 ## References
 - `<repo>/shared/reference/course/ad20-essentials/m25-fabrication-files.en.md` (OutJob, BOM, Gerber setup)

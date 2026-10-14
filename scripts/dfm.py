@@ -9,9 +9,11 @@ slices stored in projects/<p>/checks/<report-stem>/, and writes index.json.
 Triage findings are stored in projects/<p>/checks/<report-stem>/triage.json.
 
 CLI:
-    python scripts/dfm.py ingest <project> <pdf_path> [--kind pcb|smt]
+    python scripts/dfm.py ingest <project> <pdf_path> [--kind pcb|smt|both|auto]
     python scripts/dfm.py list <project> [--kind pcb|smt]
     python scripts/dfm.py triage <project> <stem>
+    python scripts/dfm.py gerber-zip <project>                        the Gerber + drill zip JLC wants (scripts/jlc_upload.py)
+    python scripts/dfm.py pickup <project> [--kind K] [--name FILE]   new JLCDFM reports from the Downloads folder
 """
 import argparse
 import datetime as dt
@@ -91,14 +93,77 @@ def slice_image(img: Image.Image, out_dir: pathlib.Path, slice_height: int = SLI
     return slices
 
 
-def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | None = None, kind: str = "pcb") -> dict[str, Any]:
+class KindUnknown(ValueError):
+    """The report's header did not say which analyses ran, and nobody said: ask the student."""
+
+
+# The header of a JLCDFM report (the first slice) ends in a row "Analyze project:" with one check box per analysis, in
+# this order: PCB DFM, SMT DFM. A ticked box holds a dark check mark. Checked on a real report (both ticked, 2400 px
+# wide); a bare-board-only or assembly-only report is read from the same glyph and not yet seen on a real report.
+_BOX_RUN = re.compile(rb"(?<!\xff)\xff{24,44}(?!\xff)")      # a box is one 24..44 px run of non-white pixels
+_KIND_OF_TICKS = {(True, True): "both", (True, False): "pcb", (False, True): "smt"}
+
+
+def _check_boxes(img: Image.Image) -> list[tuple[int, int, int, int]]:
+    """Boxes (x0, x1, y0, y1) in the header band of a report image: runs that keep their place for 20+ rows."""
+    w, h = img.size
+    x0, x1, y0, y1 = int(w * 0.3), int(w * 0.75), min(600, h), min(1300, h)
+    if x1 - x0 < 50 or y1 - y0 < 30:
+        return []
+    band = img.crop((x0, y0, x1, y1)).convert("L").point(lambda v: 255 if v < 235 else 0)
+    data, bw = band.tobytes(), band.size[0]
+    active: list[dict] = []
+    done: list[dict] = []
+    for y in range(band.size[1]):
+        row = data[y * bw:(y + 1) * bw]
+        carried = []
+        for m in _BOX_RUN.finditer(row):
+            a, b = m.span()
+            run = next((r for r in active if abs(r["x0"] - a) <= 3 and abs(r["x1"] - b) <= 3), None)
+            if run:
+                active.remove(run)
+                run["last"], run["n"] = y, run["n"] + 1
+            else:
+                run = {"x0": a, "x1": b, "first": y, "last": y, "n": 1}
+            carried.append(run)
+        done += [r for r in active if r["last"] < y - 1]
+        active = carried + [r for r in active if r["last"] >= y - 1]
+    return [(r["x0"] + x0, r["x1"] + x0, r["first"] + y0, r["last"] + y0) for r in done + active
+            if r["n"] >= 20 and 24 <= r["last"] - r["first"] + 1 <= 44]
+
+
+def detect_kind(img: Image.Image) -> str | None:
+    """'pcb', 'smt' or 'both' from the "Analyze project" check boxes in the report header; None when the header is not
+    the one this reads (not exactly two boxes in a row, or neither ticked), so the caller asks the student."""
+    boxes = sorted(_check_boxes(img))
+    if len(boxes) != 2 or abs(boxes[0][2] - boxes[1][2]) > 6:
+        return None
+    gray = img.convert("L")
+    ticks = []
+    for x0, x1, y0, y1 in boxes:
+        dark = sum(gray.crop((x0, y0, x1 + 1, y1 + 1)).histogram()[:90])                   # the check mark is near black
+        if 6 < dark < 30:
+            return None                                       # neither clearly empty nor clearly ticked
+        ticks.append(dark >= 30)
+    return _KIND_OF_TICKS.get(tuple(ticks))
+
+
+def pdf_sha256(pdf_input: str | pathlib.Path | bytes) -> str:
+    raw = pdf_input if isinstance(pdf_input, bytes) else pathlib.Path(pdf_input).read_bytes()
+    return hashlib.sha256(raw).hexdigest()
+
+
+def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | None = None, kind: str = "pcb",
+               source: str = "upload") -> dict[str, Any]:
     """
     Ingest a JLCDFM report PDF, extract image, slice it, and write index.json + triage.json.
     kind is 'pcb', 'smt' or 'both' (one JLCDFM report can cover the bare board and the assembly). Defaults to 'pcb'.
+    kind 'auto' reads it from the report's header and raises KindUnknown (nothing written) when the header does not say.
+    index.json keeps the file's sha256 and where it came from (upload, downloads, cli), so the same file is never added twice.
     """
     kind = (kind or "pcb").lower().strip()
-    if kind not in KINDS:
-        raise ValueError(f"Invalid report kind: '{kind}'. Expected 'pcb', 'smt' or 'both'")
+    if kind not in KINDS + ("auto",):
+        raise ValueError(f"Invalid report kind: '{kind}'. Expected 'pcb', 'smt', 'both' or 'auto'")
 
     if name is None:
         if isinstance(pdf_input, (str, pathlib.Path)):
@@ -117,12 +182,19 @@ def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | 
     # In JLCDFM, there is usually one tall image. If multiple, take the tallest/largest.
     tallest = max(images, key=lambda im: im.size[1])
 
+    if kind == "auto":
+        kind = detect_kind(tallest)
+        if kind is None:
+            raise KindUnknown(f"'{name}': the report header does not say whether it covers the bare board, the assembly or both")
+
     slices = slice_image(tallest, checks_dir, slice_height=SLICE_HEIGHT)
 
     index_data = {
         "stem": stem,
         "kind": kind,
         "original_name": name,
+        "sha256": pdf_sha256(pdf_input),
+        "source": source,
         "width": tallest.size[0],
         "height": tallest.size[1],
         "slice_height": SLICE_HEIGHT,
@@ -152,6 +224,34 @@ def ingest_pdf(pdf_input: str | pathlib.Path | bytes, project: str, name: str | 
         "slice_files": [s["file"] for s in slices],
         "index": index_data,
     }
+
+
+def _indexes(project: str):
+    """index.json of every report of the project (a missing or damaged one is skipped)."""
+    root = workspace.project_dir(project) / "checks"
+    for d in sorted(root.iterdir()) if root.is_dir() else []:
+        f = d / "index.json"
+        if d.is_dir() and f.is_file():
+            try:
+                yield json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+
+
+def ingested_hashes(project: str) -> dict[str, str]:
+    """sha256 of every report file already added to the project -> its stem. Reports added before the hash was kept are not here."""
+    return {i["sha256"]: i.get("stem", "") for i in _indexes(project) if i.get("sha256")}
+
+
+def last_ingest_at(project: str) -> dt.datetime | None:
+    """When the newest report of the project was added (local time), or None."""
+    times = []
+    for i in _indexes(project):
+        try:
+            times.append(dt.datetime.fromisoformat(i["created_at"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return max(times) if times else None
 
 
 def list_checks(project: str, kind: str | None = None) -> list[dict[str, Any]]:
@@ -266,6 +366,36 @@ def save_triage(project: str, stem: str, rows: list[dict[str, Any]]) -> list[dic
     return norm_rows
 
 
+def merge_triage(project: str, stem: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The agent lists findings it read from the slices. A row is added, or updated when the table already has one with the
+    same section, check and layer. A verdict is the student's: a new row starts 'unknown', an existing row keeps its own,
+    and a fix or evidence the student already wrote is not replaced."""
+    load_index(project, stem)                                       # the report must exist
+    table = load_triage(project, stem)
+    key = lambda r: tuple(str(r.get(k, "")).strip().lower() for k in ("section", "check", "layer"))
+    by_key = {key(r): r for r in table}
+    added = updated = 0
+    for raw in rows:
+        if not isinstance(raw, dict) or not str(raw.get("check", "")).strip():
+            raise ValueError("every row needs a check name")
+        new = validate_triage_row({**raw, "verdict": "unknown"})
+        old = by_key.get(key(new))
+        if old is None:
+            table.append(new)
+            by_key[key(new)] = new
+            added += 1
+            continue
+        for f in ("worst", "level", "danger", "warning", "good"):
+            if f in raw:
+                old[f] = new[f]
+        for f in ("fix", "evidence"):
+            if not str(old.get(f, "")).strip():
+                old[f] = new[f]
+        updated += 1
+    saved = save_triage(project, stem, table)
+    return {"stem": stem, "added": added, "updated": updated, "triage": saved, "sig": triage_sig(saved)}
+
+
 def get_slice_path(project: str, stem: str, slice_file: str) -> pathlib.Path | None:
     """Safely resolve path to a slice JPEG within the check folder."""
     base = (workspace.project_dir(project) / "checks" / stem).resolve()
@@ -283,8 +413,9 @@ def main(argv=None):
     ingest_p = sub.add_parser("ingest")
     ingest_p.add_argument("project", help="Project name")
     ingest_p.add_argument("pdf", help="Path to JLCDFM PDF report")
-    ingest_p.add_argument("--kind", choices=list(KINDS), default="pcb",
-                          help="Report kind: 'pcb' (bare board) or 'smt' (assembly), default 'pcb'")
+    ingest_p.add_argument("--kind", choices=list(KINDS) + ["auto"], default="pcb",
+                          help="Report kind: 'pcb' (bare board), 'smt' (assembly), 'both', or 'auto' (read from the "
+                               "report header), default 'pcb'")
 
     list_p = sub.add_parser("list")
     list_p.add_argument("project", help="Project name")
@@ -295,11 +426,28 @@ def main(argv=None):
     triage_p.add_argument("project", help="Project name")
     triage_p.add_argument("stem", help="Check report stem")
 
+    zip_p = sub.add_parser("gerber-zip", help="build the Gerber + drill zip JLC wants, from the linked Altium outputs")
+    zip_p.add_argument("project", help="Project name")
+
+    pick_p = sub.add_parser("pickup", help="add the new JLCDFM report PDFs found in the Downloads folder")
+    pick_p.add_argument("project", help="Project name")
+    pick_p.add_argument("--kind", choices=list(KINDS), default=None, help="what a report covers, when its header does not say")
+    pick_p.add_argument("--name", default=None, help="only this file of the Downloads folder")
+
     args = ap.parse_args(argv)
 
     if args.cmd == "ingest":
-        res = ingest_pdf(args.pdf, args.project, kind=args.kind)
+        try:
+            res = ingest_pdf(args.pdf, args.project, kind=args.kind, source="cli")
+        except KindUnknown as exc:
+            raise SystemExit(f"{exc}. Run again with --kind pcb, smt or both.")
         print(json.dumps(res, ensure_ascii=False, indent=2))
+    elif args.cmd == "gerber-zip":
+        import jlc_upload
+        print(json.dumps(jlc_upload.gerber_zip(args.project), ensure_ascii=False, indent=2))
+    elif args.cmd == "pickup":
+        import jlc_upload
+        print(json.dumps(jlc_upload.pickup(args.project, kind=args.kind, name=args.name), ensure_ascii=False, indent=2))
     elif args.cmd == "list":
         res = list_checks(args.project, kind=args.kind)
         print(json.dumps(res, ensure_ascii=False, indent=2))

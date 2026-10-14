@@ -92,7 +92,8 @@ python scripts/skills/lint.py
 | `scripts/runtime_pack.py` | syncs runtime pack to engine home |
 | `scripts/sources.py` | document caching, retrieval, and quote verification |
 | `scripts/jlc.py` | JLC parts API client and cache |
-| `scripts/rules.py` | JLC rules preset, .RUL exporter, and board diff |
+| `scripts/rules.py` | .RUL exporter and board diff against the JLC rules preset |
+| `scripts/jlc_preset.py` | the JLC preset numbers by layer count, copper weight and mask colour |
 | `scripts/calc.py` | IPC-2152 trace width and engineering calculators |
 | `scripts/library.py` | model search links, package check, and IntLib build script |
 | `scripts/outjob.py` | Altium OutJob file generator |
