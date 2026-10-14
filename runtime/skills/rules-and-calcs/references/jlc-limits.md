@@ -2,7 +2,7 @@
 
 Capability source: https://jlcpcb.com/capabilities/pcb-capabilities (standard multilayer, checked 2026-10-09 by a previous
 project). Re-check the page and write today's date next to any number you give; limits change.
-2-layer figures are NOT in this file: for a 2-layer board open the page, read the 1-2 layer column, quote it with the date.
+2-layer figures are NOT in this file: read the 1-2 layer column in `<repo>/shared/reference/jlc/pcb-capabilities.en.md` (cited, dated).
 The fab limits are minimums; design above them.
 
 | Item | JLC (multilayer, 4+ layers) |

@@ -51,6 +51,7 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
 
 ## References
 - `references/jlc-limits.md` - capability numbers with source and date, JLC stack-ups, rule catalogue with typical values.
+- `<repo>/shared/reference/jlc/pcb-capabilities.en.md` - full JLC tables (1-2 layer and multilayer, by copper weight, mask colour), cited with URL and date.
 - `<repo>/shared/reference/course/ad20-essentials/m19-pcb-rules-and-panels.en.md` - 19.3 editor and priorities, 19.4 net classes.
 - `<repo>/shared/reference/course/altium-education/unit3-pcb-layout.en.md` - [22]-[26] rule types and what values to use.
 - `<repo>/shared/reference/course/altium-education/unit4-routing-signal-integrity.en.md` - [06]-[08] vias, [17] impedance.

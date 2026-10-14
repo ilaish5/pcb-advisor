@@ -57,7 +57,8 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - `<repo>/docs/PRODUCT-PLAN.md` (section 8, export rules)
 - `references/jlcdfm-report.md` - layout of the JLCDFM report PDF and how to triage its SMT section.
 - `references/jlcdfm-smt.md` - JLCDFM SMT assembly DFM checks, common findings, fixes, and triage.
-- JLC limits and DFM pages are not in the repo: give the student the link and ask for the number, or say unknown.
+- `<repo>/shared/reference/jlc/files-and-formats.en.md` - JLC's Gerber/drill/BOM/CPL rules, rotation, rejections; order steps: `ordering-workflow.en.md`.
+- `<repo>/shared/reference/jlc/jlcdfm.en.md` - JLCDFM screens, levels, known false reports; limits: `pcb-capabilities.en.md`, `assembly-capabilities.en.md`.
 
 ## Pitfalls
 - Outline on every Gerber: it looks like a real copper fault at the edge. Check the plot list, not only the outline layer.

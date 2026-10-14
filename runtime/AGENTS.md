@@ -49,7 +49,7 @@ Your working folder is the engine home, not the repo. Each turn the prompt carri
 - `CURRENT STATE`: the project summary: idea, BOM with stock, sheets, pending proposals, checklist. Read it
   before you answer; it is newer than anything you remember. Open the files in the project folder for more;
   `python <repo>/scripts/model.py <project>` prints all of it.
-- Reference routing: open `<repo>/shared/reference/AGENTS.md` first for course or Altium questions (topic index).
+- Reference routing: open `<repo>/shared/reference/AGENTS.md` first for course, Altium or JLC questions (topic index).
   The AD20 Essentials manual `<repo>/shared/reference/course/ad20-essentials/` is THE guide for "how do I do X in
   Altium". Never read the whole tree.
 - `projects/<name>/sources/` (this project's documents, its parts' datasheets included) and `shared/datasheets/`

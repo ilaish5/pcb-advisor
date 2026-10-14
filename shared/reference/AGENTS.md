@@ -7,6 +7,7 @@ Read this file first; then open **one** file section from the index below. Never
 ## What the advisor uses it for
 1. "How do I do X in Altium?" (panels, ECO, rules, OutJob, polygons...) -> short answer + citation. Best source: `course/ad20-essentials/` (step lists).
 2. Explain a PCB concept (stackup, rules, routing, vias, impedance, crosstalk, EMI, fab files) -> `course/altium-education/` (English).
+3. A JLCPCB fact (fab limits, assembly services and fees, parts classes, Gerber/BOM/CPL format, ordering steps, JLCDFM) -> `jlc/` (cited JLC pages with read date).
 
 ## Full map
 ```
@@ -18,13 +19,19 @@ shared/reference/
       ad20-essentials-exercises.pdf    original, 21 MB, copy-protected (see "PDF note"); use the md files instead
     altium-education/                  Altium Academy PCB course text, English, 4 units (118 lessons). Concepts + some Altium steps
       unit1-intro.en.md  unit2-schematics-libraries.en.md  unit3-pcb-layout.en.md  unit4-routing-signal-integrity.en.md   (## [NN] lesson headings)
+  jlc/                                 JLCPCB, the only manufacturer: verified facts from JLC's own pages, each value tagged [ID] -> Sources table (URL, read date)
+    pcb-capabilities.en.md             bare board: trace/space, drills, vias, annular ring, mask, silk, outline, size, thickness, copper, finish, impedance stacks, panels, price drivers
+    assembly-capabilities.en.md        PCBA: Economic vs Standard, min package/pitch, part spacing, rails/fiducials, Basic/Preferred/Extended and fees, sourcing, THT, lead times
+    files-and-formats.en.md            upload zip, Gerber RS-274X and layer names, JLC's Altium Gerber/drill settings, Excellon, BOM and CPL columns, rotation, stencil, rejections
+    ordering-workflow.en.md            order steps for boards + assembly, options, BOM/CPL messages, placement review and rotation fixes, payment, holds, lead times, tips
+    jlcdfm.en.md                       JLCDFM tool: inputs, screens, result levels and object names, parse/false-report causes, relation to the order review
 ```
 Altium parser fixtures (real SchDoc/PcbDoc/libraries) live in `tests/fixtures/altium/`: developer use, not reference material.
 
 Language: everything here is English. When the student writes Hebrew, search with the English term and keep menu and technical terms in English in the answer.
 
 ## Topic index (topic -> where to read)
-`E`=`course/altium-education/`, `A`=`course/ad20-essentials/`. "§" = heading number inside the file.
+`E`=`course/altium-education/`, `A`=`course/ad20-essentials/`, `J`=`jlc/`. "§" = heading number (or `##` heading in `jlc/`) inside the file.
 | Topic | Concept / explanation | Altium how-to |
 |---|---|---|
 | Design documents (schematic, BOM, layout, libraries), PCB vs PCBA, terms | `E/unit1-intro` [04]-[09] | `A/m02-first-project` §2.2 |
@@ -60,26 +67,39 @@ Language: everything here is English. When the student writes Hebrew, search wit
 | BOM export | `E/unit1-intro` [08] | `A/m25` §25.3; `A/m08` ; `A/m24` (BOM table) |
 | Draftsman (fab/assembly drawings) | - | `A/m24-draftsman` |
 | Schematic PDF / Smart PDF, sheet numbering | - | `A/m08` §8.4-8.5 |
+| JLC fab limits: trace/space, via, drill, annular ring, hole/edge clearances, mask dam by colour, silk | `J/pcb-capabilities` § Traces and spacing; § Drills, vias and annular ring; § Solder mask; § Silkscreen | - |
+| JLC board size, thickness, outline layer, slots, castellations, V-cut, panels, copper, finish | `J/pcb-capabilities` § Outline, board size and thickness; § Castellated holes, plated edges; § Panelization and V-cut; § Copper weight; § Surface finish | - |
+| JLC impedance, stack-up codes, prepreg Er | `J/pcb-capabilities` § Impedance control and stack-ups | - |
+| JLC assembly: Economic vs Standard, min package/pitch, part spacing, rails, fiducials | `J/assembly-capabilities` § Economic vs Standard PCBA; § Placement limits and part spacing; § Edge rails, fiducials, tooling holes | - |
+| JLC parts classes (Basic / Preferred / Extended), assembly fees, sourcing, THT, lead times | `J/assembly-capabilities` § Parts library classes and how the fees work; § Fees; § Sourcing channels; § Through-hole and mixed assembly; § Lead times | - |
+| JLC Gerber/drill/BOM/CPL format, rotation and origin, what JLC rejects | `J/files-and-formats` | `J/files-and-formats` § JLC's Altium Gerber and drill recipe; `A/m25` |
+| Ordering at JLC, BOM/CPL messages, placement preview, holds, reorders | `J/ordering-workflow` | - |
+| JLCDFM: reading results, false reports, relation to the order review | `J/jlcdfm` | - |
 
 **Not covered anywhere in this folder** (answer from general knowledge or the datasheet and say there is no course source): decoupling/bypass capacitors and placement,
-power integrity beyond planes, thermal design, JLCPCB-specific limits and DFM tools, IPC-356, 4+ layer fab trade-offs, firmware/programming connectors, SPICE simulation. Do not invent a citation.
+power integrity beyond planes, thermal design, IPC-356, 4+ layer fab trade-offs, firmware/programming connectors, SPICE simulation. Do not invent a citation.
 
 ## How to look things up cheaply
 1. Match the question to the index row. Open that file with `grep -n "^#" <file>` first (headings only), then read just the matching section (`sed -n 'START,ENDp'` or a Read with offset/limit).
 2. Altium steps (AD20 manual): `grep -n -i "<menu or panel name>" course/ad20-essentials/*.md` (e.g. `"Output Job"`, `"Repour"`, `"Rule Priorities"`), then read that `##` section only. Menu paths are written `File » New » Project`.
 3. Search with the English term; every file is English.
-4. Sizes for planning: altium-education units 25-112 KB each, ad20-essentials modules 2-15 KB each. Prefer ad20-essentials modules (small) for how-to.
+4. Sizes for planning: altium-education units 25-112 KB each, ad20-essentials modules 2-15 KB each, `jlc/` files 8-22 KB. Prefer ad20-essentials modules (small) for how-to.
+5. JLC numbers: `grep -n -i "<term>" jlc/*.md` (e.g. `"annular"`, `"Extended"`, `"Rotation"`); the `[P1]`-style tag after a value is a row of that file's Sources table (URL, page date); every page was read 2026-10-14. Each file ends with "Conflicts" (JLC pages disagree) and/or "Gaps" (not found).
 5. Never open `.pdf` for answers. The md files hold the text.
 
 ## How to cite
 `path-from-reference-root` + heading, e.g. `course/ad20-essentials/m19-pcb-rules-and-panels.en.md § 19.3.2 Rule Priorities` or
 `course/altium-education/unit4-routing-signal-integrity.en.md § [17] Calculating Characteristic Impedance and Trace Width`. AD20 files also carry a page: `(PDF p.187)` from the `<!-- p.N -->` marker.
 Cite the file you actually read. Say when a menu name comes from AD20 (the course version) and may differ in the student's newer Altium.
+`jlc/` files: cite the file and heading, e.g. `jlc/pcb-capabilities.en.md § Drills, vias and annular ring`, and for a JLC number give the JLC page URL and
+"read 2026-10-14" from that file's Sources table, so the student can re-check it.
 
 ## Caveats
 - Altium steps are **AD20**. Newer versions rename panels and move the Layer Stack Manager; say so when unsure.
 - `E/unit3` [14] says assembly layers define paste/solder mask apertures. That is loose: in Altium those are the Top/Bottom Solder and Paste layers; assembly layers are mechanical layers for drawings.
 - `E/unit1..4` have no images; phrases like "in the image below" point to nothing.
+- `jlc/` is a snapshot of JLC's pages (read 2026-10-14). JLC changes limits, fees and button names: for an order decision tell the student to check the
+  live page; stock and part prices never come from here (run `check_availability.py`).
 - PDF note: the AD20 PDF opens with an empty password but is AES-encrypted. pypdf needs an AES backend: `cryptography` does not build on Windows ARM64, `pycryptodome` works instead. Not needed for answers, since the text is extracted.
 
 ## Rules for editing, adding and organizing
