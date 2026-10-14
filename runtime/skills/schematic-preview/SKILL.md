@@ -16,7 +16,7 @@ The picture is a teaching aid: it shows WHAT to place and HOW to lay it out. The
 
 ## Steps
 1. Collect the data first: per IC the pin number, pin name and net; per small part the ref, value and the two nets.
-   Take pins from the part's datasheet in `<repo>/shared/datasheets/` or from the student's library. Never guess a pin number;
+   Take pins from the part's datasheet in the project's `sources/` or from the student's library. Never guess a pin number;
    write "unknown - need datasheet" and ask for the file (link-and-return) instead.
 2. Split into blocks, one framed box each: power in, regulators, MCU core, clock and reset, programming/debug, USB,
    sensors, connectors/UI. Keep a block to about 45 parts or fewer; above that, make a second sheet.

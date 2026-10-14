@@ -181,8 +181,10 @@ def test_alternatives_endpoint_with_monkeypatched_jlc(server, parts_project, mon
 
 
 def test_datasheet_endpoint_success_and_failure(server, parts_project, monkeypatch):
-    # Success scenario
-    monkeypatch.setattr(sources, "fetch", lambda url, name=None: {"name": "fetched_doc.pdf", "url": url})
+    # Success scenario. A part's datasheet is downloaded into the project (sources.get);
+    # the fetch stub is for a server that still downloads through the shared library.
+    monkeypatch.setattr(sources, "get", lambda project, url, name=None: {"name": "fetched_doc.pdf", "url": url})
+    monkeypatch.setattr(sources, "fetch", lambda url, name=None, **kw: {"name": "fetched_doc.pdf", "url": url})
 
     code, body = post(server, "/api/parts/datasheet", {"line": "R1"}, parts_project)
     assert code == 200
@@ -194,10 +196,14 @@ def test_datasheet_endpoint_success_and_failure(server, parts_project, monkeypat
     assert line_by_key(st, "R1")["datasheet"] == "fetched_doc.pdf"
 
     # Link-and-return failure scenario
-    def failing_fetch(url, name=None):
+    def failing_fetch(url, name=None, **kw):
         raise urllib.error.URLError("Failed to download remote file")
 
+    def failing_get(project, url, name=None):
+        return failing_fetch(url, name)
+
     monkeypatch.setattr(sources, "fetch", failing_fetch)
+    monkeypatch.setattr(sources, "get", failing_get)
     code_err, body_err = post(server, "/api/parts/datasheet", {"line": "U1"}, parts_project)
     assert code_err == 200
     assert "error" in body_err

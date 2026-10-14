@@ -13,7 +13,7 @@ description: Finds and checks the symbol, footprint and 3D model of a part, and 
 - Not for: stock and price (`parts-and-stock`), or assembling the models into the one library (`project-library`).
 
 ## Steps
-1. Take the exact MPN and the LCSC code from the BOM line. Open its datasheet (`<repo>/shared/datasheets/`, or fetch with `sources.py`).
+1. Take the exact MPN and the LCSC code from the BOM line. Open its datasheet (`<project>/sources/`, or fetch with `sources.py get <project> <url>`).
    Find the ORDERING CODE table: the package letter/suffix of the part the student buys. The model must be for that package.
 2. Choose the source in this order. (a) JLC/EasyEDA by LCSC code: symbol, footprint and STEP exist for most JLC parts.
    (b) KiCad official library: best STEP for connectors and standard packages. (c) Vendor or aggregator: SnapEDA, Ultra Librarian,

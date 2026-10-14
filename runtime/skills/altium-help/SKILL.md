@@ -22,7 +22,7 @@ Probe marker (used only by `python pcb.py probe`; ignore otherwise): PROBE-ALTIU
 3. For a procedure, open ONE section of one `mNN-<slug>.en.md` file in `<repo>/shared/reference/course/ad20-essentials/`
    (grep the heading or a keyword first). These are step-by-step "click here" instructions from Altium Designer 20.
 4. For a concept (why, what is it), use the `course/altium-education/` unit named in the index
-   (or `course/summaries-he/` when the student writes Hebrew).
+   (the course text is English; answer in the student's language).
 5. Answer with a short numbered list of steps, in the student's language. Keep menu and dialog names in English
    exactly as in the manual. Mark the steps that come from AD20 and may differ in a newer version.
 6. Cite file and heading: `{{src:m09-compiling.en.md|9.3 Project Options}}`.
@@ -35,7 +35,7 @@ None. This skill only reads files. Do not run Altium, its scripts or its GUI; th
 ## References
 - `<repo>/shared/reference/AGENTS.md` (topic index, how to look things up cheaply, how to cite)
 - `<repo>/shared/reference/course/ad20-essentials/` (29 modules, m01 to m29, step lists)
-- `<repo>/shared/reference/course/altium-education/` (4 units, concepts) and `<repo>/shared/reference/course/summaries-he/` (Hebrew)
+- `<repo>/shared/reference/course/altium-education/` (4 units, concepts)
 - Not in the course: decoupling, JLC limits, thermal. Say "no course source" and answer from the datasheet or general knowledge.
 
 ## Pitfalls

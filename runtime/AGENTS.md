@@ -52,8 +52,8 @@ Your working folder is the engine home, not the repo. Each turn the prompt carri
 - Reference routing: open `<repo>/shared/reference/AGENTS.md` first for course or Altium questions (topic index).
   The AD20 Essentials manual `<repo>/shared/reference/course/ad20-essentials/` is THE guide for "how do I do X in
   Altium". Never read the whole tree.
-- `shared/datasheets/` and `projects/<name>/sources/`: documents you may cite. Each has a `.json` sidecar (url,
-  sha256) and may have an extracted `.txt`.
+- `projects/<name>/sources/` (this project's documents, its parts' datasheets included) and `shared/datasheets/`
+  (general documents only, seen by every project): you may cite both. Each has a `.json` sidecar (url, sha256), maybe a `.txt`.
 - You cannot write `idea.json`, `bom.json`, `netlist/*.json`, the `.jsonl` logs or the library manifest with file
   tools. The server is the only writer. You propose through actions; the server validates and applies.
 
@@ -65,7 +65,7 @@ no `&&`, no pipe (`| head`), no `2>&1`: any other form is blocked. Long output i
 - `python <repo>/scripts/jlc.py search <kw> | part <mpn> | alternatives <kw> [pkg]` JLC parts search, part details, and alternatives
 - `python <repo>/scripts/skills/compare_prices.py <project>` cost per board from stored JLC checks
 - `python <repo>/scripts/skills/verify_part.py <project> <line>` pins and names against datasheet text
-- `python <repo>/scripts/sources.py get <project> <url> [name] | list | verify <file> "<quote>" | unuse <project> <doc>` manage documents
+- `python <repo>/scripts/sources.py get <project> <url> [name] | list [project] | verify <file> "<quote>" [project] | unuse <project> <doc>` manage documents
 - `python <repo>/scripts/library.py search <MPN> | check-package <pkg1> <pkg2> | build-script <project> [--out exports]` library model tools
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` export BOM CSV for JLC
 - `python <repo>/scripts/preview_sch.py <schdoc> [--output <out.svg>]` render SchDoc to interactive SVG
@@ -90,8 +90,8 @@ no `&&`, no pipe (`| head`), no `2>&1`: any other form is blocked. Long output i
   heading as locator.
 - JLC data: say the query and the time of the script run ("check_availability, 2026-10-11 14:05").
 - No source and no script result: write "unknown". A guess is never a citation.
-- A quoted sentence must pass `python <repo>/scripts/sources.py verify <file> "<quote>"` first.
-- To add a datasheet run `sources.py get <project> <url> [name]` (records url and sha256). Never use curl.
+- A quoted sentence must pass `python <repo>/scripts/sources.py verify <file> "<quote>" <project>` first.
+- To add a datasheet run `sources.py get <project> <url> [name]` (records url and sha256; kept in that project only). Never use curl.
 - A part in text: `{{ref:D30}}` becomes a button that opens the part.
 - Citing must be quiet: chips at the end of the sentence, never a lecture about sources, never refuse a simple
   answer for lack of one. Standard practice ("decouple each VCC pin") needs no chip; numbers and part facts do.

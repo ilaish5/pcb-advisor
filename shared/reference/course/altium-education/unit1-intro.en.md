@@ -1,6 +1,6 @@
 # Altium Education (Altium Academy PCB design course) - Unit 1 - Introduction to PCB Design
 
-> Source: Altium Education course text, English. Curated 2026-10-11: lesson delimiters turned into `## [NN] Title` headings; removed 'Complete and Continue', 'Further Reading' lists (article titles only, no links) and the Quiz lesson (only question 1 was captured; the full quiz questions are in `../summaries-he/quiz-40q.he.md`). Images are missing, so phrases like 'in the image below' have no picture.
+> Source: Altium Education course text, English. Curated 2026-10-11: lesson delimiters turned into `## [NN] Title` headings; removed 'Complete and Continue', 'Further Reading' lists (article titles only, no links) and the Quiz lesson (only question 1 was captured). Images are missing, so phrases like 'in the image below' have no picture.
 
 Lessons: [01] Introduction and Important Terminology; [02] What is Printed Circuit Board Design?; [03] PCB Design Software; [04] Some Basic Terms to Help You Get Started in This Course; [05] The Role of CAD Tools; [06] Schematic Sheets; [07] PCB Layout; [08] Bill of Materials; [09] PCB Libraries; [10] Summary; [11] Your First PCB Project; [12] How to Create a New Project; [13] Make Your Project Shareable
 

@@ -128,7 +128,7 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | `projects/<name>/` | idea.json, `*-log.jsonl` (append-only truth), derived bom.json, proposals, `netlist/`, `chats/`, `sources/`, `exports/` (BOM, `.RUL`, OutJob, library script), notes.md; plus a link to the student's local Altium folder (read-only) | no (user data) |
 | engine home | generated pack (section 4); per-OS app-data dir | no |
 | `shared/reference/` | course material + `AGENTS.md` topic index; AD20 Essentials manual is the "how do I" guide | yes |
-| `shared/datasheets/` | fetched vendor PDFs + sha256 metadata, re-fetched by URL | no (metadata JSON only today; PDFs ignored) |
+| `shared/datasheets/` | GENERAL documents only (application notes, design guides, standards): sha256 metadata, re-fetched by URL. A part's datasheet is in `projects/<name>/sources/` | no (metadata JSON only; PDFs ignored) |
 | JLC cache | query results with timestamp (path decide in I4: under `shared/` or workspace cache dir) | no |
 | `tests/fixtures/altium/` | AD20 SchDoc/PcbDoc/libs/OutJob parser fixtures | yes |
 | `config/defaults.json`, `config.json` | defaults in git; user overrides local; env `PCB_ADVISOR_HOME` moves the workspace | defaults only |

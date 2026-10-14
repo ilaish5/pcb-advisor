@@ -184,7 +184,7 @@ The skills in `scripts/skills/` are the exception: `check_availability.py` appen
 a check are facts, not decisions.
 
 Adding a document is the one write worth allowing, and it goes through
-`scripts/sources.py fetch` rather than curl, so the sha256 and the url are
+`scripts/sources.py get <project> <url>` rather than curl, so the sha256 and the url are
 recorded with it.
 
 ### Why the prompt goes on stdin

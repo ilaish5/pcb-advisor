@@ -41,7 +41,6 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
 - `<repo>/docs/feasibility/README.md` - what the JLC endpoint returns (stock, library type, prices, datasheet link) and what it lacks.
 - `<repo>/docs/PRODUCT-PLAN.md` - section 1 K2 (stock found too late), section 7 decisions 2, 8, 19 (stock in table, obsolete signals).
 - `<repo>/shared/reference/course/altium-education/unit2-schematics-libraries.en.md` - [15]-[19] and [22] choosing parts, MOQ, supply chain.
-- `<repo>/shared/reference/course/summaries-he/cheatsheet-units1-4.he.md` - section "שרשרת האספקה" (Hebrew).
 
 ## Pitfalls
 - Stock changes daily. A number without its query time is worthless; stale numbers (earlier session) must be re-run before BOM export.

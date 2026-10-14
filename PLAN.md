@@ -53,7 +53,8 @@ Do "Now -> Next action". Update "Now" after every real step and write the stage 
 9. UI in **English**; the chat answers in the language the user writes in. Short answers, concrete outputs
    (table, file, image), no questionnaires.
 10. Everything is stored in local folders. General reference material is in git (`shared/reference/`); vendor
-    datasheets are not (`shared/datasheets/`, re-fetched by URL). Submission is out of scope; only the final file
+    documents are not (`shared/datasheets/` holds general ones, a project's part datasheets are in its `sources/`;
+    both are re-fetched by URL). Submission is out of scope; only the final file
     organization is in scope.
 11. AI engines are CLI tools the student installs and signs in to: Claude Code and Antigravity `agy`
     (`docs/ENGINES.md`). The tool holds no API key.

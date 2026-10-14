@@ -926,7 +926,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"error": "no datasheet URL for this part", "url": None})
 
             try:
-                meta = sources.fetch(url, name=f"{l.get('mpn') or target_line}.pdf")
+                meta = sources.get(proj, url, name=f"{l.get('mpn') or target_line}.pdf")   # a part's datasheet lives in the project
                 store.edit_bom(proj, target_line, "datasheet", meta["name"])
                 return self._send(200, {"ok": True, "datasheet": meta["name"], "state": state()})
             except Exception as exc:
@@ -1271,8 +1271,7 @@ class Handler(BaseHTTPRequestHandler):
             if not url:
                 return self._send(400, {"error": "url required"})
             try:
-                meta = sources.fetch(url, data.get("name"))
-                sources.use(proj, meta["name"])
+                meta = sources.get(proj, url, data.get("name"))   # added from the UI: the project's own sources
             except Exception as exc:
                 return self._send(200, {"error": f"could not fetch: {exc}"})
             return self._send(200, state())

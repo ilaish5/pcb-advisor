@@ -239,10 +239,12 @@ def describe(project=None, engine_home=None):
              "what": "the course reference (git-tracked): AGENTS.md is the topic index; course/ad20-essentials/ is the "
                      "step-by-step Altium manual. Read it for any 'how do I ... in Altium' question"},
             {"path": rel(datasheets_dir()), "write": "via scripts/sources.py only",
-             "what": "the shared library: course material and datasheets. Each file has a .json beside it "
-                     "with its url and sha256, and a .txt with its extracted text"},
+             "what": "the shared library: GENERAL documents every project sees (application notes, design guides, "
+                     "standards). A part's datasheet is not kept here but in the project's sources/. Each file has a "
+                     ".json beside it with its url and sha256, and a .txt with its extracted text"},
             {"path": rel(pdir / "sources"), "write": "via scripts/sources.py only",
-             "what": "documents THIS project uses, same format"},
+             "what": "documents THIS project uses: the datasheets of its parts, its uploads and what it cites, "
+                     "same format"},
             {"path": rel(pdir / "project.json"), "write": False,
              "what": "this board's settings: layers, copper weight, temperature rise"},
             {"path": rel(pdir / "idea.json"), "write": False,
@@ -313,12 +315,12 @@ def describe(project=None, engine_home=None):
              "what": "write the BOM for a manufacturer"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/render_sheet.py <project> <sheet>"),
              "what": "draw a sheet from its netlist"},
-            {"run": oscompat.py("python3 {repo}/scripts/sources.py list"),
-             "what": "what is already in the document library"},
+            {"run": oscompat.py(f"python3 {repo}/scripts/sources.py list {pdir.name}"),
+             "what": "what is already in the shared library and in this project's sources"},
             {"run": oscompat.py(f"python3 {repo}/scripts/sources.py get {pdir.name} <url> [name]"),
-             "what": "add a datasheet to this project. Use this rather than curl - it records the url and sha256, "
-                     "which is what makes it citable"},
-            {"run": oscompat.py('python3 {repo}/scripts/sources.py verify <name> "<quote>"'),
+             "what": "add a datasheet to this project (it is stored in the project's sources/ only). Use this "
+                     "rather than curl - it records the url and sha256, which is what makes it citable"},
+            {"run": oscompat.py(f'python3 {repo}/scripts/sources.py verify <name> "<quote>" {pdir.name}'),
              "what": "is this quote really in that document? Run it BEFORE you quote"},
             {"run": oscompat.py("python3 {repo}/scripts/trace_width.py <amps> --oz <copper> --rise <degrees>"),
              "what": "IPC-2221 trace width. Run it; never estimate a width yourself"},

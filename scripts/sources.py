@@ -1,9 +1,15 @@
 """
 The reference library.
 
-Shared cache, per-project copies of what was actually cited.  A document is
-stored with a sha256, so if a vendor revises a datasheet the hash changes and
-every claim resting on it can be flagged stale.
+Two places. `shared/datasheets/` holds GENERAL documents only (application notes,
+design guides, standards): everything there is visible in every project and its
+.json sidecars go to git. A project's own documents - the datasheets of ITS parts,
+what it uploads, what it cites - live in `projects/<name>/sources/` and never
+leave that project. `get` (the "add this datasheet to my board" step) therefore
+writes into the project only; `fetch` without a project writes to the shared
+library, for a general document.  A document is stored with a sha256, so if a
+vendor revises a datasheet the hash changes and every claim resting on it can be
+flagged stale.
 
 The important function here is verify(): a stored quote must be findable,
 verbatim, in the fetched document.  That turns "trust me" into a test.
@@ -31,8 +37,14 @@ class SourceError(Exception):
 
 
 def cache():
-    """The shared document library. One copy, reused by every project."""
+    """The shared document library: general documents, visible in every project."""
     return workspace.datasheets_dir()
+
+
+def folder_of(project=None):
+    """Where documents are stored: a project's sources/ folder, or, with no
+    project, the shared library."""
+    return workspace.project_dir(project) / "sources" if project else cache()
 
 
 def _safe(name):
@@ -79,12 +91,17 @@ def _check_kind(url, name, blob):
                       f"browser and add it from the Sources tab (Upload file).")
 
 
-def fetch(url, name=None, timeout=45):
-    """Download into the shared cache. Returns the metadata dict. Raises
-    SourceError when the download fails, is not what the name says, or would
-    replace a different document already cached under that name."""
+def fetch(url, name=None, timeout=45, project=None):
+    """Download a document. With a project it goes into that project's sources/;
+    without one it goes into the shared library, which is for GENERAL documents
+    (a part's datasheet belongs to the project that uses the part: use get()).
+    Returns the metadata dict. Raises SourceError when the download fails, is not
+    what the name says, or would replace a different document already stored
+    under that name."""
+    folder = folder_of(project)
+    where = f"project {project}'s sources" if project else "the shared library"
     name = _safe(name or url.rstrip("/").split("/")[-1] or "document.pdf")
-    path = cache() / name
+    path = folder / name
     blob = _download(url, timeout)
     _check_kind(url, name, blob)
     # The sidecar describes the DOCUMENT - what it is, where it came from, what
@@ -96,10 +113,10 @@ def fetch(url, name=None, timeout=45):
         "sha256": hashlib.sha256(blob).hexdigest(),
         "bytes": len(blob),
     }
-    # The cache is shared: other projects cite a document by its name, so a name
-    # already holding a different document is not ours to reuse. With no file on
-    # disk (a fresh clone before `restore`) the tracked sidecar is the record,
-    # unless it names this very url, which is `restore` bringing it back.
+    # A name already holding a different document is not ours to reuse: chats and
+    # BOM lines cite a document by its name. With no file on disk (a fresh clone
+    # before `restore`) the sidecar is the record, unless it names this very url,
+    # which is `restore` bringing it back.
     old = _read_meta(path)
     have = None
     if path.exists():
@@ -108,12 +125,12 @@ def fetch(url, name=None, timeout=45):
         have = old.get("sha256")
     if have not in (None, meta["sha256"]):
         raise SourceError(
-            f"{name} is already in the shared library as a different file (url "
-            f"{old.get('url') or 'unknown'}, sha256 {have[:12]}...). Not replacing it: other "
-            f"projects may cite it. Save this one under another name, e.g. "
+            f"{name} is already in {where} as a different file (url "
+            f"{old.get('url') or 'unknown'}, sha256 {have[:12]}...). Not replacing it: "
+            f"something may cite it. Save this one under another name, e.g. "
             f"get <project> {url} <other-name>")
     if not path.exists():
-        cache().mkdir(parents=True, exist_ok=True)
+        folder.mkdir(parents=True, exist_ok=True)
         path.write_bytes(blob)
     # When the document is unchanged, leave the sidecar alone. `restore` warms
     # the cache on every fresh clone, and writing a new timestamp each time made
@@ -169,10 +186,11 @@ def _norm(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def verify(name, quote):
-    """Is this quote actually in that document? The whole point of the module."""
+def verify(name, quote, project=None):
+    """Is this quote actually in that document? The whole point of the module.
+    With a project, that project's sources/ is searched before the shared library."""
     try:
-        body = _norm(text_of(name))
+        body = _norm(text_of(name, folder=folder_of(project) if project else None))
     except FileNotFoundError as exc:
         return {"ok": False, "reason": str(exc)}
     q = _norm(quote)
@@ -192,7 +210,9 @@ def verify(name, quote):
 
 
 def use(project, name):
-    """Copy a cached document into the project, so the project folder stands alone."""
+    """Copy a document of the shared library into the project, so the project folder
+    stands alone. A general document is visible everywhere already; this is for a
+    project that wants its own copy."""
     src = cache() / _safe(name)
     dst_dir = workspace.project_dir(project) / "sources"
     dst_dir.mkdir(parents=True, exist_ok=True)
@@ -203,17 +223,18 @@ def use(project, name):
 
 
 def get(project, url, name=None):
-    """Fetch into the shared cache and copy into the project, in one step - the
-    whole of "add this datasheet to my board". Returns the metadata, plus where
-    the project copy landed."""
-    meta = fetch(url, name)
-    return {**meta, "path": use(project, meta["name"])}
+    """Download straight into the project's sources/ - the whole of "add this
+    datasheet to my board". Nothing goes to the shared library: that is for general
+    documents, and a part's datasheet is this project's. Returns the metadata, plus
+    where the file landed."""
+    meta = fetch(url, name, project=project)
+    return {**meta, "path": str(folder_of(project) / meta["name"])}
 
 
 def unuse(project, name):
-    """Take a document out of ONE project. The shared cache is left alone: other
-    projects may cite it, and its .json is the tracked record of where it came
-    from."""
+    """Take a document out of ONE project. The shared library is left alone: it is
+    general material every project sees, and its .json is the tracked record of
+    where it came from."""
     target = workspace.project_dir(project) / "sources" / _safe(name)
     removed = []
     for p in (target, _meta_path(target), target.with_suffix(target.suffix + ".txt")):
@@ -285,7 +306,9 @@ if __name__ == "__main__":
         if cmd == "fetch":
             print(json.dumps(fetch(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None), indent=2))
         elif cmd == "verify":
-            print(json.dumps(verify(sys.argv[2], sys.argv[3]), indent=2, ensure_ascii=False))
+            # verify <name> "<quote>" [project]: the project's sources/ is searched first
+            print(json.dumps(verify(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None),
+                             indent=2, ensure_ascii=False))
         elif cmd == "get":
             print(json.dumps(get(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None), indent=2))
         elif cmd == "use":
@@ -293,9 +316,12 @@ if __name__ == "__main__":
         elif cmd == "unuse":
             print(json.dumps(unuse(sys.argv[2], sys.argv[3])))
         else:
-            for f in sorted(cache().glob("*")):
-                if f.suffix not in (".json", ".txt"):
-                    print(f.name, f.stat().st_size)
+            # list [project]: the shared library, then that project's own documents
+            places = [("shared", cache())] + ([("project", folder_of(sys.argv[2]))] if len(sys.argv) > 2 else [])
+            for scope, folder in places:
+                for f in sorted(folder.glob("*")):
+                    if f.suffix not in (".json", ".txt"):
+                        print(f"{scope:8s}{f.name} {f.stat().st_size}" if len(places) > 1 else f"{f.name} {f.stat().st_size}")
     except SourceError as exc:
         # one line a person (or the agent) can act on, not a traceback
         print(f"error: {exc}", file=sys.stderr)
