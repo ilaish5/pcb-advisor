@@ -12,6 +12,7 @@ import html
 import json
 import math
 import pathlib
+import re
 import struct
 import sys
 
@@ -27,6 +28,65 @@ import workspace
 
 def esc(s: str) -> str:
     return html.escape(str(s or ""), quote=True)
+
+
+# The picture is inlined into the page, so its <style> is global there: every rule starts with SCOPE and "&"
+# below stands for it. The layer colours are data colours (the same on both themes, readable on both
+# --pcb-bg values) and are defined once as variables on the SVG; everything else is the page's tokens with
+# the dark value as fallback, so the file still draws when it is opened on its own.
+SCOPE = "svg.pcb-preview"
+
+_CSS = """
+& { --c-top: #e74c3c; --c-bottom: #3498db; --c-multi: #f39c12; --c-crit: #2ecc71; --c-sel: #ffe066; --c-net: #c79bff;
+    --c-board: #17281f; --c-board-line: #2d5a3c; --c-text: #f2f4f8; font-family: var(--f-mono, "IBM Plex Mono", ui-monospace, monospace); }
+& .pcb-bg { fill: var(--pcb-bg, #121820); }
+& .grid-line { stroke: var(--pcb-grid, rgba(255, 255, 255, 0.04)); stroke-width: 0.8; }
+& .board-poly { fill: var(--c-board); stroke: var(--c-board-line); stroke-width: 2; }
+& .plan-group { cursor: pointer; --zone: var(--c-bottom); }
+& .plan-group rect { fill: var(--zone); stroke: var(--zone); fill-opacity: 0.15; stroke-dasharray: 4, 3; stroke-width: 1.5; }
+& .plan-group text { fill: var(--zone); font-size: 11px; font-weight: 600; }
+& .plan-group:hover rect, & .plan-group:focus-visible rect, & .plan-group.sel rect { fill-opacity: 0.3; }
+& .plan-group.sel rect { stroke-width: 2.6; stroke-dasharray: none; }
+& .plan-keepout { cursor: default; }
+& .plan-keepout rect { fill: var(--c-top); fill-opacity: 0.18; stroke: var(--c-top); stroke-dasharray: 5, 3; stroke-width: 1.8; }
+& .plan-keepout text { fill: var(--c-top); font-size: 10px; font-weight: 700; }
+& .pcb-comp { cursor: pointer; }
+& .pcb-comp rect { fill-opacity: 0.15; stroke-width: 1.2; rx: 1.5; }
+& .comp-top rect { fill: var(--c-top); stroke: var(--c-top); }
+& .comp-bottom rect { fill: var(--c-bottom); stroke: var(--c-bottom); }
+& .comp-ref { font-size: 9px; font-weight: 700; fill: var(--c-text); text-anchor: middle; pointer-events: none; }
+& .pad { cursor: pointer; }
+& .pad-top { fill: var(--c-top); stroke: var(--c-top); stroke-width: 0.5; }
+& .pad-bottom { fill: var(--c-bottom); stroke: var(--c-bottom); stroke-width: 0.5; }
+& .pad-multi { fill: var(--c-multi); stroke: var(--c-multi); stroke-width: 0.7; }
+& .crit { stroke: var(--c-crit); stroke-width: 1.8; }
+& .pcb-comp:hover rect { stroke: var(--c-sel); stroke-width: 2.2; fill-opacity: 0.4; }
+& .pad:hover { stroke: var(--c-text); stroke-width: 1.5; }
+& .pcb-comp.sel rect, & .pcb-comp:focus-visible rect { stroke: var(--c-sel); stroke-width: 2.4; fill-opacity: 0.4; }
+& .pcb-comp:focus-visible, & .plan-group:focus-visible, & .pad:focus-visible { outline: none; }
+& .pad.sel, & .pad:focus-visible { stroke: var(--c-sel); stroke-width: 1.8; }
+&.focus .pcb-comp:not(.sel), &.focus .pad:not(.sel) { opacity: 0.3; }
+& .pad.hl-net { stroke: var(--c-net); stroke-width: 2.4; }
+&.netfocus .pad:not(.hl-net) { opacity: 0.25; }
+& .legend text { font-family: var(--f-ui, system-ui, sans-serif); font-size: 11px; fill: var(--ink-3, #94a0bd); }
+"""
+
+
+def scoped_css() -> str:
+    """The stylesheet with every rule scoped to SCOPE (see above)."""
+    out = []
+    for line in _CSS.strip().splitlines():
+        out.append(line.replace("&", SCOPE) if "&" in line else line)
+    return chr(10).join(out)
+
+
+_COLOR_RE = re.compile(r"^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$")
+
+
+def _safe_color(value, default: str = "") -> str:
+    """A plan colour goes into a style attribute, so only a hex value or a plain colour name passes."""
+    v = str(value or "").strip()
+    return v if _COLOR_RE.match(v) else default
 
 
 def _mil(v) -> float:
@@ -211,29 +271,8 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
         f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{esc(doc_name)}">'
     ]
 
-    svg.append("""
-    <style>
-      .pcb-preview { background: #121820; font-family: "IBM Plex Mono", ui-monospace, monospace; }
-      .pcb-preview .board-poly { fill: #17281f; stroke: #2d5a3c; stroke-width: 2; }
-      .pcb-preview .grid-line { stroke: rgba(255,255,255,0.04); stroke-width: 0.8; }
-      .pcb-preview .plan-group rect { fill-opacity: 0.15; stroke-dasharray: 4,3; stroke-width: 1.5; }
-      .pcb-preview .plan-group text { font-size: 11px; font-weight: 600; }
-      .pcb-preview .plan-keepout rect { fill: rgba(231,76,60,0.18); stroke: #e74c3c; stroke-dasharray: 5,3; stroke-width: 1.8; }
-      .pcb-preview .plan-keepout text { font-size: 10px; font-weight: 700; fill: #e74c3c; }
-      .pcb-preview .comp-top rect { fill: rgba(231,76,60,0.15); stroke: #e74c3c; stroke-width: 1.2; rx: 1.5; }
-      .pcb-preview .comp-bottom rect { fill: rgba(52,152,219,0.15); stroke: #3498db; stroke-width: 1.2; rx: 1.5; }
-      .pcb-preview .comp-ref { font-size: 9px; font-weight: 700; fill: #ffffff; text-anchor: middle; pointer-events: none; }
-      .pcb-preview .pad { cursor: pointer; }
-      .pcb-preview .pad-top { fill: #e74c3c; stroke: #c0392b; stroke-width: 0.5; }
-      .pcb-preview .pad-bottom { fill: #3498db; stroke: #2980b9; stroke-width: 0.5; }
-      .pcb-preview .pad-multi { fill: #f39c12; stroke: #d35400; stroke-width: 0.7; }
-      .pcb-preview .pad.crit { stroke: #2ecc71; stroke-width: 1.8; }
-      .pcb-preview .pcb-comp { cursor: pointer; }
-      .pcb-preview .pcb-comp:hover rect { stroke: #ffeb3b; stroke-width: 2.2; fill-opacity: 0.4; }
-      .pcb-preview .pad:hover { stroke: #ffffff; stroke-width: 1.5; }
-      .pcb-preview .dim-label { font-size: 10px; fill: #7f8c8d; }
-    </style>
-    """)
+    svg.append(f"<style>{scoped_css()}</style>")
+    svg.append('<rect class="pcb-bg" x="0" y="0" width="100%" height="100%"/>')
 
     # Grid background pattern
     grid_step = 10.0 * scale  # 10mm grid
@@ -270,13 +309,14 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
         gy = ty(g.get("y", 0) + g.get("h", 0))
         gw = ts(g.get("w", 0))
         gh = ts(g.get("h", 0))
-        color = g.get("color", "#3498db")
+        color = _safe_color(g.get("color"))
+        zone = f' style="--zone:{color}"' if color else ""
         name = g.get("name", "Group")
         note = g.get("note", "")
         svg.append(
-            f'<g class="plan-group" data-group="{esc(name)}" cursor="pointer">'
-            f'<rect x="{gx:.1f}" y="{gy:.1f}" width="{gw:.1f}" height="{gh:.1f}" stroke="{color}" fill="{color}"/>'
-            f'<text x="{gx + 6:.1f}" y="{gy + 14:.1f}" fill="{color}">{esc(name)}'
+            f'<g class="plan-group" data-group="{esc(name)}"{zone}>'
+            f'<rect x="{gx:.1f}" y="{gy:.1f}" width="{gw:.1f}" height="{gh:.1f}"/>'
+            f'<text x="{gx + 6:.1f}" y="{gy + 14:.1f}">{esc(name)}'
             f'{f" · {esc(note)}" if note else ""}</text>'
             f'</g>'
         )
@@ -289,9 +329,9 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
         kname = k.get("name", "Keep-out")
         knote = k.get("note", "")
         svg.append(
-            f'<g class="plan-keepout" cursor="pointer">'
+            f'<g class="plan-keepout">'
             f'<rect x="{kx:.1f}" y="{ky:.1f}" width="{kw:.1f}" height="{kh:.1f}"/>'
-            f'<text x="{kx + 6:.1f}" y="{ky + 14:.1f}">KEEP-OUT: {esc(kname)}'
+            f'<text x="{kx + 6:.1f}" y="{ky + 14:.1f}">Keep-out: {esc(kname)}'
             f'{f" ({esc(knote)})" if knote else ""}</text>'
             f'</g>'
         )
@@ -389,18 +429,17 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
             )
     svg.append('</g>')
 
-    # Legend / scale
-    svg.append(
-        f'<g class="legend" transform="translate(16, {h_px - 20:.1f})">'
-        f'<rect width="280" height="18" fill="#17203a" rx="4" opacity="0.85"/>'
-        f'<text x="8" y="13" font-size="9" fill="#dfe5f3">'
-        f'<tspan fill="#e74c3c">■ Top Layer</tspan> '
-        f'<tspan fill="#3498db">■ Bottom</tspan> '
-        f'<tspan fill="#f39c12">■ Through-hole</tspan> '
-        f'<tspan fill="#2ecc71">■ Critical Net</tspan>'
-        f'</text>'
-        f'</g>'
-    )
+    # Legend: the swatches use the classes of the drawing, so the colours live in the stylesheet only
+    entries = [("pad-top", "Top"), ("pad-bottom", "Bottom"), ("pad-multi", "Through-hole")]
+    if crit_net_names:
+        entries.append(("pad-top crit", "Critical net"))
+    lg = []
+    lx = 0.0
+    for cls, label in entries:
+        lg.append(f'<rect class="{cls}" x="{lx:.1f}" y="0" width="9" height="9" rx="1.5"/>')
+        lg.append(f'<text x="{lx + 14:.1f}" y="8.5">{esc(label)}</text>')
+        lx += 14 + len(label) * 6.4 + 14
+    svg.append(f'<g class="legend" transform="translate(16 16)">{"".join(lg)}</g>')
 
     svg.append('</svg>')
     res = "\n".join(svg)
@@ -435,8 +474,10 @@ def render_project_pcb(project: str, plan_file: str = None, layer: str = "all") 
 
     if not pcb_file or not pathlib.Path(pcb_file).is_file():
         return (
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 200" style="background:#121820">'
-            '<text x="250" y="100" text-anchor="middle" fill="#94a0bd" font-family="sans-serif" font-size="14">'
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 200">'
+            '<rect width="100%" height="100%" style="fill:var(--pcb-bg,#121820)"/>'
+            '<text x="250" y="100" text-anchor="middle" font-family="sans-serif" font-size="14" '
+            'style="fill:var(--ink-3,#94a0bd)">'
             'No Altium .PcbDoc linked. Link one in Settings to view PCB placement &amp; routing preview.'
             '</text></svg>'
         )

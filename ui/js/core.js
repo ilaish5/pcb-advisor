@@ -1,6 +1,6 @@
 /* PCB Advisor UI - core: globals/state, api + render helpers, generic text helpers, the action registry and the
    document click/change delegates. Classic scripts (no modules): every ui/js file shares one global scope and they load
-   in this order: core, shell, chat, views/*, viewer, boot (see the <script> tags at the end of ui/index.html).
+   in this order: kit, core, shell, chat, views/*, viewer, palette, boot (see the <script> tags at the end of ui/index.html).
    Top-level code in a file must not READ a let/const that a later file declares; functions may (they run later). */
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -27,9 +27,7 @@ let activeFileChip = null;
 let schZoom = {scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, didDrag: false, downX: 0, downY: 0};
 let pcbZoom = {scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, didDrag: false, downX: 0, downY: 0};
 
-let diagLinkingFrom = null;
-
-let lastChatKey = '', lastCenterKey = '';
+let lastChatKey = '', lastCenterKey = '', pendingRender = false;
 
 const q = (extra = {}) => {
   const p = new URLSearchParams({project: PROJECT, ...(SESSION ? {session: SESSION} : {}), ...extra});
@@ -43,7 +41,7 @@ async function api(path, body, opts = {}) {
     : await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
   let data = null;
   try { data = await r.json(); } catch (e) { data = {error: 'bad response'}; }
-  if (!r.ok && !opts.soft) { toast(data.error || ('Error ' + r.status)); throw new Error(data.error || r.status); }
+  if (!r.ok && !opts.soft) { toast(data.error || ('Error ' + r.status), null, {bad: true}); throw new Error(data.error || r.status); }
   return data;
 }
 function setState(st) {
@@ -148,77 +146,103 @@ function fmt(text) {
   return out.join('');
 }
 
+/* ---------- render ---------- */
+// The main sheet (#view), the optional side sheet (#view-side) and the inspector (#detail) are drawn from S by shell.js.
 function renderCenter(force) {
   const active = document.activeElement;
-  if (!force && active && active.closest && active.closest('.editor-content') && /INPUT|TEXTAREA|SELECT/.test(active.tagName)) return;   // do not eat an edit in progress
-  $('#whead').innerHTML = wheadHTML();
-  initTabScroller();
-  renderEditorGroups(force);
+  if (!force && active && active.closest && active.closest('#view, #view-side, #detail') && /INPUT|TEXTAREA|SELECT/.test(active.tagName)) return;   // do not eat an edit in progress
+  renderMain(force);
+  renderSide(force);
   renderDetail();
 }
 function renderDetail() {
   // The inspector (views/inspector.js) decides whether it has something to show for the current view and selection.
   const d = $('#detail');
+  if (!d) return;
   const html = typeof inspectorHTML === 'function' ? inspectorHTML() : '';
   d.hidden = !html;
   d.innerHTML = html;
 }
 function render(force) {
   if (!S) return;
+  // Never rebuild what is under an open menu, the palette or a dialog. A forced render that had to wait runs afterwards.
+  if (uiBusy()) { pendingRender = pendingRender || !!force; return; }
+  if (pendingRender) { force = true; pendingRender = false; }
+  // The selection (sel) is not part of the centre key: select() marks rows and the drawing itself, so a poll after a
+  // click must not rebuild the sheet (that reset the schematic and PCB zoom).
   document.title = S.title + ' · PCB Advisor';
   renderNav();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, S.exports, S.checks, page, tab, sel, compareCard, exportCard, libExport, sheetId, altsCard, outjobBanner, curCheckStem, schAnchor, impInfo, impSel, impReport, impBusy]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.requirements, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, outjobBanner, curCheckStem, schAnchor, impInfo, impSel, impReport, impBusy]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
-function go(p, t) {
-  page = p;
-  if (t) {
-    tab = t;
-    openStageInActiveGroup(t);
-  } else if (p === 'workspace') {
-    openStageInActiveGroup(tab || 'bom');
-  } else {
-    openPageAsTab(p);
-  }
-  if (p === 'settings') loadAltium();
-  render(true);
-  setView('work');
-}
+// go('workspace', 'bom') or go('bom') shows a stage in the main sheet; go('library') a page. See shell.js.
+// select(key) marks a part and opens the inspector; it leaves bom, sch, pcb and library where they are.
 function select(key, goSch) {
   sel = key;
   if (goSch) {
-    openStageInActiveGroup('sch');
+    if (sideView() !== 'sch') go('workspace', 'sch');
+    else { markSelected(); applyFocusSafe(); renderDetail(); }
     return;
   }
-  const actTab = getActiveTab();
-  if (!(actTab && ((actTab.kind === 'stage' && (actTab.stage === 'bom' || actTab.stage === 'sch')) || (actTab.kind === 'page' && actTab.page === 'library')))) {
-    openStageInActiveGroup('bom');
+  if (!['bom', 'sch', 'pcb', 'library'].includes(mainView()) && sideView() !== 'bom') {
+    go('workspace', 'bom');
     return;
   }
-  document.querySelectorAll('.view tr[data-key]').forEach(tr => tr.classList.toggle('sel', tr.dataset.key === key));
-  applyFocus();
+  markSelected();
+  applyFocusSafe();
   renderDetail();
   setView('work');
 }
-function setView(v) { if (matchMedia('(max-width:860px)').matches) $('#app').dataset.view = v; }
-function toast(msg, action) {
+function markSelected() {
+  document.querySelectorAll('tr[data-key]').forEach(tr => tr.classList.toggle('sel', tr.dataset.key === sel));
+}
+function applyFocusSafe() { if (typeof applyFocus === 'function') applyFocus(); }
+/* One toast at a time, for errors and Undo. Success shows in place. toast(msg, {label, onClick}, {bad: true}) */
+function toast(msg, action, opts) {
   const t = $('#toast');
-  t.innerHTML = '';
+  if (!t) return;
+  const bad = opts && opts.bad != null ? !!opts.bad : /^(error|failed|couldn.t|could not|can.t|cannot)\b/i.test(String(msg));
+  t.className = 'toast' + (bad ? ' bad' : '');
+  t.setAttribute('role', 'status');
+  t.textContent = '';
   const span = document.createElement('span');
   span.textContent = msg;
   t.appendChild(span);
   if (action && action.label && action.onClick) {
-    const btn = document.createElement('button');
-    btn.className = 'btn btn-sm';
-    btn.style.cssText = 'margin-left:8px;padding:1px 6px;font-size:11px;background:#3b82f6;color:#fff;border:none;border-radius:4px;cursor:pointer;';
-    btn.textContent = action.label;
-    btn.onclick = (e) => { e.stopPropagation(); t.hidden = true; action.onClick(); };
-    t.appendChild(btn);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = action.label;
+    b.onclick = e => { e.stopPropagation(); t.hidden = true; action.onClick(); };
+    t.appendChild(b);
   }
   t.hidden = false;
   clearTimeout(toast.h);
-  toast.h = setTimeout(() => t.hidden = true, action ? 5000 : 3600);
+  toast.h = setTimeout(() => { t.hidden = true; }, bad || action ? 6000 : 3600);
+}
+/* A small dialog that asks for one line of text, instead of prompt(). Resolves to the trimmed text, or null when cancelled.
+   askText({title, label, value, placeholder, hint, confirm}) */
+function askText(o) {
+  o = o || {};
+  return new Promise(resolve => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dlg';
+    dlg.setAttribute('aria-labelledby', 'dlg-title');
+    dlg.innerHTML = `<form method="dialog"><h2 id="dlg-title">${esc(o.title || '')}</h2>
+      <label class="field"><span>${esc(o.label || '')}</span><input class="in" name="v" value="${esc(o.value || '')}" placeholder="${esc(o.placeholder || '')}" autocomplete="off" required>${o.hint ? `<small>${esc(o.hint)}</small>` : ''}</label>
+      <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn pri" value="ok">${esc(o.confirm || 'OK')}</button></div></form>`;
+    // Cancel is not a submit button: Enter in the field submits the form through its first submit button, which must be the OK one
+    dlg.querySelector('[data-cancel]').addEventListener('click', () => dlg.close('cancel'));
+    dlg.addEventListener('close', () => {
+      const v = dlg.querySelector('input').value.trim();
+      const ok = dlg.returnValue === 'ok' && v;
+      dlg.remove();
+      resolve(ok ? v : null);
+    });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    dlg.querySelector('input').select();
+  });
 }
 
 /* ---------- events ---------- */
@@ -232,40 +256,12 @@ function onAct(name, fn) { ACTIONS[name] = fn; }
 const CHANGE_HANDLERS = [];
 function onChange(test, fn) { CHANGE_HANDLERS.push({test, fn}); }
 document.addEventListener('click', async e => {
-  const grpEl = e.target.closest('.editor-group');
-  if (grpEl && grpEl.dataset.groupId && editorState.activeGroupId !== grpEl.dataset.groupId) {
-    editorState.activeGroupId = grpEl.dataset.groupId;
-    document.querySelectorAll('.editor-group').forEach(g => g.classList.toggle('active', g.dataset.groupId === editorState.activeGroupId));
-    saveStoredEditorState(editorState);
-  }
-  const edTabEl = e.target.closest('.editor-tab');
-  if (edTabEl && !e.target.closest('[data-act="close-tab"]')) {
-    activateTabInGroup(edTabEl.dataset.tabId, edTabEl.dataset.groupId);
-    return;
-  }
-  const el = e.target.closest('button, tr[data-key], g.part, g.diag-block, g[data-tab], g[data-act], a');
+  const el = e.target.closest('button, tr[data-key], g.part, g[data-tab], g[data-act], a');
   if (!el) return;
   if (el.tagName === 'A') return;
-  if (diagLinkingFrom) {
-    const blockEl = el.closest('g.diag-block');
-    const destId = blockEl ? blockEl.dataset.bid : null;
-    if (destId && destId !== diagLinkingFrom) {
-      const label = prompt('Signal or voltage label (e.g. SPI, I2C, 3.3V, SAFETY):', 'SPI');
-      if (label !== null) {
-        const links = S.idea.links || [];
-        links.push({from: diagLinkingFrom, to: destId, label: label.trim(), safety: /safety/i.test(label)});
-        diagLinkingFrom = null;
-        await api('/api/idea', {blocks: S.idea.blocks || [], links});
-        renderCenter(true);
-        toast('Blocks connected');
-        return;
-      }
-    }
-    if (el.dataset.act !== 'diag-link-start') {
-      diagLinkingFrom = null;
-      renderCenter(true);
-    }
-  }
+  // A menu item runs its action first. The menu closes on its own timer after this handler, but the render that the
+  // action triggers must not be held back by a menu that is about to close, so close it now.
+  if (el.closest('.menu') && typeof kitMenuClose === 'function') kitMenuClose();
   if (el.matches('g.part')) { const l = lineOfRef(el.dataset.ref); if (l) select(l.key); return; }
   if (el.matches('tr[data-key]')) { if (e.target.closest('input')) return; if (!e.target.closest('button')) { select(el.dataset.key); return; } }
   const d = el.dataset;
@@ -274,22 +270,13 @@ document.addEventListener('click', async e => {
     // arguments for its action (btn() in kit.js turns plain keys into data-* attributes).
     const fn = d.act && ACTIONS[d.act];
     if (fn) { await fn(el, d, e); return; }
-    if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); toast(d.decide === 'approved' ? 'Change applied' : 'Rejected'); return; }
+    if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); return; }      // the proposal card shows the decision; no toast
     if (d.accept) { setState(await api('/api/library/accept', {line: d.accept})); render(true); toast('Accepted'); return; }
     if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast('Result: ' + r.result.verify); return; }
     if (d.thread !== undefined && el.dataset.thread !== undefined) { if (d.thread) switchSession(d.thread); return; }
     if (d.proj) { ALTIUM_DATA = null; const u = new URL(location.href); u.searchParams.set('project', d.proj); u.searchParams.delete('session'); location.href = u; return; }
-    if (d.tab) {
-      openStageInActiveGroup(d.tab);
-      const curTab = document.querySelector(`.tabs-scroller .tab[data-tab="${d.tab}"], .tabs .tab[data-tab="${d.tab}"]`);
-      if (curTab) curTab.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-      return;
-    }
-    if (d.page) {
-      if (d.page === 'workspace') openStageInActiveGroup(tab || 'bom');
-      else openPageAsTab(d.page);
-      return;
-    }
+    if (d.tab) { go('workspace', d.tab); return; }
+    if (d.page) { go(d.page); return; }
     if (d.view) { setView(d.view); return; }
     if (d.src) { hitSrc = d.src; openViewerSource(d.src, el.dataset.where); return; }
     if (d.altiumPath) { openViewerAltium(d.altiumPath); return; }
@@ -307,5 +294,8 @@ document.addEventListener('change', async e => {
   }
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeViewer(); closeCompPanel(); }
+  if (e.key === 'Escape') {
+    if (typeof closeViewer === 'function') closeViewer();
+    if (typeof closeCompPanel === 'function') closeCompPanel();
+  }
 });

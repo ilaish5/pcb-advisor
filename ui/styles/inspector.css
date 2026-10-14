@@ -1,1 +1,53 @@
-/* Inspector drawer (#detail): styles for views/inspector.js. */
+/* inspector.css: the content of the inspector drawer (#detail), built by views/inspector.js.
+   The drawer itself (.drawer, .drawer-h, .drawer-b) is in base.css; this file only styles what goes inside it. */
+
+/* the drawer: #detail floats over the right edge of the main sheet (the same look as .drawer in base.css) */
+.detail{position:absolute;top:0;right:0;bottom:0;width:min(380px,100%);z-index:20;overflow:hidden;background:var(--sheet);border-left:1px solid var(--line);
+  box-shadow:var(--float);animation:slide .18s var(--ease)}
+.detail[hidden]{display:none}
+.insp{display:flex;flex-direction:column;height:100%;min-height:0}
+.insp .drawer-h .acts{flex:none;flex-wrap:nowrap;gap:4px}
+.drawer-h h2.plain{font-family:var(--f-ui)}
+.insp .loading{padding:4px 0}
+
+/* role, note and MPN: editable in place, quiet until hovered */
+.insp .kv{grid-template-columns:44px minmax(0,1fr);align-items:center;row-gap:2px}
+.insp .kv dd .in{width:calc(100% + 12px);margin-left:-6px}
+.insp-desc{margin-top:8px;font-size:12.5px;color:var(--ink-3)}
+
+/* sections: a small heading, an optional action on the right, no boxes */
+.insp-sh{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:6px}
+.insp-sh h3{flex:1;margin:0}
+.insp-sh .acts{flex:none;display:flex;align-items:center;gap:8px}
+.insp-foot{margin-top:6px;font-size:12px;color:var(--ink-3)}
+
+/* where used, connected parts */
+.insp-rows{display:grid;gap:1px;margin:0 -8px}
+.insp-row{display:flex;align-items:baseline;gap:10px;width:100%;min-width:0;padding:5px 8px;border-radius:var(--r-sm);text-align:left;font-size:13px}
+.insp-row:hover{background:var(--hover)}
+.insp-row .ref{flex:none;min-width:32px}
+.insp-row .muted{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insp-row .pin{flex:none;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.insp-rows .btn.link{justify-self:start;margin:4px 8px 0}
+
+/* nets are violet, here and on the drawing */
+.insp-nets{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.insp-net{display:inline-flex;align-items:center;height:20px;padding:0 7px;border-radius:5px;font-family:var(--f-mono);font-size:12px;font-weight:500;
+  background:var(--net-soft);color:var(--net);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.insp-net:hover{box-shadow:inset 0 0 0 1px var(--net)}
+.insp-nets .btn.link{margin-left:4px}
+
+/* stock: the best supplier in ink, the others muted */
+.insp-sups{display:grid;gap:3px}
+.insp-sup{display:grid;grid-template-columns:72px minmax(0,1fr) auto;gap:10px;font-size:13px;color:var(--ink-3)}
+.insp-sup.best{color:var(--ink);font-weight:600}
+
+/* library: one line */
+.insp-lib{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;font-size:13px}
+.insp-lib .i{vertical-align:-2px}
+
+/* pins */
+.insp-pins{margin-top:4px}
+.insp-pins th:first-child,.insp-pins td:first-child{padding-left:0}
+.insp-pins th:last-child,.insp-pins td:last-child{padding-right:0}
+.insp-pins .insp-net{height:18px;font-size:11.5px}

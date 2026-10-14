@@ -9,8 +9,8 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500;600&family=Atkinson+Hyperlegible+Next:wght@400;500;600;700&display=swap">
 <script src="/ui/js/theme-boot.js"></script>
 <script src="/ui/diagram.js"></script>
-<link rel="stylesheet" href="/ui/styles/core.css">
 <link rel="stylesheet" href="/ui/styles/base.css">
+<link rel="stylesheet" href="/ui/styles/core.css">
 <link rel="stylesheet" href="/ui/styles/shell.css">
 <link rel="stylesheet" href="/ui/styles/chat.css">
 <link rel="stylesheet" href="/ui/styles/bom.css">
@@ -25,54 +25,47 @@
 </head>
 <body>
 <div class="app" id="app" data-view="work">
-  <!-- LEFT: chat -->
-  <section class="panel chat" aria-label="Chat with the agent">
-    <div class="chead">
-      <button class="convbtn" data-act="convs" aria-expanded="false"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h8" stroke="currentColor" stroke-width="1.6" fill="none"/></svg><span id="convtitle">Conversation</span></button>
-      <button class="newbtn" data-act="new">+ New</button>
-    </div>
+  <!-- LEFT: project, stages, pages -->
+  <nav class="nav" aria-label="Navigation" id="nav"></nav>
+
+  <!-- CENTRE: the main sheet and, when asked for, a side sheet -->
+  <div class="panes" id="panes">
+    <main class="pane work" id="work" aria-label="Workspace">
+      <div class="view" id="view"></div>
+      <aside class="detail" id="detail" hidden></aside>
+    </main>
+    <section class="pane side" id="side" aria-label="Side sheet" hidden>
+      <header class="side-h" id="side-h"></header>
+      <div class="view" id="view-side"></div>
+    </section>
+  </div>
+
+  <div class="splitter" id="splitter-chat" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize the chat. Double-click to reset" aria-label="Resize chat"></div>
+
+  <!-- RIGHT: chat -->
+  <section class="chat" aria-label="Chat with the agent">
+    <header class="chat-h">
+      <button type="button" class="chat-title" data-act="convs" aria-expanded="false" aria-haspopup="true" aria-controls="convs" title="Conversations"><span id="convtitle">Conversation</span><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <button type="button" class="btn icon" data-act="new" title="New chat" aria-label="New chat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button type="button" class="btn icon" data-act="toggle-chat" title="Hide chat" aria-label="Hide chat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+    </header>
     <div class="convs" id="convs" hidden></div>
-    <div class="msgs" id="msgs" aria-live="polite"></div>
+    <div class="msgs" id="msgs" role="region" aria-label="Conversation" tabindex="0"></div>
+    <div class="sr" id="chat-live" aria-live="polite" aria-atomic="true"></div>
     <div class="composer">
       <div class="sugs" id="sugs"></div>
-      <div class="chat-chip" id="chat-chip" hidden></div>
-      <form class="inrow" id="form">
-        <textarea id="input" rows="1" dir="auto" placeholder="Message the agent… (Enter to send)"></textarea>
-        <button class="btn pri" type="submit" id="sendbtn">Send</button>
+      <form class="box" id="form">
+        <textarea id="input" rows="1" dir="auto" placeholder="Ask about this board" aria-label="Message"></textarea>
+        <div class="box-row">
+          <span class="chat-chip" id="chat-chip" hidden></span>
+          <button type="submit" class="send" id="sendbtn" title="Send" aria-label="Send" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </div>
       </form>
+      <div class="chat-status" id="chat-status" role="status"></div>
     </div>
   </section>
-
-  <div class="splitter" id="splitter-chat" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize chat panel (Enter to toggle, arrow keys to resize)" aria-label="Resize chat panel"></div>
-
-  <!-- CENTER: main screen -->
-  <section class="panel work" aria-label="Workspace">
-    <div class="whead" id="whead"></div>
-    <div class="editor-groups-container" id="editor-groups-container">
-      <div class="editor-group active" id="group-g1" data-group-id="g1">
-        <div class="editor-tabs-bar" id="tabs-bar-g1">
-          <div class="editor-tabs" role="tablist" aria-label="Editor tabs group 1"></div>
-          <div class="editor-group-actions">
-            <button type="button" class="editor-split-btn" data-act="split-editor" aria-label="Split editor" title="Split editor (⇆)">⇆</button>
-          </div>
-        </div>
-        <div class="editor-group-body">
-          <div class="drop-zone drop-zone-left" hidden>Drop to split left</div>
-          <div class="drop-zone drop-zone-right" hidden>Drop to split right</div>
-          <div class="view editor-content" id="view" data-group-id="g1"></div>
-        </div>
-      </div>
-    </div>
-    <aside class="detail" id="detail" hidden></aside>
-    <aside class="viewer" id="viewer" hidden aria-label="File viewer"></aside>
-  </section>
-
-  <div class="splitter" id="splitter-nav" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to resize navigation panel (Enter to toggle, arrow keys to resize)" aria-label="Resize navigation panel"></div>
-
-  <!-- RIGHT: navigation -->
-  <nav class="nav" aria-label="Navigation" id="nav"></nav>
 </div>
-<div class="toast" id="toast" hidden></div>
+<div class="toast" id="toast" role="status" hidden></div>
 <input type="file" id="filepick" hidden>
 <input type="file" id="dfmpick" accept=".pdf" hidden>
 
@@ -89,6 +82,7 @@
 <script src="/ui/js/views/outputs.js"></script>
 <script src="/ui/js/views/pages.js"></script>
 <script src="/ui/js/viewer.js"></script>
+<script src="/ui/js/palette.js"></script>
 <script src="/ui/js/boot.js"></script>
 
 </body>

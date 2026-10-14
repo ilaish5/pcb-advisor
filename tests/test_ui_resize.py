@@ -1,13 +1,14 @@
 """
-Static checks for UI resize handles, collapse/restore, compact navigation,
-and layout persistence (ui/index.html, ui/styles, ui/js).
+Static checks for the app frame: one splitter between the sheets and the chat column, the chat width and its
+collapse, the responsive frame (rail, drawer, one column) and layout persistence
+(ui/index.html, ui/styles/shell.css, ui/js/shell.js).
 """
-import pathlib
 import re
 
-from ui_source import ui_all, ui_js
+from ui_source import UI, ui_all, ui_css, ui_html, ui_js
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
+SHELL_JS = (UI / "js" / "shell.js").read_text(encoding="utf-8")
+SHELL_CSS = (UI / "styles" / "shell.css").read_text(encoding="utf-8")
 
 
 def read_html() -> str:
@@ -15,38 +16,38 @@ def read_html() -> str:
     return ui_all()
 
 
-def test_two_vertical_separator_elements():
-    """Ensure exactly two elements with role='separator' exist with vertical orientation."""
-    content = read_html()
-    separators = re.findall(r'<[^>]+role=["\']separator["\'][^>]*>', content)
-    assert len(separators) == 2, f"Expected exactly two separators, found {len(separators)}: {separators}"
+def media_block(css: str, query: str) -> str:
+    """The body of the first @media block whose condition contains `query`, found by matching braces."""
+    idx = css.find("@media (" + query)
+    assert idx != -1, f"@media ({query}...) must exist"
+    start = css.find("{", idx)
+    depth, end = 1, start + 1
+    while depth and end < len(css):
+        depth += {"{": 1, "}": -1}.get(css[end], 0)
+        end += 1
+    return css[start + 1 : end - 1]
 
-    for sep in separators:
-        assert 'aria-orientation="vertical"' in sep or "aria-orientation='vertical'" in sep, (
-            f"Separator missing aria-orientation='vertical': {sep}"
-        )
 
-    # Verify positions: one between chat and work, one between work and nav
-    chat_idx = content.find('class="panel chat"')
-    work_idx = content.find('class="panel work"')
-    nav_idx = content.find('class="nav"')
-
-    assert chat_idx != -1 and work_idx != -1 and nav_idx != -1
-
-    sep1_idx = content.find('id="splitter-chat"')
-    sep2_idx = content.find('id="splitter-nav"')
-
-    assert sep1_idx != -1 and sep2_idx != -1
-    assert chat_idx < sep1_idx < work_idx, "splitter-chat must be between chat and work panels"
-    assert work_idx < sep2_idx < nav_idx, "splitter-nav must be between work and nav panels"
+def test_one_vertical_separator_between_the_sheets_and_the_chat():
+    """The only resize handle is the chat splitter: a keyboard-operable vertical separator between #panes and the chat."""
+    html = ui_html()
+    separators = re.findall(r'<[^>]+role=["\']separator["\'][^>]*>', html)
+    assert len(separators) == 1, f"Expected exactly one separator, found {len(separators)}: {separators}"
+    sep = separators[0]
+    assert 'id="splitter-chat"' in sep
+    assert 'aria-orientation="vertical"' in sep
+    assert 'tabindex="0"' in sep, "the splitter must be reachable by keyboard"
+    assert re.search(r'aria-label="[^"]+"', sep), "the splitter needs a name"
+    panes = html.find('id="panes"')
+    splitter = html.find('id="splitter-chat"')
+    chat = html.find('<section class="chat"')
+    assert -1 not in (panes, splitter, chat)
+    assert panes < splitter < chat, "the splitter sits between the sheets and the chat column"
 
 
 def test_localstorage_inside_try_catch():
-    """Verify localStorage is used to persist layout and every call is wrapped in try/catch."""
-    content = read_html()
-    assert "localStorage" in content, "ui/index.html must use localStorage to persist layout"
-
-    # The scripts (ui/js/**, in load order)
+    """Layout is persisted in localStorage; every call is wrapped in try/catch (blocked storage must not break the page)."""
+    assert "localStorage" in read_html(), "the UI must use localStorage to persist layout"
     script = ui_js()
     assert script.strip(), "no scripts found under ui/js"
 
@@ -61,63 +62,95 @@ def test_localstorage_inside_try_catch():
         assert "catch" in next_chunk, f"localStorage on line {idx + 1} not followed by catch block"
 
 
-def test_reset_layout_control():
-    """Ensure a 'Reset layout' control exists in settings and has event handling."""
+def test_layout_is_saved_per_browser_and_the_side_sheet_per_project():
+    assert "LAYOUT_KEY = 'pcb_advisor_shell'" in SHELL_JS
+    assert re.search(r"saveLayout\(\)\s*\{[^}]*chatWidth[^}]*chatHidden", SHELL_JS), "the chat width and whether it is hidden are saved"
+    assert "SIDE_KEY = 'pcb_advisor_side:'" in SHELL_JS
+    assert "SIDE_KEY + PROJECT" in SHELL_JS, "the side sheet is remembered per project"
+    # the keys of the removed layouts (left chat, nav width, editor tabs) are cleaned up, not read
+    assert "lsDel('pcb_advisor_layout')" in SHELL_JS
+    assert "lsDel('pcb_advisor_editor_tabs')" in SHELL_JS
+
+
+def test_reset_layout_handler_forgets_the_saved_layout():
+    """The Reset layout link lives in Settings (the pages area) and fires data-act="reset-layout"; the frame owns the handler."""
+    assert "onAct('reset-layout'" in SHELL_JS
+    body = re.search(r"function resetLayout\(\)\s*\{(.*?)\n\}", SHELL_JS, re.S)
+    assert body, "resetLayout() must exist"
+    assert "lsDel(LAYOUT_KEY)" in body.group(1)
+    assert "lsDel(SIDE_KEY + PROJECT)" in body.group(1)
+    assert "chatWidth = CHAT_DEFAULT" in body.group(1)
+
+
+def test_old_nav_splitter_compact_mode_and_hidden_centre_are_gone():
     content = read_html()
-    assert "Reset layout" in content, "ui/index.html must contain a 'Reset layout' control"
-
-    # Verify button exists in settings HTML
-    assert re.search(r'<button[^>]+data-act=["\']reset-layout["\'][^>]*>\s*Reset layout\s*</button>', content), (
-        "Expected a button with data-act='reset-layout' labeled 'Reset layout'"
-    )
-
-    # Verify event handler or function resets layout
-    assert "reset-layout" in content
-    assert "resetLayout" in content
+    assert "splitter-nav" not in content, "the nav has no resize handle any more"
+    assert ".nav.compact" not in content
+    assert "centerHidden" not in content, "the 'hide the centre' mode is gone"
+    assert 'class="panel work"' not in content and 'class="panel chat"' not in content
 
 
-def test_nav_compact_rules_exist():
-    """Ensure .nav.compact CSS rules exist for narrow navigation mode (~60px to ~150px)."""
-    content = read_html()
-
-    assert ".nav.compact" in content, "CSS must define .nav.compact rules"
-    assert re.search(r"\.nav\.compact\b[^{]*\{", content), "Missing .nav.compact selector"
-    assert re.search(r"\.nav\.compact\s+\.lbl", content), "Missing .nav.compact child selectors for label hiding"
-    assert re.search(r"\.nav\.compact\s+\.nitem", content), "Missing .nav.compact .nitem rule"
-
-
-def test_viewer_hidden_style_kept():
-    """Ensure .viewer[hidden]{display:none} rule is preserved."""
-    content = read_html()
-    assert ".viewer[hidden]{display:none}" in content, ".viewer[hidden]{display:none} must be kept intact"
+def test_chat_width_is_a_css_variable_with_limits():
+    assert re.search(r"setProperty\('--chat-w'", SHELL_JS), "the chat width is a CSS variable on #app"
+    assert "var(--chat-w)" in SHELL_CSS
+    assert re.search(r"CHAT_MIN = 300", SHELL_JS) and re.search(r"CHAT_MAX = 720", SHELL_JS)
+    assert "PANES_MIN" in SHELL_JS, "the chat may not squeeze the sheets below a working width"
+    for attr in ("aria-valuemin", "aria-valuemax", "aria-valuenow"):
+        assert attr in SHELL_JS, f"the splitter must expose {attr}"
 
 
-def test_narrow_screen_hides_handles():
-    """Ensure on narrow screens (max-width:860px) the splitters are hidden."""
-    content = read_html()
-    # Find @media (max-width:860px) block
-    idx = content.find("@media (max-width:860px)")
-    assert idx != -1, "@media (max-width:860px) query must exist"
-    # Slice the media query block by matching braces
-    start = content.find("{", idx)
-    depth = 1
-    end = start + 1
-    while depth > 0 and end < len(content):
-        if content[end] == "{":
-            depth += 1
-        elif content[end] == "}":
-            depth -= 1
-        end += 1
-    mq_body = content[start:end]
-    assert ".splitter" in mq_body and "display:none" in mq_body.replace(" ", ""), (
-        "@media (max-width:860px) must hide .splitter"
-    )
+def test_splitter_keyboard_pointer_and_reset():
+    for key in ("ArrowLeft", "ArrowRight", "Home", "End", "Enter"):
+        assert f"'{key}'" in SHELL_JS, f"the splitter handles {key}"
+    assert "dblclick" in SHELL_JS, "double-click resets the width"
+    assert "setPointerCapture" in SHELL_JS, "dragging must keep working when the pointer leaves the handle"
+    assert re.search(r"CHAT_DROP", SHELL_JS), "dragging the chat narrower than the minimum hides it"
+
+
+def test_chat_can_be_hidden_and_brought_back():
+    assert re.search(r"function hideChat\b", SHELL_JS) and re.search(r"function showChat\b", SHELL_JS)
+    assert "(e.key === 'j' || e.key === 'J')" in SHELL_JS, "Ctrl+J toggles the chat"
+    assert "onAct('toggle-chat'" in SHELL_JS
+    assert re.search(r"\.app\.chat-off>\.chat[^{]*\{[^}]*display\s*:\s*none", SHELL_CSS), "a hidden chat takes no column"
+    # hiding the chat while the focus is inside it must not strand the focus
+    hide = re.search(r"function hideChat\(\)\s*\{(.*?)\n\}", SHELL_JS, re.S).group(1)
+    assert ".focus()" in hide
+
+
+def test_hidden_attribute_always_wins():
+    """The hidden attribute always wins over a component's display rule (the side sheet, the detail drawer and menus rely on it)."""
+    assert re.search(r"\[hidden\]\s*\{\s*display\s*:\s*none\s*!important", ui_css()), "[hidden]{display:none !important} must be kept"
+
+
+def test_nav_is_a_56px_rail_at_1280():
+    block = media_block(SHELL_CSS, "max-width:1280px")
+    assert "--nav-w:56px" in block.replace(" ", "")
+    assert re.search(r"\.nitem\s+\.lbl[^{]*\{[^}]*display\s*:\s*none", block), "labels are hidden in the rail"
+    assert "title=" in SHELL_JS and "aria-label=" in SHELL_JS, "every stage button carries its name and state in title and aria-label"
+
+
+def test_chat_is_a_drawer_at_1100():
+    block = media_block(SHELL_CSS, "max-width:1100px")
+    compact = block.replace(" ", "")
+    assert ".app>.splitter" in compact and "display:none" in compact, "no splitter when the chat is a drawer"
+    assert ".app.chat-open>.chat" in compact and "position:fixed" in compact
+    assert "chatDrawer" in SHELL_JS and "'drawer'" in SHELL_JS
+    assert "e.key === 'Escape' && chatDrawer" in SHELL_JS, "Esc closes the drawer"
+
+
+def test_narrow_screen_is_one_column_with_a_work_chat_switch():
+    block = media_block(SHELL_CSS, "max-width:860px")
+    compact = block.replace(" ", "")
+    assert "grid-template-columns:minmax(0,1fr)" in compact, "one column"
+    assert '.app[data-view="chat"]>.panes{display:none}' in compact, "Chat replaces the sheets"
+    assert ".viewsw{display:inline-flex" in compact, "the Work / Chat switch appears"
+    assert 'data-view="work"' in SHELL_JS and 'data-view="chat"' in SHELL_JS
+    assert "data-view" in ui_html(), "#app starts on the work view"
 
 
 def test_handle_styles_and_cursor():
-    """Ensure splitter has col-resize cursor and hover styling."""
-    content = read_html()
-    assert "col-resize" in content, "Splitter must use cursor: col-resize"
-    assert ".splitter:hover" in content or ".splitter:hover::after" in content, (
-        "Splitter must have hover visible line style"
-    )
+    """The splitter has a col-resize cursor, a hover line and a visible keyboard focus."""
+    css = ui_css()
+    assert "col-resize" in css, "Splitter must use cursor: col-resize"
+    assert ".splitter:hover" in css, "Splitter must have a hover line"
+    assert ".splitter:focus-visible" in css, "Splitter must show keyboard focus"

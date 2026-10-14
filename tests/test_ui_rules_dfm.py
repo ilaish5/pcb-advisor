@@ -13,6 +13,7 @@ from PIL import Image
 import dfm
 import model
 import project
+import store
 from ui_source import ui_all, ui_js
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
@@ -54,8 +55,11 @@ def test_a_both_report_is_listed_in_both_dfm_cards():
 
 
 def test_the_bom_table_flags_a_code_that_is_another_part():
-    assert "const CODE_RISK = 'LCSC code is another part'" in HTML
-    assert "r === CODE_RISK" in HTML and "l.supply?.LCSC?.code_mismatch" in HTML
+    bom = (REPO / "ui" / "js" / "views" / "bom.js").read_text(encoding="utf-8")
+    assert f"const CODE_RISK = '{store.CODE_RISK}'" in bom             # the same string the server writes into l.risk
+    # that risk becomes a "Code is another part" tag, and the supplier's own explanation is the tag's tooltip
+    assert "risks.includes(CODE_RISK)" in bom and "text: 'Code is another part'" in bom
+    assert "l.supply?.LCSC?.code_mismatch" in bom
 
 
 def test_state_carries_the_kind_of_a_both_report(home, tmp_path):

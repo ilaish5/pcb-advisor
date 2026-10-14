@@ -467,9 +467,9 @@ def test_static_ui_checks():
     assert "/api/idea/item/confirm" in index_html
     assert "/api/idea/item/move" in index_html
 
-    # Stage strip highlight driven by active tab of active editor group
-    assert "activeStage" in index_html or "actTab.stage" in index_html
-    assert "aria-selected=\"${activeStage === id}\"" in index_html
+    # The stage trace in the nav marks the stage the main sheet shows (the stepper strip and editor tabs are gone)
+    assert "const here = mainView()" in index_html
+    assert "${here === id ? ' aria-current=\"page\"' : ''}" in index_html
 
     # Undo diagram change button in chat
     assert "undo-diagram" in index_html

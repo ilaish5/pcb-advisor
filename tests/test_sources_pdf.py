@@ -107,10 +107,11 @@ def test_ask_about_file_chat_integration(server, lte, monkeypatch):
         seen["ask"] = ask
         return {"reply": "500 mA.", "actions": []}
     monkeypatch.setattr(agent, "respond", fake_respond)
-    # 1. Chat chip element in composer
+    # 1. The composer holds the context chip (one chip for part, net, file, ...); its x clears it,
+    #    and the file the viewer picked still reaches it through activeFileChip
     content = read_html()
     assert 'id="chat-chip"' in content
-    assert 'data-act="clear-file-chip"' in content
+    assert 'data-act="clear-chip"' in content
     assert "activeFileChip" in content
 
     # 2. Upload a valid text or pdf source to ask about

@@ -70,10 +70,11 @@ def test_both_previews_use_shared_pan_helper():
     """Verify both schematic preview and PCB preview use initZoomPan with attachPanHelper."""
     h_content = read_html()
     # initZoomPan references attachPanHelper
-    assert "attachPanHelper" in h_content, "ui/index.html initZoomPan must use shared attachPanHelper"
-    # Both schematic and PCB preview initialize zoom/pan
-    assert re.search(r"initZoomPan\(\s*['\"]schwrap['\"]\s*,\s*schZoom\)", h_content), "Schematic preview must use initZoomPan"
-    assert re.search(r"initZoomPan\(\s*['\"]pcbwrap['\"]\s*,\s*pcbZoom\)", h_content), "PCB preview must use initZoomPan"
+    assert "attachPanHelper" in h_content, "initZoomPan must use the shared attachPanHelper"
+    # Both schematic and PCB preview initialize zoom/pan (views/previews.js hands each canvas its own zoom state)
+    assert re.search(r"initZoomPan\(\s*wrap\s*,\s*schZoom\)", h_content), "Schematic preview must use initZoomPan"
+    assert re.search(r"initZoomPan\(\s*wrap\s*,\s*pcbZoom\)", h_content), "PCB preview must use initZoomPan"
+    assert 'id="schwrap"' in h_content and 'id="pcbwrap"' in h_content
 
 
 def test_empty_space_left_pan_in_previews_preserves_clicks():
@@ -82,9 +83,11 @@ def test_empty_space_left_pan_in_previews_preserves_clicks():
     # Left drag on empty space checks for non-interactive targets
     assert re.search(r"e\.button\s*===\s*0", h_content), "initZoomPan must handle button === 0 for left-drag on empty space"
     assert "g.part" in h_content and "pcb-comp" in h_content, "interactive elements check must include components"
+    # Net labels, power ports, pads and zones stay clickable too
+    assert "g.net-label" in h_content and "rect.pad" in h_content and "g.plan-group" in h_content
     # Component clicks still check didDrag (drag > 4 px is not a click)
-    assert "schZoom.didDrag" in h_content
-    assert "pcbZoom.didDrag" in h_content
+    assert "z.didDrag" in h_content or "schZoom.didDrag" in h_content
+    assert "zoomState.didDrag" in h_content
 
 
 def test_diagram_editor_uses_shared_pan_helper():
@@ -94,14 +97,17 @@ def test_diagram_editor_uses_shared_pan_helper():
 
 
 def test_pcb_empty_state_text_html_centered():
-    """Verify PCB preview empty state text is rendered as normal-size HTML text centred in the box, not scaled with SVG."""
+    """The no-PCB state is a normal-size HTML empty state centred in the sheet, not text scaled with an SVG."""
     h_content = read_html()
     assert "formatPcbPreview" in h_content, "formatPcbPreview helper must format PCB preview content"
-    assert "Settings to view PCB" in h_content, "Empty state detection must check for Settings to view PCB message"
+    assert "Settings to view PCB" in h_content, "Empty state detection must check for the server's Settings to view PCB message"
     assert "pcb-empty-state" in h_content, "HTML empty state element must use pcb-empty-state class"
-    # Centered and wrapped styling
-    assert re.search(r"justify-content\s*:\s*center", h_content)
-    assert re.search(r"align-items\s*:\s*center", h_content)
+    assert "emptyState('No PCB linked'" in h_content and "Link a project" in h_content
+    # Centred, in the sheet's own stylesheet
+    css = (REPO / "ui" / "styles" / "previews.css").read_text(encoding="utf-8")
+    rule = re.search(r"\.pcb-empty-state\s*\{([^}]*)\}", css).group(1)
+    assert "justify-content:center" in rule.replace(" ", "")
+    assert "align-items:center" in rule.replace(" ", "")
 
 
 def test_idea_tab_layout_no_vertical_scroll():
@@ -132,11 +138,13 @@ def test_diagram_toolbar_compact_one_or_two_rows():
 
 
 def test_right_nav_no_horizontal_scroll():
-    """Verify right nav has overflow-x:hidden, labels ellipsis, and badges always visible."""
+    """Verify the nav has overflow-x:hidden, labels ellipsis, and the muted count (.hint) is always visible."""
     h_content = read_html()
     # .nav has overflow-x:hidden
-    assert re.search(r"\.nav\s*\{[^}]*overflow-x\s*:\s*hidden", h_content), ".nav must have overflow-x:hidden"
+    assert re.search(r"(?m)^\.nav\s*\{[^}]*overflow-x\s*:\s*hidden", h_content), ".nav must have overflow-x:hidden"
     # .nitem .lbl has ellipsis
     assert re.search(r"\.nitem\s+\.lbl\s*\{[^}]*text-overflow\s*:\s*ellipsis", h_content), ".nitem .lbl must have text-overflow:ellipsis"
-    # .nitem .cnt has flex:none so count badge is never cut off
-    assert re.search(r"\.nitem\s+\.cnt\s*\{[^}]*flex\s*:\s*none", h_content), ".nitem .cnt must have flex:none so badges are always visible"
+    # .nitem .hint (the count next to a stage) has flex:none so it is never cut off
+    assert re.search(r"\.nitem\s+\.hint\s*\{[^}]*flex\s*:\s*none", h_content), ".nitem .hint must have flex:none so counts are always visible"
+    # the project name ellipsizes too (a long name must not widen the nav)
+    assert re.search(r"\.proj\s+\.nm\s*\{[^}]*text-overflow\s*:\s*ellipsis", h_content), ".proj .nm must have text-overflow:ellipsis"

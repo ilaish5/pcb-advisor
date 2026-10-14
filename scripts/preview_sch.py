@@ -24,6 +24,57 @@ def esc(s: str) -> str:
     return html.escape(str(s or ""), quote=True)
 
 
+# Selector every rule below is scoped to: this renderer's own SVG (class "sch" + data-render="schdoc"), so the
+# inlined <style> cannot touch the netlist renderer's SVG (skills/render_sheet.py, styled by ui/styles/previews.css)
+# or anything else on the page. "&" stands for the scope.
+SCOPE = 'svg.sch[data-render="schdoc"]'
+
+# Colours are the page's tokens (ui/styles/base.css) with the light-theme value as fallback, so the picture
+# follows the theme in the page and still draws when the SVG file is opened on its own.
+_CSS = """
+& { font-family: var(--f-mono, "IBM Plex Mono", ui-monospace, monospace); }
+& .sch-bg { fill: var(--sch-bg, #fbfcfe); }
+& .sch-title { font-family: var(--f-ui, sans-serif); font-size: 14px; font-weight: 700; fill: var(--ink-3, #7d889b); }
+& text { font-size: 10px; fill: var(--sch-text, #151515); }
+& .refd { font-weight: 700; font-size: 11px; }
+& .mpn { font-size: 9px; fill: var(--ink-3, #5b667b); }
+& .pnum { font-size: 8px; fill: var(--ink-3, #888888); }
+& .pname { font-size: 8.5px; font-weight: 600; }
+& .w { stroke: var(--sch-wire, #233f99); stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+& .pin { stroke: var(--sch-text, #333333); stroke-width: 1.2; }
+& .body { fill: var(--sch-body, #fdf2c8); stroke: var(--sch-body-line, #7d2f14); stroke-width: 1.5; rx: 3; }
+& .jn { fill: var(--sch-wire, #233f99); }
+& .pin-tip { fill: var(--sch-wire, #233f99); opacity: 0; }
+& .part:hover .pin-tip { opacity: 0.8; }
+& .part { cursor: pointer; }
+& .hlbox { fill: transparent; stroke: none; }
+& .part:hover .hlbox { fill: var(--hover, rgba(33, 72, 201, 0.08)); stroke: var(--sig-line, rgba(33, 72, 201, 0.3)); stroke-width: 1; }
+& .part.sel .hlbox, & .part:focus-visible .hlbox { fill: var(--sig-soft, rgba(33, 72, 201, 0.15)); stroke: var(--sig, #2148c9); stroke-width: 1.8; }
+& .part:focus-visible { outline: none; }
+&.focus .part:not(.sel) { opacity: 0.3; }
+& .net-label, & .power-port, & .port { cursor: pointer; }
+& .net-label rect { fill: var(--net-soft, #f0e7fb); stroke: var(--net, #6b2fb3); stroke-width: 0.8; }
+& .net-label text { font-size: 9.5px; font-weight: 600; fill: var(--net, #6b2fb3); }
+& .power-port text { font-size: 9px; font-weight: 700; fill: var(--sch-pwr, #d27a12); }
+& .pb { stroke: var(--sch-pwr, #d27a12); stroke-width: 2.2; }
+& .port-poly { fill: var(--ok-soft, #e1f2e8); stroke: var(--ok, #167a46); stroke-width: 1.2; }
+& .port text { font-size: 9px; font-weight: 600; fill: var(--ok, #167a46); }
+& .hl-net rect, & .hl-net polygon { stroke: var(--net, #6b2fb3); stroke-width: 2.4; }
+& .hl-net text { font-weight: 800; }
+&.netfocus [data-net]:not(.hl-net) { opacity: 0.35; }
+& .net-label:focus-visible, & .power-port:focus-visible, & .port:focus-visible { outline: none; }
+& .net-label:focus-visible rect, & .port:focus-visible polygon { stroke: var(--sig, #2148c9); stroke-width: 2; }
+"""
+
+
+def scoped_css() -> str:
+    """The renderer's stylesheet with every rule scoped to SCOPE (see above)."""
+    return "\n".join(
+        line.replace("&", SCOPE) if line.startswith("&") or ", &" in line else line
+        for line in _CSS.strip().splitlines()
+    )
+
+
 def render_schdoc(doc_or_path, title: str = None, write: bool = False, out_path: str = None) -> str:
     """Render a parsed SchDoc dict or a .SchDoc file path to SVG string."""
     if isinstance(doc_or_path, (str, pathlib.Path)):
@@ -83,45 +134,20 @@ def render_schdoc(doc_or_path, title: str = None, write: bool = False, out_path:
         return (max_y - y) + pad
 
     svg_parts = [
-        f'<svg id="sch" class="sch" viewBox="0 0 {w_px} {h_px}" '
+        f'<svg id="sch" class="sch" data-render="schdoc" viewBox="0 0 {w_px} {h_px}" '
         f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{esc(sheet_title)}">'
     ]
 
-    # Embedded CSS styles compatible with ui/index.html
-    svg_parts.append("""
-    <style>
-      .sch { background: #fbfcfe; font-family: "IBM Plex Mono", ui-monospace, monospace; }
-      .sch text { font-size: 10px; fill: #151515; }
-      .sch .refd { font-weight: 700; font-size: 11px; fill: #2148c9; }
-      .sch .mpn { font-size: 9px; fill: #5b667b; }
-      .sch .pnum { font-size: 8px; fill: #888888; }
-      .sch .pname { font-size: 8.5px; font-weight: 600; fill: #222222; }
-      .sch .w { stroke: #233f99; stroke-width: 1.6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-      .sch .pin { stroke: #333333; stroke-width: 1.2; }
-      .sch .body { fill: #fdf2c8; stroke: #7d2f14; stroke-width: 1.5; rx: 3; }
-      .sch .hlbox { fill: transparent; stroke: none; }
-      .sch .part:hover .hlbox { fill: rgba(33, 72, 201, 0.08); stroke: rgba(33, 72, 201, 0.3); stroke-width: 1; }
-      .sch .part.sel .hlbox { fill: rgba(33, 72, 201, 0.15); stroke: #2148c9; stroke-width: 1.8; }
-      .sch .net-label { cursor: pointer; }
-      .sch .net-label:hover rect { fill: #e3e9fb; stroke: #2148c9; }
-      .sch .net-label text { font-size: 9.5px; font-weight: 600; fill: #6b2fb3; }
-      .sch .power-port { cursor: pointer; }
-      .sch .power-port text { font-size: 9px; font-weight: 700; fill: #d27a12; }
-      .sch .pb { stroke: #d27a12; stroke-width: 2.2; }
-      .sch .port { cursor: pointer; }
-      .sch .port-poly { fill: #e1f2e8; stroke: #167a46; stroke-width: 1.2; }
-      .sch .port text { font-size: 9px; font-weight: 600; fill: #167a46; }
-      .sch .jn { fill: #233f99; }
-      .sch .pin-tip { fill: #233f99; opacity: 0; }
-      .sch .part:hover .pin-tip { opacity: 0.8; }
-    </style>
-    """)
+    # The <style> is inlined into the page, so it is global there. Every rule is scoped to this SVG (the
+    # SCOPE selector) and colours come from the page's tokens: var(--sch-*, fallback). Opened on its own
+    # (python scripts/preview_sch.py ... -o out.svg) there are no tokens and the fallbacks draw it.
+    svg_parts.append(f"<style>{scoped_css()}</style>")
 
     # Background
-    svg_parts.append(f'<rect width="{w_px}" height="{h_px}" fill="#fbfcfe"/>')
+    svg_parts.append(f'<rect class="sch-bg" width="{w_px}" height="{h_px}"/>')
 
     # Title watermark
-    svg_parts.append(f'<text x="20" y="25" font-family="sans-serif" font-size="14" font-weight="700" fill="#7d889b">{esc(sheet_title)}</text>')
+    svg_parts.append(f'<text class="sch-title" x="20" y="25">{esc(sheet_title)}</text>')
 
     # 1. Wires
     svg_parts.append('<g class="wires">')
@@ -239,7 +265,7 @@ def render_schdoc(doc_or_path, title: str = None, write: bool = False, out_path:
         label_w = max(24, len(net_text) * 6 + 8)
         svg_parts.append(
             f'<g class="net-label" data-net="{esc(net_text)}" tabindex="0">'
-            f'<rect x="{lx:.1f}" y="{ly - 10:.1f}" width="{label_w}" height="13" fill="#f0e7fb" stroke="#6b2fb3" stroke-width="0.8" rx="2"/>'
+            f'<rect x="{lx:.1f}" y="{ly - 10:.1f}" width="{label_w}" height="13" rx="2"/>'
             f'<text x="{lx + 4:.1f}" y="{ly - 1:.1f}">{esc(net_text)}</text>'
             f'</g>'
         )
@@ -318,7 +344,7 @@ def render_project_sch(project: str, sheet: str = None) -> str:
         import store
         return render_sheet.render(project, sheet or (store.sheet_ids(project) or [""])[0], write=False)
     except (Exception, SystemExit) as exc:
-        return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100"><text x="20" y="50" fill="#999">No schematic preview available ({esc(str(exc))})</text></svg>'
+        return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100"><text x="20" y="50" style="fill:var(--ink-3,#999)">No schematic preview available ({esc(str(exc))})</text></svg>'
 
 
 def resolve_schdoc_component_pins(doc: dict, target_comp: dict) -> list[dict]:

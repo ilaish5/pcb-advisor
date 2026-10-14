@@ -930,12 +930,14 @@ def test_the_endpoint_refuses_paths_outside_the_project(server, empty, tmp_path)
 
 # ---------------------------------------------------------------- the page
 
-def test_the_bom_tab_offers_the_import():
+def test_the_bom_view_offers_the_import():
+    """The import is a drawer of the BOM view, reached from the ... menu (and from the empty BOM); it is not a card."""
     html = ui_all()
-    for needle in ("Import BOM from Altium", "/api/bom/import/candidates", "'/api/bom/import'",
-                   'data-act="imp-preview"', 'data-act="imp-apply"', 'data-act="imp-scan"',
-                   "function importHTML()", "function importReportHTML(", "${importHTML()}",
-                   "Import works into an empty BOM", "onAct('imp-apply'"):
+    for needle in ("Import from Altium", "/api/bom/import/candidates", "'/api/bom/import'",
+                   "act: 'imp-open'", "act: 'imp-preview'", "act: 'imp-apply'", "act: 'imp-scan'",
+                   "function importHTML()", "function importReportHTML(", "importHTML()",
+                   "Import works into an empty BOM", "onAct('imp-open'", "onAct('imp-apply'", "onAct('imp-preview'"):
         assert needle in html, needle
+    assert "bomLinked() &&" in html        # no Altium project linked: no import entry in the menu
     # a finding is text from a file: it goes through esc()
     assert "esc(f.message)" in html and "esc(f.kind)" in html and "esc(c.path)" in html

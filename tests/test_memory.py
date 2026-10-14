@@ -27,6 +27,20 @@ def test_the_first_thing_the_student_says_names_the_conversation(home):
     assert row["title"].startswith("a freezer door alarm")
 
 
+def test_the_conversation_list_carries_the_last_thing_said(home):
+    sid = session.create("p")
+    assert next(r for r in session.list_all("p") if r["id"] == sid)["last"] is None       # nothing yet
+    session.append("p", sid, {"role": "user", "text": "why   this\n  connector?"})
+    session.append("p", sid, {"role": "agent", "text": "Because it is rated for 3 A.", "error": True})
+    session.append("p", sid, {"role": "agent", "text": "Updated.", "decision": "approved", "proposal": "p1"})
+    session.append("p", sid, {"role": "ctx", "part": {"ref": "J1"}})
+    row = next(r for r in session.list_all("p") if r["id"] == sid)
+    assert row["messages"] == 4
+    assert row["last"] == {"role": "user", "text": "why this connector?"}      # an error, a decision note and a card are not "said"
+    session.append("p", sid, {"role": "agent", "text": "x" * 500})
+    assert len(next(r for r in session.list_all("p") if r["id"] == sid)["last"]["text"]) == 200
+
+
 def test_a_later_message_does_not_rename_it(home):
     sid = session.create("p")
     session.append("p", sid, {"role": "user", "text": "first thing"})

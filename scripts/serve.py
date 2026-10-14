@@ -284,6 +284,33 @@ def open_part_session(project, ref_or_key):
     return sid
 
 
+ABOUT_KINDS = ("part", "net", "dfm", "rule", "zone")     # what an "Ask" chip in the chat can point at (a file has its own field)
+
+
+def chat_about(raw):
+    """The chip the student sent with a message, cleaned: {kind, id, label} or None. It is stored on the user's
+    message (the chat draws it) and turned into context for the engine by about_context."""
+    if not isinstance(raw, dict) or raw.get("kind") not in ABOUT_KINDS:
+        return None
+    ident = str(raw.get("id") or "").strip()[:200]
+    if not ident:
+        return None
+    return {"kind": raw["kind"], "id": ident, "label": str(raw.get("label") or ident).strip()[:200]}
+
+
+def about_context(project, about):
+    """What the engine is told about the thing the student pointed at, in front of their question.
+    A part gets the same context card a part conversation starts with."""
+    if about["kind"] == "part":
+        line = next((l for l in store.bom_lines(project)
+                     if about["id"] in l.get("refs", []) or l["key"] == about["id"]), None)
+        ref = about["id"] if line and about["id"] in line.get("refs", []) else (line["refs"][0] if line and line.get("refs") else None)
+        ctx = model.part_context(project, ref) if ref else None
+        if ctx:
+            return "[this question is about one part; its context]\n" + json.dumps(ctx, ensure_ascii=False, indent=2) + "\n\n"
+    return f"[this question is about the {about['kind']} '{about['label']}' ({about['id']})]\n\n"
+
+
 def export_library(project):
     """The Altium library package: manifest + whatever part files exist. Compiling the
     IntLib itself needs Altium (Windows); this is the hand-over, and it says what is unverified."""
@@ -780,9 +807,12 @@ class Handler(BaseHTTPRequestHandler):
             if not text:
                 return self._send(400, {"error": "text required"})
             source_file = data.get("file") or data.get("source")
+            about = None if source_file else chat_about(data.get("about"))
             user_msg = {"ts": now(), "role": "user", "text": text}
             if source_file:
                 user_msg["source"] = source_file
+            if about:
+                user_msg["about"] = about
             say(proj, sess, user_msg)
             m = model.build(project=proj, session=sess)
             ask = text
@@ -798,6 +828,8 @@ class Handler(BaseHTTPRequestHandler):
                            f"{src_text[:12000]}\n\n{text}")
                 else:
                     ask = f"[this conversation is about file '{source_file}']\n\n{text}"
+            elif about:
+                ask = about_context(proj, about) + text
             elif row.get("anchor"):
                 ref = (store.bom_lines(proj) and next(
                     (l["refs"][0] for l in store.bom_lines(proj) if l["key"] == row["anchor"] and l.get("refs")), None))
@@ -813,6 +845,8 @@ class Handler(BaseHTTPRequestHandler):
                 if refused:
                     reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
                 rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
+                if res.get("error"):
+                    rec["error"] = True       # the engine did not answer: the chat offers Retry instead of showing this as a reply
                 if chat_meta.get("diagram_touched"):
                     rec["diagram_touched"] = chat_meta["diagram_touched"]
                 if res.get("tools"):
@@ -836,11 +870,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
             project_mod.touch(proj)
+            # These notes tell the engine what the student decided. The chat does not draw them (the proposal card
+            # shows the decision), hence `decision` and `proposal`; the conversation list skips them too.
+            decided = {"decision": data.get("decision"), "proposal": data.get("id")}
             if data.get("decision") == "approved":
                 prop = next(p for p in store.proposals(proj) if p["id"] == data["id"])
                 if prop.get("kind") == "idea_diagram":
                     say(proj, sess, {"ts": now(), "role": "agent",
-                                     "text": "Approved diagram changes. The block diagram has been updated."})
+                                     "text": "Approved diagram changes. The block diagram has been updated.", **decided})
                 else:
                     if "mpn" in prop.get("changes", {}):
                         recheck_async(proj, prop["line"])
@@ -849,9 +886,9 @@ class Handler(BaseHTTPRequestHandler):
                                prop["line"])
                     say(proj, sess, {"ts": now(), "role": "agent",
                                      "text": "Updated. {{ref:" + ref + "}} is changed in the BOM, on the schematic label "
-                                             "and in the library."})
+                                             "and in the library.", **decided})
             else:
-                say(proj, sess, {"ts": now(), "role": "agent", "text": f"Rejected. {data.get('id')} changes nothing."})
+                say(proj, sess, {"ts": now(), "role": "agent", "text": f"Rejected. {data.get('id')} changes nothing.", **decided})
             return self._send(200, state())
 
         if path == "/api/bom/edit":

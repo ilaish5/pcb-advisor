@@ -97,16 +97,38 @@ def save_index(project, rows):
 
 
 def list_all(project=None):
-    """Every conversation, newest activity first, with live message counts."""
+    """Every conversation, newest activity first, with live message counts and the last thing said."""
     rows = []
     for row in load_index(project):
         path = chat_path(project, row["id"])
         row = dict(row)
-        row["messages"] = _count(path)
+        row["messages"], row["last"] = _scan(path)
         row["exists"] = path.exists()
         rows.append(row)
     rows.sort(key=lambda r: r.get("updated", ""), reverse=True)
     return rows
+
+
+def _scan(path):
+    """(message count, last) in one pass. `last` is what the conversation list shows under the title:
+    {role, text} of the newest message someone actually said (not a context card, an error or the
+    server's note of a decision), cut to one line, or None."""
+    if not path.exists():
+        return 0, None
+    count, last = 0, None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        count += 1
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        text = rec.get("text")
+        if rec.get("role") in ("user", "agent") and isinstance(text, str) and text.strip() \
+                and not rec.get("error") and not rec.get("decision"):
+            last = {"role": rec["role"], "text": " ".join(text.split())[:200]}
+    return count, last
 
 
 def _count(path):

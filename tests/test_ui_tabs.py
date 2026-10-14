@@ -1,14 +1,16 @@
 """
-Static checks for center area editor groups, stages and files as tabs,
-split view controls, drag & drop handlers, localStorage in try/catch,
+Static checks for what the frame shows: one main sheet and an optional side sheet (no editor groups, tab bars or
+drag and drop), the stage trace as the one way to navigate, documents opening in the side sheet, localStorage in try/catch,
 and container-taking stage render functions (ui/index.html, ui/styles, ui/js).
 """
-import pathlib
 import re
 
-from ui_source import ui_all, ui_js
+from ui_source import UI, ui_all, ui_html, ui_js
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
+SHELL_JS = (UI / "js" / "shell.js").read_text(encoding="utf-8")
+CORE_JS = (UI / "js" / "core.js").read_text(encoding="utf-8")
+BOOT_JS = (UI / "js" / "boot.js").read_text(encoding="utf-8")
+SHELL_CSS = (UI / "styles" / "shell.css").read_text(encoding="utf-8")
 
 
 def read_html() -> str:
@@ -16,73 +18,71 @@ def read_html() -> str:
     return ui_all()
 
 
-def test_editor_groups_and_tab_structure():
-    content = read_html()
-    assert "editor-groups-container" in content, "Missing .editor-groups-container"
-    assert "editor-group" in content, "Missing .editor-group"
-    assert "editor-tabs-bar" in content, "Missing .editor-tabs-bar"
-    assert "editor-tabs" in content, "Missing .editor-tabs"
-    assert "editor-tab" in content, "Missing .editor-tab"
-
-    # Stage tab mark ◆ and file badges
-    assert "◆" in content or "tab-stage-mark" in content, "Stage tabs must show ◆ mark"
-    for badge in ["PDF", "SCH", "PCB", "IMG", "TXT"]:
-        assert badge in content, f"Missing file type badge: {badge}"
-
-    # Tab close button
-    assert 'data-act="close-tab"' in content, "Missing data-act='close-tab'"
-    assert 'aria-label="Close tab"' in content or "aria-label='Close tab'" in content, (
-        "Missing aria-label='Close tab'"
-    )
-
-    # Stage strip toggle
-    assert 'data-act="toggle-stage-strip"' in content, "Missing data-act='toggle-stage-strip'"
-    assert "toggle-stage-strip" in content
+def media_block(css: str, query: str) -> str:
+    idx = css.find("@media (" + query)
+    assert idx != -1, f"@media ({query}...) must exist"
+    start = css.find("{", idx)
+    depth, end = 1, start + 1
+    while depth and end < len(css):
+        depth += {"{": 1, "}": -1}.get(css[end], 0)
+        end += 1
+    return css[start + 1 : end - 1]
 
 
-def test_split_unsplit_controls_with_aria_labels():
-    content = read_html()
-    # Split / unsplit controls
-    assert 'data-act="split-editor"' in content, "Missing data-act='split-editor'"
-    assert 'aria-label="Split editor"' in content or "aria-label='Split editor'" in content, (
-        "Missing aria-label='Split editor'"
-    )
-    assert "⇆" in content, "Missing split button icon ⇆"
-    assert 'data-act="unsplit-editor"' in content, "Missing data-act='unsplit-editor'"
-    assert 'aria-label="Unsplit editor"' in content or "aria-label='Unsplit editor'" in content, (
-        "Missing aria-label='Unsplit editor'"
-    )
-    assert "▭" in content, "Missing unsplit button icon ▭"
-
-    # Resize divider
-    assert "editor-divider" in content, "Missing .editor-divider"
-    assert 'aria-label="Resize editor split"' in content or "Resize editor split" in content, (
-        "Missing aria-label for resize divider"
-    )
-
-    # Double-click and keyboard resize
-    assert "dblclick" in content, "Missing double-click handler for divider"
-    assert "50/50" in content or "0.5" in content, "Divider must reset to 50/50 on double click"
-    assert "0.12" in content, "Missing < 12% unsplit threshold"
-    assert "0.88" in content, "Missing > 88% unsplit threshold"
+def test_main_sheet_side_sheet_and_inspector_structure():
+    html = ui_html()
+    # the main sheet holds its view and the inspector drawer; the side sheet has its own small header and view
+    assert re.search(r'<main class="pane work" id="work"[^>]*>.*?id="view".*?id="detail"[^>]*hidden', html, re.S)
+    assert re.search(r'<section class="pane side" id="side"[^>]*hidden>\s*<header class="side-h" id="side-h">.*?id="view-side"', html, re.S)
+    for name in ("function mainView", "function sideView", "function renderMain", "function renderSide", "function openSide", "function closeSide", "function swapSheets", "function toggleSide"):
+        assert name in SHELL_JS, f"shell.js must define {name}"
+    # the side header: a menu to pick what it shows, swap, close
+    head = re.search(r"function sideHeadHTML\(\)\s*\{(.*?)\n\}", SHELL_JS, re.S).group(1)
+    for token in ("menu(", "side-swap", "side-close"):
+        assert token in head
+    assert "act: 'side-set'" in SHELL_JS and "onAct('side-set'" in SHELL_JS
 
 
-def test_drag_and_drop_handlers():
-    content = read_html()
-    # Drag attributes and handlers
-    assert 'draggable="true"' in content or "draggable" in content, "Tabs must be draggable"
-    for evt in ["dragstart", "dragover", "dragleave", "drop", "dragend"]:
-        assert evt in content, f"Missing drag event handler: {evt}"
+def test_editor_groups_tab_bars_and_drag_and_drop_are_gone():
+    # the frame's own files (the views' stylesheets are checked by their owners)
+    core_css = (UI / "styles" / "core.css").read_text(encoding="utf-8")
+    content = "\n".join([ui_html(), ui_js(), SHELL_CSS, core_css])
+    for gone in ("editor-groups-container", "editor-group", "editor-tabs-bar", "editor-tab", "editor-divider", "close-tab",
+                 "toggle-stage-strip", "split-editor", "unsplit-editor", "drop-zone", 'id="whead"', "tab-stage-mark"):
+        assert gone not in content, f"{gone} belongs to the old editor tabs and must be gone"
 
-    # Drop zones
-    assert "drop-zone" in content, "Missing drop-zone"
-    assert "drop-zone-left" in content, "Missing drop-zone-left"
-    assert "drop-zone-right" in content, "Missing drop-zone-right"
 
-    # Keyboard alternative Ctrl+Alt+Left/Right
-    assert "ctrlKey" in content and "altKey" in content, "Missing Ctrl+Alt keyboard shortcut handler"
-    assert "ArrowLeft" in content or "Left" in content, "Missing ArrowLeft keyboard navigation"
-    assert "ArrowRight" in content or "Right" in content, "Missing ArrowRight keyboard navigation"
+def test_the_stage_trace_is_the_one_way_to_navigate():
+    nav = re.search(r"function navHTML\(\)\s*\{(.*?)\n\}", SHELL_JS, re.S).group(1)
+    assert 'class="trace"' in nav and 'data-tab="${id}"' in nav, "one button per stage in the trace"
+    assert 'aria-current="page"' in nav, "the open sheet is marked for assistive technology"
+    assert "data-page=" in nav, "Library, Sources and Settings are pages"
+    assert re.search(r"STAGES = \[\['idea', 'Idea'\], \['bom', 'BOM'\], \['sch', 'Schematic'\], \['pcb', 'Layout'\], \['rules', 'Rules'\], \['outputs', 'Outputs'\], \['checks', 'DFM'\]\]", SHELL_JS), \
+        "stage ids stay, labels are the new names"
+    # the click delegate: d.tab -> a stage, d.page -> a page; both go through go()
+    assert "go('workspace', d.tab)" in CORE_JS and "go(d.page)" in CORE_JS
+    # go(page, tab) and select(key) stay global, the test harness drives them
+    assert re.search(r"function go\(p, t\)", SHELL_JS) and re.search(r"function select\(key", CORE_JS)
+
+
+def test_page_and_tab_in_the_url_are_honoured_on_load():
+    assert "URLQ.get('page')" in BOOT_JS and "URLQ.get('tab')" in BOOT_JS
+    assert "initMain(initialMain())" in BOOT_JS, "the first sheet is set before the first paint"
+    assert "restoreSide()" in BOOT_JS, "the side sheet comes back per project"
+
+
+def test_documents_open_in_the_side_sheet_and_a_sheet_is_never_shown_twice():
+    body = re.search(r"function openFileAsTab\(info\)\s*\{(.*?)\n\}", SHELL_JS, re.S).group(1)
+    assert "openSide(" in body, "a document opens the side sheet"
+    assert "already open in the main sheet" in SHELL_JS, "the same stage is not shown in both sheets (global preview ids)"
+    set_main = re.search(r"function setMain\(item\)\s*\{(.*?)\n\}", SHELL_JS, re.S).group(1)
+    assert "sideItem = mainItem" in set_main, "going to what the side sheet shows swaps the sheets"
+
+
+def test_narrow_screen_the_side_sheet_covers_the_main_sheet():
+    block = media_block(SHELL_CSS, "max-width:860px").replace(" ", "")
+    assert ".pane.side{position:absolute;inset:0" in block
+    assert ".app.has-side.pane.work{visibility:hidden}" in block, "the covered sheet must not take keyboard focus"
 
 
 def test_localstorage_inside_try_catch_all_occurrences():
@@ -92,7 +92,7 @@ def test_localstorage_inside_try_catch_all_occurrences():
 
     lines = script.splitlines()
     ls_line_indices = [i for i, line in enumerate(lines) if "localStorage." in line]
-    assert len(ls_line_indices) >= 5, "Expected localStorage calls for layout and tabs persistence"
+    assert len(ls_line_indices) >= 5, "Expected localStorage calls for layout, the side sheet and the theme"
 
     for idx in ls_line_indices:
         prev_chunk = "\n".join(lines[max(0, idx - 10) : idx + 1])
@@ -100,7 +100,7 @@ def test_localstorage_inside_try_catch_all_occurrences():
         assert "try" in prev_chunk, f"localStorage on line {idx + 1} not preceded by try block"
         assert "catch" in next_chunk, f"localStorage on line {idx + 1} not followed by catch block"
 
-    # Reset layout resets tabs too
+    # Reset layout forgets the side sheet too
     assert "resetLayout" in content
     assert "reset-layout" in content
 
@@ -116,9 +116,3 @@ def test_stage_render_functions_take_container():
     assert re.search(r"function\s+outputsHTML\s*\(\s*container\b", content), "outputsHTML must take container parameter"
     assert re.search(r"function\s+checksHTML\s*\(\s*container\b", content), "checksHTML must take container parameter"
     assert re.search(r"function\s+renderStage\s*\([^)]*container[^)]*\)", content), "renderStage must take container parameter"
-
-
-def test_narrow_center_disables_split():
-    content = read_html()
-    assert "640px" in content, "Missing 640px threshold for disabling split"
-    assert ".editor-divider" in content

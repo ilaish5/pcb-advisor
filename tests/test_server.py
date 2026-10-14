@@ -215,6 +215,42 @@ def test_chat_in_a_part_conversation_gives_the_agent_that_parts_context(server, 
     assert code == 200 and "TXS0104EPWR" in seen["ask"] and "why OE?" in seen["ask"]
 
 
+def test_an_ask_chip_reaches_the_engine_and_stays_on_the_students_message(server, lte, monkeypatch):
+    import agent
+    seen = []
+    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: (
+        seen.append(ask) or {"reply": "ok", "actions": [], "tools": []}))
+    _, st = post(server, "/api/chat", {"text": "is this right?", "about": {"kind": "part", "id": "U5", "label": "U5"}}, lte)
+    assert "TXS0104EPWR" in seen[0] and seen[0].endswith("is this right?")        # a part brings its context card
+    user = next(m for m in st["chat"] if m.get("text") == "is this right?")
+    assert user["about"] == {"kind": "part", "id": "U5", "label": "U5"}
+    post(server, "/api/chat", {"text": "why?", "about": {"kind": "net", "id": "+3V3", "label": "+3V3"}}, lte)
+    assert "net '+3V3'" in seen[1] and seen[1].endswith("why?")
+    # a chip the server does not know is ignored, not trusted
+    _, st = post(server, "/api/chat", {"text": "hm", "about": {"kind": "shell", "id": "rm"}}, lte)
+    assert seen[2] == "hm" and "about" not in next(m for m in st["chat"] if m.get("text") == "hm")
+
+
+def test_a_reply_the_engine_failed_to_give_is_marked_so_the_chat_can_offer_retry(server, lte, monkeypatch):
+    import agent
+    monkeypatch.setattr(agent, "respond", lambda *a, **k: {"reply": "[agy] timed out", "actions": [], "error": True})
+    _, st = post(server, "/api/chat", {"text": "hello"}, lte)
+    assert st["chat"][-1]["error"] is True
+    monkeypatch.setattr(agent, "respond", lambda *a, **k: {"reply": "Hi.", "actions": []})
+    _, st = post(server, "/api/chat", {"text": "again"}, lte)
+    assert "error" not in st["chat"][-1]
+
+
+def test_the_note_of_a_decision_is_marked_so_the_chat_does_not_repeat_the_card(server, lte):
+    _, st = get(server, "/api/state", lte)
+    pid = next(p for p in st["proposals"] if p["status"] == "pending")["id"]
+    _, st = post(server, "/api/proposal", {"id": pid, "decision": "rejected"}, lte)
+    note = st["chat"][-1]
+    assert note["role"] == "agent" and note["decision"] == "rejected" and note["proposal"] == pid
+    row = next(r for r in st["sessions"] if r["id"] == st["session"])
+    assert row["last"] is None or "Rejected" not in row["last"]["text"]
+
+
 def test_a_refused_action_is_shown_to_the_student(server, lte, monkeypatch):
     import agent
     monkeypatch.setattr(agent, "respond", lambda *a, **k: {

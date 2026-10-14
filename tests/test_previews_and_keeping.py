@@ -243,3 +243,143 @@ def test_board_shape_comes_from_board6():
     pts = preview_pcb.board6_outline(arc)
     assert len(pts) == 10 and pts[0] == (25.4, 0.0) and abs(pts[8][0]) < 1e-3 and pts[8][1] == 25.4
     assert preview_pcb.board6_outline({"VX0": "0mil", "VY0": "0mil"}) is None
+
+
+# ---------------------------------------------------------------------------------------------------
+# The two server-drawn pictures are inlined into the page, so their <style> is global there.
+# These pin the contract: every rule is scoped to the picture, colours come from the page's tokens
+# (var(--x, fallback)), and the ids and classes the UI (views/previews.js) hooks into stay put.
+# ---------------------------------------------------------------------------------------------------
+import re
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "altium"
+HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+
+
+def _style(svg):
+    m = re.search(r"<style>(.*?)</style>", svg, re.S)
+    assert m, "the picture carries its own <style>"
+    return m.group(1)
+
+
+def _selectors(css):
+    """Every selector of every rule in a flat stylesheet (there is no @media in these)."""
+    out = []
+    for head in re.findall(r"([^{}]+)\{", css):
+        out += [x.strip() for x in head.split(",") if x.strip()]
+    return out
+
+
+def _markup(svg):
+    return re.sub(r"<style>.*?</style>", "", svg, flags=re.S)
+
+
+@pytest.fixture(scope="module")
+def sch_svg():
+    return preview_sch.render_schdoc(FIXTURES / "project" / "CAN_Interface.SchDoc")
+
+
+@pytest.fixture(scope="module")
+def pcb_svg():
+    plan = {
+        "groups": [{"name": "Power", "x": 10, "y": 10, "w": 20, "h": 20}],
+        "keep_outs": [{"name": "Antenna", "x": 5, "y": 5, "w": 10, "h": 10}],
+        "critical_nets": [{"net": "SPI_CLK", "note": "match length"}],
+    }
+    return preview_pcb.render_pcbdoc(FIXTURES / "finished-board.PcbDoc", plan=plan)
+
+
+def test_sch_picture_style_is_scoped_to_the_picture(sch_svg):
+    css = _style(sch_svg)
+    sels = _selectors(css)
+    assert len(sels) > 10
+    assert all(x.startswith(preview_sch.SCOPE) for x in sels), [x for x in sels if not x.startswith(preview_sch.SCOPE)]
+    assert 'data-render="schdoc"' in sch_svg and 'class="sch"' in sch_svg
+
+
+def test_sch_picture_colours_are_the_pages_tokens_with_fallbacks(sch_svg):
+    css = _style(sch_svg)
+    for token in ("--sch-bg", "--sch-text", "--sch-wire", "--sch-body", "--sch-body-line", "--sch-pwr", "--net", "--net-soft", "--sig", "--sig-soft"):
+        assert re.search(r"var\(" + token + r",\s*[^)]+\)", css), f"{token} must be read with a fallback"
+    # a hex colour is only ever the fallback inside var(), never a bare fill or stroke
+    for decl in re.findall(r"(?:fill|stroke)\s*:\s*([^;}]+)", css):
+        assert not HEX.match(decl.strip()), decl
+    # the markup carries no colours at all: the background and the net labels are styled by classes
+    assert not HEX.search(_markup(sch_svg))
+    assert 'class="sch-bg"' in sch_svg
+
+
+def test_sch_picture_has_the_rules_for_toggling_selection_classes(sch_svg):
+    css = _style(sch_svg)
+    for frag in (".part.sel", ".part:focus-visible", ".hl-net", ".netfocus", ".focus"):
+        assert frag in css, frag
+    # a part carries what the UI needs to pick it
+    assert re.search(r'<g class="part" data-ref="[^"]+" id="part-[^"]+"', sch_svg)
+    assert "hlbox" in sch_svg
+
+
+def test_sch_empty_document_still_draws_a_picture():
+    svg = preview_sch.render_schdoc({"components": [], "wires": []}, title="Empty")
+    assert svg.startswith("<svg")
+    assert svg.rstrip().endswith("</svg>")
+
+
+def test_pcb_picture_style_is_scoped_and_uses_tokens(pcb_svg):
+    css = _style(pcb_svg)
+    sels = _selectors(css)
+    assert len(sels) > 20
+    assert all(x.startswith(preview_pcb.SCOPE) for x in sels), [x for x in sels if not x.startswith(preview_pcb.SCOPE)]
+    for token in ("--pcb-bg", "--pcb-grid", "--ink-3"):
+        assert re.search(r"var\(" + token + r",\s*[^)]+\)", css), f"{token} must be read with a fallback"
+    # the layer colours are data: defined once, as variables on the picture, and used by name everywhere else
+    root = re.search(r"svg\.pcb-preview\s*\{([^}]*)\}", css).group(1)
+    for var in ("--c-top", "--c-bottom", "--c-multi", "--c-crit", "--c-sel", "--c-net"):
+        assert re.search(var + r"\s*:\s*#[0-9a-fA-F]{3,8}", root), var
+    rest = css.replace(root, "")
+    assert not HEX.search(re.sub(r"var\([^)]*\)", "", rest)), "hex colours belong to the variables on the root rule"
+
+
+def test_pcb_markup_has_no_colours_and_the_legend_uses_the_drawings_classes(pcb_svg):
+    markup = _markup(pcb_svg)
+    assert not HEX.search(markup), set(HEX.findall(markup))
+    legend = re.search(r'<g class="legend"[^>]*>(.*?)</g>', pcb_svg, re.S).group(1)
+    for cls in ("pad-top", "pad-bottom", "pad-multi"):
+        assert f'class="{cls}' in legend, cls
+        assert f".{cls}" in _style(pcb_svg)
+    assert "Critical net" in legend                 # the plan names a critical net
+    assert 'class="pcb-bg"' in pcb_svg
+
+
+def test_pcb_picture_keeps_the_ids_and_classes_the_ui_hooks_into(pcb_svg):
+    assert pcb_svg.startswith("<svg") and 'id="pcb-preview"' in pcb_svg and "pcb-preview layer-all" in pcb_svg
+    for needle in ('id="pcb-layer-outline"', 'id="pcb-layer-plan"', 'id="pcb-layer-bottom"', 'id="pcb-layer-top"', "pcb-outline"):
+        assert needle in pcb_svg, needle
+    assert re.search(r'<g class="pcb-comp[^"]*" data-ref="[^"]+" id="pcb-comp-[^"]+"', pcb_svg)
+    assert re.search(r'<rect class="pad [^"]*"[^>]* data-ref="[^"]+" data-net="[^"]*"', pcb_svg)
+    assert '<g class="plan-group" data-group="Power"' in pcb_svg
+    assert "plan-keepout" in pcb_svg and "Keep-out: Antenna" in pcb_svg
+
+
+def test_pcb_plan_colour_is_data_but_cannot_break_out_of_the_style_attribute():
+    assert preview_pcb._safe_color("#ff8800") == "#ff8800"
+    assert preview_pcb._safe_color("teal") == "teal"
+    for bad in ("red;} body{display:none", "url(javascript:alert(1))", '"><script>', "#12", "rgb(1,2,3)", ""):
+        assert preview_pcb._safe_color(bad) == "", bad
+    board = FIXTURES / "finished-board.PcbDoc"
+    evil = {"groups": [{"name": "Zone", "x": 1, "y": 1, "w": 4, "h": 4, "color": "red;} body{display:none"}]}
+    assert "display:none" not in preview_pcb.render_pcbdoc(board, plan=evil)
+    good = {"groups": [{"name": "Zone", "x": 1, "y": 1, "w": 4, "h": 4, "color": "#ff8800"}]}
+    assert 'style="--zone:#ff8800"' in preview_pcb.render_pcbdoc(board, plan=good)
+
+
+def test_pcb_legend_has_no_critical_swatch_without_a_critical_net():
+    svg = preview_pcb.render_pcbdoc(FIXTURES / "finished-board.PcbDoc")
+    assert "Critical net" not in svg
+
+
+def test_pcb_picture_without_a_pcb_says_so_in_the_words_the_ui_looks_for():
+    # views/previews.js turns this text into its "No PCB linked" state
+    svg = preview_pcb.render_project_pcb("no-such-project-x")
+    assert "No Altium .PcbDoc linked" in svg
+    assert "Settings to view PCB" in svg
+    assert not HEX.search(svg.replace("var(--pcb-bg,#121820)", "").replace("var(--ink-3,#94a0bd)", ""))
