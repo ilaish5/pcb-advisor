@@ -329,3 +329,66 @@ def test_library_endpoints(server, lte):
     code, res = post(server, "/api/library/build_script", {}, lte)
     assert code == 200
     assert res.get("ok") is True
+
+
+# ---------------------------------------------------------------- static files under /ui/
+
+def get_static(base, path):
+    """Raw GET (no project parameter): status, Content-Type, body. Errors come back as values, not exceptions."""
+    try:
+        with urllib.request.urlopen(f"{base}{path}", timeout=10) as r:
+            return r.status, r.headers.get("Content-Type", ""), r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers.get("Content-Type", ""), e.read()
+
+
+def test_ui_serves_script_files_from_ui_dir(server):
+    status, ctype, body = get_static(server, "/ui/js/core.js")
+    assert status == 200
+    assert ctype.startswith("application/javascript")
+    assert b"ACTIONS" in body
+    # nested folders work, and the old alias still points at diagram.js
+    assert get_static(server, "/ui/js/views/bom.js")[0] == 200
+    status, ctype, body = get_static(server, "/diagram.js")
+    assert status == 200 and ctype.startswith("application/javascript") and b"DiagramEditor" in body
+
+
+def test_ui_serves_every_stylesheet_the_page_links(server):
+    import re
+    status, ctype, html = get_static(server, "/")
+    assert status == 200 and ctype.startswith("text/html")
+    hrefs = re.findall(r'<link rel="stylesheet" href="(/ui/[^"]+\.css)"', html.decode("utf-8"))
+    assert "/ui/styles/core.css" in hrefs
+    for href in hrefs:
+        status, ctype, body = get_static(server, href)
+        assert status == 200, href
+        assert ctype.startswith("text/css"), href
+        assert body.strip(), href
+
+
+def test_ui_serves_every_script_the_page_loads(server):
+    import re
+    status, _, html = get_static(server, "/")
+    srcs = re.findall(r'<script src="(/ui/[^"]+)"', html.decode("utf-8"))
+    assert "/ui/js/core.js" in srcs and "/ui/js/boot.js" in srcs
+    for src in srcs:
+        status, ctype, _ = get_static(server, src)
+        assert status == 200 and ctype.startswith("application/javascript"), src
+
+
+def test_ui_static_refuses_paths_outside_ui_dir(server):
+    for bad in ("/ui/../scripts/serve.py", "/ui/../config.json", "/ui/%2e%2e/config.json",
+                "/ui/js/../../config.json", "/ui//config.json", "/ui/..%5cconfig.json"):
+        status, _, body = get_static(server, bad)
+        assert status in (403, 404), bad
+        assert b"workspace" not in body and b"projects_dir" not in body, bad
+
+
+def test_ui_static_refuses_unknown_extensions_and_missing_files(server):
+    assert get_static(server, "/ui/index.html")[0] == 404        # the page itself is served at / only
+    assert get_static(server, "/ui/js/core.py")[0] == 404
+    assert get_static(server, "/ui/js/")[0] == 404
+    assert get_static(server, "/ui/js/nope.js")[0] == 404
+    assert get_static(server, "/ui/styles/nope.css")[0] == 404
+    assert get_static(server, "/ui/js/core.js%00.png")[0] in (403, 404)
+    assert get_static(server, "/tabs.js")[0] == 404             # old dead entries are gone

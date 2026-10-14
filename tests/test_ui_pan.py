@@ -7,14 +7,15 @@ import pathlib
 import re
 import pytest
 
+from ui_source import ui_all
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
-HTML_PATH = REPO / "ui" / "index.html"
 DIAGRAM_PATH = REPO / "ui" / "diagram.js"
 
 
 def read_html() -> str:
-    assert HTML_PATH.is_file(), "ui/index.html must exist"
-    return HTML_PATH.read_text(encoding="utf-8")
+    """index.html + stylesheets + scripts (ui_source.py)."""
+    return ui_all()
 
 
 def read_diagram() -> str:

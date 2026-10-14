@@ -1,0 +1,17 @@
+/* viewer.css: the file viewer. */
+
+.viewer{position:absolute;top:0;right:0;bottom:0;width:min(680px,100%);border-left:1px solid var(--line);background:var(--panel);box-shadow:-10px 0 28px rgba(20,26,38,.12);z-index:7;display:flex;flex-direction:column;min-width:0}
+.viewer[hidden]{display:none}
+.viewer-h{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line2);background:var(--panel2);flex:none}
+.viewer-h .vtitle{font-weight:600;font-size:13.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
+.viewer-h .vtitle .badge{font-family:var(--f-mono);font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent);border-radius:4px;padding:1px 6px;flex:none}
+.viewer-h .vacts{display:flex;align-items:center;gap:8px;flex:none}
+.viewer-b{padding:14px;overflow-y:auto;overflow-x:auto;flex:1;min-height:0;display:flex;flex-direction:column}
+.viewer-tbl{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+.viewer-tbl th,.viewer-tbl td{padding:5px 8px;border:1px solid var(--line2);text-align:left}
+.viewer-tbl th{background:var(--panel2);font-weight:600;color:var(--dim)}
+.viewer-pre{margin:0;padding:12px;background:var(--panel2);border:1px solid var(--line2);border-radius:6px;overflow:auto;flex:1;white-space:pre-wrap;word-break:break-word;font-size:12px;font-family:var(--f-mono);color:var(--ink2)}
+.fname-btn{font-family:var(--f-mono);font-size:12.5px;font-weight:500;text-align:left;border:0;background:none;padding:0;color:var(--accent);cursor:pointer}
+.fname-btn:hover{text-decoration:underline}
+.ext-lnk{font-size:12px;color:var(--dim);text-decoration:none;margin-left:4px;padding:1px 4px;border-radius:3px;display:inline-block}
+.ext-lnk:hover{color:var(--accent);background:var(--panel2)}

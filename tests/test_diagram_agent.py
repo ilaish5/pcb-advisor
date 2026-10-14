@@ -17,6 +17,7 @@ import model
 import serve
 import session
 import store
+from ui_source import ui_all
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 
@@ -450,10 +451,10 @@ def test_agent_proposal_preserves_student_prev_text(empty):
 
 def test_static_ui_checks():
     """Static checks for requirement editing controls, stage strip highlight, and diagram pulse/undo."""
-    index_html = (REPO / "ui" / "index.html").read_text(encoding="utf-8")
+    index_html = ui_all()
     diagram_js = (REPO / "ui" / "diagram.js").read_text(encoding="utf-8")
 
-    # Requirement editing controls in index.html
+    # Requirement editing controls in the UI source (index.html + ui/js)
     assert "req-row" in index_html
     assert "req-edit-btn" in index_html or "edit-req" in index_html  # ✎
     assert "req-del-btn" in index_html or "delete-req" in index_html  # 🗑

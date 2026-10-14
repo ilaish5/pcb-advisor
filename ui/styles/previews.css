@@ -1,0 +1,92 @@
+/* previews.css: schematic and PCB previews, zoom controls, preview layout, component panel, selection bar, net highlight. */
+
+/* schematic */
+.sheets{display:flex;gap:4px;flex-wrap:wrap}
+.sheet{border:1px solid var(--line);background:var(--panel);border-radius:7px;padding:3px 10px;font-size:12.5px}
+.sheet[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.sheet:disabled{color:var(--dim);cursor:default;opacity:.7}
+.schwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;background:var(--sch-bg)}
+svg.sch{display:block;width:100%;height:auto}
+.sch text{font-family:var(--f-mono);font-size:10px;fill:var(--sch-text)}
+.sch .refd{font-weight:600;font-size:11.5px}
+.sch .mpn{fill:var(--sch-wire);font-size:9.5px}
+.sch .pnum{font-size:8.5px;fill:var(--dim)}
+.sch .pname{font-weight:600}
+.sch .net{fill:var(--net);font-weight:600}
+.sch .pwr{fill:var(--sch-pwr);font-weight:700}
+.sch .pwr3{fill:var(--sch-pwr3);font-weight:700}
+.sch .refs{font-size:9.5px;fill:var(--sch-text);font-weight:400}
+.sch .w{stroke:var(--sch-wire);stroke-width:1.6;fill:none;stroke-linecap:round}
+.sch .pin{stroke:var(--sch-text);stroke-width:1.2}
+.sch .pb{stroke:var(--sch-pwr);stroke-width:2.6}
+.sch .pb3{stroke:var(--sch-pwr3);stroke-width:2.6}
+.sch .g{stroke:var(--sch-gnd);stroke-width:1.6}
+.sch .gt{fill:var(--sch-gnd);font-size:8px;font-weight:600}
+.sch .body{fill:var(--sch-body);stroke:var(--sch-body-line);stroke-width:1.8}
+.sch .nbox{fill:var(--sch-bg);stroke:var(--net);stroke-width:1.2}
+.sch .secr{fill:none;stroke:var(--sch-dash);stroke-dasharray:7 5;stroke-width:1.3}
+.sch .sect{font-family:var(--f-ui);font-weight:600;font-size:12px;fill:var(--ink)}
+.sch .title{font-family:var(--f-ui);font-weight:700;font-size:14px;fill:var(--ink)}
+.sch .nc{stroke:var(--bad);stroke-width:1.8}
+.sch .nct{fill:var(--bad);font-size:8px}
+.sch .note{fill:var(--dim);font-size:9px;font-style:italic}
+.sch .wn{fill:var(--bad);font-size:9px;font-style:italic}
+.sch .jn{fill:var(--sch-wire)}
+.sch .dnp{opacity:.5}
+.sch .dnp .w{stroke-dasharray:3 3}
+.sch .tpc{fill:none;stroke:var(--sch-wire);stroke-width:1.8}
+.sch .part{cursor:pointer;transition:opacity .2s}
+.sch .hlbox{fill:transparent;stroke:none}
+.sch .part:hover .hlbox{fill:var(--hl2)}
+.sch .part.sel .hlbox{fill:var(--hl);stroke:var(--accent);stroke-width:1.6}
+.sch.focus .part:not(.sel){opacity:.28}
+
+/* Selection / ask bar in previews */
+.sel-bar{display:inline-flex;align-items:center;gap:8px;padding:3px 8px;background:var(--panel2);border:1px solid var(--line);border-radius:7px;font-size:12.5px}
+.sel-bar b{font-family:var(--f-mono);color:var(--net)}
+/* PCB Preview */
+.pcbwrap{overflow:auto;border:1px solid var(--line);border-radius:10px;background:#121820;min-height:420px;position:relative}
+svg.pcb-preview{display:block;width:100%;height:auto}
+.pcb-preview.hide-top #pcb-layer-top{display:none}
+.pcb-preview.hide-bottom #pcb-layer-bottom{display:none}
+.pcb-preview.hide-plan #pcb-layer-plan{display:none}
+.plan-card{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--panel2)}
+
+/* Component panel & preview fit layout */
+.preview-layout{display:flex;flex-direction:row;gap:12px;width:100%;min-width:0;min-height:0;height:calc(100vh - 160px)}
+.preview-main{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;gap:8px}
+.preview-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;flex:none}
+.preview-box{flex:1;min-height:300px;min-width:0;position:relative;overflow:hidden;border:1px solid var(--line);border-radius:10px}
+.preview-box svg{width:100%;height:100%;max-height:100%;display:block;transform-origin:center center}
+.zoom-controls{display:inline-flex;align-items:center;gap:3px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:2px 4px}
+.zoom-btn{border:0;background:none;font-weight:600;font-size:13px;padding:3px 8px;border-radius:5px;cursor:pointer;color:var(--ink2);line-height:1}
+.zoom-btn:hover{background:var(--panel2);color:var(--accent)}
+.comp-panel{width:320px;max-width:380px;flex:none;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);overflow-y:auto;display:flex;flex-direction:column;min-height:0;max-height:100%}
+.comp-panel[hidden]{display:none !important}
+.comp-panel-h{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line2);background:var(--panel2);position:sticky;top:0;z-index:2}
+.comp-panel-ref{font-family:var(--f-mono);font-weight:700;font-size:15px;color:var(--accent)}
+.comp-panel-sub{font-size:12px;color:var(--dim);word-break:break-all}
+.comp-panel-b{padding:12px 14px;display:grid;gap:12px;font-size:12.5px}
+.comp-panel-actions{display:flex;gap:6px;flex-wrap:wrap}
+.comp-props{display:grid;gap:6px;background:var(--panel2);border:1px solid var(--line2);border-radius:8px;padding:8px 10px}
+.comp-prop{display:grid;grid-template-columns:85px minmax(0,1fr);gap:6px}
+.comp-prop-k{color:var(--dim);font-weight:500}
+.comp-prop-v{font-weight:500;word-break:break-word}
+.comp-pins-tbl,.comp-params-tbl{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:4px}
+.comp-pins-tbl th,.comp-pins-tbl td,.comp-params-tbl th,.comp-params-tbl td{padding:4px 6px;border:1px solid var(--line2);text-align:left}
+.comp-pins-tbl th,.comp-params-tbl th{background:var(--panel2);font-weight:600;color:var(--dim)}
+.net-btn{font-family:var(--f-mono);font-size:11px;font-weight:600;color:var(--net);background:var(--net-soft);border:1px solid var(--net);border-radius:4px;padding:1px 5px;cursor:pointer}
+.net-btn:hover{background:var(--net);color:#fff}
+.hl-net rect, .hl-net polygon, .hl-net text, .hl-net path{filter:drop-shadow(0 0 4px #2148c9) !important;stroke:#2148c9 !important;stroke-width:2.2px !important}
+
+@media (max-width:900px){
+  .preview-layout{flex-direction:column !important;height:auto !important}
+  .comp-panel{width:100% !important;max-width:100% !important;max-height:500px !important}
+}
+@container (max-width:720px){
+  .preview-layout{flex-direction:column !important;height:auto !important}
+  .comp-panel{width:100% !important;max-width:100% !important;max-height:500px !important}
+}
+
+.pcb-empty-state{user-select:none}
+.is-panning,.is-panning *{cursor:grabbing !important}

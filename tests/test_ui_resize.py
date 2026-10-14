@@ -1,17 +1,18 @@
 """
 Static checks for UI resize handles, collapse/restore, compact navigation,
-and layout persistence in ui/index.html.
+and layout persistence (ui/index.html, ui/styles, ui/js).
 """
 import pathlib
 import re
 
+from ui_source import ui_all, ui_js
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
-HTML_PATH = REPO / "ui" / "index.html"
 
 
 def read_html() -> str:
-    assert HTML_PATH.is_file(), "ui/index.html must exist"
-    return HTML_PATH.read_text(encoding="utf-8")
+    """index.html + stylesheets + scripts (ui_source.py)."""
+    return ui_all()
 
 
 def test_two_vertical_separator_elements():
@@ -45,10 +46,9 @@ def test_localstorage_inside_try_catch():
     content = read_html()
     assert "localStorage" in content, "ui/index.html must use localStorage to persist layout"
 
-    # Find script section
-    script_match = re.search(r"<script>(.*)</script>", content, re.DOTALL)
-    assert script_match, "<script> block not found in ui/index.html"
-    script = script_match.group(1)
+    # The scripts (ui/js/**, in load order)
+    script = ui_js()
+    assert script.strip(), "no scripts found under ui/js"
 
     lines = script.splitlines()
     ls_line_indices = [i for i, line in enumerate(lines) if "localStorage." in line]

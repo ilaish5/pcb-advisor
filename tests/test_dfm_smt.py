@@ -16,6 +16,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 import dfm
 import serve
 import workspace
+from ui_source import ui_all
 
 
 def make_test_pdf(tmp_path, filename="report.pdf"):
@@ -165,9 +166,8 @@ def test_serve_upload_validates_kind(test_server, tmp_path):
 
 
 def test_ui_has_both_cards_and_status_line():
-    """Verify that ui/index.html includes both PCB and SMT DFM cards and status line."""
-    ui_path = REPO / "ui" / "index.html"
-    html = ui_path.read_text(encoding="utf-8")
+    """Verify that the UI source includes both PCB and SMT DFM cards and status line."""
+    html = ui_all()
 
     # Two clear cards
     assert "PCB DFM (bare board)" in html

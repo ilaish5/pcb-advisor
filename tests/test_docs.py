@@ -23,11 +23,15 @@ def test_scripts_named_in_docs_exist(doc_path):
     assert not missing, f"{doc_path} references non-existent script(s): {missing}"
 
 
-def test_ui_index_html_no_hebrew_outside_comments():
-    html_path = REPO / "ui" / "index.html"
-    assert html_path.is_file(), "ui/index.html must exist"
-    content = html_path.read_text(encoding="utf-8")
-    # Strip HTML comments: <!-- ... -->
-    clean_html = re.sub(r"<!--.*?-->", "", content, flags=re.S)
-    hebrew_matches = re.findall(r"[\u0590-\u05FF]+", clean_html)
-    assert not hebrew_matches, f"Found Hebrew text in ui/index.html outside comments: {hebrew_matches}"
+def test_ui_sources_no_hebrew_outside_comments():
+    """index.html and every stylesheet and script under ui/ (diagram.js too) is English only."""
+    ui = REPO / "ui"
+    assert (ui / "index.html").is_file(), "ui/index.html must exist"
+    files = sorted(p for p in ui.rglob("*") if p.suffix in (".html", ".css", ".js"))
+    assert len(files) > 1, "expected the stylesheets and scripts next to index.html"
+    for path in files:
+        content = path.read_text(encoding="utf-8")
+        # Strip HTML comments: <!-- ... -->
+        clean = re.sub(r"<!--.*?-->", "", content, flags=re.S)
+        hebrew_matches = re.findall(r"[\u0590-\u05FF]+", clean)
+        assert not hebrew_matches, f"Found Hebrew text in {path.relative_to(REPO)} outside comments: {hebrew_matches}"

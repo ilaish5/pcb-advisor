@@ -1,8 +1,8 @@
 """
 The page's rules tab (a verdict per rule) and DFM tab (one report for both cards).
 
-The UI has no JS test runner here, so these read ui/index.html the way the other
-UI tests do; the behaviour itself was driven in headless Edge when it was written.
+The UI has no JS test runner here, so these read the UI source (tests/ui_source.py)
+the way the other UI tests do; the behaviour itself was driven in headless Edge when it was written.
 """
 import pathlib
 import re
@@ -13,16 +13,18 @@ from PIL import Image
 import dfm
 import model
 import project
+from ui_source import ui_all, ui_js
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
-HTML = (REPO / "ui" / "index.html").read_text(encoding="utf-8")
+HTML = ui_all()
+JS = ui_js()
 
 
 def _body(name):
     """The source of one top-level function of the page."""
-    start = HTML.index(f"function {name}(")
-    nxt = re.search(r"\n(?:async )?function \w+\(|\nlet \w+ = ", HTML[start + 10:])
-    return HTML[start:start + 10 + (nxt.start() if nxt else 20000)]
+    start = JS.index(f"function {name}(")
+    nxt = re.search(r"\n(?:async )?function \w+\(|\nlet \w+ = ", JS[start + 10:])
+    return JS[start:start + 10 + (nxt.start() if nxt else 20000)]
 
 
 def test_the_rules_diff_has_a_verdict_column_that_escapes_the_detail():

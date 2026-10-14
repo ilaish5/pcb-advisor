@@ -1,0 +1,65 @@
+/* idea.css: Idea view (requirements, block diagram). */
+
+.idea{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start}
+@container (max-width:720px){
+  .idea{grid-template-columns:minmax(0,1fr)}
+  .agreed div{grid-template-columns:minmax(0,1fr);gap:4px}
+}
+
+.agreed{margin:0}
+.agreed div{display:grid;grid-template-columns:96px minmax(0,1fr);gap:10px;padding:8px 14px;border-bottom:1px solid var(--line2)}
+.agreed div:last-child{border-bottom:0}
+.agreed dt{font-weight:600;font-size:13px}
+.agreed dd{margin:0;font-size:13px;color:var(--ink2)}
+.agreed small{display:block;color:var(--dim);font-size:11.5px}
+.reqs{list-style:none;margin:0;padding:8px 14px 6px;display:grid;gap:6px;font-size:13px}
+.reqs li{display:flex;gap:8px;align-items:baseline}
+.reqs .ic{font-weight:700;width:14px;flex:none}
+svg.blocks{display:block;width:100%;height:auto}
+.blocks rect{fill:var(--panel2);stroke:var(--line);stroke-width:1.4}
+.blocks .cur rect{fill:var(--accent-soft);stroke:var(--accent)}
+.blocks .open rect{stroke-dasharray:5 4}
+.blocks text{font-family:var(--f-mono);font-size:12px;fill:var(--ink)}
+.blocks .s{fill:var(--dim);font-size:10.5px}
+.blocks path{stroke:var(--dim);stroke-width:1.5;fill:none}
+.blocks .pl{fill:var(--sch-pwr);font-size:10px;font-weight:600}
+.blocks g.cur{cursor:pointer}
+
+@media (max-width:1280px){
+  .idea{grid-template-columns:minmax(0,1fr)}
+}
+
+/* Block Diagram Interactive */
+.diag-wrap{position:relative;border:1px solid var(--line);border-radius:10px;background:#f8fafc;overflow:hidden}
+.diag-toolbar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line2);flex-wrap:wrap}
+svg.diag-svg{display:block;width:100%;height:auto;user-select:none}
+.diag-block{cursor:grab;transition:filter .15s}
+.diag-block:hover{filter:drop-shadow(0 2px 6px rgba(0,0,0,.15))}
+.diag-block.dragging{cursor:grabbing;filter:drop-shadow(0 4px 12px rgba(0,0,0,.25))}
+.diag-block.linking rect{stroke:#2563eb !important;stroke-width:2.5 !important;animation:pulse 1s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.diag-btn{font-size:11px;padding:2px 7px;border-radius:4px;border:1px solid var(--line);background:var(--panel);cursor:pointer}
+.diag-btn:hover{background:var(--panel2);border-color:var(--accent)}
+
+.editor-group-body > .view.stage-idea,
+.editor-group-body > .view[data-active-tab-id="idea"],
+.editor-group-body > .view:has(.idea-layout){display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;padding:12px 14px}
+.idea-layout{display:flex;flex-direction:column;flex:1;min-height:0;height:100%;gap:8px;width:100%;overflow:hidden}
+.idea-layout .agreed-card{flex:none;min-height:0;max-height:220px;overflow:hidden}
+.idea-layout .diagram-card{flex:1;min-height:0;display:flex;flex-direction:column;height:100%;padding:0;position:relative;overflow:hidden}
+.diagram-mount-point{flex:1;min-height:0;width:100%;height:100%;position:relative;display:flex;flex-direction:column}
+.req-row{display:flex;align-items:flex-start;gap:6px;padding:5px 6px;border-bottom:1px solid var(--line2);border-radius:4px;transition:background .1s}
+.req-row:hover{background:var(--subtle,#f8fafc)}
+.req-row.drag-over{border-top:2px solid var(--accent);background:rgba(33,72,201,.06)}
+.req-row .req-actions{opacity:0;transition:opacity .15s}
+.req-row:hover .req-actions, .req-row:focus-within .req-actions{opacity:1}
+.req-actions .btn-icon{width:24px;height:24px;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:4px;border:1px solid transparent;background:transparent;cursor:pointer;color:var(--dim)}
+.req-actions .btn-icon:hover{border-color:var(--line);color:var(--ink);background:var(--panel)}
+.req-actions .req-del-btn:hover{color:#ef4444}
+.req-actions .req-confirm-btn:hover{color:#10b981}
+.req-drag-handle{cursor:grab;color:var(--dim);user-select:none;padding:2px 4px;font-size:13px;line-height:1}
+.req-drag-handle:active{cursor:grabbing}
+.req-topic{cursor:pointer;font-weight:600;color:var(--ink)}
+.req-topic:hover{text-decoration:underline}
+.req-text{cursor:pointer}
+.req-text:hover{background:rgba(0,0,0,0.02)}

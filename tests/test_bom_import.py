@@ -24,6 +24,7 @@ import export_bom
 import jlc
 import project
 import store
+from ui_source import ui_all
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 FX = REPO / "tests" / "fixtures"
@@ -930,11 +931,11 @@ def test_the_endpoint_refuses_paths_outside_the_project(server, empty, tmp_path)
 # ---------------------------------------------------------------- the page
 
 def test_the_bom_tab_offers_the_import():
-    html = (REPO / "ui" / "index.html").read_text(encoding="utf-8")
+    html = ui_all()
     for needle in ("Import BOM from Altium", "/api/bom/import/candidates", "'/api/bom/import'",
                    'data-act="imp-preview"', 'data-act="imp-apply"', 'data-act="imp-scan"',
                    "function importHTML()", "function importReportHTML(", "${importHTML()}",
-                   "Import works into an empty BOM", "case 'imp-apply'"):
+                   "Import works into an empty BOM", "onAct('imp-apply'"):
         assert needle in html, needle
     # a finding is text from a file: it goes through esc()
     assert "esc(f.message)" in html and "esc(f.kind)" in html and "esc(c.path)" in html

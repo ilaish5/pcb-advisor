@@ -9,13 +9,14 @@ import urllib.error
 import urllib.request
 import pytest
 
+from ui_source import ui_all, ui_css
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
-HTML_PATH = REPO / "ui" / "index.html"
 
 
 def read_html() -> str:
-    assert HTML_PATH.is_file(), "ui/index.html must exist"
-    return HTML_PATH.read_text(encoding="utf-8")
+    """index.html + stylesheets + scripts (ui_source.py)."""
+    return ui_all()
 
 
 @pytest.fixture
@@ -100,12 +101,9 @@ def test_component_panel_static_ui_markup():
 
 
 def test_component_panel_docked_right_and_narrow_screen_responsive():
-    content = read_html()
-
     # CSS for .preview-layout and .comp-panel
-    style_match = re.search(r"<style>(.*?)</style>", content, re.DOTALL)
-    assert style_match
-    style = style_match.group(1)
+    style = ui_css()
+    assert style.strip()
 
     # .preview-layout is a flex row with preview-main and comp-panel
     assert re.search(r"\.preview-layout\s*\{[^}]*display\s*:\s*flex", style)

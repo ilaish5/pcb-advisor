@@ -342,6 +342,16 @@ def run_skill(name, project, *args):
 
 QUIET = False
 
+# What GET /ui/<path> may serve from ui_dir, by file extension (anything else is a 404).
+UI_STATIC_TYPES = {
+    ".js": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".woff2": "font/woff2",
+    ".json": "application/json",
+}
+
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -384,26 +394,32 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_ui_static(self, rel):
+        """GET /ui/<rel>: any file under ui_dir with an allowed extension (scripts, styles, images, fonts, json).
+        Anything that resolves outside ui_dir is refused (403); unknown extensions and missing files are 404."""
+        rel = unquote(rel)
+        ctype = UI_STATIC_TYPES.get(pathlib.PurePosixPath(rel.replace("\\", "/")).suffix.lower())
+        try:
+            ui_dir = workspace.ui_dir().resolve()
+            target = (ui_dir / rel).resolve()
+        except (OSError, ValueError):       # NUL byte, invalid characters
+            return self._send(404, {"error": "not found"})
+        if ui_dir not in target.parents:
+            return self._send(403, {"error": "forbidden"})
+        if ctype is None or not target.is_file():
+            return self._send(404, {"error": "not found"})
+        return self._send(200, target.read_bytes(), ctype)
+
     # ---------------------------------------------------------------- read
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             return self._send(200, (workspace.ui_dir() / "index.html").read_text(encoding="utf-8"),
                               "text/html; charset=utf-8")
-        STATIC_UI = {
-            "/ui/diagram.js": "diagram.js",
-            "/diagram.js": "diagram.js",
-            "/ui/tabs.js": "tabs.js",
-            "/tabs.js": "tabs.js",
-        }
-        if path in STATIC_UI:
-            fname = STATIC_UI[path]
-            ui_dir = workspace.ui_dir().resolve()
-            target = (ui_dir / fname).resolve()
-            if target.is_file() and ui_dir in target.parents:
-                return self._send(200, target.read_text(encoding="utf-8"),
-                                  "application/javascript; charset=utf-8")
-            return self._send(404, {"error": "not found"})
+        if path == "/diagram.js":          # old alias for /ui/diagram.js
+            path = "/ui/diagram.js"
+        if path.startswith("/ui/"):
+            return self._send_ui_static(path[len("/ui/"):])
         if path == "/api/projects":
             return self._send(200, {"projects": model.list_projects(),
                                     "default": DEFAULT_PROJECT or workspace.default_project()})

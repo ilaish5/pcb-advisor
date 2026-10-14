@@ -1,18 +1,19 @@
 """
 Static checks for center area editor groups, stages and files as tabs,
 split view controls, drag & drop handlers, localStorage in try/catch,
-and container-taking stage render functions in ui/index.html.
+and container-taking stage render functions (ui/index.html, ui/styles, ui/js).
 """
 import pathlib
 import re
 
+from ui_source import ui_all, ui_js
+
 REPO = pathlib.Path(__file__).resolve().parent.parent
-HTML_PATH = REPO / "ui" / "index.html"
 
 
 def read_html() -> str:
-    assert HTML_PATH.is_file(), "ui/index.html must exist"
-    return HTML_PATH.read_text(encoding="utf-8")
+    """index.html + stylesheets + scripts (ui_source.py)."""
+    return ui_all()
 
 
 def test_editor_groups_and_tab_structure():
@@ -86,9 +87,8 @@ def test_drag_and_drop_handlers():
 
 def test_localstorage_inside_try_catch_all_occurrences():
     content = read_html()
-    script_match = re.search(r"<script>(.*)</script>", content, re.DOTALL)
-    assert script_match, "<script> block not found in ui/index.html"
-    script = script_match.group(1)
+    script = ui_js()
+    assert script.strip(), "no scripts found under ui/js"
 
     lines = script.splitlines()
     ls_line_indices = [i for i, line in enumerate(lines) if "localStorage." in line]

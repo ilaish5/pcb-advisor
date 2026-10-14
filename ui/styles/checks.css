@@ -1,0 +1,7 @@
+/* checks.css: Checks view (triage table, DFM cards). */
+
+.triage-tbl{border-collapse:collapse;width:100%;font-size:12px}
+.triage-tbl th,.triage-tbl td{padding:4px 6px;border:1px solid var(--line2);text-align:left}
+.triage-tbl th{background:var(--panel2);font-weight:600;color:var(--dim);white-space:nowrap}
+.triage-tbl input,.triage-tbl select{font:inherit;font-size:12px;border:1px solid var(--line);border-radius:4px;padding:3px 5px;background:var(--panel2);color:var(--ink);width:100%;box-sizing:border-box}
+.triage-tbl input:focus,.triage-tbl select:focus{border-color:var(--accent);background:var(--panel)}

@@ -1,24 +1,20 @@
 """
-Static checks for UI center width fitting and tab scrolling in ui/index.html.
+Static checks for UI center width fitting and tab scrolling (ui/index.html, ui/styles, ui/js).
 """
-import pathlib
 import re
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
-HTML_PATH = REPO / "ui" / "index.html"
+from ui_source import ui_all, ui_css
 
 
 def read_html() -> str:
-    assert HTML_PATH.is_file(), "ui/index.html must exist"
-    return HTML_PATH.read_text(encoding="utf-8")
+    """index.html + stylesheets + scripts (ui_source.py)."""
+    return ui_all()
 
 
 def test_no_fixed_min_width_on_svg_rules():
     """Verify no min-width:760px or min-width:980px exist on svg rules in style tag."""
-    content = read_html()
-    style_match = re.search(r"<style>(.*?)</style>", content, re.DOTALL)
-    assert style_match, "<style> block must exist"
-    style = style_match.group(1)
+    style = ui_css()
+    assert style.strip(), "the stylesheets must exist"
 
     # Check for forbidden fixed min-width rules on SVGs (760px and 980px)
     assert not re.search(
@@ -38,10 +34,8 @@ def test_no_fixed_min_width_on_svg_rules():
 
 def test_view_has_overflow_x_hidden():
     """Verify .view has overflow-x:hidden and container-type:inline-size."""
-    content = read_html()
-    style_match = re.search(r"<style>(.*?)</style>", content, re.DOTALL)
-    assert style_match, "<style> block must exist"
-    style = style_match.group(1)
+    style = ui_css()
+    assert style.strip(), "the stylesheets must exist"
 
     m = re.search(r"\.view\s*\{([^}]+)\}", style)
     assert m, "CSS rule for .view must exist"
@@ -71,10 +65,10 @@ def test_wheel_listener_on_tab_scroller():
     """Verify a wheel event listener is attached to the tab scroller."""
     content = read_html()
 
-    assert "wheel" in content, "A wheel listener must be present in ui/index.html"
+    assert "wheel" in content, "A wheel listener must be present in the UI source"
     assert re.search(
         r"""addEventListener\(\s*['"]wheel['"]""", content
-    ), "Expected addEventListener('wheel') in ui/index.html"
+    ), "Expected addEventListener('wheel') in the UI source"
 
 
 def test_tab_arrow_scroll_by_approx_70_percent():
@@ -107,10 +101,8 @@ def test_tab_arrows_update_on_resize_and_scroll():
 
 def test_idea_layout_responsive():
     """Verify Idea tab two-column layout wraps on narrow center view."""
-    content = read_html()
-    style_match = re.search(r"<style>(.*?)</style>", content, re.DOTALL)
-    assert style_match, "<style> block must exist"
-    style = style_match.group(1)
+    style = ui_css()
+    assert style.strip(), "the stylesheets must exist"
 
     assert "container-type:inline-size" in style.replace(" ", "") or "@container" in style, (
         "Expected container query support on center view"

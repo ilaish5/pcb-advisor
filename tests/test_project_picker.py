@@ -1,7 +1,7 @@
 """Static checks: the project selector is a dropdown, not an always-open list."""
-from pathlib import Path
+from ui_source import ui_all
 
-HTML = (Path(__file__).resolve().parent.parent / "ui" / "index.html").read_text(encoding="utf-8")
+HTML = ui_all()
 
 
 def test_dropdown_markup_present():
@@ -17,7 +17,7 @@ def test_dropdown_handlers_present():
     assert 'function toggleProjMenu' in HTML
     assert 'function closeProjMenu' in HTML
     assert "e.key === 'Escape'" in HTML
-    assert "d.act === 'projmenu'" in HTML
+    assert "onAct('projmenu'" in HTML
 
 
 def test_names_escaped():
