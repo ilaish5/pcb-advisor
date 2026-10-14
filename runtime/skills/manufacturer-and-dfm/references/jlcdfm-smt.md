@@ -1,4 +1,4 @@
-# JLCDFM SMT assembly report (dfm.jlcdfm.com)
+# JLCDFM SMT assembly report (jlcdfm.com)
 
 ## What SMT DFM checks
 JLCDFM assembly analysis checks the Pick and Place (CPL) data and Bill of Materials (BOM) against component package

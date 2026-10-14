@@ -1,7 +1,7 @@
 """
 Ingest and triage JLCDFM report PDFs.
 
-A JLCDFM report PDF (dfm.jlcdfm.com) is typically one tall page containing a single
+A JLCDFM report PDF (jlcdfm.com) is typically one tall page containing a single
 embedded JPEG (~2400 x 15000 px) with no text layer.
 
 This script extracts the embedded image using pypdf, slices it into ~1400 px height

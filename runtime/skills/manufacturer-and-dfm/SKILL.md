@@ -29,10 +29,10 @@ description: Prepares the manufacturing package for JLC and walks the student th
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
 4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
    its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in (same package) for the student to approve.
-5. PCB DFM at JLC: the student uploads the Gerber zip to JLC DFM (dfm.jlcdfm.com), runs the bare-board PCB DFM, and
+5. PCB DFM at JLC: the student uploads the Gerber zip to JLC DFM (jlcdfm.com), runs the bare-board PCB DFM, and
    uploads the report PDF. Ingest it with `scripts/dfm.py ingest <project> <pdf> --kind pcb` to slice into ~1400 px images
    and review bare-board items (trace/space, drill, mask, silk) in the triage table (`references/jlcdfm-report.md`).
-6. SMT DFM and assembly preview: the student runs SMT DFM on dfm.jlcdfm.com and uploads the assembly report PDF. Ingest it
+6. SMT DFM and assembly preview: the student runs SMT DFM on jlcdfm.com and uploads the assembly report PDF. Ingest it
    with `scripts/dfm.py ingest <project> <pdf> --kind smt`. Review footprint vs lead, part spacing, polarity, and rotation
    (`references/jlcdfm-smt.md`). In the JLC assembly flow Component Placements view, check pin 1 mark and body outlines.
 7. Triage each item. Real: outline on every layer, silk narrower than the JLC minimum, copper too near the edge, wrong

@@ -1,4 +1,4 @@
-# The JLCDFM report PDF (dfm.jlcdfm.com, "DFM analysis report_JLCDFM_<gerber zip>.pdf")
+# The JLCDFM report PDF (jlcdfm.com, "DFM analysis report_JLCDFM_<gerber zip>.pdf")
 
 ## Shape
 - ONE very tall page; the whole report is a single embedded JPEG (about 2400 x 15000 px). There is NO text layer:
