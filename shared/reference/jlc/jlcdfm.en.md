@@ -27,9 +27,13 @@ All read 2026-10-14. "Page date" is the "Last updated" stamp on the page.
 
 Address: the tool is at https://jlcdfm.com (https://dfm.jlcpcb.com redirects there). The host name dfm.jlcdfm.com did not resolve on
 2026-10-14 (DNS: non-existent domain).
+Checked live, 2026-10-14: the report PDF the app exports still prints "https://dfm.jlcdfm.com/" in its header; use jlcdfm.com.
 
 ## What it is and what it accepts [D1]
 - Free, web-based; upload a Gerber archive, "zip/rar format, max 50MB".
+  Verified by upload, 2026-10-14: free but not anonymous. Without a login the upload (`pcbDfm/uploadGerber`) fails with HTTP 500 and
+  the app sends the browser to the passport.jlcpcb.com login, so a JLCPCB account is needed. "View Example" (a demo board) and its
+  PDF export work without an account (`docs/bench-runs/jlc-live-2026-10-14/`).
 - "5 comprehensive analysis modules covering traces, solder masks, drilling, silkscreen, and component assembly" and "a 30+ point
   checklist", each finding located on the board; one-click PDF report.
 - Rules: "Use ready-to-go DFM rules or incorporate DFM rules provided by your preferred supplier".
@@ -54,6 +58,8 @@ Address: the tool is at https://jlcdfm.com (https://dfm.jlcpcb.com redirects the
 - Object 1 / Object 2 are the two measured objects, named by the DFM engine's primitives: `r3.93701` = round, 3.93701 mil diameter (for a
   trace, its width); `rect20x30`, `oval20x50`; component checks show designators; a one-object check shows `null` for the other.
 - Only the 50 lowest-level (worst) results per item are kept, to avoid "audit fatigue". So a list of 50 can hide more cases.
+  Checked live, 2026-10-14 (demo result file): at most 50 results per check and layer are stored, with the original count beside them
+  (e.g. 1555 annular-ring results cut to 50).
 - "Smart Display" hides unrelated layers when jumping to a result; "Auto Fit View" zooms to it.
 
 ## Parse problems and false reports JLC documents
@@ -85,4 +91,12 @@ Address: the tool is at https://jlcdfm.com (https://dfm.jlcpcb.com redirects the
 
 ## Gaps
 - The individual checks of each module and their Danger/Warning thresholds (not published in the pages read).
+  Checked live, 2026-10-14 (no upload: the web app serves its built-in rules at `pcbDfm/getDfmConfigFile`): each check has a range
+  [r0, r1, r2] in mil; below r0 Danger, below r1 Warning, below r2 Good, above r2 not listed (the demo's statistics reproduce this).
+  Trace width 4/5/8, trace spacing 4/6/8, trace to board edge 6/8/10, pad spacing 4/6/8, pad to board edge 5/8/16, PTH to trace
+  7/9/12, annular ring 4/6/8, soldermask bridge 4/6/8, mask opening to trace 3/6/8, silkscreen to pad and to hole 5/7/10, silkscreen
+  line width 4/6/8, PTH spacing 7/8/10, slot width 24/32/40, via to PTH 40/44/48; assembly: component spacing 8/12/16, component to
+  board edge 20/32/40 (the demo result adds via to pad 4/6/8). The bounds are whole mils, so a
+  value at JLC's own mm minimum lands below them: 0.10 mm track, space or mask dam (3.94 mil) is Danger; 0.15 mm silk width, silk to
+  pad or ring (5.9 mil) is Warning; 0.20 mm copper to edge (7.9 mil) is Warning. Full list: `docs/bench-runs/jlc-live-2026-10-14/jlcdfm_rules.json`.
 - An "SMT" counterpart of the "DFM Main Interface Help: PCB" page (none in the DFM Tool Help catalogue on 2026-10-14) [D13].

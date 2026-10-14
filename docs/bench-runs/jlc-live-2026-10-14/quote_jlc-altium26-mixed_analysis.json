@@ -1,0 +1,203 @@
+{
+ "head": "ok",
+ "orderType": null,
+ "resultJson": {
+  "technologyDiscernRecordId": 36853850,
+  "technologyDiscernRecordNum": "2842731477344ab4859a75e78adaa9f5",
+  "gerberFileId": 74534198,
+  "createTime": 1791965126000,
+  "stencilLayer": 2,
+  "pcsLength": 50.0,
+  "pcsWidth": 50.0,
+  "setLength": 50.0,
+  "setWidth": 50.0,
+  "minLineWidth": 0.07,
+  "minLineDist": 0.08,
+  "gerberResult": 0,
+  "fileResult": {
+   "file_counts": 9,
+   "color_screenPrint_flag": false,
+   "file_list": [
+    {
+     "file_name": "TB1.GTO"
+    },
+    {
+     "file_name": "TB1.GTP"
+    },
+    {
+     "file_name": "TB1.GTS"
+    },
+    {
+     "file_name": "TB1.GTL"
+    },
+    {
+     "file_name": "TB1.GBL"
+    },
+    {
+     "file_name": "TB1.GBS"
+    },
+    {
+     "file_name": "TB1-NonPlated.TXT",
+     "min_dia": 1.999996,
+     "holes_count": 1
+    },
+    {
+     "file_name": "TB1-Plated.TXT",
+     "min_dia": 0.150114,
+     "holes_count": 14
+    },
+    {
+     "file_name": "TB1.GM1"
+    }
+   ],
+   "dfm_base_info": {
+    "board_thickness": 1.6,
+    "color_ss": {
+     "has": false
+    },
+    "copper_grid": {
+     "have": false
+    },
+    "cu_layers": 2,
+    "drill_blind": {
+     "has": false
+    },
+    "drill_sum": {
+     "has_half_hole": false,
+     "holes": {
+      "min_blind_dia": null,
+      "min_blind_ring": null,
+      "min_dia": 0.0059,
+      "min_ring": 0.001965,
+      "total": 15,
+      "total_npth": 2
+     },
+     "slots": {
+      "min_width": null,
+      "more_slots": false,
+      "total": 0,
+      "total_holes": 0,
+      "total_npth": 0
+     }
+    },
+    "eda_type": "EDA_T_UNKNOWN",
+    "fly_test": {
+     "points": 35
+    },
+    "fpc": null,
+    "gold_finger": {
+     "is_has_gold_finger": false
+    },
+    "has_bga": false,
+    "min_line_spacing": 0.002953,
+    "min_line_width": 0.002952,
+    "rout_sum": {
+     "len": 8.039929
+    },
+    "size": {
+     "x": 1.968503,
+     "y": 1.968503
+    },
+    "smt": {
+     "comp2comp": null,
+     "footprints": 0,
+     "hole_pads": 14,
+     "min_body": null,
+     "pins_dis": null,
+     "smd_pads": {
+      "bottom": 0,
+      "top": 21
+     },
+     "tht2smd": null
+    },
+    "src_type": "GERBER",
+    "ss_layers": 1,
+    "surface": {
+     "sm_color": "0",
+     "ss_color": "0",
+     "surface": "0"
+    },
+    "surface_area": {
+     "bottom_layer": 0.006619932,
+     "profile_area": 3.875004,
+     "pths_circumference": 0.6927212,
+     "surface_hole": 0.01091036,
+     "top_layer": 0.03112427
+    }
+   },
+   "eda_type": "EDA_T_UNKNOWN",
+   "eda_socre": 0
+  },
+  "edatoolName": "EDA_T_UNKNOWN",
+  "duplicated": false,
+  "bordType": -1,
+  "resultForm": 1,
+  "dfmFileId": "8798621814978400256",
+  "webFileId": "8798621816824569856",
+  "bottomImageFileId": "8798621818632855552",
+  "topImageFileId": "8798621817571155968",
+  "colorScreenPrintFlag": false,
+  "dfmResultCode": "RES_OK",
+  "surfaceAreaTop": 20.0801,
+  "surfaceAreaBot": 4.2709,
+  "pthCircumference": 17.5951,
+  "surfaceHole": 7.0389,
+  "profileArea": 2499.9976,
+  "splitIntentFlag": false
+ },
+ "technologyDiscernRecordId": "36853850",
+ "technologyDiscernRecordNum": "2842731477344ab4859a75e78adaa9f5",
+ "customerId": null,
+ "customerCode": null,
+ "gerberFileId": "74534198",
+ "createTime": "1791965126000",
+ "noticeType": null,
+ "gerberFilePath": null,
+ "remark": null,
+ "stencilLayer": "2",
+ "pcsLength": "50.0",
+ "pcsWidth": "50.0",
+ "setLength": "50.0",
+ "setWidth": "50.0",
+ "panelX": null,
+ "needAgreeShrinkHole": false,
+ "needAgreeSplitHole": false,
+ "panelY": null,
+ "minLineWidth": "0.07",
+ "minLineDist": "0.08",
+ "smallestHole": null,
+ "totalHitsCount": null,
+ "isHalfHole": null,
+ "isGoldFinger": null,
+ "topImageFilePath": null,
+ "bottomImageFilePath": null,
+ "jsonFilePath": null,
+ "gerberResult": "0",
+ "edatoolName": "EDA_T_UNKNOWN",
+ "gerberFileError": null,
+ "uuid": null,
+ "colorList": [
+  "Green",
+  "Purple",
+  "Black",
+  "Blue",
+  "Red",
+  "White",
+  "Yellow"
+ ],
+ "gerberFileNameList": [
+  "TB1.GTO",
+  "TB1.GTP",
+  "TB1.GTS",
+  "TB1.GTL",
+  "TB1.GBL",
+  "TB1.GBS",
+  "TB1-NonPlated.TXT",
+  "TB1-Plated.TXT",
+  "TB1.GM1"
+ ],
+ "colorScreenPrintFlag": false,
+ "easyEdaDesignFlag": false,
+ "colorEdaVersionCheckFlag": true,
+ "plateType": null
+}

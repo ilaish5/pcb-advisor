@@ -1,0 +1,1145 @@
+{
+  "board": {
+    "name": "TB1",
+    "size_mm": [
+      50.0,
+      50.0
+    ],
+    "layers": 2,
+    "outline_layer": "GM1",
+    "outline_width_mm": 0.15,
+    "mask_expansion_mm": 0.05,
+    "absolute_origin_mm": [
+      31.75,
+      22.86
+    ],
+    "coordinates": "mm from the board's lower-left corner (outline centre line)"
+  },
+  "generator": "scripts/jlc_testboard.py",
+  "coupons": [
+    {
+      "id": "TS075",
+      "kind": "track_space",
+      "nominal": {
+        "width_mm": 0.075,
+        "space_mm": 0.075
+      },
+      "what": "3 top tracks 0.075 mm wide, 0.075 mm apart",
+      "bbox": [
+        1.925,
+        43.425,
+        8.075,
+        43.875
+      ],
+      "label_at": [
+        2.0,
+        45.3
+      ]
+    },
+    {
+      "id": "TS090",
+      "kind": "track_space",
+      "nominal": {
+        "width_mm": 0.09,
+        "space_mm": 0.09
+      },
+      "what": "3 top tracks 0.09 mm wide, 0.09 mm apart",
+      "bbox": [
+        11.41,
+        43.41,
+        17.59,
+        43.95
+      ],
+      "label_at": [
+        11.5,
+        45.3
+      ]
+    },
+    {
+      "id": "TS100",
+      "kind": "track_space",
+      "nominal": {
+        "width_mm": 0.1,
+        "space_mm": 0.1
+      },
+      "what": "3 top tracks 0.1 mm wide, 0.1 mm apart",
+      "bbox": [
+        20.9,
+        43.4,
+        27.1,
+        44.0
+      ],
+      "label_at": [
+        21.0,
+        45.3
+      ]
+    },
+    {
+      "id": "TS127",
+      "kind": "track_space",
+      "nominal": {
+        "width_mm": 0.127,
+        "space_mm": 0.127
+      },
+      "what": "3 top tracks 0.127 mm wide, 0.127 mm apart",
+      "bbox": [
+        30.373,
+        43.373,
+        36.627,
+        44.135
+      ],
+      "label_at": [
+        30.5,
+        45.3
+      ]
+    },
+    {
+      "id": "TS150",
+      "kind": "track_space",
+      "nominal": {
+        "width_mm": 0.15,
+        "space_mm": 0.15
+      },
+      "what": "3 top tracks 0.15 mm wide, 0.15 mm apart",
+      "bbox": [
+        39.85,
+        43.35,
+        46.15,
+        44.25
+      ],
+      "label_at": [
+        40.0,
+        45.3
+      ]
+    },
+    {
+      "id": "AR10",
+      "kind": "annular_ring",
+      "nominal": {
+        "ring_mm": 0.1,
+        "drill_mm": 0.8,
+        "pad_mm": 1.0
+      },
+      "what": "PTH pad, drill 0.8 mm, pad 1.00 mm (ring 0.1 mm), top and bottom",
+      "bbox": [
+        4.0,
+        37.0,
+        6.0,
+        39.0
+      ],
+      "label_at": [
+        3.2,
+        39.5
+      ]
+    },
+    {
+      "id": "AR13",
+      "kind": "annular_ring",
+      "nominal": {
+        "ring_mm": 0.13,
+        "drill_mm": 0.8,
+        "pad_mm": 1.06
+      },
+      "what": "PTH pad, drill 0.8 mm, pad 1.06 mm (ring 0.13 mm), top and bottom",
+      "bbox": [
+        13.5,
+        37.0,
+        15.5,
+        39.0
+      ],
+      "label_at": [
+        12.7,
+        39.5
+      ]
+    },
+    {
+      "id": "AR15",
+      "kind": "annular_ring",
+      "nominal": {
+        "ring_mm": 0.15,
+        "drill_mm": 0.8,
+        "pad_mm": 1.1
+      },
+      "what": "PTH pad, drill 0.8 mm, pad 1.10 mm (ring 0.15 mm), top and bottom",
+      "bbox": [
+        23.0,
+        37.0,
+        25.0,
+        39.0
+      ],
+      "label_at": [
+        22.2,
+        39.5
+      ]
+    },
+    {
+      "id": "AR18",
+      "kind": "annular_ring",
+      "nominal": {
+        "ring_mm": 0.18,
+        "drill_mm": 0.8,
+        "pad_mm": 1.16
+      },
+      "what": "PTH pad, drill 0.8 mm, pad 1.16 mm (ring 0.18 mm), top and bottom",
+      "bbox": [
+        32.5,
+        37.0,
+        34.5,
+        39.0
+      ],
+      "label_at": [
+        31.7,
+        39.5
+      ]
+    },
+    {
+      "id": "AR25",
+      "kind": "annular_ring",
+      "nominal": {
+        "ring_mm": 0.25,
+        "drill_mm": 0.8,
+        "pad_mm": 1.3
+      },
+      "what": "PTH pad, drill 0.8 mm, pad 1.30 mm (ring 0.25 mm), top and bottom",
+      "bbox": [
+        42.0,
+        37.0,
+        44.0,
+        39.0
+      ],
+      "label_at": [
+        41.2,
+        39.5
+      ]
+    },
+    {
+      "id": "V15",
+      "kind": "via",
+      "nominal": {
+        "drill_mm": 0.15,
+        "dia_mm": 0.25,
+        "ring_mm": 0.05
+      },
+      "what": "tented via, drill 0.15 mm, diameter 0.25 mm",
+      "bbox": [
+        4.4,
+        30.9,
+        5.6,
+        32.1
+      ],
+      "label_at": [
+        3.2,
+        32.8
+      ]
+    },
+    {
+      "id": "V20",
+      "kind": "via",
+      "nominal": {
+        "drill_mm": 0.2,
+        "dia_mm": 0.35,
+        "ring_mm": 0.075
+      },
+      "what": "tented via, drill 0.2 mm, diameter 0.35 mm",
+      "bbox": [
+        13.9,
+        30.9,
+        15.1,
+        32.1
+      ],
+      "label_at": [
+        12.7,
+        32.8
+      ]
+    },
+    {
+      "id": "V30",
+      "kind": "via",
+      "nominal": {
+        "drill_mm": 0.3,
+        "dia_mm": 0.6,
+        "ring_mm": 0.15
+      },
+      "what": "tented via, drill 0.3 mm, diameter 0.6 mm",
+      "bbox": [
+        23.4,
+        30.9,
+        24.6,
+        32.1
+      ],
+      "label_at": [
+        22.2,
+        32.8
+      ]
+    },
+    {
+      "id": "DR15",
+      "kind": "drill",
+      "nominal": {
+        "drill_mm": 0.15,
+        "dia_mm": 0.45,
+        "ring_mm": 0.15
+      },
+      "what": "tented via, drill 0.15 mm, diameter 0.45 mm",
+      "bbox": [
+        32.9,
+        30.9,
+        34.1,
+        32.1
+      ],
+      "label_at": [
+        31.7,
+        32.8
+      ]
+    },
+    {
+      "id": "DR20",
+      "kind": "drill",
+      "nominal": {
+        "drill_mm": 0.2,
+        "dia_mm": 0.5,
+        "ring_mm": 0.15
+      },
+      "what": "tented via, drill 0.2 mm, diameter 0.5 mm",
+      "bbox": [
+        42.4,
+        30.9,
+        43.6,
+        32.1
+      ],
+      "label_at": [
+        41.2,
+        32.8
+      ]
+    },
+    {
+      "id": "SP05",
+      "kind": "silk_to_pad",
+      "nominal": {
+        "silk_to_mask_mm": 0.05,
+        "silk_to_pad_mm": 0.1
+      },
+      "what": "silk line 0.05 mm from the mask opening (0.10 mm from the copper)",
+      "bbox": [
+        3.1,
+        23.85,
+        5.125,
+        26.15
+      ],
+      "label_at": [
+        3.25,
+        26.6
+      ]
+    },
+    {
+      "id": "SP10",
+      "kind": "silk_to_pad",
+      "nominal": {
+        "silk_to_mask_mm": 0.1,
+        "silk_to_pad_mm": 0.15
+      },
+      "what": "silk line 0.1 mm from the mask opening (0.15 mm from the copper)",
+      "bbox": [
+        11.1,
+        23.85,
+        13.175,
+        26.15
+      ],
+      "label_at": [
+        11.25,
+        26.6
+      ]
+    },
+    {
+      "id": "SP15",
+      "kind": "silk_to_pad",
+      "nominal": {
+        "silk_to_mask_mm": 0.15,
+        "silk_to_pad_mm": 0.2
+      },
+      "what": "silk line 0.15 mm from the mask opening (0.20 mm from the copper)",
+      "bbox": [
+        19.1,
+        23.85,
+        21.225,
+        26.15
+      ],
+      "label_at": [
+        19.25,
+        26.6
+      ]
+    },
+    {
+      "id": "SW10",
+      "kind": "silk_width",
+      "nominal": {
+        "width_mm": 0.1
+      },
+      "what": "5 mm silk line 0.1 mm wide",
+      "bbox": [
+        29.8,
+        24.8,
+        35.2,
+        25.2
+      ],
+      "label_at": [
+        30.0,
+        26.6
+      ]
+    },
+    {
+      "id": "SW15",
+      "kind": "silk_width",
+      "nominal": {
+        "width_mm": 0.15
+      },
+      "what": "5 mm silk line 0.15 mm wide",
+      "bbox": [
+        39.8,
+        24.8,
+        45.2,
+        25.2
+      ],
+      "label_at": [
+        40.0,
+        26.6
+      ]
+    },
+    {
+      "id": "MD08",
+      "kind": "mask_dam",
+      "nominal": {
+        "dam_mm": 0.08,
+        "pad_gap_mm": 0.18
+      },
+      "what": "4 pads 0.3 x 1.2 mm, gap 0.18 mm, mask dam 0.08 mm",
+      "bbox": [
+        2.7,
+        17.25,
+        4.74,
+        18.75
+      ],
+      "label_at": [
+        3.0,
+        19.4
+      ]
+    },
+    {
+      "id": "MD10",
+      "kind": "mask_dam",
+      "nominal": {
+        "dam_mm": 0.1,
+        "pad_gap_mm": 0.2
+      },
+      "what": "4 pads 0.3 x 1.2 mm, gap 0.20 mm, mask dam 0.1 mm",
+      "bbox": [
+        13.7,
+        17.25,
+        15.8,
+        18.75
+      ],
+      "label_at": [
+        14.0,
+        19.4
+      ]
+    },
+    {
+      "id": "MD13",
+      "kind": "mask_dam",
+      "nominal": {
+        "dam_mm": 0.13,
+        "pad_gap_mm": 0.23
+      },
+      "what": "4 pads 0.3 x 1.2 mm, gap 0.23 mm, mask dam 0.13 mm",
+      "bbox": [
+        24.7,
+        17.25,
+        26.89,
+        18.75
+      ],
+      "label_at": [
+        25.0,
+        19.4
+      ]
+    },
+    {
+      "id": "HV25",
+      "kind": "hole_to_hole",
+      "nominal": {
+        "gap_mm": 0.25,
+        "drill_mm": 0.3,
+        "what": "via-via"
+      },
+      "what": "two tented vias 0.3/0.5 mm, holes 0.25 mm apart (edge to edge)",
+      "bbox": [
+        3.6,
+        9.6,
+        4.95,
+        10.4
+      ],
+      "label_at": [
+        3.0,
+        11.4
+      ]
+    },
+    {
+      "id": "HP40",
+      "kind": "hole_to_hole",
+      "nominal": {
+        "gap_mm": 0.4,
+        "drill_mm": 0.8,
+        "what": "PTH-PTH"
+      },
+      "what": "two PTH pads 0.8/1.3 mm, holes 0.40 mm apart (edge to edge)",
+      "bbox": [
+        10.2,
+        9.2,
+        13.0,
+        10.8
+      ],
+      "label_at": [
+        10.5,
+        11.4
+      ]
+    },
+    {
+      "id": "MH",
+      "kind": "npth",
+      "nominal": {
+        "drill_mm": 2.0
+      },
+      "what": "non-plated hole 2.0 mm, no copper",
+      "bbox": [
+        42.9,
+        8.9,
+        45.1,
+        11.1
+      ],
+      "label_at": [
+        43.4,
+        11.6
+      ]
+    },
+    {
+      "id": "E15",
+      "kind": "copper_to_edge",
+      "nominal": {
+        "edge_mm": 0.15,
+        "to_outline_line_edge_mm": 0.075
+      },
+      "what": "0.25 mm track 0.15 mm from the board edge (outline centre line)",
+      "bbox": [
+        2.8,
+        -0.1,
+        7.2,
+        0.5
+      ],
+      "label_at": [
+        3.0,
+        2.0
+      ]
+    },
+    {
+      "id": "E20",
+      "kind": "copper_to_edge",
+      "nominal": {
+        "edge_mm": 0.2,
+        "to_outline_line_edge_mm": 0.125
+      },
+      "what": "0.25 mm track 0.2 mm from the board edge (outline centre line)",
+      "bbox": [
+        12.8,
+        -0.1,
+        17.2,
+        0.55
+      ],
+      "label_at": [
+        13.0,
+        2.0
+      ]
+    },
+    {
+      "id": "E30",
+      "kind": "copper_to_edge",
+      "nominal": {
+        "edge_mm": 0.3,
+        "to_outline_line_edge_mm": 0.225
+      },
+      "what": "0.25 mm track 0.3 mm from the board edge (outline centre line)",
+      "bbox": [
+        22.8,
+        -0.1,
+        27.2,
+        0.65
+      ],
+      "label_at": [
+        23.0,
+        2.0
+      ]
+    },
+    {
+      "id": "E40",
+      "kind": "copper_to_edge",
+      "nominal": {
+        "edge_mm": 0.4,
+        "to_outline_line_edge_mm": 0.325
+      },
+      "what": "0.25 mm track 0.4 mm from the board edge (outline centre line)",
+      "bbox": [
+        32.8,
+        -0.1,
+        37.2,
+        0.75
+      ],
+      "label_at": [
+        33.0,
+        2.0
+      ]
+    }
+  ],
+  "parts": [
+    {
+      "ref": "R1",
+      "value": "10k",
+      "footprint": "0603",
+      "lcsc": "C25804",
+      "x": 22.0,
+      "y": 10.0,
+      "rotation": 0,
+      "layer": "Top"
+    },
+    {
+      "ref": "C1",
+      "value": "100nF",
+      "footprint": "0603",
+      "lcsc": "C14663",
+      "x": 28.0,
+      "y": 10.0,
+      "rotation": 0,
+      "layer": "Top"
+    },
+    {
+      "ref": "D1",
+      "value": "Red LED",
+      "footprint": "0603",
+      "lcsc": "C2286",
+      "x": 34.0,
+      "y": 10.0,
+      "rotation": 0,
+      "layer": "Top"
+    }
+  ],
+  "formats": {
+    "jlc-altium26": {
+      "dir": "jlc-altium26",
+      "zip": "TB1_jlc-altium26.zip",
+      "files": [
+        "TB1.GTL",
+        "TB1.GBL",
+        "TB1.GTO",
+        "TB1.GTS",
+        "TB1.GBS",
+        "TB1.GTP",
+        "TB1.GM1",
+        "TB1-Plated.TXT",
+        "TB1-NonPlated.TXT"
+      ],
+      "title": "JLC's Altium 26 recipe",
+      "source": "shared/reference/jlc/files-and-formats.en.md \u00a7 JLC's Altium Gerber and drill recipe [F1]",
+      "gerber": {
+        "units": "mm",
+        "int": 4,
+        "dec": 4,
+        "zeros": "suppress_leading"
+      },
+      "drill": {
+        "units": "inch",
+        "int": 2,
+        "dec": 5,
+        "zeros": "keep"
+      },
+      "gerber_origin": "absolute",
+      "drill_origin": "absolute",
+      "origin_offset_mm": {
+        "gerber": [
+          31.75,
+          22.86
+        ],
+        "drill": [
+          31.75,
+          22.86
+        ]
+      },
+      "measured": {
+        "TS075": {
+          "width_mm": 0.075,
+          "space_mm": 0.075
+        },
+        "TS090": {
+          "width_mm": 0.09,
+          "space_mm": 0.09
+        },
+        "TS100": {
+          "width_mm": 0.1,
+          "space_mm": 0.1
+        },
+        "TS127": {
+          "width_mm": 0.127,
+          "space_mm": 0.127
+        },
+        "TS150": {
+          "width_mm": 0.15,
+          "space_mm": 0.15
+        },
+        "AR10": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.1,
+          "pad_mm": 1.0
+        },
+        "AR13": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.13,
+          "pad_mm": 1.06
+        },
+        "AR15": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.15,
+          "pad_mm": 1.1
+        },
+        "AR18": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.1799,
+          "pad_mm": 1.16
+        },
+        "AR25": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.25,
+          "pad_mm": 1.3
+        },
+        "V15": {
+          "drill_mm": 0.1501,
+          "ring_mm": 0.0499,
+          "dia_mm": 0.25
+        },
+        "V20": {
+          "drill_mm": 0.1999,
+          "ring_mm": 0.0751,
+          "dia_mm": 0.35
+        },
+        "V30": {
+          "drill_mm": 0.3,
+          "ring_mm": 0.15,
+          "dia_mm": 0.6
+        },
+        "DR15": {
+          "drill_mm": 0.1501,
+          "ring_mm": 0.1499,
+          "dia_mm": 0.45
+        },
+        "DR20": {
+          "drill_mm": 0.1999,
+          "ring_mm": 0.1501,
+          "dia_mm": 0.5
+        },
+        "SP05": {
+          "silk_to_mask_mm": 0.05,
+          "silk_to_pad_mm": 0.1
+        },
+        "SP10": {
+          "silk_to_mask_mm": 0.1,
+          "silk_to_pad_mm": 0.15
+        },
+        "SP15": {
+          "silk_to_mask_mm": 0.15,
+          "silk_to_pad_mm": 0.2
+        },
+        "SW10": {
+          "width_mm": 0.1
+        },
+        "SW15": {
+          "width_mm": 0.15
+        },
+        "MD08": {
+          "dam_mm": 0.08,
+          "pad_gap_mm": 0.18
+        },
+        "MD10": {
+          "dam_mm": 0.1,
+          "pad_gap_mm": 0.2
+        },
+        "MD13": {
+          "dam_mm": 0.13,
+          "pad_gap_mm": 0.23
+        },
+        "HV25": {
+          "gap_mm": 0.2499,
+          "drill_mm": 0.3
+        },
+        "HP40": {
+          "gap_mm": 0.3998,
+          "drill_mm": 0.8001
+        },
+        "MH": {
+          "drill_mm": 2.0
+        },
+        "E15": {
+          "edge_mm": 0.15,
+          "to_outline_line_edge_mm": 0.075
+        },
+        "E20": {
+          "edge_mm": 0.2,
+          "to_outline_line_edge_mm": 0.125
+        },
+        "E30": {
+          "edge_mm": 0.3,
+          "to_outline_line_edge_mm": 0.225
+        },
+        "E40": {
+          "edge_mm": 0.4,
+          "to_outline_line_edge_mm": 0.325
+        }
+      }
+    },
+    "outjob": {
+      "dir": "outjob",
+      "zip": "TB1_outjob.zip",
+      "files": [
+        "TB1.GTL",
+        "TB1.GBL",
+        "TB1.GTO",
+        "TB1.GTS",
+        "TB1.GBS",
+        "TB1.GTP",
+        "TB1.GM1",
+        "TB1-Plated.TXT",
+        "TB1-NonPlated.TXT"
+      ],
+      "title": "pcb-advisor OutJob (scripts/outjob.py)",
+      "source": "scripts/outjob.py: Gerber GerberUnit=Imperial, NumberOfDecimals=4, SuppressLeadingZeroes, OriginPosition=Relative; NC Drill Units=Imperial, NumberOfUnits=2, NumberOfDecimals=4, SuppressLeadingZeroes, OriginPosition=Relative",
+      "gerber": {
+        "units": "inch",
+        "int": 2,
+        "dec": 4,
+        "zeros": "suppress_leading"
+      },
+      "drill": {
+        "units": "inch",
+        "int": 2,
+        "dec": 4,
+        "zeros": "suppress_leading"
+      },
+      "gerber_origin": "relative",
+      "drill_origin": "relative",
+      "origin_offset_mm": {
+        "gerber": [
+          0.0,
+          0.0
+        ],
+        "drill": [
+          0.0,
+          0.0
+        ]
+      },
+      "measured": {
+        "TS075": {
+          "width_mm": 0.0749,
+          "space_mm": 0.0749
+        },
+        "TS090": {
+          "width_mm": 0.0899,
+          "space_mm": 0.0904
+        },
+        "TS100": {
+          "width_mm": 0.1001,
+          "space_mm": 0.098
+        },
+        "TS127": {
+          "width_mm": 0.127,
+          "space_mm": 0.127
+        },
+        "TS150": {
+          "width_mm": 0.1501,
+          "space_mm": 0.1496
+        },
+        "AR10": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.0999,
+          "pad_mm": 1.0
+        },
+        "AR13": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.1299,
+          "pad_mm": 1.0599
+        },
+        "AR15": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.15,
+          "pad_mm": 1.1001
+        },
+        "AR18": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.18,
+          "pad_mm": 1.16
+        },
+        "AR25": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.2499,
+          "pad_mm": 1.3
+        },
+        "V15": {
+          "drill_mm": 0.1501,
+          "ring_mm": 0.0499,
+          "dia_mm": 0.2499
+        },
+        "V20": {
+          "drill_mm": 0.1999,
+          "ring_mm": 0.0751,
+          "dia_mm": 0.35
+        },
+        "V30": {
+          "drill_mm": 0.3,
+          "ring_mm": 0.15,
+          "dia_mm": 0.5999
+        },
+        "DR15": {
+          "drill_mm": 0.1501,
+          "ring_mm": 0.15,
+          "dia_mm": 0.4501
+        },
+        "DR20": {
+          "drill_mm": 0.1999,
+          "ring_mm": 0.1501,
+          "dia_mm": 0.5001
+        },
+        "SP05": {
+          "silk_to_mask_mm": 0.0495,
+          "silk_to_pad_mm": 0.0994
+        },
+        "SP10": {
+          "silk_to_mask_mm": 0.1003,
+          "silk_to_pad_mm": 0.1502
+        },
+        "SP15": {
+          "silk_to_mask_mm": 0.1511,
+          "silk_to_pad_mm": 0.201
+        },
+        "SW10": {
+          "width_mm": 0.1001
+        },
+        "SW15": {
+          "width_mm": 0.1501
+        },
+        "MD08": {
+          "dam_mm": 0.08,
+          "pad_gap_mm": 0.1801
+        },
+        "MD10": {
+          "dam_mm": 0.0978,
+          "pad_gap_mm": 0.1979
+        },
+        "MD13": {
+          "dam_mm": 0.1283,
+          "pad_gap_mm": 0.2283
+        },
+        "HV25": {
+          "gap_mm": 0.2487,
+          "drill_mm": 0.3
+        },
+        "HP40": {
+          "gap_mm": 0.3988,
+          "drill_mm": 0.8001
+        },
+        "MH": {
+          "drill_mm": 2.0
+        },
+        "E15": {
+          "edge_mm": 0.1494,
+          "to_outline_line_edge_mm": 0.0743
+        },
+        "E20": {
+          "edge_mm": 0.2002,
+          "to_outline_line_edge_mm": 0.1251
+        },
+        "E30": {
+          "edge_mm": 0.2992,
+          "to_outline_line_edge_mm": 0.2242
+        },
+        "E40": {
+          "edge_mm": 0.4008,
+          "to_outline_line_edge_mm": 0.3258
+        }
+      }
+    },
+    "jlc-altium26-mixed": {
+      "dir": "jlc-altium26-mixed",
+      "zip": "TB1_jlc-altium26-mixed.zip",
+      "files": [
+        "TB1.GTL",
+        "TB1.GBL",
+        "TB1.GTO",
+        "TB1.GTS",
+        "TB1.GBS",
+        "TB1.GTP",
+        "TB1.GM1",
+        "TB1-Plated.TXT",
+        "TB1-NonPlated.TXT"
+      ],
+      "title": "JLC's Altium 26 recipe with Altium's default (relative) Gerber origin",
+      "source": "experiment: F1 sets the drill to the absolute origin and does not say where the Gerber goes",
+      "gerber": {
+        "units": "mm",
+        "int": 4,
+        "dec": 4,
+        "zeros": "suppress_leading"
+      },
+      "drill": {
+        "units": "inch",
+        "int": 2,
+        "dec": 5,
+        "zeros": "keep"
+      },
+      "gerber_origin": "relative",
+      "drill_origin": "absolute",
+      "experimental": true,
+      "origin_offset_mm": {
+        "gerber": [
+          0.0,
+          0.0
+        ],
+        "drill": [
+          31.75,
+          22.86
+        ]
+      },
+      "measured": {
+        "TS075": {
+          "width_mm": 0.075,
+          "space_mm": 0.075
+        },
+        "TS090": {
+          "width_mm": 0.09,
+          "space_mm": 0.09
+        },
+        "TS100": {
+          "width_mm": 0.1,
+          "space_mm": 0.1
+        },
+        "TS127": {
+          "width_mm": 0.127,
+          "space_mm": 0.127
+        },
+        "TS150": {
+          "width_mm": 0.15,
+          "space_mm": 0.15
+        },
+        "AR10": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.1,
+          "pad_mm": 1.0
+        },
+        "AR13": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.13,
+          "pad_mm": 1.06
+        },
+        "AR15": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.15,
+          "pad_mm": 1.1
+        },
+        "AR18": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.1799,
+          "pad_mm": 1.16
+        },
+        "AR25": {
+          "drill_mm": 0.8001,
+          "ring_mm": 0.25,
+          "pad_mm": 1.3
+        },
+        "V15": {
+          "drill_mm": 0.1501,
+          "ring_mm": 0.0499,
+          "dia_mm": 0.25
+        },
+        "V20": {
+          "drill_mm": 0.1999,
+          "ring_mm": 0.0751,
+          "dia_mm": 0.35
+        },
+        "V30": {
+          "drill_mm": 0.3,
+          "ring_mm": 0.15,
+          "dia_mm": 0.6
+        },
+        "DR15": {
+          "drill_mm": 0.1501,
+          "ring_mm": 0.1499,
+          "dia_mm": 0.45
+        },
+        "DR20": {
+          "drill_mm": 0.1999,
+          "ring_mm": 0.1501,
+          "dia_mm": 0.5
+        },
+        "SP05": {
+          "silk_to_mask_mm": 0.05,
+          "silk_to_pad_mm": 0.1
+        },
+        "SP10": {
+          "silk_to_mask_mm": 0.1,
+          "silk_to_pad_mm": 0.15
+        },
+        "SP15": {
+          "silk_to_mask_mm": 0.15,
+          "silk_to_pad_mm": 0.2
+        },
+        "SW10": {
+          "width_mm": 0.1
+        },
+        "SW15": {
+          "width_mm": 0.15
+        },
+        "MD08": {
+          "dam_mm": 0.08,
+          "pad_gap_mm": 0.18
+        },
+        "MD10": {
+          "dam_mm": 0.1,
+          "pad_gap_mm": 0.2
+        },
+        "MD13": {
+          "dam_mm": 0.13,
+          "pad_gap_mm": 0.23
+        },
+        "HV25": {
+          "gap_mm": 0.2499,
+          "drill_mm": 0.3
+        },
+        "HP40": {
+          "gap_mm": 0.3998,
+          "drill_mm": 0.8001
+        },
+        "MH": {
+          "drill_mm": 2.0
+        },
+        "E15": {
+          "edge_mm": 0.15,
+          "to_outline_line_edge_mm": 0.075
+        },
+        "E20": {
+          "edge_mm": 0.2,
+          "to_outline_line_edge_mm": 0.125
+        },
+        "E30": {
+          "edge_mm": 0.3,
+          "to_outline_line_edge_mm": 0.225
+        },
+        "E40": {
+          "edge_mm": 0.4,
+          "to_outline_line_edge_mm": 0.325
+        }
+      }
+    }
+  }
+}

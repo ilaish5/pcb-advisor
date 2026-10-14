@@ -40,6 +40,8 @@ All read 2026-10-14. "Page date" is the "Last updated" stamp on the page.
 ## The upload archive
 - One .zip or .rar, files at the top level, no nested folder [F1]. Size: JLCDFM takes up to 50 MB [F23]; the older cart file manager says
   "Only accept zip or rar, Max 10 M" [F22]; the limit of the current quote page was not found.
+  Verified by upload, 2026-10-14: the quote page (https://jlcpcb.com/quote) says "Only accept zip or rar, Max 100 MB" and took a flat
+  zip of RS-274X Gerbers and two Excellon .TXT files without an account (`docs/bench-runs/jlc-live-2026-10-14/`).
 - The board is built from the Gerber files only: notes, PDF, DXF or Excel in the archive are ignored (put what matters in the remark). If
   the archive holds both a PCB design file and Gerbers, the Gerbers are used [F9 #2, #3].
 - Extra layers (via-fill "sk" layer, stiffener, heatsink pads, a second GM layer) need a remark saying what they are, or they may be
@@ -79,11 +81,17 @@ Applies to Altium Designer 24, 25 and 26 (written on 26.1.1).
   commands" ticked; separate files for plated and non-plated holes ticked; separate files for via features unticked. The output is three
   drill files plus a report.
 - Gerbers in mm with the drill in inches is safe: every Excellon file declares its own units and format in its header [F1].
+  Verified by upload, 2026-10-14 (quote page, synthetic board): this recipe (mm 4:4 Gerber, inch 2:5 drill with all zeros, absolute
+  origin) and the advisor's OutJob format (inch 2:4 Gerber and drill, leading zeros suppressed, relative origin) both parsed as a
+  2-layer 50 x 50 mm board with every drill centred on its pad in JLC's render (`docs/bench-runs/jlc-live-2026-10-14/`).
 - The older Altium 24 article sets the drill precision to 2:4, plots "Select Used", and includes drill drawing and drill guide [F2]. It also
   offers a customer-made "JLCPCB Milti_Layer Rules.rul" (sic) and 4/6-layer stack-up files that JLC says are "not exhaustively validated" [F2].
 - Output goes to "Project Outputs for <ProjectName>" next to the .PrjPcb; zip those files flat [F1].
 - The Gerber position setting (relative or absolute origin) is not stated in F1 (gap): keep Gerber and drill on the same origin and check
   the drill hits against the pads in a viewer.
+  Verified by upload, 2026-10-14: with the Gerbers on the relative origin and the drill on the absolute origin (31.75 / 22.86 mm apart)
+  the quote page still showed every drill on its pad, so its parser re-aligned the drill to the copper. Not tested: the CAM review
+  after an order, and boards without flashed pads (see "NC drill files").
 
 ## NC drill files [F6, F7, F8]
 - JLC expects a self-contained Excellon file: header (M48) with units, zero suppression and the tool list (T1C0.45...). Missing header, tool
@@ -120,6 +128,8 @@ Applies to Altium Designer 24, 25 and 26 (written on 26.1.1).
   Place headers is not stated in the pages read (gap).
 - Panelized orders: choose "Single Piece, please help me repeat the data" for a one-board BOM/CPL, or "Complete File, just proceed with my
   own files" if the files already describe the panel [F13].
+- Checked live, 2026-10-14: BOM/CPL upload and matching need a JLCPCB account. On the quote page the PCB Assembly options show without
+  one, but NEXT answers "code 460" and opens the passport.jlcpcb.com login, so the BOM/CPL rules above were not tested by upload.
 
 ## Rotation and origin problems
 - JLC's 0 degrees: "Zero orientation for PCB library should match the component orientation in the packaging (tape/reel)". Datasheets or

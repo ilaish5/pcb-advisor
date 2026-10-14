@@ -1,0 +1,2404 @@
+{
+ "date": "2026-10-14",
+ "errors": [],
+ "parts": [
+  {
+   "code": "C20814",
+   "tool": {
+    "mpn": "SMD1812P260TF/16",
+    "manufacturer": "RUILON(Shenzhen Ruilongyuan Elec)",
+    "package": "1812",
+    "library_type": "Extended",
+    "stock": 1043
+   },
+   "site": {
+    "mpn": "SMD1812P260TF/16",
+    "manufacturer": "RUILON(Shenzhen Ruilongyuan Elec)",
+    "package": "1812",
+    "library_type": "Extended",
+    "preferred": null,
+    "stock": 1043,
+    "name": "RUILON SMD1812P260TF/16"
+   },
+   "agree": true,
+   "diffs": [],
+   "expected": "RUILON SMD1812P260TF/16",
+   "expected_ok": true
+  },
+  {
+   "code": "C207075",
+   "tool": {
+    "mpn": "1812L260/16MR",
+    "manufacturer": "Littelfuse",
+    "package": "1812",
+    "library_type": "Extended",
+    "stock": 1390
+   },
+   "site": {
+    "mpn": "1812L260/16MR",
+    "manufacturer": "Littelfuse",
+    "package": "1812",
+    "library_type": "Extended",
+    "preferred": null,
+    "stock": 1390,
+    "name": "Littelfuse 1812L260/16MR"
+   },
+   "agree": true,
+   "diffs": []
+  },
+  {
+   "code": "C25804",
+   "tool": {
+    "mpn": "0603WAF1002T5E",
+    "manufacturer": "UNI-ROYAL(Uniroyal Elec)",
+    "package": "0603",
+    "library_type": "Basic",
+    "stock": 31020621
+   },
+   "site": {
+    "mpn": "0603WAF1002T5E",
+    "manufacturer": "UNI-ROYAL(Uniroyal Elec)",
+    "package": "0603",
+    "library_type": "Basic",
+    "preferred": null,
+    "stock": 31020621,
+    "name": "UNI-ROYAL 0603WAF1002T5E"
+   },
+   "agree": true,
+   "diffs": []
+  },
+  {
+   "code": "C14663",
+   "tool": {
+    "mpn": "CC0603KRX7R9BB104",
+    "manufacturer": "YAGEO",
+    "package": "0603",
+    "library_type": "Basic",
+    "stock": 51518601
+   },
+   "site": {
+    "mpn": "CC0603KRX7R9BB104",
+    "manufacturer": "YAGEO",
+    "package": "0603",
+    "library_type": "Basic",
+    "preferred": null,
+    "stock": 51518601,
+    "name": "YAGEO CC0603KRX7R9BB104"
+   },
+   "agree": true,
+   "diffs": []
+  },
+  {
+   "code": "C2286",
+   "tool": {
+    "mpn": "KT-0603R",
+    "manufacturer": "Hubei KENTO Elec",
+    "package": "0603",
+    "library_type": "Basic",
+    "stock": 7926160
+   },
+   "site": {
+    "mpn": "KT-0603R",
+    "manufacturer": "Hubei KENTO Elec",
+    "package": "0603",
+    "library_type": "Basic",
+    "preferred": null,
+    "stock": 7926160,
+    "name": "Hubei KENTO Elec KT-0603R"
+   },
+   "agree": true,
+   "diffs": []
+  }
+ ],
+ "dfm_rules": {
+  "count": 38,
+  "file": "dfm用户自定义配置模板.json",
+  "sha256": "f1bebb3b2b5ac2ba0579f882fc0605d169c1d6a3a852a07beb8652b719e0a725"
+ },
+ "dfm_upload": {
+  "login_state": {
+   "login": false
+  },
+  "upload": {
+   "status": 500,
+   "body": "{\"timestamp\":1791964888828,\"status\":500,\"error\":\"Internal Server Error\",\"path\":\"/overseas-dfm-service/pcbDfm/uploadGerber\"}"
+  },
+  "redirected_to_login": true,
+  "page_after": "https://passport.jlcpcb.com/#/login?response_type=code&client_id=ccb7fe742f3b112f50c118dcee6102cc&redirect_url=https%3A%",
+  "api": [
+   {
+    "url": "https://jlcdfm.com/api/overseas-dfm-service/getAll?_t=1791964878388",
+    "status": 200,
+    "body": "{\"success\":true,\"code\":200,\"message\":null,\"errorCode\":null,\"data\":{\"login\":false}}"
+   },
+   {
+    "url": "https://jlcdfm.com/api/overseas-dfm-service/registerTrace",
+    "status": 200,
+    "body": "{\"code\":200,\"data\":null,\"message\":null}"
+   },
+   {
+    "url": "https://jlcdfm.com/api/overseas-dfm-service/smtDfm/checkIp?_t=1791964878565",
+    "status": 200,
+    "body": "{\"success\":true,\"code\":200,\"message\":null,\"errorCode\":null,\"data\":false}"
+   },
+   {
+    "url": "https://jlcdfm.com/api/overseas-dfm-service/pcbDfm/uploadGerber",
+    "status": 500,
+    "body": "{\"timestamp\":1791964888828,\"status\":500,\"error\":\"Internal Server Error\",\"path\":\"/overseas-dfm-service/pcbDfm/uploadGerber\"}"
+   },
+   {
+    "url": "https://jlcdfm.com/api/overseas-dfm-service/auth/login?url=https%3A%2F%2Fjlcdfm.com%2F&_t=1791964888700",
+    "status": 302,
+    "body": ""
+   }
+  ]
+ },
+ "dfm_demo_report": {
+  "pdf": {
+   "name": "DFM analysis report_JLCDFM_JLCDFM Demo File.pdf",
+   "bytes": 5392508,
+   "sha256": "0fab3d73ab7171806aa90d83b8ad7fc070c48ceada2d82a059b6e14459a6ff80"
+  },
+  "ingest": {
+   "ok": true,
+   "slices": 11,
+   "width": 2400,
+   "height": 14486,
+   "stem": "DFM_analysis_report_JLCDFM_JLCDFM_Demo_File"
+  },
+  "pdf_layout": {
+   "pages": 1,
+   "images_on_page1": 1,
+   "text_chars": 0
+  }
+ },
+ "quote": [
+  {
+   "format": "jlc-altium26",
+   "upload_limit_text": "Only accept zip or rar, Max 100 MB, View example >",
+   "upload_status": 200,
+   "analysis_seconds": 22,
+   "detected_text": "Detected 2 layer board of 50x50mm(1.969x1.969 inches).",
+   "size_mm": [
+    50.0,
+    50.0
+   ],
+   "layers": 2,
+   "minLineWidth_mm": "0.07",
+   "minLineDist_mm": "0.08",
+   "min_line_width_mm_exact": 0.075,
+   "min_line_spacing_mm_exact": 0.075,
+   "min_hole_mm": 0.1499,
+   "min_ring_mm": 0.0499,
+   "holes_total": 15,
+   "holes_npth": 2,
+   "files": [
+    {
+     "file_name": "TB1.GTO"
+    },
+    {
+     "file_name": "TB1.GTP"
+    },
+    {
+     "file_name": "TB1.GTS"
+    },
+    {
+     "file_name": "TB1.GTL"
+    },
+    {
+     "file_name": "TB1.GBL"
+    },
+    {
+     "file_name": "TB1.GBS"
+    },
+    {
+     "file_name": "TB1-NonPlated.TXT",
+     "min_dia": 1.999996,
+     "holes_count": 1
+    },
+    {
+     "file_name": "TB1-Plated.TXT",
+     "min_dia": 0.150114,
+     "holes_count": 14
+    },
+    {
+     "file_name": "TB1.GM1"
+    }
+   ],
+   "smd_pads": {
+    "bottom": 0,
+    "top": 21
+   },
+   "hole_pads": 14,
+   "dfmResultCode": "RES_OK",
+   "edatoolName": "EDA_T_UNKNOWN",
+   "gerberResult": "0",
+   "gerberFileError": null,
+   "render_check": {
+    "render_px": [
+     1138,
+     1139
+    ],
+    "px_per_mm": 22.76,
+    "holes_found": "15/15",
+    "pads_checked": 5,
+    "max_hole_vs_pad_mm": 0.017,
+    "max_hole_vs_board_mm": 0.151,
+    "smd_pads_on_copper": "21/21",
+    "holes": [
+     {
+      "x": 5.0,
+      "y": 31.5,
+      "d": 0.15,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.127,
+      "render_hole_mm": 0.186
+     },
+     {
+      "x": 33.5,
+      "y": 31.5,
+      "d": 0.15,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.071,
+      "render_hole_mm": 0.186
+     },
+     {
+      "x": 14.5,
+      "y": 31.5,
+      "d": 0.2,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.106,
+      "render_hole_mm": 0.227
+     },
+     {
+      "x": 43.0,
+      "y": 31.5,
+      "d": 0.2,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.071,
+      "render_hole_mm": 0.222
+     },
+     {
+      "x": 24.0,
+      "y": 31.5,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.088,
+      "render_hole_mm": 0.325
+     },
+     {
+      "x": 4.0,
+      "y": 10.0,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.113,
+      "render_hole_mm": 0.325
+     },
+     {
+      "x": 4.55,
+      "y": 10.0,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.074,
+      "render_hole_mm": 0.34
+     },
+     {
+      "x": 5.0,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.151,
+      "render_hole_mm": 0.834,
+      "vs_pad_mm": 0.017,
+      "render_pad_mm": 1.006,
+      "drawn_pad_mm": 1.0
+     },
+     {
+      "x": 14.5,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.125,
+      "render_hole_mm": 0.83,
+      "vs_pad_mm": 0.001,
+      "render_pad_mm": 1.082,
+      "drawn_pad_mm": 1.06
+     },
+     {
+      "x": 24.0,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.11,
+      "render_hole_mm": 0.831,
+      "vs_pad_mm": 0.006,
+      "render_pad_mm": 1.12,
+      "drawn_pad_mm": 1.1
+     },
+     {
+      "x": 33.5,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.099,
+      "render_hole_mm": 0.83,
+      "vs_pad_mm": 0.001,
+      "render_pad_mm": 1.181,
+      "drawn_pad_mm": 1.16
+     },
+     {
+      "x": 43.0,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.102,
+      "render_hole_mm": 0.831,
+      "vs_pad_mm": 0.005,
+      "render_pad_mm": 1.315,
+      "drawn_pad_mm": 1.3
+     },
+     {
+      "x": 11.0,
+      "y": 10.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.093,
+      "render_hole_mm": 0.831
+     },
+     {
+      "x": 12.2,
+      "y": 10.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.077,
+      "render_hole_mm": 0.837
+     },
+     {
+      "x": 44.0,
+      "y": 10.0,
+      "d": 2.0,
+      "plated": false,
+      "found": true,
+      "vs_board_mm": 0.03,
+      "render_hole_mm": 2.011
+     }
+    ]
+   },
+   "assembly": {
+    "switch": "on",
+    "section_text": "PCB Assembly | Assembly cost starting from $0 with coupon> | Assemble top side | Assemble bottom side | PCBA Type | Economic Standard What's the difference? | Assembly Side | Top Side Bottom Side Both Sides | PCBA Qty | 5 2 | Tooling holes | Added by JLCPCB Added by Customer | Confirm Parts Placement | No Yes | Stencil Storage | No Yes | Fixture Storage | No Yes | Parts Selection | By Customer (Self-Service) By JLCPCB (Manual Match) | Advanced Options | Bake Components | Photo Confirmation | Board Cleaning | Conformal Coating (cleaning included) | Packaging | Special stencil | Depanel boards &",
+    "next": "clicked",
+    "customerInfo": "{\"success\":false,\"code\":460,\"message\":\"For security reasons, you were automatically logged out of your account.\",\"errorCode\":\"\"}",
+    "login_wall": true,
+    "calls": [
+     "https://cart.jlcpcb.com/api/overseas-core-platform/order/checkPcbOrderSizeLimit",
+     "https://cart.jlcpcb.com/api/overseas-core-platform/customer/customerInfo?_t=1791965031032",
+     "https://passport.jlcpcb.com/"
+    ]
+   }
+  },
+  {
+   "format": "outjob",
+   "upload_limit_text": "Only accept zip or rar, Max 100 MB, View example >",
+   "upload_status": 200,
+   "analysis_seconds": 22,
+   "detected_text": "Detected 2 layer board of 50x50mm(1.969x1.969 inches).",
+   "size_mm": [
+    50.0,
+    50.0
+   ],
+   "layers": 2,
+   "minLineWidth_mm": "0.07",
+   "minLineDist_mm": "0.07",
+   "min_line_width_mm_exact": 0.0749,
+   "min_line_spacing_mm_exact": 0.0749,
+   "min_hole_mm": 0.1499,
+   "min_ring_mm": 0.0499,
+   "holes_total": 15,
+   "holes_npth": 2,
+   "files": [
+    {
+     "file_name": "TB1.GTO"
+    },
+    {
+     "file_name": "TB1.GTP"
+    },
+    {
+     "file_name": "TB1.GTS"
+    },
+    {
+     "file_name": "TB1.GTL"
+    },
+    {
+     "file_name": "TB1.GBL"
+    },
+    {
+     "file_name": "TB1.GBS"
+    },
+    {
+     "file_name": "TB1-NonPlated.TXT",
+     "min_dia": 1.999996,
+     "holes_count": 1
+    },
+    {
+     "file_name": "TB1-Plated.TXT",
+     "min_dia": 0.150114,
+     "holes_count": 14
+    },
+    {
+     "file_name": "TB1.GM1"
+    }
+   ],
+   "smd_pads": {
+    "bottom": 0,
+    "top": 21
+   },
+   "hole_pads": 14,
+   "dfmResultCode": "RES_OK",
+   "edatoolName": "EDA_T_UNKNOWN",
+   "gerberResult": "0",
+   "gerberFileError": null,
+   "render_check": {
+    "render_px": [
+     1139,
+     1139
+    ],
+    "px_per_mm": 22.78,
+    "holes_found": "15/15",
+    "pads_checked": 5,
+    "max_hole_vs_pad_mm": 0.022,
+    "max_hole_vs_board_mm": 0.163,
+    "smd_pads_on_copper": "21/21",
+    "holes": [
+     {
+      "x": 5.001,
+      "y": 31.501,
+      "d": 0.15,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.144,
+      "render_hole_mm": 0.172
+     },
+     {
+      "x": 33.5,
+      "y": 31.501,
+      "d": 0.15,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.07,
+      "render_hole_mm": 0.185
+     },
+     {
+      "x": 14.501,
+      "y": 31.501,
+      "d": 0.2,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.118,
+      "render_hole_mm": 0.232
+     },
+     {
+      "x": 43.0,
+      "y": 31.501,
+      "d": 0.2,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.083,
+      "render_hole_mm": 0.227
+     },
+     {
+      "x": 24.0,
+      "y": 31.501,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.089,
+      "render_hole_mm": 0.329
+     },
+     {
+      "x": 4.0,
+      "y": 10.0,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.14,
+      "render_hole_mm": 0.321
+     },
+     {
+      "x": 4.549,
+      "y": 10.0,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.058,
+      "render_hole_mm": 0.357
+     },
+     {
+      "x": 5.001,
+      "y": 38.001,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.163,
+      "render_hole_mm": 0.829,
+      "vs_pad_mm": 0.022,
+      "render_pad_mm": 1.003,
+      "drawn_pad_mm": 1.0
+     },
+     {
+      "x": 14.501,
+      "y": 38.001,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.135,
+      "render_hole_mm": 0.833,
+      "vs_pad_mm": 0.007,
+      "render_pad_mm": 1.081,
+      "drawn_pad_mm": 1.06
+     },
+     {
+      "x": 24.0,
+      "y": 38.001,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.109,
+      "render_hole_mm": 0.829,
+      "vs_pad_mm": 0.004,
+      "render_pad_mm": 1.118,
+      "drawn_pad_mm": 1.1
+     },
+     {
+      "x": 33.5,
+      "y": 38.001,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.102,
+      "render_hole_mm": 0.83,
+      "vs_pad_mm": 0.004,
+      "render_pad_mm": 1.179,
+      "drawn_pad_mm": 1.16
+     },
+     {
+      "x": 43.0,
+      "y": 38.001,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.104,
+      "render_hole_mm": 0.829,
+      "vs_pad_mm": 0.005,
+      "render_pad_mm": 1.311,
+      "drawn_pad_mm": 1.3
+     },
+     {
+      "x": 11.001,
+      "y": 10.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.107,
+      "render_hole_mm": 0.826
+     },
+     {
+      "x": 12.2,
+      "y": 10.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.078,
+      "render_hole_mm": 0.842
+     },
+     {
+      "x": 44.0,
+      "y": 10.0,
+      "d": 2.0,
+      "plated": false,
+      "found": true,
+      "vs_board_mm": 0.042,
+      "render_hole_mm": 2.01
+     }
+    ]
+   },
+   "gerber_viewer": {
+    "clicked": true,
+    "goes_to": [
+     "https://passport.jlcpcb.com/"
+    ],
+    "login_wall": true
+   }
+  },
+  {
+   "format": "jlc-altium26-mixed",
+   "upload_limit_text": "Only accept zip or rar, Max 100 MB, View example >",
+   "upload_status": 200,
+   "analysis_seconds": 13,
+   "detected_text": "Detected 2 layer board of 50x50mm(1.969x1.969 inches).",
+   "size_mm": [
+    50.0,
+    50.0
+   ],
+   "layers": 2,
+   "minLineWidth_mm": "0.07",
+   "minLineDist_mm": "0.08",
+   "min_line_width_mm_exact": 0.075,
+   "min_line_spacing_mm_exact": 0.075,
+   "min_hole_mm": 0.1499,
+   "min_ring_mm": 0.0499,
+   "holes_total": 15,
+   "holes_npth": 2,
+   "files": [
+    {
+     "file_name": "TB1.GTO"
+    },
+    {
+     "file_name": "TB1.GTP"
+    },
+    {
+     "file_name": "TB1.GTS"
+    },
+    {
+     "file_name": "TB1.GTL"
+    },
+    {
+     "file_name": "TB1.GBL"
+    },
+    {
+     "file_name": "TB1.GBS"
+    },
+    {
+     "file_name": "TB1-NonPlated.TXT",
+     "min_dia": 1.999996,
+     "holes_count": 1
+    },
+    {
+     "file_name": "TB1-Plated.TXT",
+     "min_dia": 0.150114,
+     "holes_count": 14
+    },
+    {
+     "file_name": "TB1.GM1"
+    }
+   ],
+   "smd_pads": {
+    "bottom": 0,
+    "top": 21
+   },
+   "hole_pads": 14,
+   "dfmResultCode": "RES_OK",
+   "edatoolName": "EDA_T_UNKNOWN",
+   "gerberResult": "0",
+   "gerberFileError": null,
+   "render_check": {
+    "render_px": [
+     1139,
+     1139
+    ],
+    "px_per_mm": 22.78,
+    "holes_found": "15/15",
+    "pads_checked": 5,
+    "max_hole_vs_pad_mm": 0.022,
+    "max_hole_vs_board_mm": 0.163,
+    "smd_pads_on_copper": "21/21",
+    "holes": [
+     {
+      "x": 5.0,
+      "y": 31.5,
+      "d": 0.15,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.145,
+      "render_hole_mm": 0.172
+     },
+     {
+      "x": 33.5,
+      "y": 31.5,
+      "d": 0.15,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.069,
+      "render_hole_mm": 0.185
+     },
+     {
+      "x": 14.5,
+      "y": 31.5,
+      "d": 0.2,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.117,
+      "render_hole_mm": 0.227
+     },
+     {
+      "x": 43.0,
+      "y": 31.5,
+      "d": 0.2,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.082,
+      "render_hole_mm": 0.227
+     },
+     {
+      "x": 24.0,
+      "y": 31.5,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.089,
+      "render_hole_mm": 0.329
+     },
+     {
+      "x": 4.0,
+      "y": 10.0,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.14,
+      "render_hole_mm": 0.321
+     },
+     {
+      "x": 4.55,
+      "y": 10.0,
+      "d": 0.3,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.057,
+      "render_hole_mm": 0.357
+     },
+     {
+      "x": 5.0,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.163,
+      "render_hole_mm": 0.829,
+      "vs_pad_mm": 0.022,
+      "render_pad_mm": 1.001,
+      "drawn_pad_mm": 1.0
+     },
+     {
+      "x": 14.5,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.134,
+      "render_hole_mm": 0.833,
+      "vs_pad_mm": 0.005,
+      "render_pad_mm": 1.078,
+      "drawn_pad_mm": 1.06
+     },
+     {
+      "x": 24.0,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.111,
+      "render_hole_mm": 0.827,
+      "vs_pad_mm": 0.006,
+      "render_pad_mm": 1.119,
+      "drawn_pad_mm": 1.1
+     },
+     {
+      "x": 33.5,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.1,
+      "render_hole_mm": 0.83,
+      "vs_pad_mm": 0.004,
+      "render_pad_mm": 1.179,
+      "drawn_pad_mm": 1.16
+     },
+     {
+      "x": 43.0,
+      "y": 38.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.107,
+      "render_hole_mm": 0.827,
+      "vs_pad_mm": 0.01,
+      "render_pad_mm": 1.311,
+      "drawn_pad_mm": 1.3
+     },
+     {
+      "x": 11.0,
+      "y": 10.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.106,
+      "render_hole_mm": 0.826
+     },
+     {
+      "x": 12.2,
+      "y": 10.0,
+      "d": 0.8,
+      "plated": true,
+      "found": true,
+      "vs_board_mm": 0.08,
+      "render_hole_mm": 0.841
+     },
+     {
+      "x": 44.0,
+      "y": 10.0,
+      "d": 2.0,
+      "plated": false,
+      "found": true,
+      "vs_board_mm": 0.043,
+      "render_hole_mm": 2.008
+     }
+    ]
+   },
+   "gerber_viewer": {
+    "clicked": true,
+    "goes_to": [
+     "https://passport.jlcpcb.com/"
+    ],
+    "login_wall": true
+   }
+  }
+ ],
+ "assembly_files": {
+  "bom": {
+   "file": "projects/jlc-testboard/exports/jlc-testboard_BOM_jlc.csv",
+   "format": "jlc",
+   "lines": 3,
+   "left_out": [],
+   "needs_lcsc": []
+  },
+  "cpl": {
+   "file": "projects/jlc-testboard/exports/jlc-testboard_cpl.csv",
+   "name": "jlc-testboard_cpl.csv",
+   "count": 3
+  },
+  "bom_csv": "Comment,Designator,Footprint,LCSC Part #\n10k,R1,0603,C25804\n100nF,C1,0603,C14663\nRed LED,D1,0603,C2286\n",
+  "cpl_csv": "Designator,Mid X,Mid Y,Layer,Rotation\nR1,22.0000mm,10.0000mm,Top,0.0\nC1,28.0000mm,10.0000mm,Top,0.0\nD1,34.0000mm,10.0000mm,Top,0.0\n"
+ },
+ "compare": [
+  {
+   "id": "TS075",
+   "kind": "track_space",
+   "what": "3 top tracks 0.075 mm wide, 0.075 mm apart",
+   "measured_a": {
+    "width_mm": 0.075,
+    "space_mm": 0.075
+   },
+   "measured_b": {
+    "width_mm": 0.0749,
+    "space_mm": 0.0749
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace width",
+     "range_mil": [
+      4,
+      5,
+      8
+     ],
+     "value_mm": 0.075,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    },
+    {
+     "check": "Trace spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.075,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "min track/space 0.10/0.10 mm (1-2 layer, 1 oz) [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": "below_fab_min",
+    "checks": [
+     [
+      "Width",
+      "unknown"
+     ],
+     [
+      "Clearance",
+      "below_fab_min"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "fail",
+    "preset": "fail"
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "TS090",
+   "kind": "track_space",
+   "what": "3 top tracks 0.09 mm wide, 0.09 mm apart",
+   "measured_a": {
+    "width_mm": 0.09,
+    "space_mm": 0.09
+   },
+   "measured_b": {
+    "width_mm": 0.0899,
+    "space_mm": 0.0904
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace width",
+     "range_mil": [
+      4,
+      5,
+      8
+     ],
+     "value_mm": 0.09,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    },
+    {
+     "check": "Trace spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.09,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "min track/space 0.10/0.10 mm (1-2 layer, 1 oz) [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": "unknown",
+    "checks": [
+     [
+      "Width",
+      "unknown"
+     ],
+     [
+      "Clearance",
+      "tighter_ok"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "fail",
+    "preset": "warn"
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "TS100",
+   "kind": "track_space",
+   "what": "3 top tracks 0.1 mm wide, 0.1 mm apart",
+   "measured_a": {
+    "width_mm": 0.1,
+    "space_mm": 0.1
+   },
+   "measured_b": {
+    "width_mm": 0.1001,
+    "space_mm": 0.098
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace width",
+     "range_mil": [
+      4,
+      5,
+      8
+     ],
+     "value_mm": 0.1,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    },
+    {
+     "check": "Trace spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.1,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "min track/space 0.10/0.10 mm (1-2 layer, 1 oz) [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "unknown",
+    "checks": [
+     [
+      "Width",
+      "unknown"
+     ],
+     [
+      "Clearance",
+      "tighter_ok"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "pass",
+    "preset": "warn"
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "TS127",
+   "kind": "track_space",
+   "what": "3 top tracks 0.127 mm wide, 0.127 mm apart",
+   "measured_a": {
+    "width_mm": 0.127,
+    "space_mm": 0.127
+   },
+   "measured_b": {
+    "width_mm": 0.127,
+    "space_mm": 0.127
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace width",
+     "range_mil": [
+      4,
+      5,
+      8
+     ],
+     "value_mm": 0.127,
+     "level_a": "Good",
+     "level_b": "Good"
+    },
+    {
+     "check": "Trace spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.127,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "min track/space 0.10/0.10 mm (1-2 layer, 1 oz) [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "tighter_ok",
+    "checks": [
+     [
+      "Width",
+      "same"
+     ],
+     [
+      "Clearance",
+      "tighter_ok"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": "warn"
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "TS150",
+   "kind": "track_space",
+   "what": "3 top tracks 0.15 mm wide, 0.15 mm apart",
+   "measured_a": {
+    "width_mm": 0.15,
+    "space_mm": 0.15
+   },
+   "measured_b": {
+    "width_mm": 0.1501,
+    "space_mm": 0.1496
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace width",
+     "range_mil": [
+      4,
+      5,
+      8
+     ],
+     "value_mm": 0.15,
+     "level_a": "Good",
+     "level_b": "Good"
+    },
+    {
+     "check": "Trace spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.15,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "min track/space 0.10/0.10 mm (1-2 layer, 1 oz) [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "same",
+    "checks": [
+     [
+      "Width",
+      "safer"
+     ],
+     [
+      "Clearance",
+      "same"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": "pass"
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "AR10",
+   "kind": "annular_ring",
+   "what": "PTH pad, drill 0.8 mm, pad 1.00 mm (ring 0.1 mm), top and bottom",
+   "measured_a": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.1,
+    "pad_mm": 1.0
+   },
+   "measured_b": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.0999,
+    "pad_mm": 1.0
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.1,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "PTH ring 2-layer 1 oz: 0.18 abs. min, 0.25 recommended [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": "below_fab_min",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "below_fab_min"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "fail",
+    "preset": "fail"
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "AR13",
+   "kind": "annular_ring",
+   "what": "PTH pad, drill 0.8 mm, pad 1.06 mm (ring 0.13 mm), top and bottom",
+   "measured_a": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.13,
+    "pad_mm": 1.06
+   },
+   "measured_b": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.1299,
+    "pad_mm": 1.0599
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.13,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "PTH ring 2-layer 1 oz: 0.18 abs. min, 0.25 recommended [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": "below_fab_min",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "below_fab_min"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "fail",
+    "preset": "fail"
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "AR15",
+   "kind": "annular_ring",
+   "what": "PTH pad, drill 0.8 mm, pad 1.10 mm (ring 0.15 mm), top and bottom",
+   "measured_a": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.15,
+    "pad_mm": 1.1
+   },
+   "measured_b": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.15,
+    "pad_mm": 1.1001
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.15,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "PTH ring 2-layer 1 oz: 0.18 abs. min, 0.25 recommended [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": "same",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "same"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "fail",
+    "preset": "pass"
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "AR18",
+   "kind": "annular_ring",
+   "what": "PTH pad, drill 0.8 mm, pad 1.16 mm (ring 0.18 mm), top and bottom",
+   "measured_a": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.1799,
+    "pad_mm": 1.16
+   },
+   "measured_b": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.18,
+    "pad_mm": 1.16
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.1799,
+     "level_a": "Good",
+     "level_b": "Good"
+    }
+   ],
+   "jlcdfm_a": "Good",
+   "jlcdfm_b": "Good",
+   "reference": {
+    "claim": "PTH ring 2-layer 1 oz: 0.18 abs. min, 0.25 recommended [P1]",
+    "verdict": "at/above min"
+   },
+   "preset": {
+    "verdict": "safer",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "safer"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "pass",
+    "reference": "pass",
+    "preset": "pass"
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "AR25",
+   "kind": "annular_ring",
+   "what": "PTH pad, drill 0.8 mm, pad 1.30 mm (ring 0.25 mm), top and bottom",
+   "measured_a": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.25,
+    "pad_mm": 1.3
+   },
+   "measured_b": {
+    "drill_mm": 0.8001,
+    "ring_mm": 0.2499,
+    "pad_mm": 1.3
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.25,
+     "level_a": "not reported",
+     "level_b": "not reported"
+    }
+   ],
+   "jlcdfm_a": "not reported",
+   "jlcdfm_b": "not reported",
+   "reference": {
+    "claim": "PTH ring 2-layer 1 oz: 0.18 abs. min, 0.25 recommended [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "safer",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "safer"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "pass",
+    "reference": "pass",
+    "preset": "pass"
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "V15",
+   "kind": "via",
+   "what": "tented via, drill 0.15 mm, diameter 0.25 mm",
+   "measured_a": {
+    "drill_mm": 0.1501,
+    "ring_mm": 0.0499,
+    "dia_mm": 0.25
+   },
+   "measured_b": {
+    "drill_mm": 0.1501,
+    "ring_mm": 0.0499,
+    "dia_mm": 0.2499
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.0499,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "min via 0.15/0.25 mm, diameter >= hole + 0.1 [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "below_fab_min",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "below_fab_min"
+     ],
+     [
+      "RoutingVias",
+      "unknown"
+     ],
+     [
+      "HoleSize",
+      "unknown"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "pass",
+    "preset": "fail"
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "V20",
+   "kind": "via",
+   "what": "tented via, drill 0.2 mm, diameter 0.35 mm",
+   "measured_a": {
+    "drill_mm": 0.1999,
+    "ring_mm": 0.0751,
+    "dia_mm": 0.35
+   },
+   "measured_b": {
+    "drill_mm": 0.1999,
+    "ring_mm": 0.0751,
+    "dia_mm": 0.35
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.0751,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "min via 0.15/0.25 mm, diameter >= hole + 0.1 [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "below_fab_min",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "below_fab_min"
+     ],
+     [
+      "RoutingVias",
+      "unknown"
+     ],
+     [
+      "HoleSize",
+      "unknown"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "pass",
+    "preset": "fail"
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "V30",
+   "kind": "via",
+   "what": "tented via, drill 0.3 mm, diameter 0.6 mm",
+   "measured_a": {
+    "drill_mm": 0.3,
+    "ring_mm": 0.15,
+    "dia_mm": 0.6
+   },
+   "measured_b": {
+    "drill_mm": 0.3,
+    "ring_mm": 0.15,
+    "dia_mm": 0.5999
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.15,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "min via 0.15/0.25 mm, diameter >= hole + 0.1 [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "same",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "same"
+     ],
+     [
+      "RoutingVias",
+      "same"
+     ],
+     [
+      "HoleSize",
+      "same"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": "pass"
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "DR15",
+   "kind": "drill",
+   "what": "tented via, drill 0.15 mm, diameter 0.45 mm",
+   "measured_a": {
+    "drill_mm": 0.1501,
+    "ring_mm": 0.1499,
+    "dia_mm": 0.45
+   },
+   "measured_b": {
+    "drill_mm": 0.1501,
+    "ring_mm": 0.15,
+    "dia_mm": 0.4501
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.1499,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "drill 0.15-6.3 mm on 2 layers [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "unknown",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "same"
+     ],
+     [
+      "RoutingVias",
+      "unknown"
+     ],
+     [
+      "HoleSize",
+      "unknown"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": "warn"
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "DR20",
+   "kind": "drill",
+   "what": "tented via, drill 0.2 mm, diameter 0.5 mm",
+   "measured_a": {
+    "drill_mm": 0.1999,
+    "ring_mm": 0.1501,
+    "dia_mm": 0.5
+   },
+   "measured_b": {
+    "drill_mm": 0.1999,
+    "ring_mm": 0.1501,
+    "dia_mm": 0.5001
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Annular ring",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.1501,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "drill 0.15-6.3 mm on 2 layers [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "unknown",
+    "checks": [
+     [
+      "MinimumAnnularRing",
+      "same"
+     ],
+     [
+      "RoutingVias",
+      "unknown"
+     ],
+     [
+      "HoleSize",
+      "unknown"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": "warn"
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "SP05",
+   "kind": "silk_to_pad",
+   "what": "silk line 0.05 mm from the mask opening (0.10 mm from the copper)",
+   "measured_a": {
+    "silk_to_mask_mm": 0.05,
+    "silk_to_pad_mm": 0.1
+   },
+   "measured_b": {
+    "silk_to_mask_mm": 0.0495,
+    "silk_to_pad_mm": 0.0994
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Silkscreen to pad",
+     "range_mil": [
+      5,
+      7,
+      10
+     ],
+     "value_mm": 0.1,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "pad to silkscreen 0.15 mm [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": "below_fab_min",
+    "checks": [
+     [
+      "SilkToSolderMaskClearance",
+      "below_fab_min"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "fail",
+    "preset": "fail"
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "SP10",
+   "kind": "silk_to_pad",
+   "what": "silk line 0.1 mm from the mask opening (0.15 mm from the copper)",
+   "measured_a": {
+    "silk_to_mask_mm": 0.1,
+    "silk_to_pad_mm": 0.15
+   },
+   "measured_b": {
+    "silk_to_mask_mm": 0.1003,
+    "silk_to_pad_mm": 0.1502
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Silkscreen to pad",
+     "range_mil": [
+      5,
+      7,
+      10
+     ],
+     "value_mm": 0.15,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "pad to silkscreen 0.15 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "below_fab_min",
+    "checks": [
+     [
+      "SilkToSolderMaskClearance",
+      "below_fab_min"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": "fail"
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "SP15",
+   "kind": "silk_to_pad",
+   "what": "silk line 0.15 mm from the mask opening (0.20 mm from the copper)",
+   "measured_a": {
+    "silk_to_mask_mm": 0.15,
+    "silk_to_pad_mm": 0.2
+   },
+   "measured_b": {
+    "silk_to_mask_mm": 0.1511,
+    "silk_to_pad_mm": 0.201
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Silkscreen to pad",
+     "range_mil": [
+      5,
+      7,
+      10
+     ],
+     "value_mm": 0.2,
+     "level_a": "Good",
+     "level_b": "Good"
+    }
+   ],
+   "jlcdfm_a": "Good",
+   "jlcdfm_b": "Good",
+   "reference": {
+    "claim": "pad to silkscreen 0.15 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "same",
+    "checks": [
+     [
+      "SilkToSolderMaskClearance",
+      "same"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": "pass",
+    "reference": "pass",
+    "preset": "pass"
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "SW10",
+   "kind": "silk_width",
+   "what": "5 mm silk line 0.1 mm wide",
+   "measured_a": {
+    "width_mm": 0.1
+   },
+   "measured_b": {
+    "width_mm": 0.1001
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Silkscreen line width",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.1,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "silk line >= 0.15 mm [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "fail",
+    "preset": null
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "SW15",
+   "kind": "silk_width",
+   "what": "5 mm silk line 0.15 mm wide",
+   "measured_a": {
+    "width_mm": 0.15
+   },
+   "measured_b": {
+    "width_mm": 0.1501
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Silkscreen line width",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.15,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "silk line >= 0.15 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": null
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "MD08",
+   "kind": "mask_dam",
+   "what": "4 pads 0.3 x 1.2 mm, gap 0.18 mm, mask dam 0.08 mm",
+   "measured_a": {
+    "dam_mm": 0.08,
+    "pad_gap_mm": 0.18
+   },
+   "measured_b": {
+    "dam_mm": 0.08,
+    "pad_gap_mm": 0.1801
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Soldermask bridge",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.08,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    },
+    {
+     "check": "Pad spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.18,
+     "level_a": "Good",
+     "level_b": "Good"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "mask bridge 0.10 mm, green 1 oz [P1] (P2: 2-layer pad gap >= 0.2 mm)",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "fail",
+    "preset": null
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "MD10",
+   "kind": "mask_dam",
+   "what": "4 pads 0.3 x 1.2 mm, gap 0.20 mm, mask dam 0.1 mm",
+   "measured_a": {
+    "dam_mm": 0.1,
+    "pad_gap_mm": 0.2
+   },
+   "measured_b": {
+    "dam_mm": 0.0978,
+    "pad_gap_mm": 0.1979
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Soldermask bridge",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.1,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    },
+    {
+     "check": "Pad spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.2,
+     "level_a": "Good",
+     "level_b": "Good"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "mask bridge 0.10 mm, green 1 oz [P1] (P2: 2-layer pad gap >= 0.2 mm)",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "pass",
+    "preset": null
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "MD13",
+   "kind": "mask_dam",
+   "what": "4 pads 0.3 x 1.2 mm, gap 0.23 mm, mask dam 0.13 mm",
+   "measured_a": {
+    "dam_mm": 0.13,
+    "pad_gap_mm": 0.23
+   },
+   "measured_b": {
+    "dam_mm": 0.1283,
+    "pad_gap_mm": 0.2283
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Soldermask bridge",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.13,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    },
+    {
+     "check": "Pad spacing",
+     "range_mil": [
+      4,
+      6,
+      8
+     ],
+     "value_mm": 0.23,
+     "level_a": "not reported",
+     "level_b": "not reported"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "mask bridge 0.10 mm, green 1 oz [P1] (P2: 2-layer pad gap >= 0.2 mm)",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": null
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "HV25",
+   "kind": "hole_to_hole",
+   "what": "two tented vias 0.3/0.5 mm, holes 0.25 mm apart (edge to edge)",
+   "measured_a": {
+    "gap_mm": 0.2499,
+    "drill_mm": 0.3
+   },
+   "measured_b": {
+    "gap_mm": 0.2487,
+    "drill_mm": 0.3
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Plated through-hole spacing",
+     "range_mil": [
+      7,
+      8,
+      10
+     ],
+     "value_mm": 0.2499,
+     "level_a": "Good",
+     "level_b": "Good"
+    }
+   ],
+   "jlcdfm_a": "Good",
+   "jlcdfm_b": "Good",
+   "reference": {
+    "claim": "hole to hole: via-via 0.2, pad-pad 0.45 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "pass",
+    "reference": "pass",
+    "preset": null
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "HP40",
+   "kind": "hole_to_hole",
+   "what": "two PTH pads 0.8/1.3 mm, holes 0.40 mm apart (edge to edge)",
+   "measured_a": {
+    "gap_mm": 0.3998,
+    "drill_mm": 0.8001
+   },
+   "measured_b": {
+    "gap_mm": 0.3988,
+    "drill_mm": 0.8001
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Plated through-hole spacing",
+     "range_mil": [
+      7,
+      8,
+      10
+     ],
+     "value_mm": 0.3998,
+     "level_a": "not reported",
+     "level_b": "not reported"
+    }
+   ],
+   "jlcdfm_a": "not reported",
+   "jlcdfm_b": "not reported",
+   "reference": {
+    "claim": "hole to hole: via-via 0.2, pad-pad 0.45 mm [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "pass",
+    "reference": "fail",
+    "preset": null
+   },
+   "agree": "NO"
+  },
+  {
+   "id": "MH",
+   "kind": "npth",
+   "what": "non-plated hole 2.0 mm, no copper",
+   "measured_a": {
+    "drill_mm": 2.0
+   },
+   "measured_b": {
+    "drill_mm": 2.0
+   },
+   "jlcdfm_checks": [],
+   "jlcdfm_a": null,
+   "jlcdfm_b": null,
+   "reference": {
+    "claim": "min NPTH 0.50 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": "safer",
+    "checks": [
+     [
+      "HoleSize",
+      "safer"
+     ]
+    ]
+   },
+   "votes": {
+    "jlcdfm": null,
+    "reference": "pass",
+    "preset": "pass"
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "E15",
+   "kind": "copper_to_edge",
+   "what": "0.25 mm track 0.15 mm from the board edge (outline centre line)",
+   "measured_a": {
+    "edge_mm": 0.15,
+    "to_outline_line_edge_mm": 0.075
+   },
+   "measured_b": {
+    "edge_mm": 0.1494,
+    "to_outline_line_edge_mm": 0.0743
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace to board edge",
+     "range_mil": [
+      6,
+      8,
+      10
+     ],
+     "value_mm": 0.15,
+     "level_a": "Danger",
+     "level_b": "Danger"
+    }
+   ],
+   "jlcdfm_a": "Danger",
+   "jlcdfm_b": "Danger",
+   "reference": {
+    "claim": "copper to routed edge >= 0.2 mm [P1]",
+    "verdict": "below"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "fail",
+    "reference": "fail",
+    "preset": null
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "E20",
+   "kind": "copper_to_edge",
+   "what": "0.25 mm track 0.2 mm from the board edge (outline centre line)",
+   "measured_a": {
+    "edge_mm": 0.2,
+    "to_outline_line_edge_mm": 0.125
+   },
+   "measured_b": {
+    "edge_mm": 0.2002,
+    "to_outline_line_edge_mm": 0.1251
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace to board edge",
+     "range_mil": [
+      6,
+      8,
+      10
+     ],
+     "value_mm": 0.2,
+     "level_a": "Warning",
+     "level_b": "Warning"
+    }
+   ],
+   "jlcdfm_a": "Warning",
+   "jlcdfm_b": "Warning",
+   "reference": {
+    "claim": "copper to routed edge >= 0.2 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "warn",
+    "reference": "pass",
+    "preset": null
+   },
+   "agree": "partly"
+  },
+  {
+   "id": "E30",
+   "kind": "copper_to_edge",
+   "what": "0.25 mm track 0.3 mm from the board edge (outline centre line)",
+   "measured_a": {
+    "edge_mm": 0.3,
+    "to_outline_line_edge_mm": 0.225
+   },
+   "measured_b": {
+    "edge_mm": 0.2992,
+    "to_outline_line_edge_mm": 0.2242
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace to board edge",
+     "range_mil": [
+      6,
+      8,
+      10
+     ],
+     "value_mm": 0.3,
+     "level_a": "not reported",
+     "level_b": "not reported"
+    }
+   ],
+   "jlcdfm_a": "not reported",
+   "jlcdfm_b": "not reported",
+   "reference": {
+    "claim": "copper to routed edge >= 0.2 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "pass",
+    "reference": "pass",
+    "preset": null
+   },
+   "agree": "yes"
+  },
+  {
+   "id": "E40",
+   "kind": "copper_to_edge",
+   "what": "0.25 mm track 0.4 mm from the board edge (outline centre line)",
+   "measured_a": {
+    "edge_mm": 0.4,
+    "to_outline_line_edge_mm": 0.325
+   },
+   "measured_b": {
+    "edge_mm": 0.4008,
+    "to_outline_line_edge_mm": 0.3258
+   },
+   "jlcdfm_checks": [
+    {
+     "check": "Trace to board edge",
+     "range_mil": [
+      6,
+      8,
+      10
+     ],
+     "value_mm": 0.4,
+     "level_a": "not reported",
+     "level_b": "not reported"
+    }
+   ],
+   "jlcdfm_a": "not reported",
+   "jlcdfm_b": "not reported",
+   "reference": {
+    "claim": "copper to routed edge >= 0.2 mm [P1]",
+    "verdict": "ok"
+   },
+   "preset": {
+    "verdict": null,
+    "checks": []
+   },
+   "votes": {
+    "jlcdfm": "pass",
+    "reference": "pass",
+    "preset": null
+   },
+   "agree": "yes"
+  }
+ ]
+}

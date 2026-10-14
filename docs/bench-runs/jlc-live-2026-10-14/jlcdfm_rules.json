@@ -1,0 +1,475 @@
+{
+ "source": "https://jlcdfm.com/api/overseas-dfm-service/pcbDfm/getDfmConfigFile",
+ "file_name": "dfm用户自定义配置模板.json",
+ "sha256": "f1bebb3b2b5ac2ba0579f882fc0605d169c1d6a3a852a07beb8652b719e0a725",
+ "fetched": "2026-10-14T11:01:16",
+ "level_rule": "value(mil) < r[0] Danger, < r[1] Warning, < r[2] Good, else not listed",
+ "rules": {
+  "jlc_analysis_drill.miss_pth": {
+   "title": "Missing plated through-hole",
+   "what": "Detect top and bottom pads at the same location without plated through-holes",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_drill.pth_2_pth": {
+   "title": "Plated through-hole spacing",
+   "what": "Measure spacing between plated through-holes",
+   "range_mil": [
+    7,
+    8,
+    10
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_drill.short_slot": {
+   "title": "Short slot detection",
+   "what": "Detect slots shorter than twice their width",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_drill.slot_width": {
+   "title": "Slot width check",
+   "what": "Measure slot width",
+   "range_mil": [
+    24,
+    32,
+    40
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_drill.via_2_pth": {
+   "title": "Via to PTH spacing",
+   "what": "Measure spacing of vias to plated through-holes",
+   "range_mil": [
+    40,
+    44,
+    48
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.acute_line": {
+   "title": "Sharp trace corner",
+   "what": "Check for sharp corners in traces",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.bga_pad": {
+   "title": "BGA pad",
+   "what": "Check BGA pads on the board",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.hole_on_pad": {
+   "title": "Via placed within a pad",
+   "what": "Check if there is a via placed within a pad",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.line2edge": {
+   "title": "Trace to board edge",
+   "what": "Detect traces too close to the board edge",
+   "range_mil": [
+    6,
+    8,
+    10
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.line2line": {
+   "title": "Trace spacing",
+   "what": "Measure spacing between adjacent parallel traces",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.line_stub": {
+   "title": "Unconnected trace end",
+   "what": "Free-standing trace ends not connected to pads",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.lines": {
+   "title": "Trace width",
+   "what": "Trace width information",
+   "range_mil": [
+    4,
+    5,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.marks": {
+   "title": "Fiducial",
+   "what": "Detect fiducial marks on the board",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.pad2edge": {
+   "title": "Pad to board edge",
+   "what": "Measure distance of pads from the board edge",
+   "range_mil": [
+    5,
+    8,
+    16
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.pad2pad": {
+   "title": "Pad spacing",
+   "what": "Measure pad to pad spacing",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.pth2line": {
+   "title": "Plated through-hole to trace clearance",
+   "what": "Measure clearance of plated through-holes to traces",
+   "range_mil": [
+    7,
+    9,
+    12
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_inner.pth_ar": {
+   "title": "Annular ring",
+   "what": "Annular ring width of pads compared to holes",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.acute_line": {
+   "title": "Sharp trace corner",
+   "what": "Check for sharp corners in traces",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.bga_pad": {
+   "title": "BGA pad",
+   "what": "Check BGA pads on the board",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.hole_on_pad": {
+   "title": "Via placed within a pad",
+   "what": "Check if there is a via placed within a pad",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.line2edge": {
+   "title": "Trace to board edge",
+   "what": "Detect traces too close to the board edge",
+   "range_mil": [
+    6,
+    8,
+    10
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.line2line": {
+   "title": "Trace spacing",
+   "what": "Measure spacing between adjacent parallel traces",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.line_stub": {
+   "title": "Unconnected trace end",
+   "what": "Free-standing trace ends not connected to pads",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.lines": {
+   "title": "Trace width",
+   "what": "Trace width information",
+   "range_mil": [
+    4,
+    5,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.marks": {
+   "title": "Fiducial",
+   "what": "Detect fiducial marks on the board",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.pad2edge": {
+   "title": "Pad to board edge",
+   "what": "Measure distance of pads from the board edge",
+   "range_mil": [
+    5,
+    8,
+    16
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.pad2pad": {
+   "title": "Pad spacing",
+   "what": "Measure pad to pad spacing",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.pth2line": {
+   "title": "Plated through-hole to trace clearance",
+   "what": "Measure clearance of plated through-holes to traces",
+   "range_mil": [
+    7,
+    9,
+    12
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_signal_outer.pth_ar": {
+   "title": "Annular ring",
+   "what": "Annular ring width of pads compared to holes",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_sm.bridge": {
+   "title": "Soldermask bridge",
+   "what": "Detect distance between parallel soldermask opening edges",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_sm.coverage": {
+   "title": "Solder mask opening exposing trace",
+   "what": "Detect clearance of solder mask openings to nearby traces",
+   "range_mil": [
+    3,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_sm.fills": {
+   "title": "Soldermask opening with multiple segments",
+   "what": "Check if solder mask openings are constructed from multiple geometric shapes",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_sm.neg_pad_ar": {
+   "title": "Negative soldermask expansion",
+   "what": "Detect solder mask openings smaller than their corresponding pads",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.c2c_size": {
+   "title": "Component collision warning",
+   "what": "Component collision warning;Component 1;Component 2",
+   "range_mil": [
+    0.06,
+    0.1,
+    0.15
+   ],
+   "type": "CGT_DOUBLE_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.comp2comp": {
+   "title": "Component spacing",
+   "what": "Component to component spacing;Component 1;Component 2",
+   "range_mil": [
+    8,
+    12,
+    16
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.comp2edge": {
+   "title": "Component to board edge distance",
+   "what": "Measure distance from component outline to the board edge",
+   "range_mil": [
+    20,
+    32,
+    40
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.comp2hole": {
+   "title": "Lead to hole distance",
+   "what": "Detect clearance of component leads to holes",
+   "range_mil": [
+    8,
+    10,
+    12
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.comp_p2p": {
+   "title": "Coponent pad spacing",
+   "what": "Detect clearance between pads of the same component",
+   "range_mil": [
+    6,
+    8,
+    10
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.comp_x_edge": {
+   "title": "Component clipped by board outline",
+   "what": "Detect component boundary clipping by the board outline",
+   "range_mil": null,
+   "type": "CGT_WARNING_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.pin_i_edge": {
+   "title": "Pin inner edge",
+   "what": "Measure if component pin edges extend past pad edges",
+   "range_mil": null,
+   "type": "CGT_ERROR_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.pin_l_edge": {
+   "title": "Pin left edge",
+   "what": "Measure if component pin edges extend past pad edges",
+   "range_mil": null,
+   "type": "CGT_ERROR_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.pin_non_pad": {
+   "title": "Pin without pad",
+   "what": "Detect if component pins without pads",
+   "range_mil": null,
+   "type": "CGT_ERROR_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.pin_o_edge": {
+   "title": "Pin outer edge",
+   "what": "Measure if component pin edges extend past pad edges",
+   "range_mil": null,
+   "type": "CGT_ERROR_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.pin_r_edge": {
+   "title": "Pin right edge",
+   "what": "Measure if component pin edges extend past pad edges",
+   "range_mil": null,
+   "type": "CGT_ERROR_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.tht2hole": {
+   "title": "Component through-hole",
+   "what": "Detect misalignment of component through-hole pins to pad holes",
+   "range_mil": [
+    8,
+    6,
+    3
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.tht_miss_hole": {
+   "title": "Missing hole for component pin",
+   "what": "Detect component through-hole pins without corresponding holes",
+   "range_mil": null,
+   "type": "CGT_ERROR_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_smt.weld2paste": {
+   "title": "Lead area overlapping pad",
+   "what": "Detect insufficient overlap between component pins and pads",
+   "range_mil": [
+    0.75,
+    0.9,
+    1.0
+   ],
+   "type": "CGT_DOUBLE_VALUE",
+   "unit": "inch"
+  },
+  "jlc_analysis_ss.ss2pad": {
+   "title": "Silkscreen to pad",
+   "what": "Detect clearance of silkscreen to pads",
+   "range_mil": [
+    5,
+    7,
+    10
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_ss.ss2pth": {
+   "title": "Silkscreen to hole",
+   "what": "Detect clearance of silkscreen to holes",
+   "range_mil": [
+    5,
+    7,
+    10
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  },
+  "jlc_analysis_ss.ssl_w": {
+   "title": "Silkscreen line width",
+   "what": "Check silkscreen line width",
+   "range_mil": [
+    4,
+    6,
+    8
+   ],
+   "type": "CGT_LINE_SEGMENT",
+   "unit": "inch"
+  }
+ }
+}

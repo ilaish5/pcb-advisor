@@ -59,6 +59,10 @@ options that change a limit or the price. Assembly limits: `assembly-capabilitie
 | BGA | pad 0.2-0.25 mm needs ENIG; pad to trace >= 0.1 mm | pad to trace min 0.09 mm | via in BGA pad only as filled and plated-over via | P1 |
 
 - Multilayer trace/space of 3.0-3.5 mil is charged as a difficult process: +20 % of the order for 4-8 layers, +30 % for 10+ layers [P13].
+- Checked live, 2026-10-14 (synthetic 2-layer board, `docs/bench-runs/jlc-live-2026-10-14/`): the quote page took 0.075 mm track/space
+  without a message (it shows the minimum rounded to 0.01 mm: "0.07 / 0.08"). JLCDFM's built-in rules (served by jlcdfm.com, applied
+  to the drawn values; its upload needs an account) rate 0.10 mm track or space Danger (threshold 4 mil = 0.1016 mm) and 0.127-0.15 mm
+  spacing Warning (below 6 mil): stricter than the 0.10 mm minimum above.
 - Long narrow dangling traces can short through dry-film bridging: delete them or connect the end at 5 mil or wider [P7].
 
 ## Drills, vias and annular ring
@@ -85,6 +89,12 @@ options that change a limit or the price. Assembly limits: `assembly-capabilitie
 Note: the ring figures are for plated component holes. A via at the 0.15 / 0.25 mm minimum has a 0.05 mm ring: via rings follow the via
 diameter rule, not the PTH ring rule. Altium's single MinimumAnnularRing rule covers both, so scope it if vias and pads need different values.
 
+Checked live, 2026-10-14 (`docs/bench-runs/jlc-live-2026-10-14/`): the quote page read 0.15 mm drills and a 0.05 mm via ring without a
+message and offers the via options 0.3/(0.4/0.45), 0.25/(0.35/0.4), 0.2/(0.3/0.35), 0.15/(0.25/0.3) and 0.1/(0.2/0.25) mm, as above.
+JLCDFM's built-in rules (no upload: it needs an account) disagree in places: annular ring Danger below 4 mil (0.10 mm), Warning below
+6 mil, so a 0.13 or 0.15 mm PTH ring is only a Warning although 0.18 mm is the 2-layer minimum here; PTH spacing is flagged only below
+10 mil (0.254 mm), so a 0.40 mm PTH-to-PTH gap passes although pad-to-pad above says 0.45 mm.
+
 ## Solder mask
 - LPI mask, colours Green, Purple, Red, Yellow, Blue, White, Black [P1].
 - Expansion: pad-to-opening 1:1 is possible since the LDI upgrade of June 2025 (a reorder follows its old production file). Keep
@@ -92,6 +102,8 @@ diameter rule, not the PTH ring rule. Altium's single MinimumAnnularRing rule co
   negative expansion covers the pad.
 - Mask bridge (dam between pads), 1 oz copper: 0.10 mm for green, red, yellow, blue, purple; 0.13 mm for black and white. 2 oz: 0.20 mm,
   any colour [P1]. The colour therefore changes the minimum pad gap that keeps a dam.
+  Checked live, 2026-10-14: JLCDFM's built-in "Soldermask bridge" check is Danger below 4 mil and Warning below 6 mil, so a 0.10 mm dam
+  is Danger and 0.13 mm a Warning there (rules served by jlcdfm.com; `docs/bench-runs/jlc-live-2026-10-14/jlcdfm_rules.json`).
 - No mask layer, or an empty one, means the whole board is covered [P2 #19]. Where silkscreen overlaps an opening, the opening wins and
   the silk is dropped unless a remark asks otherwise [P2 #9].
 - Mask dielectric constant 3.8; ink >= 10 um [P1]. For impedance JLC models mask as 1.2 mil on laminate, 0.6 mil on copper, 1.2 mil
@@ -119,6 +131,8 @@ diameter rule, not the PTH ring rule. Altium's single MinimumAnnularRing rule co
 | Letter spacing; outline fonts | >= 0.15 mm between letters; fill lines >= 0.15 mm, hollow part > 0.2 mm | P2 #9 |
 
 - JLC does not check silkscreen and may widen thin text to 0.15 mm; complaints about unreadable non-standard text are not accepted [P2 #9].
+- Checked live, 2026-10-14: JLCDFM's built-in rules rate silk line width Danger below 4 mil, Warning below 6 mil (so 0.15 mm is a
+  Warning) and silkscreen to pad Danger below 5 mil, Warning below 7 mil (so 0.15 mm is a Warning).
 - Top text upright, bottom text mirrored in the design; slots drawn only in silkscreen are not made; silk on exposed copper is not
   printed unless asked [P7].
 - No mark is added to the board by default. The order-number service ended in May 2026: do not put "JLCJLCJLCJLC" on the silkscreen.
@@ -131,6 +145,8 @@ diameter rule, not the PTH ring rule. Altium's single MinimumAnnularRing rule co
   Keep exactly one outline layer. Draw outline lines 0.15 mm wide; wider lines are cut on their centre line.
 - Copper to edge: routed edge or routed slot >= 0.2 mm; V-cut edge >= 0.4 mm; non-mouse-bite edges of a mouse-bite panel >= 0.2 mm [P1].
   For Economic assembly JLC asks > 0.3 mm from traces and components to the edge (depanel tolerance about 0.2 mm) [P24 #14].
+  Checked live, 2026-10-14: JLCDFM's built-in "Trace to board edge" is Danger below 6 mil and Warning below 8 mil (0.203 mm), so a
+  0.20 mm gap is a Warning there; "Pad to board edge" is Danger below 5 mil, Warning below 8 mil.
 - Edge tolerance: routed +/-0.2 mm regular, +/-0.1 mm high precision (board >= 50 x 50 mm and >= 3 tooling holes of >= 1.5 mm on
   different corners); V-cut +/-0.4 mm; general dimension tolerance +/-0.1 mm [P1].
 - Size [P1, P4]:
