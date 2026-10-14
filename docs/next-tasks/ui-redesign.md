@@ -1,6 +1,6 @@
 # UI redesign: calm, modern, intuitive
 
-Status: in progress (2026-10-14). The owner asked for a full redesign of the app. The aim is a clean, modern and pleasant tool that does not tire the eye, with no needless text or shapes. Decisions the owner made:
+Status: done (2026-10-14). The open items are in PLAN.md section 7, under "UI redesign done". The owner asked for a full redesign of the app. The aim is a clean, modern and pleasant tool that does not tire the eye, with no needless text or shapes. Decisions the owner made:
 
 | Question | Decision |
 |---|---|

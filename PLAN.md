@@ -237,6 +237,26 @@ file: `docs/STATUS-2026-10-14.md`. User decisions: Altium 365 is ignored (the di
 finished project (review mode, no new design); Sonnet subagents for parallel tasks. Project data lives in
 `projects/real-project/` (git-ignored); the review is `checks/device-review.md`.
 
+**UI redesign done (2026-10-14)** - brief and design system: `docs/next-tasks/ui-redesign.md`.
+- **Owner's choices:** light + dark, nav left / chat right, no tab bars but side by side, colour only where it means something.
+- **The UI is split by area:** ui/styles/*.css and ui/js/{kit,core,shell,chat,palette,viewer,markdown}.js + views/. Clicks go through an `onAct` registry.
+- **Built by parallel Sonnet waves**, then reviewed from screenshots in both themes (`shoot.py`).
+- **Ground rule restated by the owner:** system files go to GitHub, and only GENERAL sources go into shared/. A part's datasheet lives in its project. Everything is reachable in the UI and through the API.
+  - 28 part datasheets moved into the projects.
+  - The course extras were removed at the owner's request.
+  - shared/reference is listed in Sources.
+- **JLC knowledge:**
+  - shared/reference/jlc/ (cited, verified).
+  - A live check with a synthetic test board: `scripts/jlc_live.py`, `docs/bench-runs/jlc-live-2026-10-14/`.
+  - The preset follows the board (layers, copper, mask colour) at JLC's verified floors, with new rules.
+  - A guided upload: the user signs in and uploads; the tool builds the Gerber zip and picks the report up from Downloads.
+- **Device fixes are parked:** `projects/real-project/checks/parked-fixes.md`.
+- **Open, with the owner at the end:**
+  1. The first real JLCDFM upload: the user signs in; the tool guides and picks the report up.
+  2. Import the new .RUL files into AD26 on a scratch board. This is GUI automation, so it needs the screen.
+  3. The device diagram: rebuild it from the presentation's block diagram (`_Work/pcb-outputs/make_block_diagram.py` in the device folder), and make that format the agent's default diagram style. Awaiting the owner's yes.
+- 935 tests.
+
 Done 2026-10-12 (read-only, with the user's OK): device previews rendered for all 4 sheets + the PcbDoc
 (fixed a missing `import store` in preview_sch.py). Board preview is correct; on the schematic, the 64-pin MCU's
 pin names and top/bottom net labels crowd and get cut to one letter (known limit, readable when zoomed).
