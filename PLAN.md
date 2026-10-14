@@ -254,7 +254,9 @@ finished project (review mode, no new design); Sonnet subagents for parallel tas
 - **Open, with the owner at the end:**
   1. The first real JLCDFM upload: the user signs in; the tool guides and picks the report up.
   2. Import the new .RUL files into AD26 on a scratch board. This is GUI automation, so it needs the screen.
-  3. The device diagram: rebuild it from the presentation's block diagram (`_Work/pcb-outputs/make_block_diagram.py` in the device folder), and make that format the agent's default diagram style. Awaiting the owner's yes.
+  3. Done 2026-10-14:
+     - The device diagram was rebuilt from the presentation's block diagram (12 blocks, 12 labelled links, the board frame, W25Q128 per the BOM). The old one is the first undo step.
+     - That layout is the Idea skill's default "system block diagram" style (`references/diagram-ops.md`).
 - 935 tests.
 
 Done 2026-10-12 (read-only, with the user's OK): device previews rendered for all 4 sheets + the PcbDoc

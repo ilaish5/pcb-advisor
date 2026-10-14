@@ -25,6 +25,8 @@ description: Turns a rough project idea into a short list of open requirements q
    with bus or rail ("5V", "I2C", "SPI"). Available ops: `add_shape`, `update_shape`, `delete_shape`, `add_connector`,
    `update_connector`, `delete_connector`, `add_frame`, `update_frame`, `delete_frame`, `auto_layout`. See
    `references/diagram-ops.md` for full op syntax and power-chain, MCU-bus, and dashed-domain-frame examples.
+   Default layout for a new diagram: the "system block diagram" style in that file (a board frame with off-board parts
+   outside, one colour per domain, a labelled link each, dashed safety paths). Use it unless the student asks otherwise.
 
 Question list (pick, do not ask all):
 - Power: source (USB, battery, adapter, 12 V), highest and lowest voltage, peak current, battery life target, charging.
