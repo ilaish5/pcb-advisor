@@ -107,3 +107,30 @@ def test_svg_contains_new_group_ids():
     # Tracks and vias rendered with classes
     assert 'class="track track-top"' in svg
     assert 'class="via"' in svg
+
+
+def test_hidden_designators_and_comments_are_not_read():
+    """Comments are switched off per component (COMMENTON=FALSE); only the visible texts come through."""
+    doc = read_pcbdoc(FIXTURES / "finished-board.PcbDoc")
+    texts = doc["texts"]
+    assert not [t for t in texts if t["kind"] == "comment" and t["text"] == "LM1084IS-5.0/NOPB"]
+    assert any(t["kind"] == "designator" and t["text"] == "Reg5" for t in texts)
+    assert not [t for t in texts if t["text"].startswith(".")]  # mechanical-layer placeholders
+
+
+def test_silk_texts_lie_within_board_bbox():
+    """Every visible silkscreen text anchor sits inside the board outline bounding box."""
+    doc = read_pcbdoc(FIXTURES / "finished-board.PcbDoc")
+    outline = get_board_outline(FIXTURES / "finished-board.PcbDoc")
+    xs = [p[0] for p in outline]
+    ys = [p[1] for p in outline]
+    assert doc["texts"]
+    for t in doc["texts"]:
+        assert min(xs) <= t["x_mm"] <= max(xs), f"{t['text']} x {t['x_mm']} outside board"
+        assert min(ys) <= t["y_mm"] <= max(ys), f"{t['text']} y {t['y_mm']} outside board"
+
+
+def test_svg_reports_copper_layer_count():
+    """The SVG carries the real copper layer count that the Layout header shows."""
+    svg = render_pcbdoc(FIXTURES / "finished-board.PcbDoc")
+    assert 'data-copper-layers="2"' in svg

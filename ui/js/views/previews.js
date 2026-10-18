@@ -417,7 +417,8 @@ function pcbHTML(container) {
   if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout'})}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
   const plan = pvPlan(), b = S.board || {}, cnt = k => plan && Array.isArray(plan[k]) ? plan[k].length : 0;
   const size = Array.isArray(b.size_mm) && b.size_mm.length === 2 ? b.size_mm.map(v => Math.round(v * 10) / 10).join(' × ') + ' mm' : '';
-  const meta = metaLine([size, {n: b.layers, label: 'layers'}, {n: cnt('groups'), label: cnt('groups') === 1 ? 'zone' : 'zones'},
+  const cu = text && text.match(/data-copper-layers="(\d+)"/), copper = cu ? +cu[1] : b.layers;
+  const meta = metaLine([size, {n: copper, label: 'copper layers'}, {n: cnt('groups'), label: cnt('groups') === 1 ? 'zone' : 'zones'},
     {n: cnt('keep_outs'), label: cnt('keep_outs') === 1 ? 'keep-out' : 'keep-outs'}, {n: cnt('critical_nets'), label: cnt('critical_nets') === 1 ? 'critical net' : 'critical nets'}]);
   const layers = pcbLayerList(text, plan);
   const inner = pvPcbErr ? `<div class="pv-note">${errorLine('draw the layout', pvPcbErr, btn('Try again', {size: 'sm', act: 'pcb-retry'}))}</div>` : formatPcbPreview(text);

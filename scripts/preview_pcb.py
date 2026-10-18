@@ -346,12 +346,21 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
         h = t.get("height_mm", 1.5)
         fs = max(5.0, h * scale)
         rot = -t.get("rotation", 0.0)
-        transform = f' transform="rotate({rot:.1f} {px:.1f} {py:.1f})"' if rot else ""
+        parts = []
+        if rot:
+            parts.append(f"rotate({rot:.1f} {px:.1f} {py:.1f})")
+        if t.get("mirrored"):  # bottom-side text reads mirrored: flip about its own anchor
+            parts.append(f"translate({px:.1f} 0) scale(-1 1) translate({-px:.1f} 0)")
+        transform = f' transform="{" ".join(parts)}"' if parts else ""
         txt = esc(t.get("text", ""))
         return f'<text x="{px:.1f}" y="{py:.1f}" class="{cls}" font-size="{fs:.1f}px"{transform}>{txt}</text>'
 
+    # Copper layers the board really uses (1 = top, 2..31 = inner, 32 = bottom), for the header count
+    copper = {it.get("layer") for it in (*tracks, *arcs, *pads) if isinstance(it.get("layer"), int) and 1 <= it["layer"] <= 32}
+    n_copper = len(copper)
+
     svg = [
-        f'<svg id="pcb-preview" class="pcb-preview layer-{active_layer}" viewBox="0 0 {w_px:.1f} {h_px:.1f}" '
+        f'<svg id="pcb-preview" class="pcb-preview layer-{active_layer}" data-copper-layers="{n_copper}" viewBox="0 0 {w_px:.1f} {h_px:.1f}" '
         f'xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{esc(doc_name)}">'
     ]
 

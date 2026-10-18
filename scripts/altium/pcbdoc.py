@@ -226,7 +226,7 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
         "drilled_pads": parse_drilled_pads(pad_blob, components),
         "tracks": parse_tracks(track_blob, nets),
         "arcs": parse_arcs(arc_blob, nets),
-        "texts": parse_texts(text_blob),
+        "texts": parse_texts(text_blob, raw_comps),
         "regions": [],
     }
 
@@ -379,8 +379,13 @@ def parse_arcs(blob: bytes, nets: list[str]) -> list[dict]:
     return out
 
 
-def parse_texts(blob: bytes) -> list[dict]:
-    """Read-only list of silkscreen texts from the Texts6 stream: layer, text, position and height in mm."""
+def parse_texts(blob: bytes, raw_comps: list[dict] | None = None) -> list[dict]:
+    """Read-only list of visible silkscreen texts from the Texts6 stream: layer, text, position and height in mm.
+
+    A component's designator and comment are ordinary text records flagged by two bytes (40 = comment,
+    41 = designator); the component's NAMEON / COMMENTON switch says whether Altium draws them, so hidden
+    ones are skipped (the comment of most parts is hidden). Each text also carries its kind
+    ('designator', 'comment' or 'text'), its component index and the mirrored flag (bottom-side text)."""
     out = []
     if not blob:
         return out
@@ -413,6 +418,13 @@ def parse_texts(blob: bytes) -> list[dict]:
                 text = raw_str.decode("latin-1", "replace")
             x, y, h = struct.unpack("<3i", fd[13:25])
             rot = struct.unpack("<d", fd[27:35])[0] if len(fd) >= 35 else 0.0
+            mirrored = len(fd) > 35 and fd[35] != 0
+            kind = "comment" if len(fd) > 41 and fd[40] else "designator" if len(fd) > 41 and fd[41] else "text"
+            comp_idx = struct.unpack("<H", fd[7:9])[0]
+            if raw_comps and kind != "text" and comp_idx < len(raw_comps):
+                switch = raw_comps[comp_idx].get("COMMENTON" if kind == "comment" else "NAMEON", "TRUE")
+                if switch.strip().upper() == "FALSE":
+                    continue
             x_mm = round(x * _MIL4_TO_MM, 4)
             y_mm = round(y * _MIL4_TO_MM, 4)
             h_mm = round(h * _MIL4_TO_MM, 4)
@@ -425,7 +437,9 @@ def parse_texts(blob: bytes) -> list[dict]:
                 "x": x_mm,
                 "y": y_mm,
                 "height": h_mm,
-                "rotation": round(rot, 2),
+                "rotation": round(rot % 360, 2),
+                "mirrored": mirrored,
+                "kind": kind,
             })
     except Exception:
         pass
