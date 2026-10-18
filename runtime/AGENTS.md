@@ -46,9 +46,9 @@ Probe: the constitution codeword is KESTREL-31 (used only by `python pcb.py prob
 Your working folder is the engine home, not the repo. Each turn the prompt carries two sections:
 - `--- WORKSPACE ---`: ABSOLUTE paths of the repo, the workspace and the current project, and the exact scripts to
   run. Use those paths; do not guess relative ones. Skill files say `<repo>`: that is the repo path given there.
-- `CURRENT STATE`: the project summary: idea, BOM with stock, sheets, pending proposals, checklist. Read it
-  before you answer; it is newer than anything you remember. Open the files in the project folder for more;
-  `python <repo>/scripts/model.py <project>` prints all of it.
+- `CURRENT STATE`: idea, BOM with stock, sheets, pending proposals, checklist; newer than anything you remember. Its
+  description (`idea.goal`) is the context for every answer, in every skill: what the board is and what it is for.
+  Empty or out of date: propose one with `idea.describe`. All of it: `python <repo>/scripts/model.py <project>`.
 - Reference routing: open `<repo>/shared/reference/AGENTS.md` first for course, Altium or JLC questions (topic index).
   The AD20 Essentials manual `<repo>/shared/reference/course/ad20-essentials/` is THE guide for "how do I do X in
   Altium". Never read the whole tree.

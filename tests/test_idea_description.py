@@ -110,3 +110,9 @@ def test_the_sheet_shows_the_description_above_the_requirements():
     # a proposed description holds back "Confirm idea" like a proposed requirement does
     head = IDEA_JS[IDEA_JS.index("function ideaHeaderHTML"):IDEA_JS.index("function reqRowHTML")]
     assert "descProposed()" in head
+
+
+def test_the_agent_is_told_the_description_is_the_context_for_every_answer():
+    rules = (agent.RULES_DIR / "AGENTS.md").read_text(encoding="utf-8")
+    where = rules[rules.index("# WHERE THINGS ARE"):]
+    assert "idea.goal" in where and "context for every answer" in where and "idea.describe" in where
