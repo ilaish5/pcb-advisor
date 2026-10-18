@@ -191,7 +191,7 @@ I2: allow-rule in agy settings vs the flag); Claude `Edit(//c/...)` rule form no
 **User decisions (2026-10-11):** agy permissions = (a): ship with `--dangerously-skip-permissions` (gateway default,
 keep it). Do NOT re-run the measurements of I1/I2 (the partial baseline stays as recorded). Ask the user before any
 heavy bench run in later stages (the PC ran out of memory twice). Implementation subagent = **agy** (saves Claude Code
-tokens): precise briefs via `%TEMP%\agy-task.py`; Claude Code plans, briefs and verifies every result itself.
+tokens): precise briefs via ``tools/agy_task.py``; Claude Code plans, briefs and verifies every result itself.
 
 **I3 done (2026-10-11)** - see section 8.
 
