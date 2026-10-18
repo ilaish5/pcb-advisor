@@ -1,113 +1,45 @@
 # pcb-advisor
 
-A local AI co-pilot for a student's PCB design project (Altium Designer + JLCPCB manufacturing).
-The chat with an agent is the main interface. The student arrives with a rough idea; the agent helps
-refine requirements, pick and verify parts, review schematic and layout, configure rules, generate
-manufacturing packages, and triage manufacturer DFM reports.
+An AI co-pilot for your PCB project (Altium Designer + JLCPCB). You chat with an agent in the browser:
+it helps you refine the idea, pick parts that are in stock at JLC, check the schematic and layout against
+datasheets, prepare Altium rules and outputs, and understand the manufacturer's DFM report.
 
-Altium files are read **read-only** from a local folder. The tool prepares what goes into Altium and
-checks what comes out; it never drives Altium's GUI, never routes, never orders, and never logs in for the student.
+It never drives Altium, never routes, never orders. It reads your Altium files (read-only) and tells you what to do.
 
-## Capabilities and Workspace Tabs
+## Install (about 5 minutes)
 
-Seven tabs guide the design across the product lifecycle:
+You need **Python 3.10+** and **one AI engine** (Claude Code or Antigravity).
 
-1. **Idea** - agreed requirements, interactive mouse-editable block diagram (drag, rename, link, domain colors, board outline), and agent architecture proposals.
-2. **BOM** - interactive parts table with live JLC availability, unit pricing, cost per board, risk tags, role notes, datasheet links, and in-stock alternatives.
-3. **Schematic** - Python-rendered interactive preview from SchDoc or netlist; one-click questions on any part or connection ("Ask about this").
-4. **Placement & routing** - interactive board preview (outline, pads, layer toggle), placement plan overlay, and critical-net routing plan.
-5. **Rules** - JLC manufacturing capability preset, custom rules, diff of board rules against preset, `.RUL` export with a 4-step Altium import guide, and engineering calculators (IPC-2152 trace width, voltage divider, LED resistor, via current, microstrip impedance).
-6. **Altium outputs** - ready OutJob generator (Gerber RS-274X, NC drill, JLC BOM, CPL, schematic PDF), CPL exporter, and IntLib library build script.
-7. **Final manufacturer checks** - JLCDFM report PDF ingest (slice extraction + triage table: severity, counts, layer) and triage chat to distinguish real faults from false alarms.
+1. **Get the tool**
+   ```
+   git clone https://github.com/ilaish5/pcb-advisor.git
+   cd pcb-advisor
+   ```
+   (or click *Code > Download ZIP* on GitHub and unzip it)
+2. **Install** - double-click `install.bat` (macOS/Linux: run `./install.sh`).
+3. **Install and sign in to an AI engine, once** - follow [docs/ENGINES.md](docs/ENGINES.md)
+   (two commands for Claude Code or Antigravity).
 
-Cross-cutting features:
-- **In-app file viewer** - view PDF datasheets, images, text/markdown, CSV, and Altium document summaries directly in the app without leaving the workspace. Citation chips open files directly.
-- **Settings with Altium link** - link local Altium projects (PrjPcb, PcbDoc, sheets, output folder) with detected installs from the Windows registry.
-- **Knowledge base (Sources)** - manage course references and project datasheets with automated quote verification.
+## Run
 
-## Setup and Running
+Double-click `start.bat` (macOS/Linux: `./start.sh`). The browser opens at http://localhost:8931.
+Create a project, describe your board in the chat, and follow the tabs from left to right:
+Idea, BOM, Schematic, Placement, Rules, Altium outputs, Final checks.
 
-Requires Python 3.10+ and one AI engine CLI (Claude Code or Antigravity, see [docs/ENGINES.md](docs/ENGINES.md)).
+Want to see a finished example first? Run `.venv\Scripts\python pcb.py seed` and open the project `lte-tracker`.
 
-```bash
-git clone https://github.com/ilaish5/pcb-advisor.git
-cd pcb-advisor
-install.bat        # Windows (macOS/Linux: ./install.sh): private venv, dependencies, workspace
-start.bat          # (./start.sh) starts the server and opens http://localhost:8931
+## Problems?
+
+- `python pcb.py probe` checks that your AI engine works with the tool.
+- `python pcb.py list` shows your projects. Projects live in the `projects/` folder, all on your machine.
+
+## For developers
+
+```
+.venv\Scripts\python -m pip install -r requirements-dev.txt
+.venv\Scripts\python -m pytest -q
 ```
 
-Optional: `python pcb.py seed` adds a worked example project. Developers: `pip install -r requirements-dev.txt`.
-
-## CLI Commands
-
-`pcb.py` is the single entry point for workspace management:
-
-```bash
-python pcb.py init                                      # create workspace folders and config.json
-python pcb.py serve                                     # start the server, open browser (also: run)
-python pcb.py new "usb sensor"                          # start a new project from template
-python pcb.py list                                      # list all projects in the workspace
-python pcb.py show [project]                            # show project state (BOM, stock, proposals, checklist)
-python pcb.py seed                                      # initialize worked example (projects/lte-tracker)
-python pcb.py engines                                   # list configured AI engines (* = active)
-python pcb.py tools [--apply|--clear]                   # view or set engine tool permission policies
-python pcb.py probe [--engine X]                        # verify engine loads the runtime pack and skills
-python pcb.py bench [--engine X] [--evals] [--only 1,5] # run device replay benchmark
-python pcb.py skills lint [--only NAME]                 # lint runtime skills format and consistency
-python pcb.py chats [project]                           # list conversations and memory status
-python pcb.py config [key] [value]                      # read or set configuration values
-python pcb.py check [project]                           # validate sheets against BOM and verify citations
-python pcb.py reset [project]                           # wipe project state
-python pcb.py trace 1.5                                 # calculate IPC-2221 trace width
-python pcb.py rules diff|export|preset                  # diff rules vs JLC preset, export .RUL, show preset
-python pcb.py calc trace-width|divider|led|via|microstrip # engineering calculators
-python pcb.py library search|check-package|build-script # model search, package check, IntLib script
-```
-
-## AI Engines
-
-pcb-advisor connects to external AI CLIs via `scripts/gateway/`:
-- **Claude Code** (`claude`)
-- **Antigravity CLI** (`agy`)
-
-See [docs/ENGINES.md](docs/ENGINES.md) for installation and setup.
-
-## Tests
-
-```bash
-python -m pytest -q
-python scripts/skills/lint.py
-```
-
-## Layout
-
-| path | what |
-|---|---|
-| `pcb.py` | CLI entry point |
-| `config/defaults.json` | default settings |
-| `scripts/serve.py` | HTTP server and single state writer |
-| `scripts/store.py` | append-only logs and derived state |
-| `scripts/model.py` | project state model |
-| `scripts/agent.py` | prompt construction and action dispatcher |
-| `scripts/workspace.py` | workspace paths and environment |
-| `scripts/oscompat.py` | cross-platform helpers (Windows & macOS) |
-| `scripts/runtime_pack.py` | syncs runtime pack to engine home |
-| `scripts/sources.py` | document caching, retrieval, and quote verification |
-| `scripts/jlc.py` | JLC parts API client and cache |
-| `scripts/rules.py` | .RUL exporter and board diff against the JLC rules preset |
-| `scripts/jlc_preset.py` | the JLC preset numbers by layer count, copper weight and mask colour |
-| `scripts/calc.py` | IPC-2152 trace width and engineering calculators |
-| `scripts/library.py` | model search links, package check, and IntLib build script |
-| `scripts/outjob.py` | Altium OutJob file generator |
-| `scripts/dfm.py` | JLCDFM PDF report slicer and triage table |
-| `scripts/keeping.py` | decision log, change impact, and file organization |
-| `scripts/preview_sch.py` | SchDoc interactive SVG preview renderer |
-| `scripts/preview_pcb.py` | PcbDoc interactive SVG preview renderer |
-| `scripts/altium/` | read-only Altium document readers (SchDoc, PcbDoc, PrjPcb, .RUL) |
-| `scripts/checks/` | layout and schematic review checks |
-| `scripts/skills/` | skill-specific scripts run by the engine |
-| `scripts/gateway/` | AI engine CLI abstraction layer |
-| `runtime/` | AGENTS.md constitution and skill definitions |
-| `ui/index.html` | browser UI |
-| `tests/` | automated test suite |
-| `docs/` | architecture, engines guide, and product specs |
+Code: `scripts/serve.py` (server), `scripts/store.py` (project state), `scripts/agent.py` (agent actions), `ui/index.html` (UI).
+Docs: [architecture](docs/ARCHITECTURE.md), [engines](docs/ENGINES.md), [product plan](docs/PRODUCT-PLAN.md).
+Commands: `python pcb.py --help`. License: [MIT](LICENSE).
