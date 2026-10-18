@@ -188,6 +188,9 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
             if kind == "idea.propose" and a.get("topic") and a.get("text"):
                 store.propose_idea(project, a["topic"], a["text"], by="agent")
                 applied.append(f"idea.propose:{a['topic']}")
+            elif kind == "idea.describe" and isinstance(a.get("text"), str):
+                store.set_idea_goal(project, a["text"], by="agent")
+                applied.append("idea.describe")
             elif kind == "idea.confirm":
                 # only after the student said yes: the quote must be in what they just wrote
                 said = (a.get("student_said") or "").strip().lower()
@@ -1071,10 +1074,29 @@ class Handler(BaseHTTPRequestHandler):
                     idea["diagram"] = store.validate_diagram(data["diagram"])
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
-            for key in ("goal", "blocks", "links"):
+            for key in ("blocks", "links"):
                 if key in data:
                     idea[key] = data[key]
             store.save_idea(proj, idea)
+            if "goal" in data:
+                try:
+                    store.set_idea_goal(proj, data["goal"], by="student")
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+            return self._send(200, state())
+
+        if path == "/api/idea/goal":
+            try:
+                store.set_idea_goal(proj, data.get("text", ""), by="student")
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, state())
+
+        if path in ("/api/idea/goal/confirm", "/api/idea/goal/dismiss"):
+            try:
+                store.decide_idea_goal(proj, accept=path.endswith("/confirm"))
+            except KeyError as exc:
+                return self._send(400, {"error": str(exc).strip("'")})
             return self._send(200, state())
 
         if path == "/api/idea/confirm":

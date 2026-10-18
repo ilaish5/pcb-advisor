@@ -1018,6 +1018,44 @@ def save_idea(project, idea):
     return idea
 
 
+GOAL_MAX = 3000
+
+
+def set_idea_goal(project, text, by="student"):
+    """The description: the board in plain words (what it is, what it is for, the diagram told as text).
+    The student's text is agreed as written. The agent's is proposed until the student accepts it, and the text it
+    would replace is kept, so Dismiss puts it back."""
+    if not isinstance(text, str) or len(text.strip()) > GOAL_MAX:
+        raise ValueError(f"description must be text of at most {GOAL_MAX} chars")
+    text = text.strip()
+    idea = load_idea(project)
+    if by == "agent":
+        if not text:
+            raise ValueError("description is empty")
+        if idea.get("goal_status") != "proposed":    # a second proposal keeps the text the first one replaced
+            idea["goal_prev"] = {"text": idea.get("goal", ""), "by": idea.get("goal_by", "student")}
+        idea.update(goal=text, goal_by="agent", goal_status="proposed")
+    else:
+        idea.pop("goal_prev", None)
+        idea.update(goal=text, goal_by="student", goal_status="confirmed")
+    idea["goal_ts"] = now()
+    return save_idea(project, idea)
+
+
+def decide_idea_goal(project, accept):
+    """Accept the agent's description, or dismiss it and put back the text it replaced."""
+    idea = load_idea(project)
+    if idea.get("goal_status") != "proposed":
+        raise KeyError("no proposed description")
+    prev = idea.pop("goal_prev", None) or {}
+    if not accept:
+        idea["goal"] = prev.get("text", "")
+        idea["goal_by"] = prev.get("by", "student")
+    idea["goal_status"] = "confirmed"
+    idea["goal_ts"] = now()
+    return save_idea(project, idea)
+
+
 def validate_idea_item(topic, text):
     if not topic or not isinstance(topic, str) or not topic.strip() or len(topic.strip()) > 60:
         raise ValueError("topic must be 1-60 chars")
@@ -1127,6 +1165,9 @@ def confirm_idea(project):
     for i in idea["agreed"]:
         if i["status"] == "proposed":
             i["status"] = "confirmed"
+    if idea.get("goal_status") == "proposed":
+        idea["goal_status"] = "confirmed"
+        idea.pop("goal_prev", None)
     return save_idea(project, idea)
 
 

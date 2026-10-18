@@ -12,6 +12,8 @@ const IDEA_SPLIT_MIN = 12, IDEA_SPLIT_MAX = 70, IDEA_SPLIT_STEP = 3;
 /* ---------- small helpers ---------- */
 const ideaDiagram = () => (S && S.idea && S.idea.diagram) || {shapes: [], connectors: [], frames: []};
 const ideaItems = () => (S && S.idea && S.idea.agreed) || [];
+const ideaGoal = () => ((S && S.idea && S.idea.goal) || '').trim();
+const descProposed = () => !!ideaGoal() && S.idea.goal_status === 'proposed';
 function pendingDiagramProposal() {
   return ((S && S.proposals) || []).find(p => p.kind === 'idea_diagram' && p.status === 'pending') || null;
 }
@@ -125,10 +127,10 @@ function mountDiagramEditor(container) {
 /* ---------- pieces of the sheet ---------- */
 function ideaHeaderHTML() {
   const I = (S && S.idea) || {}, items = ideaItems();
-  const proposed = items.filter(i => i.status !== 'confirmed').length;
+  const proposed = items.filter(i => i.status !== 'confirmed').length + (descProposed() ? 1 : 0);
   const when = ideaDate(I.confirmed_at);
   const meta = metaLine([
-    {n: items.length, label: items.length === 1 ? 'requirement' : 'requirements', title: I.goal || ''},
+    {n: items.length, label: items.length === 1 ? 'requirement' : 'requirements'},
     {n: proposed, label: 'proposed', tone: 'warn', title: 'The agent proposed these. Accept or dismiss each one.'},
     I.confirmed ? 'confirmed' + (when ? ' ' + when : '') : ''
   ]);

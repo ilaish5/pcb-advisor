@@ -111,7 +111,7 @@ def _summary(model):
                         {k: v.get("stock") for k, v in sup.items()})
         bom.append(row)
     diag_summary = _compact_diagram(model.get("diagram") or (model.get("idea") or {}).get("diagram"))
-    idea_summary = {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "agreed", "confirmed")}
+    idea_summary = {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "goal_status", "agreed", "confirmed")}
     idea_summary["diagram"] = diag_summary
     s = {
         "idea": idea_summary,
