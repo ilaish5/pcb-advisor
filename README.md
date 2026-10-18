@@ -20,6 +20,8 @@ You need **Python 3.10+** and **one AI engine** (Claude Code or Antigravity).
 3. **Install and sign in to an AI engine, once** - follow [docs/ENGINES.md](docs/ENGINES.md)
    (two commands for Claude Code or Antigravity).
 
+**Easier:** open any AI agent in a terminal and paste the prompt from [SETUP-PROMPT.md](SETUP-PROMPT.md) - it does all the steps above and connects the engine for you.
+
 ## Run
 
 Double-click `start.bat` (macOS/Linux: `./start.sh`). The browser opens at http://localhost:8931.
