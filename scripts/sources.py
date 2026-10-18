@@ -284,6 +284,34 @@ def get(project, url, name=None):
     return {**meta, "path": str(folder_of(project) / meta["name"])}
 
 
+def adopt(project):
+    """Register the documents the student dropped into the project's sources/ by hand: a PDF with no
+    sidecar gets one (name, sha256, no url), so it can be cited and verified like a downloaded one.
+    Returns the names registered."""
+    folder = folder_of(project)
+    added = []
+    for f in sorted(folder.glob("*")) if folder.is_dir() else []:
+        if f.suffix.lower() in (".json", ".txt") or not f.is_file() or _meta_path(f).exists():
+            continue
+        meta = {"name": f.name, "url": None, "sha256": file_sha256(f), "bytes": f.stat().st_size,
+                "origin": "added by the student"}
+        _meta_path(f).write_bytes((json.dumps(meta, indent=2) + "\n").encode("utf-8"))
+        added.append(f.name)
+    return added
+
+
+def find_for(project, mpn):
+    """The project's document whose file name carries the part number (case and punctuation ignored)."""
+    adopt(project)
+    key = re.sub(r"[^a-z0-9]", "", (mpn or "").lower())
+    if len(key) < 4:
+        return None
+    for f in sorted(folder_of(project).glob("*.pdf")):
+        if key in re.sub(r"[^a-z0-9]", "", f.name.lower()):
+            return f.name
+    return None
+
+
 def unuse(project, name):
     """Take a document out of ONE project. The shared library is left alone: it is
     general material every project sees, and its .json is the tracked record of
@@ -376,6 +404,7 @@ if __name__ == "__main__":
             rows = [("shared", n, size) for n, size in own(cache())]
             rows += [("shared", name, f.stat().st_size) for name, f in reference_files().items()]
             if len(sys.argv) > 2:
+                adopt(sys.argv[2])
                 rows += [("project", n, size) for n, size in own(folder_of(sys.argv[2]))]
             for scope, name, size in rows:
                 print(f"{scope:8s}{name} {size}" if len(sys.argv) > 2 else f"{name} {size}")

@@ -27,14 +27,16 @@ Cross-cutting features:
 
 ## Setup and Running
 
-Requires Python 3.10+ (Pillow is required for preview rendering and DFM report slicing).
+Requires Python 3.10+ and one AI engine CLI (Claude Code or Antigravity, see [docs/ENGINES.md](docs/ENGINES.md)).
 
 ```bash
-pip install -r requirements-dev.txt   # includes Pillow and test dependencies
-python pcb.py init                    # create folders and config.json
-python pcb.py seed                    # worked example: projects/lte-tracker
-python pcb.py serve                   # start the server and open http://localhost:8931
+git clone https://github.com/ilaish5/pcb-advisor.git
+cd pcb-advisor
+install.bat        # Windows (macOS/Linux: ./install.sh): private venv, dependencies, workspace
+start.bat          # (./start.sh) starts the server and opens http://localhost:8931
 ```
+
+Optional: `python pcb.py seed` adds a worked example project. Developers: `pip install -r requirements-dev.txt`.
 
 ## CLI Commands
 

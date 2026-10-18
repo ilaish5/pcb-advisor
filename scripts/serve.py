@@ -923,9 +923,8 @@ class Handler(BaseHTTPRequestHandler):
                     redraw(proj)
                     ref = next((l["refs"][0] for l in store.bom_lines(proj) if l["key"] == prop["line"] and l.get("refs")),
                                prop["line"])
-                    say(proj, sess, {"ts": now(), "role": "agent",
-                                     "text": "Updated. {{ref:" + ref + "}} is changed in the BOM, on the schematic label "
-                                             "and in the library.", **decided})
+                    what = "added to the BOM" if prop.get("new") else "updated in the BOM, on the schematic label and in the library"
+                    say(proj, sess, {"ts": now(), "role": "agent", "text": "Approved. {{ref:" + ref + "}} is " + what + ".", **decided})
             else:
                 say(proj, sess, {"ts": now(), "role": "agent", "text": f"Rejected. {data.get('id')} changes nothing.", **decided})
             return self._send(200, state())

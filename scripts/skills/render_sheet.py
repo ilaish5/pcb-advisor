@@ -251,7 +251,9 @@ def render_sheet(sheet, bom_lines):
     blocks = []
     for sec in secs:
         parts = [p for p in sheet.get("parts", []) if (p.get("section") or secs[0]["id"]) == sec["id"]]
-        notes = [n for n in sheet.get("notes", []) if n.get("section") == sec["id"]]
+        # a note may be a plain string: it belongs to the first section
+        notes = [n if isinstance(n, dict) else {"section": secs[0]["id"], "text": str(n)} for n in sheet.get("notes", [])]
+        notes = [n for n in notes if n.get("section", secs[0]["id"]) == sec["id"]]
         if parts or notes:
             blocks.append(layout_section(sec, parts, notes, bom_by_ref))
     ncols = 1 if len(blocks) <= 1 else 2 if len(blocks) <= 4 else 3

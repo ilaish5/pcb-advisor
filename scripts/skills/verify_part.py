@@ -30,7 +30,7 @@ def verify(project, key):
     line = next((l for l in store.bom_lines(project) if l["key"] == key), None)
     if not line:
         raise SystemExit(f"no BOM line {key!r}")
-    ds = line.get("datasheet")
+    ds = line.get("datasheet") or sources.find_for(project, line.get("mpn"))
     if not ds:
         result = {"verify": "unchecked", "issues": "no datasheet stored for this part"}
     else:

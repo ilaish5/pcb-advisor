@@ -47,6 +47,8 @@ VALID_ENDPOINT_SIDES = {"top", "bottom", "left", "right"}
 VALID_ENDPOINT_POINTS = VALID_ENDPOINT_SIDES | {"top-left", "top-right", "bottom-right", "bottom-left"}
 VALID_ALIGN = {"left", "center", "right"}
 VALID_FONT_SIZES = {"S", "M", "L"}
+DOMAIN_ALIASES = {"sensor": "sensors", "microcontroller": "mcu", "controller": "mcu", "supply": "power",
+                  "communication": "comms", "output": "drive", "input": "io"}
 VALID_DOMAINS = {
     "power", "sensing", "sensors", "mcu", "comms", "rf",
     "drive", "io", "ui", "sticky", "white", "none", "",
@@ -347,6 +349,9 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
     before = {k: existing.get(line, {}).get(k) for k in changes}
+    if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):
+        changes = {**changes, "refs": [line]}
+        before = {**before, "refs": None}
     pid = _new_proposal_id(project)
     rec = {"id": pid, "ts": now(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),
@@ -449,7 +454,7 @@ def validate_diagram(data):
             "locked": locked,
         }
         if "domain" in s:
-            dom = s["domain"]
+            dom = DOMAIN_ALIASES.get(s["domain"], s["domain"]) if isinstance(s["domain"], str) else s["domain"]
             if not isinstance(dom, str) or dom not in VALID_DOMAINS:
                 raise ValueError(f"shape {sid} invalid domain: {dom!r}")
             clean_s["domain"] = dom
@@ -1323,7 +1328,8 @@ def apply_diagram_edit(project, ops):
             if len(text) > 2000:
                 raise ValueError("text must be <= 2000 chars")
 
-            raw_dom = str(op.get("domain", "")).lower() if "domain" in op else ""
+            raw_dom = str(op.get("domain", "")).strip().lower() if "domain" in op else ""
+            raw_dom = DOMAIN_ALIASES.get(raw_dom, raw_dom)
             dom = raw_dom if raw_dom in VALID_DOMAINS else ""
             if "domain" in op and raw_dom not in VALID_DOMAINS:
                 raise ValueError(f"invalid domain: {raw_dom!r}")
@@ -1398,9 +1404,10 @@ def apply_diagram_edit(project, ops):
                     raise ValueError("text <= 2000 chars")
                 shape["text"] = t
             if "domain" in op:
-                dom = str(op["domain"]).lower()
+                dom = str(op["domain"]).strip().lower()
+                dom = DOMAIN_ALIASES.get(dom, dom)
                 if dom not in VALID_DOMAINS:
-                    raise ValueError(f"invalid domain: {dom!r}")
+                    raise ValueError(f"invalid domain: {dom!r} (use one of {', '.join(sorted(d for d in VALID_DOMAINS if d))})")
                 shape["domain"] = dom
                 if "fill" not in op and dom in DOMAIN_COLORS:
                     shape["fill"] = DOMAIN_COLORS[dom]["fill"]
@@ -1805,7 +1812,10 @@ def validate_sheet(sheet, bom_refs):
 
 def write_sheet(project, sheet_id, sheet):
     """Validate against the BOM, then write. Refuses a sheet with problems."""
-    refs = {r for l in bom_lines(project) for r in l.get("refs", [])}
+    refs = set()
+    for l in bom_lines(project):
+        # a line the student approved without references is still known by its key when that is a designator
+        refs.update(l.get("refs") or ([l["key"]] if re.fullmatch(r"[A-Za-z]+\d+", l["key"]) else []))
     errors = validate_sheet(sheet, refs)
     if errors:
         return {"ok": False, "errors": errors}
