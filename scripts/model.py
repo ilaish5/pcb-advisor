@@ -228,6 +228,8 @@ def build(project=None, session=None):
         "bom": lines,
         "totals": tot,
         "proposals": props,
+        "history": store.history(project),
+        "autonomy": store.autonomy(),
         "sheets": sheets(project),
         "library": store.library_view(project),
         "sources": list_sources(project),

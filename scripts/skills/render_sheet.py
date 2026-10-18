@@ -205,6 +205,10 @@ def render_part(p, line, bom_line):
     else:
         body = part_ic(p, sub)
     svg, w, h = body
+    if p.get("pins_source") == "agent":
+        svg += (f'<g class="unv"><title>Pins from the agent; add the datasheet to verify</title>'
+                f'<text x="{max(w - 4, 0):g}" y="-2" text-anchor="end" font-size="9" fill="#b7791f" '
+                f'font-style="italic">unverified</text></g>')
     if (bom_line or {}).get("dnp") or p.get("dnp"):
         svg = f'<g class="dnp">{svg}</g>'
     return svg, w, h

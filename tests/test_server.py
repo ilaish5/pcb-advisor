@@ -195,6 +195,8 @@ def test_a_part_conversation_is_anchored_and_starts_with_its_context(home, lte):
 
 def test_chat_stores_the_replys_tools_and_proposals(server, lte, monkeypatch):
     import agent
+    import workspace
+    workspace.set_value("agent.autonomy", "ask")      # a routine proposal would otherwise be applied (and noted) at once
     monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: {
         "reply": "Proposed.", "tools": [{"t": "Check availability", "d": "x", "st": "ok"}],
         "actions": [{"type": "bom.propose", "line": "U5", "changes": {"note": "n"}, "reason": "r"}]})

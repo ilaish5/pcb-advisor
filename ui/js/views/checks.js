@@ -126,17 +126,35 @@ function dfmTotals() {
 function dfmHeader(reports) {
   if (!reports) return viewHeader({title: 'DFM'});
   const t = dfmTotals();
-  const ready = t.known && t.n > 0 && !t.open && !t.real;     // reports alone do not make a board ready: every finding is judged
+  const unv = dfmUnverified().length;
+  const ready = t.known && t.n > 0 && !t.open && !t.real && !unv;     // reports alone do not make a board ready: every finding is judged
   const meta = metaLine([
     {n: t.n, label: t.n === 1 ? 'finding' : 'findings'},
     {n: t.open, label: 'to review', tone: 'warn', title: 'Findings nobody has judged yet'},
     {n: t.real, label: t.real === 1 ? 'real issue' : 'real issues', tone: 'bad', title: 'Findings that need a change on the board'},
+    {n: unv, label: 'unverified', tone: 'warn', title: 'Parts whose pins came from the agent, not a datasheet'},
     ready && {always: true, label: 'Ready to order', tone: 'ok', title: 'Every finding is judged and none is a real issue'},
     t.known && !t.n && {always: true, label: 'No findings listed yet', title: 'Add the findings of the report, or ask the agent to list them'},
   ]);
   const more = menu({icon: 'more', title: 'More'}, [{label: dfmGuide ? 'Hide how to check at JLC' : 'How to check at JLC', act: 'dfm-guide'}]);
   return viewHeader({title: 'DFM', meta, actions: more, primary: dfmUpload({kind: 'pri'})});
 }
+// Parts placed with pins from the agent: the one place the missing datasheet blocks. Resolved by a verified datasheet or an explicit accept.
+function dfmUnverified() {
+  return (S.bom || []).filter(l => (l.refs || []).length && !l.dnp && !l.nobuy && (l.pins_status === 'unverified' || l.pins_status === 'mismatch'));
+}
+function dfmUnverifiedHTML() {
+  const rows = dfmUnverified();
+  if (!rows.length) return '';
+  const item = l => `<li class="unv-row"><span class="m">${esc(refsLabel(l.refs))}</span> ${esc(l.mpn || l.value || '')}
+    <span class="unv-why">${l.pins_status === 'mismatch' ? 'Pins conflict with the datasheet: ' + esc(l.pins_issues || '') : 'Pins from the agent; add the datasheet to verify'}</span>
+    ${btn('Accept as is', {kind: 'line', size: 'sm', act: 'accept-pins', line: l.key, title: 'You checked these pins yourself'})}</li>`;
+  return `<section class="dfm-unv"><h3>Unverified parts <span class="m">(${rows.length}) to resolve before ordering</span></h3>
+    <p class="m">Drop each datasheet in Sources and re-check, or accept the pins as is.</p>
+    <ul>${rows.map(item).join('')}</ul>${btn('Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins'})}</section>`;
+}
+onAct('accept-pins', async (el, d) => { await api('/api/pins/accept', {line: d.line}); await refresh(true); });
+onAct('recheck-pins', async () => { await api('/api/final/unverified'); await refresh(true); });
 function dfmUpload(trigger) {
   if (dfmBusy || dfmLooking) return btn(dfmLooking ? 'Looking…' : 'Uploading…', {kind: trigger.kind, disabled: true});
   return menu(Object.assign({label: 'Upload report', icon: 'upload', iconAfter: 'chev', title: 'Add the PDF report from jlcdfm.com'}, trigger), [
@@ -328,7 +346,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -347,7 +365,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

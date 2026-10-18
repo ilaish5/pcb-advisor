@@ -27,10 +27,11 @@
 .rules-steps li{padding-left:2px}
 .rules-src{margin-top:2px}
 .rules-add{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
+.rules-add .field{width:150px}
 .rules-add .field:nth-child(1){width:190px}
-.rules-add .field:nth-child(2){width:170px}
 .rules-add .field:nth-child(3){width:220px}
-.rules-add .field:nth-child(4){width:110px}
+.rules-hint{margin:0}
+.rules-std .field:nth-child(1){width:230px}
 .rules-add .in{width:100%}
 
 /* calculators: plain sections, two columns when the sheet is wide enough */
@@ -50,7 +51,7 @@
 .rules-vb .sec-h .meta{min-width:0;overflow-wrap:anywhere}
 .rules-vb .check{white-space:nowrap}
 @container (max-width:760px){
-  .rules-add .field:nth-child(n){width:calc(50% - 6px)}
+  .rules-add .field:nth-child(n),.rules-std .field:nth-child(n){width:calc(50% - 6px)}
 }
 @container (max-width:640px){
   .rules-diff thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
@@ -63,3 +64,4 @@
   .rules-diff td.res{grid-column:1/-1;margin-top:6px;min-width:0}
   .rules-diff td:has(>.row-acts){position:absolute;top:6px;right:0;width:auto;padding:0}
 }
+.rules-tbl tr.rule-off td:not(:first-child){opacity:.5}

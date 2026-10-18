@@ -1,0 +1,19 @@
+{
+  "checked": "2026-10-18",
+  "clearance": {
+    "source": "standards/ipc-2221b-clearance.en.md",
+    "max_volts": 1500,
+    "locations": {
+      "B1": {"label": "Internal conductors", "bands": [[15, 0.05], [30, 0.05], [50, 0.1], [100, 0.1], [150, 0.2], [170, 0.2], [250, 0.2], [300, 0.2], [500, 0.25]], "per_volt_above_500": 0.0025},
+      "B2": {"label": "External, uncoated (sea level to 3050 m)", "bands": [[15, 0.1], [30, 0.1], [50, 0.6], [100, 0.6], [150, 0.6], [170, 1.25], [250, 1.25], [300, 1.25], [500, 2.5]], "per_volt_above_500": 0.005},
+      "B4": {"label": "External, permanent polymer coating (solder mask does not count)", "bands": [[15, 0.05], [30, 0.05], [50, 0.13], [100, 0.13], [150, 0.4], [170, 0.4], [250, 0.4], [300, 0.4], [500, 0.8]], "per_volt_above_500": 0.00305}
+    }
+  },
+  "annular_ring": {
+    "source": "standards/ipc-class-annular-ring.en.md",
+    "classes": {
+      "2": {"label": "IPC Class 2", "external_mm": 0.05, "internal_mm": 0.05},
+      "3": {"label": "IPC Class 3", "external_mm": 0.05, "internal_mm": 0.025}
+    }
+  }
+}

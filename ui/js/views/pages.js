@@ -167,6 +167,10 @@ function setAgentHTML(c) {
   return setRow('Engine', setSel('set-provider', 'data-set="agent.provider"', opts, cur ? cur.id : c.engine), {id: 'set-provider'}) +
     (cur && !cur.available ? `<div class="set-hint warn-t">${esc(cur.title || cur.id)} can't run now${cur.reason ? ': ' + esc(cur.reason) : ''}.</div>` : '') +
     setRow('Model', `<input id="set-model" class="in" data-set="agent.model" value="${esc((c.agent && c.agent.model) || '')}" placeholder="Engine default" autocomplete="off">`, {id: 'set-model'}) +
+    setRow('Approvals', setSel('set-autonomy', 'data-set="agent.autonomy"', [
+      ['ask', 'Ask me for every change'],
+      ['important', 'Ask only for important changes (parts, Altium, ordering)'],
+      ['auto', 'Do everything except ordering and deleting']], (c.agent && c.agent.autonomy) || 'important'), {id: 'set-autonomy'}) +
     setRow('Language', setSel('set-language', 'data-set="user.language"', PG_LANGS, lang), {id: 'set-language'}) +
     setRow('Your name', `<input id="set-name" class="in" data-set="user.name" value="${esc((c.user && c.user.name) || '')}" autocomplete="off">`, {id: 'set-name'});
 }

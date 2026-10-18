@@ -8,7 +8,7 @@ const RULES_SRC = 'jlc/pcb-capabilities.en.md';    // a general source, named by
 let RULES_AT = 0, RULES_P = null;       // when RULES_DATA was read, and the read in flight
 let rulesSeg = null;                    // 'rules' | 'calc', remembered as a UI preference
 let rulesAll = false;                   // "Show all": every row of the diff, not only the ones that need attention
-const rulesOpen = {};                   // which disclosures the user opened: howto, preset, extra
+const rulesOpen = {};                   // which disclosures the user opened: howto, preset, standard, extra
 const rulesDraft = {};                  // the extra-rule form, kept while the view redraws
 
 /* ---------- loading ---------- */
@@ -59,7 +59,7 @@ function rulesResult(d) {
 }
 /* {below, differ, rows}: below the JLC minimum, and the others that need a look. shell.js stageStatus('rules') may use it. */
 function rulesSummary(rd) {
-  const out = {below: 0, differ: 0, rows: 0, preset: ((rd && rd.preset && rd.preset.rules) || []).length};
+  const out = {below: 0, differ: 0, rows: 0, preset: ((rd && rd.preset && rd.preset.rules) || []).filter(r => !((rd.preset_off || []).includes(r.name))).length};
   for (const d of (rd && rd.diff) || []) {
     const r = rulesResult(d);
     out.rows++;
@@ -140,32 +140,79 @@ function rulesHowTo(linked) {
 function rulesPresetTable(rd) {
   const p = (rd.preset && rd.preset.rules) || [];
   const cite = chip(RULES_SRC);                 // opens the document in the side sheet; marked broken if Sources does not list it
-  return `<table class="tbl dense rules-tbl"><thead><tr><th>Rule</th><th>Constraints</th><th>Scope</th><th>Description</th></tr></thead><tbody>
-    ${p.map(r => `<tr><td><span class="rn">${esc(r.name)}</span></td><td class="val">${esc(r.value || '—')}</td><td>${esc(r.scope1 || 'All')}</td><td class="muted wrapcell">${esc(r.description || '')}</td></tr>`).join('')}
+  const off = rd.preset_off || [];
+  return `<p class="muted">${p.length - p.filter(r => off.includes(r.name)).length} of ${p.length} preset rules on. A rule turned off is left out of the .RUL and the comparison.</p>
+    <table class="tbl dense rules-tbl"><thead><tr><th>On</th><th>Rule</th><th>Constraints</th><th>Scope</th><th>Description</th></tr></thead><tbody>
+    ${p.map(r => `<tr${off.includes(r.name) ? ' class="rule-off"' : ''}><td><input type="checkbox" data-preset-toggle="${esc(r.name)}" aria-label="Rule ${esc(r.name)} on"${off.includes(r.name) ? '' : ' checked'}></td><td><span class="rn">${esc(r.name)}</span></td><td class="val">${esc(r.value || '—')}</td><td>${esc(r.scope1 || 'All')}</td><td class="muted wrapcell">${esc(r.description || '')}</td></tr>`).join('')}
     </tbody></table><p class="muted rules-src">Values from JLC&rsquo;s capabilities page, summarised in ${cite}.</p>`;
+}
+function rulesKindFields(rd, kind) {      // the value inputs of one kind, from the server's list
+  const k = (rd.kinds || []).find(x => x.kind === kind) || (rd.kinds || [])[0];
+  return k || {kind, label: kind, hint: '', fields: []};
+}
+function rulesFieldHTML(f, dr) {
+  const v = dr['v_' + f.key] ?? '';
+  if (f.type === 'choice') {
+    return `<label class="field"><span>${esc(f.label)}</span><select class="in" data-draft="v_${f.key}" data-field="${f.key}">${f.choices.map(c => `<option value="${esc(c)}"${(v || f.default) === c ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></label>`;
+  }
+  return `<label class="field"><span>${esc(f.label)}${f.optional ? ' (optional)' : ''}</span><input class="in" data-draft="v_${f.key}" data-field="${f.key}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" autocomplete="off" title="mil or mm, e.g. 10mil or 0.25mm"></label>`;
 }
 function rulesExtraBody(rd) {
   const ex = rd.extra || [];
   const dr = rulesDraft;
-  const kinds = ['Width', 'Clearance', 'RoutingVias', 'ComponentClearance'];
+  const kinds = rd.kinds || [];
+  const kind = rulesKindFields(rd, dr.kind || 'Width');
   const table = ex.length
-    ? `<p class="muted">Added to every .RUL you download.</p><table class="tbl dense rules-tbl"><thead><tr><th>Rule</th><th>Kind</th><th>Scope</th><th>Value</th></tr></thead><tbody>
-      ${ex.map(r => `<tr><td><span class="rn">${esc(r.name)}</span></td><td>${esc(r.kind)}</td><td>${esc(r.scope1 || 'All')}</td><td class="val">${esc(r.value || '')}</td></tr>`).join('')}</tbody></table>`
+    ? `<p class="muted">Added to every .RUL you download; a rule turned off stays here but is left out.</p><table class="tbl dense rules-tbl"><thead><tr><th>On</th><th>Rule</th><th>Kind</th><th>Scope</th><th>Value</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
+      ${ex.map(r => `<tr${r.enabled === false ? ' class="rule-off"' : ''}><td><input type="checkbox" data-extra-toggle="${esc(r.name)}" aria-label="Rule ${esc(r.name)} on"${r.enabled === false ? '' : ' checked'}></td><td><span class="rn">${esc(r.name)}</span>${r.source ? `<span class="sub">${chip(r.source)}</span>` : ''}</td><td>${esc(r.kind)}</td><td>${esc(r.scope1 || 'All')}</td><td class="val">${esc(r.value || '')}</td>
+        <td><div class="row-acts">${btn('', {icon: 'trash', size: 'sm', title: `Remove ${r.name}`, act: 'remove-extra-rule', rule: r.name})}</div></td></tr>`).join('')}</tbody></table>`
     : '<p class="muted">No extra rules yet. Rules you add here go into every .RUL you download.</p>';
   return `${table}
     <div class="rules-add" role="group" aria-label="Add an extra rule">
       <label class="field"><span>Name</span><input class="in" id="er-name" data-draft="name" value="${esc(dr.name || '')}" placeholder="PowerNets_Width" autocomplete="off"></label>
-      <label class="field"><span>Kind</span><select class="in" id="er-kind" data-draft="kind">${kinds.map(k => `<option value="${k}"${(dr.kind || 'Width') === k ? ' selected' : ''}>${k}</option>`).join('')}</select></label>
+      <label class="field"><span>Kind</span><select class="in" id="er-kind" data-draft="kind">${kinds.map(k => `<option value="${esc(k.kind)}"${kind.kind === k.kind ? ' selected' : ''}>${esc(k.label)}</option>`).join('')}</select></label>
       <label class="field"><span>Scope</span><input class="in" id="er-scope" data-draft="scope" value="${esc(dr.scope || '')}" placeholder="InNetClass('PowerNets')" autocomplete="off"></label>
-      <label class="field"><span>Value</span><input class="in" id="er-val" data-draft="val" value="${esc(dr.val || '')}" placeholder="20mil" autocomplete="off"></label>
+      ${kind.fields.map(f => rulesFieldHTML(f, dr)).join('')}
       ${btn('Add rule', {kind: 'line', act: 'add-extra-rule'})}
-    </div>`;
+    </div>
+    <p class="muted rules-hint">${esc(kind.hint)} Lengths in mil or mm (a bare number is mil). Scope blank means All.</p>`;
+}
+
+/* ---------- by a standard: IPC-2221B voltage clearance, IPC class annular ring ---------- */
+const rulesStd = {preview: null, error: '', off: new Set()};      // the last preview (what "Add these rules" would add)
+function rulesStandardBody(rd) {
+  const info = rd.standards;
+  if (!info || !(info.standards || []).length) return '<p class="muted">No standards available.</p>';
+  const dr = rulesDraft, std = info.standards.find(x => x.id === (dr.std || 'ipc2221b')) || info.standards[0];
+  const opts = (items, cur) => items.map(i => `<option value="${esc(i.id)}"${i.id === cur ? ' selected' : ''}>${esc(i.label)}</option>`).join('');
+  const inputs = std.id === 'ipc2221b'
+    ? `<label class="field"><span>Peak voltage (V)</span><input class="in" type="number" inputmode="decimal" min="0" max="${std.max_volts}" step="any" data-draft="s_volts" value="${esc(dr.s_volts || '')}" placeholder="60" title="Peak voltage between the two conductors"></label>
+       <label class="field"><span>Location</span><select class="in" data-draft="s_location">${opts(std.locations, dr.s_location || 'B2')}</select></label>
+       <label class="field"><span>Scope</span><input class="in" data-draft="s_scope" value="${esc(dr.s_scope || '')}" placeholder="InNetClass('HV')" autocomplete="off"></label>`
+    : `<label class="field"><span>Class</span><select class="in" data-draft="s_class">${opts(std.classes, dr.s_class || '2')}</select></label>`;
+  const pv = rulesStd.preview;
+  let prev = '';
+  if (rulesStd.error) prev = `<p class="warn-t">${esc(rulesStd.error)}</p>`;
+  else if (pv) {
+    prev = `<table class="tbl dense rules-tbl"><thead><tr><th>Add</th><th>Rule</th><th>Kind</th><th>Scope</th><th>Value</th><th>Source</th></tr></thead><tbody>
+      ${pv.rules.map(r => `<tr><td><input type="checkbox" data-std-pick="${esc(r.name)}" aria-label="Add ${esc(r.name)}"${rulesStd.off.has(r.name) ? '' : ' checked'}></td><td><span class="rn">${esc(r.name)}</span>${r.note ? `<span class="why">${esc(r.note)}</span>` : ''}</td><td>${esc(r.kind)}</td><td>${esc(r.scope1)}</td>
+        <td class="val">${esc(r.value)}<span class="sub">standard ${+r.standard_mm.toFixed(4)} mm${r.jlc_mm != null ? `, JLC ${+r.jlc_mm.toFixed(4)} mm` : ''}</span></td><td>${chip(pv.source)}</td></tr>`).join('')}</tbody></table>
+      ${(pv.notes || []).map(n => `<p class="muted">${esc(n)}</p>`).join('')}
+      <div class="rules-add">${btn('Add the ticked rules', {kind: 'pri', act: 'add-standard-rules'})}${btn('Select all', {kind: 'link', act: 'std-pick', value: 'all'})}${btn('Select none', {kind: 'link', act: 'std-pick', value: 'none'})}</div>`;
+  }
+  return `<p class="muted">${esc(std.hint)} On top of the fab&rsquo;s limits: a value below the JLC preset is never used, the stricter one is kept. Source: ${chip(std.source)}, checked ${esc(info.checked)}.</p>
+    <div class="rules-add rules-std" role="group" aria-label="Rules by a standard">
+      <label class="field"><span>Standard</span><select class="in" id="sd-std" data-draft="std">${info.standards.map(x => `<option value="${esc(x.id)}"${x.id === std.id ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}</select></label>
+      ${inputs}
+      ${btn('Preview', {kind: 'line', act: 'preview-standard'})}
+    </div>${prev}`;
 }
 function rulesDiscs(rd) {
   const linked = !!rd.linked_pcb, n = ((rd.preset && rd.preset.rules) || []).length, ex = (rd.extra || []).length;
   return `<div class="rules-discs">
     ${rulesDisc('howto', 'How to import in Altium', rulesHowTo(linked), !!rulesOpen.howto)}
-    ${rulesDisc('preset', `JLC preset (${n} rules)`, rulesPresetTable(rd), rulesOpen.preset ?? !linked)}
+    ${rulesDisc('preset', `JLC preset (${n - (rd.preset_off || []).length} of ${n} rules on)`, rulesPresetTable(rd), rulesOpen.preset ?? !linked)}
+    ${rulesDisc('standard', 'By a standard (IPC)', rulesStandardBody(rd), !!rulesOpen.standard)}
     ${rulesDisc('extra', ex ? `Extra rules (${ex})` : 'Extra rules', rulesExtraBody(rd), !!rulesOpen.extra)}
   </div>`;
 }
@@ -265,7 +312,7 @@ document.addEventListener('input', e => {
 document.addEventListener('keydown', e => {      // Enter in the extra-rule form adds the rule
   if (e.key !== 'Enter' || !e.target.closest || e.target.tagName !== 'INPUT' || !e.target.closest('.rules-add')) return;
   e.preventDefault();
-  const b = $('[data-act="add-extra-rule"]');
+  const b = e.target.closest('.rules-std') ? $('[data-act="preview-standard"]') : $('[data-act="add-extra-rule"]');
   if (b) b.click();
 });
 document.addEventListener('click', e => {       // a disclosure the user opened stays open when the view redraws
@@ -328,15 +375,72 @@ onAct('rules-ask', async (el, d, e) => {
   const text = r ? `Should I change the ${d.rule} rule? My board has ${bv || 'nothing'}, the JLC preset has ${pv || 'nothing'} (${r.text.toLowerCase()}).` : '';
   askAbout({kind: 'rule', id: d.rule, label: d.rule, text});
 });
+onChange(t => t.id === 'er-kind' || t.id === 'sd-std', async e => {      // another kind or standard: other inputs
+  const id = e.target.id;
+  rulesDraft[id === 'er-kind' ? 'kind' : 'std'] = e.target.value;
+  rulesStd.preview = null;
+  rulesStd.error = '';
+  renderCenter(true);
+  rulesFocus('#' + id);
+});
 onAct('add-extra-rule', async (el, d, e) => {
   const name = ($('#er-name')?.value || '').trim();
   const kind = $('#er-kind')?.value || 'Width';
   const scope1 = ($('#er-scope')?.value || 'All').trim() || 'All';
-  const val = ($('#er-val')?.value || '').trim();
-  if (!name || !val) { toast('Enter a name and a value for the rule.', null, {bad: true}); return; }
-  const res = await api('/api/rules/extra', {rule: {name, kind, scope1, value: val}});
+  const values = {};
+  for (const inp of document.querySelectorAll('.rules-add [data-field]')) values[inp.dataset.field] = inp.value.trim();
+  if (!name) { toast('Enter a name for the rule.', null, {bad: true}); return; }
+  const res = await api('/api/rules/extra', {rule: {name, kind, scope1, values}});     // the server says what is wrong with a value
   if (RULES_DATA && res && Array.isArray(res.extra)) RULES_DATA.extra = res.extra;
-  for (const k of Object.keys(rulesDraft)) delete rulesDraft[k];
+  for (const k of Object.keys(rulesDraft)) if (k !== 'std') delete rulesDraft[k];
   renderCenter(true);       // the new rule shows in the table
   rulesFocus('#er-name');
+});
+onAct('remove-extra-rule', async (el, d, e) => {
+  const res = await api('/api/rules/extra/delete', {name: d.rule});
+  if (RULES_DATA && res && Array.isArray(res.extra)) RULES_DATA.extra = res.extra;
+  renderCenter(true);
+});
+function rulesStdParams() {
+  const dr = rulesDraft, id = dr.std || 'ipc2221b';
+  if (id === 'ipc2221b') return {standard: id, volts: dr.s_volts || '', location: dr.s_location || 'B2', scope: (dr.s_scope || '').trim()};
+  return {standard: id, class: dr.s_class || '2'};
+}
+onAct('preview-standard', async (el, d, e) => {
+  const p = new URLSearchParams(rulesStdParams());
+  const res = await api('/api/rules/standard?' + p, undefined, {soft: true});
+  rulesStd.error = res && res.error ? res.error : '';
+  rulesStd.preview = rulesStd.error ? null : res;
+  rulesStd.off = new Set();
+  renderCenter(true);
+});
+onChange(t => t.dataset && t.dataset.stdPick !== undefined, async e => {
+  rulesStd.off[e.target.checked ? 'delete' : 'add'](e.target.dataset.stdPick);
+});
+onAct('std-pick', async (el, d, e) => {
+  rulesStd.off = d.value === 'all' ? new Set() : new Set(((rulesStd.preview && rulesStd.preview.rules) || []).map(r => r.name));
+  renderCenter(true);
+});
+onChange(t => t.dataset && t.dataset.extraToggle !== undefined, async e => {
+  const res = await api('/api/rules/extra/enabled', {name: e.target.dataset.extraToggle, enabled: e.target.checked});
+  if (RULES_DATA && res && Array.isArray(res.extra)) RULES_DATA.extra = res.extra;
+  renderCenter(true);
+});
+onChange(t => t.dataset && t.dataset.presetToggle !== undefined, async e => {
+  const res = await api('/api/rules/preset/enabled', {name: e.target.dataset.presetToggle, enabled: e.target.checked});
+  if (RULES_DATA && res && Array.isArray(res.preset_off)) RULES_DATA.preset_off = res.preset_off;
+  loadRules(true);          // the comparison changes with the rules that are on
+  renderCenter(true);
+});
+onAct('add-standard-rules', async (el, d, e) => {
+  const p = rulesStdParams();
+  const names = ((rulesStd.preview && rulesStd.preview.rules) || []).map(r => r.name).filter(n => !rulesStd.off.has(n));
+  if (!names.length) { toast('Tick at least one rule to add.', null, {bad: true}); return; }
+  const res = await api('/api/rules/standard', {standard: p.standard, params: p, names});
+  if (RULES_DATA && res && Array.isArray(res.extra)) RULES_DATA.extra = res.extra;
+  const n = (res.added || []).length;
+  rulesStd.preview = null;
+  rulesOpen.extra = true;
+  toast(`Added ${n} rule${n === 1 ? '' : 's'} to the extra rules.`);
+  renderCenter(true);
 });

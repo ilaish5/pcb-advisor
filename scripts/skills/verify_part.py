@@ -62,7 +62,10 @@ def verify(project, key):
     changes = {**result, "verified_at": store.now()}
     if result["verify"] != "pass":
         changes["accepted"] = False          # a part that fails is no longer accepted
+    if result["verify"] == "mismatch":
+        changes["pins_accepted"] = False     # new conflicting pins: the student decides again
     store.add_library(project, key, changes, by="verify_part")
+    store.refresh_pins_source(project)       # clears the "unverified" mark on the sheet parts, or leaves it
     return {"line": key, **result}
 
 

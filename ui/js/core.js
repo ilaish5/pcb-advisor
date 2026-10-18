@@ -126,10 +126,23 @@ function inline(t) {
     .replace(/`([^`]+)`/g, '<span class="m">$1</span>');
 }
 function fmt(text) {
-  const out = []; let list = null;
-  const flush = () => { if (list) { out.push(`<${list.t}>${list.items.map(i => `<li>${i}</li>`).join('')}</${list.t}>`); list = null; } };
+  const out = []; let list = null, rows = null;
+  const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
+  const flushRows = () => {
+    if (!rows) return;
+    const [head, ...body] = rows; rows = null;
+    out.push(`<table class="tbl dense"><thead><tr>${head.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>` +
+      body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') + '</tbody></table>');
+  };
+  const flush = () => { flushRows(); if (list) { out.push(`<${list.t}>${list.items.map(i => `<li>${i}</li>`).join('')}</${list.t}>`); list = null; } };
   for (const raw of String(text || '').split('\n')) {
     const line = esc(raw);
+    if (/^\s*\|.*\|\s*$/.test(line)) {               // a pipe table row; the |---| separator row is dropped
+      if (!rows) { flush(); rows = []; }
+      if (!/^\s*\|[\s:|-]+\|\s*$/.test(line)) rows.push(cells(line));
+      continue;
+    }
+    flushRows();
     const ul = /^\s*[-*] (.*)$/.exec(line), ol = /^\s*\d+[.)] (.*)$/.exec(line);
     if (ul || ol) {
       const t = ul ? 'ul' : 'ol';

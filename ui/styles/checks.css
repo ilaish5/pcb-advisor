@@ -70,3 +70,10 @@
 /* a narrow sheet (the side sheet open, a small window) drops what can be read in the report itself */
 @container (max-width:780px){.dfm-tbl .c-good{display:none}.dfm-xb{grid-template-columns:minmax(0,1fr)}}
 @container (max-width:620px){.dfm-tbl .c-layer,.dfm-tbl .c-warn,.dfm-tbl .c-ask{display:none}}
+
+/* parts whose pins came from the agent: the only open item that blocks ordering */
+.dfm-unv { margin: 0 0 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.dfm-unv h3 { margin: 0 0 4px; font-size: 14px; }
+.dfm-unv ul { list-style: none; margin: 8px 0; padding: 0; }
+.dfm-unv .unv-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
+.dfm-unv .unv-why { flex: 1; color: var(--ink-3); font-size: var(--t-xs); }

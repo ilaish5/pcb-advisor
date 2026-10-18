@@ -19,7 +19,7 @@ import workspace  # noqa: E402
 
 SCHEMA_VERSION = 1
 # the design log. The conversation lives in chats/<id>.jsonl, one per session.
-LOGS = ("bom-log.jsonl", "supply-log.jsonl", "proposals.jsonl", "library-log.jsonl")
+LOGS = ("bom-log.jsonl", "supply-log.jsonl", "proposals.jsonl", "library-log.jsonl", "sheet-log.jsonl")
 DERIVED = ("design-model.json", "bom.json", "artifacts")
 
 

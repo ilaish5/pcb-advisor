@@ -135,10 +135,12 @@ function diffHTML(p) {
   const refBtn = ref ? `<button type="button" class="ref" data-ref="${esc(ref)}">${esc(p.new ? p.line : ref)}</button>` : '';
   const labels = keys.map(k => propLabel(k));
   const what = labels.length > 2 ? propPlural(labels.length, 'field') : labels.map(propLower).join(' and ');
-  if (p.status === 'approved' || p.status === 'rejected') {
-    const ok = p.status === 'approved';
+  if (p.status === 'approved' || p.status === 'rejected' || p.status === 'undone') {
+    const ok = p.status === 'approved', undone = p.status === 'undone';
     const subj = diagram ? 'diagram changes' : `${refBtn} ${esc(p.new ? 'new line' : propLower(labels.join(', ')) || 'change')}`;
-    return `<div class="prop-done ${ok ? 'ok' : 'no'}"><span class="${ok ? 'ok-t' : ''}">${icon(ok ? 'check' : 'x', 's')}</span><span>${ok ? 'Approved' : 'Rejected'}: ${subj}</span></div>`;
+    const word = undone ? 'Undone' : ok ? (p.decided_by === 'auto' ? 'Done' : 'Approved') : 'Rejected';
+    const undo = ok ? btn('Undo', {kind: 'link', size: 'sm', icon: 'undo', act: 'undo-change', pid: p.id, title: 'Put it back how it was'}) : '';
+    return `<div class="prop-done ${ok ? 'ok' : 'no'}"><span class="${ok ? 'ok-t' : ''}">${icon(ok ? 'check' : 'x', 's')}</span><span>${word}: ${subj}</span>${undo}</div>`;
   }
   const pid = esc(p.id);
   const why = p.reason ? `<p class="why" dir="auto">${esc(p.reason)}</p>` : '';
@@ -158,6 +160,44 @@ function diffHTML(p) {
   if (p.library) rows.push(`<div class="row"><span class="k">Library</span> <span class="t">Model from ${esc(p.library.model_source || 'the agent')}, needs your check</span></div>`);
   const title = p.new ? 'add a new line' : keys.length ? 'change the ' + what : 'change';
   return `<div class="prop" data-pid="${pid}"><h4>${refBtn}: ${esc(title)}</h4><div class="chg">${rows.join('')}</div>${why}${srcs}${acts()}</div>`;
+}
+
+/* One-line summary of a proposal, for the lists inside a group. */
+function propSummary(p) {
+  if (p.kind === 'idea_diagram') return 'Diagram changes';
+  const ref = ((lineByKey(p.line) || {}).refs || [p.line])[0];
+  const keys = Object.keys(p.changes || {}).filter(k => k !== 'refs' || p.new);
+  return `${p.new ? 'New ' : ''}${ref}: ${keys.map(k => propLabel(k).toLowerCase() + ' ' + propShow(p.changes[k])).join(', ')}`;
+}
+function propGroupTitle(ps) {
+  const bom = ps.filter(p => p.kind !== 'idea_diagram').length, dia = ps.length - bom;
+  return [bom && propPlural(bom, 'BOM line'), dia && propPlural(dia, 'diagram change')].filter(Boolean).join(', ');
+}
+/* Several proposals from one turn: ONE card. Pending: Approve all / Reject all act on the ticked rows (all, at first).
+   Decided together (autonomy): one "Done" line with the list and an Undo per row. */
+function propGroupHTML(ps, pending) {
+  const items = ps.map(p => pending
+    ? `<label class="prop-grow"><input type="checkbox" data-gpid="${esc(p.id)}" checked> <span dir="auto">${esc(propSummary(p))}</span></label>`
+    : `<div class="prop-grow"><span dir="auto">${p.status === 'undone' ? '<s>' : ''}${esc(propSummary(p))}${p.status === 'undone' ? '</s>' : ''}</span>` +
+      (p.status === 'approved' ? btn('Undo', {kind: 'link', size: 'sm', icon: 'undo', act: 'undo-change', pid: p.id}) : '<span class="muted">undone</span>') + '</div>').join('');
+  if (pending) {
+    return `<div class="prop batch" data-pids="${esc(ps.map(p => p.id).join(','))}"><h4>${esc(propGroupTitle(ps))}</h4>` +
+      `<details class="prop-glist"><summary>Show the list</summary>${items}</details>` +
+      `<div class="acts">${btn('Approve all', {kind: chatLead === null || ps.some(p => p.id === chatLead) ? 'pri' : 'line', size: 'sm', act: 'batch-decide', decision: 'approved'})}` +
+      `${btn('Reject all', {size: 'sm', act: 'batch-decide', decision: 'rejected'})}</div></div>`;
+  }
+  const decidedBy = ps.every(p => p.decided_by === 'auto') ? 'Done' : 'Approved';
+  const live = ps.filter(p => p.status === 'approved').length;
+  return `<details class="prop-done ok prop-glist"><summary><span class="ok-t">${icon('check', 's')}</span><span>${decidedBy}: ${esc(propGroupTitle(ps))}${live < ps.length ? ` (${ps.length - live} undone)` : ''}</span></summary>${items}</details>`;
+}
+/* The cards under one agent message: decided ones as lines (grouped from two up), pending ones as one group card. */
+function propsHTML(ids) {
+  const ps = ids.map(id => (S.proposals || []).find(p => p.id === id)).filter(Boolean);
+  const pending = ps.filter(p => p.status === 'pending');
+  const done = ps.filter(p => p.status === 'approved' || p.status === 'undone');
+  const other = ps.filter(p => p.status === 'rejected');
+  return (done.length > 1 ? propGroupHTML(done, false) : done.map(diffHTML).join('')) +
+    other.map(diffHTML).join('') + (pending.length > 1 ? propGroupHTML(pending, true) : pending.map(diffHTML).join(''));
 }
 
 /* ---------- messages ---------- */
@@ -188,7 +228,7 @@ function msgHTML(m, undoTs) {
   if (m.role === 'ctx') return ctxHTML(m.part);
   if (m.role === 'agent') {
     if (m.error || m.decision) return '';      // a failed reply becomes Retry under the box; a decision is the proposal card's own state
-    const props = (m.proposals || (m.proposal ? [m.proposal] : [])).map(id => diffHTML(S.proposals.find(p => p.id === id))).join('');
+    const props = propsHTML(m.proposals || (m.proposal ? [m.proposal] : []));
     const undo = m.ts === undoTs && ((m.applied || []).includes('idea.diagram.edit') || m.diagram_edit)
       ? `<div class="undo">${btn('Undo diagram change', {size: 'sm', icon: 'undo', act: 'undo-diagram', title: 'Undo diagram change'})}</div>` : '';
     return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text))}</div>${undo}</div>` : '') + props;
@@ -266,7 +306,7 @@ function renderThread(force) {
     const p = (S.proposals || []).find(x => x.id === id);
     if (p && p.status === 'pending') chatLead = id;
   }
-  const html = S.chat.length ? S.chat.map(m => msgHTML(m, undoTs)).join('') : '<p class="hint">Ask about parts, nets or rules. Any change the agent suggests waits for your approval.</p>';
+  const html = S.chat.length ? S.chat.map(m => msgHTML(m, undoTs)).join('') : '<p class="hint">Ask about parts, nets or rules. Routine changes are done for you and can be undone; important ones (parts, Altium, ordering) wait for your approval.</p>';
   chatLead = null;
   const grew = chatSeen.session !== S.session || S.chat.length !== chatSeen.count;
   const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -456,3 +496,15 @@ onAct('retry', async (el, d, e) => {
   await send(err.text, {ctx: err.ctx || null});
 });
 onAct('review-diagram', async (el, d, e) => { go('workspace', 'idea'); });
+// Undo one applied change: the server appends a compensating entry; if later changes depend on it, it says so (409)
+onAct('undo-change', async (el, d, e) => { setState(await api('/api/undo', {id: d.pid})); render(true); toast('Undone'); });
+// Approve all / Reject all on a group card: the ticked rows, applied in order; the server reports each one
+onAct('batch-decide', async (el, d, e) => {
+  const card = el.closest('.batch');
+  const ids = [...card.querySelectorAll('input[data-gpid]:checked')].map(i => i.dataset.gpid);
+  if (!ids.length) { toast('Tick at least one change'); return; }
+  const r = await api('/api/proposals/batch', {ids, decision: d.decision});
+  setState(r); render(true);
+  const failed = (r.results || []).filter(x => !x.ok);
+  if (failed.length) toast(`${failed.length} not applied: ${failed[0].error}`, null, {bad: true});
+});

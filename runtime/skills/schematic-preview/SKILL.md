@@ -16,8 +16,11 @@ The picture is a teaching aid: it shows WHAT to place and HOW to lay it out. The
 
 ## Steps
 1. Collect the data first: per IC the pin number, pin name and net; per small part the ref, value and the two nets.
-   Take pins from the part's datasheet in the project's `sources/` or from the student's library. Never guess a pin number;
-   write "unknown - need datasheet" and ask for the file (link-and-return) instead.
+   Take pins from the part's datasheet in the project's `sources/` or from the student's library when one is there. Simple parts
+   (R, C, L, LED, diode, ferrite, crystal, generic connector) need none. For an IC with no datasheet, use the well-known pinout of
+   that MPN and package and keep going: the part is saved as `pins_source: "agent"` (unverified). Do not stop and do not ask for the
+   file first; at the end say once "N parts unverified - drop their datasheets in Sources when you have them". If you truly do not
+   know the pinout of a part, leave that part out and say so; do not invent pins.
 2. Split into blocks, one framed box each: power in, regulators, MCU core, clock and reset, programming/debug, USB,
    sensors, connectors/UI. Keep a block to about 45 parts or fewer; above that, make a second sheet.
 3. Fix the net names before drawing: one short name per net, rails with a sign (`+3V3`, `+5V`), ground `GND`. Same name = same wire.
@@ -48,7 +51,7 @@ The picture is a teaching aid: it shows WHAT to place and HOW to lay it out. The
 
 ## Pitfalls
 - A wrong net drawn confidently is worse than no picture. The drawing only shows the data you gave it, so verify pin numbers
-  against the datasheet before drawing, and list what is unverified.
+  against the datasheet when there is one; if not, draw from the known pinout, mark it unverified and list those parts.
 - Long wires across the page make a sheet unreadable and hide errors. Short stub + label is the method; it maps one to one
   to Altium net labels and power ports. Use a wire only for a 2-pin link inside a block.
 - Net names are global in a flat project but local to a sheet in a hierarchy. Say which one the student uses, or the same label on

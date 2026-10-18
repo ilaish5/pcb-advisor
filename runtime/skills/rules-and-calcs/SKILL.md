@@ -55,6 +55,12 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
 - `python <repo>/scripts/trace_width.py <amps> --layer external|internal --rise <C> --oz <n>` - IPC-2221 width in mm and mil.
 
 ## References
+- Standards on top of the fab (IPC-2221B voltage clearance, IPC-6012 class 2/3 annular ring): `python <repo>/scripts/rules.py standard ...`
+  previews the rules; the student adds them in Rules > "By a standard (IPC)". A value below the JLC preset is replaced by the JLC one.
+  Sources `{{src:standards/ipc-2221b-clearance.en.md}}`, `{{src:standards/ipc-class-annular-ring.en.md}}`.
+- Extra rules (Rules tab) take 14 kinds: Width, Clearance, RoutingVias, ComponentClearance, HoleSize, MinimumAnnularRing,
+  HoleToHoleClearance, SolderMaskExpansion, PasteMaskExpansion, SilkToSolderMaskClearance, SilkToSilkClearance, PlaneClearance,
+  PolygonConnect, DiffPairsRouting.
 - `references/jlc-limits.md` - capability numbers with source and date, JLC stack-ups, rule catalogue with typical values.
 - `<repo>/shared/reference/jlc/pcb-capabilities.en.md` - full JLC tables (1-2 layer and multilayer, by copper weight, mask colour), cited with URL and date.
 - `<repo>/shared/reference/course/ad20-essentials/m19-pcb-rules-and-panels.en.md` - 19.3 editor and priorities, 19.4 net classes.

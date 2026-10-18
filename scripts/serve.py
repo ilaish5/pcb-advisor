@@ -68,7 +68,7 @@ def compact_if_due(project, sess):
 SETTABLE = (
     "user.language", "user.units", "user.name",
     "user.theme", "agent.provider", "agent.model", "agent.memory_every",
-    "agent.memory_max_chars", "agent.history_messages",
+    "agent.memory_max_chars", "agent.history_messages", "agent.autonomy",
     "server.default_project", "altium.install_path",
 )
 
@@ -176,10 +176,50 @@ def _agent_may_set_library(changes):
     return {k: v for k, v in (changes or {}).items() if k in allowed}
 
 
+def decide_and_note(project, sess, pid, decision, by="student", note=True, redraw_now=True):
+    """Approve or reject one proposal and do what follows (supply re-check, sheet labels, a note the engine
+    reads). The click, the batch endpoint and the autonomy setting all come through here, so the logs are
+    the same whoever decided; only `by` differs."""
+    store.decide(project, pid, decision, by=by)
+    project_mod.touch(project)
+    prop = next(p for p in store.proposals(project) if p["id"] == pid)
+    if decision == "approved" and prop.get("kind") != "idea_diagram":
+        if "mpn" in prop.get("changes", {}):
+            recheck_async(project, prop["line"])
+        if redraw_now:
+            redraw(project)
+    if not note:
+        return prop
+    decided = {"decision": decision, "proposal": pid}
+    if decision != "approved":
+        say(project, sess, {"ts": now(), "role": "agent", "text": f"Rejected. {pid} changes nothing.", **decided})
+    elif prop.get("kind") == "idea_diagram":
+        say(project, sess, {"ts": now(), "role": "agent",
+                            "text": "Approved diagram changes. The block diagram has been updated.", **decided})
+    else:
+        ref = next((l["refs"][0] for l in store.bom_lines(project) if l["key"] == prop["line"] and l.get("refs")),
+                   prop["line"])
+        what = "added to the BOM" if prop.get("new") else "updated in the BOM, on the schematic label and in the library"
+        say(project, sess, {"ts": now(), "role": "agent", "text": "Approved. {{ref:" + ref + "}} is " + what + ".", **decided})
+    return prop
+
+
 def apply_actions(project, actions, sess=None, last_user="", meta=None):
     """The server is the only writer. Agents propose; this applies.
-    Returns (applied, proposal_ids, refused)."""
+    Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
+    approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
     applied, proposals, refused = [], [], []
+    auto_done = []
+
+    def maybe_auto(rec):
+        if not store.may_auto_apply(rec):
+            return
+        try:
+            decide_and_note(project, sess, rec["id"], "approved", by="auto", note=False, redraw_now=False)
+            auto_done.append(rec)
+        except (ValueError, KeyError) as exc:
+            refused.append(f"auto-apply of {rec['id']} failed, it waits for you: {exc}")
+
     for a in actions or []:
         if not isinstance(a, dict):
             continue
@@ -205,11 +245,13 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                                         sess, new=bool(a.get("new")))
                 proposals.append(rec["id"])
                 applied.append(f"bom.propose:{a['line']}")
+                maybe_auto(rec)
             elif kind == "idea.diagram" and isinstance(a.get("changes"), dict):
                 rec = store.propose_idea_diagram(project, a["changes"], a.get("reason", "Diagram update proposed"),
                                                 sources=a.get("sources", []), session=sess)
                 proposals.append(rec["id"])
                 applied.append("idea.diagram")
+                maybe_auto(rec)
             elif kind == "idea.diagram.edit":
                 ops = a.get("ops")
                 if not isinstance(ops, list):
@@ -219,7 +261,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                 if meta is not None and isinstance(res, dict) and res.get("touched"):
                     meta.setdefault("diagram_touched", []).extend(res["touched"])
             elif kind == "netlist.write" and a.get("sheet") and isinstance(a.get("data"), dict):
-                res = store.write_sheet(project, a["sheet"], a["data"])
+                res = store.write_sheet_logged(project, a["sheet"], a["data"])
                 if res["ok"]:
                     applied.append(f"netlist.write:{res['sheet']}")
                 else:
@@ -265,8 +307,12 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                 refused.append(f"{kind}: not a known action, or fields missing")
         except (ValueError, KeyError) as exc:
             refused.append(f"{kind}: {exc}")
-    if any(x.startswith("netlist") for x in applied):
+    if any(x.startswith("netlist") for x in applied) or any(r.get("kind") != "idea_diagram" for r in auto_done):
         redraw(project)
+    if auto_done and sess:
+        say(project, sess, {"ts": now(), "role": "agent", "decision": "approved", "proposal": auto_done[0]["id"],
+                            "text": f"Applied without asking ({store.autonomy()} mode, the student can undo): "
+                                    + ", ".join(r["id"] for r in auto_done)})
     return applied, proposals, refused
 
 
@@ -407,6 +453,41 @@ UI_STATIC_TYPES = {
     ".woff2": "font/woff2",
     ".json": "application/json",
 }
+
+
+def _extra_rules_load(rules_file):
+    """The project's extra rules (rules.json), [] when there are none or the file is unreadable."""
+    if rules_file.is_file():
+        try:
+            val = json.loads(rules_file.read_text(encoding="utf-8"))
+            return val if isinstance(val, list) else []
+        except Exception:
+            return []
+    return []
+
+
+def _preset_off(proj):
+    """Names of the JLC preset rules this project turned off (rules-off.json)."""
+    f = model.project_dir(proj) / "rules-off.json"
+    try:
+        val = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else []
+        return [n for n in val if isinstance(n, str)] if isinstance(val, list) else []
+    except Exception:
+        return []
+
+
+def _extra_rules_save(rules_file, new_rules):
+    """Add rules to the store; a rule with the same name replaces the old one."""
+    extra = _extra_rules_load(rules_file)
+    for rule in new_rules:
+        idx = next((i for i, r in enumerate(extra) if r.get("name") == rule["name"]), None)
+        if idx is None:
+            extra.append(rule)
+        else:
+            extra[idx] = rule
+    rules_file.parent.mkdir(parents=True, exist_ok=True)
+    rules_file.write_text(json.dumps(extra, indent=2), encoding="utf-8")
+    return extra
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -648,6 +729,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, alts)
             except Exception as exc:
                 return self._send(500, {"error": str(exc)})
+        if path == "/api/final/unverified":
+            return self._send(200, {"unverified": store.unverified_parts(self.project())})
         if path == "/api/checks":
             import dfm
             kind = self.query("kind")
@@ -698,14 +781,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/rules":
             proj = self.project()
             import rules as rules_mod
+            import rule_kinds, ipc_standards
             preset = rules_mod.get_jlc_preset(project_mod.board(proj))   # 2 or multilayer, copper weight, mask colour
             rules_file = model.project_dir(proj) / "rules.json"
-            extra = []
-            if rules_file.is_file():
-                try:
-                    extra = json.loads(rules_file.read_text(encoding="utf-8"))
-                except Exception:
-                    extra = []
+            extra = _extra_rules_load(rules_file)
             linked_pcb = None
             board_rules = []
             doc = None
@@ -724,17 +803,29 @@ class Handler(BaseHTTPRequestHandler):
                         linked_pcb = pcb_path.name
             except Exception:
                 pass
-            diff = rules_mod.diff_rules(board_rules, preset.get("rules"), board_geom=doc)
+            off = _preset_off(proj)
+            diff = rules_mod.diff_rules(board_rules, [r for r in preset.get("rules", []) if r.get("name") not in off], board_geom=doc)
             return self._send(200, {
                 "preset": preset,
                 "extra": extra,
+                "preset_off": off,
+                "kinds": rule_kinds.kinds_info(),
+                "standards": ipc_standards.info(),
                 "diff": diff,
                 "linked_pcb": linked_pcb,
             })
+        if path == "/api/rules/standard":           # what a standard preset would add (nothing is stored)
+            import ipc_standards
+            q = self.queries()
+            try:
+                return self._send(200, ipc_standards.preview(q.get("standard", ""), q, project_mod.board(self.project())))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
         if path == "/api/rules/export":
             proj = self.project()
             import rules as rules_mod
-            records = rules_mod.get_preset_rule_records(project_mod.board(proj))
+            off = _preset_off(proj)
+            records = [r for r in rules_mod.get_preset_rule_records(project_mod.board(proj)) if r.get("NAME") not in off]
             board_aware = False
             if not self.query("plain"):
                 try:
@@ -750,23 +841,8 @@ class Handler(BaseHTTPRequestHandler):
                             board_aware = True
                 except Exception:
                     pass
-            rules_file = model.project_dir(proj) / "rules.json"
-            if rules_file.is_file():
-                try:
-                    extra = json.loads(rules_file.read_text(encoding="utf-8"))
-                    for r in extra:
-                        attrs = r.get("attributes")
-                        if attrs:
-                            records.append(attrs)
-                        elif r.get("name") and r.get("kind"):
-                            records.append({
-                                "NAME": r["name"],
-                                "RULEKIND": r["kind"],
-                                "SCOPE1EXPRESSION": r.get("scope1", "All"),
-                                "GAP": r.get("value", "10mil"),
-                            })
-                except Exception:
-                    pass
+            import rule_kinds
+            records = rule_kinds.append_extra_records(records, _extra_rules_load(model.project_dir(proj) / "rules.json"))
             b = rules_mod.format_rul_bytes(records)
             return self._send(200, b, "application/octet-stream",
                               {"Content-Disposition": f'attachment; filename="{proj}-rules{"-board" if board_aware else ""}.RUL"'})
@@ -903,30 +979,51 @@ class Handler(BaseHTTPRequestHandler):
         # ---- the student decides
         if path == "/api/proposal":
             try:
-                store.decide(proj, data.get("id"), data.get("decision"))
+                decide_and_note(proj, sess, data.get("id"), data.get("decision"))
             except KeyError as exc:
                 return self._send(404, {"error": str(exc)})
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
-            project_mod.touch(proj)
-            # These notes tell the engine what the student decided. The chat does not draw them (the proposal card
-            # shows the decision), hence `decision` and `proposal`; the conversation list skips them too.
-            decided = {"decision": data.get("decision"), "proposal": data.get("id")}
-            if data.get("decision") == "approved":
-                prop = next(p for p in store.proposals(proj) if p["id"] == data["id"])
-                if prop.get("kind") == "idea_diagram":
-                    say(proj, sess, {"ts": now(), "role": "agent",
-                                     "text": "Approved diagram changes. The block diagram has been updated.", **decided})
-                else:
-                    if "mpn" in prop.get("changes", {}):
-                        recheck_async(proj, prop["line"])
+            return self._send(200, state())
+
+        # several proposals at once ("Approve all" / "Reject all"): applied in the order given, each one
+        # reported; a refused item does not stop the rest
+        if path == "/api/proposals/batch":
+            ids, decision = data.get("ids"), data.get("decision")
+            if not isinstance(ids, list) or not ids or decision not in ("approved", "rejected"):
+                return self._send(400, {"error": "ids (a list) and decision (approved or rejected) required"})
+            results = []
+            for pid in ids:
+                try:
+                    decide_and_note(proj, sess, pid, decision, note=False, redraw_now=False)
+                    results.append({"id": pid, "ok": True})
+                except (KeyError, ValueError) as exc:
+                    results.append({"id": pid, "ok": False, "error": str(exc).strip("'\"")})
+            done = [r["id"] for r in results if r["ok"]]
+            if done:
+                if decision == "approved":
                     redraw(proj)
-                    ref = next((l["refs"][0] for l in store.bom_lines(proj) if l["key"] == prop["line"] and l.get("refs")),
-                               prop["line"])
-                    what = "added to the BOM" if prop.get("new") else "updated in the BOM, on the schematic label and in the library"
-                    say(proj, sess, {"ts": now(), "role": "agent", "text": "Approved. {{ref:" + ref + "}} is " + what + ".", **decided})
-            else:
-                say(proj, sess, {"ts": now(), "role": "agent", "text": f"Rejected. {data.get('id')} changes nothing.", **decided})
+                say(proj, sess, {"ts": now(), "role": "agent", "decision": decision, "proposal": done[0],
+                                 "text": f"{'Approved' if decision == 'approved' else 'Rejected'} {len(done)} proposals: "
+                                         + ", ".join(done)})
+            out = state()
+            out["results"] = results
+            return self._send(200, out)
+
+        # undo one applied change (a proposal "p..." or a sheet write "s..."): a compensating log entry
+        if path == "/api/undo":
+            try:
+                prop = store.undo(proj, data.get("id"))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc).strip("'\"")})
+            except ValueError as exc:             # includes store.UndoRefused: the message says what to undo first
+                return self._send(409, {"error": str(exc)})
+            if isinstance(prop, dict) and "mpn" in (prop.get("changes") or {}) and prop.get("line"):
+                recheck_async(proj, prop["line"])
+            redraw(proj)
+            project_mod.touch(proj)
+            say(proj, sess, {"ts": now(), "role": "agent", "decision": "undone", "proposal": data.get("id"),
+                             "text": f"The student undid change {data.get('id')}; it is back to how it was."})
             return self._send(200, state())
 
         if path == "/api/bom/edit":
@@ -1014,6 +1111,8 @@ class Handler(BaseHTTPRequestHandler):
             sources_list = data.get("sources") or []
             try:
                 rec = store.propose_bom(proj, line_key, changes, reason=reason, sources=sources_list, session=sess)
+                if store.may_auto_apply(rec):
+                    decide_and_note(proj, sess, rec["id"], "approved", by="auto")
                 say(proj, sess, {
                     "ts": now(), "role": "agent",
                     "text": f"Proposed alternative for {line_key}: {changes.get('mpn') or ''}",
@@ -1022,6 +1121,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, state())
             except Exception as exc:
                 return self._send(400, {"error": str(exc)})
+
+        if path == "/api/pins/accept":
+            if not data.get("line"):
+                return self._send(400, {"error": "line required"})
+            store.accept_pins(proj, data["line"])
+            return self._send(200, state())
 
         if path == "/api/library/accept":
             entry = store.library_parts(proj).get(data.get("line"))
@@ -1278,6 +1383,8 @@ class Handler(BaseHTTPRequestHandler):
             bad = [k for k in changes if k not in SETTABLE]
             if bad:
                 return self._send(400, {"error": f"not settable from here: {', '.join(bad)}"})
+            if changes.get("agent.autonomy", "ask") not in store.AUTONOMY_MODES:
+                return self._send(400, {"error": "agent.autonomy must be one of: " + ", ".join(store.AUTONOMY_MODES)})
             # a model name belongs to one engine, so it is stored under whichever engine is
             # current, and the engine is switched first when both arrive together
             for key in sorted(changes, key=lambda k: k != "agent.provider"):
@@ -1437,37 +1544,49 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
         if path == "/api/rules/extra":
-            rule = data.get("rule") or data
-            if not rule or not rule.get("name") or not rule.get("kind"):
-                return self._send(400, {"error": "rule name and kind are required"})
+            import rule_kinds
+            try:
+                clean_rule = rule_kinds.validate_rule(data.get("rule") or data)
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
             rules_file = model.project_dir(proj) / "rules.json"
-            extra = []
-            if rules_file.is_file():
-                try:
-                    extra = json.loads(rules_file.read_text(encoding="utf-8"))
-                except Exception:
-                    extra = []
-            idx = next((i for i, r in enumerate(extra) if r.get("name") == rule["name"]), None)
-            clean_rule = {
-                "name": rule["name"],
-                "kind": rule["kind"],
-                "scope1": rule.get("scope1", "All"),
-                "value": rule.get("value", ""),
-                "description": rule.get("description", "Custom rule"),
-                "attributes": rule.get("attributes", {
-                    "NAME": rule["name"],
-                    "RULEKIND": rule["kind"],
-                    "SCOPE1EXPRESSION": rule.get("scope1", "All"),
-                    "GAP": rule.get("value", "10mil"),
-                }),
-            }
-            if idx is not None:
-                extra[idx] = clean_rule
-            else:
-                extra.append(clean_rule)
-            rules_file.parent.mkdir(parents=True, exist_ok=True)
+            extra = _extra_rules_save(rules_file, [clean_rule])
+            return self._send(200, {"ok": True, "extra": extra})
+        if path == "/api/rules/extra/enabled":      # switch one extra rule on or off (off: kept in the list, not in the .RUL)
+            rules_file = model.project_dir(proj) / "rules.json"
+            extra = _extra_rules_load(rules_file)
+            hit = [r for r in extra if r.get("name") == data.get("name")]
+            if not hit:
+                return self._send(404, {"error": "no such extra rule"})
+            hit[0]["enabled"] = bool(data.get("enabled"))
             rules_file.write_text(json.dumps(extra, indent=2), encoding="utf-8")
             return self._send(200, {"ok": True, "extra": extra})
+        if path == "/api/rules/preset/enabled":     # switch one JLC preset rule on or off for this project
+            import rules as rules_mod
+            name = data.get("name")
+            if name not in {r["name"] for r in rules_mod.get_jlc_preset(project_mod.board(proj)).get("rules", [])}:
+                return self._send(404, {"error": "no such preset rule"})
+            off = [n for n in _preset_off(proj) if n != name] + ([] if data.get("enabled") else [name])
+            (model.project_dir(proj) / "rules-off.json").write_text(json.dumps(off), encoding="utf-8")
+            return self._send(200, {"ok": True, "preset_off": off})
+        if path == "/api/rules/extra/delete":
+            rules_file = model.project_dir(proj) / "rules.json"
+            extra = [r for r in _extra_rules_load(rules_file) if r.get("name") != data.get("name")]
+            rules_file.write_text(json.dumps(extra, indent=2), encoding="utf-8")
+            return self._send(200, {"ok": True, "extra": extra})
+        if path == "/api/rules/standard":           # add the rules of a standard preset to the extra rules
+            import ipc_standards
+            try:
+                pre = ipc_standards.preview(data.get("standard", ""), data.get("params") or data, project_mod.board(proj))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            chosen = data.get("names")                  # the rows ticked in the preview; none given: all of them
+            rows = pre["rules"] if chosen is None else [r for r in pre["rules"] if r["name"] in chosen]
+            if not rows:
+                return self._send(400, {"error": "choose at least one rule to add"})
+            rules_file = model.project_dir(proj) / "rules.json"
+            extra = _extra_rules_save(rules_file, rows)
+            return self._send(200, {"ok": True, "added": [r["name"] for r in rows], "extra": extra})
 
         if path == "/api/calc":
             import calc

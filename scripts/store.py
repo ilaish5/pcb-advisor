@@ -116,6 +116,9 @@ def bom_lines(project):
         key = ev.get("line")
         if not key:
             continue
+        if ev.get("removed"):                # an undo of a line the log had added
+            lines.pop(key, None)
+            continue
         line = lines.setdefault(key, {"key": key, "refs": []})
         line.update(ev.get("changes") or {})
     for line in lines.values():
@@ -239,6 +242,7 @@ def bom(project, write=True):
         entry = lib.get(l["key"])
         l["library"] = library_status(l, entry)
         l["library_entry"] = entry
+        l["pins_status"], l["pins_issues"] = pins_status(l, entry)
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
         l["role"] = l.get("role") or ""
 
@@ -332,6 +336,10 @@ def proposals(project):
             continue
         if pid in rows and ev.get("status") in ("approved", "rejected"):
             rows[pid].update(status=ev["status"], decided_at=ev.get("ts"), decided_by=ev.get("by"))
+            if ev.get("after_hash"):
+                rows[pid]["after_hash"] = ev["after_hash"]
+        elif pid in rows and ev.get("status") == "undone":
+            rows[pid].update(status="undone", undone_at=ev.get("ts"), undone_by=ev.get("by"))
         elif pid not in rows:
             rows[pid] = dict(ev)
     return list(rows.values())
@@ -881,9 +889,10 @@ def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
     return append(project, "proposals.jsonl", rec)
 
 
-def decide(project, pid, decision):
+def decide(project, pid, decision, by="student"):
     """Approve or reject. Approving appends to bom-log.jsonl (and library-log.jsonl) - that is
-    the only way an agent-proposed change reaches the BOM."""
+    the only way an agent-proposed change reaches the BOM. `by` is "student" for a click and
+    "auto" when the autonomy setting let a routine change through (the logs are otherwise identical)."""
     if decision not in ("approved", "rejected"):
         raise ValueError("decision must be approved or rejected")
     prop = next((p for p in proposals(project) if p["id"] == pid), None)
@@ -913,10 +922,11 @@ def decide(project, pid, decision):
             if "diagram" in idea:
                 idea["diagram"] = validate_diagram(idea["diagram"])
 
-            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
             save_idea(project, idea)
+            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by,
+                                                "after_hash": _idea_hash(load_idea(project))})
         else:
-            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
+            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
             append(project, "bom-log.jsonl", {
                 "ts": now(), "by": "agent-approved", "line": prop["line"],
                 "changes": _drop_stale_lcsc(project, prop["line"], dict(prop["changes"])),
@@ -927,8 +937,207 @@ def decide(project, pid, decision):
                     "ts": now(), "by": "agent-approved", "line": prop["line"],
                     "changes": prop["library"], "proposal": pid})
     else:
-        append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": "student"})
+        append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
     return prop
+
+
+# ---------------------------------------------------------------- autonomy
+#
+# "act, show, allow undo; ask only for what matters". The agent.autonomy setting decides which
+# proposals are applied without a click:
+#   ask        none (every proposal waits for Approve)
+#   important  ROUTINE ones are applied at once; IMPORTANT and CRITICAL wait            (default)
+#   auto       ROUTINE and IMPORTANT are applied; only CRITICAL waits
+# Levels: routine = passive values, BOM edits that do not choose a costed part, diagram, notes ...
+#         important = choosing or changing a part with an MPN/LCSC code (costs money), confirming the
+#         idea, anything that writes Altium files; critical = ordering/upload to the manufacturer,
+#         deleting data. An unknown kind is treated as important.
+AUTONOMY_MODES = ("ask", "important", "auto")
+DEFAULT_AUTONOMY = "important"
+
+
+def autonomy():
+    mode = workspace.get("agent.autonomy", DEFAULT_AUTONOMY)
+    return mode if mode in AUTONOMY_MODES else DEFAULT_AUTONOMY
+
+
+def _real(v):
+    return isinstance(v, str) and v.strip() not in ("", "—", "-")
+
+
+def classify_proposal(prop):
+    """'routine' | 'important' | 'critical' for one proposal record. The one place that decides."""
+    kind = prop.get("kind") or "bom"
+    if kind.startswith("delete") or kind in ("order", "upload", "jlc_upload", "jlc"):
+        return "critical"
+    if kind == "bom":
+        ch, before = prop.get("changes") or {}, prop.get("before") or {}
+        if ch.get("deleted") or ch.get("remove"):
+            return "critical"
+        for key in ("mpn", "lcsc"):          # a costed part is chosen (new line) or swapped
+            if _real(ch.get(key)) and str(ch[key]).strip() != str(before.get(key) or "").strip():
+                return "important"
+        return "routine"
+    if kind in ("idea_diagram", "description", "note", "rules", "rules_extra", "sheet", "diagram"):
+        return "routine"
+    return "important"          # idea_confirm, altium*, anything unknown
+
+
+def may_auto_apply(prop, mode=None):
+    mode = mode or autonomy()
+    level = classify_proposal(prop)
+    if mode == "auto":
+        return level != "critical"
+    if mode == "important":
+        return level == "routine"
+    return False
+
+
+def _idea_hash(idea):
+    import hashlib
+    blob = json.dumps({k: idea.get(k) for k in ("blocks", "links", "diagram")}, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()
+
+
+# ---------------------------------------------------------------- undo
+#
+# Undo is a compensating entry appended to the logs; nothing is rewritten. It restores the `before`
+# the proposal recorded. Simple safe rule: it is refused unless the thing still looks exactly as the
+# change left it. If something later touched the same line/diagram/sheet, the message says so and
+# the student undoes that later change first (i.e. undo works in reverse order, one step at a time).
+
+class UndoRefused(ValueError):
+    pass
+
+
+def _restore_value(key, v):
+    if v is not None:
+        return v
+    return [] if key == "refs" else False if key in ("dnp", "nobuy") else ""
+
+
+def undo_proposal(project, pid, by="student"):
+    prop = next((p for p in proposals(project) if p["id"] == pid), None)
+    if not prop:
+        raise KeyError(f"no such proposal: {pid}")
+    if prop["status"] == "undone":
+        raise UndoRefused("this change is already undone")
+    if prop["status"] != "approved":
+        raise UndoRefused("only an applied change can be undone")
+    if prop.get("kind") == "idea_diagram":
+        idea = load_idea(project)
+        if prop.get("after_hash") and _idea_hash(idea) != prop["after_hash"]:
+            raise UndoRefused("the diagram was edited after this change; undo is refused so those edits are not lost")
+        before = prop.get("before") or {}
+        for k in ("blocks", "links", "diagram"):
+            if k in before:
+                idea[k] = before[k]
+        save_idea(project, idea)
+    else:
+        entry = next((e for e in read_jsonl(pdir(project) / "bom-log.jsonl") if e.get("proposal") == pid), None)
+        if not entry:
+            raise UndoRefused("this change left no BOM entry to undo")
+        cur = next((l for l in bom_lines(project) if l["key"] == entry["line"]), None)
+        if cur is None:
+            raise UndoRefused(f"line {entry['line']} no longer exists")
+        for k, v in (entry.get("changes") or {}).items():
+            if cur.get(k) != v:
+                raise UndoRefused(f"{entry['line']} was changed after this ({k} is now {cur.get(k)!r}); "
+                                  "undo that later change first")
+        if prop.get("new"):
+            append(project, "bom-log.jsonl", {"ts": now(), "by": "undo", "line": entry["line"], "removed": True,
+                                              "changes": {}, "before": entry.get("changes"), "undoes": pid})
+        else:
+            before = entry.get("before") or prop.get("before") or {}
+            append(project, "bom-log.jsonl", {
+                "ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
+                "changes": {k: _restore_value(k, before.get(k)) for k in entry["changes"]},
+                "before": entry.get("changes"), "reason": "undo of " + pid})
+        if prop.get("library"):
+            append(project, "library-log.jsonl", {"ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
+                                                  "changes": {k: None for k in prop["library"]}})
+    append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": "undone", "by": by})
+    return prop
+
+
+def _sheet_hash(sheet):
+    import hashlib
+    return hashlib.sha1(json.dumps(sheet, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def write_sheet_logged(project, sheet_id, sheet, by="agent"):
+    """write_sheet, plus a sheet-log.jsonl entry holding the sheet as it was, so the write can be undone."""
+    sid = workspace.safe_name(sheet_id)
+    before = load_sheet(project, sid) or None
+    res = write_sheet(project, sheet_id, sheet)
+    if res.get("ok"):
+        after = load_sheet(project, res["sheet"])
+        if after != before:
+            taken = {e.get("id") for e in read_jsonl(pdir(project) / "sheet-log.jsonl")}
+            cid, n = "s" + dt.datetime.now().strftime("%Y%m%d%H%M%S%f")[:17], 1
+            base = cid
+            while cid in taken:
+                cid, n = f"{base}-{n}", n + 1
+            append(project, "sheet-log.jsonl", {"id": cid, "ts": now(), "kind": "sheet", "sheet": res["sheet"],
+                                                "before": before, "after_hash": _sheet_hash(after), "by": by})
+            res["change"] = cid
+    return res
+
+
+def _sheet_changes(project):
+    rows = {}
+    for ev in read_jsonl(pdir(project) / "sheet-log.jsonl"):
+        cid = ev.get("id")
+        if not cid:
+            continue
+        if cid in rows and ev.get("status") == "undone":
+            rows[cid].update(status="undone", undone_at=ev.get("ts"))
+        elif cid not in rows:
+            rows[cid] = {**ev, "status": "applied"}
+    return list(rows.values())
+
+
+def undo_sheet_write(project, cid, by="student"):
+    ch = next((c for c in _sheet_changes(project) if c["id"] == cid), None)
+    if not ch:
+        raise KeyError(f"no such change: {cid}")
+    if ch["status"] == "undone":
+        raise UndoRefused("this change is already undone")
+    path = netlist_dir(project) / f"{ch['sheet']}.json"
+    if _sheet_hash(load_sheet(project, ch["sheet"])) != ch["after_hash"]:
+        raise UndoRefused(f"sheet {ch['sheet']} was written again after this; undo that later change first")
+    if ch.get("before") is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_text(json.dumps(ch["before"], ensure_ascii=False, indent=2), encoding="utf-8")
+    append(project, "sheet-log.jsonl", {"id": cid, "ts": now(), "status": "undone", "by": by})
+    return ch
+
+
+def undo(project, cid, by="student"):
+    """Undo one applied change by its id: 'p...' a proposal, 's...' a sheet write."""
+    if str(cid).startswith("s"):
+        return undo_sheet_write(project, cid, by)
+    return undo_proposal(project, cid, by)
+
+
+def history(project, limit=40):
+    """Applied changes, newest first, each with what the UI needs to show a line and an Undo."""
+    out = []
+    for p in proposals(project):
+        if p.get("status") not in ("approved", "undone"):
+            continue
+        if p.get("kind") == "idea_diagram":
+            label = "Diagram changed"
+        else:
+            label = f"{p.get('line')}: " + (", ".join(p.get("changes") or {}) or "change")
+        out.append({"id": p["id"], "kind": p.get("kind") or "bom", "label": label, "ts": p.get("decided_at") or p["ts"],
+                    "by": p.get("decided_by"), "status": p["status"]})
+    for c in _sheet_changes(project):
+        out.append({"id": c["id"], "kind": "sheet", "label": f"Sheet {c['sheet']} written", "ts": c["ts"],
+                    "by": c.get("by"), "status": "undone" if c["status"] == "undone" else "approved"})
+    out.sort(key=lambda r: (r["ts"], r["id"]), reverse=True)
+    return out[:limit]
 
 
 def _drop_stale_lcsc(project, line, changes):
@@ -1831,10 +2040,98 @@ def write_sheet(project, sheet_id, sheet):
     if errors:
         return {"ok": False, "errors": errors}
     sheet = {**sheet, "id": workspace.safe_name(sheet_id)}
+    sheet["parts"] = _mark_pins_source(project, sheet["parts"])
     d = netlist_dir(project)
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{sheet['id']}.json").write_text(json.dumps(sheet, ensure_ascii=False, indent=2), encoding="utf-8")
     return {"ok": True, "sheet": sheet["id"]}
+
+
+# ---------------------------------------------------------------- unverified pins
+# Verify later, don't block now: the agent places an IC from the well-known pinout of its MPN/package and the
+# part is marked pins_source "agent" until a datasheet is dropped in and verify_part passes (or the student accepts
+# it as is). Generic parts never need a datasheet. The only gate is the Final checks list.
+
+SIMPLE_PREFIXES = ("R", "C", "L", "D", "LED", "FB", "Y", "X", "XTAL", "J", "P", "H", "TP", "SW", "F", "FID", "MH")
+
+
+def is_simple_ref(ref):
+    """Passives and simple parts (R, C, L, LED, diode, ferrite, crystal, connector, test point): no datasheet needed."""
+    prefix = re.match(r"[A-Za-z]+", ref or "")
+    return bool(prefix) and prefix.group(0).upper() in SIMPLE_PREFIXES
+
+
+def pins_status(line, entry):
+    """('', '') for a simple part or one not on a sheet yet; else ('verified'|'accepted'|'unverified'|'mismatch', issues)."""
+    refs = line.get("refs") or []
+    if not refs or all(is_simple_ref(r) for r in refs):
+        return "", ""
+    entry = entry or {}
+    if entry.get("verify") == "pass":
+        return "verified", ""
+    if entry.get("verify") == "mismatch":
+        return ("accepted" if entry.get("pins_accepted") else "mismatch"), entry.get("issues", "")
+    if entry.get("pins_accepted"):
+        return "accepted", ""
+    return "unverified", ""
+
+
+def _mark_pins_source(project, parts):
+    lib = library_parts(project)
+    by_ref = {}
+    for l in bom_lines(project):
+        for r in l.get("refs") or []:
+            by_ref[r] = l
+    out = []
+    for part in parts:
+        part = dict(part)
+        ref = part.get("ref")
+        if is_simple_ref(ref):
+            part.pop("pins_source", None)
+        else:
+            ln = by_ref.get(ref)
+            st = pins_status(ln, lib.get(ln["key"]))[0] if ln else "unverified"
+            if st in ("verified", "accepted"):
+                part["pins_source"] = "datasheet" if st == "verified" else "student"
+            else:
+                part["pins_source"] = "agent"
+        out.append(part)
+    return out
+
+
+def refresh_pins_source(project):
+    """Re-mark the parts of every sheet after a verify or an accept."""
+    for sh in sheet_ids(project):
+        sheet = load_sheet(project, sh)
+        marked = _mark_pins_source(project, sheet.get("parts", []))
+        if marked != sheet.get("parts"):
+            (netlist_dir(project) / f"{sh}.json").write_text(
+                json.dumps({**sheet, "parts": marked}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def unverified_parts(project, verify_new=True):
+    """Every BOM line on a sheet whose pins are not verified or accepted. With verify_new, a datasheet that has
+    appeared since is used first (verify_part), which clears the mark or raises the conflicting pins."""
+    lines = [l for l in bom(project, write=False) if l.get("on_sheet") and l.get("pins_status") in ("unverified", "mismatch")]
+    if verify_new:
+        import sources
+        import verify_part
+        ran = False
+        for l in lines:
+            if l["pins_status"] == "unverified" and (l.get("datasheet") or sources.find_for(project, l.get("mpn"))):
+                verify_part.verify(project, l["key"])
+                ran = True
+        if ran:
+            refresh_pins_source(project)
+            lines = [l for l in bom(project, write=False) if l.get("on_sheet") and l.get("pins_status") in ("unverified", "mismatch")]
+    return [{"line": l["key"], "refs": l.get("refs", []), "mpn": l.get("mpn"), "status": l["pins_status"],
+             "issues": l.get("pins_issues", "")} for l in lines]
+
+
+def accept_pins(project, key):
+    """The student accepts the agent's pins as is."""
+    add_library(project, key, {"pins_accepted": True}, by="student")
+    refresh_pins_source(project)
 
 
 def nets_of(project, ref):

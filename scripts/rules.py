@@ -81,8 +81,15 @@ def rule_display_value(rule: dict[str, str]) -> str:
         return rule.get("MINSILKSCREENTOMASKGAP", "")
     elif kind == "SilkToSilkClearance":
         return rule.get("SILKTOSILKCLEARANCE", "")
-    elif kind == "SolderMaskExpansion":
+    elif kind in ("SolderMaskExpansion", "PasteMaskExpansion"):
         return rule.get("EXPANSION", "")
+    elif kind == "PolygonConnect":
+        style = rule.get("CONNECTSTYLE", "")
+        if style == "Relief":
+            return f"Relief, spoke {rule.get('RELIEFCONDUCTORWIDTH', '')}, gap {rule.get('AIRGAPWIDTH', '')}"
+        return style
+    elif kind == "DiffPairsRouting":
+        return f"Width: {rule.get('TOPLAYER_PREFWIDTH', '')}, Gap: {rule.get('MOSTFREQGAP', '')}"
     elif kind == "MinimumSolderMaskSliver":
         return rule.get("MINSOLDERMASKWIDTH", "")
     elif kind == "HoleToHoleClearance":
@@ -734,6 +741,14 @@ def main(argv=None):
     preset_p = sub.add_parser("preset", help="Print JLC preset design rules")
     _add_board_args(preset_p)
 
+    std_p = sub.add_parser("standard", help="Preview the rules of an IPC standard preset (never weaker than JLC)")
+    std_p.add_argument("standard", choices=["ipc2221b", "ipc_class"])
+    std_p.add_argument("--volts", help="ipc2221b: peak voltage between conductors")
+    std_p.add_argument("--location", default="B2", help="ipc2221b: B1 internal, B2 external uncoated, B4 external coated")
+    std_p.add_argument("--scope", default="All", help="ipc2221b: rule scope, e.g. \"InNetClass('HV')\"")
+    std_p.add_argument("--cls", default="2", help="ipc_class: 2 or 3")
+    _add_board_args(std_p)
+
     args = ap.parse_args(argv)
     board = board_settings(getattr(args, "project", None), getattr(args, "layers", None), getattr(args, "oz", None))
 
@@ -763,6 +778,17 @@ def main(argv=None):
         else:
             out = write_rul(records, args.output)
             print(f"Exported {len(records)} {name} rules to {out} (import with 'Merge', then raise the *_1 / scoped rules in Priorities)")
+        return 0
+
+    elif args.cmd == "standard":
+        import ipc_standards
+        try:
+            pre = ipc_standards.preview(args.standard, {"volts": args.volts, "location": args.location, "scope": args.scope,
+                                                        "class": args.cls}, board)
+        except ValueError as exc:
+            print(f"error: {exc}")
+            return 1
+        print(json.dumps(pre, ensure_ascii=False, indent=2))
         return 0
 
     elif args.cmd == "preset":

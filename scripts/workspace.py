@@ -107,6 +107,8 @@ def save(cfg):
 
 def set_value(dotted, value):
     """Set one key and persist it. Returns the value actually stored."""
+    if dotted == "agent.autonomy" and value not in ("ask", "important", "auto"):
+        raise SystemExit("agent.autonomy must be one of: ask, important, auto")
     cfg = copy.deepcopy(load())
     cur = cfg
     parts = dotted.split(".")

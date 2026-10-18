@@ -27,6 +27,7 @@
     "engine_home": "",
     "timeout_seconds": 180,
     "history_messages": 8,
+    "autonomy": "important",
     "memory_every": 10,
     "memory_max_chars": 2000,
     "providers": {

@@ -54,6 +54,8 @@ function bomProblems(l, q, b) {
   // A model still to review is the normal state of a new or imported BOM: the meta line counts those, the Library page
   // lists them. Only a missing model is a problem worth a tag on the row.
   if (l.library === 'missing') out.push({rank: 4, text: 'No model', tone: 'warn', title: LIBTXT.missing});
+  if (l.pins_status === 'unverified') out.push({rank: 6, text: 'unverified', title: 'Pins from the agent; add the datasheet to verify'});
+  if (l.pins_status === 'mismatch') out.push({rank: 3, text: 'pins conflict', tone: 'warn', title: 'Pins differ from the datasheet: ' + (l.pins_issues || '')});
   return out.sort((a, c) => a.rank - c.rank);
 }
 function bomTags(ps) {      // the worst problem; the others are counted, and named in the tooltip, so a row keeps its height
