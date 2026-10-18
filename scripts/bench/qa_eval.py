@@ -5,7 +5,7 @@ Contract (used by the bench runner):
     provider None  -> nothing is asked; score None, rows list the cases (scored False).
     provider "x"   -> each question goes through agent.respond(model, question, history=[], backend=provider)
                       (the normal advisor path, with the runtime pack synced), the answer is graded and saved to
-                      <out_dir>/qa-<id>.md. Default out_dir: docs/bench-runs/<date>-<provider>/.
+                      <out_dir>/qa-<id>.md. Default out_dir: local/bench-runs/<date>-<provider>/.
 
 Grading, per answer (all deterministic, no model involved):
 
@@ -41,7 +41,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 DATA = HERE / "qa" / "questions.json"
-DOCS = REPO / "docs" / "bench-runs"
+DOCS = REPO / "local" / "bench-runs"
 
 HE = re.compile(r"[֐-׿]")
 LATIN = re.compile(r"[A-Za-z]")

@@ -284,6 +284,9 @@ def get(project, url, name=None):
     return {**meta, "path": str(folder_of(project) / meta["name"])}
 
 
+DOC_SUFFIXES = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm", ".zip")
+
+
 def adopt(project):
     """Register the documents the student dropped into the project's sources/ by hand: a PDF with no
     sidecar gets one (name, sha256, no url), so it can be cited and verified like a downloaded one.
@@ -291,7 +294,7 @@ def adopt(project):
     folder = folder_of(project)
     added = []
     for f in sorted(folder.glob("*")) if folder.is_dir() else []:
-        if f.suffix.lower() in (".json", ".txt") or not f.is_file() or _meta_path(f).exists():
+        if f.suffix.lower() not in DOC_SUFFIXES or f.name.startswith(".") or not f.is_file() or _meta_path(f).exists():
             continue
         meta = {"name": f.name, "url": None, "sha256": file_sha256(f), "bytes": f.stat().st_size,
                 "origin": "added by the student"}
@@ -306,8 +309,8 @@ def find_for(project, mpn):
     key = re.sub(r"[^a-z0-9]", "", (mpn or "").lower())
     if len(key) < 4:
         return None
-    for f in sorted(folder_of(project).glob("*.pdf")):
-        if key in re.sub(r"[^a-z0-9]", "", f.name.lower()):
+    for f in sorted(folder_of(project).glob("*")):
+        if f.suffix.lower() == ".pdf" and key in re.sub(r"[^a-z0-9]", "", f.name.lower()):
             return f.name
     return None
 

@@ -118,6 +118,10 @@ def bom_lines(project):
             continue
         line = lines.setdefault(key, {"key": key, "refs": []})
         line.update(ev.get("changes") or {})
+    for line in lines.values():
+        # a line approved without references is still known by its key when that is a designator
+        if not line.get("refs") and re.fullmatch(r"[A-Za-z]+\d+", line["key"]):
+            line["refs"] = [line["key"]]
     return list(lines.values())
 
 
@@ -454,7 +458,10 @@ def validate_diagram(data):
             "locked": locked,
         }
         if "domain" in s:
-            dom = DOMAIN_ALIASES.get(s["domain"], s["domain"]) if isinstance(s["domain"], str) else s["domain"]
+            dom = s["domain"]
+            if isinstance(dom, str):
+                dom = dom.strip().lower()
+                dom = DOMAIN_ALIASES.get(dom, dom)
             if not isinstance(dom, str) or dom not in VALID_DOMAINS:
                 raise ValueError(f"shape {sid} invalid domain: {dom!r}")
             clean_s["domain"] = dom
@@ -1026,12 +1033,17 @@ def save_idea(project, idea):
 GOAL_MAX = 3000
 
 
+def check_idea_goal(text):
+    """Raise ValueError unless text is an acceptable description (checked before anything is saved)."""
+    if not isinstance(text, str) or len(text.strip()) > GOAL_MAX:
+        raise ValueError(f"description must be text of at most {GOAL_MAX} chars")
+
+
 def set_idea_goal(project, text, by="student"):
     """The description: the board in plain words (what it is, what it is for, the diagram told as text).
     The student's text is agreed as written. The agent's is proposed until the student accepts it, and the text it
     would replace is kept, so Dismiss puts it back."""
-    if not isinstance(text, str) or len(text.strip()) > GOAL_MAX:
-        raise ValueError(f"description must be text of at most {GOAL_MAX} chars")
+    check_idea_goal(text)
     text = text.strip()
     idea = load_idea(project)
     if by == "agent":
@@ -1814,8 +1826,7 @@ def write_sheet(project, sheet_id, sheet):
     """Validate against the BOM, then write. Refuses a sheet with problems."""
     refs = set()
     for l in bom_lines(project):
-        # a line the student approved without references is still known by its key when that is a designator
-        refs.update(l.get("refs") or ([l["key"]] if re.fullmatch(r"[A-Za-z]+\d+", l["key"]) else []))
+        refs.update(l.get("refs") or [])
     errors = validate_sheet(sheet, refs)
     if errors:
         return {"ok": False, "errors": errors}

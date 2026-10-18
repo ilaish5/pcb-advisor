@@ -5,11 +5,11 @@ import pathlib
 import pytest
 
 import outjob
-from bench import detectors
+from bench import detectors, incidents
 from bench import checks_board, checks_idea  # noqa: F401 - registers
 from checks import board, idea
 
-FIX = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "bench" / "fixtures"
+FIX = incidents.FIXTURES   # private, gitignored (local/); the tests skip when it is absent
 MODS = ("bench.checks_board", "bench.checks_idea")
 
 
@@ -20,6 +20,7 @@ def my_registry(monkeypatch):
     monkeypatch.setattr(detectors, "REGISTRY", reg)
 
 
+@pytest.mark.skipif(not FIX.is_dir(), reason="private incident fixtures (local/bench-fixtures) not present")
 def test_fixtures_caught_and_quiet_elsewhere():
     n = 0
     for d in sorted(p for p in FIX.iterdir() if p.is_dir()):

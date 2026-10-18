@@ -220,6 +220,7 @@ def test_an_ask_chip_reaches_the_engine_and_stays_on_the_students_message(server
     seen = []
     monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: (
         seen.append(ask) or {"reply": "ok", "actions": [], "tools": []}))
+    monkeypatch.setattr(agent, "compact", lambda *a, **k: {"ok": True})    # no real engine call for memory
     _, st = post(server, "/api/chat", {"text": "is this right?", "about": {"kind": "part", "id": "U5", "label": "U5"}}, lte)
     assert "TXS0104EPWR" in seen[0] and seen[0].endswith("is this right?")        # a part brings its context card
     user = next(m for m in st["chat"] if m.get("text") == "is this right?")

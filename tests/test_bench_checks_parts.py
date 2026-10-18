@@ -8,6 +8,8 @@ FIX = incidents.FIXTURES
 
 
 def _dirs():
+    if not FIX.is_dir():
+        return []     # private fixtures (local/bench-fixtures) absent: nothing to parametrize
     return sorted(p for p in FIX.iterdir() if (p / "incident.json").is_file())
 
 

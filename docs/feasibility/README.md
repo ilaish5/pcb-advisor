@@ -1,7 +1,7 @@
 # Feasibility scripts (2026-10-11)
 
-Throw-away probes that proved the items in `docs/PRODUCT-PLAN.md` section 9. Not product code: paths point at
-the device project (`C:\Users\Public\Documents\Altium\real-project`) and the output is printed. Use them as the
+Throw-away probes that proved the items in `docs/PRODUCT-PLAN.md` section 9. Not product code: the project folder is
+passed as the first argument or the `PROJECT_DIR` environment variable, and the output is printed. Use them as the
 reference for the real implementation. Run with any Python that has `olefile` (`python -I <script>`).
 
 | script | proves |

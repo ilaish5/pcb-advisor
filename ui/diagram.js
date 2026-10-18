@@ -1793,7 +1793,8 @@
       this.textOverlayEl.addEventListener('blur', () => this.commitTextEdit());
       this.textOverlayEl.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
-          this.commitTextEdit();
+          e.preventDefault();
+          this.cancelTextEdit();
         } else if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
           this.commitTextEdit();
@@ -1978,6 +1979,11 @@
 
     setTool(tool) {
       this.tool = tool;
+      // the line tool starts clean: what was selected (and its handles and toolbar) is let go first
+      if (tool === 'connector' && (this.selectedShapeIds.size || this.selectedConnectorIds.size || this.selectedFrameIds.size)) {
+        this.clearSelection();
+        this.render();
+      }
 
       // Update aria-pressed and active classes on rail buttons
       const isShapeTool = VALID_SHAPE_TYPES.has(tool) && tool !== 'sticky' && tool !== 'text';
@@ -2059,6 +2065,19 @@
 
       // Select mode
       if (this.tool === 'select') {
+        // A double-click is found here: the first press redraws the nodes, and the browser then sends no dblclick.
+        const kind = shapeEl ? 'shape' : (connEl ? 'connector' : (frameEl ? 'frame' : ''));
+        const pressedId = (shapeEl || connEl || frameEl || {dataset: {}}).dataset.id;
+        const last = this.lastPress, now = Date.now();
+        this.lastPress = kind ? {kind, id: pressedId, t: now, x: e.clientX, y: e.clientY} : null;
+        if (kind && last && last.kind === kind && last.id === pressedId && now - last.t < 400 &&
+            Math.hypot(e.clientX - last.x, e.clientY - last.y) < 6) {
+          e.preventDefault();   // the press must not move focus off the text box it opens
+          e.stopPropagation();
+          this.lastPress = null;
+          this.startTextEdit(kind, pressedId);
+          return;
+        }
         if (shapeEl) {
           e.stopPropagation();
           const sid = shapeEl.dataset.id;
@@ -2215,8 +2234,13 @@
       if (this.previewing) return;
       const canvasPos = this.clientToDiagram(e.clientX, e.clientY);
 
+      // The first click redraws the nodes (selection), so e.target can be a node that is already gone, or the layer
+      // around it: ask what is under the pointer now.
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      const at = hit && this.svgEl.contains(hit) ? hit : e.target;
+
       // Shape double-click -> inline edit
-      const shapeEl = e.target.closest('.diag-shape-node');
+      const shapeEl = at.closest('.diag-shape-node');
       if (shapeEl) {
         e.stopPropagation();
         this.startTextEdit('shape', shapeEl.dataset.id);
@@ -2224,7 +2248,7 @@
       }
 
       // Connector double-click -> edit label
-      const connEl = e.target.closest('.diag-connector-node');
+      const connEl = at.closest('.diag-connector-node');
       if (connEl) {
         e.stopPropagation();
         this.startTextEdit('connector', connEl.dataset.id);
@@ -2232,7 +2256,7 @@
       }
 
       // Frame double-click -> edit title
-      const frameEl = e.target.closest('.diag-frame-node');
+      const frameEl = at.closest('.diag-frame-node');
       if (frameEl) {
         e.stopPropagation();
         this.startTextEdit('frame', frameEl.dataset.id);
@@ -2300,6 +2324,14 @@
         }
         if (key === 'delete' || key === 'backspace') {
           this.deleteSelected();
+        }
+        if (key === 'enter' || key === 'f2') {
+          // Enter or F2 edits the text of the one selected block (or line label, frame title)
+          const one = this.selectedShapeIds.size + this.selectedConnectorIds.size + this.selectedFrameIds.size === 1;
+          if (one) {
+            e.preventDefault();
+            this.startTextEditOfSelection();
+          }
         }
       }
 
@@ -2657,8 +2689,7 @@
         route: 'elbow'
       };
       this.data.connectors.push(conn);
-      this.clearSelection();
-      this.selectedConnectorIds.add(conn.id);
+      this.clearSelection();   // the new line is not left selected either
       this.saveHistory();
       this.triggerAutosave();
       this.render();
@@ -3066,6 +3097,22 @@
       this.canvasWrap.scrollLeft = 0;
     }
 
+    /** Edit the text of the single selected item: a block's text, a line's label or a frame's title. */
+    startTextEditOfSelection() {
+      if (this.previewing) return;
+      const sid = [...this.selectedShapeIds][0], cid = [...this.selectedConnectorIds][0], fid = [...this.selectedFrameIds][0];
+      if (sid) this.startTextEdit('shape', sid);
+      else if (cid) this.startTextEdit('connector', cid);
+      else if (fid) this.startTextEdit('frame', fid);
+    }
+
+    /** Esc: close the editor and keep the text as it was. */
+    cancelTextEdit() {
+      this.editingTextTarget = null;   // the blur that follows then has nothing to commit
+      this.textOverlayEl.style.display = 'none';
+      this.mountEl.focus({ preventScroll: true });
+    }
+
     commitTextEdit() {
       if (!this.editingTextTarget) return;
       const { type, id } = this.editingTextTarget;
@@ -3075,7 +3122,8 @@
 
       if (type === 'shape') {
         const s = this.data.shapes.find(x => x.id === id);
-        if (s && s.text !== newText) {
+        // a block keeps its words when the box is emptied (an empty new block stays empty: nothing changed)
+        if (s && newText && s.text !== newText) {
           s.text = newText;
           this.saveHistory();
           this.triggerAutosave();
@@ -3462,6 +3510,8 @@
         const size = (firstShape && firstShape.fontSize) || 'M';
 
         html = `
+          <button type="button" class="diag-ctx-btn" data-act="edit-shape-text" title="Edit text (Enter)" aria-label="Edit text (Enter)">${getIconSvg('label')}</button>
+          <span class="diag-sep" aria-hidden="true"></span>
           <button type="button" class="diag-ctx-btn" data-act="toggle-ctx-shapes" title="Change shape" aria-label="Change shape">${getIconSvg('change-shape')}</button>
           <span class="diag-sep" aria-hidden="true"></span>
 
@@ -3649,6 +3699,11 @@
         this.saveHistory();
         this.triggerAutosave();
         this.render();
+        return;
+      }
+
+      if (act === 'edit-shape-text') {
+        this.startTextEditOfSelection();
         return;
       }
 

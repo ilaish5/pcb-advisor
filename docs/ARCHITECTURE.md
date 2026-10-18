@@ -50,7 +50,7 @@ Verdicts: keep = untouched except bug fixes; change = same role, edited; replace
 | `scripts/session.py` | keep | conversations + memory are independent of the rebuild | - |
 | `scripts/sources.py` | change | sha256 cache kept; add JLC datasheet download and link-and-return filing | I4 |
 | `scripts/verify_sources.py` | keep | every citation must resolve; becomes part of skill lint and evals | I2 |
-| `scripts/seed.py` | replace | lte-tracker mock data does not match the new flow; fixtures come from the device incidents (decide in I1: keep a small demo or drop) | I1 |
+| `scripts/seed.py` | replace | lte-tracker mock data does not match the new flow; fixtures come from the real-project incidents (decide in I1: keep a small demo or drop) | I1 |
 | `scripts/reset.py` | keep | wipe project state | - |
 | `scripts/trace_width.py` | change | IPC-2221 stays; moves into the calculators module next to impedance/divider | I7 |
 | `scripts/validate_netlist.py` | replace | checks hand-written sheet JSON vs BOM; netlists now come from PcbDoc/SchDoc readers | I6 |
@@ -98,7 +98,7 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | module | purpose | stage |
 |---|---|---|
 | `scripts/runtime_pack.py` | pack source and materializer | I0 |
-| `scripts/bench/runner.py` | device replay (12 incidents), Q&A eval, behaviour evals | I1 |
+| `scripts/bench/runner.py` | real-incident replay (12 incidents), Q&A eval, behaviour evals | I1 |
 | `scripts/skills/lint.py` | frontmatter, triggers, references, pitfalls present per skill | I2 |
 | `scripts/altium/ole.py` | OLE compound document parser | I3 |
 | `scripts/altium/schdoc.py` | read-only SchDoc reader (components, pins, wires, labels, ports) | I3 |
@@ -133,7 +133,7 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | JLC cache | query results with timestamp (path decide in I4: under `shared/` or workspace cache dir) | no |
 | `tests/fixtures/altium/` | AD20 SchDoc/PcbDoc/libs/OutJob parser fixtures | yes |
 | `config/defaults.json`, `config.json` | defaults in git; user overrides local; env `PCB_ADVISOR_HOME` moves the workspace | defaults only |
-| device project (`real-project`) | read-only evidence base for incident fixtures and skill knowledge; never git there | n/a |
+| real-project project (`real-project`) | read-only evidence base for incident fixtures and skill knowledge; never git there | n/a |
 
 ## 7. Testing and evals
 
@@ -141,7 +141,7 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 |---|---|---|---|
 | unit/integration | `.venv\Scripts\python -m pytest -q` (110 green at I0 start) | gateway, store, server, workspace, sources, skills, oscompat; new: readers vs fixtures, JLC client (recorded responses), `.RUL` round trip | all |
 | skill lint | `scripts/skills/lint.py` via pytest | every skill has when/steps/scripts/references/pitfalls/output + evals | I2 |
-| device replay benchmark | `python pcb.py bench` -> `docs/BENCHMARK.md` | 12 incidents: caught / stage / earlier than reality; deterministic checks run without an engine, engine-based ones marked and run once per stage | I1, every stage |
+| real-incident replay benchmark | `python pcb.py bench` -> `docs/BENCHMARK.md` | 12 incidents: caught / stage / earlier than reality; deterministic checks run without an engine, engine-based ones marked and run once per stage | I1, every stage |
 | Altium Q&A eval | `scripts/bench/qa_eval.py` | ~25 real questions; scores citation (expected file/section) and answer length | I1-I2, I10 |
 | behaviour evals | `scripts/bench/behaviour.py` | user's language, short, no stock/price without a skill run, no invented part numbers | I1, I11 |
 | engine probe | gateway probe (both engines answer a question needing a skill file) | pack loads in Claude Code and `agy` | I0 |

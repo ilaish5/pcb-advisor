@@ -1,0 +1,252 @@
+{
+  "goal": "A 5 V USB-C powered running light. An NE555 makes a clock of about 2 Hz, a CD4017 decade counter steps through ten outputs, and each output lights one red LED. Two ICs only.",
+  "agreed": [
+    {
+      "topic": "Function",
+      "text": "Ten red LEDs light one at a time in a loop, a running light. About 2 steps per second.",
+      "by": "student",
+      "status": "confirmed",
+      "ts": "2026-10-18T20:01:50"
+    },
+    {
+      "topic": "Power",
+      "text": "USB-C, 5 V only. J1 has VBUS, GND, CC1 and CC2; R4 and R5 (5.1k) on CC1/CC2 make the charger give 5 V. C5 10uF on VBUS.",
+      "by": "student",
+      "status": "confirmed",
+      "ts": "2026-10-18T20:01:50"
+    },
+    {
+      "topic": "Clock",
+      "text": "U1 NE555 astable: f = 1.44 / ((R1 + 2*R2) * C1) = 1.44 / (146k * 4.7uF), about 2.1 Hz. C2 10nF on CTRL.",
+      "by": "student",
+      "status": "confirmed",
+      "ts": "2026-10-18T20:01:50"
+    },
+    {
+      "topic": "Counter and LEDs",
+      "text": "U2 CD4017 counts the clock and raises Q0..Q9 in turn, each driving one LED anode. All cathodes share R3 470R to GND, so one LED is on at a time (about 7 mA).",
+      "by": "student",
+      "status": "confirmed",
+      "ts": "2026-10-18T20:01:50"
+    },
+    {
+      "topic": "Board",
+      "text": "Two layers, 0603/0805 parts, SOIC-8 and SOIC-16 for the two ICs. One 100nF decoupling cap per IC.",
+      "by": "student",
+      "status": "confirmed",
+      "ts": "2026-10-18T20:01:50"
+    }
+  ],
+  "blocks": [
+    {
+      "id": "usb",
+      "label": "USB-C 5 V",
+      "role": "J1, R4, R5, C5",
+      "domain": "power",
+      "x": 40.0,
+      "y": 120.0
+    },
+    {
+      "id": "clk",
+      "label": "NE555 clock",
+      "role": "U1, R1, R2, C1, C2",
+      "domain": "mcu",
+      "x": 300.0,
+      "y": 120.0
+    },
+    {
+      "id": "cnt",
+      "label": "CD4017 counter",
+      "role": "U2, one output at a time",
+      "domain": "mcu",
+      "x": 560.0,
+      "y": 120.0
+    },
+    {
+      "id": "led",
+      "label": "10 LEDs",
+      "role": "D1..D10, R3",
+      "domain": "drive",
+      "x": 820.0,
+      "y": 120.0
+    }
+  ],
+  "links": [
+    {
+      "from": "usb",
+      "to": "clk",
+      "label": "+5 V"
+    },
+    {
+      "from": "usb",
+      "to": "cnt",
+      "label": "+5 V"
+    },
+    {
+      "from": "clk",
+      "to": "cnt",
+      "label": "CLK"
+    },
+    {
+      "from": "cnt",
+      "to": "led",
+      "label": "Q0..Q9"
+    }
+  ],
+  "confirmed": true,
+  "goal_by": "student",
+  "goal_status": "confirmed",
+  "goal_ts": "2026-10-18T20:01:50",
+  "diagram": {
+    "shapes": [
+      {
+        "id": "usb",
+        "type": "block",
+        "x": 40.0,
+        "y": 120.0,
+        "w": 160.0,
+        "h": 64.0,
+        "text": "USB-C 5 V\nJ1, R4, R5, C5",
+        "fill": "#fef3e2",
+        "stroke": "#e67e22",
+        "strokeStyle": "solid",
+        "strokeWidth": 2.0,
+        "fontSize": "M",
+        "bold": true,
+        "align": "center",
+        "z": 1.0,
+        "locked": false,
+        "domain": "power",
+        "role": "J1, R4, R5, C5"
+      },
+      {
+        "id": "clk",
+        "type": "block",
+        "x": 300.0,
+        "y": 120.0,
+        "w": 160.0,
+        "h": 64.0,
+        "text": "NE555 clock\nU1, R1, R2, C1, C2",
+        "fill": "#ebf5fb",
+        "stroke": "#2980b9",
+        "strokeStyle": "solid",
+        "strokeWidth": 2.0,
+        "fontSize": "M",
+        "bold": true,
+        "align": "center",
+        "z": 2.0,
+        "locked": false,
+        "domain": "mcu",
+        "role": "U1, R1, R2, C1, C2"
+      },
+      {
+        "id": "cnt",
+        "type": "block",
+        "x": 560.0,
+        "y": 120.0,
+        "w": 160.0,
+        "h": 64.0,
+        "text": "CD4017 counter\nU2, one output at a time",
+        "fill": "#ebf5fb",
+        "stroke": "#2980b9",
+        "strokeStyle": "solid",
+        "strokeWidth": 2.0,
+        "fontSize": "M",
+        "bold": true,
+        "align": "center",
+        "z": 3.0,
+        "locked": false,
+        "domain": "mcu",
+        "role": "U2, one output at a time"
+      },
+      {
+        "id": "led",
+        "type": "block",
+        "x": 820.0,
+        "y": 120.0,
+        "w": 160.0,
+        "h": 64.0,
+        "text": "10 LEDs\nD1..D10, R3",
+        "fill": "#fdedec",
+        "stroke": "#c0392b",
+        "strokeStyle": "solid",
+        "strokeWidth": 2.0,
+        "fontSize": "M",
+        "bold": true,
+        "align": "center",
+        "z": 4.0,
+        "locked": false,
+        "domain": "drive",
+        "role": "D1..D10, R3"
+      }
+    ],
+    "connectors": [
+      {
+        "id": "conn_0",
+        "from": {
+          "shape": "usb",
+          "side": "right"
+        },
+        "to": {
+          "shape": "clk",
+          "side": "left"
+        },
+        "label": "+5 V",
+        "stroke": "#64748b",
+        "style": "solid",
+        "arrows": "end",
+        "route": "elbow"
+      },
+      {
+        "id": "conn_1",
+        "from": {
+          "shape": "usb",
+          "side": "right"
+        },
+        "to": {
+          "shape": "cnt",
+          "side": "left"
+        },
+        "label": "+5 V",
+        "stroke": "#64748b",
+        "style": "solid",
+        "arrows": "end",
+        "route": "elbow"
+      },
+      {
+        "id": "conn_2",
+        "from": {
+          "shape": "clk",
+          "side": "right"
+        },
+        "to": {
+          "shape": "cnt",
+          "side": "left"
+        },
+        "label": "CLK",
+        "stroke": "#64748b",
+        "style": "solid",
+        "arrows": "end",
+        "route": "elbow"
+      },
+      {
+        "id": "conn_3",
+        "from": {
+          "shape": "cnt",
+          "side": "right"
+        },
+        "to": {
+          "shape": "led",
+          "side": "left"
+        },
+        "label": "Q0..Q9",
+        "stroke": "#64748b",
+        "style": "solid",
+        "arrows": "end",
+        "route": "elbow"
+      }
+    ],
+    "frames": []
+  },
+  "confirmed_at": "2026-10-18T20:01:50"
+}

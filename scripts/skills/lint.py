@@ -23,7 +23,7 @@ SKILLS_12 = (
 )
 SECTIONS = ("When to use", "Steps", "Scripts", "References", "Pitfalls", "Output")
 MAX_SKILL_LINES, MAX_LINE, MAX_REF_LINES, MAX_DESC = 150, 160, 200, 600
-FORBIDDEN = re.compile(r"real-project|mcp__altium|DelphiScript|run_altium_script|C:\\Users", re.I)
+FORBIDDEN = re.compile(r"mcp__altium|DelphiScript|run_altium_script|C:\\Users", re.I)
 CASE_KEYS = {"id", "lang", "question", "expect_skill", "must", "must_not", "cite"}
 CODEWORD = "KESTREL-31"
 

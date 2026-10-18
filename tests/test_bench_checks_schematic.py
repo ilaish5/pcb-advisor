@@ -22,6 +22,8 @@ def registry(monkeypatch):
 
 
 def _all():
+    if not incidents.FIXTURES.is_dir():
+        pytest.skip("private incident fixtures (local/bench-fixtures) not present")
     items, problems = incidents.load_all()
     assert not problems
     return items

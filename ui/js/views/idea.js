@@ -170,7 +170,7 @@ function descHTML() {
   const I = (S && S.idea) || {};
   const goal = (I.goal || '').trim();
   const proposed = descProposed();
-  const by = I.goal_by === 'student' ? 'Written by you' : 'Suggested by the agent';
+  const by = I.goal_by === 'agent' ? 'Suggested by the agent' : 'Written by you';
   const titleAttr = goal ? ` title="${esc(by)}"` : '';
   const acts = proposed
     ? btn('Accept', {size: 'sm', icon: 'check', act: 'confirm-desc', title: 'Agree to this description'}) +

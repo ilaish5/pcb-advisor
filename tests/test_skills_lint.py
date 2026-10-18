@@ -134,7 +134,7 @@ def test_local_reference_must_exist(tmp_path):
     assert any(p["rule"] == "reference" and "gone.md" in p["message"] for p in probs)
 
 
-@pytest.mark.parametrize("bad", ["real-project", "mcp__altium__x", "DelphiScript", "run_altium_script",
+@pytest.mark.parametrize("bad", ["mcp__altium__x", "DelphiScript", "run_altium_script",
                                  "C:\\Users\\bob"])
 def test_forbidden_content(tmp_path, bad):
     assert "forbidden" in rules(run(pack(tmp_path, skill=GOOD + f"- {bad}\n")))

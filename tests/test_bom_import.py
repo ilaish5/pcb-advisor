@@ -28,7 +28,7 @@ from ui_source import ui_all
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 FX = REPO / "tests" / "fixtures"
-DEVICE = FX / "bom" / "device-bom.csv"
+SAMPLE_BOM = FX / "bom" / "sample-bom.csv"
 DEFAULT = FX / "bom" / "altium-default-bom.csv"
 
 
@@ -83,7 +83,7 @@ def altium_copy(tmp_path):
     shutil.copy(FX / "altium" / "finished-board.PcbDoc", root / "finished-board.PcbDoc")
     out = root / "Outputs" / "Assembly"
     out.mkdir(parents=True)
-    shutil.copy(DEVICE, out / "BOM-full.csv")
+    shutil.copy(SAMPLE_BOM, out / "BOM-full.csv")
     return root
 
 
@@ -104,7 +104,7 @@ def events(name):
 # ---------------------------------------------------------------- reading a BOM CSV
 
 def test_a_hand_made_bom_is_read_with_its_quirks():
-    info = bom_import.inspect_csv(DEVICE)
+    info = bom_import.inspect_csv(SAMPLE_BOM)
     assert info["encoding"] == "utf-8" and info["delimiter"] == "," and info["skipped"] == []
     by_ref = {l["refs"][0]: l for l in info["lines"]}
     assert list(by_ref) == ["C5", "R7", "J9", "U9"]
@@ -121,7 +121,7 @@ def test_a_hand_made_bom_is_read_with_its_quirks():
     j9 = by_ref["J9"]                                           # a manufacturer that is the repr of a dict
     assert j9["manufacturer"] == "W\u00fcrth Elektronik"
     assert j9["broken"] == [{"field": "manufacturer", "raw": "{'manufacturer': u'W\\xfcrth Elektronik'}"}]
-    assert bom_import.read_bom_csv(DEVICE) == info["lines"]
+    assert bom_import.read_bom_csv(SAMPLE_BOM) == info["lines"]
 
 
 def test_altiums_own_bom_is_ansi_text_without_an_mpn_column():
@@ -135,7 +135,7 @@ def test_altiums_own_bom_is_ansi_text_without_an_mpn_column():
 
 
 def test_headers_delimiters_and_a_preamble_are_flexible(tmp_path):
-    text = ("Project;Device\n"
+    text = ("Project;Demo\n"
             "Reference;Qty;Part Number;LCSC Part #;Package\n"
             '"C1, C2";2;GRM155R71C104KA88D;c1525;0402\n'
             ";1;ignored;;\n")
@@ -178,14 +178,14 @@ def test_designators_are_split_deduplicated_and_naturally_sorted():
 
 # ---------------------------------------------------------------- the comparison, on the real fixture
 
-def test_the_device_csv_against_the_wctopping_project():
+def test_the_sample_csv_against_the_wctopping_project():
     alt = bom_import.read_altium_parts(FX / "altium" / "project" / "WCTopping.PrjPcb",
                                        FX / "altium" / "finished-board.PcbDoc")
     assert sorted(alt["sch"]) == ["C5", "C6"]                  # the rest of the fixture is not annotated
     assert len(alt["unannotated"]) == 58 and alt["errors"] == [] and len(alt["pcb"]) == 56
     assert alt["sch"]["C5"]["mpn"] == "CC0603ZRY5V9BB104" and alt["sch"]["C5"]["sheet"] == "Processor_Interface"
 
-    found = bom_import.compare(bom_import.read_bom_csv(DEVICE), alt)
+    found = bom_import.compare(bom_import.read_bom_csv(SAMPLE_BOM), alt)
     sev = lambda kind: {f["severity"] for f in of(found, kind)}
     assert refs_of(found, "missing_in_schematic") == ["J9", "R7", "R8", "U9"] and sev("missing_in_schematic") == {"error"}
     assert refs_of(found, "missing_in_bom") == ["C6"] and sev("missing_in_bom") == {"warn"}
@@ -385,8 +385,8 @@ def test_build_lines_takes_the_csv_and_fills_the_blanks_from_the_schematic():
 # ---------------------------------------------------------------- apply
 
 def test_preview_writes_the_report_and_nothing_else(empty):
-    before = DEVICE.read_bytes()
-    report = bom_import.preview(empty, DEVICE)
+    before = SAMPLE_BOM.read_bytes()
+    report = bom_import.preview(empty, SAMPLE_BOM)
     assert report["applied"] is False and report["bom_empty"] is True
     assert report["csv"]["lines"] == 4 and report["csv"]["refs"] == 5 and report["altium"] is None
     assert events(empty) == [] and store.bom_lines(empty) == []
@@ -394,18 +394,18 @@ def test_preview_writes_the_report_and_nothing_else(empty):
     assert json.loads((d / "bom-import.json").read_text(encoding="utf-8"))["by_kind"] == report["by_kind"]
     md = (d / "bom-import.md").read_text(encoding="utf-8")
     assert md.startswith(f"# BOM import - {empty}") and "Preview (nothing imported)" in md and "| bom_csv |" in md
-    assert DEVICE.read_bytes() == before
+    assert SAMPLE_BOM.read_bytes() == before
 
 
 def test_apply_appends_one_event_per_line_and_says_where_they_came_from(empty):
-    report = bom_import.apply(empty, DEVICE)
+    report = bom_import.apply(empty, SAMPLE_BOM)
     assert report["applied"] is True and report["imported_lines"] == 4
 
     evs = events(empty)
     assert [e["line"] for e in evs] == ["C5", "R7", "J9", "U9"]
     assert {e["by"] for e in evs} == {"import"} and len({e["ts"] for e in evs}) == 1
     sha = next(s["sha256"] for s in report["sources"] if s["role"] == "bom_csv")
-    assert {e["reason"] for e in evs} == {f"Imported from device-bom.csv (sha256 {sha[:12]})"}
+    assert {e["reason"] for e in evs} == {f"Imported from sample-bom.csv (sha256 {sha[:12]})"}
 
     lines = {l["key"]: l for l in store.bom_lines(empty)}
     assert lines["R7"]["refs"] == ["R7", "R8"] and lines["R7"]["lcsc"] == "C15850"
@@ -437,17 +437,17 @@ def test_library_entries_take_the_symbol_from_the_schematic_and_the_footprint_fr
 
 
 def test_apply_is_refused_into_a_bom_that_has_lines(empty):
-    bom_import.apply(empty, DEVICE)
+    bom_import.apply(empty, SAMPLE_BOM)
     n = len(events(empty))
     with pytest.raises(bom_import.BomNotEmpty, match="4 lines"):
-        bom_import.apply(empty, DEVICE)
+        bom_import.apply(empty, SAMPLE_BOM)
     assert len(events(empty)) == n                                    # refused before anything was written
-    assert bom_import.preview(empty, DEVICE)["bom_empty"] is False      # a preview is still allowed
+    assert bom_import.preview(empty, SAMPLE_BOM)["bom_empty"] is False      # a preview is still allowed
 
 
 def test_apply_to_a_project_that_does_not_exist():
     with pytest.raises(bom_import.BomImportError, match="no such project"):
-        bom_import.apply("ghost", DEVICE)
+        bom_import.apply("ghost", SAMPLE_BOM)
 
 
 def test_a_missing_csv_is_an_error_the_caller_can_fix(empty, tmp_path):
@@ -526,7 +526,7 @@ def test_which_paths_a_request_from_the_browser_may_name(empty, tmp_path):
     assert bom_import.resolve_csv(empty, str(inside)) == inside.resolve()
     assert bom_import.resolve_csv(empty, "Outputs/Assembly/BOM-full.csv") == inside.resolve()     # relative to the project
     assert bom_import.resolve_csv(empty, str(ours)) == ours.resolve()                           # the project's own folder
-    for bad in (str(secret), "Outputs/../../secret.csv", str(FX / "bom" / "device-bom.csv"), "C:/Windows/win.ini"):
+    for bad in (str(secret), "Outputs/../../secret.csv", str(FX / "bom" / "sample-bom.csv"), "C:/Windows/win.ini"):
         with pytest.raises(bom_import.PathRefused):
             bom_import.resolve_csv(empty, bad)
     assert bom_import.resolve_csv(empty, str(secret), restrict=False) == secret.resolve()     # the command line may
@@ -558,7 +558,7 @@ def test_a_jlc_export_uses_the_declared_code_and_the_stock_check_wins(lte):
 
 
 def test_a_new_mpn_voids_the_declared_code(empty):
-    bom_import.apply(empty, DEVICE)
+    bom_import.apply(empty, SAMPLE_BOM)
     assert {l["key"]: l for l in store.bom_lines(empty)}["C5"]["lcsc"] == "C14663"
 
     assert store.edit_bom(empty, "C5", "mpn", "CC0603ZRY5V9BB104/TR") is None        # not a change: the code stays
@@ -581,7 +581,7 @@ def test_a_new_mpn_on_a_line_without_a_code_adds_no_lcsc_key(empty):
 
 
 def test_an_approved_proposal_with_a_new_mpn_voids_the_declared_code_too(empty):
-    bom_import.apply(empty, DEVICE)
+    bom_import.apply(empty, SAMPLE_BOM)
     pid = store.propose_bom(empty, "U9", {"mpn": "W25Q64JVSSIQ"}, reason="smaller flash")["id"]
     store.decide(empty, pid, "approved")
     u9 = {l["key"]: l for l in store.bom_lines(empty)}["U9"]
@@ -825,12 +825,12 @@ def test_the_command_line_lists_candidates_and_does_a_dry_run(empty, tmp_path, c
 
 def test_the_command_line_says_what_is_wrong(empty, tmp_path):
     with pytest.raises(SystemExit, match="no such project"):
-        bom_import.main(["ghost", str(DEVICE)])
+        bom_import.main(["ghost", str(SAMPLE_BOM)])
     with pytest.raises(SystemExit, match="not found"):
         bom_import.main([empty, str(tmp_path / "nope.csv")])
-    bom_import.apply(empty, DEVICE)
+    bom_import.apply(empty, SAMPLE_BOM)
     with pytest.raises(SystemExit, match="empty BOM"):
-        bom_import.main([empty, str(DEVICE), "--apply"])
+        bom_import.main([empty, str(SAMPLE_BOM), "--apply"])
 
 
 # ---------------------------------------------------------------- over HTTP
@@ -899,7 +899,7 @@ def test_preview_then_import_over_http(server, empty, tmp_path):
 
 
 def test_the_endpoint_works_without_a_linked_altium_project(server, empty):
-    mine = write_csv(store.pdir(empty) / "sources" / "bom.csv", DEVICE.read_bytes().decode("utf-8-sig"))
+    mine = write_csv(store.pdir(empty) / "sources" / "bom.csv", SAMPLE_BOM.read_bytes().decode("utf-8-sig"))
     code, rep = call(server, "/api/bom/import", empty, {"csv": str(mine)})
     assert code == 200 and rep["altium"] is None and rep["csv"]["lines"] == 4
     code, rep = call(server, "/api/bom/import", empty, {"csv": "sources/bom.csv", "apply": True})
@@ -911,7 +911,7 @@ def test_the_endpoint_refuses_paths_outside_the_project(server, empty, tmp_path)
     link_altium(empty, root)
     secret = write_csv(tmp_path / "secret.csv", "Designator\nR1\n")
     write_csv(root / "Outputs" / "notes.txt", "x")
-    for bad in (str(secret), "Outputs/../../secret.csv", str(DEVICE), "C:/Windows/win.ini"):
+    for bad in (str(secret), "Outputs/../../secret.csv", str(SAMPLE_BOM), "C:/Windows/win.ini"):
         code, err = call(server, "/api/bom/import", empty, {"csv": bad})
         assert code == 403, bad
         assert "must be inside" in err["error"]
@@ -925,7 +925,7 @@ def test_the_endpoint_refuses_paths_outside_the_project(server, empty, tmp_path)
     code, err = call(server, "/api/bom/import", empty, {"csv": str(bad_csv)})
     assert code == 400 and "Designator" in err["error"]
     assert events(empty) == []
-    assert call(server, "/api/bom/import", empty, {"project": "ghost", "csv": str(DEVICE)})[0] == 404
+    assert call(server, "/api/bom/import", empty, {"project": "ghost", "csv": str(SAMPLE_BOM)})[0] == 404
 
 
 # ---------------------------------------------------------------- the page

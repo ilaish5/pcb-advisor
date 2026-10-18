@@ -18,6 +18,8 @@ adds = []
 while "--add-dir" in args:
     i = args.index("--add-dir"); adds += ["--add-dir", args[i + 1]]; del args[i:i + 2]
 
+if not shutil.which("agy"):
+    sys.exit("error: the agy CLI was not found on PATH (see docs/ENGINES.md)")
 cmd = [shutil.which("agy"), "-p=", "--input-format", "stream-json", "--output-format", "stream-json",
        "--dangerously-skip-permissions", "--print-timeout", f"{timeout}s", *adds]
 line = json.dumps({"event": "user", "message": {"role": "user", "content": brief.read_text(encoding="utf-8")}})

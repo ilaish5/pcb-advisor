@@ -37,8 +37,8 @@ def esc(s: str) -> str:
 SCOPE = "svg.pcb-preview"
 
 _CSS = """
-& { --c-top: #e74c3c; --c-bottom: #3498db; --c-multi: #f39c12; --c-crit: #2ecc71; --c-sel: #ffe066; --c-net: #c79bff;
-    --c-board: #17281f; --c-board-line: #2d5a3c; --c-text: #f2f4f8; font-family: var(--f-mono, "IBM Plex Mono", ui-monospace, monospace); }
+& { --c-top: #e74c3c; --c-bottom: #3498db; --c-inner: #9b59b6; --c-multi: #f39c12; --c-crit: #2ecc71; --c-sel: #ffe066; --c-net: #c79bff;
+    --c-silk: #e8ecf1; --c-silk-bottom: #9ba5b5; --c-board: #17281f; --c-board-line: #2d5a3c; --c-text: #f2f4f8; font-family: var(--f-mono, "IBM Plex Mono", ui-monospace, monospace); }
 & .pcb-bg { fill: var(--pcb-bg, #121820); }
 & .grid-line { stroke: var(--pcb-grid, rgba(255, 255, 255, 0.04)); stroke-width: 0.8; }
 & .board-poly { fill: var(--c-board); stroke: var(--c-board-line); stroke-width: 2; }
@@ -59,15 +59,33 @@ _CSS = """
 & .pad-top { fill: var(--c-top); stroke: var(--c-top); stroke-width: 0.5; }
 & .pad-bottom { fill: var(--c-bottom); stroke: var(--c-bottom); stroke-width: 0.5; }
 & .pad-multi { fill: var(--c-multi); stroke: var(--c-multi); stroke-width: 0.7; }
+& .track { stroke-linecap: round; cursor: pointer; }
+& .track-top { stroke: var(--c-top); }
+& .track-bottom { stroke: var(--c-bottom); }
+& .track-inner { stroke: var(--c-inner); }
+& .track:hover { stroke: var(--c-sel); }
+& .track.hl-net { stroke: var(--c-net) !important; }
+& .via { cursor: pointer; }
+& .via-pad { fill: var(--c-multi); stroke: var(--c-multi); stroke-width: 0.5; }
+& .via-hole { fill: var(--pcb-bg, #121820); stroke: none; pointer-events: none; }
+& .via.crit .via-pad { stroke: var(--c-crit); stroke-width: 1.5; }
+& .via:hover .via-pad { stroke: var(--c-text); stroke-width: 1.5; }
+& .via.hl-net .via-pad { stroke: var(--c-net) !important; stroke-width: 2; }
+& .silk { stroke: var(--c-silk); fill: none; stroke-linecap: round; pointer-events: none; }
+& .silk-top { stroke: var(--c-silk); }
+& .silk-bottom { stroke: var(--c-silk-bottom); }
+& .silk-text { font-family: var(--f-mono, "IBM Plex Mono", ui-monospace, monospace); pointer-events: none; font-weight: 500; }
+& .silk-top-text { fill: var(--c-silk); }
+& .silk-bottom-text { fill: var(--c-silk-bottom); }
 & .crit { stroke: var(--c-crit); stroke-width: 1.8; }
 & .pcb-comp:hover rect { stroke: var(--c-sel); stroke-width: 2.2; fill-opacity: 0.4; }
 & .pad:hover { stroke: var(--c-text); stroke-width: 1.5; }
 & .pcb-comp.sel rect, & .pcb-comp:focus-visible rect { stroke: var(--c-sel); stroke-width: 2.4; fill-opacity: 0.4; }
-& .pcb-comp:focus-visible, & .plan-group:focus-visible, & .pad:focus-visible { outline: none; }
+& .pcb-comp:focus-visible, & .plan-group:focus-visible, & .pad:focus-visible, & .track:focus-visible, & .via:focus-visible { outline: none; }
 & .pad.sel, & .pad:focus-visible { stroke: var(--c-sel); stroke-width: 1.8; }
 &.focus .pcb-comp:not(.sel), &.focus .pad:not(.sel) { opacity: 0.3; }
 & .pad.hl-net { stroke: var(--c-net); stroke-width: 2.4; }
-&.netfocus .pad:not(.hl-net) { opacity: 0.25; }
+&.netfocus .pad:not(.hl-net), &.netfocus .track:not(.hl-net), &.netfocus .via:not(.hl-net) { opacity: 0.25; }
 & .legend text { font-family: var(--f-ui, system-ui, sans-serif); font-size: 11px; fill: var(--ink-3, #94a0bd); }
 """
 
@@ -196,6 +214,10 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
     components = doc.get("components", [])
     pads = doc.get("pads", [])
     nets = doc.get("nets", [])
+    vias = doc.get("vias", [])
+    tracks = doc.get("tracks", [])
+    arcs = doc.get("arcs", [])
+    texts = doc.get("texts", [])
     plan = plan or {}
 
     # Outline
@@ -219,6 +241,19 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
     for p in pads:
         xs.append(p.get("x_mm", 0))
         ys.append(p.get("y_mm", 0))
+
+    for t in tracks:
+        xs.extend([t.get("x1_mm", 0), t.get("x2_mm", 0)])
+        ys.extend([t.get("y1_mm", 0), t.get("y2_mm", 0)])
+
+    for v in vias:
+        xs.append(v.get("x_mm", 0))
+        ys.append(v.get("y_mm", 0))
+
+    for a in arcs:
+        cx, cy, r = a.get("cx_mm", 0), a.get("cy_mm", 0), a.get("r_mm", 0)
+        xs.extend([cx - r, cx + r])
+        ys.extend([cy - r, cy + r])
 
     # Also include plan groups / keep-outs
     for g in plan.get("groups", []):
@@ -265,6 +300,55 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
         return max(1.0, dim_mm * scale)
 
     crit_net_names = {cn.get("net") for cn in plan.get("critical_nets", []) if cn.get("net")}
+
+    def render_track(t, cls, is_silk=False):
+        x1 = tx(t.get("x1_mm", 0))
+        y1 = ty(t.get("y1_mm", 0))
+        x2 = tx(t.get("x2_mm", 0))
+        y2 = ty(t.get("y2_mm", 0))
+        w = t.get("width_mm", 0.2)
+        sw = max(0.5, w * scale)
+        net = t.get("net") or ""
+        is_crit = (net in crit_net_names) and not is_silk
+        crit_cls = " crit" if is_crit else ""
+        net_attr = f' data-net="{esc(net)}"' if (net and not is_silk) else ""
+        title = f'<title>{esc(net)} ({w}mm)</title>' if (net and not is_silk) else ""
+        if title:
+            return f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" class="{cls}{crit_cls}" stroke-width="{sw:.2f}"{net_attr}>{title}</line>'
+        return f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" class="{cls}{crit_cls}" stroke-width="{sw:.2f}"{net_attr}/>'
+
+    def render_arc(a, cls, is_silk=False):
+        cx = a.get("cx_mm", 0)
+        cy = a.get("cy_mm", 0)
+        r = a.get("r_mm", 0)
+        a1 = a.get("a1", 0)
+        a2 = a.get("a2", 0)
+        w = a.get("width_mm", 0.2)
+        sw = max(0.5, w * scale)
+        net = a.get("net") or ""
+        is_crit = (net in crit_net_names) and not is_silk
+        crit_cls = " crit" if is_crit else ""
+        net_attr = f' data-net="{esc(net)}"' if (net and not is_silk) else ""
+        sweep = (a2 - a1) % 360.0
+        r_px = max(0.5, r * scale)
+        if abs(sweep) < 1e-4 or abs(sweep - 360.0) < 1e-4 or a1 == a2:
+            return f'<circle cx="{tx(cx):.1f}" cy="{ty(cy):.1f}" r="{r_px:.2f}" class="{cls}{crit_cls}" stroke-width="{sw:.2f}" fill="none"{net_attr}/>'
+        large_arc = 1 if sweep > 180.0 else 0
+        sx = tx(cx + r * math.cos(math.radians(a1)))
+        sy = ty(cy + r * math.sin(math.radians(a1)))
+        ex = tx(cx + r * math.cos(math.radians(a2)))
+        ey = ty(cy + r * math.sin(math.radians(a2)))
+        return f'<path d="M {sx:.1f} {sy:.1f} A {r_px:.2f} {r_px:.2f} 0 {large_arc} 0 {ex:.1f} {ey:.1f}" class="{cls}{crit_cls}" stroke-width="{sw:.2f}" fill="none"{net_attr}/>'
+
+    def render_text(t, cls):
+        px = tx(t.get("x_mm", 0))
+        py = ty(t.get("y_mm", 0))
+        h = t.get("height_mm", 1.5)
+        fs = max(5.0, h * scale)
+        rot = -t.get("rotation", 0.0)
+        transform = f' transform="rotate({rot:.1f} {px:.1f} {py:.1f})"' if rot else ""
+        txt = esc(t.get("text", ""))
+        return f'<text x="{px:.1f}" y="{py:.1f}" class="{cls}" font-size="{fs:.1f}px"{transform}>{txt}</text>'
 
     svg = [
         f'<svg id="pcb-preview" class="pcb-preview layer-{active_layer}" viewBox="0 0 {w_px:.1f} {h_px:.1f}" '
@@ -337,23 +421,14 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
         )
     svg.append('</g>')
 
-    # 3. Bottom Layer
-    svg.append('<g id="pcb-layer-bottom" class="layer-bottom">')
-    # Bottom components
-    for c in components:
-        if c.get("layer") == "BOTTOM":
-            ref = c.get("ref", "")
-            cx = tx(c.get("x_mm", 0))
-            cy = ty(c.get("y_mm", 0))
-            rot = -c.get("rotation", 0.0)
-            svg.append(
-                f'<g class="pcb-comp comp-bottom" data-ref="{esc(ref)}" id="pcb-comp-{esc(ref)}" '
-                f'transform="rotate({rot:.1f} {cx:.1f} {cy:.1f})">'
-                f'<rect x="{cx - 16:.1f}" y="{cy - 12:.1f}" width="32" height="24"/>'
-                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}">{esc(ref)}</text>'
-                f'</g>'
-            )
-    # Bottom pads
+    # 3. Bottom Copper Layer
+    svg.append('<g id="pcb-layer-bottom-copper" class="layer-bottom-copper">')
+    for t in tracks:
+        if t.get("layer") == 32:
+            svg.append(render_track(t, "track track-bottom"))
+    for a in arcs:
+        if a.get("layer") == 32:
+            svg.append(render_arc(a, "track track-bottom"))
     for p in pads:
         if p.get("layer") == 32:  # Bottom
             px = tx(p.get("x_mm", 0))
@@ -373,9 +448,72 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
             )
     svg.append('</g>')
 
-    # 4. Top Layer (and Multi-Layer)
-    svg.append('<g id="pcb-layer-top" class="layer-top">')
-    # Multi-layer pads
+    # 4. Bottom Layer Components
+    svg.append('<g id="pcb-layer-bottom" class="layer-bottom">')
+    for c in components:
+        if c.get("layer") == "BOTTOM":
+            ref = c.get("ref", "")
+            cx = tx(c.get("x_mm", 0))
+            cy = ty(c.get("y_mm", 0))
+            rot = -c.get("rotation", 0.0)
+            svg.append(
+                f'<g class="pcb-comp comp-bottom" data-ref="{esc(ref)}" id="pcb-comp-{esc(ref)}" '
+                f'transform="rotate({rot:.1f} {cx:.1f} {cy:.1f})">'
+                f'<rect x="{cx - 16:.1f}" y="{cy - 12:.1f}" width="32" height="24"/>'
+                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}">{esc(ref)}</text>'
+                f'</g>'
+            )
+    svg.append('</g>')
+
+    # 5. Bottom Silkscreen Layer
+    svg.append('<g id="pcb-layer-silk-bottom" class="layer-silk-bottom">')
+    for t in tracks:
+        if t.get("layer") == 34:
+            svg.append(render_track(t, "silk silk-bottom", is_silk=True))
+    for a in arcs:
+        if a.get("layer") == 34:
+            svg.append(render_arc(a, "silk silk-bottom", is_silk=True))
+    for tx_item in texts:
+        if tx_item.get("layer") == 34:
+            svg.append(render_text(tx_item, "silk-text silk-bottom-text"))
+    svg.append('</g>')
+
+    # 6. Inner Copper Layer
+    svg.append('<g id="pcb-layer-inner" class="layer-inner">')
+    for t in tracks:
+        if 2 <= t.get("layer", 0) <= 31:
+            svg.append(render_track(t, "track track-inner"))
+    for a in arcs:
+        if 2 <= a.get("layer", 0) <= 31:
+            svg.append(render_arc(a, "track track-inner"))
+    svg.append('</g>')
+
+    # 7. Vias Layer
+    svg.append('<g id="pcb-layer-vias" class="layer-vias">')
+    for v in vias:
+        vx = tx(v.get("x_mm", 0))
+        vy = ty(v.get("y_mm", 0))
+        vr = max(0.5, ts(v.get("dia_mm", 0.6) / 2))
+        hr = max(0.2, ts(v.get("hole_mm", 0.3) / 2))
+        net = v.get("net") or ""
+        is_crit = net in crit_net_names
+        svg.append(
+            f'<g class="via{" crit" if is_crit else ""}" data-net="{esc(net)}">'
+            f'<title>Via: {esc(net)}</title>'
+            f'<circle cx="{vx:.1f}" cy="{vy:.1f}" r="{vr:.1f}" class="via-pad"/>'
+            f'<circle cx="{vx:.1f}" cy="{vy:.1f}" r="{hr:.1f}" class="via-hole"/>'
+            f'</g>'
+        )
+    svg.append('</g>')
+
+    # 8. Top Copper Layer
+    svg.append('<g id="pcb-layer-top-copper" class="layer-top-copper">')
+    for t in tracks:
+        if t.get("layer") == 1:
+            svg.append(render_track(t, "track track-top"))
+    for a in arcs:
+        if a.get("layer") == 1:
+            svg.append(render_arc(a, "track track-top"))
     for p in pads:
         if p.get("layer") == 74:  # Multi-layer through-hole
             px = tx(p.get("x_mm", 0))
@@ -393,8 +531,6 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
                 f'<title>{esc(ref)}.{esc(pname)} (TH): {esc(net)}</title>'
                 f'</rect>'
             )
-
-    # Top pads
     for p in pads:
         if p.get("layer") == 1:  # Top
             px = tx(p.get("x_mm", 0))
@@ -412,8 +548,10 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
                 f'<title>{esc(ref)}.{esc(pname)}: {esc(net)}</title>'
                 f'</rect>'
             )
+    svg.append('</g>')
 
-    # Top components
+    # 9. Top Layer Components
+    svg.append('<g id="pcb-layer-top" class="layer-top">')
     for c in components:
         if c.get("layer") != "BOTTOM":
             ref = c.get("ref", "")
@@ -427,6 +565,19 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
                 f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}">{esc(ref)}</text>'
                 f'</g>'
             )
+    svg.append('</g>')
+
+    # 10. Top Silkscreen Layer
+    svg.append('<g id="pcb-layer-silk-top" class="layer-silk-top">')
+    for t in tracks:
+        if t.get("layer") == 33:
+            svg.append(render_track(t, "silk silk-top", is_silk=True))
+    for a in arcs:
+        if a.get("layer") == 33:
+            svg.append(render_arc(a, "silk silk-top", is_silk=True))
+    for tx_item in texts:
+        if tx_item.get("layer") == 33:
+            svg.append(render_text(tx_item, "silk-text silk-top-text"))
     svg.append('</g>')
 
     # Legend: the swatches use the classes of the drawing, so the colours live in the stylesheet only

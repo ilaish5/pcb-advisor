@@ -610,7 +610,7 @@ onAct('side-swap', async () => { swapSheets(); });
 onAct('side-set', async (el, d) => { const it = itemFromRef(d.item); if (it) openSide(it); });
 onAct('reset-layout', async () => { resetLayout(); toast('Layout reset to default'); });
 onAct('newproj', async () => {
-  const n = await askText({title: 'New project', label: 'Project name', placeholder: 'Device controller', confirm: 'Create'});
+  const n = await askText({title: 'New project', label: 'Project name', placeholder: 'Temperature controller', confirm: 'Create'});
   if (!n) return;
   const r = await api('/api/projects/new', {name: n});
   const u = new URL(location.href);

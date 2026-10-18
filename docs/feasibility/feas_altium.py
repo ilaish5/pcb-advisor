@@ -1,7 +1,9 @@
 """Feasibility: read Altium SchDoc / PcbDoc straight from disk, read-only."""
-import sys, re, struct, olefile, collections, pathlib
+import os, sys, re, struct, olefile, collections, pathlib
 
-P = pathlib.Path(r"C:\Users\Public\Documents\Altium\real-project")
+PROJECT = os.environ.get("PROJECT_DIR") or (sys.argv[1] if len(sys.argv) > 1 else None)
+assert PROJECT, "usage: PROJECT_DIR=<folder with the .PcbDoc> python feas_altium.py"
+P = pathlib.Path(PROJECT)
 
 
 def records(blob):
@@ -45,7 +47,7 @@ for sch in sorted(P.glob("0*.SchDoc")):
     ole.close()
 
 print("\n=== PcbDoc")
-ole = olefile.OleFileIO(str(P / "real-project.PcbDoc"))
+ole = olefile.OleFileIO(str(next(P.glob("*.PcbDoc"))))
 streams = ["/".join(s) for s in ole.listdir()]
 print("storages:", sorted({s.split("/")[0] for s in streams})[:60])
 

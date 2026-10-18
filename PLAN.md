@@ -6,8 +6,8 @@ Do "Now -> Next action". Update "Now" after every real step and write the stage 
 - **What** the tool does and why: `docs/PRODUCT-PLAN.md` (Hebrew; pain points K1-K9, the 12 capabilities, decisions
   1-24, feasibility results). This file is **how** it gets built. If they disagree, PRODUCT-PLAN decides the what,
   this file decides the order and the method.
-- Owner: the user (עילי). Course 27525. The tool replaces a regular final project; the device board
-  (`C:\Users\Public\Documents\Altium\real-project`) was built to learn the stages and is the evidence base.
+- Owner: the user (עילי). Course 27525. The tool replaces a regular final project; the real-project board
+  (`<real-project folder>`) was built to learn the stages and is the evidence base.
 
 ---
 
@@ -17,7 +17,7 @@ Do "Now -> Next action". Update "Now" after every real step and write the stage 
   **Sonnet subagent** with a written brief, then **verifies** the result itself before accepting it.
   The orchestrator writes code only for small fixes and integration; subagents do the bulk.
 - **Task brief** (every subagent): goal; the files it may create/edit (everything else read-only); the inputs to read
-  (paths); acceptance checks it must run and report; "do not commit, do not push, do not touch the device project".
+  (paths); acceptance checks it must run and report; "do not commit, do not push, do not touch the real-project project".
   Parallel subagents must have disjoint files, or run with `isolation: worktree`.
 - **Verification** (orchestrator, every task): read the diff; run `.venv\Scripts\python -m pytest -q`; run the stage's
   acceptance checks and the benchmark (section 5) when the stage touches what it measures; reject and re-brief on
@@ -77,28 +77,28 @@ files and skills (context + procedures + tools), so they are a first-class deliv
   for Claude Code) and **proves** that both Claude Code and `agy` load the pack and the skills from there.
 - Today's runtime rules are `.agents/rules/*.md` + `.claude/skills/pcb-design-advisor/SKILL.md` (v2, ~120 lines):
   migrate what is good into the new pack, delete the rest.
-- **Knowledge sources for the skills** (read-only): the device project's 11 skills
+- **Knowledge sources for the skills** (read-only): the real-project project's 11 skills
   (`real-project/.claude/skills/`: altium-part-sourcing, altium-library-builder, altium-schematic-builder,
   altium-automation, drawing-schematic-diagrams, pcb-manufacturer-rules, pcb-placement, pcb-routing, pcb-drc, pcb-finish,
   pcb-outputs) hold the hard-won lessons; keep the knowledge, drop the Altium-driving parts. Plus the course reference
-  and the device notes (`real-project/Docs/Project-Notes/*.md`).
+  and the real-project notes (`real-project/Docs/Project-Notes/*.md`).
 
 | runtime skill | capability (PRODUCT-PLAN §3) | main sources |
 |---|---|---|
-| idea-and-requirements | 1 - the questions people regret (power, flashing/debug e.g. USB DFU, cable sides, UI, memory, assembly) | device K4 |
-| parts-and-stock | 2 - BOM line checked against JLC as it is entered | feasibility `feas_jlc.py`, device `_Work/pcb-outputs/jlc_parts.py` |
-| part-models | 3 - symbol/footprint/3D, link-and-return, package variant vs datasheet | device altium-part-sourcing |
-| project-library | 4 - one library, built by one Altium script the student runs | device altium-library-builder |
-| schematic-preview | 5 - example sheets to redraw | device altium-schematic-builder, drawing-schematic-diagrams |
-| schematic-review | 6 - pull-ups, decoupling, abs-max, open nets, ERC explained, with citations | device K3 incidents |
-| rules-and-calcs | 7 - JLC rules + extra rules, `.RUL` export, read-back diff, width/impedance/divider calcs | device pcb-manufacturer-rules |
-| placement-and-routing-plan | 8 - placement preview, critical-net routing plan | device pcb-placement, pcb-routing |
-| board-review | 9 - connector direction, decap distance, antenna, GND, DRC explained | device pcb-drc, pcb-finish |
-| manufacturer-and-dfm | 10 - OutJob, pre-upload check, run JLC DFM, enter + triage the results, fixes | device pcb-outputs, K7 |
+| idea-and-requirements | 1 - the questions people regret (power, flashing/debug e.g. USB DFU, cable sides, UI, memory, assembly) | real-project K4 |
+| parts-and-stock | 2 - BOM line checked against JLC as it is entered | feasibility `feas_jlc.py`, real-project `_Work/pcb-outputs/jlc_parts.py` |
+| part-models | 3 - symbol/footprint/3D, link-and-return, package variant vs datasheet | real-project altium-part-sourcing |
+| project-library | 4 - one library, built by one Altium script the student runs | real-project altium-library-builder |
+| schematic-preview | 5 - example sheets to redraw | real-project altium-schematic-builder, drawing-schematic-diagrams |
+| schematic-review | 6 - pull-ups, decoupling, abs-max, open nets, ERC explained, with citations | real-project K3 incidents |
+| rules-and-calcs | 7 - JLC rules + extra rules, `.RUL` export, read-back diff, width/impedance/divider calcs | real-project pcb-manufacturer-rules |
+| placement-and-routing-plan | 8 - placement preview, critical-net routing plan | real-project pcb-placement, pcb-routing |
+| board-review | 9 - connector direction, decap distance, antenna, GND, DRC explained | real-project pcb-drc, pcb-finish |
+| manufacturer-and-dfm | 10 - OutJob, pre-upload check, run JLC DFM, enter + triage the results, fixes | real-project pcb-outputs, K7 |
 | altium-help | 11 - "how do I..." from the AD20 manual + course units, version-aware | `shared/reference/AGENTS.md` |
-| project-keeping | 12 - folder order, decision log, change impact, final file organization | device K9 |
+| project-keeping | 12 - folder order, decision log, change impact, final file organization | real-project K9 |
 
-Every skill states: when to use it; the steps; the scripts it may run; its references; the pitfalls (from the device
+Every skill states: when to use it; the steps; the scripts it may run; its references; the pitfalls (from the real-project
 transcripts); the output format; and has evals (section 5).
 
 ## 3a. The product UI (user, 2026-10-11) - binding for every stage
@@ -140,16 +140,16 @@ Cross-cutting:
 | `shared/reference/AGENTS.md` | course material map + topic index |
 | `tests/fixtures/altium/` | AD20 SchDoc/PcbDoc/libs/OutJob that already parse |
 | `README.md`, `docs/configuration.md`, `docs/gateway.md` | current v2 code: workspace, config, engine gateway |
-| `C:\Users\Public\Documents\Altium\real-project` | **read-only** evidence base: board files, `Docs/Project-Notes/` (PLAN, STATUS, PCB, LIBRARY, SCHEMATICS), `_Work/` scripts, `Outputs/` (JLC DFM, quotes, BOM/CPL), 11 skills. Its git `origin` is Altium 365: **never run git there** |
-| `<home>\.claude\projects\C--Users-Public-Documents-Altium-real-project\*.jsonl` | the device transcripts (a18fc41e, a5966420, 25fd4f25, 31f2d778): JSONL, large - extract user messages / summaries with a script, never read whole |
+| `<real-project folder>` | **read-only** evidence base: board files, `Docs/Project-Notes/` (PLAN, STATUS, PCB, LIBRARY, SCHEMATICS), `_Work/` scripts, `Outputs/` (JLC DFM, quotes, BOM/CPL), 11 skills. Its git `origin` is Altium 365: **never run git there** |
+| `<home>\.claude\projects\<real-project>\*.jsonl` | the real-project transcripts (a18fc41e, a5966420, 25fd4f25, 31f2d778): JSONL, large - extract user messages / summaries with a script, never read whole |
 
 ## 5. Measurement (criterion ג)
 
-- **Device replay benchmark** (PRODUCT-PLAN §5.1): the 12 real incidents, each as a fixture = the project state before
+- **Real-incident replay benchmark** (PRODUCT-PLAN §5.1): the 12 real incidents, each as a fixture = the project state before
   it was caught + the expected finding + the stage the tool should catch it in. `python pcb.py bench` prints the
   score table (caught / stage / earlier-than-reality) and writes `docs/BENCHMARK.md`. Deterministic checks run
   without an engine; engine-based checks are marked and run once per stage.
-- **Altium Q&A eval**: ~25 real student questions (from the device transcripts and the course quiz) with the expected
+- **Altium Q&A eval**: ~25 real student questions (from the real-project transcripts and the course quiz) with the expected
   source file/section; scores the answer's citation and length.
 - **Behaviour evals**: answers in the user's language, short, no stock/price without a skill run, no invented part
   numbers.
@@ -163,13 +163,13 @@ Cross-cutting:
 | I0 | **Orientation + architecture.** Read the inputs; keep/replace map of the v2 code; runtime-pack layout (section 3) proven with **both** engines; fix the known engine bugs: agy refuses `--model ...-high` together with `--effort` (send one), long prompts on the command line (Windows ~32K limit) -> stdin with `--input-format stream-json` (`docs/ENGINES.md` §5). Write `docs/ARCHITECTURE.md` (short). | both engines answer a probe that needs a skill file; gateway tests for the two bugs; all tests green | ✅ |
 | I1 | **Measurement harness.** 12 incident fixtures, Q&A eval, behaviour evals, `pcb.py bench`, `docs/BENCHMARK.md` | bench runs end to end; baseline recorded | ✅ |
 | I2 | **Runtime core.** `AGENTS.md` + 12 skill skeletons (frontmatter, triggers, references, pitfalls), reference routing, skill lint test | lint green; Q&A eval citation score recorded and improved vs I1 | ✅ (measurement partial, see §8) |
-| I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, link the Altium project: PrjPcb, PcbDoc, sheets, output folder); open files in the UI + upload to the knowledge base (§3a) | all fixtures + device files parse; TC_FAULT pad map correct; settings work in the UI | ✅ |
+| I3 | **Altium reader + settings.** Read-only SchDoc / PcbDoc (components, params, pads, nets, rules, positions) / PrjPcb / `.RUL`; Altium install + recent projects from the registry; settings page (Altium location, link the Altium project: PrjPcb, PcbDoc, sheets, output folder); open files in the UI + upload to the knowledge base (§3a) | all fixtures + real-project files parse; TC_FAULT pad map correct; settings work in the UI | ✅ |
 | I4 | **Parts and stock** (cap 2). JLC client with cache; parts table: stock, price, library type, cost per board, risk flag, alternatives; datasheet click (auto download through the JLC file endpoint, else link-and-return); interactive parts tab (§3a: edit/replace, availability indicator, role line, chat per part with datasheet); skill parts-and-stock complete | incidents 2-5 caught at the parts stage | ✅ |
 | I5 | **Board check + manufacturer** (caps 9, 10). OutJob generator; checks: connector opening side, decap distance, outline layers, CPL rotation vs JLC; DFM guide: how to run JLC DFM, enter results, triage, fix; UI spaces "Altium outputs" and "Final manufacturer checks" (§3a: upload results, discuss); skills board-review + manufacturer-and-dfm | incidents 10-12 caught | ✅ |
 | I6 | **Schematic review** (cap 6). Netlist from PcbDoc pads and from SchDoc wire geometry; checks with datasheet citations; schematic tab: click part/net -> ask (§3a); skill schematic-review | incidents 6, 7, 9 caught | ✅ |
 | I7 | **Rules and calcs** (cap 7). Rules tab (JLC preset + extra rules), `.RUL` writer, read-back diff from the PcbDoc, calculators; skill rules-and-calcs | `.RUL` round-trip test; diff test on a changed fixture; one import in Altium listed for the user | ✅ |
 | I8 | **Library** (caps 3, 4). Model search + link-and-return, package-variant check vs datasheet, one-script library build for Altium; skills part-models + project-library | incident 1 caught | ✅ |
-| I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the device and one AD20 fixture | ✅ (fixture; device preview by the user) |
+| I9 | **Previews** (caps 5, 8). Schematic preview, interactive placement + routing tab (§3a); skills schematic-preview + placement-and-routing-plan | previews for the real-project and one AD20 fixture | ✅ (fixture; real-project preview by the user) |
 | I10 | **Idea, Altium help, project keeping** (caps 1, 11, 12). Requirement questions + editable block diagram (§3a), stage guidance in every tab, how-to answers from the AD20 manual, decision log, change impact, final file organization | incident 8 caught at the idea stage; Q&A eval target met | ✅ (built; measured in I11) |
 | I11 | **Wrap-up.** Full benchmark, README + ENGINES + docs current, English UI check, clean tree, final summary for the user | 12/12 or the gaps explained | ✅ (deterministic 12/12; engine run waits for the user's OK) |
 
@@ -201,7 +201,7 @@ tokens): precise briefs via ``tools/agy_task.py``; Claude Code plans, briefs and
 **Token budget mode (user, 2026-10-12, options 1+3):** the weekly Claude Code quota may not cover I4-I11.
 1. agy writes ALL code (always `--dangerously-skip-permissions`). Claude Code writes a short brief (goal, files allowed,
    hard limits, acceptance commands) and verifies by running pytest + the acceptance commands + a `git diff --stat`
-   glance; read only risky spots (security, writes outside the project, device path), not every line.
+   glance; read only risky spots (security, writes outside the project, real-project path), not every line.
 2. Stages merged, one commit each: **A = I3 viewer + I4**, **B = I5 + I6**, **C = I7 + I8**, **D = I9 + I10**, then
    **I11**. Stage summaries stay 10 lines; one Hebrew report per merged stage.
 
@@ -209,7 +209,7 @@ tokens): precise briefs via ``tools/agy_task.py``; Claude Code plans, briefs and
 (~2400x15000 px), no text layer. `scripts/dfm.py` must: extract the JPEG (pypdf), cut it into ~1400 px slices, save
 them in the project (`checks/`), and give the engine the slices to read (image input), then build the triage table
 (section, check, worst value, level, D/W/G counts, layer). Layout + SMT triage hints:
-`runtime/skills/manufacturer-and-dfm/references/jlcdfm-report.md`. Sample: the user's device report (local only,
+`runtime/skills/manufacturer-and-dfm/references/jlcdfm-report.md`. Sample: the user's real-project report (local only,
 untrusted copy in %TEMP%\dfm-untrusted; not committed).
 
 **Stage A done (2026-10-12)**, **stage B done**, **stage C done**, **stage D done (2026-10-12)** - see section 8. Edge and two idle Claude Code sessions were
@@ -221,21 +221,21 @@ Claude Code verifies each, commits it on its branch and merges into this branch,
 Done today: UI rework, icon diagram toolbars, right-drag pan, diagram hardening, agent live diagram edits
 (`idea.diagram.edit` + undo), editable requirements, stage strip follows the active tab; 382 tests green.
 Next: (1) agy brief `docs/next-tasks/diagram-offset-and-snap.md` (shape created off-cursor; connectors snap to shape
-points); (2) device check 2: .RUL import into Altium (export only to the advisor's exports); (3) full benchmark only
+points); (2) real-project check 2: .RUL import into Altium (export only to the advisor's exports); (3) full benchmark only
 with the user's OK; (4) close I11 (section 8 summary, Hebrew report). Hourly cron removed.
 
 **Note:** the UI server does not reload Python; restart it after serve.py/store.py changes (a stale server made
 "Ask about this file" look broken on 2026-10-12).
 
 **I11 done (2026-10-13)** - see section 8. Status file: `docs/STATUS-2026-10-13.md`.
-The .RUL import was done in AD26 by Claude Code on a temp copy of the rules-board fixture (not the device).
+The .RUL import was done in AD26 by Claude Code on a temp copy of the rules-board fixture (not the real-project).
 Engine benchmark with Claude Code done 2026-10-13 (see §8 I11 item 9, `docs/BENCHMARK.md`). Open: agy engine run;
 behaviour evals 7/13 (length, unflagged MPNs).
 
-**Device onboarding done (2026-10-13/14)** - see section 8. Plan: `docs/next-tasks/device-project-import.md`; status
-file: `docs/STATUS-2026-10-14.md`. User decisions: Altium 365 is ignored (the disk copy is the truth); the device is a
+**Real project onboarding done (2026-10-13/14)** - see section 8. Plan: kept in the private `local/` folder (not in git); status
+file: `docs/STATUS-2026-10-14.md`. User decisions: Altium 365 is ignored (the disk copy is the truth); the real-project is a
 finished project (review mode, no new design); Sonnet subagents for parallel tasks. Project data lives in
-`projects/real-project/` (git-ignored); the review is `checks/device-review.md`.
+`projects/real-project/` (git-ignored); the review is `checks/real-project-review.md`.
 
 **UI redesign done (2026-10-14)** - brief and design system: `docs/next-tasks/ui-redesign.md`.
 - **Owner's choices:** light + dark, nav left / chat right, no tab bars but side by side, colour only where it means something.
@@ -250,16 +250,16 @@ finished project (review mode, no new design); Sonnet subagents for parallel tas
   - A live check with a synthetic test board: `scripts/jlc_live.py`, `docs/bench-runs/jlc-live-2026-10-14/`.
   - The preset follows the board (layers, copper, mask colour) at JLC's verified floors, with new rules.
   - A guided upload: the user signs in and uploads; the tool builds the Gerber zip and picks the report up from Downloads.
-- **Device fixes are parked:** `projects/real-project/checks/parked-fixes.md`.
+- **Real project fixes are parked:** `projects/real-project/checks/parked-fixes.md`.
 - **Open, with the owner at the end:**
   1. The first real JLCDFM upload: the user signs in; the tool guides and picks the report up.
   2. Import the new .RUL files into AD26 on a scratch board. This is GUI automation, so it needs the screen.
   3. Done 2026-10-14:
-     - The device diagram was rebuilt from the presentation's block diagram (12 blocks, 12 labelled links, the board frame, W25Q128 per the BOM). The old one is the first undo step.
+     - The real-project diagram was rebuilt from the presentation's block diagram (12 blocks, 12 labelled links, the board frame, W25Q128 per the BOM). The old one is the first undo step.
      - That layout is the Idea skill's default "system block diagram" style (`references/diagram-ops.md`).
 - 935 tests.
 
-Done 2026-10-12 (read-only, with the user's OK): device previews rendered for all 4 sheets + the PcbDoc
+Done 2026-10-12 (read-only, with the user's OK): real-project previews rendered for all 4 sheets + the PcbDoc
 (fixed a missing `import store` in preview_sch.py). Board preview is correct; on the schematic, the 64-pin MCU's
 pin names and top/bottom net labels crowd and get cut to one letter (known limit, readable when zoomed).
 
@@ -281,9 +281,9 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 10. Open: agy permission policy for script-running skills; Edit rule form on Windows (both in I2).
 
 ### I1 - Measurement harness (2026-10-11) ✅
-1. 12 incident fixtures (`scripts/bench/incidents/`), one per device incident, cleaned of answer leaks (06, 11, 12).
+1. 12 incident fixtures (`local/bench-fixtures/`, private, not in git), one per real-project incident, cleaned of answer leaks (06, 11, 12).
 2. Q&A eval (25 questions) and behaviour evals (13 cases) with keyword groups, must_not and citation checks.
-3. `pcb.py bench [--engine X] [--evals] [--only 1,5]`: deterministic or engine run, answers kept in `docs/bench-runs/`.
+3. `pcb.py bench [--engine X] [--evals] [--only 1,5]`: deterministic or engine run, answers kept in `local/bench-runs/` (private).
 4. `docs/BENCHMARK.md` is rewritten each run and keeps a History section.
 5. Deterministic run: 0/12 caught (no checks exist yet; expected).
 6. Engine baseline from a clean copy of 07c515c + I1 (so the I2 skills could not leak in).
@@ -296,14 +296,14 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 1. `runtime/AGENTS.md` rewritten (118 lines): hard rules 1-10, how to answer, where things are, scripts, citing,
    the actions protocol, the three stages, and a `# SKILLS` routing table of the 12 skills.
 2. 12 skills in `runtime/skills/` (frontmatter + When/Steps/Scripts/References/Pitfalls/Output), lessons generalized,
-   no device answers; short `references/` files for checklists, ERC messages, JLC limits, question bank.
+   no real-project answers; short `references/` files for checklists, ERC messages, JLC limits, question bank.
 3. Per-skill evals outside the pack: `scripts/bench/skill_evals/<name>.json` (>=3 cases, >=1 Hebrew each).
 4. `scripts/skills/lint.py` + `pcb.py skills lint`: format, lengths, paths exist, planned scripts, forbidden text,
    routing table == folders == the 12 names, KESTREL-31 codeword. The shipped pack lints clean.
 5. Gateway: agy empty answer with denied tools is now an error that names the cause; denials kept in meta.
 6. agy permissions decided by the user: `--dangerously-skip-permissions` (gateway default).
 7. Measurement: not re-run (user decision, low memory). The "improved vs I1" check is therefore not proven.
-8. Caveat: the skills carry the device lessons (generalized), so the benchmark is partly in-sample.
+8. Caveat: the skills carry the real-project lessons (generalized), so the benchmark is partly in-sample.
 9. Tests: 208 green. Runtime skills updated: all 12 (this stage).
 10. Open: `check_availability.py` still has a Mouser branch (I4); `trace_width.py` is IPC-2221 only (IPC-2152 in I7).
 
@@ -313,7 +313,7 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 2. `dump.py <file> [--full] [--net NAME]` CLI; listed in AGENTS.md SCRIPTS and in board/schematic/project skills.
 3. Fixture numbers pinned in tests (rules-board 59/76/35/281, finished-board 56/71/45/272, 5 sheets exact).
 4. `altium/registry.py`: installs (HKLM Builds) + recent PrjPcb (HKCU), read-only, injectable fake for tests.
-   This PC: AD26 26.8.1.31; recent = the device PrjPcb.
+   This PC: AD26 26.8.1.31; recent = the real-project PrjPcb.
 5. Project link: `project.json.altium` {project_file, pcb_file, outputs_dir}; GET /api/altium, POST link/unlink;
    settings block in the UI (installs, path, linked project, PcbDoc pick, output folder, recent + Link).
 6. The engine gets the linked folder via add-dir and a READ ONLY place in the workspace description.
@@ -321,7 +321,7 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
    Upload to the knowledge base already existed (Sources page).
 8. Built by agy from two briefs (I3-A readers, I3-B settings); every diff and test read by Claude Code.
 9. Tests: 229 green, skills lint ok. No benchmark run (user: no heavy runs without asking; I3 adds no answers).
-10. Device check run by the user: TC_FAULT = Q5D-1, TP8-TP, U3-13, U6-25 (correct; TP8's pad is named TP).
+10. Real project check run by the user: TC_FAULT = Q5D-1, TP8-TP, U3-13, U6-25 (correct; TP8's pad is named TP).
     Open: the settings UI was not opened in a browser (no GUI).
 
 ### Stage A (I3 viewer + I4 parts and stock), 2026-10-12
@@ -386,7 +386,7 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 8. Incident: removing the C worktree followed its `.venv` junction and emptied the shared venv; agy patched it with a
    system-site `.pth`. Fixed: venv rebuilt from requirements (Pillow added to requirements.txt), junctions removed first.
 9. Tests green after the rebuild, skills lint ok. No benchmark run.
-10. Open at the time: previews not yet opened in a browser. Since done: device previews checked, UI screenshotted in Edge.
+10. Open at the time: previews not yet opened in a browser. Since done: real-project previews checked, UI screenshotted in Edge.
 
 ### UI rework from user feedback (part of I11), 2026-10-12
 1. Panes: chat | nav | center with splitters, collapse/restore, compact nav, Settings -> Reset layout.
@@ -420,24 +420,24 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
    could not run 13 scripts AGENTS.md names (allow-list + test), word limit in AGENTS.md, three grader false
    negatives. Connectors end on the outline of every shape; the server kept dropping `point` on load (fixed);
    view jumped when a label box opened (fixed). agy engine run not done.
-10. The device folder was not touched (no git, no writes); all Altium work on `%TEMP%` copies, deleted afterwards.
+10. The real-project folder was not touched (no git, no writes); all Altium work on `%TEMP%` copies, deleted afterwards.
 
-### Device onboarding - a real finished board as a project (2026-10-13/14) ✅
-1. `projects/real-project`: manifest of which device files are current (`checks/device-manifest.md`), BOM imported
+### Real project onboarding - a real finished board as a project (2026-10-13/14) ✅
+1. `projects/real-project`: manifest of which real-project files are current (`checks/real-project-manifest.md`), BOM imported
    from `Outputs/Assembly/BOM-full.csv` by the new `scripts/bom_import.py` (60 lines, 127 parts; API + BOM tab).
 2. Checkers run on the real board and fixed until no false alarm was left: schematic T-joins/No ERC (558/558 pins
    match the board), connector direction, decap distance, board shape from Board6 (100x80 mm, was 177x127 default).
-3. Exports equal the hand-made device files: JLC BOM identical; CPL positions equal on all 127 parts (CPL origin fix),
+3. Exports equal the hand-made real-project files: JLC BOM identical; CPL positions equal on all 127 parts (CPL origin fix),
    12 rotations differ = the deliberate ROT_FIX parts. Board-aware .RUL (74 rules), rules verdicts in the UI.
 4. JLCDFM PCB+SMT report triaged against the files: 1 real error, cosmetic (silk-to-mask 0.127 mm < JLC 0.15 mm).
 5. Part findings: F1's LCSC code is another maker's part (new `code_mpn_mismatch` check), U9 lib ref still the NAND
    part, stale U6 links, broken J8/J11 manufacturer, stock tight for J11/U4/Y1; 41.37 USD/board.
-6. Idea, 18 agreed items, 35 requirements, 16-shape diagram and 20 decisions drafted from the device docs (subagent B).
+6. Idea, 18 agreed items, 35 requirements, 16-shape diagram and 20 decisions drafted from the real-project docs (subagent B).
 7. Datasheets: 24/27 in Sources with url + sha256; sources.py refuses HTML-as-PDF and replacing a different file.
 8. Browser check of every tab on the real project found 3 UI bugs, fixed: blank Outputs rows, "C3-C66" ref ranges
    that were not runs, imported parts shown as "missing" from the library (now "in library, to review").
 9. Benchmark: Claude Code incidents 12/12, Q&A 0.90, behaviour 11/13 (grader fixed); agy: incidents 7/12 (3 timeouts
    at 300 s), Q&A 0.93, behaviour 13/13. A run that passed midnight split into two folders (fixed). Caveat: the
-   engines could read the device project (repo add-dir); no answer cites it.
+   engines could read the real-project project (repo add-dir); no answer cites it.
 10. Sonnet subagents A-G in parallel, all verified by Claude Code; 663 tests green, deterministic bench 12/12.
-    The device folder was never written (`.git/index` unchanged since 10-11).
+    The real-project folder was never written (`.git/index` unchanged since 10-11).

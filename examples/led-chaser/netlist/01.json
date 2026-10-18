@@ -1,0 +1,564 @@
+{
+  "id": "01",
+  "title": "LED chaser",
+  "sections": [
+    {
+      "id": "PWR",
+      "title": "USB-C 5 V in"
+    },
+    {
+      "id": "CLK",
+      "title": "U1 NE555 clock, about 2 Hz"
+    },
+    {
+      "id": "CNT",
+      "title": "U2 CD4017 decade counter"
+    },
+    {
+      "id": "LED",
+      "title": "D1..D10 and the shared resistor R3"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "J1",
+      "section": "PWR",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "VBUS",
+          "num": "A4B9",
+          "net": "+5V"
+        },
+        {
+          "name": "GND",
+          "num": "A1B12",
+          "net": "GND"
+        },
+        {
+          "name": "CC1",
+          "num": "A5",
+          "net": "CC1"
+        },
+        {
+          "name": "CC2",
+          "num": "B5",
+          "net": "CC2"
+        },
+        {
+          "name": "SHIELD",
+          "num": "S1",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R4",
+      "section": "PWR",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC1"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R5",
+      "section": "PWR",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC2"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C5",
+      "section": "PWR",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "U1",
+      "section": "CLK",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "GND",
+          "num": "1",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "TRIG",
+          "num": "2",
+          "net": "THR",
+          "side": "left"
+        },
+        {
+          "name": "OUT",
+          "num": "3",
+          "net": "CLK",
+          "side": "left"
+        },
+        {
+          "name": "RESET",
+          "num": "4",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "CTRL",
+          "num": "5",
+          "net": "CTRL",
+          "side": "right"
+        },
+        {
+          "name": "THR",
+          "num": "6",
+          "net": "THR",
+          "side": "right"
+        },
+        {
+          "name": "DIS",
+          "num": "7",
+          "net": "DIS",
+          "side": "right"
+        },
+        {
+          "name": "VCC",
+          "num": "8",
+          "net": "+5V",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "section": "CLK",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "DIS"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "section": "CLK",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "DIS"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "THR"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "section": "CLK",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "THR"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "section": "CLK",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CTRL"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "section": "CLK",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "U2",
+      "section": "CNT",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "VSS",
+          "num": "8",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "CLK",
+          "num": "14",
+          "net": "CLK",
+          "side": "left"
+        },
+        {
+          "name": "CLK INH",
+          "num": "13",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "RESET",
+          "num": "15",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "CO",
+          "num": "12",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "VDD",
+          "num": "16",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "Q0",
+          "num": "3",
+          "net": "Q0",
+          "side": "right"
+        },
+        {
+          "name": "Q1",
+          "num": "2",
+          "net": "Q1",
+          "side": "right"
+        },
+        {
+          "name": "Q2",
+          "num": "4",
+          "net": "Q2",
+          "side": "right"
+        },
+        {
+          "name": "Q3",
+          "num": "7",
+          "net": "Q3",
+          "side": "right"
+        },
+        {
+          "name": "Q4",
+          "num": "10",
+          "net": "Q4",
+          "side": "right"
+        },
+        {
+          "name": "Q5",
+          "num": "1",
+          "net": "Q5",
+          "side": "right"
+        },
+        {
+          "name": "Q6",
+          "num": "5",
+          "net": "Q6",
+          "side": "right"
+        },
+        {
+          "name": "Q7",
+          "num": "6",
+          "net": "Q7",
+          "side": "right"
+        },
+        {
+          "name": "Q8",
+          "num": "9",
+          "net": "Q8",
+          "side": "right"
+        },
+        {
+          "name": "Q9",
+          "num": "11",
+          "net": "Q9",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "C4",
+      "section": "CNT",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "section": "LED",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "LED_K"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q0"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D2",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q1"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D3",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q2"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D4",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q3"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D5",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q4"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D6",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q5"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D7",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q6"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D8",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q7"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D9",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q8"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    },
+    {
+      "ref": "D10",
+      "section": "LED",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "2",
+          "net": "Q9"
+        },
+        {
+          "name": "K",
+          "num": "1",
+          "net": "LED_K"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "CLK",
+      "text": "f = 1.44 / ((R1 + 2*R2) * C1), about 2.1 Hz. THR and TRIG are one net."
+    },
+    {
+      "section": "LED",
+      "text": "All cathodes meet at LED_K; one LED is on at a time, so one resistor is enough."
+    }
+  ]
+}

@@ -139,6 +139,9 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
         pad_blob = stream(ole, "Pads6/Data")
         bodies, outlines = _footprint_geometry(ole, len(raw_comps)) if geometry else ({}, {})
         via_blob = _optional_stream(ole, "Vias6/Data")
+        track_blob = _optional_stream(ole, "Tracks6/Data")
+        arc_blob = _optional_stream(ole, "Arcs6/Data")
+        text_blob = _optional_stream(ole, "Texts6/Data")
 
     components = []
     for ci, c in enumerate(raw_comps):
@@ -221,6 +224,10 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
         "classes": classes,
         "vias": parse_vias(via_blob, nets),
         "drilled_pads": parse_drilled_pads(pad_blob, components),
+        "tracks": parse_tracks(track_blob, nets),
+        "arcs": parse_arcs(arc_blob, nets),
+        "texts": parse_texts(text_blob),
+        "regions": [],
     }
 
 
@@ -312,3 +319,115 @@ def pad_net_map(doc: dict) -> dict[str, list[str]]:
         tag = f"{ref}-{name}" if ref else name
         mapping[net].add(tag)
     return {net: sorted(tags) for net, tags in sorted(mapping.items())}
+
+
+def parse_tracks(blob: bytes, nets: list[str]) -> list[dict]:
+    """Read-only list of tracks from the Tracks6 stream: layer, net, endpoints and width in mm."""
+    out = []
+    if not blob:
+        return out
+    try:
+        for rec in _primitive_records(blob):
+            if len(rec) < 33:
+                continue
+            layer = rec[0]
+            net_idx = struct.unpack("<H", rec[3:5])[0]
+            x1, y1, x2, y2 = struct.unpack("<4i", rec[13:29])
+            w = struct.unpack("<i", rec[29:33])[0]
+            net_name = nets[net_idx] if (net_idx != 0xFFFF and 0 <= net_idx < len(nets)) else None
+            out.append({
+                "layer": layer,
+                "net": net_name,
+                "x1_mm": round(x1 * _MIL4_TO_MM, 4),
+                "y1_mm": round(y1 * _MIL4_TO_MM, 4),
+                "x2_mm": round(x2 * _MIL4_TO_MM, 4),
+                "y2_mm": round(y2 * _MIL4_TO_MM, 4),
+                "width_mm": round(w * _MIL4_TO_MM, 4),
+            })
+    except Exception:
+        pass
+    return out
+
+
+def parse_arcs(blob: bytes, nets: list[str]) -> list[dict]:
+    """Read-only list of arcs from the Arcs6 stream: layer, net, center, radius, angles and width in mm."""
+    out = []
+    if not blob:
+        return out
+    try:
+        for rec in _primitive_records(blob):
+            if len(rec) < 45:
+                continue
+            layer = rec[0]
+            net_idx = struct.unpack("<H", rec[3:5])[0]
+            cx, cy, r = struct.unpack("<3i", rec[13:25])
+            a1, a2 = struct.unpack("<2d", rec[25:41])
+            w = struct.unpack("<i", rec[41:45])[0]
+            net_name = nets[net_idx] if (net_idx != 0xFFFF and 0 <= net_idx < len(nets)) else None
+            out.append({
+                "layer": layer,
+                "net": net_name,
+                "cx_mm": round(cx * _MIL4_TO_MM, 4),
+                "cy_mm": round(cy * _MIL4_TO_MM, 4),
+                "r_mm": round(r * _MIL4_TO_MM, 4),
+                "a1": round(a1, 2),
+                "a2": round(a2, 2),
+                "width_mm": round(w * _MIL4_TO_MM, 4),
+            })
+    except Exception:
+        pass
+    return out
+
+
+def parse_texts(blob: bytes) -> list[dict]:
+    """Read-only list of silkscreen texts from the Texts6 stream: layer, text, position and height in mm."""
+    out = []
+    if not blob:
+        return out
+    try:
+        i = 0
+        while i + 5 <= len(blob):
+            rec_type = blob[i]
+            if rec_type != 5:
+                break
+            fl = struct.unpack("<I", blob[i + 1:i + 5])[0]
+            if i + 5 + fl > len(blob):
+                break
+            fd = blob[i + 5:i + 5 + fl]
+            pos = i + 5 + fl
+            if pos + 4 > len(blob):
+                break
+            sl = struct.unpack("<I", blob[pos:pos + 4])[0]
+            if pos + 4 + sl > len(blob):
+                break
+            raw_str = blob[pos + 4:pos + 4 + sl]
+            i = pos + 4 + sl
+            if len(fd) < 25:
+                continue
+            layer = fd[0]
+            if layer not in _SILK_LAYERS:
+                continue
+            if raw_str and raw_str[0] == len(raw_str) - 1:
+                text = raw_str[1:].decode("latin-1", "replace")
+            else:
+                text = raw_str.decode("latin-1", "replace")
+            x, y, h = struct.unpack("<3i", fd[13:25])
+            rot = struct.unpack("<d", fd[27:35])[0] if len(fd) >= 35 else 0.0
+            x_mm = round(x * _MIL4_TO_MM, 4)
+            y_mm = round(y * _MIL4_TO_MM, 4)
+            h_mm = round(h * _MIL4_TO_MM, 4)
+            out.append({
+                "layer": layer,
+                "text": text,
+                "x_mm": x_mm,
+                "y_mm": y_mm,
+                "height_mm": h_mm,
+                "x": x_mm,
+                "y": y_mm,
+                "height": h_mm,
+                "rotation": round(rot, 2),
+            })
+    except Exception:
+        pass
+    return out
+

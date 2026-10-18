@@ -28,12 +28,14 @@ Double-click `start.bat` (macOS/Linux: `./start.sh`). The browser opens at http:
 Create a project, describe your board in the chat, and follow the tabs from left to right:
 Idea, BOM, Schematic, Placement, Rules, Altium outputs, Final checks.
 
+The install comes with an example project, "LED chaser" (USB-C, NE555, CD4017, 10 LEDs): idea, BOM and a schematic sheet, no Altium files yet.
+
 Want to see a finished example first? Run `.venv\Scripts\python pcb.py seed` and open the project `lte-tracker`.
 
 ## Problems?
 
-- `python pcb.py probe` checks that your AI engine works with the tool.
-- `python pcb.py list` shows your projects. Projects live in the `projects/` folder, all on your machine.
+- `.venv\Scripts\python pcb.py probe` (macOS/Linux: `.venv/bin/python`) checks that your AI engine works with the tool.
+- `.venv\Scripts\python pcb.py list` shows your projects. Projects live in the `projects/` folder, all on your machine.
 
 ## For developers
 
@@ -44,4 +46,4 @@ Want to see a finished example first? Run `.venv\Scripts\python pcb.py seed` and
 
 Code: `scripts/serve.py` (server), `scripts/store.py` (project state), `scripts/agent.py` (agent actions), `ui/index.html` (UI).
 Docs: [architecture](docs/ARCHITECTURE.md), [engines](docs/ENGINES.md), [product plan](docs/PRODUCT-PLAN.md).
-Commands: `python pcb.py --help`. License: [MIT](LICENSE).
+Commands: `.venv\Scripts\python pcb.py --help` (macOS/Linux: `.venv/bin/python`). License: [MIT](LICENSE).

@@ -54,7 +54,7 @@ def run_incidents(items, engine=None, repo=None, runs_dir=None, today=None):
             engine_ok = True
         except runtime_pack.RuntimePackError as exc:
             errors_global.append(f"runtime pack: {exc}")
-        out_dir = pathlib.Path(runs_dir or DOCS / "bench-runs") / f"{today}-{prov_id}"
+        out_dir = pathlib.Path(runs_dir or REPO / "local" / "bench-runs") / f"{today}-{prov_id}"
     rows = []
     for inc in items:
         row = {"id": inc["id"], "slug": inc["slug"], "title": inc["title"],
@@ -149,7 +149,7 @@ def read_history(path):
 def render(result, evals, mode, when, commit, problems, history):
     rows = result["rows"]
     summary = totals(rows, result["provider"] is not None)
-    out = ["# Benchmark: device replay", "",
+    out = ["# Benchmark: real-incident replay", "",
            f"- date: {when}", f"- commit: {commit}", f"- mode: {mode}", "",
            "## Scores", "", table(rows), "", f"**{summary}**", ""]
     if problems or result["errors"]:

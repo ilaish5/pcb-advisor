@@ -1,7 +1,9 @@
 """Compare an exported .RUL with Rules6 inside the PcbDoc."""
-import struct, sys, collections, olefile
+import glob, os, struct, sys, collections, olefile
 sys.stdout.reconfigure(encoding="utf-8")
-ROOT = r"C:\Users\Public\Documents\Altium\real-project"
+PROJECT = os.environ.get("PROJECT_DIR") or (sys.argv[1] if len(sys.argv) > 1 else None)
+assert PROJECT, "usage: PROJECT_DIR=<folder with the .PcbDoc / .RUL> python this_script.py"
+ROOT = PROJECT
 
 def kv(txt):
     d = {}
@@ -10,13 +12,13 @@ def kv(txt):
             k, v = part.split("=", 1); d[k.upper()] = v
     return d
 
-raw = open(ROOT + r"\real-project-RULES.RUL", "rb").read()
+raw = open(glob.glob(ROOT + "/*.RUL")[0], "rb").read()
 lines = raw.split(b"\r\n")
 print("lines:", len(lines), "last line len:", len(lines[-1]))
 print("line ending bytes:", sorted({l[-1:] for l in lines if l}))
 rul = [kv(l.rstrip(b"\0\x00").decode("latin-1")) for l in lines if l.strip()]
 
-ole = olefile.OleFileIO(ROOT + r"\real-project.PcbDoc")
+ole = olefile.OleFileIO(glob.glob(ROOT + "/*.PcbDoc")[0])
 blob = ole.openstream("Rules6/Data").read(); i, pcb = 0, []
 while i + 6 <= len(blob):
     i += 2; n = struct.unpack("<I", blob[i:i + 4])[0]

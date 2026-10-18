@@ -1,8 +1,9 @@
-"""Load and validate benchmark fixtures (scripts/bench/fixtures/NN-slug/incident.json)."""
+"""Load and validate benchmark fixtures (local/bench-fixtures/NN-slug/incident.json; the folder is gitignored)."""
 import json
 import pathlib
 
-FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
+# Real-incident fixtures come from a private project and are not in git: they live in local/ (gitignored).
+FIXTURES = pathlib.Path(__file__).resolve().parent.parent.parent / "local" / "bench-fixtures"
 STAGES = "ABCDEF"
 DETECTOR_STAGES = tuple(f"I{n}" for n in range(4, 11))
 
@@ -84,7 +85,7 @@ def load_all(fixtures=None):
     root = pathlib.Path(fixtures) if fixtures else FIXTURES
     found, problems = [], []
     if not root.is_dir():
-        return found, [f"{root}: fixtures folder not found"]
+        return found, [f"{root}: fixtures folder not found (local/bench-fixtures is private, not in git)"]
     for folder in sorted(p for p in root.iterdir() if p.is_dir()):
         try:
             found.append(load_one(folder))

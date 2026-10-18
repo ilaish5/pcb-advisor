@@ -28,6 +28,13 @@
 /* ---------- layout picture: the layer switches (the picture's own colours are in scripts/preview_pcb.py) ---------- */
 .pcb-preview.hide-top #pcb-layer-top{display:none}
 .pcb-preview.hide-bottom #pcb-layer-bottom{display:none}
+.pcb-preview.hide-top-copper #pcb-layer-top-copper{display:none}
+.pcb-preview.hide-bottom-copper #pcb-layer-bottom-copper{display:none}
+.pcb-preview.hide-inner #pcb-layer-inner{display:none}
+.pcb-preview.hide-vias #pcb-layer-vias{display:none}
+.pcb-preview.hide-silk-top #pcb-layer-silk-top{display:none}
+.pcb-preview.hide-silk-bottom #pcb-layer-silk-bottom{display:none}
+.pcb-preview.hide-outline #pcb-layer-outline{display:none}
 .pcb-preview.hide-plan #pcb-layer-plan{display:none}
 
 /* ---------- schematic drawn from the netlist (scripts/skills/render_sheet.py) ---------- */

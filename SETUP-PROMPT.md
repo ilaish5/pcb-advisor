@@ -1,7 +1,8 @@
 # Set everything up with an AI agent
 
 Open a terminal in any folder, start a coding agent (`claude` or `agy`), paste the prompt below, and answer its few questions.
-If you have no agent yet, install one first: [docs/ENGINES.md](docs/ENGINES.md) sections 1-2 (one command, one sign-in).
+If you have no agent yet, install one first: [docs/ENGINES.md](docs/ENGINES.md) sections 1-2 (one command, one sign-in; those are Windows commands).
+On macOS/Linux: Claude Code `curl -fsSL https://claude.ai/install.sh | bash` then `claude`; for `agy` follow the Antigravity vendor docs.
 
 ---
 
@@ -25,11 +26,11 @@ Report in a few short lines at the end.
    `.venv\Scripts\python pcb.py config agent.provider <claude_code|antigravity>`
    (macOS/Linux: `.venv/bin/python`). If the CLI is not found on PATH, set its full path with
    `pcb.py config agent.providers.<provider>.command "<full path>"` (see docs/ENGINES.md section 4).
-6. Verify: run `pcb.py engines` (the chosen one must have `*` and say ready), then `pcb.py probe`.
+6. Verify: run `pcb.py engines` (the chosen one must have `*` and say ready), then `pcb.py probe --engine <provider>`.
    If probe fails, read the error, fix the cause (sign-in, PATH, timeout) and run it again.
 7. Optional: ask me whether to run `pcb.py seed` (a finished example project).
 8. Start: run `start.bat` (or `./start.sh`) in the background, check http://localhost:8931 answers, and tell me
    to open it. Then tell me how to start it next time.
 
-Do not change any file in the repo. Do not store or print any password or token.
+Do not change any file in the repo except .venv and config.json. Do not store or print any password or token.
 ```

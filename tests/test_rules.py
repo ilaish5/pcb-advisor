@@ -185,8 +185,8 @@ def test_preset_keys_exist_in_altium_records():
     for rec in get_preset_rule_records():
         kind = rec["RULEKIND"]
         if kind not in fixture_keys:
-            # The fixtures have no such rule. The keys come from the real Altium export of the device board
-            # (real-project, AD26): MinimumAnnularRing uses MINIMUMRING; ViasUnderSMD uses ALLOWED.
+            # The fixtures have no such rule. The keys come from a real Altium export of a finished board
+            # (AD26): MinimumAnnularRing uses MINIMUMRING; ViasUnderSMD uses ALLOWED.
             assert kind in ("MinimumAnnularRing", "ViasUnderSMD"), kind
             if kind == "MinimumAnnularRing":
                 assert "MINIMUMRING" in rec and "MINIMUM" not in rec
@@ -600,7 +600,7 @@ def test_preset_has_scoped_annular_ring_rules():
 
 
 def test_new_rule_kinds_use_altium_rul_syntax(tmp_path):
-    """The keys and scope strings are the ones in Altium's own export of the device board (real-project, AD26)
+    """The keys and scope strings are the ones in Altium's own export of a finished board (AD26)
     and in tests/fixtures/altium; write_rul / read_rul keep them."""
     recs = get_preset_rule_records()
     back = read_rul(write_rul(recs, tmp_path / "preset.RUL"))
@@ -684,7 +684,7 @@ def test_jlcdfm_note_is_added_to_the_detail_but_the_verdict_stays_the_fab_floor(
     ("6mil", "same"),
     ("10mil", "safer"),
     ("4mil", "tighter_ok"),         # 0.1016 mm >= 0.10 mm
-    ("2.7559mil", "below_fab_min"), # 0.07 mm: the device's USB-C sliver rule
+    ("2.7559mil", "below_fab_min"), # 0.07 mm: a real USB-C sliver rule
 ])
 def test_verdict_mask_sliver(value, verdict):
     assert _row([_board("MinimumSolderMaskSliver", MINSOLDERMASKWIDTH=value)], "MinimumSolderMaskSliver")["verdict"] == verdict
@@ -692,7 +692,7 @@ def test_verdict_mask_sliver(value, verdict):
 
 @pytest.mark.parametrize("value,verdict", [
     ("12mil", "same"),
-    ("11.811mil", "same"),          # 0.3 mm, the device
+    ("11.811mil", "same"),          # 0.3 mm, a real board
     ("20mil", "safer"),
     ("0.2mm", "tighter_ok"),        # JLC: copper to routed edge >= 0.2 mm
     ("0.15mm", "below_fab_min"),
@@ -703,7 +703,7 @@ def test_verdict_board_outline_clearance(value, verdict):
 
 
 def test_hole_to_hole_rules_pad_pair_and_everything_else():
-    # one scope-All rule on the board (as in the device, 10 mil = 0.254 mm) governs pad pairs too
+    # one scope-All rule on the board (as in a real board, 10 mil = 0.254 mm) governs pad pairs too
     rows = {r["rule"]: r for r in diff_rules([_board("HoleToHoleClearance", GAP="10mil")])}
     pth, other = rows["HoleToHoleClearance_PTH"], rows["HoleToHoleClearance"]
     assert pth["verdict"] == "below_fab_min" and "0.45" in pth["detail"]           # JLC pad to pad 0.45 mm [P1]

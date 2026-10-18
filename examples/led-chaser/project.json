@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "led-chaser",
+  "title": "LED chaser",
+  "brief": "USB-C powered running light: NE555 clock, CD4017 counter, 10 LEDs.",
+  "created": "2026-10-18T20:01:50",
+  "updated": "2026-10-18T20:01:50",
+  "owner": "",
+  "status": "draft",
+  "tags": [],
+  "board": {
+    "layers": 2,
+    "copper_oz": 1.0,
+    "trace_layer": "external",
+    "ambient_c": 25,
+    "max_temp_rise_c": 10,
+    "min_track_mm": 0.2,
+    "min_clearance_mm": 0.2,
+    "min_via_drill_mm": 0.3,
+    "board_finish": "HASL",
+    "mask_colour": "green",
+    "assembly": "reflow"
+  },
+  "altium": {
+    "project_file": "",
+    "pcb_file": "",
+    "outputs_dir": ""
+  },
+  "notes": ""
+}

@@ -11,7 +11,7 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py engines              which LLM engines are wired up
     python3 pcb.py tools [--clear]      what the engine may touch on your machine
     python3 pcb.py probe [--engine X]   prove the engine loads the runtime pack (claude_code|antigravity|all)
-    python3 pcb.py bench [--engine X] [--evals] [--only 1,5]  device replay -> docs/BENCHMARK.md
+    python3 pcb.py bench [--engine X] [--evals] [--only 1,5]  real-incident replay -> docs/BENCHMARK.md
     python3 pcb.py skills lint [--only NAME]  check runtime/skills against the skill format
     python3 pcb.py chats [project]    conversations, and when memory was rewritten
     python3 pcb.py config [key] [value] read or set a setting

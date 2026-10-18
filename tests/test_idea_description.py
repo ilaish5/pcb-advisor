@@ -40,8 +40,8 @@ def post(base, path, body, project):
 
 
 def test_the_students_text_is_agreed_as_written(empty):
-    idea = store.set_idea_goal(empty, "  A device controller.\n\nIt reads the temperature.  ", by="student")
-    assert idea["goal"] == "A device controller.\n\nIt reads the temperature."
+    idea = store.set_idea_goal(empty, "  A temperature controller.\n\nIt reads the temperature.  ", by="student")
+    assert idea["goal"] == "A temperature controller.\n\nIt reads the temperature."
     assert idea["goal_by"] == "student" and idea["goal_status"] == "confirmed" and "goal_prev" not in idea
     with pytest.raises(ValueError):
         store.set_idea_goal(empty, "x" * (store.GOAL_MAX + 1))

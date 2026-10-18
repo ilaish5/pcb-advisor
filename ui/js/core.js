@@ -20,7 +20,7 @@ let curPcbCheckStem = null, curSmtCheckStem = null, uploadDfmKind = 'pcb';
 let triageMap = {}, triageLoading = {}, indexMap = {}, indexLoading = {};
 let svgCache = {key: '', text: ''};
 let pcbSvgCache = {key: '', text: ''};
-let pcbLayers = {top: true, bottom: true, plan: true};
+let pcbLayers = {'top-copper': true, 'bottom-copper': true, inner: true, vias: true, 'silk-top': true, 'silk-bottom': true, outline: true, plan: true};
 let schZoom = {scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, didDrag: false, downX: 0, downY: 0};
 let pcbZoom = {scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, didDrag: false, downX: 0, downY: 0};
 

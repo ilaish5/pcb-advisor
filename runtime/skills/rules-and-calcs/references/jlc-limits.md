@@ -81,7 +81,7 @@ A thinner prepreg gives narrower 50 ohm lines (easier on fine-pitch pads). Use t
 - Annular ring key is `MINIMUMRING` (not `MINIMUM`). Other keys: BoardOutlineClearance `GAP` and `GENERICCLEARANCE`
   (with `NETSCOPE=DifferentNets`), MinimumSolderMaskSliver `MINSOLDERMASKWIDTH`, HoleToHoleClearance `GAP`, ViasUnderSMD `ALLOWED=FALSE`.
 - Scope strings as Altium writes them: `All`, `IsPad`, `IsVia`; a hole-to-hole rule has two (`IsPad` and `IsPad`). The ring and
-  hole-to-hole rules with these scopes are generated from the device board's own export; the first Altium import of the generated file is
+  hole-to-hole rules with these scopes are generated from the real-project board's own export; the first Altium import of the generated file is
   still to be confirmed, so check the imported rules in the Rules editor.
 - A scoped rule must have a lower PRIORITY number than the scope-All rule of its kind, or the All rule wins. The board-aware file
   inserts it just above the All rule and shifts the others; after a Merge import raise it by hand in Priorities.

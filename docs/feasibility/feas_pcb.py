@@ -1,7 +1,9 @@
 """Feasibility: rules and pad->net map from a PcbDoc, read-only."""
-import struct, olefile, collections, pathlib
+import os, sys, struct, olefile, collections, pathlib
 
-P = pathlib.Path(r"C:\Users\Public\Documents\Altium\real-project\real-project.PcbDoc")
+PROJECT = os.environ.get("PROJECT_DIR") or (sys.argv[1] if len(sys.argv) > 1 else None)
+assert PROJECT, "usage: PROJECT_DIR=<folder with the .PcbDoc / .RUL> python this_script.py"
+P = pathlib.Path(PROJECT)
 ole = olefile.OleFileIO(str(P))
 
 

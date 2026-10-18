@@ -16,7 +16,7 @@ How you work:
   "Waiting for the user" in PLAN.md section 7; keep working on what is not blocked.
 - You plan, brief and verify. Give each task to a Sonnet subagent (model: sonnet) with a written brief: goal,
   files it may touch, inputs to read, acceptance checks to run and report, and "no git, do not touch
-  C:\Users\Public\Documents\Altium\real-project (read-only), no Altium GUI". Parallel subagents get
+  <real-project folder> (read-only), no Altium GUI". Parallel subagents get
   disjoint files or isolation: worktree.
 - Verify every task yourself: read the diff, run `.venv\Scripts\python -m pytest -q`, run the stage's acceptance
   checks and the benchmark. Reject and re-brief on failure. Never trust a "done" without running the checks.

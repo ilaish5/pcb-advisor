@@ -19,6 +19,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 
 import oscompat
 
@@ -347,7 +348,24 @@ def init(force=False):
         }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         made.append(path.name)
         load(reload=True)
+    made += _copy_examples()
     return {"home": str(home()), "config": str(path), "created": made}
+
+
+def _copy_examples():
+    """Give a new workspace the shipped example projects (examples/<name>/ -> projects/<name>/).
+    A project that already exists is never touched, so deleting an example and re-running init
+    brings it back, and editing one is safe."""
+    src = REPO / "examples"
+    made = []
+    if not src.is_dir():
+        return made
+    for ex in sorted(src.iterdir()):
+        dest = projects_dir() / safe_name(ex.name)
+        if ex.is_dir() and not ex.name.startswith(".") and not dest.exists():
+            shutil.copytree(ex, dest, ignore=shutil.ignore_patterns("__pycache__"))
+            made.append(f"projects/{dest.name}")
+    return made
 
 
 if __name__ == "__main__":

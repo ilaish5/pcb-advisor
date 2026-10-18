@@ -33,7 +33,7 @@ The `idea.diagram.edit` action accepts a list of ops (`ops: [...]`, capped at 10
 10. `auto_layout`: `{"op": "auto_layout"}` (rearranges shapes left-to-right following connectors; recalculates enclosing frames).
 
 ## Default style: the system block diagram (owner's choice, 2026-10-14)
-Draw every new block diagram this way unless the student asks for another layout. Model: the device controller's
+Draw every new block diagram this way unless the student asks for another layout. Model: the real-project controller's
 presentation diagram.
 
 - **Board frame.**

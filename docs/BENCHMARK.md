@@ -1,4 +1,4 @@
-# Benchmark: device replay
+# Benchmark: real-incident replay
 
 - date: 2026-10-18 10:24
 - commit: b51642b

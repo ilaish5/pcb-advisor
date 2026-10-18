@@ -415,14 +415,16 @@ def test_cli_board_option_prints_board_mismatches(capsys):
 
 
 def test_real_finished_project_matches_its_board():
-    """The finished real-project project (a sibling folder, never copied into this repo): the
-    netlist built from its four sheets has the connectivity of the PcbDoc that ECO made from them,
-    and the only finding is the No ERC count. Skipped when the project is not on this machine."""
+    """A finished real project (a private folder, never copied into this repo; set PCB_ADVISOR_REAL_PROJECT):
+    the netlist built from its sheets has the connectivity of the PcbDoc that ECO made from them,
+    and the only finding is the No ERC count. Skipped when the variable is not set."""
     import os
-    proj = pathlib.Path(os.environ.get("PCB_ADVISOR_REAL_PROJECT") or REPO.parent / "real-project")
-    board = proj / "real-project.PcbDoc"
-    if not (proj.is_dir() and board.is_file()):
-        pytest.skip("real project not available")
+    env = os.environ.get("PCB_ADVISOR_REAL_PROJECT")
+    proj = pathlib.Path(env) if env else None
+    boards = sorted(proj.glob("*.PcbDoc")) if proj and proj.is_dir() else []
+    if not boards:
+        pytest.skip("real project not available (set PCB_ADVISOR_REAL_PROJECT)")
+    board = boards[0]
     res = check_schematic(proj, board=board)
     assert res["board_mismatches"] == []
     assert res["board_compare"]["compared_pins"] > 500

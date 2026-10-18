@@ -18,3 +18,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 shared/cache/
+
+# Private material tied to one real student project (replay fixtures, bench run outputs, notes).
+# Stays on the owner's machine; the bench skips cleanly when it is missing.
+local/

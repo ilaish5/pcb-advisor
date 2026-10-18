@@ -12,3 +12,4 @@
 *.PrjPcb -text
 *.OutJob -text
 *.RUL -text
+*.bat text eol=crlf

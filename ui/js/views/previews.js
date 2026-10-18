@@ -53,7 +53,7 @@ function updateZoomTransform(wrap, z) {
   else svg.style.transform = `translate(${z.x}px, ${z.y}px) scale(${z.scale})`;
   svg.style.transformOrigin = 'center center';
 }
-const PV_HIT = 'g.part, g.net-label, g.power-port, g.port, g.pcb-comp, g.plan-group, rect.pad, text[data-net], button, a, input, select';
+const PV_HIT = 'g.part, g.net-label, g.power-port, g.port, g.pcb-comp, g.plan-group, rect.pad, line.track, path.track, g.via, text[data-net], button, a, input, select';
 function initZoomPan(wrapId, zoomState) {
   const wrap = typeof wrapId === 'string' ? document.getElementById(wrapId) : wrapId;
   if (!wrap || wrap.dataset.zoomInited) return;
@@ -94,7 +94,7 @@ function initZoomPan(wrapId, zoomState) {
         // the middle and the right button always pan; the left button pans on the empty canvas only
         if (e.button === 2 || e.button === 1) return true;
         if (e.button === 0) {
-          const interactive = e.target.closest && e.target.closest('g.part, g.net-label, g.power-port, g.port, g.pcb-comp, g.plan-group, rect.pad, text[data-net], button, a, input, select');
+          const interactive = e.target.closest && e.target.closest('g.part, g.net-label, g.power-port, g.port, g.pcb-comp, g.plan-group, rect.pad, line.track, path.track, g.via, text[data-net], button, a, input, select');
           return !interactive;
         }
         return false;
@@ -261,7 +261,7 @@ function showNetOnSchematic(net) {
 
 /* ---------- clicks on the drawn picture: one delegate per canvas ---------- */
 function pvTarget(el, kind) {
-  return el && el.closest ? el.closest(kind === 'sch' ? 'g.part, g.net-label, g.power-port, g.port, text[data-net]' : 'g.pcb-comp, rect.pad, g.plan-group') : null;
+  return el && el.closest ? el.closest(kind === 'sch' ? 'g.part, g.net-label, g.power-port, g.port, text[data-net]' : 'g.pcb-comp, rect.pad, g.plan-group, line.track, path.track, g.via') : null;
 }
 function pvActivate(t, kind) {
   if (t.matches('g.part, g.pcb-comp')) { pickPart(t.dataset.ref || (t.id || '').replace(/^pcb-comp-/, ''), kind === 'sch' ? sheetId : ''); return; }
@@ -391,6 +391,27 @@ function pvPlan() {
   const n = k => Array.isArray(p[k]) ? p[k].length : 0;
   return n('groups') || n('keep_outs') || n('critical_nets') ? p : null;
 }
+function pcbHasLayer(svgText, id) {
+  if (!svgText) return false;
+  const m = svgText.match(new RegExp(`<g id="pcb-layer-${id}"[^>]*>([\\s\\S]*?)</g>`));
+  return m ? m[1].trim().length > 0 : false;
+}
+function pcbLayerList(svgText, plan) {
+  const all = [
+    {value: 'top-copper', label: 'Top copper'},
+    {value: 'bottom-copper', label: 'Bottom copper'},
+    {value: 'inner', label: 'Inner'},
+    {value: 'vias', label: 'Vias'},
+    {value: 'silk-top', label: 'Silkscreen top'},
+    {value: 'silk-bottom', label: 'Silkscreen bottom'},
+    {value: 'outline', label: 'Outline'},
+  ];
+  const active = svgText
+    ? all.filter(l => pcbHasLayer(svgText, l.value))
+    : all.filter(l => l.value !== 'inner' && l.value !== 'silk-bottom');
+  if (plan) active.push({value: 'plan', label: 'Plan'});
+  return active;
+}
 function pcbHTML(container) {
   const text = pcbSvgCache.text;
   if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout'})}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
@@ -398,7 +419,7 @@ function pcbHTML(container) {
   const size = Array.isArray(b.size_mm) && b.size_mm.length === 2 ? b.size_mm.map(v => Math.round(v * 10) / 10).join(' × ') + ' mm' : '';
   const meta = metaLine([size, {n: b.layers, label: 'layers'}, {n: cnt('groups'), label: cnt('groups') === 1 ? 'zone' : 'zones'},
     {n: cnt('keep_outs'), label: cnt('keep_outs') === 1 ? 'keep-out' : 'keep-outs'}, {n: cnt('critical_nets'), label: cnt('critical_nets') === 1 ? 'critical net' : 'critical nets'}]);
-  const layers = [{value: 'top', label: 'Top'}, {value: 'bottom', label: 'Bottom'}, ...(plan ? [{value: 'plan', label: 'Plan'}] : [])];
+  const layers = pcbLayerList(text, plan);
   const inner = pvPcbErr ? `<div class="pv-note">${errorLine('draw the layout', pvPcbErr, btn('Try again', {size: 'sm', act: 'pcb-retry'}))}</div>` : formatPcbPreview(text);
   const zoom = text || pvPcbErr ? pvZoomHTML('pcb') : '';
   return `<div class="pv" data-pv="pcb">` +
@@ -435,9 +456,11 @@ function afterPcb() {
 function applyPcbLayers() {
   const svg = $('#pcbwrap svg');
   if (!svg) return;
-  svg.classList.toggle('hide-top', !pcbLayers.top);
-  svg.classList.toggle('hide-bottom', !pcbLayers.bottom);
-  svg.classList.toggle('hide-plan', !pcbLayers.plan);
+  for (const [k, on] of Object.entries(pcbLayers)) {
+    svg.classList.toggle('hide-' + k, !on);
+  }
+  if ('top-copper' in pcbLayers) svg.classList.toggle('hide-top', !pcbLayers['top-copper']);
+  if ('bottom-copper' in pcbLayers) svg.classList.toggle('hide-bottom', !pcbLayers['bottom-copper']);
 }
 
 /* ---------- keyboard: sheet tabs ---------- */

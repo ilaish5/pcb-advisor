@@ -1073,15 +1073,17 @@ class Handler(BaseHTTPRequestHandler):
                     idea["diagram"] = store.validate_diagram(data["diagram"])
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
+            if "goal" in data:
+                try:
+                    store.check_idea_goal(data["goal"])
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
             for key in ("blocks", "links"):
                 if key in data:
                     idea[key] = data[key]
             store.save_idea(proj, idea)
             if "goal" in data:
-                try:
-                    store.set_idea_goal(proj, data["goal"], by="student")
-                except ValueError as exc:
-                    return self._send(400, {"error": str(exc)})
+                store.set_idea_goal(proj, data["goal"], by="student")
             return self._send(200, state())
 
         if path == "/api/idea/goal":
@@ -1525,6 +1527,11 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
 
+class _Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second server bind a port already in use
+    allow_reuse_address = os.name != "nt"
+
+
 def main(argv=None):
     global BACKEND, DEFAULT_PROJECT, QUIET
 
@@ -1564,10 +1571,17 @@ def main(argv=None):
     if not QUIET:
         print("             logging requests; --quiet turns this off")
 
+    try:
+        httpd = _Server((host, port), Handler)
+    except OSError:
+        print(f"already running at {url}")
+        if cfg["server"].get("open_browser") and not a.no_browser:
+            webbrowser.open(url)
+        return 0
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     try:
-        ThreadingHTTPServer((host, port), Handler).serve_forever()
+        httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
 

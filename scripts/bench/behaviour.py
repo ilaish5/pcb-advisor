@@ -4,7 +4,7 @@ Contract (bench runner):
     run(provider: str | None, out_dir=None) -> {"name", "score", "total", "rows", "needs_engine"}
     provider None -> not asked, score None, rows list the cases. Otherwise each case message goes through
     agent.respond(model, message, history=[], backend=provider) and the reply (plus the "tools" records it
-    returns) is graded and saved to <out_dir>/behaviour-<id>.md (default docs/bench-runs/<date>-<provider>/).
+    returns) is graded and saved to <out_dir>/behaviour-<id>.md (default local/bench-runs/<date>-<provider>/).
 
 Case score is all-or-nothing: 1 if EVERY check of the case passes, else 0. score = mean of case scores.
 Each row also lists every check with its pass/fail so a failure says why.
