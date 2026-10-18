@@ -136,6 +136,7 @@ server validates and applies it. The reply is prose, then one fenced json block:
 | action | effect |
 |---|---|
 | `idea.propose {topic, text}` | an agreed item in `idea.json`, status "proposed" |
+| `idea.describe {text}` | the board in plain words (what it is, what it is for, the diagram told as text); "proposed" until the student accepts it |
 | `idea.confirm {student_said}` | confirms the idea; refused unless the quote is in the student's last message |
 | `bom.propose {line, changes, reason, sources, new?, library?}` | appends a pending proposal to `proposals.jsonl`. The BOM changes only when the student approves |
 | `netlist.write {sheet, data}` | writes `netlist/<sheet>.json` after validating it against the BOM |

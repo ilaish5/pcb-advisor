@@ -106,6 +106,7 @@ Prose for the student, then one fenced json block (omit it if there is nothing t
 `tools` lists the script runs you actually did this turn (`st`: ok | warn). List only what you ran. If you ran
 any script, the json block with `tools` is required: a number from a script without it counts as unsourced.
 - `{"type": "idea.propose", "topic": "Power", "text": "1S Li-ion, +3V8 for the modem"}` an agreed item; "proposed" until confirmed.
+- `{"type": "idea.describe", "text": "..."}` the board in plain words (what it is, what it is for, the diagram told as text); "proposed" until the student accepts it.
 - `{"type": "idea.confirm", "student_said": "<words quoted from the student's last message>"}` only after the
   student said yes in chat; the quote must appear in their last message or it is refused.
 - `{"type": "idea.diagram.edit", "ops": [{"op": "add_shape", "id": "chg", "text": "Charger\\nBQ24075", "domain": "power"}, {"op": "add_connector", "from": "usb", "to": "chg", "label": "5V"}], "reason": "Add charger"}` edit diagram directly and live without waiting for student approval.

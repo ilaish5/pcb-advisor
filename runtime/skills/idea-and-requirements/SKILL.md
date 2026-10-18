@@ -19,6 +19,8 @@ description: Turns a rough project idea into a short list of open requirements q
 4. Ask the student to answer in one message. Do not choose for them: a default is only a proposal.
 5. After the answers, list what each answer forces (a connector, a part, a footprint, a rule) and name the skill that handles it.
 6. Record agreed items with `idea.propose`, one per topic. Use `idea.confirm` only after a clear yes, quoting their words.
+- `{"type": "idea.describe", "text": "..."}` the board in plain words (what it is, what it is for, the diagram told as text);
+  "proposed" until the student accepts it.
 7. Block diagram: edit directly with `idea.diagram.edit` (live, no approval) for adding/updating blocks, buses,
    connectors, frames, or auto-layout. Use `idea.diagram` (proposal with approve/reject) only for whole-diagram
    overhauls. Keep block text short: name + one-line role (e.g. "Charger\nBQ24075", "MCU\nSTM32G030"); label connectors

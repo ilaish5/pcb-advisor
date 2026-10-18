@@ -166,8 +166,34 @@ function reqRowHTML(i, idx) {
     </li>`;
 }
 
+function descHTML() {
+  const I = (S && S.idea) || {};
+  const goal = (I.goal || '').trim();
+  const proposed = descProposed();
+  const by = I.goal_by === 'student' ? 'Written by you' : 'Suggested by the agent';
+  const titleAttr = goal ? ` title="${esc(by)}"` : '';
+  const acts = proposed
+    ? btn('Accept', {size: 'sm', icon: 'check', act: 'confirm-desc', title: 'Agree to this description'}) +
+      btn('Dismiss', {size: 'sm', act: 'dismiss-desc', title: 'Remove this proposal'})
+    : (goal ? btn('', {size: 'sm', icon: 'edit', act: 'edit-desc', title: 'Edit description'}) : '');
+  const content = goal
+    ? `<p class="desc-text" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : ''}${esc(goal)}</p>`
+    : `<button type="button" class="desc-empty" data-act="edit-desc">Describe the board in a few sentences</button>`;
+  return `<div class="desc-block${proposed ? ' is-proposed' : ''}"${titleAttr}>
+      <div class="desc-main">
+        <div class="desc-view">${content}</div>
+        <div class="desc-edit-form" hidden>
+          <textarea class="in desc-edit-text" maxlength="3000" rows="3" placeholder="Describe the board in a few sentences" aria-label="Board description" title="Ctrl+Enter saves, Esc cancels" dir="auto">${esc(goal)}</textarea>
+          <div class="acts">${btn('Save', {size: 'sm', kind: 'line', act: 'save-desc'})}${btn('Cancel', {size: 'sm', act: 'cancel-desc'})}</div>
+        </div>
+      </div>
+      <div class="desc-acts">${acts}</div>
+    </div>`;
+}
+
 function requirementsHTML() {
   const items = ideaItems(), cap = ideaSplitPct();
+  const desc = descHTML();
   const body = items.length
     ? `<ul class="req-list" aria-label="Requirements">${items.map(reqRowHTML).join('')}</ul>`
     : `<p class="req-empty">Nothing agreed yet. Describe your idea in the chat, or add a requirement yourself.</p>`;
@@ -175,7 +201,7 @@ function requirementsHTML() {
     ? `<div class="idea-split" role="separator" aria-orientation="horizontal" aria-label="Resize the requirements list" tabindex="0" aria-valuemin="${IDEA_SPLIT_MIN}" aria-valuemax="${IDEA_SPLIT_MAX}" aria-valuenow="${cap || 30}" title="Drag to resize, double-click to reset"></div>`
     : '';
   return `<section class="idea-reqs"${cap ? ` style="max-height:${cap}%"` : ''} aria-label="Agreed requirements">
-      <div class="req-scroll">${body}</div>
+      <div class="req-scroll">${desc}${body}</div>
       <div class="req-add-row">
         <button type="button" class="btn sm" data-act="show-add-req">+ Add requirement</button>
         <div class="req-add-form" hidden>
@@ -249,7 +275,7 @@ function updateIdeaContent(container) {
     if (vh) vh.outerHTML = head;
   }
   const reqs = requirementsHTML();
-  const open = container.querySelector('.req-edit-form:not([hidden]), .req-add-form:not([hidden])');   // never eat what is being typed
+  const open = container.querySelector('.req-edit-form:not([hidden]), .req-add-form:not([hidden]), .desc-edit-form:not([hidden])');   // never eat what is being typed
   if (reqs !== sig.reqs && (!open || ideaForce)) {
     sig.reqs = reqs;
     const old = container.querySelector('.idea-reqs');
@@ -344,11 +370,48 @@ function closeAddReq(addRow) {
   if (btn0) { btn0.hidden = false; btn0.focus(); }
 }
 
+/* ---------- description: edit, save ---------- */
+const descBlockOf = el => (el && el.closest ? el.closest('.desc-block') : null);
+function openDescEdit(block) {
+  const view = block.querySelector('.desc-view'), form = block.querySelector('.desc-edit-form');
+  if (!view || !form) return;
+  view.hidden = true;
+  form.hidden = false;
+  block.classList.add('is-editing');
+  const ta = form.querySelector('.desc-edit-text');
+  if (!ta) return;
+  ta.focus();
+  const n = ta.value.length;
+  ta.setSelectionRange(n, n);
+}
+function closeDescEdit(block) {
+  const view = block.querySelector('.desc-view'), form = block.querySelector('.desc-edit-form');
+  if (view) view.hidden = false;
+  if (form) form.hidden = true;
+  block.classList.remove('is-editing');
+  const btn0 = block.querySelector('[data-act="edit-desc"], .desc-text');
+  if (btn0) btn0.focus();
+}
+async function saveDesc(block) {
+  const text = (block.querySelector('.desc-edit-text')?.value || '').trim();
+  if (await ideaPost('/api/idea/goal', {text})) ideaRedraw();
+}
+
 // Keyboard: Enter saves (Shift+Enter is a new line), Esc cancels; on a row Enter edits, Delete removes, Alt+arrows move.
 document.addEventListener('keydown', e => {
   const t = e.target;
   if (!t || !t.matches || e.isComposing) return;
-  if (t.matches('.req-edit-text, .req-edit-topic')) {
+  if (t.matches('.desc-edit-text')) {
+    const block = descBlockOf(t);
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (block) saveDesc(block);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      if (block) closeDescEdit(block);
+    }
+  } else if (t.matches('.req-edit-text, .req-edit-topic')) {
     const row = reqRowOf(t);
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (row) saveReq(row); }
     else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (row) closeReqEdit(row); }
@@ -517,6 +580,24 @@ onAct('undo-diagram', async () => {
   render(true);
   toast('Diagram change undone');
 });
+onAct('edit-desc', (el) => {
+  const block = descBlockOf(el);
+  if (block) openDescEdit(block);
+});
+onAct('cancel-desc', (el) => {
+  const block = descBlockOf(el);
+  if (block) closeDescEdit(block);
+});
+onAct('save-desc', (el) => {
+  const block = descBlockOf(el);
+  if (block) return saveDesc(block);
+});
+onAct('confirm-desc', async () => {
+  if (await ideaPost('/api/idea/goal/confirm', {})) ideaRedraw();
+});
+onAct('dismiss-desc', async () => {
+  if (await ideaPost('/api/idea/goal/dismiss', {})) ideaRedraw();
+});
 onAct('edit-req', (el) => {
   const row = reqRowOf(el);
   if (row) openReqEdit(row, 'text');
@@ -529,6 +610,14 @@ document.addEventListener('click', e => {
   const sel = window.getSelection && window.getSelection();
   if (sel && !sel.isCollapsed) return;   // dragging over the words to copy them is not an edit
   openReqEdit(row, words.classList.contains('req-topic') ? 'topic' : 'text');
+});
+document.addEventListener('click', e => {
+  const words = e.target.closest ? e.target.closest('.desc-text') : null;
+  const block = words && descBlockOf(words);
+  if (!block || block.classList.contains('is-editing')) return;
+  const sel = window.getSelection && window.getSelection();
+  if (sel && !sel.isCollapsed) return;
+  openDescEdit(block);
 });
 onAct('cancel-req', (el) => {
   const row = reqRowOf(el);
