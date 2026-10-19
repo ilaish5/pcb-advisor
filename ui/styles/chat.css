@@ -37,6 +37,8 @@
 .msg .about{font-size:var(--t-xs);color:var(--ink-3);margin-inline:2px}
 .msg.agent .txt{overflow-wrap:anywhere}
 .msg.agent .txt p+p{margin-top:8px}
+.msg.agent .txt .tbl-wrap{margin:6px 0}
+.msg.agent .txt .tbl td,.msg.agent .txt .tbl th{overflow-wrap:normal;padding-inline:6px}
 .msg.agent .txt ul,.msg.agent .txt ol{margin:6px 0;padding-inline-start:20px}
 .msg.agent .txt li+li{margin-top:3px}
 .msg .undo{margin-top:6px}

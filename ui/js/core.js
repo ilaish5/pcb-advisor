@@ -131,8 +131,8 @@ function fmt(text) {
   const flushRows = () => {
     if (!rows) return;
     const [head, ...body] = rows; rows = null;
-    out.push(`<table class="tbl dense"><thead><tr>${head.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>` +
-      body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') + '</tbody></table>');
+    out.push(`<div class="tbl-wrap"><table class="tbl dense"><thead><tr>${head.map(c => `<th>${c}</th>`).join('')}</tr></thead><tbody>` +
+      body.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join('')}</tr>`).join('') + '</tbody></table></div>');
   };
   const flush = () => { flushRows(); if (list) { out.push(`<${list.t}>${list.items.map(i => `<li>${i}</li>`).join('')}</${list.t}>`); list = null; } };
   for (const raw of String(text || '').split('\n')) {

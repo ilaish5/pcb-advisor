@@ -149,8 +149,8 @@ function dfmUnverifiedHTML() {
   const item = l => `<li class="unv-row"><span class="m">${esc(refsLabel(l.refs))}</span> ${esc(l.mpn || l.value || '')}
     <span class="unv-why">${l.pins_status === 'mismatch' ? 'Pins conflict with the datasheet: ' + esc(l.pins_issues || '') : 'Pins from the agent; add the datasheet to verify'}</span>
     ${btn('Accept as is', {kind: 'line', size: 'sm', act: 'accept-pins', line: l.key, title: 'You checked these pins yourself'})}</li>`;
-  return `<section class="dfm-unv"><h3>Unverified parts <span class="m">(${rows.length}) to resolve before ordering</span></h3>
-    <p class="m">Drop each datasheet in Sources and re-check, or accept the pins as is.</p>
+  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>
+    <p class="muted">Drop each datasheet in Sources and re-check, or accept the pins as is.</p>
     <ul>${rows.map(item).join('')}</ul>${btn('Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins'})}</section>`;
 }
 onAct('accept-pins', async (el, d) => { await api('/api/pins/accept', {line: d.line}); await refresh(true); });
