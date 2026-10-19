@@ -13,3 +13,5 @@
 *.OutJob -text
 *.RUL -text
 *.bat text eol=crlf
+*.pas text eol=crlf
+*.PrjScr text eol=crlf
