@@ -84,8 +84,8 @@ function rulesHeader(rd) {
     linked && {n: sm.below, label: 'below JLC minimum', tone: 'bad', title: 'The fab may reject or alter these'},
     linked && !sm.differ && !sm.below && {always: true, label: 'Your board matches the preset'},
   ]);
-  const actions = linked ? menu({icon: 'more', title: 'More'}, [
-    {label: 'Preset only (.RUL)', act: 'rules-preset'}]) : '';
+  const actions = linked ? btn('Apply rules in Altium', {kind: 'line', act: 'rules-apply-altium', title: 'Puts these rules into the linked PcbDoc by name; your own rules stay. The PcbDoc is copied to .advisor-backup first.'})
+    + menu({icon: 'more', title: 'More'}, [{label: 'Preset only (.RUL)', act: 'rules-preset'}]) : '';
   const primary = `<a class="btn pri" href="/api/rules/export?${q()}" download="${esc(PROJECT)}-rules${linked ? '-board' : ''}.RUL" title="${linked ? 'All the rules of your board, with the JLC values filled in' : 'The JLC preset rules'}">${icon('download')}<span>Download .RUL</span></a>`;
   return viewHeader({title: 'Rules', meta, actions, primary});
 }
@@ -359,6 +359,20 @@ onChange(t => t.id === 'rules-all', async e => {
 onAct('rules-retry', async (el, d, e) => {
   RULES_DATA = null;
   renderCenter(true);
+});
+onAct('rules-apply-altium', async (el, d, e) => {      // Altium writes the PcbDoc; it may take a minute and flash while it works
+  if (el.disabled) return;
+  el.disabled = true;
+  toast('Applying the rules in Altium. It may take a minute and flash while it works.');
+  try {
+    const r = await api('/api/altium/import-rules', {});
+    const n = r.created.length + r.updated.length;
+    toast(n ? `Altium: ${r.created.length} rule${r.created.length === 1 ? '' : 's'} added, ${r.updated.length} updated.` : 'Altium already has these rules.');
+    if (r.skipped.length) toast(`Skipped ${r.skipped.length}: ${r.skipped.map(x => x.name).join(', ')} (${r.skipped[0].why}).`, null, {bad: true});
+    if (r.unconfirmed.length) toast(`Altium did not keep: ${r.unconfirmed.join(', ')}.`, null, {bad: true});
+  } catch (err) { /* the error toast already said why */ }
+  el.disabled = false;
+  loadRules(true);
 });
 onAct('rules-preset', async (el, d, e) => {      // the JLC rules alone, for Merge
   const a = document.createElement('a');

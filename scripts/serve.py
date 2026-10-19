@@ -204,7 +204,8 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
     return prop
 
 
-ALTIUM_ACTIONS = ("altium.create_project", "altium.add_sheet", "altium.skeleton", "altium.add_pcb", "altium.open")
+ALTIUM_ACTIONS = ("altium.create_project", "altium.add_sheet", "altium.skeleton", "altium.add_pcb", "altium.open",
+                  "altium.import_rules", "altium.run_outjob")
 
 
 def apply_actions(project, actions, sess=None, last_user="", meta=None):
@@ -297,6 +298,25 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                     bridge.skeleton(project, a.get("sheet"))
                 elif kind == "altium.add_pcb":
                     bridge.add_pcb(project)
+                elif kind == "altium.import_rules":
+                    # the PcbDoc is copied to .advisor-backup first; the student's own rules are never deleted
+                    try:
+                        res = bridge.import_rules(project)
+                    except (bridge.BridgeError, bridge.AltiumReadError) as exc:
+                        refused.append(f"{kind}: {exc}")
+                        continue
+                    applied.append(f"{kind}: {len(res['created'])} added, {len(res['updated'])} updated"
+                                   + (f", {len(res['skipped'])} skipped ({', '.join(x['name'] for x in res['skipped'])})" if res["skipped"] else "")
+                                   + (f", not confirmed: {', '.join(res['unconfirmed'])}" if res["unconfirmed"] else ""))
+                    continue
+                elif kind == "altium.run_outjob":
+                    try:
+                        res = bridge.run_outjob(project)
+                    except (bridge.BridgeError, bridge.AltiumReadError) as exc:
+                        refused.append(f"{kind}: {exc}")
+                        continue
+                    applied.append(f"{kind}: {len(res['files'])} files" + (" (OutJob added to the project)" if res["added"] else ""))
+                    continue
                 else:
                     bridge.open_project(project)
                 applied.append(kind + (f":{a['name']}" if kind == "altium.add_sheet" else ""))
@@ -1409,6 +1429,14 @@ class Handler(BaseHTTPRequestHandler):
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
             return self._send(200, _altium_state(proj))
+
+        if path in ("/api/altium/import-rules", "/api/altium/run-outjob"):
+            from altium import bridge
+            try:
+                res = bridge.import_rules(proj) if path.endswith("rules") else bridge.run_outjob(proj)
+            except (bridge.BridgeError, bridge.AltiumReadError) as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, res)
 
         # ---- settings, sessions, projects
         if path == "/api/config":

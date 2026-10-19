@@ -28,9 +28,14 @@ function outAgo(iso) {                        // "just now", "5 min ago", "2 h a
 const outFull = iso => (iso || '').replace('T', ' ').slice(0, 16);
 const outUrl = name => `/api/export/${encodeURIComponent(name)}?${q()}`;
 
+function outAltiumBtn() {       // only when an Altium project is linked; the link is read once, then the view redraws
+  if (!ALTIUM_DATA && !ALTIUM_ERR && typeof loadAltium === 'function') loadAltium().then(() => { if (ALTIUM_DATA && ALTIUM_DATA.linked) renderCenter(true); });
+  return ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file
+    ? btn('Generate outputs in Altium', {kind: 'line', act: 'gen-altium-outputs', title: 'Altium runs the project OutJob: Gerber, NC drill, BOM and pick and place go into its outputs folder. Ours is added first when the project has none.'}) : '';
+}
 function outHeader(files) {
   if (!files.length) return viewHeader({title: 'Outputs'});
-  const actions = menu({label: 'Export', iconAfter: 'chev'}, outExportItems());
+  const actions = outAltiumBtn() + menu({label: 'Export', iconAfter: 'chev'}, outExportItems());
   const primary = btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB});
   const meta = metaLine([{n: files.length, label: files.length === 1 ? 'file' : 'files'}, {label: 'in exports/', always: true}]);
   return viewHeader({title: 'Outputs', meta, actions, primary});
@@ -55,7 +60,7 @@ function outputsHTML(container) {
   const files = S.exports || [];
   if (!files.length) {
     return viewHeader({title: 'Outputs'}) + emptyState('Nothing exported yet', 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
-      btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB}) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()));
+      btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB}) + outAltiumBtn() + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()));
   }
   const showTimes = files.some(f => f.modified);
   return `${outHeader(files)}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
@@ -88,6 +93,17 @@ onAct('gen-gerber-zip', async (el, d, e) => {     // the newest Gerber and NC dr
   const gaps = (r.missing || []).filter(m => m.level === 'problem').map(m => m.layer.toLowerCase());
   await outWrote(`Gerber zip written, ${r.files.length} files${gaps.length ? `. Missing: ${gaps.join(', ')}` : ''}`, r.zip);
   return;
+});
+onAct('gen-altium-outputs', async (el, d, e) => {      // Altium writes the files; it may take a minute and flash while it works
+  if (el.disabled) return;
+  el.disabled = true;
+  toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
+  try {
+    const r = await api('/api/altium/run-outjob', {});
+    await outWrote(`Altium wrote ${r.files.length} files${r.added ? ' (OutJob added to the project)' : ''}.`);
+  } catch (err) { /* the error toast already said why */ }
+  el.disabled = false;
+  renderCenter(true);
 });
 onAct('view-export', async (el, d, e) => {
   openFileAsTab({name: d.name, path: d.name, fileType: 'export'});

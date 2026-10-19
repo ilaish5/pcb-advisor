@@ -7,6 +7,8 @@ Two-way link to a running Altium Designer: create the project, add documents, dr
     python scripts/altium/bridge.py add-sheet <project> <name> | add-pcb <project>
     python scripts/altium/bridge.py skeleton <project> [<sheet>]  title block, parameters, one text frame per section;
                                                                  no components, safe to repeat
+    python scripts/altium/bridge.py import-rules <project>       the advisor's rule set into the linked PcbDoc, by rule name
+    python scripts/altium/bridge.py run-outjob <project>         Gerber, NC drill, BOM, pick and place into the outputs folder
     python scripts/altium/bridge.py open <project>
 
 How: Altium runs a DelphiScript from scripts/altium/bridge/ (`X2.EXE -RScriptingSystem:RunScript(...)`); the request
@@ -14,11 +16,16 @@ and the answer go through files in a fixed folder. The script mechanism is adapt
 2025 Siddharth Ahuja, see bridge/LICENSE-altium-mcp). A script runtime error leaves Altium's script executor paused;
 we notice (the script never starts or stops logging), release it with `X2.EXE -REditScript:Stop` and say so.
 
+import-rules adds or updates the rules the preset, the Rules tab's extra rules and rules-off.json call for (matched by
+name; the student's own rules are never deleted) and reads the PcbDoc back to confirm. run-outjob adds our OutJob
+(scripts/outjob.py) to the project when it has none, then runs its Folder Structure containers.
+
 Every write copies the files it will change into <altium project>/.advisor-backup/<time>/ first (undo = copy back)
 and is logged in the advisor project's altium-log.jsonl. Windows with Altium Designer only; elsewhere every
 operation says so instead of failing obscurely. Components and routes are never touched.
 """
 import argparse
+import configparser
 import datetime as dt
 import json
 import math
@@ -35,7 +42,11 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import jlc_upload  # noqa: E402
+import outjob  # noqa: E402
 import project as project_mod  # noqa: E402
+import rule_kinds  # noqa: E402
+import rules as rules_mod  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
 from altium import AltiumReadError, registry  # noqa: E402
@@ -78,7 +89,7 @@ def _running():
 
 
 def _close_dialogs():
-    """Close the dialog boxes Altium left open (class #32770, owned by X2.EXE), so the next script can run."""
+    """Close the dialog boxes Altium left open (class #32770 or a script error box, owned by X2.EXE), so the next script can run."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -97,6 +108,10 @@ def _close_dialogs():
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                 if cls.value == "#32770" and pid.value in pids:
                     user32.PostMessageW(hwnd, 0x0010, 0, 0)       # WM_CLOSE
+                    closed.append(hwnd)
+                elif cls.value == "TMessageForm" and pid.value in pids:     # a script error box: only its OK button ends it
+                    user32.PostMessageW(hwnd, 0x0100, 13, 0)      # WM_KEYDOWN, VK_RETURN
+                    user32.PostMessageW(hwnd, 0x0101, 13, 0)      # WM_KEYUP
                     closed.append(hwnd)
             return True
 
@@ -416,6 +431,187 @@ def skeleton(project, sheet=None):
     return {"sheets": [str(d) for d, _, _ in todo], "created": [str(d) for d in new_docs], "backup": backup}
 
 
+# ---------------------------------------------------------------- the rules
+
+# kind -> {.RUL record key: the Altium rule property that script sets}. Lengths go over as Altium's internal unit
+# (1 mil = 10000); a property that starts with "Layer" is set on every signal layer; ViasUnderSMD's flag is 0 or 1.
+RULE_PROPS = {
+    "Clearance": {"GAP": "Gap"},
+    "BoardOutlineClearance": {"GAP": "Gap"},
+    "Width": {"MINLIMIT": "LayerMinWidth", "MAXLIMIT": "LayerMaxWidth", "PREFEREDWIDTH": "LayerFavoredWidth"},
+    "RoutingVias": {"MINHOLEWIDTH": "MinHoleWidth", "MAXHOLEWIDTH": "MaxHoleWidth", "HOLEWIDTH": "PreferedHoleWidth",
+                    "MINWIDTH": "MinWidth", "MAXWIDTH": "MaxWidth", "WIDTH": "PreferedWidth"},
+    "HoleSize": {"MINLIMIT": "MinLimit", "MAXLIMIT": "MaxLimit"},
+    "MinimumAnnularRing": {"MINIMUMRING": "MinimumRing"},
+    "SolderMaskExpansion": {"EXPANSION": "Expansion"},
+    "PasteMaskExpansion": {"EXPANSION": "Expansion"},
+    "HoleToHoleClearance": {"GAP": "Gap"},
+    "SilkToSolderMaskClearance": {"MINSILKSCREENTOMASKGAP": "SilkToMaskGap"},
+    "SilkToSilkClearance": {"SILKTOSILKCLEARANCE": "SilkToSilkClearance"},
+    "ComponentClearance": {"GAP": "Gap", "VERTICALGAP": "VerticalGap"},
+    "MinimumSolderMaskSliver": {"MINSOLDERMASKWIDTH": "MinSolderMaskSliver"},
+    "ViasUnderSMD": {"ALLOWED": "Allowed"},
+}
+COORD_PER_MM = 10000 / 0.0254        # Altium's internal length unit per mm
+COORD_SLACK = 50                     # 0.005 mil: the board file rounds what we wrote
+
+
+def _coord(text):
+    mm = rules_mod.to_mm(text)
+    return None if mm is None else int(round(mm * COORD_PER_MM))
+
+
+def _rule_values(rec):
+    """{script property: integer} of one rule record, or None when a value of it is not a length."""
+    out = {}
+    for key, prop in RULE_PROPS[rec["RULEKIND"]].items():
+        if key not in rec:
+            continue
+        val = int(str(rec[key]).strip().upper() == "TRUE") if prop == "Allowed" else _coord(rec[key])
+        if val is None:
+            return None
+        out[prop] = val
+    return out
+
+
+def _same_values(want, got):
+    """The board's values (a script property each) equal the wanted ones, within the file's rounding."""
+    return all(abs(got.get(k, -10 ** 9) - v) <= (0 if k == "Allowed" else COORD_SLACK) for k, v in want.items())
+
+
+def _project_pcb(project):
+    link = project_mod.altium_link(project)
+    name = link.get("pcb_file")
+    pcb = pathlib.Path(name) if name else None
+    if pcb and not pcb.is_file() and link.get("project_file"):
+        pcb = pathlib.Path(link["project_file"]).parent / name
+    if not pcb or not pcb.is_file():
+        raise BridgeError("The linked Altium project has no PcbDoc yet. Add one first (add-pcb).")
+    return pcb
+
+
+def _json_list(project, name):
+    try:
+        val = json.loads((store.pdir(project) / name).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return val if isinstance(val, list) else []
+
+
+def rule_plan(project, pcb):
+    """What the PcbDoc needs: ([(record, script values)] to add or change, [{name, kind, why}] skipped). The record set is
+    what the Download .RUL gives (preset minus the rules turned off, existing rules of the same kind and scope updated,
+    extra rules added); a rule the board already has in the same state is left alone."""
+    off = {n for n in _json_list(project, "rules-off.json") if isinstance(n, str)}
+    preset = [r for r in rules_mod.get_preset_rule_records(project_mod.board(project)) if r.get("NAME") not in off]
+    records = rule_kinds.append_extra_records(rules_mod.board_rul_records(pcb, preset), _json_list(project, "rules.json"))
+    board = {r.get("NAME"): r for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
+    todo, skipped = [], []
+    for rec in records:
+        name, kind, have = rec.get("NAME", ""), rec.get("RULEKIND", ""), board.get(rec.get("NAME"))
+        if kind not in RULE_PROPS:
+            if have is None or any(have.get(k) != v for k, v in rec.items()):
+                skipped.append({"name": name, "kind": kind, "why": "this kind of rule cannot be written to Altium yet"})
+            continue
+        if have is not None and have.get("RULEKIND") != kind:
+            skipped.append({"name": name, "kind": kind, "why": f"the board has a {have.get('RULEKIND')} rule with this name"})
+            continue
+        vals = _rule_values(rec)
+        text = name + rec.get("SCOPE1EXPRESSION", "") + rec.get("SCOPE2EXPRESSION", "")
+        if vals is None or any(ord(c) < 32 for c in text):
+            skipped.append({"name": name, "kind": kind, "why": "a value or the name is not usable"})
+            continue
+        if (have is not None and _same_values(vals, _rule_values(have) or {})
+                and rules_mod._rule_scopes(have) == rules_mod._rule_scopes(rec)):     # the priority is not ours to set
+            continue
+        todo.append((rec, vals))
+    return todo, skipped
+
+
+def rule_commands(pcb, todo):
+    cmds = [("RULE", str(pcb), rec["RULEKIND"], rec["NAME"], rec.get("SCOPE1EXPRESSION", "All"),
+             rec.get("SCOPE2EXPRESSION", "All"), str(rules_mod._prio(rec)), *[f"{k}={v}" for k, v in vals.items()])
+            for rec, vals in todo]
+    return cmds + [("SAVE", str(pcb))]
+
+
+def import_rules(project):
+    """Put the advisor's rules into the linked PcbDoc. Returns {created, updated, skipped, unconfirmed, backup}."""
+    prj = _linked(project)
+    pcb = _project_pcb(project)
+    todo, skipped = rule_plan(project, pcb)
+    res = {"created": [], "updated": [], "skipped": skipped, "unconfirmed": [], "backup": ""}
+    if not todo:
+        return res
+    before = {r.get("NAME") for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
+    res["backup"] = _backup(prj, [pcb])
+    run_commands([("PROJECT", str(prj)), *rule_commands(pcb, todo)])
+    after = {r.get("NAME"): r for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
+    for rec, vals in todo:
+        got = after.get(rec["NAME"])
+        (res["updated"] if rec["NAME"] in before else res["created"]).append(rec["NAME"])
+        if got is None or not _same_values(vals, _rule_values(got) or {}):
+            res["unconfirmed"].append(rec["NAME"])      # Altium did not keep what we wrote: the Rules tab will show it
+    _log(project, "import-rules", pcb=str(pcb), backup=res["backup"], skipped=[s["name"] for s in skipped],
+         **{k: res[k] for k in ("created", "updated", "unconfirmed")})
+    return res
+
+
+# ---------------------------------------------------------------- the OutJob
+
+def outjob_containers(path):
+    """[(medium name, base path)] of the OutJob's Folder Structure containers: the ones that write files."""
+    cp = configparser.RawConfigParser(strict=False, interpolation=None)
+    cp.optionxform = str
+    cp.read(str(path), encoding="latin-1")
+    out = []
+    for sec in cp.sections():
+        if not sec.startswith("OutputGroup"):
+            continue
+        for key, val in cp.items(sec):
+            m = re.fullmatch(r"OutputMedium(\d+)", key)
+            if m and cp.get(sec, key + "_Type", fallback="") == "GeneratedFiles" and val not in [o[0] for o in out]:
+                out.append((val, cp.get("PublishSettings", f"OutputBasePath{m.group(1)}", fallback="")))
+    return out
+
+
+def run_outjob(project):
+    """Run the project's OutJob (ours is added first when it has none). Returns {outjob, added, containers, files, backup}."""
+    prj = _linked(project)
+    summary = read_prjpcb(prj)
+    target, added, backup = None, False, ""
+    for rel in summary["outjobs"]:
+        cand = prj.parent / pathlib.Path(rel.replace("\\", "/"))
+        if cand.is_file() and outjob_containers(cand):
+            target = cand
+            break
+    cmds = [("PROJECT", str(prj))]
+    if target is None:
+        if summary["outjobs"]:
+            raise BridgeError("The project's OutJob has no Folder Structure output to run.")
+        target = prj.parent / f"{prj.stem}.OutJob"
+        if target.exists():
+            raise BridgeError(f"{target.name} is in the project folder but not in the project; add it to the project first.")
+        backup = _backup(prj, [prj])
+        outjob.generate_outjob(project, filename=target.name, out_dir=prj.parent)
+        cmds += [("ADDDOC", str(prj), str(target)), ("SAVEPRJ", str(prj))]
+        added = True
+    boxes = outjob_containers(target)
+    cmds += [("OUTJOB", str(target), medium, base) for medium, base in boxes]
+    t0 = time.time() - 2
+    run_commands(cmds, total_timeout=600)
+    roots = jlc_upload._roots(project) or [prj.parent / "Outputs"]     # the linked folder, Altium's "Project Outputs for ..."
+    files = []
+    for root in roots:
+        for dirpath, dirs, names in os.walk(root):
+            dirs[:] = [d for d in dirs if d.lower() != BACKUP_DIR]
+            files += [str(pathlib.Path(dirpath, n)) for n in names if pathlib.Path(dirpath, n).stat().st_mtime >= t0]
+    if not files:
+        raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
+    _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup)
+    return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup}
+
+
 def open_project(project):
     prj = _linked(project)
     run_commands([("PROJECT", str(prj))])
@@ -435,7 +631,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="op", required=True)
     sub.add_parser("status")
-    for op in ("new-project", "add-pcb", "open"):
+    for op in ("new-project", "add-pcb", "open", "import-rules", "run-outjob"):
         sub.add_parser(op).add_argument("project")
     p = sub.add_parser("add-sheet")
     p.add_argument("project")
@@ -455,6 +651,10 @@ def main(argv=None):
             res = add_pcb(a.project)
         elif a.op == "skeleton":
             res = skeleton(a.project, a.sheet)
+        elif a.op == "import-rules":
+            res = import_rules(a.project)
+        elif a.op == "run-outjob":
+            res = run_outjob(a.project)
         else:
             res = open_project(a.project)
     except (BridgeError, AltiumReadError) as exc:

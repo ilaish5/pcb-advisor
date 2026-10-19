@@ -33,6 +33,15 @@ class FakeAltium:
                 with open(self.prj, "a", encoding="ascii", newline="") as fh:
                     n = self.prj.read_text(encoding="ascii").count("[Document") + 1
                     fh.write(f"\r\n[Document{n}]\r\nDocumentPath={pathlib.Path(c[1]).name}\r\n")
+            elif c[0] == "ADDDOC":
+                with open(self.prj, "a", encoding="ascii", newline="") as fh:
+                    n = self.prj.read_text(encoding="ascii").count("[Document") + 1
+                    fh.write(f"\r\n[Document{n}]\r\nDocumentPath={pathlib.Path(c[2]).name}\r\n")
+            elif c[0] == "OUTJOB":                  # Altium's own folder next to the project: one Gerber per layer
+                out = self.prj.parent / f"Project Outputs for {self.prj.stem}" / "Gerber"
+                out.mkdir(parents=True, exist_ok=True)
+                for ext in ("GTL", "GBL", "GTS", "GBS", "GTO", "GBO", "GTP", "GBP", "GM1"):
+                    (out / f"{self.prj.stem}.{ext}").write_text("G04 x*\nM02*\n")
         return []
 
     def flat(self):
@@ -186,6 +195,147 @@ def test_api_create_links_and_reports_errors(lte, fake, monkeypatch):
         assert code == 200 and body["linked"]["project_file"].endswith(".PrjPcb")
         code, body = post("/api/altium/create")                     # the folder now holds a project
         assert code == 400 and "never overwrite" in body["error"]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+# ---------------------------------------------------------------- import-rules and run-outjob
+
+FIX = pathlib.Path(__file__).parent / "fixtures" / "altium"
+
+
+def _linked_with_rules_board(lte, fake):
+    """A linked Altium project whose PcbDoc is the fixture board (it has rules of its own)."""
+    res = bridge.new_project(lte)
+    pcb = pathlib.Path(project_mod.altium_link(lte)["pcb_file"])
+    pcb.write_bytes((FIX / "rules-board.PcbDoc").read_bytes())
+    fake.runs.clear()
+    return pathlib.Path(res["project_file"]), pcb
+
+
+def test_import_rules_sends_the_preset_and_extras_minus_the_disabled_ones(lte, fake):
+    prj, pcb = _linked_with_rules_board(lte, fake)
+    todo, _ = bridge.rule_plan(lte, pcb)
+    names = [rec["NAME"] for rec, _ in todo]
+    assert names
+    off = names[0]
+    (store.pdir(lte) / "rules-off.json").write_text(json.dumps([off]), encoding="utf-8")
+    (store.pdir(lte) / "rules.json").write_text(json.dumps([
+        {"name": "Silk_Silk", "kind": "SilkToSilkClearance", "values": {"gap": "8mil"}},
+        {"name": "Poly_Conn", "kind": "PolygonConnect", "values": {}}]), encoding="utf-8")
+    res = bridge.import_rules(lte)
+    cmds = fake.flat()
+    assert cmds[0] == ("PROJECT", str(prj)) and cmds[-1] == ("SAVE", str(pcb))
+    sent = {c[3]: c for c in cmds if c[0] == "RULE"}
+    assert off not in sent and set(names) - {off} <= set(sent)               # the rule that is off is not written
+    assert sent["Silk_Silk"][1:3] == (str(pcb), "SilkToSilkClearance") and "SilkToSilkClearance=80000" in sent["Silk_Silk"]
+    assert "Poly_Conn" not in sent                                            # a kind we cannot write is reported, not sent
+    assert [x["name"] for x in res["skipped"]] == ["Poly_Conn"]
+    assert all(f.isascii() for c in sent.values() for f in c)
+    assert (pathlib.Path(res["backup"]) / pcb.name).read_bytes() == (FIX / "rules-board.PcbDoc").read_bytes()
+    assert any(e["op"] == "import-rules" for e in store.read_jsonl(store.pdir(lte) / "altium-log.jsonl"))
+
+
+def test_import_rules_lengths_are_altium_units_and_every_property_is_one_the_kind_has(lte, fake):
+    _, pcb = _linked_with_rules_board(lte, fake)
+    todo, _ = bridge.rule_plan(lte, pcb)
+    assert todo
+    for rec, vals in todo:
+        assert rec["RULEKIND"] in bridge.RULE_PROPS and set(vals) <= set(bridge.RULE_PROPS[rec["RULEKIND"]].values())
+    assert bridge._coord("6mil") == 60000 and bridge._coord("0.1524mm") == 60000 and bridge._coord("-2mil") == -20000
+    assert bridge._same_values({"Gap": 60000}, {"Gap": 60010}) and not bridge._same_values({"Gap": 60000}, {"Gap": 61000})
+
+
+def test_import_rules_needs_a_linked_project_and_leaves_a_matching_board_alone(lte, fake, monkeypatch):
+    with pytest.raises(bridge.BridgeError, match="No Altium project is linked"):
+        bridge.import_rules(lte)
+    _linked_with_rules_board(lte, fake)
+    monkeypatch.setattr(bridge, "rule_plan", lambda project, pcb: ([], []))
+    res = bridge.import_rules(lte)
+    assert res["created"] == res["updated"] == [] and not res["backup"] and not fake.runs
+
+
+def test_run_outjob_adds_ours_when_the_project_has_none(lte, fake):
+    prj, _ = _linked_with_rules_board(lte, fake)
+    res = bridge.run_outjob(lte)
+    out = prj.parent / f"{prj.stem}.OutJob"
+    assert res["added"] and out.is_file() and res["containers"] == ["Folder Structure"]
+    cmds = fake.flat()
+    assert [c[0] for c in cmds] == ["PROJECT", "ADDDOC", "SAVEPRJ", "OUTJOB"]
+    assert cmds[1][1:] == (str(prj), str(out)) and cmds[3][1:3] == (str(out), "Folder Structure")
+    assert (pathlib.Path(res["backup"]) / prj.name).is_file()                  # the project file is copied first
+    assert any(f.endswith(".GTL") for f in res["files"])
+
+
+def test_run_outjob_uses_the_projects_own_outjob_and_the_gerber_set_is_found(lte, fake):
+    import jlc_upload
+    _linked_with_rules_board(lte, fake)
+    bridge.run_outjob(lte)                       # the fake adds the OutJob to the project file, as Altium does
+    fake.runs.clear()
+    res = bridge.run_outjob(lte)
+    assert not res["added"] and [c[0] for c in fake.flat()] == ["PROJECT", "OUTJOB"]
+    got = jlc_upload.find_set(lte)
+    assert {p.suffix.upper() for p, _ in got["gerbers"]} >= {".GTL", ".GBL", ".GTS", ".GBS"}
+
+
+def test_run_outjob_says_so_when_altium_wrote_nothing(lte, fake, monkeypatch):
+    _linked_with_rules_board(lte, fake)
+    monkeypatch.setattr(bridge, "run_commands", lambda commands, **kw: [])
+    with pytest.raises(bridge.BridgeError, match="wrote no files"):
+        bridge.run_outjob(lte)
+
+
+def test_the_outjob_template_plots_the_copper_mask_silk_and_paste_layers():
+    import outjob
+    cfg = outjob.OUTJOB_TEMPLATE.split("OutputType3=Gerber")[1].split("Configuration3_Item1=")[1].split("\n")[0]
+    plot = cfg.split("|Plot.Set=")[1].split("|")[0]
+    for layer in ("16777217", "16842751", "16973830", "16973834", "16973832"):   # top, bottom, silk, mask, paste
+        assert f"{layer}~1" in plot
+    assert "16908289" not in cfg.split("AddToAllPlots.Set=")[1].split("|")[0]    # the outline is not in every plot
+
+
+def test_the_new_actions_route_to_the_bridge_and_report(lte, fake):
+    import serve
+    _linked_with_rules_board(lte, fake)
+    applied, _, refused = serve.apply_actions(lte, [{"type": "altium.import_rules"}, {"type": "altium.run_outjob"}])
+    assert not refused
+    assert applied[0].startswith("altium.import_rules:") and "added" in applied[0]
+    assert applied[1].startswith("altium.run_outjob:") and "OutJob added" in applied[1]
+
+
+def test_the_new_actions_are_refused_not_raised_without_a_project(lte, fake):
+    import serve
+    applied, _, refused = serve.apply_actions(lte, [{"type": "altium.import_rules"}, {"type": "altium.run_outjob"}])
+    assert not applied and len(refused) == 2 and all("No Altium project is linked" in r for r in refused)
+
+
+def test_api_import_rules_and_run_outjob(lte, fake, monkeypatch):
+    from http.server import ThreadingHTTPServer
+    import serve
+    monkeypatch.setattr(serve, "QUIET", True)
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def post(path):
+        req = urllib.request.Request(f"{base}{path}?project={lte}", method="POST", data=b"{}",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    try:
+        for path in ("/api/altium/import-rules", "/api/altium/run-outjob"):
+            code, body = post(path)                                  # nothing linked yet
+            assert code == 400 and "No Altium project is linked" in body["error"]
+        _linked_with_rules_board(lte, fake)
+        code, body = post("/api/altium/import-rules")
+        assert code == 200 and body["created"] + body["updated"] and set(body) >= {"skipped", "unconfirmed", "backup"}
+        code, body = post("/api/altium/run-outjob")
+        assert code == 200 and body["added"] and any(f.endswith(".GTL") for f in body["files"])
     finally:
         httpd.shutdown()
         httpd.server_close()
