@@ -4,7 +4,7 @@ An AI co-pilot for your PCB project (Altium Designer + JLCPCB). You chat with an
 it helps you refine the idea, pick parts that are in stock at JLC, check the schematic and layout against
 datasheets, prepare Altium rules and outputs, and understand the manufacturer's DFM report.
 
-It never drives Altium, never routes, never orders. It reads your Altium files (read-only) and tells you what to do.
+It reads your Altium files and can create the Altium project for you (project, empty PCB, sheets with a skeleton and no components, through `scripts/altium/bridge.py`); it never places components, routes or orders.
 
 ## Install (about 5 minutes)
 
@@ -47,3 +47,5 @@ Want to see a finished example first? Run `.venv\Scripts\python pcb.py seed` and
 Code: `scripts/serve.py` (server), `scripts/store.py` (project state), `scripts/agent.py` (agent actions), `ui/index.html` (UI).
 Docs: [architecture](docs/ARCHITECTURE.md), [engines](docs/ENGINES.md), [product plan](docs/PRODUCT-PLAN.md).
 Commands: `.venv\Scripts\python pcb.py --help` (macOS/Linux: `.venv/bin/python`). License: [MIT](LICENSE).
+
+Credits: the way `scripts/altium/bridge.py` starts Altium scripts and exchanges files with them is adapted from [altium-mcp](https://github.com/coffeenmusic/altium-mcp) (MIT, Copyright (c) 2025 Siddharth Ahuja; licence kept in `scripts/altium/bridge/LICENSE-altium-mcp`).

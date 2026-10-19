@@ -288,7 +288,7 @@ def describe(project=None, engine_home=None):
                 "write": False,
                 "what": f"the student's Altium project (linked in Settings): {pathlib.Path(p_file).name}; "
                         f"board {pathlib.Path(link.get('pcb_file') or '?').name}; outputs {link.get('outputs_dir') or '?'}. "
-                        "READ ONLY - never write here; read a SchDoc/PcbDoc/PrjPcb/.RUL with "
+                        "READ ONLY for file tools - never write here (changes go through scripts/altium/bridge.py); read a SchDoc/PcbDoc/PrjPcb/.RUL with "
                         + oscompat.py("python3 {repo}/scripts/altium/dump.py <file> [--full]"),
             })
     except Exception:

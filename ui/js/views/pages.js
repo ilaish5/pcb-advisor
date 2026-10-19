@@ -241,7 +241,7 @@ function setAltiumHTML(c) {
   const have = (c.altium && c.altium.install_path) || '';
   const auto = (a.active_install && a.active_install.path) || (installs[0] && installs[0].path) || '';
   let out = a.linked ? altLinkedHTML(a)
-    : setRow('Project', `<span class="muted">Not linked</span><span class="sep" aria-hidden="true">·</span>${altLinkMenu(a, 'Link a project')}`, {saved: false});
+    : setRow('Project', `<span class="muted">Not linked</span><span class="sep" aria-hidden="true">·</span>${altLinkMenu(a, 'Link a project')}<span class="sep" aria-hidden="true">·</span>${btn('Create an Altium project', {kind: 'link', act: 'altium-create', title: 'Altium makes the project, an empty PCB and one sheet per planned sheet, with no components'})}`, {saved: false});
   if (installs.length || have) {
     const opts = [['', 'Newest (auto)'], ...installs.map(i => [i.path, esc((i.version ? 'Altium ' + i.version : i.build || 'Altium') + (i.exe ? '' : ' (no X2.EXE)'))])];
     if (have && !installs.some(i => i.path === have)) opts.push([have, esc(pgBase(have) || have)]);
@@ -249,7 +249,8 @@ function setAltiumHTML(c) {
   } else {
     out += setRow('Install', '<span class="muted">No Altium Designer found</span>', {saved: false});
   }
-  out += setDetails('adv', 'Advanced', setRow('Altium folder', `<input id="set-altium-path" class="in" data-set="altium.install_path" value="${esc(have)}" placeholder="${esc(auto || 'Newest install')}" autocomplete="off">`, {id: 'set-altium-path'}));
+  out += setDetails('adv', 'Advanced', setRow('Altium folder', `<input id="set-altium-path" class="in" data-set="altium.install_path" value="${esc(have)}" placeholder="${esc(auto || 'Newest install')}" autocomplete="off">`, {id: 'set-altium-path'})
+    + setRow('New projects in', `<input id="set-altium-base" class="in" data-set="altium.projects_dir" value="${esc((c.altium && c.altium.projects_dir) || '')}" placeholder="Public Documents/Altium folder (default) profile" autocomplete="off">`, {id: 'set-altium-base'}));
   return out;
 }
 function setSkillsHTML() {
@@ -441,6 +442,19 @@ onAct('altium-link', async (el, d, e) => { if (d.path) await pgLink(d.path); });
 onAct('altium-browse', async (el, d, e) => {
   const p = await askText({title: 'Link an Altium project', label: 'Path to the .PrjPcb file or its folder', placeholder: 'C:\\Projects\\MyBoard\\MyBoard.PrjPcb', confirm: 'Link'});
   if (p) await pgLink(p);
+});
+onAct('altium-create', async (el, d, e) => {
+  if (el.disabled) return;
+  el.disabled = true;
+  toast('Creating the Altium project. Altium may take a minute and flash while it works.');
+  try {
+    ALTIUM_DATA = await api('/api/altium/create', {});
+    ALTIUM_ERR = null;
+    impFor = null;                            // the BOM asks again whether a project is linked
+    toast('Altium project created: ' + pgBase(ALTIUM_DATA.linked.project_file));
+  } catch (err) { /* api() already said why */ }
+  el.disabled = false;
+  renderCenter(true);
 });
 onAct('altium-unlink', async (el, d, e) => {
   ALTIUM_DATA = await api('/api/altium/unlink', {});

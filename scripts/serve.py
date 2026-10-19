@@ -69,7 +69,7 @@ SETTABLE = (
     "user.language", "user.units", "user.name",
     "user.theme", "agent.provider", "agent.model", "agent.memory_every",
     "agent.memory_max_chars", "agent.history_messages", "agent.autonomy",
-    "server.default_project", "altium.install_path",
+    "server.default_project", "altium.install_path", "altium.projects_dir",
 )
 
 
@@ -79,7 +79,7 @@ def _public_config():
     return {
         "user": cfg.get("user", {}),
         "engineering_defaults": cfg.get("engineering_defaults", {}),
-        "altium": cfg.get("altium", {"install_path": ""}),
+        "altium": cfg.get("altium", {"install_path": "", "projects_dir": ""}),
         "agent": {**{k: v for k, v in agent_cfg.items() if k != "providers"},
                   "model": (agent_cfg.get("providers", {})
                             .get(gateway.resolve(BACKEND), {}).get("model", ""))},
@@ -204,6 +204,9 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
     return prop
 
 
+ALTIUM_ACTIONS = ("altium.create_project", "altium.add_sheet", "altium.skeleton", "altium.add_pcb", "altium.open")
+
+
 def apply_actions(project, actions, sess=None, last_user="", meta=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
@@ -283,6 +286,20 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                     applied.append(f"thread.open:{a['anchor']}")
                 else:
                     refused.append(f"thread.open: nothing to anchor to at {a['anchor']}")
+            elif kind in ALTIUM_ACTIONS:
+                from altium import bridge
+                # routine: new files only, and whatever it modifies is copied to .advisor-backup first
+                if kind == "altium.create_project":
+                    bridge.create(project)
+                elif kind == "altium.add_sheet":
+                    bridge.add_sheet(project, str(a.get("name") or ""))
+                elif kind == "altium.skeleton":
+                    bridge.skeleton(project, a.get("sheet"))
+                elif kind == "altium.add_pcb":
+                    bridge.add_pcb(project)
+                else:
+                    bridge.open_project(project)
+                applied.append(kind + (f":{a['name']}" if kind == "altium.add_sheet" else ""))
             elif kind == "jlc.gerber_zip":
                 import jlc_upload
                 try:
@@ -1383,6 +1400,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/altium/unlink":
             project_mod.set_altium_link(proj, project_file="")
+            return self._send(200, _altium_state(proj))
+
+        if path == "/api/altium/create":
+            from altium import bridge
+            try:
+                bridge.create(proj)
+            except (bridge.BridgeError, bridge.AltiumReadError) as exc:
+                return self._send(400, {"error": str(exc)})
             return self._send(200, _altium_state(proj))
 
         # ---- settings, sessions, projects

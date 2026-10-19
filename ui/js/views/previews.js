@@ -385,7 +385,7 @@ function formatPcbPreview(raw) {
       const name = linked[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;/g, "'");
       return `<div class="pcb-empty-state">${emptyState('No PCB file in the project yet', `${name} is linked but has no .PcbDoc. In Altium: File > New > PCB, save it in the project, then come back here.`, '')}</div>`;
     }
-    return `<div class="pcb-empty-state">${emptyState('No PCB linked', 'Link an Altium project that has a PcbDoc to see the layout here.', btn('Link a project', {kind: 'pri', act: 'pv-link'}))}</div>`;
+    return `<div class="pcb-empty-state">${emptyState('No PCB linked', 'Link an Altium project that has a PcbDoc to see the layout here.', btn('Link a project', {kind: 'pri', act: 'pv-link'}) + btn('Create an Altium project', {act: 'altium-create'}))}</div>`;
   }
   return raw;
 }

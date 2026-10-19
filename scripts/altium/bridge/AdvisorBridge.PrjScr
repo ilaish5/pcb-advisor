@@ -1,0 +1,8 @@
+[Design]
+Version=1.0
+HierarchyMode=0
+OutputPath=
+LogFolderPath=
+
+[Document1]
+DocumentPath=AdvisorBridge.pas
