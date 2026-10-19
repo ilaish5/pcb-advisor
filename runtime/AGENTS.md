@@ -66,7 +66,6 @@ no `&&`, no pipe (`| head`), no `2>&1`: any other form is blocked. Long output i
 - `python <repo>/scripts/skills/verify_part.py <project> <line>` pins and names against datasheet text
 - `python <repo>/scripts/sources.py get <project> <url> [name] | list [project] | verify <file> "<quote>" [project] | unuse <project> <doc>` manage documents
 - `python <repo>/scripts/library.py search <MPN> | check-package <pkg1> <pkg2> | build-script <project> [--out exports]` library model tools
-- `python <repo>/scripts/skills/export_bom.py <project> jlc` export BOM CSV for JLC
 - `python <repo>/scripts/preview_sch.py <schdoc> [--output <out.svg>]` render SchDoc to interactive SVG
 - `python <repo>/scripts/skills/render_sheet.py <project> <sheet>` render netlist sheet to SVG preview
 - `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` check sheet netlist refs against BOM
@@ -76,12 +75,11 @@ no `&&`, no pipe (`| head`), no `2>&1`: any other form is blocked. Long output i
 - `python <repo>/scripts/trace_width.py <amps> --layer external|internal [--rise <C>] [--oz <n>]` IPC-2221 trace width
 - `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project> [--plan <plan.json>]` render PcbDoc to SVG with placement plan overlay
 - `python <repo>/scripts/checks/board.py <pcb_file>` board layout checks: connector opening, decap distance, CPL rotation
-- `python <repo>/scripts/outjob.py <project> [output_dir]` write ready Altium OutJob file
+- `python <repo>/scripts/skills/export_bom.py <project> jlc` BOM CSV for JLC | `python <repo>/scripts/outjob.py <project> [output_dir]` Altium OutJob file
 - `python <repo>/scripts/dfm.py ingest <project> <pdf> [--kind pcb|smt|both|auto]` | `gerber-zip <project>` | `pickup <project> [--kind K]` add a JLCDFM report PDF, make the Gerber zip, add the new report from Downloads
 - `python <repo>/scripts/altium/dump.py <file> [--full] [--net NAME]` read-only inspector for SchDoc, PcbDoc pads+nets+rules, PrjPcb, .RUL
 - `python <repo>/scripts/keeping.py <project> log|decisions|impact|report` decision log, change impact, file organization
 - `python <repo>/scripts/model.py <project>` print derived project state (idea, BOM, requirements, sheets)
-- `python <repo>/scripts/project.py ...` project folder and metadata helpers
 
 # CITING
 - In text, a citation is `{{src:file name|locator}}`, for example `{{src:esda6v1w5.pdf|p. 2, Pin configuration}}`.
@@ -115,9 +113,11 @@ any script, the json block with `tools` is required: a number from a script with
   "step": true, "model_source": "Ultra Librarian"}}` shows a diff card with Approve and Reject. `new: true`
   proposes a new line. `library` is optional and applied on approval; `verify` and `accepted` in it are dropped.
   Routine ones (no costed MPN) apply at once with Undo; IC/MPN ones wait. Send related proposals in ONE turn.
-- `{"type": "netlist.write", "sheet": "03", "data": {...}}` one sheet: sections, parts with pins, notes. Every ref must be in the BOM and every pin needs a net or `NC`, else the server refuses and says why.
+- `{"type": "netlist.write", "sheet": "03", "data": {...}}` one sheet: write early, partial (undecided pins net "", pending parts in); state the warnings.
 - `{"type": "library.add", "line": "U4", "changes": {"symbol": true, "footprint": true, "step": false,
   "model_source": "...", "issues": "..."}}` says what exists for a non-standard part.
+- `{"type": "part.attach_datasheet", "ref": "U3", "name": "<file in sources>"}` links a document to a part and verifies its pins at once; the
+  result says verified or the issues. "A file is in the folder" -> `sources.py list <project>`, attach to the part they name, report the result.
 - `{"type": "thread.open", "anchor": "U5"}` opens a conversation about one part (refdes or BOM line key).
 - `{"type": "jlc.gerber_zip"}` writes `exports/<project>_gerbers.zip` from the linked Altium outputs (read only); `{"type": "jlc.pickup"}` adds the JLCDFM report PDFs new in the student's Downloads, only after they say they exported it (`"kind": "pcb|smt|both"` only when told, `"name"` for one file). Neither logs in or uploads.
 - `{"type": "dfm.triage", "stem": "<report>", "rows": [{"section": "..", "check": "..", "worst": "..", "level": "..", "danger": 0, "warning": 1, "good": 3, "layer": "..", "fix": "..", "evidence": ".."}]}` lists findings you read from the slices; rows start unknown, the verdict is the student's.

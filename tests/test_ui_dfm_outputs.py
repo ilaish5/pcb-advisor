@@ -46,7 +46,7 @@ def test_the_dfm_verdicts_are_the_servers_verdicts_with_plain_names():
 def test_dfm_is_ready_only_when_every_finding_is_judged_and_none_is_real():
     """Bug 12: the header said ready as soon as a report existed."""
     header = _block(CHECKS, "dfmHeader")
-    assert "const ready = t.known && t.n > 0 && !t.open && !t.real && !unv;" in header      # and no part with unverified pins
+    assert "const ready = t.known && t.n > 0 && !t.open && !t.real && !unv && !gaps.open_pins.length && !gaps.parts.length;" in header      # and no part with unverified pins
     assert "label: 'Ready to order'" in header and "ready &&" in header
     assert "Ready" not in _block(CHECKS, "checksHTML")           # a report existing says nothing about the board
     # the counts come from the loaded findings, else from the state the server summarises (triage_open, triage_real)

@@ -76,4 +76,7 @@
 .dfm-unv h3 { margin: 0 0 4px; font-size: 14px; }
 .dfm-unv ul { list-style: none; margin: 8px 0; padding: 0; }
 .dfm-unv .unv-row { display: flex; gap: 8px; align-items: center; padding: 4px 0; }
-.dfm-unv .unv-why { flex: 1; color: var(--ink-3); font-size: var(--t-xs); }
+.dfm-unv .unv-why { flex: 1; min-width: 0; color: var(--ink-3); font-size: var(--t-xs);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.dfm-unv .unv-row > .m { flex: none; }
+.dfm-unv select { max-width: 180px; }

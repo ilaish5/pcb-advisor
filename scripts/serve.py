@@ -263,7 +263,8 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
             elif kind == "netlist.write" and a.get("sheet") and isinstance(a.get("data"), dict):
                 res = store.write_sheet_logged(project, a["sheet"], a["data"])
                 if res["ok"]:
-                    applied.append(f"netlist.write:{res['sheet']}")
+                    note = f" (warnings: {'; '.join(res['warnings'][:8])})" if res.get("warnings") else ""
+                    applied.append(f"netlist.write:{res['sheet']}{note}")
                 else:
                     refused.append(f"netlist.write:{a['sheet']} refused: " + "; ".join(res["errors"][:8]))
             elif kind == "library.add" and a.get("line"):
@@ -272,6 +273,11 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                 else:
                     store.add_library(project, a["line"], _agent_may_set_library(a.get("changes")))
                     applied.append(f"library.add:{a['line']}")
+            elif kind == "part.attach_datasheet" and a.get("ref") and a.get("name"):
+                # routine: applies at once; detach (the Unverified panel, /api/parts/detach_datasheet) is the undo
+                res = store.attach_datasheet(project, a["ref"], a["name"], by="agent")
+                applied.append(f"part.attach_datasheet:{a['ref']} <- {res['name']}: {res['status']}"
+                               + (f" ({res['issues']})" if res["issues"] else ""))
             elif kind == "thread.open" and a.get("anchor"):
                 if open_part_session(project, a["anchor"]):
                     applied.append(f"thread.open:{a['anchor']}")
@@ -731,6 +737,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": str(exc)})
         if path == "/api/final/unverified":
             return self._send(200, {"unverified": store.unverified_parts(self.project())})
+        if path == "/api/final/incomplete":
+            return self._send(200, store.sheet_gaps(self.project()))
         if path == "/api/checks":
             import dfm
             kind = self.query("kind")
@@ -1467,7 +1475,22 @@ class Handler(BaseHTTPRequestHandler):
             target.with_suffix(target.suffix + ".json").write_text(json.dumps(
                 {"name": name, "url": None, "uploaded_at": now(), "origin": "uploaded by the student",
                  "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}, indent=2), encoding="utf-8")
-            return self._send(200, state())
+            found = store.auto_attach(proj)         # adopts hand-dropped files too; links and verifies the sure ones
+            return self._send(200, {**state(), **found})
+
+        if path == "/api/parts/attach_datasheet":
+            try:
+                res = store.attach_datasheet(proj, data.get("line") or data.get("ref") or "", data.get("name") or "")
+            except (KeyError, ValueError) as exc:
+                return self._send(400, {"error": str(exc.args[0] if exc.args else exc)})
+            return self._send(200, {**state(), "attached": res})
+
+        if path == "/api/parts/detach_datasheet":
+            try:
+                res = store.detach_datasheet(proj, data.get("line") or data.get("ref") or "")
+            except KeyError as exc:
+                return self._send(400, {"error": str(exc.args[0])})
+            return self._send(200, {**state(), "detached": res})
 
         if path == "/api/fetch_source":
             url = data.get("url")

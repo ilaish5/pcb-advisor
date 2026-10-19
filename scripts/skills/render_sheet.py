@@ -58,8 +58,17 @@ def gnd_side(x, y, d):
             + L(x + d * 8, y - 2, x + d * 8, y + 2, "g") + T(x + d * 12, y + 3, "GND", "gt", "end" if d < 0 else "start"))
 
 
+def open_pin(x, y, d=1):
+    """A pin with no net yet: an open circle and a red ? at the pin end."""
+    return (f'<g class="openpin"><title>open pin: no net yet</title>'
+            f'<circle cx="{x + d * 4:g}" cy="{y:g}" r="3.5" class="openc"/>'
+            + T(x + d * 11, y + 3, "?", "openq", "end" if d < 0 else "start") + '</g>')
+
+
 def net_end(x, y, net, d):
     """What a pin stub ends in, to the left (d=-1) or right (d=+1) of (x,y)."""
+    if not net:
+        return open_pin(x, y, d)
     if net == "NC":
         return (L(x - 4, y - 4, x + 4, y + 4, "nc") + L(x - 4, y + 4, x + 4, y - 4, "nc")
                 + T(x + d * 8, y + 3, "No ERC", "nct", "end" if d < 0 else "start"))
@@ -74,6 +83,8 @@ def net_end(x, y, net, d):
 
 def net_top(x, y, net):
     """A vertical pin end above a part: power bar, GND, or a boxed label."""
+    if not net:
+        return open_pin(x, y - 4, 1).replace(f'cx="{x + 4:g}"', f'cx="{x:g}"')
     if net == "GND":
         return gnd_down(x, y - 14) + ""
     if is_power(net):
@@ -155,8 +166,8 @@ def part_vertical(p, value, kind):
         s += gnd_down(cx, top + 60)
     elif is_power(end):
         s += net_top(cx, top + 60, end).replace(f'y="{top + 60 - 16}"', f'y="{top + 60 + 1}"')
-    elif end == "NC":
-        s += net_end(cx, top + 60, "NC", 1)
+    elif end == "NC" or not end:
+        s += net_end(cx, top + 60, end, 1)
     else:
         s += T(cx, top + 76, end, "net", "middle")
     s += T(cx - 16, top + 31, p["ref"], "refs", "end") + T(cx - 16, top + 43, value or "", "refs", "end")
@@ -179,7 +190,7 @@ def part_tp(p):
     if net == "GND":
         s += L(12, 29.5, 12, 38) + gnd_down(12, 38)
         return s, 80, 74
-    s += T(22, 35, net, "net")
+    s += T(22, 35, net, "net") if net else open_pin(16, 35)
     return s, max(80, 26 + len(net) * CW), 44
 
 
@@ -189,7 +200,7 @@ def part_conn(p, sub):
     return part_ic(dict(p, pins=pins), sub)
 
 
-def render_part(p, line, bom_line):
+def render_part(p, line, bom_line, bom_status=None):
     ref = p["ref"]
     kind = p.get("kind") or ("ic" if len(p["pins"]) > 3 else "res" if len(p["pins"]) == 2 else "q")
     value = (bom_line or {}).get("value") or p.get("value") or ""
@@ -209,6 +220,11 @@ def render_part(p, line, bom_line):
         svg += (f'<g class="unv"><title>Pins from the agent; add the datasheet to verify</title>'
                 f'<text x="{max(w - 4, 0):g}" y="-2" text-anchor="end" font-size="9" fill="#b7791f" '
                 f'font-style="italic">unverified</text></g>')
+    if bom_status:
+        what = "waits for approval" if bom_status == "pending" else "not in the BOM yet"
+        svg = (f'<g class="pend"><title>{esc(ref)}: {what}</title>{svg}'
+               f'<text x="0" y="-2" font-size="9" fill="#b7791f" font-style="italic">'
+               f'{"pending approval" if bom_status == "pending" else "not in BOM"}</text></g>')
     if (bom_line or {}).get("dnp") or p.get("dnp"):
         svg = f'<g class="dnp">{svg}</g>'
     return svg, w, h
@@ -216,9 +232,10 @@ def render_part(p, line, bom_line):
 
 # ---------------------------------------------------------------- layout
 
-def layout_section(sec, parts, notes, bom_by_ref):
+def layout_section(sec, parts, notes, bom_by_ref, status=None):
     """Flow a section's parts: ICs first (one per row), then the small parts in rows."""
-    rendered = [(p, *render_part(p, None, bom_by_ref.get(p["ref"]))) for p in parts]
+    status = status or {}
+    rendered = [(p, *render_part(p, None, bom_by_ref.get(p["ref"]), status.get(p["ref"]))) for p in parts]
     ics = [r for r in rendered if r[0].get("kind") in ("ic", "conn", "q") or (not r[0].get("kind") and len(r[0]["pins"]) > 2)]
     small = [r for r in rendered if r not in ics]
     inner = max([r[2] for r in ics] + [440])
@@ -249,17 +266,24 @@ def layout_section(sec, parts, notes, bom_by_ref):
     return box + body + note_svg, w_total, h_total
 
 
-def render_sheet(sheet, bom_lines):
+def render_sheet(sheet, bom_lines, pending_refs=None):
+    """pending_refs: refs a pending proposal covers. Given, a part not in bom_lines is 'pending' or 'missing' by the
+    current BOM; left out, the part's own bom_status mark (set when the sheet was written) is used."""
     bom_by_ref = {r: l for l in bom_lines for r in l.get("refs", [])}
+    if pending_refs is None:
+        status = {p["ref"]: p["bom_status"] for p in sheet.get("parts", []) if p.get("bom_status")}
+    else:
+        status = {p["ref"]: store.bom_status_of(p["ref"], bom_by_ref, pending_refs) for p in sheet.get("parts", [])}
     secs = sheet.get("sections") or [{"id": "", "title": ""}]
+    ids = {s["id"] for s in secs}
     blocks = []
-    for sec in secs:
-        parts = [p for p in sheet.get("parts", []) if (p.get("section") or secs[0]["id"]) == sec["id"]]
+    for sec in secs:       # a part in an undefined section is drawn in the first one
+        parts = [p for p in sheet.get("parts", []) if ((p.get("section") if p.get("section") in ids else None) or secs[0]["id"]) == sec["id"]]
         # a note may be a plain string: it belongs to the first section
         notes = [n if isinstance(n, dict) else {"section": secs[0]["id"], "text": str(n)} for n in sheet.get("notes", [])]
         notes = [n for n in notes if n.get("section", secs[0]["id"]) == sec["id"]]
         if parts or notes:
-            blocks.append(layout_section(sec, parts, notes, bom_by_ref))
+            blocks.append(layout_section(sec, parts, notes, bom_by_ref, status))
     ncols = 1 if len(blocks) <= 1 else 2 if len(blocks) <= 4 else 3
     cols = [[] for _ in range(ncols)]
     heights = [0] * ncols
@@ -301,7 +325,7 @@ def render(project, sheet_id, write=True):
         except Exception:
             pass
         raise SystemExit(f"no sheet {sheet_id!r} in {project}")
-    svg = render_sheet(sheet, store.bom(project, write=False))
+    svg = render_sheet(sheet, store.bom(project, write=False), store.pending_bom_refs(project))
     if write:
         out = store.pdir(project) / "artifacts" / f"sheet-{sheet['id']}.svg"
         out.parent.mkdir(parents=True, exist_ok=True)

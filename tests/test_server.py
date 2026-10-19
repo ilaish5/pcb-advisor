@@ -155,13 +155,17 @@ def test_the_agent_cannot_mark_a_part_verified_or_accepted(home, lte):
     assert prop["library"] == {"symbol": True}
 
 
-def test_a_netlist_with_a_bad_pin_or_unknown_ref_is_refused(home, lte):
+def test_a_netlist_with_a_part_without_pins_is_refused_and_gaps_only_warn(home, lte):
     import serve
+    applied, _, refused = serve.apply_actions(lte, [{"type": "netlist.write", "sheet": "05", "data": {
+        "parts": [{"ref": "U99", "pins": []}]}}])
+    assert not applied and "05" not in store.sheet_ids(lte)
+    assert "U99" in refused[0] and "no pins" in refused[0]
     applied, _, refused = serve.apply_actions(lte, [{"type": "netlist.write", "sheet": "05", "data": {
         "parts": [{"ref": "U99", "pins": [{"name": "A", "num": "1", "net": "N"}]},
                   {"ref": "U5", "pins": [{"name": "B", "num": "2", "net": ""}]}]}}])
-    assert not applied and "05" not in store.sheet_ids(lte)
-    assert "U99" in refused[0] and "no net" in refused[0]
+    assert not refused and "05" in store.sheet_ids(lte)
+    assert "U99: not in the BOM yet" in applied[0] and "U5.B: open pin" in applied[0]
 
 
 def test_confirming_the_idea_needs_a_quote_from_the_student(home, empty):

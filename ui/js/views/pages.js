@@ -10,6 +10,7 @@ const PG_LANGS = [['auto', 'Auto'], ['en', 'English'], ['he', '&#1506;&#1489;&#1
 const PG_RESTORE = 'python scripts/sources.py restore';
 const PG_COURSE_LIB = 'course/ad20-essentials/m29-integrated-library.en.md';   // a general source: its name is its path under shared/reference
 
+let srcUnmatched = [];                       // uploaded documents no part claimed yet: asked about in Sources
 let srcFilter = 'all', srcBusy = '';        // Sources: which scope is shown, and what is being added right now
 let libBusy = false;
 let ALTIUM_ERR = null, altiumLoading = false, pgSkillsScrolled = false;
@@ -135,12 +136,38 @@ function sourcesHTML(container) {
   else if (!shown.length) body = `<p class="muted">${srcFilter === 'shared' ? 'No shared documents.' : 'This project has no documents of its own yet.'}</p>`;
   else body = `<div class="tbl-wrap"><table class="tbl dense rows src-tbl${cols.type || cols.used ? '' : ' slim'}"><thead><tr><th>Name</th>${cols.type ? '<th>Type</th>' : ''}<th class="num">Size</th>${cols.used ? '<th>Used for</th>' : ''}</tr></thead>
     <tbody>${shown.map(s => srcRow(s, srcFilter === 'all', cols)).join('')}</tbody></table></div>`;
-  return `${viewHeader({title: 'Sources', meta, actions, primary})}<div class="vb">${note}${srcBusy ? loadingLine(srcBusy) : ''}${body}</div>`;
+  return `${viewHeader({title: 'Sources', meta, actions, primary})}<div class="vb">${note}${srcAskHTML()}${srcBusy ? loadingLine(srcBusy) : ''}${body}</div>`;
 }
-// a document the server just added shows where it landed: the new row is scrolled to and flashes once
+// a document no part claimed: which part is it for? ICs first, the passives need no datasheet
+function srcAskHTML() {
+  const names = srcUnmatched.filter(n => srcByName(n));
+  if (!names.length) return '';
+  const lines = (S.bom || []).filter(l => (l.refs || []).length && !l.datasheet);
+  const isIc = l => !/^(R|C|L|D|LED|FB|Y|X|XTAL|J|P|H|TP|SW|F|FID|MH)\d/i.test(l.refs[0]);
+  lines.sort((a, b) => isIc(b) - isIc(a));
+  const opts = `<option value="">Which part is this for?</option>` + lines.map(l => `<option value="${esc(l.key)}">${esc(refsLabel(l.refs))} ${esc(l.mpn || l.value || '')}</option>`).join('');
+  return names.map(n => `<div class="note"><span><span class="m">${esc(n)}</span> is not linked to a part yet.</span><span class="acts"><select class="in quiet" data-attach-doc="${esc(n)}" aria-label="Part for ${esc(n)}">${opts}</select></span></div>`).join('');
+}
+onChange(t => t.dataset && t.dataset.attachDoc !== undefined, async e => {
+  if (!e.target.value) return;
+  const r = await api('/api/parts/attach_datasheet', {line: e.target.value, name: e.target.dataset.attachDoc});
+  srcUnmatched = srcUnmatched.filter(n => n !== e.target.dataset.attachDoc);
+  setState(r); render(true);
+  toast(attachMsg(r.attached));
+});
+function attachMsg(a) {
+  return `${a.name} -> ${refsLabel(a.refs)}, ` + (a.status === 'verified' ? 'pins verified' : a.status === 'mismatch' ? 'pins conflict: ' + a.issues : 'nothing to check yet');
+}
+// a document the server just added shows where it landed: the new row is scrolled to and flashes once;
+// what the matcher did with it is said in a toast, and a file nobody claimed gets a question
 async function srcAdded(st) {
   const had = new Set((S.sources || []).map(s => s.name));
   const fresh = (st.sources || []).find(s => !had.has(s.name));
+  if (st.matched || st.unmatched) {
+    srcUnmatched = st.unmatched || [];
+    const m = st.matched || [];
+    if (m.length) setTimeout(() => toast(m.map(x => `${x.name} -> ${x.ref}, ` + (x.status === 'verified' ? 'pins verified' : x.status === 'mismatch' ? 'pins conflict: ' + x.issues : 'linked')).join('; ')), 50);
+  }
   setState(st);
   if (fresh) hitSrc = fresh.name;
   srcBusy = '';

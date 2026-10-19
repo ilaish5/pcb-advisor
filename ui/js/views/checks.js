@@ -127,12 +127,15 @@ function dfmHeader(reports) {
   if (!reports) return viewHeader({title: 'DFM'});
   const t = dfmTotals();
   const unv = dfmUnverified().length;
-  const ready = t.known && t.n > 0 && !t.open && !t.real && !unv;     // reports alone do not make a board ready: every finding is judged
+  const gaps = dfmGaps();
+  const ready = t.known && t.n > 0 && !t.open && !t.real && !unv && !gaps.open_pins.length && !gaps.parts.length;     // reports alone do not make a board ready: every finding is judged
   const meta = metaLine([
     {n: t.n, label: t.n === 1 ? 'finding' : 'findings'},
     {n: t.open, label: 'to review', tone: 'warn', title: 'Findings nobody has judged yet'},
     {n: t.real, label: t.real === 1 ? 'real issue' : 'real issues', tone: 'bad', title: 'Findings that need a change on the board'},
     {n: unv, label: 'unverified', tone: 'warn', title: 'Parts whose pins came from the agent, not a datasheet'},
+    {n: gaps.open_pins.length, label: gaps.open_pins.length === 1 ? 'open pin' : 'open pins', tone: 'warn', title: 'Pins on the schematic with no net yet'},
+    {n: gaps.parts.length, label: 'not in BOM', tone: 'warn', title: 'Schematic parts missing from the BOM or waiting for approval'},
     ready && {always: true, label: 'Ready to order', tone: 'ok', title: 'Every finding is judged and none is a real issue'},
     t.known && !t.n && {always: true, label: 'No findings listed yet', title: 'Add the findings of the report, or ask the agent to list them'},
   ]);
@@ -146,13 +149,37 @@ function dfmUnverified() {
 function dfmUnverifiedHTML() {
   const rows = dfmUnverified();
   if (!rows.length) return '';
+  const docs = (S.sources || []).filter(s => s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
   const item = l => `<li class="unv-row"><span class="m">${esc(refsLabel(l.refs))}</span> ${esc(l.mpn || l.value || '')}
-    <span class="unv-why">${l.pins_status === 'mismatch' ? 'Pins conflict with the datasheet: ' + esc(l.pins_issues || '') : 'Pins from the agent; add the datasheet to verify'}</span>
-    ${btn('Accept as is', {kind: 'line', size: 'sm', act: 'accept-pins', line: l.key, title: 'You checked these pins yourself'})}</li>`;
+    <span class="unv-why" title="${esc(l.pins_issues || '')}">${l.pins_status === 'mismatch' ? 'Pins conflict with ' + esc(l.datasheet || 'the datasheet') + ': ' + esc(l.pins_issues || '') : 'Pins from the agent; add the datasheet to verify'}</span>
+    ${btn('Accept as is', {kind: 'line', size: 'sm', act: 'accept-pins', line: l.key, title: 'You checked these pins yourself'})}
+    ${docs.length ? `<select class="in quiet" data-pick-ds="${esc(l.key)}" aria-label="Pick a datasheet for ${esc(refsLabel(l.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}"${d === l.datasheet ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
   return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>
     <p class="muted">Drop each datasheet in Sources and re-check, or accept the pins as is.</p>
     <ul>${rows.map(item).join('')}</ul>${btn('Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins'})}</section>`;
 }
+// A partial schematic is welcome while designing; before ordering, every pin has a net and every part is in the BOM.
+function dfmGaps() {
+  const g = S.sheet_gaps || {};
+  return {open_pins: g.open_pins || [], parts: g.parts || []};
+}
+function dfmGapsHTML() {
+  const g = dfmGaps();
+  if (!g.open_pins.length && !g.parts.length) return '';
+  const row = (ref, what, why) => `<li class="unv-row"><span class="m">${esc(ref)}</span> ${esc(what)} <span class="unv-why">${esc(why)}</span></li>`;
+  const items = g.parts.map(p => row(p.ref, `sheet ${p.sheet}`, p.status === 'pending' ? 'Waits for your approval in the BOM' : 'Not in the BOM yet'))
+    .concat(Object.values(g.open_pins.reduce((by, p) => {      // one row per part, not one per pin
+      const k = p.sheet + ' ' + p.ref; (by[k] = by[k] || {ref: p.ref, sheet: p.sheet, pins: []}).pins.push(p.pin); return by; }, {}))
+      .map(p => row(p.ref, `sheet ${p.sheet}`, `Open pin${p.pins.length > 1 ? 's' : ''}: ${p.pins.join(', ')}`)));
+  return `<section class="dfm-unv"><h3>Unfinished schematic <span class="muted">(${items.length}) to resolve before ordering</span></h3>
+    <p class="muted">Give each open pin a net (or NC), and approve or add each part in the BOM.</p><ul>${items.join('')}</ul></section>`;
+}
+onChange(t => t.dataset && t.dataset.pickDs !== undefined, async e => {
+  if (!e.target.value) return;
+  const r = await api('/api/parts/attach_datasheet', {line: e.target.dataset.pickDs, name: e.target.value});
+  setState(r); render(true);
+  toast(attachMsg(r.attached));
+});
 onAct('accept-pins', async (el, d) => { await api('/api/pins/accept', {line: d.line}); await refresh(true); });
 onAct('recheck-pins', async () => { await api('/api/final/unverified'); await refresh(true); });
 function dfmUpload(trigger) {
@@ -346,7 +373,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -365,7 +392,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

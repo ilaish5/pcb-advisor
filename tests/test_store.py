@@ -98,12 +98,12 @@ def test_a_netlist_is_checked_against_the_bom(lte):
         {"ref": "C34", "section": "A", "pins": [{"name": "1", "num": "1", "net": ""}]}]}
     errors = store.validate_sheet(sheet, refs)
     assert any("U99" in e and "not in the BOM" in e for e in errors)
-    assert any("C34" in e and "no net" in e for e in errors)
+    assert any("C34" in e and "open pin" in e for e in errors)
     assert not any("U5" in e for e in errors)
 
 
 def test_write_sheet_refuses_a_bad_sheet_and_writes_a_good_one(lte):
-    bad = store.write_sheet(lte, "09", {"parts": [{"ref": "U5", "pins": [{"name": "A", "num": "1", "net": ""}]}]})
+    bad = store.write_sheet(lte, "09", {"parts": [{"ref": "U5", "pins": []}]})
     assert not bad["ok"] and "09" not in store.sheet_ids(lte)
     good = store.write_sheet(lte, "09", {"title": "t", "parts": [
         {"ref": "U5", "pins": [{"name": "A", "num": "1", "net": "NC"}]}]})

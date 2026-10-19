@@ -63,6 +63,10 @@
 .sch .note{fill:var(--ink-3);font-size:9px;font-style:italic}
 .sch .wn{fill:var(--bad);font-size:9px;font-style:italic}
 .sch .jn{fill:var(--sch-wire)}
+.sch .openc{fill:none;stroke:var(--bad);stroke-width:1.5}
+.sch .openq{fill:var(--bad);font-size:10px;font-weight:700}
+.sch .pend{opacity:.55}
+.sch .pend .w,.sch .pend .body,.sch .pend .pin{stroke-dasharray:3 3}
 .sch .dnp{opacity:.5}
 .sch .dnp .w{stroke-dasharray:3 3}
 .sch .tpc{fill:none;stroke:var(--sch-wire);stroke-width:1.8}

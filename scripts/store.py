@@ -2002,15 +2002,19 @@ def load_sheet(project, sheet):
         return {}
 
 
-def validate_sheet(sheet, bom_refs):
-    """Problems with one sheet (list of strings; empty = fine). Every ref must be
-    in the BOM, and every pin needs a net or an explicit NC."""
-    errors = []
+def check_sheet(sheet, bom_refs, pending_refs=()):
+    """(errors, warnings) for one sheet. Never block, verify later: only a sheet that cannot be drawn at all is an
+    error (not a dict, no parts list, a part without ref or pins, a duplicate ref). A ref not in the BOM yet, a pin
+    without a net and an undefined section are warnings: the sheet is still written and shows the gap."""
+    errors, warnings = [], []
     if not isinstance(sheet, dict) or not isinstance(sheet.get("parts"), list):
-        return ["a sheet needs a 'parts' list"]
-    sections = {s.get("id") for s in sheet.get("sections", [])}
+        return ["a sheet needs a 'parts' list"], warnings
+    sections = {s.get("id") for s in sheet.get("sections", []) if isinstance(s, dict)}
     seen = set()
     for part in sheet["parts"]:
+        if not isinstance(part, dict):
+            errors.append("a part is not an object")
+            continue
         ref = part.get("ref")
         if not ref:
             errors.append("a part has no ref")
@@ -2018,33 +2022,93 @@ def validate_sheet(sheet, bom_refs):
         if ref in seen:
             errors.append(f"{ref}: appears twice")
         seen.add(ref)
-        if ref not in bom_refs:
-            errors.append(f"{ref}: not in the BOM")
-        if sections and part.get("section") not in sections:
-            errors.append(f"{ref}: section {part.get('section')!r} is not defined")
         pins = part.get("pins")
-        if not pins:
+        if not isinstance(pins, list) or not pins:
             errors.append(f"{ref}: no pins")
-        for pin in pins or []:
+            pins = []
+        elif not all(isinstance(pin, dict) for pin in pins):
+            errors.append(f"{ref}: a pin is not an object")
+            pins = []
+        if ref not in bom_refs:
+            warnings.append(f"{ref}: waits for approval" if ref in pending_refs else f"{ref}: not in the BOM yet")
+        if sections and part.get("section") not in sections:
+            warnings.append(f"{ref}: section {part.get('section')!r} is not defined (drawn in the first section)")
+        for pin in pins:
             if not (pin.get("net") or "").strip():
-                errors.append(f"{ref}.{pin.get('name') or pin.get('num')}: no net (write NC if unconnected)")
-    return errors
+                warnings.append(f"{ref}.{pin.get('name') or pin.get('num')}: open pin (no net yet)")
+    return errors, warnings
+
+
+def validate_sheet(sheet, bom_refs):
+    """Every problem with one sheet, errors first then warnings (list of strings; empty = fine)."""
+    errors, warnings = check_sheet(sheet, bom_refs)
+    return errors + warnings
+
+
+def pending_bom_refs(project):
+    """Refs a pending BOM proposal would add: those parts may be drawn before the student approves."""
+    refs = set()
+    for p in proposals(project):
+        if p.get("kind") == "bom" and p.get("status") == "pending":
+            ch = p.get("changes") or {}
+            refs.update(ch.get("refs") or ([p["line"]] if re.fullmatch(r"[A-Za-z]+\d+", p.get("line") or "") else []))
+    return refs
+
+
+def bom_status_of(ref, bom_refs, pending_refs):
+    """'' (in the BOM), 'pending' (a proposal waits for the student) or 'missing'. Always computed from the current
+    BOM and proposals, so approving or rejecting a proposal changes it with nothing to refresh."""
+    return "" if ref in bom_refs else "pending" if ref in pending_refs else "missing"
+
+
+def mark_bom_status(project, parts):
+    bom_refs = {r for l in bom_lines(project) for r in l.get("refs") or []}
+    pending = pending_bom_refs(project)
+    out = []
+    for part in parts:
+        part = dict(part)
+        st = bom_status_of(part.get("ref"), bom_refs, pending)
+        if st:
+            part["bom_status"] = st
+        else:
+            part.pop("bom_status", None)
+        out.append(part)
+    return out
+
+
+def sheet_gaps(project):
+    """What a partial sheet still lacks: open pins and parts not in the BOM (or waiting for approval)."""
+    open_pins, parts = [], []
+    for sh in sheet_ids(project):
+        marked = mark_bom_status(project, load_sheet(project, sh).get("parts", []))
+        for part in marked:
+            if part.get("bom_status"):
+                parts.append({"sheet": sh, "ref": part["ref"], "status": part["bom_status"]})
+            for pin in part.get("pins", []):
+                if not (pin.get("net") or "").strip():
+                    open_pins.append({"sheet": sh, "ref": part["ref"], "pin": pin.get("name") or pin.get("num") or ""})
+    return {"open_pins": open_pins, "parts": parts}
 
 
 def write_sheet(project, sheet_id, sheet):
-    """Validate against the BOM, then write. Refuses a sheet with problems."""
+    """Write a sheet, partial or not. Refuses only a sheet that cannot be drawn; the rest comes back as warnings."""
     refs = set()
     for l in bom_lines(project):
         refs.update(l.get("refs") or [])
-    errors = validate_sheet(sheet, refs)
+    errors, warnings = check_sheet(sheet, refs, pending_bom_refs(project))
     if errors:
         return {"ok": False, "errors": errors}
     sheet = {**sheet, "id": workspace.safe_name(sheet_id)}
-    sheet["parts"] = _mark_pins_source(project, sheet["parts"])
+    parts = []
+    for part in sheet["parts"]:
+        part = dict(part)
+        part["pins"] = [{**pin, "net": (pin.get("net") or "").strip()} for pin in part["pins"]]
+        parts.append(part)
+    sheet["parts"] = mark_bom_status(project, _mark_pins_source(project, parts))
     d = netlist_dir(project)
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{sheet['id']}.json").write_text(json.dumps(sheet, ensure_ascii=False, indent=2), encoding="utf-8")
-    return {"ok": True, "sheet": sheet["id"]}
+    return {"ok": True, "sheet": sheet["id"], "warnings": warnings}
 
 
 # ---------------------------------------------------------------- unverified pins
@@ -2112,6 +2176,8 @@ def refresh_pins_source(project):
 def unverified_parts(project, verify_new=True):
     """Every BOM line on a sheet whose pins are not verified or accepted. With verify_new, a datasheet that has
     appeared since is used first (verify_part), which clears the mark or raises the conflicting pins."""
+    if verify_new:
+        auto_attach(project)           # a document that arrived by hand is matched to its part first
     lines = [l for l in bom(project, write=False) if l.get("on_sheet") and l.get("pins_status") in ("unverified", "mismatch")]
     if verify_new:
         import sources
@@ -2132,6 +2198,67 @@ def accept_pins(project, key):
     """The student accepts the agent's pins as is."""
     add_library(project, key, {"pins_accepted": True}, by="student")
     refresh_pins_source(project)
+
+
+# ---------------------------------------------------------------- datasheet link
+# A BOM line's `datasheet` names a document of the project's sources/ (or the shared library). Set by the student
+# in the UI, by the agent (part.attach_datasheet) or by the matcher when a file arrives; each link is verified at once.
+
+def _line_of(project, line_or_ref):
+    for l in bom_lines(project):
+        if l["key"] == line_or_ref or line_or_ref in (l.get("refs") or []):
+            return l
+    raise KeyError(f"no BOM line or part {line_or_ref!r}")
+
+
+def _verify_line(project, key):
+    import verify_part
+    r = verify_part.verify(project, key)
+    return {"status": {"pass": "verified"}.get(r["verify"], r["verify"]), "issues": r.get("issues", "")}
+
+
+def attach_datasheet(project, line_or_ref, doc_name, by="student"):
+    """Link a document to a BOM line (a line key or a designator) and verify the part's pins against it.
+    Returns {ok, line, refs, name, status: verified|mismatch|unchecked, issues}."""
+    import sources
+    line = _line_of(project, line_or_ref)
+    sources.adopt(project)
+    name = pathlib.Path(doc_name or "").name
+    if not name or not ((sources.folder_of(project) / name).is_file() or (sources.cache() / name).is_file()):
+        raise ValueError(f"no document {doc_name!r} in this project's sources or the shared library")
+    if line.get("datasheet") != name:
+        append(project, "bom-log.jsonl", {"ts": now(), "by": by, "line": line["key"], "changes": {"datasheet": name},
+                                          "before": {"datasheet": line.get("datasheet")}})
+    return {"ok": True, "line": line["key"], "refs": line.get("refs", []), "name": name, **_verify_line(project, line["key"])}
+
+
+def detach_datasheet(project, line_or_ref, by="student"):
+    """Take the link away: the part goes back to unverified until a datasheet is linked again."""
+    line = _line_of(project, line_or_ref)
+    if line.get("datasheet"):
+        append(project, "bom-log.jsonl", {"ts": now(), "by": by, "line": line["key"], "changes": {"datasheet": ""},
+                                          "before": {"datasheet": line.get("datasheet")}})
+    add_library(project, line["key"], {"verify": "unchecked", "issues": "datasheet detached", "verified_at": now()}, by=by)
+    refresh_pins_source(project)
+    return {"ok": True, "line": line["key"], "refs": line.get("refs", [])}
+
+
+def auto_attach(project):
+    """Match the project's documents to the ICs that have no datasheet yet, link the unambiguous ones and verify
+    them. Returns {matched: [{name, line, ref, how, status, issues}], unmatched: [names nobody claims]}."""
+    import sources
+    sources.adopt(project)
+    todo = [(l["key"], l.get("mpn")) for l in bom_lines(project)
+            if not l.get("datasheet") and l.get("mpn") not in (None, "", "—", "-")
+            and l.get("refs") and not all(is_simple_ref(r) for r in l["refs"])]
+    found, free = sources.match_documents(project, todo)
+    matched = []
+    for key, m in found.items():
+        r = attach_datasheet(project, key, m["name"], by="auto")
+        matched.append({"name": m["name"], "line": key, "ref": (r["refs"] or [key])[0], "how": m["how"],
+                        "status": r["status"], "issues": r["issues"]})
+    linked = {l.get("datasheet") for l in bom_lines(project)}
+    return {"matched": matched, "unmatched": [n for n in free if n not in linked]}
 
 
 def nets_of(project, ref):

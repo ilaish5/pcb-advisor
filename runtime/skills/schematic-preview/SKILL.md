@@ -21,6 +21,9 @@ The picture is a teaching aid: it shows WHAT to place and HOW to lay it out. The
    that MPN and package and keep going: the part is saved as `pins_source: "agent"` (unverified). Do not stop and do not ask for the
    file first; at the end say once "N parts unverified - drop their datasheets in Sources when you have them". If you truly do not
    know the pinout of a part, leave that part out and say so; do not invent pins.
+   Never wait for a complete sheet: write it early and partial. Draw what is known, leave undecided pins with net "" (shown as an
+   open pin) and include parts whose BOM proposals are still pending (shown "pending approval"). The write returns warnings
+   (open pins, parts not in the BOM yet); tell the student in one line, e.g. "sheet written, 3 open pins, U5 waits for approval".
 2. Split into blocks, one framed box each: power in, regulators, MCU core, clock and reset, programming/debug, USB,
    sensors, connectors/UI. Keep a block to about 45 parts or fewer; above that, make a second sheet.
 3. Fix the net names before drawing: one short name per net, rails with a sign (`+3V3`, `+5V`), ground `GND`. Same name = same wire.
@@ -57,7 +60,7 @@ The picture is a teaching aid: it shows WHAT to place and HOW to lay it out. The
 - Net names are global in a flat project but local to a sheet in a hierarchy. Say which one the student uses, or the same label on
   two sheets will silently join (or fail to join).
 - Overlapping text is the usual defect (long pin names, neighbour labels). Shorten the label or widen the column; look at the image.
-- Open pins: show them with a No-ERC cross, not blank. Blank pins become "unconnected pin" ERC warnings later.
+- Open pins: net "" while undecided (red ?); `NC` once decided to leave them open (No-ERC cross). Blank pins become "unconnected pin" ERC warnings later.
 - Pin electrical types matter later: passives imported as Input cause "floating input pins" or "no driving source" ERC messages.
   Mention it when the student uses a downloaded library, and send them to `schematic-review`.
 - Grid: a part placed off the 100 mil grid gives "Off grid" warnings; tell the student to keep the snap grid on.

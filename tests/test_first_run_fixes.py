@@ -14,9 +14,10 @@ def test_new_line_named_like_a_designator_gets_its_ref(empty):
     assert prop["changes"]["refs"] == ["U1"]
 
 
-def test_sheet_refuses_a_part_that_is_not_in_the_bom(empty):
+def test_sheet_writes_a_part_that_is_not_in_the_bom_with_a_warning(empty):
     sheet = {"parts": [{"ref": "R9", "pins": [{"name": "1", "net": "A"}]}]}
-    assert "R9: not in the BOM" in store.write_sheet(empty, "01", sheet)["errors"]
+    res = store.write_sheet(empty, "01", sheet)
+    assert res["ok"] and "R9: not in the BOM yet" in res["warnings"]
 
 
 def test_diagram_domain_singular_is_accepted():

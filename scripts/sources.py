@@ -315,6 +315,68 @@ def find_for(project, mpn):
     return None
 
 
+def _key(s):
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _family_hit(token, key):
+    """One of two alphanumeric strings is the other with an ordering suffix cut off (NE555 / NE555DR,
+    CD4017B / CD4017BM96). At least 4 characters, one digit, and the cut must not fall inside a run of
+    digits (NE55 is not NE555)."""
+    if token == key:
+        return len(token) >= 4
+    short, long_ = sorted((token, key), key=len)
+    if len(short) < 4 or not any(c.isdigit() for c in short) or not long_.startswith(short):
+        return False
+    return not (short[-1].isdigit() and long_[len(short)].isdigit())
+
+
+def _tokens(text):
+    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def match_documents(project, lines):
+    """Which project document belongs to which BOM line. `lines` are (line key, MPN) pairs still without a
+    datasheet. Returns ({line key: {"name", "how"}}, [names no line claims]). `how` is 'name' (the full MPN is in the
+    file name), 'family' (the MPN without its ordering suffix is) or 'text' (it is in the first pages).
+    A file that fits two lines, or a line that fits two files at the same level, is left alone."""
+    adopt(project)
+    folder = folder_of(project)
+    docs = [f.name for f in sorted(folder.glob("*")) if f.suffix.lower() == ".pdf" and f.is_file()]
+    lines = [(k, _key(m)) for k, m in lines if len(_key(m)) >= 4]
+    found = {}          # file -> {level: set of line keys}
+    for name in docs:
+        stem_key, toks = _key(name), _tokens(pathlib.Path(name).stem)
+        by_name = {k for k, m in lines if m in stem_key}
+        by_family = {k for k, m in lines if any(_family_hit(t, m) for t in toks)}
+        if by_name or by_family:
+            found[name] = {"name" if by_name else "family": by_name | by_family}
+    for name in docs:
+        if name in found or not lines:
+            continue
+        try:
+            head = text_of(name, folder)[:6000]
+        except Exception:
+            continue
+        head_key, toks = _key(head), _tokens(head)
+        hit = {k for k, m in lines if m in head_key or any(_family_hit(t, m) for t in toks)}
+        if hit:
+            found[name] = {"text": hit}
+    claimed = {}        # line key -> [(level rank, file)]
+    for name, by_level in found.items():
+        level, keys = next(iter(by_level.items()))
+        if len(keys) == 1:
+            claimed.setdefault(next(iter(keys)), []).append((("name", "family", "text").index(level), name, level))
+    out = {}
+    for key, cands in claimed.items():
+        cands.sort()
+        best = [c for c in cands if c[0] == cands[0][0]]
+        if len(best) == 1 or cands[0][2] == "name":
+            out[key] = {"name": best[0][1], "how": best[0][2]}
+    used = {v["name"] for v in out.values()}
+    return out, [n for n in docs if n not in used]
+
+
 def unuse(project, name):
     """Take a document out of ONE project. The shared library is left alone: it is
     general material every project sees, and its .json is the tracked record of

@@ -231,6 +231,7 @@ def build(project=None, session=None):
         "history": store.history(project),
         "autonomy": store.autonomy(),
         "sheets": sheets(project),
+        "sheet_gaps": store.sheet_gaps(project),
         "library": store.library_view(project),
         "sources": list_sources(project),
         "checks": checks_list,
