@@ -633,8 +633,11 @@ def render_project_pcb(project: str, plan_file: str = None, layer: str = "all") 
                 pass
 
     if not pcb_file or not pathlib.Path(pcb_file).is_file():
+        prj_file = link.get("project_file")
+        # the UI tells "not linked" from "linked, no PcbDoc" by this attribute
+        prj_attr = f' data-linked-project="{html.escape(pathlib.Path(prj_file).name)}"' if prj_file else ""
         return (
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 200">'
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 200"{prj_attr}>'
             '<rect width="100%" height="100%" style="fill:var(--pcb-bg,#121820)"/>'
             '<text x="250" y="100" text-anchor="middle" font-family="sans-serif" font-size="14" '
             'style="fill:var(--ink-3,#94a0bd)">'

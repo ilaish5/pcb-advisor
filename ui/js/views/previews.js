@@ -361,7 +361,7 @@ function afterSheet() {
 }
 
 /* ---------- layout (PCB) ---------- */
-const pcbKey = () => PROJECT + '|' + (ALTIUM_DATA?.linked?.pcb_file || '');
+const pcbKey = () => PROJECT + '|' + (ALTIUM_DATA?.linked?.project_file || '') + '|' + (ALTIUM_DATA?.linked?.pcb_file || '');
 const pvNoPcb = text => typeof text === 'string' && (text.includes('Settings to view PCB') || text.includes('No Altium .PcbDoc linked'));
 // The picture, once per project. The inspector asks for it too (the pads tell which parts touch a net).
 function pcbText() {
@@ -380,6 +380,11 @@ function pcbText() {
 function formatPcbPreview(raw) {
   if (!raw) return `<div class="pv-note">${loadingLine('Drawing the layout')}</div>`;
   if (pvNoPcb(raw)) {
+    const linked = raw.match(/data-linked-project="([^"]*)"/);
+    if (linked) {                    // linked, but the project has no PcbDoc yet: say that, not "not linked"
+      const name = linked[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;/g, "'");
+      return `<div class="pcb-empty-state">${emptyState('No PCB file in the project yet', `${name} is linked but has no .PcbDoc. In Altium: File > New > PCB, save it in the project, then come back here.`, '')}</div>`;
+    }
     return `<div class="pcb-empty-state">${emptyState('No PCB linked', 'Link an Altium project that has a PcbDoc to see the layout here.', btn('Link a project', {kind: 'pri', act: 'pv-link'}))}</div>`;
   }
   return raw;
