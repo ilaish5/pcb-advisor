@@ -8,6 +8,7 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py list                 what is in the workspace
     python3 pcb.py show [project]       where the design stands
     python3 pcb.py seed                 the worked example: projects/lte-tracker
+    python3 pcb.py doctor [--json]      is this computer ready (ok / fix + the one command); exit 1 if not
     python3 pcb.py engines              which LLM engines are wired up
     python3 pcb.py tools [--clear]      what the engine may touch on your machine
     python3 pcb.py probe [--engine X]   prove the engine loads the runtime pack (claude_code|antigravity|all)
@@ -308,6 +309,11 @@ def cmd_update(args):
     return update.main(args)
 
 
+def cmd_doctor(args):
+    import doctor
+    return doctor.main(args)
+
+
 def cmd_version(args):
     import update
     return update.main(["version"])
@@ -321,6 +327,7 @@ COMMANDS = {
     "skills": cmd_skills, "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
     "rules": cmd_rules, "calc": cmd_calc, "library": cmd_library,
     "outputs": cmd_outputs, "usage": cmd_usage, "update": cmd_update, "version": cmd_version,
+    "doctor": cmd_doctor,
 }
 
 

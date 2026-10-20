@@ -37,7 +37,7 @@ RULES_FILE = RULES_DIR / "AGENTS.md"
 
 
 def rules():
-    return RULES_FILE.read_text(encoding="utf-8").strip()
+    return runtime_pack.render("AGENTS.md", RULES_FILE.read_bytes()).decode("utf-8").strip()
 
 
 def _compact_diagram(diag):
@@ -110,6 +110,10 @@ def _summary(model):
         sup = l.get("supply")
         row["stock"] = ("not checked" if sup is None else
                         {k: v.get("stock") for k, v in sup.items()})
+        # a check runs in the background after every BOM change: run the script yourself only when this says
+        # missing, or stale (older than 24 h); "checking" means wait, do not start another
+        import background
+        row["stock_check"] = background.stock_state(model.get("project") or "", l["key"], sup)
         bom.append(row)
     diag_summary = _compact_diagram(model.get("diagram") or (model.get("idea") or {}).get("diagram"))
     idea_summary = {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "goal_status", "agreed", "confirmed")}
@@ -225,7 +229,7 @@ def compact(model, project, sess, backend=None):
         t0 = time.monotonic()
         res = gateway.route(gateway.Request(
             prompt=prompt,
-            timeout=int(workspace.get("agent.timeout_seconds", 180)),
+            timeout=int(workspace.get("agent.timeout_seconds", 900)),
         ), name=name)
         introspect.record(project, sess, "memory", {"provider": res.provider or name, "model": res.model,
                                                     "usage": getattr(res, "meta", None) or {}, "error": res.error}, time.monotonic() - t0)
@@ -295,7 +299,7 @@ def _add_dirs(project):
     return out
 
 
-def respond(model, message, history, backend=None, timeout=None):
+def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None):
     """(state, message) -> {reply, actions}. `backend` names an engine; None
     means whatever `agent.provider` is set to."""
     name = gateway.resolve(backend)
@@ -324,23 +328,37 @@ def respond(model, message, history, backend=None, timeout=None):
     parts.append("--- STUDENT SAYS ---\n" + message + "\n")
     prompt = "\n\n".join(parts)
 
+    # The engine lives in its own folder, where only the instructions and skills are (sync() above).
+    # The repo, the project and the workspace are reachable only through add_dirs.
+    options = {"cwd": str(engine_home), "add_dirs": _add_dirs(model.get("project")),
+               "idle_timeout": int(workspace.get("agent.idle_timeout_seconds", 180))}
+    if on_event:
+        options["on_event"] = on_event
+    if cancel is not None:
+        options["cancel"] = cancel
     t0 = time.monotonic()
     res = gateway.route(gateway.Request(
         prompt=prompt,
         system=parts[0],
         history=[{"role": m.get("role"), "text": m.get("text")} for m in history[-keep:]],
-        timeout=int(timeout or workspace.get("agent.timeout_seconds", 180)),
-        # The engine lives in its own folder, where only the instructions and skills are (sync() above).
-        # The repo, the project and the workspace are reachable only through add_dirs.
-        options={"cwd": str(engine_home), "add_dirs": _add_dirs(model.get("project"))}
+        timeout=int(timeout or workspace.get("agent.timeout_seconds", 900)),
+        options=options,
     ), name=name)
 
-    took = {"seconds": time.monotonic() - t0, "usage": getattr(res, "meta", None) or {}}   # introspect.py keeps these per turn
+    meta = getattr(res, "meta", None) or {}
+    took = {"seconds": time.monotonic() - t0, "usage": meta}   # introspect.py keeps these per turn
+    turn = {k: meta[k] for k in ("steps", "denied", "error_kind", "retry_at") if meta.get(k)}
+    if meta.get("partial"):
+        # stopped or timed out: keep what was written, trust no half-written actions block
+        reply = re.sub(r"```json.*?(```|$)", "", res.text or "", flags=re.S).strip()
+        return {"reply": reply, "actions": [], "tools": [], "partial": True,
+                "backend": res.provider or name, "provider": res.provider or name, "model": res.model,
+                **turn, **took}
     if not res.ok:
         return {"reply": f"[{res.provider or name}] {res.error}", "actions": [],
                 "backend": res.provider or name, "provider": res.provider or name,
-                "error": True, **took}
+                "error": True, **turn, **took}
 
     reply, actions, tools = _parse(res.text)
     return {"reply": reply or "(no reply)", "actions": actions, "tools": tools,
-            "backend": res.provider, "provider": res.provider, "model": res.model, **took}
+            "backend": res.provider, "provider": res.provider, "model": res.model, **turn, **took}

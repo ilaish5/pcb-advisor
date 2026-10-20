@@ -113,19 +113,37 @@ const checkedAt = () => {
 const srcByName = n => (S.sources || []).find(s => s.name === n);
 
 /* ---------- text: citations, refs, lists ---------- */
-function chip(name, where) {
-  const known = srcByName(name);
-  return `<button class="src ${known ? '' : 'broken'}" data-src="${esc(name)}" ${where ? `data-where="${esc(where)}"` : ''} title="${known ? '' : 'Not in Sources'}"><b>${esc(name)}</b>${where ? ' · ' + esc(where) : ''}</button>`;
+// The server checks every quote of an agent reply after the reply is stored (scripts/background.py); the result
+// rides on the record as `cites`: {state: 'checking'} or {state: 'done', items: {'file|locator': {status, reason}}}.
+let fmtCites = null;               // the record fmt() is drawing, so a chip can show its check
+function citeState(name, where) {
+  const c = fmtCites, it = c && c.items && c.items[`${name}|${where || ''}`];
+  if (!it) return c && c.state === 'checking' ? {cls: 'cite-checking', mark: '…', tip: 'Checking the quote in the file'} : null;
+  if (it.status === 'ok') return {cls: 'cite-ok', mark: '✓', tip: it.reason || 'Found in the file'};
+  return {cls: 'cite-bad', mark: '⚠', tip: it.status === 'missing_file' ? (it.reason || 'File not in Sources') : 'Quote not found in file: ' + (it.reason || '')};
 }
+function chip(name, where) {
+  const known = srcByName(name), cs = citeState(name, where);
+  const title = cs ? cs.tip : (known ? '' : 'Not in Sources');
+  const broken = cs ? cs.cls === 'cite-bad' && !known : !known;     // the server read the file: its verdict wins
+  return `<button class="src ${broken ? 'broken' : ''}${cs ? ' ' + cs.cls : ''}" data-src="${esc(name)}" ${where ? `data-where="${esc(where)}"` : ''} title="${esc(title)}"><b>${esc(name)}</b>${where ? ' · ' + esc(where) : ''}` +
+    (cs ? `<span class="cite-m" aria-hidden="true">${cs.mark}</span><span class="sr"> (${esc(cs.tip)})</span>` : '') + '</button>';
+}
+// chip() escapes again, and the check is keyed by the raw text: a quoted locator ("...") must match it.
+const unesc = s => s.replace(/&(amp|lt|gt|quot|#39);/g, (m, e) => ({amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'"}[e]));
 function inline(t) {
   // t is escaped text. Citations and refs become buttons; **bold** and `code` are the only markup.
   return t
-    .replace(/\{\{src:([^|}]+)(?:\|([^}]*))?\}\}/g, (m, n, w) => chip(n.trim().replace(/&amp;/g, '&'), (w || '').trim().replace(/&amp;/g, '&')))
+    .replace(/\{\{src:([^|}]+)(?:\|([^}]*))?\}\}/g, (m, n, w) => chip(unesc(n.trim()), unesc((w || '').trim())))
     .replace(/\{\{ref:([^}]+)\}\}/g, (m, r) => `<button class="ref" data-ref="${r}">${r}</button>`)
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
     .replace(/`([^`]+)`/g, '<span class="m">$1</span>');
 }
-function fmt(text) {
+function fmt(text, cites) {
+  fmtCites = cites || null;
+  try { return fmtLines(text); } finally { fmtCites = null; }
+}
+function fmtLines(text) {
   const out = []; let list = null, rows = null;
   const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
   const flushRows = () => {
@@ -183,7 +201,7 @@ function render(force) {
   document.title = S.title + ' · PCB Advisor';
   renderNav();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
 // go('workspace', 'bom') or go('bom') shows a stage in the main sheet; go('library') a page. See shell.js.

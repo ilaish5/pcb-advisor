@@ -18,6 +18,21 @@ sys.path.insert(0, str(REPO / "scripts" / "skills"))
 
 
 @pytest.fixture(autouse=True)
+def no_network(monkeypatch):
+    """Tests never reach the internet. Background jobs (stock checks after a chat turn or a BOM change) would
+    otherwise ask JLC from any test that forgot to stub them. Loopback stays open for the test servers."""
+    import socket
+    real = socket.socket.connect
+
+    def connect(self, address):
+        host = address[0] if isinstance(address, tuple) else address
+        if isinstance(host, str) and host not in ("127.0.0.1", "::1", "localhost") and not host.startswith("/"):
+            raise OSError(f"test tried to reach the network: {address!r}")
+        return real(self, address)
+    monkeypatch.setattr(socket.socket, "connect", connect)
+
+
+@pytest.fixture(autouse=True)
 def engine_home(tmp_path_factory, monkeypatch):
     """The engine's folder, never the real one in the user's app data. It must sit
     outside any git tree (the pack refuses otherwise); pytest's temp dir does."""

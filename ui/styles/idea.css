@@ -83,6 +83,14 @@
 .idea-split:hover::before,.idea-split:focus-visible::before,.idea-split.is-drag::before{opacity:1;background:var(--sig)}
 .idea-split:focus-visible{outline:none}
 
+/* ---------- the draft bar and Accept all ---------- */
+.idea-draft{display:flex;align-items:center;gap:8px;margin:0 0 8px;padding:6px 8px 6px 12px;border-radius:var(--r-md);
+  background:var(--sheet);border:1px solid var(--line);font-size:13px;color:var(--ink-2)}
+.idea-draft.is-active{color:var(--ink)}
+.idea-draft-msg{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.idea-draft .acts{margin-left:auto;flex:none;display:flex;gap:6px}
+.req-bulk{display:flex;gap:6px;margin:0 0 8px}
+
 /* ---------- the canvas ---------- */
 .idea-canvas{flex:1 1 0;min-height:160px;margin:0 0 24px;border-radius:var(--r-md);background:var(--canvas);overflow:hidden;
   display:flex;flex-direction:column;position:relative}

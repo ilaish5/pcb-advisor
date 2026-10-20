@@ -112,8 +112,9 @@ def test_write_sheet_refuses_a_bad_sheet_and_writes_a_good_one(lte):
 
 def test_the_idea_is_confirmed_only_by_a_call_that_says_so(lte, empty):
     store.propose_idea(empty, "Power", "Li-ion", by="agent")
-    idea = store.load_idea(empty)
-    assert idea["agreed"][0]["status"] == "proposed" and not idea["confirmed"]
+    idea = store.load_idea_working(empty)
+    assert idea["agreed"][0]["by"] == "agent" and not idea["confirmed"]
+    assert not store.load_idea(empty)["agreed"], "only in the draft until Save or Confirm"
     store.confirm_idea(empty)
     idea = store.load_idea(empty)
     assert idea["confirmed"] and idea["agreed"][0]["status"] == "confirmed"

@@ -92,7 +92,9 @@ def check(fetch=True, repo=None) -> dict:
            "upstream": "", "behind": 0, "ahead": 0, "commits": [], "dirty": [], "can_update": False,
            "reason": "", "error": "", "url": GITHUB}
     if k == "zip":
-        res["reason"] = f"Installed from a ZIP, so it cannot update itself. Download the new one from {GITHUB}"
+        res["reason"] = ("Installed from a ZIP, so it cannot update itself. Install git, then run the installer again "
+                         "in this folder: it turns the folder into a clone and keeps your projects. Or download the new ZIP from "
+                         f"{GITHUB}")
         return res
     if k == "no-git":
         res["reason"] = "git is not installed, so the tool cannot update itself. Install git, or download the new ZIP."

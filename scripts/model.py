@@ -28,6 +28,7 @@ def project_dir(name=None):
 
 load_jsonl = store.read_jsonl
 load_idea = store.load_idea
+load_idea_working = store.load_idea_working
 
 
 def save_idea(project, idea):
@@ -50,6 +51,18 @@ def _size(n):
 
 def _kind(name):
     return (pathlib.Path(name).suffix.lstrip(".") or "file").upper()
+
+
+def _chat_with_cites(project, sess):
+    """The conversation, each agent record with citations carrying `cites` (background.py): {"state": "checking"}
+    while the check runs, then {"state": "done", "items": {"file|locator": {"status", "reason"}}}."""
+    import background
+    chat = session_mod.load_chat(project, sess)
+    for m in chat:
+        c = background.cites_for(project, sess, m)
+        if c:
+            m["cites"] = c
+    return chat
 
 
 def citations(project):
@@ -197,7 +210,7 @@ def build(project=None, session=None):
     pdir = project_dir(project)
     meta = project_mod.load_meta(project)
     sess = session_mod.current(project, session)
-    idea = store.load_idea(project)
+    idea = store.load_idea_working(project)       # the draft when there is one; stages downstream read the saved idea
     lines = store.bom(project)
     tot = store.totals(lines)
     props = store.proposals(project)
@@ -233,6 +246,7 @@ def build(project=None, session=None):
         "meta": meta,
         "board": {**workspace.get("engineering_defaults", {}), **(meta.get("board") or {})},
         "idea": idea,
+        "idea_draft": store.idea_draft_info(project),
         "diagram": idea.get("diagram", {"shapes": [], "connectors": [], "frames": []}),
         "placement_plan": placement_plan,
         "bom": lines,
@@ -246,7 +260,7 @@ def build(project=None, session=None):
         "sources": list_sources(project),
         "checks": checks_list,
         "exports": exports_list,
-        "chat": session_mod.load_chat(project, sess),
+        "chat": _chat_with_cites(project, sess),
         "session": sess,
         "sessions": sessions,
         "memory": session_mod.read_memory(project, sess),

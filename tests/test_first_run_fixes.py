@@ -55,7 +55,7 @@ def test_domain_alias_goes_through_validate_and_edit(empty):
     shape = {"id": "s", "type": "box", "x": 0, "y": 0, "w": 10, "h": 10, "domain": " Sensor "}
     assert store.validate_diagram({"shapes": [shape]})["shapes"][0]["domain"] == "sensors"
     store.apply_diagram_edit(empty, [{"op": "add_shape", "id": "t", "x": 1, "y": 1, "domain": "Sensor"}])
-    assert next(s for s in store.load_idea(empty)["diagram"]["shapes"] if s["id"] == "t")["domain"] == "sensors"
+    assert next(s for s in store.load_idea_working(empty)["diagram"]["shapes"] if s["id"] == "t")["domain"] == "sensors"
 
 
 def test_verify_with_find_for_and_no_pins_is_not_a_pass(empty):

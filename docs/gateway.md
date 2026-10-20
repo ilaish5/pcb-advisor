@@ -21,7 +21,9 @@ serve.py            the only writer. Applies actions, never generates them.
   agent.py          the PROTOCOL: the rules, the state summary, parsing the
                     actions block back out of a reply. Knows nothing about engines.
     gateway/        the ROUTE: which engine, is it available, send and return.
-      claude_code.py   spawn `claude -p`
+      claude_code.py   spawn `claude -p`, stream its steps
+      stream.py        the shared Popen runner: live lines, Stop, idle and total timeouts
+      events.py        step labels and the error kinds
       external.py      no-op; something outside is driving the folder
       planned.py       registered, not implemented — fails with a clear message
 ```
@@ -101,6 +103,7 @@ leaves the other two null.
 | `allowed` | `--allowedTools` | pre-approved, no prompt. Patterns work: `["Read", "Bash(git status)"]` |
 | `disallowed` | `--disallowedTools` | refused outright; wins over `allowed` |
 | `permission_mode` | `--permission-mode` | `acceptEdits`, `auto`, `bypassPermissions`, `manual`, `dontAsk`, `plan` |
+| `allowed_extra` | (appended to `allowed`) | rules the student added with "Allow and retry"; default `[]`. Ignored while `allowed` is `null` |
 
 A list is joined with commas, a string is passed through. `""` is a real value —
 it is how `--tools` disables everything — which is why "do not pass this" is
@@ -126,6 +129,41 @@ Note what this does and does not bound. The **protocol** is bounded whatever you
 set here: only the three actions below ever change the design, and they go
 through the server. Tool permissions bound something else — what the engine may
 touch on your machine while it composes a reply.
+
+## Streaming, Stop and timeouts
+
+The default `args` are `["-p", "-", "--output-format", "stream-json", "--verbose", "--strict-mcp-config"]`: the
+CLI prints one JSON object per line while it works, and does not start the MCP servers of the student's own
+Claude Code setup (the advisor uses none, and each one costs start-up time on every turn). Both CLI providers run through `scripts/gateway/stream.py`, one `Popen` with
+reader threads for stdout and stderr (no `select`, which cannot watch a pipe on Windows), UTF-8 both ways.
+The older single-object `--output-format json` and plain text are still parsed.
+
+`Request.options` takes three optional keys (an engine that cannot honour one ignores it):
+
+| key | meaning |
+|---|---|
+| `on_event(ev)` | called from the reader thread per step: `{"kind": "tool"/"text"/"thinking"/"denied", "label", "tool"?, "ts"}`. Labels are short English (`Running trace_width.py --amps 2`, `Reading BOM.md`). `text`/`thinking` come at most once per 2 s |
+| `cancel` | a `threading.Event`; set it and the whole process tree is killed within about a second |
+| `idle_timeout` | seconds without a stdout line before the turn is killed. `Request.timeout` stays the total ceiling (`agent.timeout_seconds`, 900; `agent.idle_timeout_seconds`, 180, is read by the caller) |
+
+Killing the tree: on Windows `taskkill /T /F /PID` (the child starts in its own process group); on macOS and
+Linux the child starts a new session and the group gets SIGTERM, then SIGKILL after 2 s. A script the engine
+started goes down with it.
+
+`Result.text` is everything the model wrote so far, so a stopped or timed-out turn keeps its partial text.
+`Result.meta` carries:
+
+| key | meaning |
+|---|---|
+| `error_kind` | `not_installed`, `not_logged_in`, `usage_limit`, `stopped`, `idle_timeout`, `total_timeout`, `engine_error`; absent when ok. `error` stays a human string. A caller should read `error_kind` and not match the text |
+| `retry_at` | ISO time a usage limit resets, when the engine said |
+| `steps` | every tool label run, in order |
+| `denied` | `[{"tool", "input", "reason", "compound"}]`, from the stream's `permission_denied` events merged with the result's `permission_denials`. `compound` is true when the CLI refused a `&&`/pipe command part by part. Antigravity's list has the same shape with `input` `{}` |
+| `partial` | `true` when the turn did not finish (stop or timeout) |
+| `usage`, `cost_usd`, `turns`, `models` | as before |
+
+A denial does not fail the turn: the model usually ends with "needs approval", so `denied` is how the caller
+tells the student.
 
 ## The actions
 

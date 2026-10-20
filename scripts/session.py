@@ -23,9 +23,12 @@ operation. The protocol is the folder.
 """
 import datetime as dt
 import json
+import os
 import pathlib
 import re
 import sys
+import threading
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import workspace  # noqa: E402
@@ -242,7 +245,22 @@ def read_memory(project, session):
 def write_memory(project, session, text):
     path = memory_path(project, session)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text.rstrip() + "\n", encoding="utf-8")
+    # Atomic: the memory is rewritten in a background thread while a turn may read it. A reader sees the old
+    # file or the new one, never half of one. os.replace is atomic on POSIX and replaces on Windows; there it
+    # can briefly fail while a reader holds the file open, so retry.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(text.rstrip() + "\n", encoding="utf-8")
+    try:
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    finally:
+        tmp.unlink(missing_ok=True)
     return path
 
 

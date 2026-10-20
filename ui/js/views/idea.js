@@ -131,21 +131,44 @@ function ideaHeaderHTML() {
   const when = ideaDate(I.confirmed_at);
   const meta = metaLine([
     {n: items.length, label: items.length === 1 ? 'requirement' : 'requirements'},
-    {n: proposed, label: 'proposed', tone: 'warn', title: 'The agent proposed these. Accept or dismiss each one.'},
+    {n: proposed, label: 'proposed', tone: 'warn', title: 'The agent proposed these. Accept all, or one by one.'},
     I.confirmed ? 'confirmed' + (when ? ' ' + when : '') : ''
   ]);
   let primary;
   if (I.confirmed) {
     primary = btn('Next: BOM', {kind: 'pri', act: 'idea-next'});
   } else {
-    const why = !items.length ? 'Add a requirement first' : (proposed ? 'Accept or dismiss the proposals first' : 'Mark the idea as agreed');
-    primary = btn('Confirm idea', {kind: 'pri', act: 'confirmidea', disabled: !items.length || proposed > 0, title: why});
+    const D = (S && S.idea_draft) || {};
+    const why = !items.length ? 'Add a requirement first' : (D.active ? 'Saves the draft and marks the idea as agreed' : 'Mark the idea as agreed');
+    primary = btn('Confirm idea', {kind: 'pri', act: 'confirmidea', disabled: !items.length, title: why});
   }
   return viewHeader({title: 'Idea', meta, primary});
 }
 
+// The draft bar: what the agent and you changed since the last save, with Save and Revert; a quiet "Previous version"
+// when nothing is pending but an earlier saved version exists.
+function draftBarHTML() {
+  const D = (S && S.idea_draft) || {};
+  if (D.active) {
+    const n = D.changes || 0;
+    return `<div class="idea-draft is-active" role="status">${dot('warn')}<span class="idea-draft-msg">Draft · ${n} ${n === 1 ? 'change' : 'changes'} since your last save</span>
+      <span class="acts">${btn('Save', {size: 'sm', kind: 'line', act: 'draft-save', title: 'Make the draft the idea'})}${btn('Revert', {size: 'sm', act: 'draft-revert', title: 'Throw the draft away and go back to the last saved version'})}</span></div>`;
+  }
+  const v = D.versions || [];
+  if (v.length >= 2) {
+    return `<div class="idea-draft" role="status"><span class="idea-draft-msg">Saved · version ${esc(String(v[0].n))}</span>
+      <span class="acts">${btn('Previous version', {size: 'sm', act: 'idea-restore', n: v[1].n, title: 'Bring the previous saved version back as a draft'})}</span></div>`;
+  }
+  return '';
+}
+
+// What the draft changed since the last Save: a quiet tag, so the student sees what Save would keep.
+function draftMark(kind) {
+  return kind ? tag(kind === 'new' ? 'New' : 'Changed', 'sig', 'Not saved yet: Save keeps it, Revert drops it') + ' ' : '';
+}
 function reqRowHTML(i, idx) {
   const proposed = i.status !== 'confirmed';
+  const mark = ((S.idea_draft || {}).marks || {}).items || {};
   const by = i.by === 'student' ? 'Written by you' : 'Suggested by the agent';
   const acts = proposed
     ? btn('Accept', {size: 'sm', icon: 'check', act: 'confirm-req', title: 'Agree to this requirement'}) +
@@ -155,7 +178,7 @@ function reqRowHTML(i, idx) {
   return `<li class="req-row${proposed ? ' is-proposed' : ''}" tabindex="${idx === 0 ? 0 : -1}" data-index="${idx}" data-topic="${esc(i.topic)}" title="${esc(by)}">
       <span class="req-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">${icon('grip')}</span>
       <div class="req-main">
-        <div class="req-view"><p class="req-line" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : ''}<b class="req-topic">${esc(i.topic)}</b> <span class="req-text">${esc(i.text)}</span></p></div>
+        <div class="req-view"><p class="req-line" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : draftMark(mark[i.topic])}<b class="req-topic">${esc(i.topic)}</b> <span class="req-text">${esc(i.text)}</span></p></div>
         <div class="req-edit-form" hidden>
           <input type="text" class="in req-edit-topic" value="${esc(i.topic)}" maxlength="60" placeholder="Topic" aria-label="Topic">
           <textarea class="in req-edit-text" maxlength="1000" rows="3" placeholder="Requirement" aria-label="Requirement" title="Enter saves, Shift+Enter adds a line, Esc cancels" dir="auto">${esc(i.text)}</textarea>
@@ -177,7 +200,7 @@ function descHTML() {
       btn('Dismiss', {size: 'sm', act: 'dismiss-desc', title: 'Remove this proposal'})
     : (goal ? btn('', {size: 'sm', icon: 'edit', act: 'edit-desc', title: 'Edit description'}) : '');
   const content = goal
-    ? `<p class="desc-text" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : ''}${esc(goal)}</p>`
+    ? `<p class="desc-text" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : draftMark(((S.idea_draft || {}).marks || {}).goal)}${esc(goal)}</p>`
     : `<button type="button" class="desc-empty" data-act="edit-desc">Describe the board in a few sentences</button>`;
   return `<div class="desc-block${proposed ? ' is-proposed' : ''}"${titleAttr}>
       <div class="desc-main">
@@ -200,8 +223,12 @@ function requirementsHTML() {
   const split = items.length
     ? `<div class="idea-split" role="separator" aria-orientation="horizontal" aria-label="Resize the requirements list" tabindex="0" aria-valuemin="${IDEA_SPLIT_MIN}" aria-valuemax="${IDEA_SPLIT_MAX}" aria-valuenow="${cap || 30}" title="Drag to resize, double-click to reset"></div>`
     : '';
+  const waiting = items.filter(i => i.status !== 'confirmed').length + (descProposed() ? 1 : 0);
+  const bulk = waiting > 1
+    ? `<div class="req-bulk">${btn('Accept all', {size: 'sm', icon: 'check', act: 'accept-all', title: 'Agree to everything the agent proposed'})}${btn('Dismiss all', {size: 'sm', act: 'dismiss-all', title: 'Remove everything the agent proposed'})}</div>`
+    : '';
   return `<section class="idea-reqs"${cap ? ` style="max-height:${cap}%"` : ''} aria-label="Agreed requirements">
-      <div class="req-scroll">${desc}${body}</div>
+      <div class="req-scroll">${bulk}${desc}${body}</div>
       <div class="req-add-row">
         <button type="button" class="btn sm" data-act="show-add-req">+ Add requirement</button>
         <div class="req-add-form" hidden>
@@ -247,11 +274,12 @@ function markIdeaCapped(container) {
 /* ---------- the shell hooks ---------- */
 function ideaHTML(container) {
   if (container) releaseIdeaEditors(container);   // the canvas below replaces the old one
-  const head = ideaHeaderHTML(), reqs = requirementsHTML();
-  if (container) container._ideaSig = {head, reqs};
+  const head = ideaHeaderHTML(), reqs = requirementsHTML(), draft = draftBarHTML();
+  if (container) container._ideaSig = {head, reqs, draft};
   // the placeholder svg is what a test (and a slow script load) sees until DiagramEditor.mount() builds the editor in its place
   return `<div class="idea-view">
     ${head}
+    <div class="idea-draftwrap">${draft}</div>
     <div class="idea-body">
       ${reqs}
       <div class="idea-canvas">
@@ -273,6 +301,12 @@ function updateIdeaContent(container) {
     sig.head = head;
     const vh = container.querySelector('.idea-view > .vh');
     if (vh) vh.outerHTML = head;
+  }
+  const draft = draftBarHTML();
+  if (draft !== sig.draft) {
+    sig.draft = draft;
+    const wrap = container.querySelector('.idea-draftwrap');
+    if (wrap) wrap.innerHTML = draft;
   }
   const reqs = requirementsHTML();
   const open = container.querySelector('.req-edit-form:not([hidden]), .req-add-form:not([hidden]), .desc-edit-form:not([hidden])');   // never eat what is being typed
@@ -560,6 +594,27 @@ window.addEventListener('resize', () => {
 /* ---------- action handlers (dispatched by the delegates in core.js) ---------- */
 onAct('confirmidea', async () => {
   if (await ideaPost('/api/idea/confirm', {})) ideaRedraw();
+});
+onAct('draft-save', async () => {
+  if (await ideaPost('/api/idea/draft/save', {})) { ideaRedraw(); toast('Saved'); }
+});
+onAct('draft-revert', async () => {
+  const res = await ideaPost('/api/idea/draft/revert', {});
+  if (!res) return;
+  ideaRedraw();
+  toast('Back to your last saved version');
+});
+onAct('idea-restore', async (el, d) => {
+  if (await ideaPost('/api/idea/version/restore', {n: parseInt(d.n, 10)})) {
+    ideaRedraw();
+    toast('Previous version is in the draft. Save it, or Revert.');
+  }
+});
+onAct('accept-all', async () => {
+  if (await ideaPost('/api/idea/items/accept-all', {})) ideaRedraw();
+});
+onAct('dismiss-all', async () => {
+  if (await ideaPost('/api/idea/items/dismiss-all', {})) ideaRedraw();
 });
 onAct('idea-next', () => go('workspace', 'bom'));
 onAct('idea-review', (el, d) => {

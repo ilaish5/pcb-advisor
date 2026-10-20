@@ -123,7 +123,7 @@ def test_ask_about_file_chat_integration(server, lte, monkeypatch):
     import agent
     seen = {}
 
-    def fake_respond(m, ask, hist, backend=None, timeout=None):
+    def fake_respond(m, ask, hist, backend=None, timeout=None, **_kw):
         seen["ask"] = ask
         return {"reply": "500 mA.", "actions": []}
     monkeypatch.setattr(agent, "respond", fake_respond)

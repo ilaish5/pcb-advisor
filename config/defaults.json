@@ -26,7 +26,8 @@
   "agent": {
     "provider": "claude_code",
     "engine_home": "",
-    "timeout_seconds": 180,
+    "timeout_seconds": 900,
+    "idle_timeout_seconds": 180,
     "history_messages": 8,
     "autonomy": "important",
     "memory_every": 10,
@@ -39,7 +40,9 @@
           "-p",
           "-",
           "--output-format",
-          "json"
+          "stream-json",
+          "--verbose",
+          "--strict-mcp-config"
         ],
         "model": "",
         "tools": {
@@ -81,6 +84,7 @@
           "disallowed": [
             "NotebookEdit"
           ],
+          "allowed_extra": [],
           "permission_mode": null
         }
       },

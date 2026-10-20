@@ -13,9 +13,11 @@ import json
 import re
 import shutil
 import subprocess
+import time
 
 import oscompat
 
+from . import events, stream
 from .base import Provider, Request, Result
 
 
@@ -185,34 +187,56 @@ class AntigravityProvider(Provider):
                            "message": {"role": "user", "content": request.prompt}},
                           ensure_ascii=False) + "\n"
 
-        try:
-            proc = subprocess.run(
-                argv, input=line,
-                capture_output=True, **oscompat.TEXT,
-                env=oscompat.child_env(),
-                timeout=request.timeout,
-                cwd=request.options.get("cwd") or None,
-            )
-        except FileNotFoundError:
-            return Result(provider=self.id, error=f"`{cmd}` is not on PATH", meta=meta)
-        except subprocess.TimeoutExpired:
-            return Result(provider=self.id, meta=meta,
-                          error=f"timed out after {request.timeout}s")
+        lines, last_text = [], [-1e9]
+        on_event = request.options.get("on_event")
 
-        out, err = proc.stdout or "", (proc.stderr or "").strip()
+        def on_line(raw):
+            lines.append(raw)
+            # agy's step events are not documented; an assistant event is the one thing we can name
+            if on_event and raw.startswith("{") and '"assistant"' in raw and \
+                    time.monotonic() - last_text[0] >= 2.0:
+                last_text[0] = time.monotonic()
+                try:
+                    on_event({"kind": "text", "label": "Writing the answer", "ts": time.time()})
+                except Exception:
+                    pass
+
+        try:
+            rc, err, ended = stream.run(
+                argv, stdin_text=line, cwd=request.options.get("cwd") or None,
+                env=oscompat.child_env(), total_timeout=request.timeout,
+                idle_timeout=request.options.get("idle_timeout"),
+                cancel=request.options.get("cancel"), on_line=on_line)
+        except FileNotFoundError:
+            meta["error_kind"] = "not_installed"
+            return Result(provider=self.id, error=f"`{cmd}` is not on PATH", meta=meta)
+
+        out, err = "\n".join(lines), (err or "").strip()
         text, problem, denied = self._parse(out)
         usage = self._usage(out)
         if usage:
             meta["usage"] = usage
         if denied:
-            meta["denied"] = denied
-        if proc.returncode != 0 and text is None:
-            return Result(provider=self.id, model=model, meta=meta,
-                          error=err[:400] or f"exit {proc.returncode}: {problem}")
+            meta["denied"] = [{"tool": d, "input": {}, "reason": "", "compound": False} for d in denied]
+        if ended != "done":
+            idle = request.options.get("idle_timeout")
+            meta.update(partial=True, error_kind=ended)
+            msg = {"stopped": "stopped", "idle_timeout": f"no output for {idle}s",
+                   "total_timeout": f"timed out after {request.timeout}s"}[ended]
+            return Result(text=text or "", provider=self.id, model=model, meta=meta, error=msg)
+
+        def fail(message):
+            kind, retry = events.classify(message, err, rc)
+            meta["error_kind"] = kind
+            if retry:
+                meta["retry_at"] = retry
+            return Result(provider=self.id, model=model, meta=meta, error=message)
+
+        if rc != 0 and text is None:
+            return fail(err[:400] or f"exit {rc}: {problem}")
         if text is None and denied:
-            return Result(provider=self.id, model=model, meta=meta, error=problem)
+            return fail(problem)
         if text is None:
             tail = (out.strip()[-200:] + " | " + err[-200:]).strip(" |")
-            return Result(provider=self.id, model=model, meta=meta,
-                          error=f"{problem}: {tail}")
+            return fail(f"{problem}: {tail}")
         return Result(text=text, provider=self.id, model=model, meta=meta)

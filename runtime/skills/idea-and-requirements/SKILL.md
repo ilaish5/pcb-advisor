@@ -13,15 +13,20 @@ description: Turns a rough project idea into a short list of open requirements q
 
 ## Steps
 1. Read the idea and notes of the current project (`idea.json`, `notes.md`; paths are in the WORKSPACE section). Do not re-ask what is written.
-2. Go through the question list below. Pick the 4-6 questions that are still open AND expensive to change later.
-   Skip the ones the idea already answers. Never ask all of them.
-3. For each open question give: the question, one line "why it matters" (what breaks if it is decided late), and a suggested default.
-4. Ask the student to answer in one message. Do not choose for them: a default is only a proposal.
-5. After the answers, list what each answer forces (a connector, a part, a footprint, a rule) and name the skill that handles it.
-6. Record agreed items with `idea.propose`, one per topic. Use `idea.confirm` only after a clear yes, quoting their words.
+2. Draft first, then ask. On the first message about a new board write a full first draft AT ONCE, in one turn: the
+   description (`idea.describe`), the block diagram (`idea.diagram.edit`), and one `idea.propose` per requirement. Mark
+   every guess "(assumed)" in the requirement text. The edits land in a live draft the student sees and can Save or Revert,
+   so a wrong guess costs one click. Never open with a questionnaire.
+3. Then ask at most 1-3 questions: the ones from the list below whose answer would change the draft most and are
+   expensive to change later. Per question: one line "why it matters" and your default (the one already in the draft).
+4. When the answers come, change the draft (replace "(assumed)" with the agreed value), list what each answer forces
+   (a connector, a part, a footprint, a rule) and name the skill that handles it.
+5. When you think the idea is agreed, emit `{"type": "idea.ready"}`: the reply shows a Confirm idea button and the student
+   decides. Do not ask them to type a yes. `idea.confirm` still exists, only with a quote of a clear yes in their last message.
 - `{"type": "idea.describe", "text": "..."}` the board in plain words (what it is, what it is for, the diagram told as text);
-  "proposed" until the student accepts it.
-7. Block diagram: edit directly with `idea.diagram.edit` (live, no approval) for adding/updating blocks, buses,
+  applies to the draft at once.
+6. Student edits go into the same draft. Read the draft (the idea in the project state) before changing anything.
+7. Block diagram: edit directly with `idea.diagram.edit` (live in the draft, no approval) for adding/updating blocks, buses,
    connectors, frames, or auto-layout. Use `idea.diagram` (proposal with approve/reject) only for whole-diagram
    overhauls. Keep block text short: name + one-line role (e.g. "Charger\nBQ24075", "MCU\nSTM32G030"); label connectors
    with bus or rail ("5V", "I2C", "SPI"). Available ops: `add_shape`, `update_shape`, `delete_shape`, `add_connector`,
@@ -65,9 +70,9 @@ Question list (pick, do not ask all):
 - A large memory "just in case" can be the most expensive part. Estimate real data (bytes per record x records) before choosing.
 - Assembly type moves the price. Modules and some fine-pitch parts may be Standard-only, and every Extended part type adds a fixed fee.
   Say it early; `parts-and-stock` then checks the real parts.
-- Do not ask 30 questions. A long questionnaire gets ignored; the five that matter beat all of them.
+- Do not ask 30 questions, and do not ask before drafting. A draft the student can correct beats a questionnaire they must answer.
 
 ## Output
-- A list of at most 7 items in the student's language. Per item: `Question - why it matters - suggested default`.
+- The draft actions, then at most 3 questions in the student's language. Per question: `Question - why it matters - default used in the draft`.
 - One last line: the next step and the skill that handles it. About 200 words at most.
 - A claim about a chip's boot mode or pins needs a datasheet citation or the word "unknown".

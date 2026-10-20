@@ -1,0 +1,96 @@
+name: install
+
+# The real installers, run in a temp folder, against THIS commit (not main): PCB_REPO is the checkout.
+# The Claude CLI is skipped (PCB_NO_CLAUDE=1), so `doctor` must report it as "fix" - that is the check
+# that doctor notices a missing engine and says how to install it.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: install (macOS) - git clone, then run again (repair)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          PCB_REPO: ${{ github.workspace }}
+          PCB_NO_CLAUDE: "1"
+          PCB_NO_START: "1"
+          PCB_YES: "1"
+        run: |
+          export PCB_DIR="$RUNNER_TEMP/pcb-git"
+          bash ./install.sh
+          echo "second run (repair)" && bash ./install.sh
+          ls "$PCB_DIR/.git" > /dev/null
+          cd "$PCB_DIR"
+          .venv/bin/python pcb.py doctor --json > "$RUNNER_TEMP/doctor.json" || true
+          .venv/bin/python scripts/ci_doctor_expect.py "$RUNNER_TEMP/doctor.json"
+
+      - name: install (macOS) - ZIP route, no git
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          PCB_NO_CLAUDE: "1"
+          PCB_NO_START: "1"
+          PCB_YES: "1"
+          PCB_NO_GIT: "1"
+        run: |
+          git archive --format=zip -o "$RUNNER_TEMP/src.zip" HEAD
+          export PCB_ZIP_URL="$RUNNER_TEMP/src.zip" PCB_DIR="$RUNNER_TEMP/pcb-zip"
+          bash ./install.sh
+          test ! -d "$PCB_DIR/.git"
+          cd "$PCB_DIR"
+          .venv/bin/python pcb.py doctor --json > "$RUNNER_TEMP/doctor-zip.json" || true
+          .venv/bin/python scripts/ci_doctor_expect.py "$RUNNER_TEMP/doctor-zip.json" --zip
+
+      - name: install (Windows) - git clone, then run again (repair)
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          PCB_REPO: ${{ github.workspace }}
+          PCB_NO_CLAUDE: "1"
+          PCB_NO_START: "1"
+          PCB_YES: "1"
+        run: |
+          $env:PCB_DIR = Join-Path $env:RUNNER_TEMP 'pcb git'      # a space in the path, on purpose
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+          Write-Host 'second run (repair)'
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+          if (-not (Test-Path (Join-Path $env:PCB_DIR '.git'))) { throw 'not a git clone' }
+          Set-Location $env:PCB_DIR
+          $out = Join-Path $env:RUNNER_TEMP 'doctor.json'
+          .venv\Scripts\python pcb.py doctor --json | Out-File -Encoding utf8 $out
+          .venv\Scripts\python scripts\ci_doctor_expect.py $out
+          if ($LASTEXITCODE -ne 0) { throw 'doctor result not as expected' }
+
+      - name: install (Windows) - ZIP route, no git
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          PCB_NO_CLAUDE: "1"
+          PCB_NO_START: "1"
+          PCB_YES: "1"
+          PCB_NO_GIT: "1"
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'src.zip'
+          git archive --format=zip -o $zip HEAD
+          $env:PCB_ZIP_URL = $zip
+          $env:PCB_DIR = Join-Path $env:RUNNER_TEMP 'pcb zip'
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+          if (Test-Path (Join-Path $env:PCB_DIR '.git')) { throw 'ZIP route made a git clone' }
+          Set-Location $env:PCB_DIR
+          $out = Join-Path $env:RUNNER_TEMP 'doctor-zip.json'
+          .venv\Scripts\python pcb.py doctor --json | Out-File -Encoding utf8 $out
+          .venv\Scripts\python scripts\ci_doctor_expect.py $out --zip
+          if ($LASTEXITCODE -ne 0) { throw 'doctor result not as expected' }

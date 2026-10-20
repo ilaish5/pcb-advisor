@@ -39,6 +39,91 @@ function outLineage(f) {
   return tag(text, tone, [made, why].filter(Boolean).join(' ') || (l.status === 'fresh' ? 'Matches the design it was made from' : ''));
 }
 
+/* ---------- Make again: rerun the exporter that made a stale or edited file (the lineage record's `tool`) ---------- */
+const OUT_REMAKE_NO = {
+  export_bom: 'a BOM export', export_cpl: 'the pick and place export', outjob: 'the OutJob generator',
+  export_library: 'the library package export', gerber_zip: 'the Gerber zip',
+};
+const outAltiumLinked = () => !!(ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file);
+// What "Make again" does for one file: {kind: 'api' | 'altium' | 'none', label, why, edited}. Pure: only reads the lineage row.
+function outRemakePlan(f) {
+  const l = f && f.lineage;
+  if (!l || (l.status !== 'stale' && l.status !== 'edited')) return {kind: 'none', label: '', why: '', edited: false};
+  const edited = l.status === 'edited', tool = l.tool || '';
+  if (tool === 'gerber_zip') {       // the zip is built from Altium's Gerbers: when the board was saved after them, Altium must write them again
+    if ((l.reasons || []).some(r => /saved after|\.pcbdoc/i.test(r)))
+      return {kind: 'altium', label: 'Generate the outputs in Altium first', edited,
+        why: 'The board was saved after these Gerbers were generated. Altium writes the Gerbers; then the zip is made again.'};
+    return {kind: 'api', label: 'Make again', why: 'Zips the newest Gerber and NC drill set of the linked Altium project again.', edited};
+  }
+  if (tool === 'export_bom' && !/_BOM_([a-z0-9]+)\.csv$/i.test(f.name || ''))
+    return {kind: 'none', label: '', why: `Can't tell which BOM format ${f.name} is. Export it from the Export menu.`, edited};
+  if (OUT_REMAKE_NO[tool]) return {kind: 'api', label: 'Make again', why: 'Runs the same export again.', edited};
+  return {kind: 'none', label: '', why: tool ? `Made by "${tool}", which this view can't run again.` : 'No record of what made this file.', edited};
+}
+function outRemakeBtn(f) {
+  const p = outRemakePlan(f);
+  if (p.kind === 'none') return p.why ? `<span class="out-remake-why muted" title="${esc(p.why)}">No Make again</span>` : '';
+  const altium = p.kind === 'altium';
+  const title = altium && !outAltiumLinked() ? 'Link an Altium project in Settings first: Altium has to write the Gerbers.' : p.why;
+  return btn(p.label, {kind: 'line', size: 'sm', act: 'remake', name: f.name, title, disabled: altium && !outAltiumLinked(), cls: 'out-remake'});
+}
+// An in-page confirm dialog, not the browser one: resolves true on the confirm button, false on Cancel or Esc.
+function outConfirm({title, body, confirm}) {
+  return new Promise(resolve => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dlg';
+    dlg.setAttribute('aria-labelledby', 'dlg-title');
+    dlg.innerHTML = `<form method="dialog"><h2 id="dlg-title">${esc(title)}</h2><p>${esc(body)}</p>
+      <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn pri" value="ok">${esc(confirm || 'OK')}</button></div></form>`;
+    dlg.querySelector('[data-cancel]').addEventListener('click', () => dlg.close('cancel'));
+    dlg.addEventListener('close', () => { const ok = dlg.returnValue === 'ok'; dlg.remove(); resolve(ok); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+  });
+}
+const OUT_EDITED_ASK = 'This file was edited by hand; making it again replaces your edits.';
+async function outRunExporter(f) {         // one api exporter; returns true when it wrote the file
+  const tool = (f.lineage && f.lineage.tool) || '';
+  if (tool === 'export_bom') {
+    const m = /_BOM_([a-z0-9]+)\.csv$/i.exec(f.name);
+    await api('/api/skill', {name: 'export_bom', args: [m[1]]});
+  } else if (tool === 'export_cpl') await api('/api/cpl/export', {});
+  else if (tool === 'outjob') await api('/api/outjob/generate', {filename: f.name});
+  else if (tool === 'export_library') await api('/api/library/export', {});
+  else if (tool === 'gerber_zip') {
+    const r = await api('/api/jlc/gerber-zip', {}, {soft: true});
+    if (!r || r.error) { toast((r && r.error) || "Couldn't make the Gerber zip.", null, {bad: true}); return false; }
+  } else return false;
+  return true;
+}
+async function outRunAltium() {            // Altium writes the Gerbers; true when it did
+  toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
+  try { await api('/api/altium/run-outjob', {}); return true; } catch (err) { return false; }   // the error toast already said why
+}
+let outRemaking = false;
+async function outRemake(files) {          // files: the lineage rows to make again, in order; one confirm for the edited ones
+  if (outRemaking || !files.length) return;
+  const plans = files.map(f => [f, outRemakePlan(f)]).filter(([, p]) => p.kind !== 'none');
+  const edited = plans.filter(([, p]) => p.edited).map(([f]) => f.name);
+  if (edited.length && !await outConfirm({title: 'Replace your edits?', confirm: 'Make again',
+      body: edited.length === 1 ? OUT_EDITED_ASK : `${OUT_EDITED_ASK} (${edited.join(', ')})`})) return;
+  outRemaking = true;
+  let done = 0;
+  try {
+    let altium = false;
+    for (const [f, p] of plans) {
+      if (p.kind === 'altium') { altium = altium || outAltiumLinked(); continue; }
+      if (await outRunExporter(f)) done++;
+    }
+    if (altium && await outRunAltium()) {  // then the zip, which is what the student asked for
+      for (const [f, p] of plans) if (p.kind === 'altium' && await outRunExporter(f)) done++;
+    } else if (plans.some(([, p]) => p.kind === 'altium') && !altium) toast('Link an Altium project first: Altium has to write the Gerbers.', null, {bad: true});
+  } finally { outRemaking = false; }
+  await refresh(true);                   // the lineage is read again, so the tag clears
+  if (done) toast(done === 1 ? 'Made again' : `Made ${done} files again`);
+}
+
 function outAltiumBtn() {       // only when an Altium project is linked; the link is read once, then the view redraws
   if (!ALTIUM_DATA && !ALTIUM_ERR && typeof loadAltium === 'function') loadAltium().then(() => { if (ALTIUM_DATA && ALTIUM_DATA.linked) renderCenter(true); });
   return ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file
@@ -68,7 +153,7 @@ function outRow(f, showTimes, showLin) {
     ${showTimes ? `<td class="muted c-mod" title="${esc(outFull(at))}">${at ? `<time datetime="${esc(at)}" data-ago>${esc(outAgo(at))}</time>` : ''}</td>` : ''}
     ${showLin ? `<td class="c-lin">${outLineage(f)}</td>` : ''}
     <td class="num">${esc(outSize(f.size))}</td>
-    <td><div class="row-acts"><a class="btn icon sm out-dl" href="${esc(outUrl(f.name))}" download="${esc(f.name)}" title="Download ${esc(f.name)}" aria-label="Download ${esc(f.name)}">${icon('download')}</a></div></td></tr>`;
+    <td><div class="row-acts">${showLin ? outRemakeBtn(f) : ''}<a class="btn icon sm out-dl" href="${esc(outUrl(f.name))}" download="${esc(f.name)}" title="Download ${esc(f.name)}" aria-label="Download ${esc(f.name)}">${icon('download')}</a></div></td></tr>`;
 }
 function outputsHTML(container) {
   const files = S.exports || [];
@@ -118,6 +203,15 @@ onAct('gen-altium-outputs', async (el, d, e) => {      // Altium writes the file
   } catch (err) { /* the error toast already said why */ }
   el.disabled = false;
   renderCenter(true);
+});
+onAct('remake', async (el, d, e) => {
+  const f = (S.exports || []).find(x => x.name === d.name);
+  if (f) await outRemake([f]);
+  return;
+});
+onAct('remake-all', async (el, d, e) => {
+  await outRemake(outOld(S.exports || []));
+  return;
 });
 onAct('view-export', async (el, d, e) => {
   openFileAsTab({name: d.name, path: d.name, fileType: 'export'});

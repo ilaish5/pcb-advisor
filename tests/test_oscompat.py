@@ -16,7 +16,8 @@ def test_an_old_python3_command_is_rewritten_too(monkeypatch):
     assert oscompat.py("/usr/bin/python3 x") == "/usr/bin/python3 x"
 
 
-def test_a_command_on_path_is_run_by_its_full_path(monkeypatch):
+def test_a_command_on_path_is_run_by_its_full_path(monkeypatch, tmp_path):
+    monkeypatch.setattr(oscompat.pathlib.Path, "home", classmethod(lambda cls: tmp_path))   # no real ~/.local/bin/claude
     monkeypatch.setattr(oscompat.shutil, "which", lambda c: r"C:\npm\claude.CMD")
     assert oscompat.resolve("claude") == r"C:\npm\claude.CMD"
     monkeypatch.setattr(oscompat.shutil, "which", lambda c: None)

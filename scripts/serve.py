@@ -20,6 +20,7 @@ import pathlib
 import re
 import sys
 import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
@@ -61,6 +62,149 @@ def compact_if_due(project, sess):
     if not res.get("ok"):
         print(f"(memory not rewritten: {res.get('reason')})")
     return res
+
+
+# One entry per chat turn in flight, keyed (project, session). The HTTP server is threaded: every access holds
+# TURNS_LOCK. "cancel" is the Event the engine watches; the entry exists only while agent.respond runs.
+TURNS = {}
+TURNS_LOCK = threading.Lock()
+COMPACTING = {}                       # (project, session) -> Lock; one memory rewrite at a time per conversation
+COMPACTING_LOCK = threading.Lock()
+ALLOW_LOCK = threading.Lock()
+
+
+def _turn_start(key):
+    t = time.time()
+    turn = {"started": t, "last": t, "steps": [], "current": None, "cancel": threading.Event()}
+    with TURNS_LOCK:
+        TURNS[key] = turn
+    return turn
+
+
+def _turn_event(key, ev):
+    """The engine's on_event, called from its reader thread."""
+    if not isinstance(ev, dict):
+        return
+    now_t = time.time()
+    with TURNS_LOCK:
+        turn = TURNS.get(key)
+        if not turn:
+            return
+        turn["last"] = now_t
+        label = str(ev.get("label") or ev.get("tool") or ev.get("kind") or "")
+        turn["current"] = label or turn["current"]
+        if ev.get("kind") != "text" and label:
+            turn["steps"].append({"label": label, "ts": ev.get("ts") or now_t})
+            del turn["steps"][:-50]
+
+
+def _turn_end(key):
+    with TURNS_LOCK:
+        TURNS.pop(key, None)
+
+
+def turn_progress(key):
+    with TURNS_LOCK:
+        turn = TURNS.get(key)
+        if not turn:
+            return {"running": False, "seconds": 0, "idle_seconds": 0, "steps": [], "current": None}
+        t = time.time()
+        return {"running": True, "seconds": round(t - turn["started"]), "idle_seconds": round(t - turn["last"]),
+                "steps": [dict(x) for x in turn["steps"][-12:]], "current": turn["current"]}
+
+
+def compact_async(project, sess):
+    """compact_if_due after the reply, off the request thread. Never raises, never runs twice at once."""
+    with COMPACTING_LOCK:
+        lock = COMPACTING.setdefault((project, sess), threading.Lock())
+
+    def work():
+        if not lock.acquire(blocking=False):
+            return                       # a rewrite is already running for this conversation
+        try:
+            compact_if_due(project, sess)
+        except BaseException as exc:    # a background rewrite must not take the server down
+            print(f"(memory rewrite failed: {exc})")
+        finally:
+            lock.release()
+
+    t = threading.Thread(target=work, name="memory-rewrite", daemon=True)
+    t.start()
+    return t
+
+
+PROTECTED_RE = re.compile(r"(\.jsonl|(^|[/\\])(idea|bom)\.json|(^|[/\\])netlist[/\\][^/\\]*\.json"
+                          r"|(^|[/\\])(library|lib)[^/\\]*(manifest|index)[^/\\]*\.json"
+                          r"|manifest[^/\\]*\.json)", re.I)
+SHELL_OPS = ("&&", "||", ";", "|", "`", "$(", "\n", ">", "<", "&")
+
+
+def unique_denials(denied):
+    """One card per command: an engine that retries a refused command reports it twice. The ids are the
+    positions in the stored list, which is what /api/chat/allow indexes."""
+    out, seen = [], set()
+    for d in denied:
+        if not isinstance(d, dict):
+            continue
+        inp = {k: v for k, v in (d.get("input") or {}).items() if k != "description"}
+        key = (d.get("tool"), json.dumps(inp, sort_keys=True, default=str))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({**d, "id": len(out)})
+    return out
+
+
+def allow_rule(denial):
+    """The permission rule for one RECORDED denial, or raise ValueError saying why not."""
+    tool = str((denial or {}).get("tool") or "")
+    inp = (denial or {}).get("input") or {}
+    if not tool:
+        raise ValueError("this denial has no tool")
+    if denial.get("compound"):
+        raise ValueError("a combined command cannot be allowed; retry asks it to run them one by one")
+    if tool == "Bash":
+        cmd = str(inp.get("command") or "").strip()
+        if not cmd:
+            raise ValueError("this denial has no command")
+        if any(op in cmd for op in SHELL_OPS):
+            raise ValueError("a combined command cannot be allowed; retry asks it to run them one by one")
+        if PROTECTED_RE.search(cmd):
+            raise ValueError("a command touching a protected file cannot be allowed")
+        return f"Bash({cmd})"
+    if tool in ("Read", "Edit", "Write", "MultiEdit", "NotebookEdit"):
+        path = str(inp.get("file_path") or inp.get("path") or inp.get("notebook_path") or "").strip()
+        if not path:
+            raise ValueError("this denial has no path")
+        if tool != "Read" and PROTECTED_RE.search(path):
+            raise ValueError("this file is written by the server only")
+        return f"{tool}({path})"
+    if tool == "WebFetch":
+        host = urlparse(str(inp.get("url") or "")).hostname
+        if not host:
+            raise ValueError("this denial has no web address")
+        return f"WebFetch(domain:{host})"
+    return tool
+
+
+def allow_denial(project, sess, turn_ts, index):
+    """Persist the rule for the denial at `index` of the agent record stamped `turn_ts`. Returns the rule."""
+    rec = next((r for r in session_mod.load_chat(project, sess)
+                if r.get("role") == "agent" and r.get("ts") == turn_ts), None)
+    if rec is None:
+        raise KeyError("no such turn in this conversation")
+    denied = rec.get("denied") or []
+    if not isinstance(index, int) or isinstance(index, bool) or not 0 <= index < len(denied):
+        raise KeyError("no such denial")
+    rule = allow_rule(denied[index])
+    key = "agent.providers.claude_code.tools.allowed_extra"
+    with ALLOW_LOCK:
+        cur = workspace.load(reload=True)
+        extra = list((((cur.get("agent") or {}).get("providers") or {}).get("claude_code") or {})
+                     .get("tools", {}).get("allowed_extra") or [])
+        if rule not in extra:
+            workspace.set_value(key, extra + [rule])    # save() reloads the cache: the next turn sees it
+    return rule
 
 
 # What the browser may see and set. The rest of the config belongs to whoever
@@ -186,6 +330,7 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
     if decision == "approved" and prop.get("kind") != "idea_diagram":
         if "mpn" in prop.get("changes", {}):
             recheck_async(project, prop["line"])
+        recheck_missing(project)           # a new line, or one whose MPN came with a library change
         if redraw_now:
             redraw(project)
     if not note:
@@ -239,10 +384,16 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                 # only after the student said yes: the quote must be in what they just wrote
                 said = (a.get("student_said") or "").strip().lower()
                 if said and said in (last_user or "").lower():
-                    store.confirm_idea(project)
-                    applied.append("idea.confirm")
+                    if store.load_idea_working(project).get("agreed"):
+                        store.confirm_idea(project)
+                        applied.append("idea.confirm")
+                    else:
+                        applied.append("idea.ready")
                 else:
-                    refused.append("idea.confirm needs student_said: a quote from the student's last message")
+                    # no quote that holds up: not an error, the reply just offers the Confirm idea button
+                    applied.append("idea.ready")
+            elif kind == "idea.ready":
+                applied.append("idea.ready")
             elif kind == "bom.propose" and a.get("line") and isinstance(a.get("changes"), dict):
                 rec = store.propose_bom(project, a["line"], a["changes"], a.get("reason", ""),
                                         a.get("sources", []), _agent_may_set_library(a.get("library")) or None,
@@ -460,14 +611,21 @@ def export_library(project):
 
 
 def recheck_async(project, key):
-    """An MPN changed: a skill run answers for the new part, in the background."""
-    def work():
-        try:
-            import check_availability
-            check_availability.check(project, {key})
-        except Exception as exc:
-            print(f"(availability check failed: {exc})")
-    threading.Thread(target=work, daemon=True).start()
+    """An MPN or LCSC code changed, or a line was added: a stock check answers for it, in the background queue
+    (one job per line; background.py)."""
+    import background
+    return background.stock_line_async(project, key)
+
+
+def recheck_missing(project):
+    """After any BOM change (edit, import, applied proposal, agent action): every line that wants a stock check and
+    has none is queued. Cheap: it reads files, never the network."""
+    import background
+    try:
+        for key in background.lines_missing_stock(project):
+            recheck_async(project, key)
+    except Exception as exc:
+        print(f"(stock sweep failed: {exc})")
 
 
 def run_skill(name, project, *args):
@@ -698,6 +856,9 @@ class Handler(BaseHTTPRequestHandler):
                                     "current": self.session(proj)})
         if path == "/api/config":
             return self._send(200, _public_config())
+        if path == "/api/chat/progress":
+            proj = self.project()
+            return self._send(200, turn_progress((proj, self.session(proj))))
         if path == "/api/altium":
             return self._send(200, _altium_state(self.project()))
         if path == "/api/bom/import/candidates":
@@ -760,6 +921,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(422, {"error": str(exc)})
             except Exception as exc:
                 return self._send(422, {"error": str(exc)})
+        if path == "/api/doctor":                  # the same list as `pcb.py doctor --json`; ?refresh=1 runs it again
+            import doctor
+            return self._send(200, doctor.cached(refresh=bool(self.query("refresh"))))
         if path == "/api/update":                  # the check made at start; ?refresh=1 checks again now
             if self.query("refresh"):
                 check_updates(fetch=True)
@@ -1090,18 +1254,30 @@ class Handler(BaseHTTPRequestHandler):
                 if ctx:
                     ask = ("[this conversation is about one part; its context]\n"
                            f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
+            tkey = (proj, sess)
+            with TURNS_LOCK:
+                running = tkey in TURNS
+            if running:
+                return self._send(409, {"error": "this conversation is still answering"})
+            turn = _turn_start(tkey)
             BUSY["chat"] += 1
             try:
-                res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND)
+                res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND, cancel=turn["cancel"],
+                                    on_event=lambda ev, k=tkey: _turn_event(k, ev))
             finally:
                 BUSY["chat"] -= 1
+                _turn_end(tkey)
             chat_meta = {}
-            applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta)
+            partial = bool(res.get("partial"))
+            if partial:      # a half-written actions block is not trusted
+                applied, proposals, refused = [], [], []
+            else:
+                applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta)
             if res.get("provider") != "external":         # an outside driver is not an engine turn
                 import introspect
                 introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
                                   applied=len(applied), proposed=len(proposals), refused=len(refused))
-            if res.get("reply") or refused:
+            if res.get("reply") or refused or partial:
                 reply = res.get("reply") or ""
                 if refused:
                     reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
@@ -1114,13 +1290,50 @@ class Handler(BaseHTTPRequestHandler):
                     rec["tools"] = res["tools"]
                 if proposals:
                     rec["proposals"] = proposals
+                kind = res.get("error_kind")
+                if res.get("steps"):
+                    rec["steps"] = res["steps"]
+                if kind:
+                    rec["error_kind"] = kind
+                if res.get("retry_at"):
+                    rec["retry_at"] = res["retry_at"]
+                if res.get("seconds") is not None:
+                    rec["seconds"] = round(float(res["seconds"]), 1)
+                if kind == "idle_timeout":
+                    rec["idle_seconds"] = int(workspace.get("agent.idle_timeout_seconds", 180))
+                if partial:
+                    rec["partial"] = True
+                    rec["stopped"] = kind == "stopped"
+                    rec["timed_out"] = kind in ("idle_timeout", "total_timeout")
+                if res.get("denied"):
+                    rec["denied"] = unique_denials(res["denied"])
                 say(proj, sess, rec)
-            compact_if_due(proj, sess)
+                import background
+                background.verify_record_async(proj, sess, rec["ts"], rec["text"])    # citations: checked after the reply, never before
+            recheck_missing(proj)
+            compact_async(proj, sess)
             out = state()
             out["last_actions"] = applied
             if chat_meta.get("diagram_touched"):
                 out["diagram_touched"] = chat_meta["diagram_touched"]
             return self._send(200, out)
+
+        if path == "/api/chat/stop":
+            with TURNS_LOCK:
+                turn = TURNS.get((proj, sess))
+            if not turn:
+                return self._send(409, {"error": "nothing is running"})
+            turn["cancel"].set()
+            return self._send(200, {"ok": True})
+
+        if path == "/api/chat/allow":
+            try:
+                rule = allow_denial(proj, sess, data.get("turn_ts"), data.get("index"))
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc.args[0] if exc.args else exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, {"rule": rule})
 
         # ---- the student decides
         if path == "/api/proposal":
@@ -1203,6 +1416,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._send(500, {"error": f"import failed: {exc}"})
             if report["applied"]:
+                recheck_missing(target)
                 redraw(target)
                 report["state"] = model.build(project=target, session=self.session(target))
             return self._send(200, report)
@@ -1312,13 +1526,13 @@ class Handler(BaseHTTPRequestHandler):
                 valid_diag = store.validate_diagram(diag)
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
-            idea = store.load_idea(proj)
+            idea = store.load_idea_working(proj)
             idea["diagram"] = valid_diag
-            store.save_idea(proj, idea)
+            store.save_idea_draft(proj, idea)
             return self._send(200, state())
 
         if path == "/api/idea":
-            idea = store.load_idea(proj)
+            idea = store.load_idea_working(proj)
             if "diagram" in data and isinstance(data["diagram"], dict):
                 try:
                     idea["diagram"] = store.validate_diagram(data["diagram"])
@@ -1332,7 +1546,7 @@ class Handler(BaseHTTPRequestHandler):
             for key in ("blocks", "links"):
                 if key in data:
                     idea[key] = data[key]
-            store.save_idea(proj, idea)
+            store.save_idea_draft(proj, idea)
             if "goal" in data:
                 store.set_idea_goal(proj, data["goal"], by="student")
             return self._send(200, state())
@@ -1352,7 +1566,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, state())
 
         if path == "/api/idea/confirm":
+            if not store.load_idea_working(proj).get("agreed"):
+                return self._send(400, {"error": "add at least one requirement before confirming the idea"})
             store.confirm_idea(proj)
+            return self._send(200, state())
+
+        if path == "/api/idea/draft/save":
+            store.save_idea_from_draft(proj, by="student")
+            return self._send(200, state())
+
+        if path == "/api/idea/draft/revert":
+            store.revert_idea_draft(proj)
+            return self._send(200, state())
+
+        if path == "/api/idea/version/restore":
+            try:
+                store.restore_idea_version(proj, int(data.get("n")))
+            except (TypeError, ValueError):
+                return self._send(400, {"error": "n (a version number) required"})
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc).strip("'\"")})
+            return self._send(200, state())
+
+        if path in ("/api/idea/items/accept-all", "/api/idea/items/dismiss-all"):
+            store.accept_all_proposed(proj, accept=path.endswith("/accept-all"))
             return self._send(200, state())
 
         if path == "/api/idea/item":

@@ -169,7 +169,8 @@ def test_a_refused_engine_home_is_an_error_reply_not_a_crash(lte, monkeypatch, t
 
 
 def test_rules_come_from_runtime_agents_md():
-    assert agent.rules() == (REPO / "runtime" / "AGENTS.md").read_text(encoding="utf-8").strip()
+    src = (REPO / "runtime" / "AGENTS.md").read_bytes()
+    assert agent.rules() == runtime_pack.render("AGENTS.md", src).decode("utf-8").strip()
     assert agent.rules().startswith("You are the PCB design advisor")
     assert len(agent.rules().splitlines()) <= 150
 
@@ -228,3 +229,13 @@ def test_every_script_agents_md_names_is_allowed_for_claude_code():
     assert named, "no scripts found in AGENTS.md"
     missing = [s for s in named if not any(fnmatch.fnmatch(s, p) for p in patterns)]
     assert not missing, f"not in claude_code tools.allowed: {missing}"
+
+
+def test_the_pack_carries_this_machines_python_command(monkeypatch):
+    """The allow-list says `python3` on a Mac; an engine that read `python <repo>/...` typed it and was denied."""
+    monkeypatch.setattr(runtime_pack.oscompat, "python_cmd", lambda: "python3")
+    out = runtime_pack.render("AGENTS.md", b"run `python <repo>/scripts/calc.py` (not ipython <repo>)").decode()
+    assert "`python3 <repo>/scripts/calc.py`" in out and "ipython <repo>" in out
+    assert runtime_pack.render("x.py", b"python <repo>") == b"python <repo>"
+    monkeypatch.setattr(runtime_pack.oscompat, "python_cmd", lambda: "python")
+    assert runtime_pack.render("AGENTS.md", b"python <repo>/x") == b"python <repo>/x"
