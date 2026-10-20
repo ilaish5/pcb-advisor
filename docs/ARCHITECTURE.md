@@ -120,6 +120,9 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | `scripts/preview_sch.py` | SchDoc to interactive SVG preview with click-to-ask anchors | I9 |
 | `scripts/preview_pcb.py` | PcbDoc to SVG preview with placement plan overlay | I9 |
 | `scripts/keeping.py` | folder order, decision log, change impact, final file organization | I10 |
+| `scripts/lineage.py` | per-output lineage: what each exported file was made from (state fingerprints, input files with sha256, tool version) and whether it is still current: fresh / stale / edited / missing / unknown. Every exporter records through `lineage.note`, which never fails an export. The Outputs view tags each file, the DFM "Ready to order" waits for every output to be current | - |
+| `scripts/introspect.py` | self-awareness: one line per engine turn (time, tokens, cost, scripts run, failures, whether a reply with numbers cites a source); the agent answers questions about itself from it; Settings > About shows it | - |
+| `scripts/update.py` | self-update: the server checks the upstream branch at every start; Update fast-forwards only (refuses on local edits, local commits, no upstream), reinstalls changed requirements, smoke-imports the new code in a fresh interpreter and rolls back if it fails. The server then restarts: `start.bat` relaunches it on exit code 75 (Windows), `os.execv` elsewhere | - |
 
 
 ## 6. Data layout
@@ -127,6 +130,8 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | where | what | in git |
 |---|---|---|
 | `projects/<name>/` | idea.json, `*-log.jsonl` (append-only truth), derived bom.json, proposals, `netlist/`, `chats/`, `sources/`, `exports/` (BOM, `.RUL`, OutJob, library script), notes.md; plus a link to the student's local Altium folder (read-only) | no (user data) |
+| `projects/<name>/lineage-log.jsonl`, `turns-log.jsonl` | append-only: one line per output written, one per engine turn | no (user data) |
+| workspace `update-status.json`, `update-log.jsonl` | the last update check (read by `introspect.py version`), and every applied or rolled-back update | no |
 | engine home | generated pack (section 4); per-OS app-data dir | no |
 | `shared/reference/` | course material + `AGENTS.md` topic index; AD20 Essentials manual is the "how do I" guide | yes |
 | `shared/datasheets/` | GENERAL documents only (application notes, design guides, standards): sha256 metadata, re-fetched by URL. A part's datasheet is in `projects/<name>/sources/` | no (metadata JSON only; PDFs ignored) |

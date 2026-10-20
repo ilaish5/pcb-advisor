@@ -140,8 +140,11 @@ function stageStatus(id) {
       return {tone: 'ok', title: 'Matches the board', hint: ''};
     }
     if (id === 'outputs') {
-      const n = (S.exports || []).length;
-      return n ? {tone: 'ok', title: plural(n, 'file'), hint: ''} : {tone: '', title: 'Nothing generated yet', hint: ''};
+      const ex = S.exports || [], n = ex.length;
+      if (!n) return {tone: '', title: 'Nothing generated yet', hint: ''};
+      const old = ex.filter(e => e.lineage && (e.lineage.status === 'stale' || e.lineage.status === 'edited')).length;
+      if (old) return {tone: 'warn', title: `${plural(old, 'file')} out of date with the design: export again`, hint: String(old)};
+      return {tone: 'ok', title: plural(n, 'file'), hint: ''};
     }
     if (id === 'checks') {
       const cs = S.checks || [];
@@ -222,7 +225,7 @@ function navHTML() {
     `<div class="viewsw seg" role="group" aria-label="Show"><button type="button" data-view="work" aria-pressed="${appView !== 'chat'}">Work</button><button type="button" data-view="chat" aria-pressed="${appView === 'chat'}">Chat</button></div>` +
     `<div class="trace" role="group" aria-label="Design stages">${STAGES.map(stage).join('')}</div>` +
     `<div class="navsp"></div>${pageBtn('library', 'book')}${pageBtn('sources', 'file')}` +
-    `<div class="navfoot">` +
+    `<div class="navfoot">` + (typeof updNavBtn === 'function' ? updNavBtn() : '') +
     `<button type="button" class="nitem" data-act="palette" data-nav="search" title="Search (Ctrl K)"><span class="no">${icon('search', 's')}</span><span class="lbl">Search</span><kbd>Ctrl K</kbd></button>` +
     `<button type="button" class="nitem chat-sw" data-act="toggle-chat" data-nav="chat" aria-pressed="${shown}" title="Chat (Ctrl J)"><span class="no">${icon('chat', 's')}</span><span class="lbl">Chat</span><kbd>Ctrl J</kbd></button>` +
     `<button type="button" class="nitem" data-page="settings" data-nav="settings"${here === 'settings' ? ' aria-current="page"' : ''} title="Settings"><span class="no">${icon('gear', 's')}</span><span class="lbl">Settings</span></button>` +

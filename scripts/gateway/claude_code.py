@@ -1,4 +1,5 @@
 """Claude Code CLI: spawn `claude -p`, take stdout."""
+import json
 import shutil
 import subprocess
 
@@ -143,8 +144,34 @@ class ClaudeCodeProvider(Provider):
             return Result(provider=self.id,
                           error=f"timed out after {request.timeout}s")
 
-        if proc.returncode != 0:
-            return Result(provider=self.id, model=model,
-                          error=(proc.stderr or "").strip()[:400] or
+        text, meta, failed = self._parse(proc.stdout)
+        if failed or proc.returncode != 0:
+            return Result(provider=self.id, model=model, meta=meta,
+                          error=failed or (proc.stderr or "").strip()[:400] or
                                 f"exit {proc.returncode}")
-        return Result(text=proc.stdout, provider=self.id, model=model)
+        return Result(text=text, provider=self.id, model=model, meta=meta)
+
+    @staticmethod
+    def _parse(stdout):
+        """(text, meta, error). With --output-format json the CLI prints one result object that also says what the
+        turn cost: tokens, dollars, its own turns. Plain text (an older config) passes through with no meta."""
+        raw = (stdout or "").strip()
+        if not raw.startswith("{"):
+            return stdout, {}, ""
+        try:
+            obj = json.loads(raw)
+        except ValueError:
+            return stdout, {}, ""
+        if not isinstance(obj, dict) or obj.get("type") != "result":
+            return stdout, {}, ""
+        usage = obj.get("usage") if isinstance(obj.get("usage"), dict) else {}
+        meta = {"usage": {k: usage[k] for k in ("input_tokens", "output_tokens", "cache_read_input_tokens",
+                                                "cache_creation_input_tokens") if isinstance(usage.get(k), int)},
+                "cost_usd": obj.get("total_cost_usd"), "engine_ms": obj.get("duration_ms"),
+                "turns": obj.get("num_turns"),
+                "models": sorted((obj.get("modelUsage") or {}).keys()) if isinstance(obj.get("modelUsage"), dict) else []}
+        meta = {k: v for k, v in meta.items() if v not in (None, {}, [])}
+        text = obj.get("result")
+        if obj.get("is_error") or not isinstance(text, str):
+            return "", meta, (str(text or obj.get("subtype") or "the engine reported an error"))[:400]
+        return text, meta, ""

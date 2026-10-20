@@ -278,6 +278,13 @@ def gerber_zip(project: str) -> dict[str, Any]:
     if found["drills"] and found["drills"][0][0].parent != found["gerbers"][0][0].parent:
         res["drill_source"] = str(found["drills"][0][0].parent)
     res["built_now"] = True
+    import lineage
+    pcb = lineage.linked_pcb(project)
+    rec = lineage.note(project, out, lambda: [lineage.file_input("drill" if classify(p.name)[0] == "drill" else "gerber", p)
+                                              for p, _ in files] + ([lineage.file_input("pcb", pcb)] if pcb else []),
+                       "gerber_zip", source=res["source"])
+    early = lineage.check(project, rec)["reasons"] if rec else []
+    res["warnings"] += [w[0].upper() + w[1:] + ": generate the outputs in Altium again." for w in early if "saved after" in w]
     return res
 
 

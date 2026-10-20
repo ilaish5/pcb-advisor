@@ -51,10 +51,9 @@ def pad_centres(doc: dict) -> dict[str, tuple[float, float]]:
     return {ref: ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for ref, b in boxes.items()}
 
 
-def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict:
-    link = project_mod.altium_link(project)
-    p_pcb = pcb_path or link.get("pcb_file")
-
+def cpl_rows(project: str, pcb_path: str | pathlib.Path | None = None) -> list[dict]:
+    """The rows the CPL file holds: from the PcbDoc when there is one, else a stub per BOM reference."""
+    p_pcb = pcb_path or project_mod.altium_link(project).get("pcb_file")
     rows = []
     if p_pcb and pathlib.Path(p_pcb).is_file():
         doc = read_pcbdoc(p_pcb)
@@ -88,6 +87,13 @@ def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict
                     "Layer": "Top",
                     "Rotation": "0.0",
                 })
+    return rows
+
+
+def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict:
+    p_pcb = pcb_path or project_mod.altium_link(project).get("pcb_file")
+    from_pcb = str(p_pcb) if p_pcb and pathlib.Path(p_pcb).is_file() else ""
+    rows = cpl_rows(project, from_pcb or None)
 
     out_dir = workspace.project_dir(project) / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -97,6 +103,10 @@ def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict
         writer = csv.DictWriter(f, fieldnames=["Designator", "Mid X", "Mid Y", "Layer", "Rotation"])
         writer.writeheader()
         writer.writerows(rows)
+    import lineage
+    lineage.note(project, out_file, lambda: [lineage.state_input(project, "cpl", from_pcb),
+                                             lineage.file_input("pcb", from_pcb, compare=False) if from_pcb else None],
+                 "export_cpl", note="" if from_pcb else "no PcbDoc linked: positions are a stub from the BOM")
 
     home = workspace.home()
     shown = out_file.relative_to(home).as_posix() if out_file.is_relative_to(home) else str(out_file)

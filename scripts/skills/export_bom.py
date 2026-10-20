@@ -38,36 +38,43 @@ def lcsc_code(project, key, line=None):
     return code or (line or {}).get("lcsc") or ""
 
 
-def export(project, fmt="generic"):
+def rows(project, fmt="generic"):
+    """(rows with the header first, left_out, needs_lcsc): exactly what the CSV holds. Lineage fingerprints this."""
     if fmt not in FORMATS:
         raise SystemExit(f"format must be one of {', '.join(FORMATS)}")
     lines = store.bom(project, write=False)
-    left_out, needs = [], []
+    out, left_out, needs = [FORMATS[fmt]], [], []
+    for l in lines:
+        if not store.qty(l):
+            left_out.append(l["key"])
+            continue
+        refs = ", ".join(l["refs"])
+        if fmt == "jlc":
+            code = lcsc_code(project, l["key"], l)
+            if not code:
+                needs.append(l["key"])
+            out.append([l.get("value") or l.get("mpn"), refs, l.get("package", ""), code])
+        elif fmt == "pcbway":
+            out.append([refs, len(l["refs"]), l.get("mpn", ""), l.get("manufacturer", ""),
+                        l.get("package", ""), l.get("description", "")])
+        else:
+            out.append([refs, l.get("value", ""), l.get("package", ""), l.get("mpn", ""),
+                        l.get("manufacturer", ""), len(l["refs"])])
+    return out, left_out, needs
+
+
+def export(project, fmt="generic"):
+    table, left_out, needs = rows(project, fmt)
     out_dir = store.pdir(project) / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{project}_BOM_{fmt}.csv"
     with open(path, "w", newline="", encoding="utf-8") as fh:
-        w = csv.writer(fh)
-        w.writerow(FORMATS[fmt])
-        for l in lines:
-            if not store.qty(l):
-                left_out.append(l["key"])
-                continue
-            refs = ", ".join(l["refs"])
-            if fmt == "jlc":
-                code = lcsc_code(project, l["key"], l)
-                if not code:
-                    needs.append(l["key"])
-                w.writerow([l.get("value") or l.get("mpn"), refs, l.get("package", ""), code])
-            elif fmt == "pcbway":
-                w.writerow([refs, len(l["refs"]), l.get("mpn", ""), l.get("manufacturer", ""),
-                            l.get("package", ""), l.get("description", "")])
-            else:
-                w.writerow([refs, l.get("value", ""), l.get("package", ""), l.get("mpn", ""),
-                            l.get("manufacturer", ""), len(l["refs"])])
+        csv.writer(fh).writerows(table)
+    import lineage
+    lineage.note(project, path, lambda: [lineage.state_input(project, "bom_csv", fmt)], "export_bom")
     home = workspace.home()
     shown = path.relative_to(home).as_posix() if path.is_relative_to(home) else str(path)
-    return {"file": shown, "format": fmt, "lines": len(lines) - len(left_out),
+    return {"file": shown, "format": fmt, "lines": len(table) - 1,
             "left_out": left_out, "needs_lcsc": needs}
 
 

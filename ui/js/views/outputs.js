@@ -27,6 +27,17 @@ function outAgo(iso) {                        // "just now", "5 min ago", "2 h a
 }
 const outFull = iso => (iso || '').replace('T', ' ').slice(0, 16);
 const outUrl = name => `/api/export/${encodeURIComponent(name)}?${q()}`;
+// Lineage (scripts/lineage.py): whether each file still matches what it was made from.
+const OUT_LIN = {fresh: ['Current', 'ok'], stale: ['Out of date', 'warn'], edited: ['Edited by hand', 'bad'], unknown: ['No record', '']};
+const outOld = files => files.filter(f => f.lineage && (f.lineage.status === 'stale' || f.lineage.status === 'edited'));
+function outLineage(f) {
+  const l = f.lineage;
+  if (!l || !OUT_LIN[l.status]) return '';
+  const [text, tone] = OUT_LIN[l.status];
+  const made = l.written ? `Made ${outFull(l.written)}${l.tool ? ' by ' + l.tool : ''}${l.version ? ' (version ' + l.version + ')' : ''}.` : '';
+  const why = (l.reasons || []).join('; ');
+  return tag(text, tone, [made, why].filter(Boolean).join(' ') || (l.status === 'fresh' ? 'Matches the design it was made from' : ''));
+}
 
 function outAltiumBtn() {       // only when an Altium project is linked; the link is read once, then the view redraws
   if (!ALTIUM_DATA && !ALTIUM_ERR && typeof loadAltium === 'function') loadAltium().then(() => { if (ALTIUM_DATA && ALTIUM_DATA.linked) renderCenter(true); });
@@ -37,7 +48,9 @@ function outHeader(files) {
   if (!files.length) return viewHeader({title: 'Outputs'});
   const actions = outAltiumBtn() + menu({label: 'Export', iconAfter: 'chev'}, outExportItems());
   const primary = btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB});
-  const meta = metaLine([{n: files.length, label: files.length === 1 ? 'file' : 'files'}, {label: 'in exports/', always: true}]);
+  const old = outOld(files).length;
+  const meta = metaLine([{n: files.length, label: files.length === 1 ? 'file' : 'files'}, {label: 'in exports/', always: true},
+    {n: old, label: 'out of date', tone: 'warn', title: 'Made from a design that has changed since, or edited by hand: export again before ordering'}]);
   return viewHeader({title: 'Outputs', meta, actions, primary});
 }
 const outExportItems = () => [
@@ -46,13 +59,14 @@ const outExportItems = () => [
   {label: 'Pick and place (CPL)', act: 'gen-cpl'},
   {label: 'Gerber zip for JLC', hint: 'from Altium', act: 'gen-gerber-zip'},
 ];
-function outRow(f, showTimes) {
+function outRow(f, showTimes, showLin) {
   const at = f.modified, key = f.name + '|' + at;          // the state lists each file with its size and when it was written (ISO)
   const fresh = !!at && !outFlashed.has(key) && Date.now() - new Date(at).getTime() < OUT_NEW_MS;
   if (at) outFlashed.add(key);
   return `<tr data-file="${esc(f.name)}"${fresh ? ' class="flash"' : ''}>
     <td class="out-n"><button type="button" class="out-open" data-act="view-export" data-name="${esc(f.name)}" title="Open ${esc(f.name)} beside this sheet">${esc(f.name)}</button></td>
     ${showTimes ? `<td class="muted c-mod" title="${esc(outFull(at))}">${at ? `<time datetime="${esc(at)}" data-ago>${esc(outAgo(at))}</time>` : ''}</td>` : ''}
+    ${showLin ? `<td class="c-lin">${outLineage(f)}</td>` : ''}
     <td class="num">${esc(outSize(f.size))}</td>
     <td><div class="row-acts"><a class="btn icon sm out-dl" href="${esc(outUrl(f.name))}" download="${esc(f.name)}" title="Download ${esc(f.name)}" aria-label="Download ${esc(f.name)}">${icon('download')}</a></div></td></tr>`;
 }
@@ -62,9 +76,9 @@ function outputsHTML(container) {
     return viewHeader({title: 'Outputs'}) + emptyState('Nothing exported yet', 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB}) + outAltiumBtn() + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()));
   }
-  const showTimes = files.some(f => f.modified);
-  return `${outHeader(files)}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
-    <tbody>${files.map(f => outRow(f, showTimes)).join('')}</tbody></table></div>`;
+  const showTimes = files.some(f => f.modified), showLin = files.some(f => f.lineage);
+  return `${outHeader(files)}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
+    <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}</tbody></table></div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

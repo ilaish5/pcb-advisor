@@ -30,6 +30,8 @@ Idea, BOM, Schematic, Placement, Rules, Altium outputs, Final checks.
 
 The install comes with an example project, "LED chaser" (USB-C, NE555, CD4017, 10 LEDs): idea, BOM and a schematic sheet, no Altium files yet.
 
+**Updates.** At every start the tool checks GitHub. When there is a new version, an **Update** button shows at the bottom left: it lists what changed, updates, and restarts by itself (your projects and settings are not touched; if the new version does not start, it goes back). This needs the `git clone` install; a ZIP install shows the download link instead. From a terminal: `.venv\Scripts\python pcb.py update`.
+
 Want to see a finished example first? Run `.venv\Scripts\python pcb.py seed` and open the project `lte-tracker`.
 
 ## Problems?

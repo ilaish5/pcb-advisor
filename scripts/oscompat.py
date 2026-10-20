@@ -81,7 +81,7 @@ def py(command):
 def rule_path(path):
     """A path in the form Claude Code permission rules want for an absolute path:
     `//` + the POSIX form of the path, where `C:/Users/x` becomes `/c/Users/x`."""
-    posix = pathlib.PurePath(path).as_posix()
+    posix = (path if isinstance(path, pathlib.PurePath) else pathlib.PurePath(path)).as_posix()   # a PureWindowsPath stays one on any OS
     m = re.match(r"^([A-Za-z]):(/.*)?$", posix)
     if m:
         posix = f"/{m.group(1).lower()}{m.group(2) or ''}"

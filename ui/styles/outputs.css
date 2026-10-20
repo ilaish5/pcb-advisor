@@ -12,3 +12,5 @@
 
 /* a narrow sheet (a file open beside it) keeps the name and the size */
 @container (max-width:560px){.out-tbl .c-mod{display:none}}
+.out-tbl .c-lin{white-space:nowrap}
+@container (max-width:420px){.out-tbl .c-lin{display:none}}

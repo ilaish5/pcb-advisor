@@ -26,6 +26,7 @@ function initialMain() {
     if (URLQ.get('sheet')) sheetId = URLQ.get('sheet');
     if (URLQ.get('convs')) convsOpen = true;
     render(true);
+    updLoad(false);                // the server checked GitHub at its start: offer Update when this install is behind
   } catch (err) { document.body.innerHTML = '<p style="padding:20px">Could not load the project: ' + esc(err.message) + '</p>'; return; }
   setInterval(() => { if (!pending && !document.hidden) refresh(); }, 4000);
 })();

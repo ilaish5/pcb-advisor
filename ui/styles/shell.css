@@ -123,3 +123,10 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
   .pane.side{position:absolute;inset:0;z-index:5}
   .app.has-side .pane.work{visibility:hidden}
 }
+/* Update (ui/js/update.js): in the nav foot only when this install is behind GitHub */
+.nitem.upd .no{position:relative;color:var(--accent,var(--ink-2))}
+.upd-dot{position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--warn,#d08a00)}
+.upd-dlg{width:min(520px,calc(100% - 32px))}
+.upd-list{list-style:none;margin:0 0 12px;padding:0;max-height:240px;overflow:auto;display:grid;gap:6px;font-size:13px}
+.upd-list .m{font-family:var(--mono,monospace);color:var(--ink-3);margin-right:6px}
+.upd-dlg p{margin:0 0 10px}
