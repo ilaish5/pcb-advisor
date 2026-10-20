@@ -186,6 +186,27 @@ function setDetails(key, summary, body) {
   return `<details class="disc" data-open-key="${key}"${pgOpen[key] ? ' open' : ''}><summary>${esc(summary)}</summary>${body}</details>`;
 }
 
+/* Setup check: the same list as `python pcb.py doctor` (GET /api/doctor). The result is kept so a re-render keeps it. */
+let PG_DOCTOR = null, PG_DOCTOR_BUSY = false;
+function doctorHTML() {
+  const run = btn(PG_DOCTOR_BUSY ? 'Checking…' : 'Run checks', {size: 'sm', act: 'doctor-run', disabled: PG_DOCTOR_BUSY});
+  if (!PG_DOCTOR) return setRow('Setup', run, {saved: false});
+  const tone = {ok: 'ok-t', warn: 'warn-t', fix: 'bad-t', skip: ''};
+  const mark = {ok: '✓', warn: '!', fix: '✗', skip: '–'};
+  const rows = PG_DOCTOR.checks.map(c => `<li><span class="${tone[c.status]}">${mark[c.status]}</span> <b>${esc(c.title)}</b>` +
+    (c.detail ? ` <span class="muted">${esc(c.detail)}</span>` : '') +
+    (c.fix && c.fix.command && c.status !== 'ok' ? `<div class="m">${esc(c.fix.command)} ${btn('Copy', {kind: 'link', size: 'sm', act: 'doctor-copy', cmd: c.fix.command})}</div>` : '') + '</li>').join('');
+  return setRow('Setup', run, {saved: false}) + `<ul class="doctor-list" aria-live="polite">${rows}</ul>`;
+}
+async function pgDoctorRun() {
+  PG_DOCTOR_BUSY = true; render(true);
+  try { PG_DOCTOR = await api('/api/doctor?refresh=1'); } finally { PG_DOCTOR_BUSY = false; render(true); }
+}
+onAct('doctor-run', async () => { await pgDoctorRun(); });
+onAct('doctor-copy', async (el, d) => {
+  try { await navigator.clipboard.writeText(d.cmd); toast('Copied'); } catch (err) { toast(d.cmd); }
+});
+
 function setAgentHTML(c) {
   const engines = c.engines || [];
   const cur = engines.find(e => e.active);
@@ -198,6 +219,7 @@ function setAgentHTML(c) {
       ['ask', 'Ask me for every change'],
       ['important', 'Ask only for important changes (parts, Altium, ordering)'],
       ['auto', 'Do everything except ordering and deleting']], (c.agent && c.agent.autonomy) || 'important'), {id: 'set-autonomy'}) +
+    doctorHTML() +
     setRow('Language', setSel('set-language', 'data-set="user.language"', PG_LANGS, lang), {id: 'set-language'}) +
     setRow('Your name', `<input id="set-name" class="in" data-set="user.name" value="${esc((c.user && c.user.name) || '')}" autocomplete="off">`, {id: 'set-name'});
 }

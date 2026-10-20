@@ -169,15 +169,18 @@ def test_a_netlist_with_a_part_without_pins_is_refused_and_gaps_only_warn(home, 
 
 
 def test_confirming_the_idea_needs_a_quote_from_the_student(home, empty):
+    """A confirm whose quote does not hold up is not an error: it becomes idea.ready (the Confirm button)."""
     import serve
-    _, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm"}], last_user="yes")
-    assert refused and not store.load_idea(empty)["confirmed"]
-    _, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm", "student_said": "sure thing"}],
-                                        last_user="Yes, confirmed.")
-    assert refused and not store.load_idea(empty)["confirmed"]
+    store.propose_idea(empty, "Power", "Li-ion", by="agent")
+    applied, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm"}], last_user="yes")
+    assert applied == ["idea.ready"] and not refused and not store.load_idea(empty)["confirmed"]
+    applied, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm", "student_said": "sure thing"}],
+                                              last_user="Yes, confirmed.")
+    assert applied == ["idea.ready"] and not refused and not store.load_idea(empty)["confirmed"]
     applied, _, refused = serve.apply_actions(empty, [{"type": "idea.confirm", "student_said": "yes, confirmed"}],
                                               last_user="Yes, confirmed.")
     assert applied == ["idea.confirm"] and store.load_idea(empty)["confirmed"]
+    assert store.load_idea(empty)["agreed"][0]["status"] == "confirmed"      # saving the draft came with it
 
 
 def test_an_unknown_action_is_reported_not_swallowed(home, lte):
@@ -201,7 +204,7 @@ def test_chat_stores_the_replys_tools_and_proposals(server, lte, monkeypatch):
     import agent
     import workspace
     workspace.set_value("agent.autonomy", "ask")      # a routine proposal would otherwise be applied (and noted) at once
-    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: {
+    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None, **_kw: {
         "reply": "Proposed.", "tools": [{"t": "Check availability", "d": "x", "st": "ok"}],
         "actions": [{"type": "bom.propose", "line": "U5", "changes": {"note": "n"}, "reason": "r"}]})
     code, st = post(server, "/api/chat", {"text": "hello"}, lte)
@@ -214,7 +217,7 @@ def test_chat_stores_the_replys_tools_and_proposals(server, lte, monkeypatch):
 def test_chat_in_a_part_conversation_gives_the_agent_that_parts_context(server, lte, monkeypatch):
     import agent
     seen = {}
-    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: (
+    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None, **_kw: (
         seen.update(ask=ask) or {"reply": "ok", "actions": [], "tools": []}))
     _, out = post(server, "/api/thread/open", {"anchor": "U5"}, lte)
     code, _ = post(server, f"/api/chat?session={out['session']}", {"text": "why OE?"}, lte)
@@ -224,7 +227,7 @@ def test_chat_in_a_part_conversation_gives_the_agent_that_parts_context(server, 
 def test_an_ask_chip_reaches_the_engine_and_stays_on_the_students_message(server, lte, monkeypatch):
     import agent
     seen = []
-    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None: (
+    monkeypatch.setattr(agent, "respond", lambda m, ask, hist, backend=None, timeout=None, **_kw: (
         seen.append(ask) or {"reply": "ok", "actions": [], "tools": []}))
     monkeypatch.setattr(agent, "compact", lambda *a, **k: {"ok": True})    # no real engine call for memory
     _, st = post(server, "/api/chat", {"text": "is this right?", "about": {"kind": "part", "id": "U5", "label": "U5"}}, lte)
@@ -258,12 +261,12 @@ def test_the_note_of_a_decision_is_marked_so_the_chat_does_not_repeat_the_card(s
     assert row["last"] is None or "Rejected" not in row["last"]["text"]
 
 
-def test_a_refused_action_is_shown_to_the_student(server, lte, monkeypatch):
+def test_a_confirm_without_a_quote_is_not_shown_as_a_refusal(server, lte, monkeypatch):
     import agent
     monkeypatch.setattr(agent, "respond", lambda *a, **k: {
         "reply": "Done.", "tools": [], "actions": [{"type": "idea.confirm"}]})
     _, st = post(server, "/api/chat", {"text": "yes"}, lte)
-    assert "Not applied" in st["chat"][-1]["text"]
+    assert "Not applied" not in st["chat"][-1]["text"] and "idea.ready" in st["chat"][-1]["applied"]
 
 
 # ---------------------------------------------------------------- the rest of the surface

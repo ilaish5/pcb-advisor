@@ -62,7 +62,7 @@ def test_add_shape_and_auto_placement(empty):
     res1 = store.apply_diagram_edit(empty, ops1)
     assert res1["ok"]
     assert "usb" in res1["touched"]
-    diag = store.load_idea(empty)["diagram"]
+    diag = store.load_idea_working(empty)["diagram"]
     assert len(diag["shapes"]) == 1
     s_usb = diag["shapes"][0]
     assert s_usb["id"] == "usb"
@@ -75,7 +75,7 @@ def test_add_shape_and_auto_placement(empty):
     ]
     res2 = store.apply_diagram_edit(empty, ops2)
     assert res2["ok"]
-    diag2 = store.load_idea(empty)["diagram"]
+    diag2 = store.load_idea_working(empty)["diagram"]
     assert len(diag2["shapes"]) == 2
     s_mcu = next(s for s in diag2["shapes"] if s["id"] == "mcu")
     # Coordinates must be finite and not directly overlapping (x, y) != (100, 100)
@@ -89,7 +89,7 @@ def test_update_shape(empty):
     res = store.apply_diagram_edit(empty, [{"op": "update_shape", "id": "s1", "text": "New Text\nRole", "domain": "power", "role": "Charger"}])
     assert res["ok"]
     assert "s1" in res["touched"]
-    diag = store.load_idea(empty)["diagram"]
+    diag = store.load_idea_working(empty)["diagram"]
     s = diag["shapes"][0]
     assert s["text"] == "New Text\nRole"
     assert s["domain"] == "power"
@@ -106,14 +106,14 @@ def test_delete_shape_removes_incident_connectors(empty):
         {"op": "add_connector", "id": "c2", "from": "s2", "to": "s3", "label": "BC"},
         {"op": "add_connector", "id": "c3", "from": "s1", "to": "s3", "label": "AC"},
     ])
-    diag_before = store.load_idea(empty)["diagram"]
+    diag_before = store.load_idea_working(empty)["diagram"]
     assert len(diag_before["shapes"]) == 3
     assert len(diag_before["connectors"]) == 3
 
     # Delete s2: c1 and c2 should be removed; c3 should remain
     res = store.apply_diagram_edit(empty, [{"op": "delete_shape", "id": "s2"}])
     assert res["ok"]
-    diag_after = store.load_idea(empty)["diagram"]
+    diag_after = store.load_idea_working(empty)["diagram"]
     assert len(diag_after["shapes"]) == 2
     assert not any(s["id"] == "s2" for s in diag_after["shapes"])
     assert len(diag_after["connectors"]) == 1
@@ -131,7 +131,7 @@ def test_connector_ops(empty):
         {"op": "add_connector", "id": "c_pwr", "from": "pwr", "to": "ldo", "label": "5V In", "style": "solid", "arrows": "to"}
     ])
     assert res_add["ok"]
-    diag = store.load_idea(empty)["diagram"]
+    diag = store.load_idea_working(empty)["diagram"]
     assert len(diag["connectors"]) == 1
     c = diag["connectors"][0]
     assert c["label"] == "5V In"
@@ -142,14 +142,14 @@ def test_connector_ops(empty):
         {"op": "update_connector", "id": "c_pwr", "label": "5V 500mA", "style": "thick"}
     ])
     assert res_up["ok"]
-    c_up = store.load_idea(empty)["diagram"]["connectors"][0]
+    c_up = store.load_idea_working(empty)["diagram"]["connectors"][0]
     assert c_up["label"] == "5V 500mA"
     assert c_up["style"] == "thick"
 
     # Delete connector
     res_del = store.apply_diagram_edit(empty, [{"op": "delete_connector", "id": "c_pwr"}])
     assert res_del["ok"]
-    assert len(store.load_idea(empty)["diagram"]["connectors"]) == 0
+    assert len(store.load_idea_working(empty)["diagram"]["connectors"]) == 0
 
 
 def test_frame_ops(empty):
@@ -163,7 +163,7 @@ def test_frame_ops(empty):
         {"op": "add_frame", "id": "f1", "title": "Subsystem", "around": ["s1", "s2"], "padding": 20, "stroke": "#2980b9"}
     ])
     assert res["ok"]
-    diag = store.load_idea(empty)["diagram"]
+    diag = store.load_idea_working(empty)["diagram"]
     assert len(diag["frames"]) == 1
     f = diag["frames"][0]
     assert f["title"] == "Subsystem"
@@ -179,12 +179,12 @@ def test_frame_ops(empty):
     # Update frame title
     res_up = store.apply_diagram_edit(empty, [{"op": "update_frame", "id": "f1", "title": "Power Domain"}])
     assert res_up["ok"]
-    assert store.load_idea(empty)["diagram"]["frames"][0]["title"] == "Power Domain"
+    assert store.load_idea_working(empty)["diagram"]["frames"][0]["title"] == "Power Domain"
 
     # Delete frame
     res_del = store.apply_diagram_edit(empty, [{"op": "delete_frame", "id": "f1"}])
     assert res_del["ok"]
-    assert len(store.load_idea(empty)["diagram"]["frames"]) == 0
+    assert len(store.load_idea_working(empty)["diagram"]["frames"]) == 0
 
 
 def test_auto_layout(empty):
@@ -197,7 +197,7 @@ def test_auto_layout(empty):
     ])
     res = store.apply_diagram_edit(empty, [{"op": "auto_layout"}])
     assert res["ok"]
-    diag = store.load_idea(empty)["diagram"]
+    diag = store.load_idea_working(empty)["diagram"]
     s_usb = next(s for s in diag["shapes"] if s["id"] == "usb")
     s_mcu = next(s for s in diag["shapes"] if s["id"] == "mcu")
     # In topological left-to-right from usb -> mcu, usb x should be < mcu x
@@ -215,27 +215,27 @@ def test_auto_layout(empty):
 def test_invalid_op_refused_diagram_unchanged(empty):
     """Test that any invalid op causes the entire batch to be refused and diagram left intact."""
     store.apply_diagram_edit(empty, [{"op": "add_shape", "id": "init", "text": "Initial"}])
-    diag_before = copy.deepcopy(store.load_idea(empty)["diagram"])
+    diag_before = copy.deepcopy(store.load_idea_working(empty)["diagram"])
 
     # 1. Unknown op
     with pytest.raises(ValueError, match="unknown op"):
         store.apply_diagram_edit(empty, [{"op": "teleport_shape", "id": "init"}])
-    assert store.load_idea(empty)["diagram"] == diag_before
+    assert store.load_idea_working(empty)["diagram"] == diag_before
 
     # 2. Invalid shape type
     with pytest.raises(ValueError):
         store.apply_diagram_edit(empty, [{"op": "add_shape", "id": "bad", "type": "triangle_nonexistent"}])
-    assert store.load_idea(empty)["diagram"] == diag_before
+    assert store.load_idea_working(empty)["diagram"] == diag_before
 
     # 3. Non-finite coordinates
     with pytest.raises(ValueError):
         store.apply_diagram_edit(empty, [{"op": "add_shape", "id": "bad", "x": float("nan"), "y": 100}])
-    assert store.load_idea(empty)["diagram"] == diag_before
+    assert store.load_idea_working(empty)["diagram"] == diag_before
 
     # 4. Connector to nonexistent shape
     with pytest.raises(ValueError):
         store.apply_diagram_edit(empty, [{"op": "add_connector", "from": "init", "to": "ghost_shape"}])
-    assert store.load_idea(empty)["diagram"] == diag_before
+    assert store.load_idea_working(empty)["diagram"] == diag_before
 
 
 def test_cap_100_ops(empty):
@@ -283,7 +283,7 @@ def test_undo_restores_diagram_and_history_cap(empty, server):
 
 def test_chat_live_diagram_edit_direct(empty, server, monkeypatch):
     """Test idea.diagram.edit action works directly via /api/chat with agent.respond monkeypatched."""
-    def fake_respond(model_state, text, chat, backend=None):
+    def fake_respond(model_state, text, chat, backend=None, **_kw):
         return {
             "reply": "Added USB and Charger blocks directly.",
             "actions": [
@@ -309,7 +309,7 @@ def test_chat_live_diagram_edit_direct(empty, server, monkeypatch):
     assert set(out["diagram_touched"]).issuperset({"usb", "chg"})
 
     # Check project state
-    diag = store.load_idea(empty)["diagram"]
+    diag = store.load_idea_working(empty)["diagram"]
     shape_ids = {s["id"] for s in diag["shapes"]}
     assert "usb" in shape_ids and "chg" in shape_ids
     assert len(diag["connectors"]) == 1
@@ -381,6 +381,13 @@ def test_agents_md_and_skills_documentation():
 # 7. Requirements Endpoints Tests
 # -----------------------------------------------------------------------------
 
+def _legacy_proposed(project, topic, text):
+    """A requirement the agent proposed before the draft existed (old projects still carry these)."""
+    idea = store.load_idea(project)
+    idea["agreed"].append({"topic": topic, "text": text, "by": "agent", "status": "proposed", "ts": store.now()})
+    store.save_idea(project, idea)
+
+
 def test_requirements_endpoints(empty, server):
     """Test requirements endpoints: add, update, rename conflict, confirm, delete, move."""
     # 1. Add requirement
@@ -410,10 +417,10 @@ def test_requirements_endpoints(empty, server):
     st_conf, _ = post_json(server, "/api/idea/item/update", {"old_topic": "Power Supply", "topic": "MCU", "text": "Conflict"}, empty)
     assert st_conf == 400
 
-    # 3. Confirm proposed item
-    # Agent proposes an item
-    store.propose_idea(empty, "Radio", "BLE 5.0", by="agent")
-    item_radio = next(i for i in store.load_idea(empty)["agreed"] if i["topic"] == "Radio")
+    # 3. Confirm a proposed item (an old project's; the agent now writes straight into the draft)
+    store.save_idea_from_draft(empty)
+    _legacy_proposed(empty, "Radio", "BLE 5.0")
+    item_radio = next(i for i in store.load_idea_working(empty)["agreed"] if i["topic"] == "Radio")
     assert item_radio["status"] == "proposed"
     st_cfm, res_cfm = post_json(server, "/api/idea/item/confirm", {"topic": "Radio"}, empty)
     assert st_cfm == 200
@@ -433,14 +440,14 @@ def test_requirements_endpoints(empty, server):
 
 
 def test_agent_proposal_preserves_student_prev_text(empty):
-    """When agent proposes change on student-edited topic, old text is kept in prev_text."""
+    """The agent's change to a student's topic lands in the draft at once; the old text is kept in prev_text."""
     store.propose_idea(empty, "Memory", "64MB SPI NOR Flash", by="student")
-    assert store.load_idea(empty)["agreed"][0]["status"] == "confirmed"
+    assert store.load_idea_working(empty)["agreed"][0]["status"] == "confirmed"
 
     # Agent proposes update
     store.propose_idea(empty, "Memory", "32MB SPI NOR Flash is enough", by="agent")
-    item = store.load_idea(empty)["agreed"][0]
-    assert item["status"] == "proposed"
+    item = store.load_idea_working(empty)["agreed"][0]
+    assert item["status"] == "confirmed" and item["by"] == "agent"
     assert item["text"] == "32MB SPI NOR Flash is enough"
     assert item["prev_text"] == "64MB SPI NOR Flash"
 

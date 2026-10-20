@@ -6,7 +6,8 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
 # Parts and stock
 
 ## When to use
-- A BOM line is added, or its MPN or value is edited: check it right away, not on order day.
+- A BOM line is added, or its MPN or value is edited: the tool checks it in the background. Read `stock_check` of the line in
+  CURRENT STATE: `missing` or `stale` (over 24 h) run the script; `checking` wait; `fresh` use the stored numbers with their time.
 - The student asks for stock, price, cost per board, Basic/Extended, or a cheaper or in-stock alternative.
 - Before the schematic is called done and before the BOM is exported.
 - The student asks if a part is obsolete: answer only from JLC signals and say lifecycle is unknown.
@@ -15,7 +16,8 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
 ## Steps
 1. List the BOM lines to check: only the lines the student changed, or all lines for a full check. Read the line as entered (MPN,
    value, package, quantity per board). Ask the board count if unknown; default to the student's planned quantity.
-2. Run the stock check (Scripts). The result carries its own `checked_at` time. Never give stock or price from memory.
+2. Run the stock check (Scripts) only for lines whose `stock_check` is `missing` or `stale`; a `fresh` one already has a script
+   result with its `checked_at`. Never give stock or price from memory, and never delay the answer for a check that is `checking`.
 3. For each line, confirm the JLC hit is the SAME part: model name equals the MPN as entered (`exact`), and the package matches.
    A search hit that is a sibling (other suffix, other package, other maker) is not a match: mark the line "no exact match".
 4. Read the type: Basic (no fee), Preferred Extended (no fee), Extended (fixed fee per part type). Count Extended types.

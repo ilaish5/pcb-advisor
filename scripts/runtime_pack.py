@@ -24,6 +24,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -82,13 +83,25 @@ def _sources():
     return out
 
 
+def render(rel, data):
+    """The instructions say `python <repo>/scripts/x.py`; the allow-list says whatever starts Python on this
+    machine (`python3` on a Mac, sometimes `py` on Windows). An engine copies the command it reads, and a
+    command that does not match the allow-list is denied - so the pack carries this machine's command."""
+    if not rel.endswith(".md"):
+        return data
+    cmd = oscompat.python_cmd()
+    if cmd == "python":
+        return data
+    return re.sub(rb"(?<![\w./-])python (?=<repo>)", cmd.encode() + b" ", data)
+
+
 def _desired(sources):
     """{path relative to the engine home: bytes}"""
-    want = {"AGENTS.md": sources["AGENTS.md"], "CLAUDE.md": CLAUDE_MD.encode("utf-8")}
+    want = {"AGENTS.md": render("AGENTS.md", sources["AGENTS.md"]), "CLAUDE.md": CLAUDE_MD.encode("utf-8")}
     for rel, data in sources.items():
         if rel.startswith("skills/"):
             for tree in SKILL_TREES:
-                want[f"{tree}/{rel[len('skills/'):]}"] = data
+                want[f"{tree}/{rel[len('skills/'):]}"] = render(rel, data)
     manifest = {"version": 1,
                 "files": {rel: hashlib.sha256(data).hexdigest() for rel, data in sources.items()}}
     want[MANIFEST] = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")

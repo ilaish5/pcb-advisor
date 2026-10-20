@@ -14,3 +14,7 @@
 @container (max-width:560px){.out-tbl .c-mod{display:none}}
 .out-tbl .c-lin{white-space:nowrap}
 @container (max-width:420px){.out-tbl .c-lin{display:none}}
+.out-tbl .row-acts{gap:8px;align-items:center}
+.out-remake-why{font-size:var(--t-xs);white-space:nowrap}
+.dlg p{line-height:1.45}
+.out-tbl tr:has(.out-remake) .row-acts{opacity:1}   /* a file that needs making again shows its button without a hover */

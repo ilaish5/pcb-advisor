@@ -75,7 +75,8 @@ Which LLM engine answers, and how. See [gateway.md](gateway.md).
 | key | default |
 |---|---|
 | `provider` | `claude_code` |
-| `timeout_seconds` | `180` |
+| `timeout_seconds` | `900` — total ceiling for one chat turn (the memory rewrite uses it too) |
+| `idle_timeout_seconds` | `180` — a turn is stopped when the engine prints nothing for this long; the partial answer is kept |
 | `history_messages` | `8` — how many recent messages go with each turn |
 | `memory_every` | `10` — rewrite a conversation's memory every N messages |
 | `memory_max_chars` | `2000` — hard ceiling; the engine is asked to compress to fit |
@@ -85,6 +86,11 @@ Which LLM engine answers, and how. See [gateway.md](gateway.md).
 while it answers. It ships allowing reads and the calculation scripts, and
 refusing Write and Edit — `pcb.py tools` shows it, `--clear` hands control back
 to the CLI's own settings. See [gateway.md](gateway.md).
+
+`providers.claude_code.tools.allowed_extra` (default `[]`) is a list of extra permission rules appended to
+`allowed`. The chat's **Allow and retry** button adds one rule here (a single exact command, path or web domain
+the advisor was denied; never a combined command, and never a write to `*.jsonl`, `idea.json`, `bom.json`,
+`netlist/*.json` or a library manifest). Remove a rule by editing `config.json`.
 
 ### `engineering_defaults`
 

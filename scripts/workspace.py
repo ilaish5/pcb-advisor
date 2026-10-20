@@ -251,7 +251,8 @@ def describe(project=None, engine_home=None):
             {"path": rel(pdir / "project.json"), "write": False,
              "what": "this board's settings: layers, copper weight, temperature rise"},
             {"path": rel(pdir / "idea.json"), "write": False,
-             "what": "the agreed idea, block diagram and checklist. The server writes it when you emit idea.* actions"},
+             "what": "the last SAVED idea, block diagram and checklist. Your idea.* actions go to the live draft "
+                     "(idea-draft.json, also read-only) that CURRENT STATE shows; the student saves it"},
             {"path": rel(pdir / "bom-log.jsonl"), "write": False,
              "what": "append-only: every applied BOM change. You change the BOM only by emitting bom.propose; "
                      "the student approves, and the server appends"},

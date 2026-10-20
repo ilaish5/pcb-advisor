@@ -123,6 +123,10 @@ function dfmTotals() {
   }
   return {n, open, real, known};
 }
+function dfmRemakeAll() {       // more than one output to make again: one button for all of them
+  const again = outOld(S.exports || []).filter(f => outRemakePlan(f).kind !== 'none');
+  return again.length > 1 ? btn('Make all again', {kind: 'line', act: 'remake-all', title: 'Runs the exporter again for every output that is out of date or edited'}) : '';
+}
 function dfmHeader(reports) {
   if (!reports) return viewHeader({title: 'DFM'});
   const t = dfmTotals();
@@ -142,7 +146,7 @@ function dfmHeader(reports) {
     t.known && !t.n && {always: true, label: 'No findings listed yet', title: 'Add the findings of the report, or ask the agent to list them'},
   ]);
   const more = menu({icon: 'more', title: 'More'}, [{label: dfmGuide ? 'Hide how to check at JLC' : 'How to check at JLC', act: 'dfm-guide'}]);
-  return viewHeader({title: 'DFM', meta, actions: more, primary: dfmUpload({kind: 'pri'})});
+  return viewHeader({title: 'DFM', meta, actions: dfmRemakeAll() + more, primary: dfmUpload({kind: 'pri'})});
 }
 // Parts placed with pins from the agent: the one place the missing datasheet blocks. Resolved by a verified datasheet or an explicit accept.
 function dfmUnverified() {
@@ -168,9 +172,9 @@ function dfmGaps() {
 function dfmStaleHTML() {        // an order must not go out with files the design has moved on from
   const rows = outOld(S.exports || []);
   if (!rows.length) return '';
-  const item = f => `<li class="unv-row"><span class="m">${esc(f.name)}</span> ${outLineage(f)} <span class="unv-why">${esc((f.lineage.reasons || []).join('; '))}</span></li>`;
+  const item = f => `<li class="unv-row"><span class="m">${esc(f.name)}</span> ${outLineage(f)} <span class="unv-why">${esc((f.lineage.reasons || []).join('; '))}</span> ${outRemakeBtn(f)}</li>`;
   return `<section class="dfm-unv"><h3>Outputs out of date <span class="muted">(${rows.length}) to export again before ordering</span></h3>
-    <p class="muted">Each was made from a design that has changed since, or was edited after the tool wrote it. Make it again from Outputs (Gerbers: generate them in Altium again).</p><ul>${rows.map(item).join('')}</ul></section>`;
+    <p class="muted">Each was made from a design that has changed since, or was edited after the tool wrote it. Make each again here (Gerbers: Altium writes them first).</p><ul>${rows.map(item).join('')}</ul></section>`;
 }
 function dfmGapsHTML() {
   const g = dfmGaps();
@@ -382,7 +386,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 

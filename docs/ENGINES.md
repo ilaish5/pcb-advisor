@@ -1,5 +1,7 @@
 # AI engines: install and configure
 
+The one-command installer in the README already installs Claude Code and offers the sign-in for you. This page is for doing it by hand, or for Antigravity. `python pcb.py doctor` shows what is missing.
+
 pcb-advisor does not ship a model. It runs an AI **command-line tool** that you install and sign in to
 yourself. Two are supported:
 
@@ -21,7 +23,7 @@ You need **one** of them. Install it, sign in once in a terminal, then tell pcb-
    It installs `claude.exe` into `%USERPROFILE%\.local\bin` and adds that folder to your PATH.
 2. **Close the terminal and open a new one** (the PATH change applies only to new terminals).
 3. Check it: `claude --version`
-4. Sign in: run `claude` with no arguments, follow the browser login, then type `/exit`.
+4. Sign in: `claude auth login` (follow the browser login). Check with `claude auth status` (exit code 0 = signed in; it cannot tell that a saved login has expired, the chat then shows a "not signed in" card).
 
 macOS / Linux: `curl -fsSL https://claude.ai/install.sh | bash`, then the same steps 2-4.
 
@@ -72,8 +74,9 @@ Restart `python pcb.py serve` after changing the engine.
 | symptom | cause / fix |
 |---|---|
 | `python pcb.py engines` says "not on PATH" | You installed in another terminal. Open a new terminal and start pcb-advisor from it. Or set the full path: `python pcb.py config agent.providers.antigravity.command "$env:LOCALAPPDATA\agy\bin\agy.exe"` (PowerShell) |
-| The chat answers "please sign in" / auth error | Run `claude` or `agy` once in a terminal and finish the browser login. |
-| Answers time out | Raise `agent.timeout_seconds` (default 180). |
+| The chat answers "please sign in" / auth error | `claude auth login` (or run `agy` once) and finish the browser login. |
+| `claude` is installed but "not found" | pcb-advisor also looks in `~/.local/bin` (Windows `%USERPROFILE%\.local\bin`), where the official installer puts it, so a terminal opened before the install still works. |
+| Answers time out | A turn stops after `agent.idle_timeout_seconds` (default 180) with no output from the engine, or after `agent.timeout_seconds` (default 900) in total. Raise the one that fired; the chat says which. |
 | Hebrew or other non-English text is garbled | Already handled: pcb-advisor talks to the CLI in UTF-8. Report it if you still see it. |
 
 ## 5. Notes for developers (verified 2026-10-11, agy 1.3.3, Claude Code 2.1.296, Windows 11 ARM64)

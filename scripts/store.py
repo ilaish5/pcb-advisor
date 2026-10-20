@@ -18,9 +18,12 @@ import copy
 import datetime as dt
 import json
 import math
+import os
 import pathlib
 import re
 import sys
+import threading
+import time
 from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -877,7 +880,7 @@ def migrate_idea_diagram(idea):
 def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
     """Record a proposal to update the idea block diagram."""
     pid = _new_proposal_id(project)
-    existing = load_idea(project)
+    existing = load_idea_working(project)
     before = {
         "blocks": existing.get("blocks", []),
         "links": existing.get("links", []),
@@ -903,7 +906,7 @@ def decide(project, pid, decision, by="student"):
 
     if decision == "approved":
         if prop.get("kind") == "idea_diagram":
-            idea = load_idea(project)
+            idea = load_idea_working(project)
             changes = prop.get("changes") or {}
             if "diagram" in changes:
                 if not isinstance(changes["diagram"], dict):
@@ -922,9 +925,9 @@ def decide(project, pid, decision, by="student"):
             if "diagram" in idea:
                 idea["diagram"] = validate_diagram(idea["diagram"])
 
-            save_idea(project, idea)
+            save_idea_draft(project, idea)
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by,
-                                                "after_hash": _idea_hash(load_idea(project))})
+                                                "after_hash": _idea_hash(load_idea_working(project))})
         else:
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
             append(project, "bom-log.jsonl", {
@@ -1025,14 +1028,14 @@ def undo_proposal(project, pid, by="student"):
     if prop["status"] != "approved":
         raise UndoRefused("only an applied change can be undone")
     if prop.get("kind") == "idea_diagram":
-        idea = load_idea(project)
+        idea = load_idea_working(project)
         if prop.get("after_hash") and _idea_hash(idea) != prop["after_hash"]:
             raise UndoRefused("the diagram was edited after this change; undo is refused so those edits are not lost")
         before = prop.get("before") or {}
         for k in ("blocks", "links", "diagram"):
             if k in before:
                 idea[k] = before[k]
-        save_idea(project, idea)
+        save_idea_draft(project, idea)
     else:
         entry = next((e for e in read_jsonl(pdir(project) / "bom-log.jsonl") if e.get("proposal") == pid), None)
         if not entry:
@@ -1188,7 +1191,38 @@ def add_library(project, line, changes, by="agent"):
 
 # ---------------------------------------------------------------- idea
 
+def _atomic_write_json(path, obj):
+    """Write JSON so a crash or a second reader never sees a half file. The temp name is per thread (the server
+    is threaded); on Windows os.replace briefly fails while a reader holds the file open, so retry."""
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _idea_defaults(idea):
+    idea.setdefault("goal", "")
+    idea.setdefault("agreed", [])
+    idea.setdefault("blocks", [])
+    idea.setdefault("links", [])
+    idea.setdefault("confirmed", False)
+    migrate_idea_diagram(idea)
+    return idea
+
+
 def load_idea(project):
+    """The SAVED idea (idea.json). Everything downstream of the idea stage reads this, never the draft."""
     path = pdir(project) / "idea.json"
     if path.exists():
         try:
@@ -1205,18 +1239,10 @@ def load_idea(project):
                         "links": o.get("links", []), "confirmed": bool(o.get("confirmed"))}
             except json.JSONDecodeError:
                 idea = {}
-    idea.setdefault("goal", "")
-    idea.setdefault("agreed", [])
-    idea.setdefault("blocks", [])
-    idea.setdefault("links", [])
-    idea.setdefault("confirmed", False)
-    migrate_idea_diagram(idea)
-    return idea
+    return _idea_defaults(idea)
 
 
-def save_idea(project, idea):
-    path = pdir(project) / "idea.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
+def _normalise_idea(idea):
     if "diagram" in idea:
         if not isinstance(idea["diagram"], dict):
             raise ValueError("diagram must be an object")
@@ -1235,7 +1261,205 @@ def save_idea(project, idea):
                 }
                 for s in shapes if s.get("type") in ("block", "rectangle")
             ]
-    path.write_text(json.dumps(idea, ensure_ascii=False, indent=2), encoding="utf-8")
+    return idea
+
+
+def save_idea(project, idea):
+    """Write the SAVED idea. The idea stage's own edits go through save_idea_draft instead."""
+    _normalise_idea(idea)
+    _atomic_write_json(pdir(project) / "idea.json", idea)
+    return idea
+
+
+# ---- draft: the working copy the agent and the student edit, saved by an explicit Save
+
+IDEA_VERSIONS_KEEP = 20
+
+
+def idea_draft_path(project):
+    return pdir(project) / "idea-draft.json"
+
+
+def idea_versions_path(project):
+    return pdir(project) / "idea-versions.json"
+
+
+def has_idea_draft(project):
+    return idea_draft_path(project).is_file()
+
+
+def load_idea_working(project):
+    """What the student and the agent are looking at: the draft when there is one, else the saved idea."""
+    path = idea_draft_path(project)
+    if path.is_file():
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(d, dict) and isinstance(d.get("idea"), dict):
+                return _idea_defaults(d["idea"])
+        except (json.JSONDecodeError, OSError):
+            pass
+    return load_idea(project)
+
+
+def idea_changes(saved, draft):
+    """How many things differ between the saved idea and the draft: requirements added / removed / changed,
+    the description, and diagram shapes / connectors / frames added / removed / changed. Derived, never counted."""
+    n = 0
+    sa = {i.get("topic"): i for i in saved.get("agreed", [])}
+    da = {i.get("topic"): i for i in draft.get("agreed", [])}
+    for t in set(sa) | set(da):
+        a, b = sa.get(t), da.get(t)
+        if a is None or b is None or (a.get("text"), a.get("status")) != (b.get("text"), b.get("status")):
+            n += 1
+    if (saved.get("goal") or "") != (draft.get("goal") or ""):
+        n += 1
+    sd, dd = saved.get("diagram") or {}, draft.get("diagram") or {}
+    for key in ("shapes", "connectors", "frames"):
+        a = {json.dumps(x, sort_keys=True) for x in sd.get(key, [])}
+        b = {json.dumps(x, sort_keys=True) for x in dd.get(key, [])}
+        n += max(len(a - b), len(b - a))
+    return n
+
+
+def idea_draft_marks(saved, draft):
+    """Which requirements are new or changed in the draft, and whether the description changed: the UI tags them."""
+    sa = {i.get("topic"): i.get("text") for i in saved.get("agreed", [])}
+    marks = {i.get("topic"): ("new" if i.get("topic") not in sa else "changed")
+             for i in draft.get("agreed", []) if sa.get(i.get("topic")) != i.get("text")}
+    sg, dg = (saved.get("goal") or "").strip(), (draft.get("goal") or "").strip()
+    return {"items": marks, "goal": False if sg == dg else ("changed" if sg else "new")}
+
+
+def idea_draft_info(project):
+    """For the UI bar: {"active", "changes": n, "since": ts, "marks": {"items": {topic: new|changed}, "goal": bool},
+    "versions": [{n, ts, by, summary}]}."""
+    versions = [{k: v.get(k) for k in ("n", "ts", "by", "summary")} for v in idea_versions(project)]
+    info = {"active": False, "changes": 0, "since": None, "marks": {"items": {}, "goal": False},
+            "versions": versions[::-1]}
+    path = idea_draft_path(project)
+    if path.is_file():
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+            info["since"] = d.get("started")
+            saved, draft = load_idea(project), _idea_defaults(d["idea"])
+            info["changes"] = idea_changes(saved, draft)
+            info["marks"] = idea_draft_marks(saved, draft)
+            info["active"] = True
+        except (json.JSONDecodeError, OSError, KeyError, TypeError):
+            pass
+    return info
+
+
+def save_idea_draft(project, idea):
+    """Write the draft. A draft equal to the saved idea is dropped (nothing to save or revert)."""
+    _normalise_idea(idea)
+    saved = load_idea(project)
+    path = idea_draft_path(project)
+    if idea_changes(saved, idea) == 0 and all(idea.get(k) == saved.get(k) for k in ("goal_status", "goal_by")):
+        revert_idea_draft(project)
+        return idea
+    started = now()
+    if path.is_file():
+        try:
+            started = json.loads(path.read_text(encoding="utf-8")).get("started") or started
+        except (json.JSONDecodeError, OSError):
+            pass
+    _atomic_write_json(path, {"started": started, "updated": now(), "idea": idea})
+    return idea
+
+
+def revert_idea_draft(project):
+    """Throw the draft away; the saved idea is what is left. Returns True when there was a draft."""
+    path = idea_draft_path(project)
+    if path.is_file():
+        path.unlink()
+        return True
+    return False
+
+
+def idea_versions(project):
+    path = idea_versions_path(project)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def _push_idea_version(project, idea, by, summary):
+    versions = idea_versions(project)
+    n = (versions[-1]["n"] + 1) if versions else 1
+    versions.append({"n": n, "ts": now(), "by": by, "summary": summary, "idea": copy.deepcopy(idea)})
+    _atomic_write_json(idea_versions_path(project), versions[-IDEA_VERSIONS_KEEP:])
+    return n
+
+
+def save_idea_from_draft(project, by="student"):
+    """Save: the draft becomes the idea (one version-history entry, which is also the log entry).
+    Returns the saved idea. Without a draft there is nothing to do and the saved idea is returned."""
+    path = idea_draft_path(project)
+    if not path.is_file():
+        return load_idea(project)
+    saved = load_idea(project)
+    draft = load_idea_working(project)
+    changes = idea_changes(saved, draft)
+    if not idea_versions(project) and idea_exists(project):
+        _push_idea_version(project, saved, "before first save", "the idea as it was before drafts")
+    keep = {k: saved[k] for k in ("confirmed", "confirmed_at") if k in saved}
+    draft.update(keep)
+    save_idea(project, draft)
+    _push_idea_version(project, draft, by, f"{changes} change{'s' if changes != 1 else ''} saved")
+    revert_idea_draft(project)
+    return draft
+
+
+def idea_exists(project):
+    return (pdir(project) / "idea.json").is_file()
+
+
+def restore_idea_version(project, n):
+    """Put saved version n into the draft (non-destructive: the student can Save it or Revert)."""
+    v = next((x for x in idea_versions(project) if x.get("n") == n), None)
+    if v is None:
+        raise KeyError(f"no saved version {n}")
+    saved = load_idea(project)
+    idea = copy.deepcopy(v["idea"])
+    for k in ("confirmed", "confirmed_at"):
+        idea.pop(k, None)
+        if k in saved:
+            idea[k] = saved[k]
+    idea = _idea_defaults(idea)
+    save_idea_draft(project, idea)
+    return load_idea_working(project)
+
+
+def accept_all_proposed(project, accept=True):
+    """Accept (or dismiss) every proposed requirement and description in the working idea."""
+    idea = load_idea_working(project)
+    kept = []
+    for it in idea.get("agreed", []):
+        if it.get("status") == "proposed":
+            if not accept:
+                if it.get("prev_text"):
+                    it["text"] = it.pop("prev_text")
+                    it["status"] = "confirmed"
+                else:
+                    continue
+            else:
+                it["status"] = "confirmed"
+                it["ts"] = now()
+        kept.append(it)
+    idea["agreed"] = kept
+    if idea.get("goal_status") == "proposed":
+        prev = idea.pop("goal_prev", None) or {}
+        if not accept:
+            idea["goal"] = prev.get("text", "")
+            idea["goal_by"] = prev.get("by", "student")
+        idea["goal_status"] = "confirmed"
+        idea["goal_ts"] = now()
+    save_idea_draft(project, idea)
     return idea
 
 
@@ -1250,27 +1474,21 @@ def check_idea_goal(text):
 
 def set_idea_goal(project, text, by="student"):
     """The description: the board in plain words (what it is, what it is for, the diagram told as text).
-    The student's text is agreed as written. The agent's is proposed until the student accepts it, and the text it
-    would replace is kept, so Dismiss puts it back."""
+    Both go into the live draft at once; the student's Save (or Revert) is the only gate."""
     check_idea_goal(text)
     text = text.strip()
-    idea = load_idea(project)
-    if by == "agent":
-        if not text:
-            raise ValueError("description is empty")
-        if idea.get("goal_status") != "proposed":    # a second proposal keeps the text the first one replaced
-            idea["goal_prev"] = {"text": idea.get("goal", ""), "by": idea.get("goal_by", "student")}
-        idea.update(goal=text, goal_by="agent", goal_status="proposed")
-    else:
-        idea.pop("goal_prev", None)
-        idea.update(goal=text, goal_by="student", goal_status="confirmed")
+    idea = load_idea_working(project)
+    if by == "agent" and not text:
+        raise ValueError("description is empty")
+    idea.pop("goal_prev", None)
+    idea.update(goal=text, goal_by="agent" if by == "agent" else "student", goal_status="confirmed")
     idea["goal_ts"] = now()
-    return save_idea(project, idea)
+    return save_idea_draft(project, idea)
 
 
 def decide_idea_goal(project, accept):
     """Accept the agent's description, or dismiss it and put back the text it replaced."""
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     if idea.get("goal_status") != "proposed":
         raise KeyError("no proposed description")
     prev = idea.pop("goal_prev", None) or {}
@@ -1279,7 +1497,7 @@ def decide_idea_goal(project, accept):
         idea["goal_by"] = prev.get("by", "student")
     idea["goal_status"] = "confirmed"
     idea["goal_ts"] = now()
-    return save_idea(project, idea)
+    return save_idea_draft(project, idea)
 
 
 def validate_idea_item(topic, text):
@@ -1291,24 +1509,25 @@ def validate_idea_item(topic, text):
 
 
 def propose_idea(project, topic, text, by="agent"):
-    """An agreed item. The agent proposes; it becomes 'confirmed' only when the student says so."""
+    """A requirement, written into the live draft at once (the student's Save is the gate). 'proposed' only
+    survives in projects made before the draft existed; Accept all / Dismiss all clear those."""
     topic, text = validate_idea_item(topic, text)
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     item = next((i for i in idea["agreed"] if i["topic"] == topic), None)
-    status = "confirmed" if by == "student" else "proposed"
+    status = "confirmed"
     if item:
         if by == "agent" and item.get("text") and item["text"] != text:
             item["prev_text"] = item["text"]
         item.update(text=text, by=by, status=status, ts=now())
     else:
         idea["agreed"].append({"topic": topic, "text": text, "by": by, "status": status, "ts": now()})
-    return save_idea(project, idea)
+    return save_idea_draft(project, idea)
 
 
 def update_idea_item(project, index=None, old_topic=None, topic=None, text=None):
     """Student updates/renames a requirement row. Sets by='student' and status='confirmed'."""
     topic, text = validate_idea_item(topic, text)
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     agreed = idea.get("agreed", [])
     item_idx = None
     if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
@@ -1328,13 +1547,13 @@ def update_idea_item(project, index=None, old_topic=None, topic=None, text=None)
     item["by"] = "student"
     item["status"] = "confirmed"
     item["ts"] = now()
-    save_idea(project, idea)
+    save_idea_draft(project, idea)
     return idea
 
 
 def delete_idea_item(project, index=None, topic=None):
     """Delete a requirement row."""
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     agreed = idea.get("agreed", [])
     item_idx = None
     if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
@@ -1344,13 +1563,13 @@ def delete_idea_item(project, index=None, topic=None):
     if item_idx is None:
         raise KeyError("requirement not found")
     deleted = agreed.pop(item_idx)
-    save_idea(project, idea)
+    save_idea_draft(project, idea)
     return deleted
 
 
 def confirm_idea_item(project, index=None, topic=None):
     """Confirm a specific requirement item (or all if none specified)."""
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     agreed = idea.get("agreed", [])
     if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
         agreed[index]["status"] = "confirmed"
@@ -1366,13 +1585,13 @@ def confirm_idea_item(project, index=None, topic=None):
             if it.get("status") == "proposed":
                 it["status"] = "confirmed"
                 it["ts"] = now()
-    save_idea(project, idea)
+    save_idea_draft(project, idea)
     return idea
 
 
 def move_idea_item(project, from_index, to_index):
     """Reorder requirements list by moving an item from from_index to to_index."""
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     agreed = idea.get("agreed", [])
     if not isinstance(from_index, int) or not isinstance(to_index, int):
         raise ValueError("from and to must be integers")
@@ -1380,20 +1599,25 @@ def move_idea_item(project, from_index, to_index):
         raise ValueError("indices out of range")
     item = agreed.pop(from_index)
     agreed.insert(to_index, item)
-    save_idea(project, idea)
+    save_idea_draft(project, idea)
     return idea
 
 
 def confirm_idea(project):
-    idea = load_idea(project)
-    idea["confirmed"] = True
-    idea["confirmed_at"] = now()
+    """Confirm the idea: the draft (if any) is saved first, then the saved idea is marked confirmed."""
+    idea = load_idea_working(project)
     for i in idea["agreed"]:
         if i["status"] == "proposed":
             i["status"] = "confirmed"
     if idea.get("goal_status") == "proposed":
         idea["goal_status"] = "confirmed"
         idea.pop("goal_prev", None)
+    if has_idea_draft(project):
+        save_idea_draft(project, idea)
+        save_idea_from_draft(project, by="confirm")
+        idea = load_idea(project)
+    idea["confirmed"] = True
+    idea["confirmed_at"] = now()
     return save_idea(project, idea)
 
 
@@ -1449,10 +1673,10 @@ def undo_diagram(project):
 
     last = history.pop()
     path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     valid_diag = validate_diagram(last.get("diagram", {}))
     idea["diagram"] = valid_diag
-    save_idea(project, idea)
+    save_idea_draft(project, idea)
     return valid_diag
 
 
@@ -1466,7 +1690,7 @@ def apply_diagram_edit(project, ops):
     if len(ops) > 100:
         raise ValueError("too many ops (max 100)")
 
-    idea = load_idea(project)
+    idea = load_idea_working(project)
     cur_diag = idea.get("diagram", {"shapes": [], "connectors": [], "frames": []})
     shapes = [copy.deepcopy(s) for s in cur_diag.get("shapes", [])]
     connectors = [copy.deepcopy(c) for c in cur_diag.get("connectors", [])]
@@ -1480,6 +1704,11 @@ def apply_diagram_edit(project, ops):
         op_name = op.get("op") or op.get("type")
         if not op_name:
             raise ValueError("op requires op or type field")
+        # a model often escapes the line break twice: "Coin cell\\nCR2032" would show the backslash
+        for part in (op, *(v for v in op.values() if isinstance(v, dict))):
+            for k in ("text", "label"):
+                if isinstance(part.get(k), str):
+                    part[k] = part[k].replace("\\n", "\n")
 
         if op_name == "add_shape":
             sid = op.get("id")
@@ -1977,7 +2206,7 @@ def apply_diagram_edit(project, ops):
     valid_diag = validate_diagram({"shapes": shapes, "connectors": connectors, "frames": frames})
     save_diagram_snapshot(project, cur_diag)
     idea["diagram"] = valid_diag
-    save_idea(project, idea)
+    save_idea_draft(project, idea)
     return {"ok": True, "diagram": valid_diag, "touched": list(touched_ids)}
 
 

@@ -123,6 +123,9 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | `scripts/lineage.py` | per-output lineage: what each exported file was made from (state fingerprints, input files with sha256, tool version) and whether it is still current: fresh / stale / edited / missing / unknown. Every exporter records through `lineage.note`, which never fails an export. The Outputs view tags each file, the DFM "Ready to order" waits for every output to be current | - |
 | `scripts/introspect.py` | self-awareness: one line per engine turn (time, tokens, cost, scripts run, failures, whether a reply with numbers cites a source); the agent answers questions about itself from it; Settings > About shows it | - |
 | `scripts/update.py` | self-update: the server checks the upstream branch at every start; Update fast-forwards only (refuses on local edits, local commits, no upstream), reinstalls changed requirements, smoke-imports the new code in a fresh interpreter and rolls back if it fails. The server then restarts: `start.bat` relaunches it on exit code 75 (Windows), `os.execv` elsewhere | - |
+| `scripts/gateway/stream.py`, `gateway/events.py` | one engine turn as a stream: Popen with reader threads, live progress labels ("Running …", "Reading …"), Stop and an idle timeout that kill the whole process tree (`taskkill /T /F` on Windows), denials and error kinds (`not_installed`, `not_logged_in`, `stopped`, `timed_out`) on the record | - |
+| `scripts/background.py` | one daemon worker with a dedupe-by-key queue: after a reply it checks every `{{src:…}}` citation against the file (stored in `chats/<session>.cites.json`, drawn on the chip as …/✓/⚠), and it checks stock for BOM lines that have no fresh answer, one line per second | - |
+| `scripts/doctor.py` | `pcb.py doctor` and `GET /api/doctor`: Python, .venv, packages, git, the engine and its sign-in, Altium, JLC network, port, writable workspace, folder names; each check is ok / warn / fix / skip with the fix command. Never installs or writes config. `install.sh` / `install.ps1` run it before starting the server | - |
 
 
 ## 6. Data layout
@@ -131,6 +134,8 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 |---|---|---|
 | `projects/<name>/` | idea.json, `*-log.jsonl` (append-only truth), derived bom.json, proposals, `netlist/`, `chats/`, `sources/`, `exports/` (BOM, `.RUL`, OutJob, library script), notes.md; plus a link to the student's local Altium folder (read-only) | no (user data) |
 | `projects/<name>/lineage-log.jsonl`, `turns-log.jsonl` | append-only: one line per output written, one per engine turn | no (user data) |
+| `projects/<name>/idea-draft.json`, `idea-versions.json` | the unsaved working idea the agent and the student edit (`idea.json` is the last SAVED one), and the newest 20 saved versions | no (user data) |
+| `projects/<name>/chats/<session>.cites.json` | citation check results by reply timestamp | no (user data) |
 | workspace `update-status.json`, `update-log.jsonl` | the last update check (read by `introspect.py version`), and every applied or rolled-back update | no |
 | engine home | generated pack (section 4); per-OS app-data dir | no |
 | `shared/reference/` | course material + `AGENTS.md` topic index; AD20 Essentials manual is the "how do I" guide | yes |

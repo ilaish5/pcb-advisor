@@ -1,22 +1,123 @@
-{"skill": "idea-and-requirements", "cases": [
-  {"id": "idea-and-requirements-01", "lang": "en",
+{
+ "skill": "idea-and-requirements",
+ "cases": [
+  {
+   "id": "idea-and-requirements-01",
+   "lang": "en",
    "question": "I want to build a small data logger with an STM32, a display and a battery. What should I decide before I start the schematic?",
    "expect_skill": true,
-   "must": [["power", "battery"], ["flash", "debug", "SWD", "DFU"], ["connector", "cable", "edge"]],
-   "must_not": ["order now"], "cite": false},
-  {"id": "idea-and-requirements-02", "lang": "he",
+   "must": [
+    [
+     "power",
+     "battery"
+    ],
+    [
+     "flash",
+     "debug",
+     "SWD",
+     "DFU"
+    ],
+    [
+     "connector",
+     "cable",
+     "edge"
+    ]
+   ],
+   "must_not": [
+    "order now"
+   ],
+   "cite": false
+  },
+  {
+   "id": "idea-and-requirements-02",
+   "lang": "he",
    "question": "יש לי רעיון לפרויקט: בקר לתנור עם מסך וחיבור USB. מה אני צריך להחליט לפני שאני מתחיל?",
    "expect_skill": true,
-   "must": [["USB", "DFU", "צריבה", "SWD"], ["חיבור", "מחבר", "כבל", "connector"], ["זיכרון", "memory", "הרכבה", "JLC"]],
-   "cite": false},
-  {"id": "idea-and-requirements-03", "lang": "en",
+   "must": [
+    [
+     "USB",
+     "DFU",
+     "צריבה",
+     "SWD"
+    ],
+    [
+     "חיבור",
+     "מחבר",
+     "כבל",
+     "connector"
+    ],
+    [
+     "זיכרון",
+     "memory",
+     "הרכבה",
+     "JLC"
+    ]
+   ],
+   "cite": false
+  },
+  {
+   "id": "idea-and-requirements-03",
+   "lang": "en",
    "question": "My board is powered from USB-C and has a small display. What else should I decide before choosing parts?",
    "expect_skill": true,
-   "must": [["flash", "debug", "SWD", "DFU"], ["connector", "cable", "edge", "enclosure"]],
-   "cite": false},
-  {"id": "idea-and-requirements-04", "lang": "en",
+   "must": [
+    [
+     "flash",
+     "debug",
+     "SWD",
+     "DFU"
+    ],
+    [
+     "connector",
+     "cable",
+     "edge",
+     "enclosure"
+    ]
+   ],
+   "cite": false
+  },
+  {
+   "id": "idea-and-requirements-04",
+   "lang": "en",
    "question": "How will I program the board the first time? I only have a USB-C connector on it.",
    "expect_skill": true,
-   "must": [["DFU", "bootloader", "BOOT"], ["datasheet", "reference manual", "unknown"]],
-   "cite": true}
-]}
+   "must": [
+    [
+     "DFU",
+     "bootloader",
+     "BOOT"
+    ],
+    [
+     "datasheet",
+     "reference manual",
+     "unknown"
+    ]
+   ],
+   "cite": true
+  },
+  {
+   "id": "idea-and-requirements-05",
+   "lang": "en",
+   "question": "I want to build a small weather station with an ESP32 and a solar panel. Where do we start?",
+   "expect_skill": true,
+   "must": [
+    [
+     "draft"
+    ],
+    [
+     "assumed",
+     "assumption"
+    ],
+    [
+     "power",
+     "battery",
+     "solar"
+    ]
+   ],
+   "must_not": [
+    "order now"
+   ],
+   "cite": false
+  }
+ ]
+}

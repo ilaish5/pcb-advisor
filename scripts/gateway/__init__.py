@@ -88,13 +88,16 @@ def route(request: Request, name=None) -> Result:
 
     ok, why = prov.available()
     if not ok:
-        return Result(provider=prov.id, error=why)
+        # the chat draws a "not installed" card from the kind; any other reason stays a plain error
+        return Result(provider=prov.id, error=why,
+                      meta={"error_kind": "not_installed"} if "not on PATH" in why else {})
 
     request.options.setdefault("cwd", str(workspace.home()))
+    request.options.setdefault("idle_timeout", int(workspace.get("agent.idle_timeout_seconds", 180)))
     if not request.model:
         request.model = prov.config.get("model", "") or ""
     if not request.timeout:
-        request.timeout = int(workspace.get("agent.timeout_seconds", 180))
+        request.timeout = int(workspace.get("agent.timeout_seconds", 900))
     return prov.complete(request)
 
 

@@ -195,12 +195,12 @@ def test_save_load_round_trip(empty):
         ]
     }
 
-    idea = store.load_idea(empty)
+    idea = store.load_idea_working(empty)
     idea["diagram"] = diagram_data
     store.save_idea(empty, idea)
 
     # Reload from disk
-    reloaded = store.load_idea(empty)
+    reloaded = store.load_idea_working(empty)
     r_diag = reloaded.get("diagram", {})
 
     assert len(r_diag["shapes"]) == 2
@@ -462,12 +462,12 @@ def test_agent_proposal_flow(lte):
     assert rec["status"] == "pending"
 
     # Before decision, idea does not have the proposed shape
-    idea_before = store.load_idea(lte)
+    idea_before = store.load_idea_working(lte)
     assert not any(s.get("id") == "prop_mcu" for s in idea_before.get("diagram", {}).get("shapes", []))
 
     # Reject proposal
     store.decide(lte, pid, "rejected")
-    idea_after_reject = store.load_idea(lte)
+    idea_after_reject = store.load_idea_working(lte)
     assert not any(s.get("id") == "prop_mcu" for s in idea_after_reject.get("diagram", {}).get("shapes", []))
 
     # Propose again and approve
@@ -475,14 +475,14 @@ def test_agent_proposal_flow(lte):
     pid2 = rec2["id"]
     store.decide(lte, pid2, "approved")
 
-    idea_after_approve = store.load_idea(lte)
+    idea_after_approve = store.load_idea_working(lte)
     shapes_after = idea_after_approve.get("diagram", {}).get("shapes", [])
     assert any(s.get("id") == "prop_mcu" for s in shapes_after)
 
 
 def test_point_ends_survive_save_and_load(empty):
     shape = {"type": "ellipse", "x": 0.0, "y": 0.0, "w": 160.0, "h": 80.0, "text": ""}
-    idea = store.load_idea(empty)
+    idea = store.load_idea_working(empty)
     idea["diagram"] = {
         "shapes": [dict(shape, id="a"), dict(shape, id="b", x=300.0)],
         "connectors": [{"id": "c1", "from": {"shape": "a", "point": "bottom"},
@@ -490,7 +490,7 @@ def test_point_ends_survive_save_and_load(empty):
         "frames": [],
     }
     store.save_idea(empty, idea)
-    c = store.load_idea(empty)["diagram"]["connectors"][0]
+    c = store.load_idea_working(empty)["diagram"]["connectors"][0]
     assert c["from"] == {"shape": "a", "point": "bottom"}
     assert c["to"] == {"shape": "b", "point": "top-left"}
 
@@ -518,7 +518,7 @@ def test_proposals_in_the_same_millisecond_get_distinct_ids(lte, monkeypatch):
     ("id", 's1" onclick="alert(1)'),
 ])
 def test_proposal_approval_with_injected_value_refused_and_idea_unchanged(empty, bad_field, bad_val):
-    initial_idea = store.load_idea(empty)
+    initial_idea = store.load_idea_working(empty)
     store.save_idea(empty, initial_idea)
     idea_path = store.pdir(empty) / "idea.json"
     idea_before = idea_path.read_text(encoding="utf-8")

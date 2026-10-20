@@ -98,7 +98,7 @@ def test_old_chat_furniture_stays_removed():
 
 def test_text_from_the_student_and_the_agent_is_escaped_before_it_is_markup():
     assert "esc(m.text)" in CHAT_JS                # the student's bubble
-    assert "fmt(m.text)" in CHAT_JS                # fmt() escapes first
+    assert "fmt(m.text, m.cites)" in CHAT_JS                # fmt() escapes first
     assert "esc(m.about.label)" in CHAT_JS
     assert not re.search(r"innerHTML\s*=\s*m\.text", CHAT_JS)
 

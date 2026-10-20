@@ -47,14 +47,16 @@ def test_the_students_text_is_agreed_as_written(empty):
         store.set_idea_goal(empty, "x" * (store.GOAL_MAX + 1))
 
 
-def test_the_agents_text_is_a_proposal_and_dismiss_puts_the_old_text_back(empty):
+def test_the_agents_text_goes_into_the_draft_and_revert_puts_the_saved_text_back(empty):
     store.set_idea_goal(empty, "Mine.", by="student")
+    store.save_idea_from_draft(empty)
     store.set_idea_goal(empty, "First try.", by="agent")
     idea = store.set_idea_goal(empty, "Second try.", by="agent")
-    assert idea["goal"] == "Second try." and idea["goal_status"] == "proposed"
-    assert idea["goal_prev"] == {"text": "Mine.", "by": "student"}, "a second proposal keeps what the first replaced"
-    idea = store.decide_idea_goal(empty, accept=False)
-    assert idea["goal"] == "Mine." and idea["goal_status"] == "confirmed" and "goal_prev" not in idea
+    assert idea["goal"] == "Second try." and idea["goal_status"] == "confirmed" and idea["goal_by"] == "agent"
+    assert store.load_idea(empty)["goal"] == "Mine.", "the saved idea is untouched until Save"
+    assert store.idea_draft_info(empty)["marks"]["goal"] == "changed"
+    store.revert_idea_draft(empty)
+    assert store.load_idea_working(empty)["goal"] == "Mine."
     with pytest.raises(KeyError):
         store.decide_idea_goal(empty, accept=True)          # nothing proposed now
     with pytest.raises(ValueError):
@@ -70,12 +72,12 @@ def test_confirming_the_idea_accepts_a_proposed_description(empty):
 def test_the_agent_proposes_with_idea_describe(empty):
     applied, _, refused = serve.apply_actions(empty, [{"type": "idea.describe", "text": "A tracker for bikes."}])
     assert applied == ["idea.describe"] and not refused
-    idea = store.load_idea(empty)
-    assert idea["goal"] == "A tracker for bikes." and idea["goal_by"] == "agent" and idea["goal_status"] == "proposed"
+    idea = store.load_idea_working(empty)
+    assert idea["goal"] == "A tracker for bikes." and idea["goal_by"] == "agent" and idea["goal_status"] == "confirmed"
     _, _, refused = serve.apply_actions(empty, [{"type": "idea.describe", "text": ""}])
     assert refused and refused[0].startswith("idea.describe")
-    # the agent sees whether its text is still only a proposal
-    assert json.loads(agent._summary(model.build(empty)))["idea"]["goal_status"] == "proposed"
+    # the agent sees its text in the working idea (the draft)
+    assert json.loads(agent._summary(model.build(empty)))["idea"]["goal"] == "A tracker for bikes."
 
 
 def test_the_api_writes_accepts_and_dismisses(empty, server):
@@ -83,10 +85,16 @@ def test_the_api_writes_accepts_and_dismisses(empty, server):
     assert st == 200 and res["idea"]["goal"] == "Written in the sheet." and res["idea"]["goal_status"] == "confirmed"
     st, res = post(server, "/api/idea/goal/confirm", {}, empty)
     assert st == 400, "nothing to accept"
-    store.set_idea_goal(empty, "The agent's words.", by="agent")
+    # an old project's proposed description: accept and dismiss still work
+    idea = store.load_idea_working(empty)
+    idea.update(goal="The agent's words.", goal_by="agent", goal_status="proposed",
+                goal_prev={"text": "Written in the sheet.", "by": "student"})
+    store.save_idea_draft(empty, idea)
     st, res = post(server, "/api/idea/goal/dismiss", {}, empty)
     assert st == 200 and res["idea"]["goal"] == "Written in the sheet."
-    store.set_idea_goal(empty, "The agent's words.", by="agent")
+    idea = store.load_idea_working(empty)
+    idea.update(goal="The agent's words.", goal_by="agent", goal_status="proposed")
+    store.save_idea_draft(empty, idea)
     st, res = post(server, "/api/idea/goal/confirm", {}, empty)
     assert st == 200 and res["idea"]["goal"] == "The agent's words." and res["idea"]["goal_status"] == "confirmed"
     st, _ = post(server, "/api/idea/goal", {"text": "x" * (store.GOAL_MAX + 1)}, empty)

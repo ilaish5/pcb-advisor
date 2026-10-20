@@ -20,17 +20,17 @@ def _run(monkeypatch, prompt="hello", stdout=None, returncode=0, stderr="",
          options=None):
     seen = {}
 
-    def fake_run(argv, **kw):
-        seen["argv"], seen["kw"] = list(argv), kw
-
-        class R:
-            pass
-        r = R()
-        r.returncode, r.stdout, r.stderr = returncode,             _stream() if stdout is None else stdout, stderr
-        return r
+    def fake_run(argv, stdin_text="", cwd=None, env=None, total_timeout=None, idle_timeout=None,
+                 cancel=None, on_line=None):
+        seen["argv"] = list(argv)
+        seen["kw"] = {"input": stdin_text, "cwd": cwd, "encoding": "utf-8"}
+        for ln in (_stream() if stdout is None else stdout).splitlines():
+            if on_line:
+                on_line(ln)
+        return returncode, stderr, "done"
 
     monkeypatch.setattr(shutil, "which", lambda cmd: "/bin/" + cmd)
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(gateway.stream, "run", fake_run)
     res = gateway.route(gateway.Request(prompt=prompt, timeout=5,
                                         options=options or {}),
                         name="antigravity")
@@ -160,8 +160,8 @@ def test_a_hanging_model_list_does_not_hang_describe(home, monkeypatch):
 
 def test_agy_never_waits_on_the_terminal(home, monkeypatch):
     _, seen = _run(monkeypatch)
-    # stdin is a pipe fed with the prompt (input=), never the inherited terminal
-    assert seen["kw"].get("input") and "stdin" not in seen["kw"]
+    # stdin is a pipe fed with the prompt, never the inherited terminal
+    assert seen["kw"].get("input")
 
 
 def _denied_stream(response, denied):
@@ -174,13 +174,15 @@ def _denied_stream(response, denied):
 def test_denied_tool_with_empty_answer_is_an_error(home, monkeypatch):
     res, _ = _run(monkeypatch, stdout=_denied_stream("", ["RunCommand"]))
     assert not res.ok and "denied" in res.error and "RunCommand" in res.error
-    assert res.meta["denied"] == ["RunCommand"]
+    assert [d["tool"] for d in res.meta["denied"]] == ["RunCommand"]
+    assert res.meta["denied"][0] == {"tool": "RunCommand", "input": {}, "reason": "", "compound": False}
 
 
 def test_denied_tool_with_text_keeps_the_text_and_lists_denials(home, monkeypatch):
     res, _ = _run(monkeypatch, stdout=_denied_stream("partial answer", ["RunCommand"]))
     assert res.ok and res.text == "partial answer"
-    assert res.meta["denied"] == ["RunCommand"]
+    assert [d["tool"] for d in res.meta["denied"]] == ["RunCommand"]
+    assert res.meta["denied"][0] == {"tool": "RunCommand", "input": {}, "reason": "", "compound": False}
 
 
 def test_empty_answer_without_denial_is_an_error(home, monkeypatch):

@@ -1,5 +1,6 @@
 /* PCB Advisor UI - chat: header and conversation list, messages, proposal cards, composer, suggestions, askAbout, sending.
-   The chat is one column that shows on every view. State it owns: askCtx (the context chip), chatError, the working timer.
+   The chat is one column that shows on every view. State it owns: askCtx (the context chip), chatError, the working timer,
+   the progress poll, the queue of messages typed while the agent works.
    Server data it reads: S.chat, S.sessions (each with `last`), S.proposals. Globals other files rely on: askAbout, send,
    renderChat, renderChatChip, switchSession, openPart, diffHTML.
    Names here are prefixed (chat*, CHAT_*, prop*) because every ui/js file shares one global scope. */
@@ -17,6 +18,10 @@ const CHAT_CHIPS = {
 let askCtx = null;                        // the chip in the composer: {kind, id, label}
 let chatError = null;                     // a send that never reached an answer: {message, text, ctx, session}
 let chatTimer = null, chatSince = 0;      // the "Working… 12 s" clock
+let chatPoller = null, chatPolling = false, chatProg = null;   // GET /api/chat/progress, once a second while pending: {current, steps, ...}
+let chatStopping = false, chatStepsOpen = false;               // Stop was pressed; the steps list under the working line is open
+let chatQueue = [], chatQid = 0;          // typed while the agent works: [{id, text, ctx, session}], sent as one message when the turn ends
+let chatTail = null;                      // while the thread is drawn: the newest agent record, the only one whose cards have buttons
 let chatSeen = {session: null, count: 0}; // what the thread showed last, so only really new messages are announced
 let chatHtml = '';                        // the thread's markup as last written, to leave the DOM alone when nothing changed
 let chatLead = null;                      // while the thread is drawn: the one pending proposal whose Approve is the primary button
@@ -200,6 +205,86 @@ function propsHTML(ids) {
     other.map(diffHTML).join('') + (pending.length > 1 ? propGroupHTML(pending, true) : pending.map(diffHTML).join(''));
 }
 
+/* ---------- partial turns, denials, queue ---------- */
+const CHAT_PARTIAL = ['stopped', 'idle_timeout', 'total_timeout'];       // error kinds that keep the text and are drawn in the thread
+const chatIsPartial = m => !!(m.partial || m.stopped || m.timed_out || CHAT_PARTIAL.includes(m.error_kind));
+const chatStepName = x => String((x && typeof x === 'object' ? x.label : x) || '').trim();
+const chatStepNames = m => (m.steps || []).map(chatStepName).filter(Boolean);
+/* seconds the turn took: the record's own, else the gap between the student's message and the reply */
+function chatElapsed(m) {
+  if (typeof m.seconds === 'number') return Math.round(m.seconds);
+  for (let j = S.chat.indexOf(m) - 1; j >= 0; j--) {
+    if (S.chat[j].role !== 'user') continue;
+    const a = Date.parse(S.chat[j].ts), b = Date.parse(m.ts);
+    return isNaN(a) || isNaN(b) ? null : Math.max(0, Math.round((b - a) / 1000));
+  }
+  return null;
+}
+function chatPartialLine(m) {
+  const n = chatElapsed(m), steps = chatStepNames(m);
+  let head;
+  if (m.error_kind === 'idle_timeout') {
+    const s = m.idle_seconds ?? (CONFIG && CONFIG.agent && CONFIG.agent.idle_timeout_seconds);
+    head = s ? `No output for ${s} s — stopped` : 'No output for a while — stopped';
+  } else if (m.error_kind === 'total_timeout' || (m.timed_out && m.error_kind !== 'stopped')) {
+    head = n != null ? `Stopped after ${n} s (time limit)` : 'Stopped at the time limit';
+  } else head = n != null ? `Stopped after ${n} s` : 'Stopped';
+  const shown = steps.slice(0, 5).join(', ') + (steps.length > 5 ? ` +${steps.length - 5} more` : '');
+  return head + (steps.length ? ` · steps: ${shown}` : '');
+}
+/* A turn that did not finish: what it wrote, one muted line, and (on the newest one) Continue and Retry. */
+function chatPartialHTML(m, live) {
+  const raw = m.error && /^\[[^\]]+\]/.test(String(m.text || '')) ? '' : m.text;      // an engine error line is not an answer
+  const steps = chatStepNames(m).slice(-12);
+  const cont = 'Continue from where you stopped.' + (steps.length ? ' Steps already done: ' + steps.join('; ') : '');
+  const acts = live ? `<div class="acts">${btn('Continue', {size: 'sm', act: 'chat-continue', text: cont})}${btn('Retry', {size: 'sm', act: 'retry'})}</div>` : '';
+  return (raw ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(raw))}</div></div>` : '') +
+    `<div class="chat-stopped" role="status"><span>${esc(chatPartialLine(m))}</span>${acts}</div>`;
+}
+/* what the advisor tried to run, as one line: the command, the file or the address, else the tool's name */
+function chatDeniedLabel(d) {
+  const i = d.input || {};
+  return String(d.label || i.command || i.file_path || i.path || i.url || d.tool || 'a command');
+}
+/* One card per command the engine refused. A single command can be allowed for good; a combined one cannot. */
+function chatDeniedHTML(m, live) {
+  if (!live) return '';
+  return (m.denied || []).map((d, k) => {
+    const id = d.id ?? k;
+    const why = d.reason ? `<p class="why" dir="auto">${esc(d.reason)}</p>` : '';
+    const body = d.compound
+      ? `<p class="why">It tried a combined command; Retry asks it to run them one by one.</p><div class="acts">${btn('Retry', {size: 'sm', act: 'retry'})}</div>`
+      : `<div class="acts">${btn('Allow and retry', {kind: 'pri', size: 'sm', act: 'chat-allow', ts: m.ts, idx: id})}</div>`;
+    return `<div class="prop chat-deny"><h4>The advisor wanted to run: <span class="m">${esc(chatDeniedLabel(d))}</span></h4>${why}${body}</div>`;
+  }).join('');
+}
+const chatQueueOf = session => chatQueue.filter(q => q.session === session);
+/* the messages typed while the agent works: muted bubbles under the thread, each removable */
+function chatQueueHTML() {
+  return chatQueueOf(S.session).map(q => `<div class="msg user queued"><div class="about">Queued${btn('', {kind: 'link', size: 'sm', icon: 'x', act: 'queue-remove', qid: q.id, title: 'Remove from the queue'})}</div>` +
+    `<div class="bubble" dir="auto">${esc(q.text)}</div></div>`).join('');
+}
+function chatEnqueue(text) {
+  const ctx = chatChip();
+  if (ctx) chatSetChip(null);
+  chatQueue = [...chatQueue, {id: ++chatQid, text, ctx, session: S.session}];
+  renderThread(true);
+}
+/* how a turn ended, for the queue: 'ok', 'stopped' (the student pressed Stop) or 'error' (nothing is sent) */
+function chatOutcome(m) {
+  if (!m || m.role !== 'agent') return 'ok';
+  if (m.stopped || m.error_kind === 'stopped') return 'stopped';
+  return m.error || chatIsPartial(m) ? 'error' : 'ok';
+}
+/* the queue of one conversation goes out as ONE message, texts joined by a blank line */
+async function chatFlush(session) {
+  const mine = chatQueueOf(session);
+  if (!mine.length || !S || S.session !== session) return;
+  chatQueue = chatQueue.filter(q => q.session !== session);
+  const withCtx = mine.find(q => q.ctx);
+  await send(mine.map(q => q.text).join('\n\n'), {ctx: withCtx ? withCtx.ctx : null});
+}
+
 /* ---------- messages ---------- */
 /* the part card that opens a part conversation, as the one line at the top of the thread */
 function ctxHTML(part) {
@@ -227,11 +312,16 @@ function msgHTML(m, undoTs) {
   }
   if (m.role === 'ctx') return ctxHTML(m.part);
   if (m.role === 'agent') {
+    const live = m === chatTail;
+    if (chatIsPartial(m)) return toolsHTML(m.tools) + chatPartialHTML(m, live) + propsHTML(m.proposals || (m.proposal ? [m.proposal] : [])) + chatDeniedHTML(m, live);
     if (m.error || m.decision) return '';      // a failed reply becomes Retry under the box; a decision is the proposal card's own state
     const props = propsHTML(m.proposals || (m.proposal ? [m.proposal] : []));
     const undo = m.ts === undoTs && ((m.applied || []).includes('idea.diagram.edit') || m.diagram_edit)
       ? `<div class="undo">${btn('Undo diagram change', {size: 'sm', icon: 'undo', act: 'undo-diagram', title: 'Undo diagram change'})}</div>` : '';
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text))}</div>${undo}</div>` : '') + props;
+    // the agent thinks the idea is agreed: the student confirms with one click (no quote check)
+    const ready = (m.applied || []).includes('idea.ready') && S.idea && !S.idea.confirmed
+      ? `<div class="undo">${btn('Confirm idea', {size: 'sm', kind: 'line', icon: 'check', act: 'chat-confirm-idea', disabled: !((S.idea.agreed || []).length), title: 'Save the draft and mark the idea as agreed'})}</div>` : '';
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }
@@ -296,18 +386,21 @@ function chatAnnounce(text) {
 function renderThread(force) {
   const box = $('#msgs');
   if (!box) return;
-  const key = JSON.stringify([S.session, S.chat.length, S.chat.at(-1)?.ts, S.proposals.map(p => p.status), (S.sources || []).length]);
+  const key = JSON.stringify([S.session, S.chat.length, S.chat.at(-1)?.ts, S.proposals.map(p => p.status), (S.sources || []).length, chatQueueOf(S.session).map(q => q.id),
+    S.chat.filter(m => m.cites).map(m => [m.ts, m.cites.state, Object.values(m.cites.items || {}).map(i => i.status)])]);
   if (!force && key === lastChatKey) return;
   lastChatKey = key;
   let undoTs = null;                                         // only the newest diagram edit can be undone
   for (const m of S.chat) if (m.role === 'agent' && ((m.applied || []).includes('idea.diagram.edit') || m.diagram_edit)) undoTs = m.ts;
   chatLead = null;
+  chatTail = [...S.chat].reverse().find(m => m.role === 'agent') || null;
   for (const m of S.chat) for (const id of (m.proposals || (m.proposal ? [m.proposal] : []))) {
     const p = (S.proposals || []).find(x => x.id === id);
     if (p && p.status === 'pending') chatLead = id;
   }
-  const html = S.chat.length ? S.chat.map(m => msgHTML(m, undoTs)).join('') : '<p class="hint">Ask about parts, nets or rules. Routine changes are done for you and can be undone; important ones (parts, Altium, ordering) wait for your approval.</p>';
+  const html = (S.chat.length ? S.chat.map(m => msgHTML(m, undoTs)).join('') : '<p class="hint">Ask about parts, nets or rules. Routine changes are done for you and can be undone; important ones (parts, Altium, ordering) wait for your approval.</p>') + chatQueueHTML();
   chatLead = null;
+  chatTail = null;
   const grew = chatSeen.session !== S.session || S.chat.length !== chatSeen.count;
   const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
   if (html !== chatHtml) {
@@ -336,7 +429,17 @@ function chatAutosize() {
 }
 function chatUpdateSend() {
   const b = $('#sendbtn'), t = $('#input');
-  if (b) b.disabled = pending || !(t && t.value.trim());
+  if (b) {
+    b.disabled = pending ? chatStopping : !(t && t.value.trim());
+    const mode = pending ? 'stop' : 'send';
+    if (b.dataset.m !== mode) {                                // while the agent works the button is Stop; Enter still queues the text
+      b.dataset.m = mode;
+      b.classList.toggle('stop', pending);
+      b.title = pending ? 'Stop' : 'Send';
+      b.setAttribute('aria-label', b.title);
+      b.innerHTML = icon(pending ? 'stop' : 'up');
+    }
+  }
   chatSugs();
 }
 /* what went wrong with the last message, if anything: {what, message, text, ctx} */
@@ -344,9 +447,11 @@ function chatCurrentError() {
   if (pending) return null;
   if (chatError && chatError.session === S.session) return {what: 'send your message', ...chatError};
   const last = S.chat.at(-1);
-  if (last && last.role === 'agent' && last.error) {
+  if (last && last.role === 'agent' && (last.error || (last.error_kind && !CHAT_PARTIAL.includes(last.error_kind)) || chatIsPartial(last))) {
     const u = chatLastUser();
-    return {what: 'get an answer', message: chatPlain(last.text).replace(/^\[[^\]]+\]\s*/, '').slice(0, 160), text: u && u.text, ctx: u && chatCtxOf(u)};
+    if (chatIsPartial(last)) return null;                      // drawn in the thread, with its own Continue and Retry
+    return {what: 'get an answer', message: chatPlain(last.text).replace(/^\[[^\]]+\]\s*/, '').slice(0, 160), text: u && u.text, ctx: u && chatCtxOf(u),
+      kind: last.error_kind, retry_at: last.retry_at};
   }
   return null;
 }
@@ -359,25 +464,70 @@ function chatSugs() {
   const html = show ? chatSuggestions().map(s => `<button type="button" class="sug" data-act="suggest" data-text="${esc(s)}">${esc(s)}</button>`).join('') : '';
   if (sugs.dataset.html !== html) { sugs.innerHTML = html; sugs.dataset.html = html; }
 }
+/* the local time a usage limit lifts: a clock time today, else the date too */
+function chatResetAt(iso) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return '';
+  const t = d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
+  return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}) + ' ' + t;
+}
+/* One friendly card for an engine failure the server named; '' for any other kind, which keeps the plain error line. */
+function chatErrorCard(err) {
+  const retry = err.text ? btn('Retry', {size: 'sm', act: 'retry'}) : '';
+  const card = (html, acts) => `<div class="note bad chat-card" role="alert"><span>${html}</span><span class="acts">${acts || ''}${retry}</span></div>`;
+  const settings = label => btn(label, {kind: 'link', size: 'sm', act: 'chat-settings', title: 'Settings › Engine'});
+  const checks = btn('Run checks', {kind: 'link', size: 'sm', act: 'chat-checks', title: 'Check what is missing and how to fix it'});
+  if (err.kind === 'not_logged_in') return card('Claude Code is not signed in. Open a terminal, run <span class="m">claude</span>, type <span class="m">/login</span>, then press Retry.', checks);
+  if (err.kind === 'not_installed') {
+    return card('Claude Code is not installed. See the <a href="https://github.com/ilaish5/pcb-advisor#install-about-5-minutes" target="_blank" rel="noopener">install steps</a>, or pick another engine.', checks + settings('Open Settings › Engine'));
+  }
+  if (err.kind === 'usage_limit') {
+    const at = chatResetAt(err.retry_at);
+    return card('Your Claude plan limit is reached' + (at ? `; it resets at ${esc(at)}` : '') + '.', settings('Switch engine'));
+  }
+  return '';
+}
 function renderComposer() {
   const err = chatCurrentError();
   const st = $('#chat-status');
   if (st) {
-    const k = pending ? 'work' : err ? 'err:' + err.what + err.message : '';
+    const steps = chatProg && Array.isArray(chatProg.steps) ? chatProg.steps.map(chatStepName).filter(Boolean) : [];
+    const k = pending ? 'work:' + steps.join('|') : err ? 'err:' + err.what + err.message + (err.kind || '') + (err.retry_at || '') : '';
     if (st.dataset.k !== k) {
       st.dataset.k = k;
-      st.innerHTML = pending ? `<span class="spin" aria-hidden="true"></span><span id="chat-clock">Working…</span>`
-        : err ? errorLine(err.what, err.message, err.text ? btn('Retry', {size: 'sm', act: 'retry'}) : '') : '';
+      st.innerHTML = pending
+        ? `<div class="chat-work"><div class="chat-line"><span class="spin" aria-hidden="true"></span><span id="chat-clock">Working…</span></div>` +
+          (steps.length ? `<details class="chat-steps"${chatStepsOpen ? ' open' : ''}><summary>Steps (${steps.length})</summary><ul>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : '') + '</div>'
+        : err ? (chatErrorCard(err) || errorLine(err.what, err.message, err.text ? btn('Retry', {size: 'sm', act: 'retry'}) : '')) : '';
     }
   }
   chatUpdateSend();
   renderChatChip();
+  if (pending) chatTick();
 }
 function chatTick() {
   const el = $('#chat-clock');
   if (!el) return;
   const s = Math.floor((Date.now() - chatSince) / 1000);
-  el.textContent = 'Working…' + (s >= 2 ? ' ' + s + ' s' : '');
+  const cur = chatProg && chatProg.current ? String(chatProg.current) : '';
+  el.textContent = chatStopping ? 'Stopping…' : (cur || 'Working…') + (s >= 2 ? (cur ? ' · ' : ' ') + s + ' s' : '');
+}
+/* one look at the server's progress for the turn in flight; a failed look is ignored, the next second asks again */
+async function chatPoll() {
+  if (!pending || chatPolling) return;
+  chatPolling = true;
+  try {
+    const p = await api('/api/chat/progress', undefined, {soft: true});
+    if (pending && p && !p.error) { chatProg = p; renderComposer(); }
+  } catch (e) { /* silent */ }
+  chatPolling = false;
+}
+async function chatStop() {
+  if (!pending || chatStopping) return;
+  chatStopping = true;
+  chatUpdateSend();
+  chatTick();
+  try { await api('/api/chat/stop', {}, {soft: true}); } catch (e) { /* the turn ends on its own */ }
 }
 
 function renderChat(force) {
@@ -402,8 +552,14 @@ async function send(text, opts) {
   chatError = null;
   pending = true;
   chatSince = Date.now();
+  chatProg = null;
+  chatStopping = false;
+  const turnSession = S.session;
+  let outcome = 'ok';
   clearInterval(chatTimer);
   chatTimer = setInterval(chatTick, 1000);
+  clearInterval(chatPoller);
+  chatPoller = setInterval(chatPoll, 1000);
   const entry = {role: 'user', text, ts: new Date().toISOString()};
   if (ctx && ctx.kind === 'file') entry.source = ctx.id;
   else if (ctx) entry.about = {kind: ctx.kind, id: ctx.id, label: ctx.label};
@@ -416,11 +572,13 @@ async function send(text, opts) {
     const res = await api('/api/chat', payload, {soft: true});      // soft: the error is drawn under the box, not toasted
     if (!res || res.error) throw new Error((res && res.error) || 'no answer');
     setState(res);
+    outcome = chatOutcome(S.chat.at(-1));
     const mountEl = document.querySelector('.diagram-mount-point');
     if (mountEl && mountEl._diagramEditor && res && res.idea && res.idea.diagram) {
       mountEl._diagramEditor.updateData(res.idea.diagram, res.diagram_touched || []);
     }
   } catch (e) {
+    outcome = 'error';
     const msg = /failed to fetch|networkerror/i.test(e.message) ? 'no connection to the server' : e.message;
     chatError = {message: msg, text, ctx, session: S.session};
     S.chat = S.chat.filter(m => m !== entry);
@@ -428,15 +586,20 @@ async function send(text, opts) {
     if (inp && !inp.value.trim()) { inp.value = text; chatAutosize(); if (ctx && !chatChip()) chatSetChip(ctx); }     // the text is not lost
   }
   pending = false;
+  chatStopping = false;
   clearInterval(chatTimer);
+  clearInterval(chatPoller);
+  chatProg = null;
   render(true);
+  if (outcome !== 'error') await chatFlush(turnSession);      // an error keeps the queue; Retry or the next answer sends it
 }
 function chatSubmit() {
   const inp = $('#input');
   const t = inp.value.trim();
-  if (!t || pending) return;               // while the agent works the text stays in the box
+  if (!t) return;
   inp.value = '';
   chatAutosize();
+  if (pending) { chatEnqueue(t); chatUpdateSend(); return; }      // typed while the agent works: it waits in the queue
   send(t);
 }
 async function openPart(anchor) {
@@ -447,7 +610,8 @@ async function openPart(anchor) {
 async function switchSession(id) { SESSION = id; convsOpen = false; await refresh(true); setView('chat'); }
 
 /* ---------- events ---------- */
-$('#form').addEventListener('submit', e => { e.preventDefault(); chatSubmit(); });
+$('#form').addEventListener('submit', e => { e.preventDefault(); if (pending) chatStop(); else chatSubmit(); });      // the button is Stop while the agent works
+$('#chat-status').addEventListener('toggle', e => { if (e.target.matches('.chat-steps')) chatStepsOpen = e.target.open; }, true);
 $('#input').addEventListener('input', () => { chatAutosize(); chatUpdateSend(); });
 $('#input').addEventListener('keydown', e => {
   // Enter sends, Shift+Enter is a new line, and Enter that confirms an IME composition (Hebrew, Chinese, ...) is left alone
@@ -488,13 +652,36 @@ onAct('new', async (el, d, e) => {
 });
 onAct('suggest', async (el, d, e) => { send(d.text); });
 onAct('retry', async (el, d, e) => {
-  const err = chatCurrentError();
+  let err = chatCurrentError();
+  if (!err || !err.text) {                                  // a partial record or a denial: the last student message again
+    const u = chatLastUser();
+    err = u ? {text: u.text, ctx: chatCtxOf(u)} : null;
+  }
   if (!err || !err.text) return;
   const inp = $('#input');
   if (inp && inp.value.trim() === err.text) { inp.value = ''; chatAutosize(); }
   chatError = null;
   await send(err.text, {ctx: err.ctx || null});
 });
+onAct('chat-continue', async (el, d, e) => { await send(d.text, {ctx: null}); });
+// Allow the one command the engine refused (the server builds the rule from its own record), then ask again
+onAct('chat-allow', async (el, d, e) => {
+  const u = chatLastUser();
+  if (!u || pending) return;
+  el.disabled = true;
+  let r = null;
+  try { r = await api('/api/chat/allow', {turn_ts: d.ts, index: Number(d.idx)}, {soft: true}); } catch (err) { r = {error: 'no connection to the server'}; }
+  if (!r || r.error) { el.disabled = false; toast("Couldn't allow it: " + ((r && r.error) || 'no answer'), null, {bad: true}); return; }
+  await send(u.text, {ctx: chatCtxOf(u)});
+});
+onAct('queue-remove', async (el, d, e) => { chatQueue = chatQueue.filter(q => String(q.id) !== d.qid); renderThread(true); });
+// Settings › Engine: the page, then the row that picks the engine
+onAct('chat-settings', async (el, d, e) => {
+  go('settings');
+  setTimeout(() => { const row = $('#set-provider'); if (row) row.scrollIntoView({block: 'center'}); }, 200);
+});
+onAct('chat-checks', async () => { go('settings'); setTimeout(() => { if (typeof pgDoctorRun === 'function') pgDoctorRun(); }, 200); });
+onAct('chat-confirm-idea', async () => { setState(await api('/api/idea/confirm', {})); render(true); toast('Idea confirmed'); });
 onAct('review-diagram', async (el, d, e) => { go('workspace', 'idea'); });
 // Undo one applied change: the server appends a compensating entry; if later changes depend on it, it says so (409)
 onAct('undo-change', async (el, d, e) => { setState(await api('/api/undo', {id: d.pid})); render(true); toast('Undone'); });

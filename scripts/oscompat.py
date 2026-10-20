@@ -36,13 +36,35 @@ def utf8_stdio():
             pass
 
 
+def _installer_dirs(cmd):
+    """Where the official installer puts a CLI, for a terminal opened before it ran
+    (its PATH change reaches only new terminals). Only `claude` has one."""
+    if cmd != "claude":
+        return []
+    exe = "claude.exe" if WINDOWS else "claude"
+    return [pathlib.Path.home() / ".local" / "bin" / exe]
+
+
+def which(cmd):
+    """Full path of a command, or None. PATH first; then the official installer's folder
+    (~/.local/bin/claude, Windows %USERPROFILE%\\.local\\bin\\claude.exe) so a terminal opened before
+    the install still finds the CLI. A path given as `cmd` is checked as it is."""
+    found = shutil.which(cmd)
+    if found:
+        return found
+    for cand in _installer_dirs(cmd):
+        if cand.is_file():
+            return str(cand)
+    return None
+
+
 def resolve(cmd):
-    """Full path of a command on PATH, or the name unchanged if it is not there.
+    """Full path of a command, or the name unchanged if it is not there.
 
     On Windows an npm-installed CLI is `claude.cmd`. shutil.which finds it
     through PATHEXT, but subprocess given the bare name only looks for an .exe
     and raises FileNotFoundError - so run the path which() found."""
-    return shutil.which(cmd) or cmd
+    return which(cmd) or cmd
 
 
 def _is_store_stub(path):
