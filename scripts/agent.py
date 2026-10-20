@@ -19,6 +19,7 @@ import json
 import pathlib
 import re
 import sys
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import gateway     # noqa: E402
@@ -218,12 +219,16 @@ def compact(model, project, sess, backend=None):
               f"--- MESSAGES SINCE ({len(new)}) ---\n{convo}\n\n"
               f"--- RETURN THE NEW MEMORY FILE ---\n")
 
+    import introspect
     text, attempts = "", 0
     for attempts in (1, 2):
+        t0 = time.monotonic()
         res = gateway.route(gateway.Request(
             prompt=prompt,
             timeout=int(workspace.get("agent.timeout_seconds", 180)),
         ), name=name)
+        introspect.record(project, sess, "memory", {"provider": res.provider or name, "model": res.model,
+                                                    "usage": getattr(res, "meta", None) or {}, "error": res.error}, time.monotonic() - t0)
         if not res.ok:
             return {"ok": False, "reason": res.error, "attempts": attempts}
         text = session.normalize(_strip_fence(res.text), title=_title(project, sess))
@@ -319,6 +324,7 @@ def respond(model, message, history, backend=None, timeout=None):
     parts.append("--- STUDENT SAYS ---\n" + message + "\n")
     prompt = "\n\n".join(parts)
 
+    t0 = time.monotonic()
     res = gateway.route(gateway.Request(
         prompt=prompt,
         system=parts[0],
@@ -329,11 +335,12 @@ def respond(model, message, history, backend=None, timeout=None):
         options={"cwd": str(engine_home), "add_dirs": _add_dirs(model.get("project"))}
     ), name=name)
 
+    took = {"seconds": time.monotonic() - t0, "usage": getattr(res, "meta", None) or {}}   # introspect.py keeps these per turn
     if not res.ok:
         return {"reply": f"[{res.provider or name}] {res.error}", "actions": [],
                 "backend": res.provider or name, "provider": res.provider or name,
-                "error": True}
+                "error": True, **took}
 
     reply, actions, tools = _parse(res.text)
     return {"reply": reply or "(no reply)", "actions": actions, "tools": tools,
-            "backend": res.provider, "provider": res.provider, "model": res.model}
+            "backend": res.provider, "provider": res.provider, "model": res.model, **took}

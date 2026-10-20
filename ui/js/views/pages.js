@@ -277,6 +277,7 @@ function settingsBody() {
     ${section('Altium', setAltiumHTML(c))}
     ${section('Memory', mem)}
     ${setSkillsHTML()}
+    ${typeof aboutHTML === 'function' ? section('About', aboutHTML(), {id: 'set-about'}) : ''}
     <p class="set-foot">${btn('Reset layout', {kind: 'link', act: 'reset-layout', title: 'Restore the default panel sizes and close the side sheet'})}</p></div>`;
 }
 // the old Skills page: Settings, scrolled to the Skills section the first time it is drawn

@@ -128,7 +128,8 @@ function dfmHeader(reports) {
   const t = dfmTotals();
   const unv = dfmUnverified().length;
   const gaps = dfmGaps();
-  const ready = t.known && t.n > 0 && !t.open && !t.real && !unv && !gaps.open_pins.length && !gaps.parts.length;     // reports alone do not make a board ready: every finding is judged
+  const old = outOld(S.exports || []).length;
+  const ready = t.known && t.n > 0 && !t.open && !t.real && !unv && !gaps.open_pins.length && !gaps.parts.length && !old;     // reports alone do not make a board ready: every finding is judged, every output is current
   const meta = metaLine([
     {n: t.n, label: t.n === 1 ? 'finding' : 'findings'},
     {n: t.open, label: 'to review', tone: 'warn', title: 'Findings nobody has judged yet'},
@@ -136,6 +137,7 @@ function dfmHeader(reports) {
     {n: unv, label: 'unverified', tone: 'warn', title: 'Parts whose pins came from the agent, not a datasheet'},
     {n: gaps.open_pins.length, label: gaps.open_pins.length === 1 ? 'open pin' : 'open pins', tone: 'warn', title: 'Pins on the schematic with no net yet'},
     {n: gaps.parts.length, label: 'not in BOM', tone: 'warn', title: 'Schematic parts missing from the BOM or waiting for approval'},
+    {n: old, label: old === 1 ? 'output out of date' : 'outputs out of date', tone: 'warn', title: 'Files in Outputs made from a design that changed since, or edited by hand'},
     ready && {always: true, label: 'Ready to order', tone: 'ok', title: 'Every finding is judged and none is a real issue'},
     t.known && !t.n && {always: true, label: 'No findings listed yet', title: 'Add the findings of the report, or ask the agent to list them'},
   ]);
@@ -162,6 +164,13 @@ function dfmUnverifiedHTML() {
 function dfmGaps() {
   const g = S.sheet_gaps || {};
   return {open_pins: g.open_pins || [], parts: g.parts || []};
+}
+function dfmStaleHTML() {        // an order must not go out with files the design has moved on from
+  const rows = outOld(S.exports || []);
+  if (!rows.length) return '';
+  const item = f => `<li class="unv-row"><span class="m">${esc(f.name)}</span> ${outLineage(f)} <span class="unv-why">${esc((f.lineage.reasons || []).join('; '))}</span></li>`;
+  return `<section class="dfm-unv"><h3>Outputs out of date <span class="muted">(${rows.length}) to export again before ordering</span></h3>
+    <p class="muted">Each was made from a design that has changed since, or was edited after the tool wrote it. Make it again from Outputs (Gerbers: generate them in Altium again).</p><ul>${rows.map(item).join('')}</ul></section>`;
 }
 function dfmGapsHTML() {
   const g = dfmGaps();
@@ -373,7 +382,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -392,7 +401,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

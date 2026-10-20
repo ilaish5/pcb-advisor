@@ -39,7 +39,7 @@
           "-p",
           "-",
           "--output-format",
-          "text"
+          "json"
         ],
         "model": "",
         "tools": {
@@ -74,7 +74,9 @@
             "Bash({python} {repo}/scripts/altium/dump.py *)",
             "Bash({python} {repo}/scripts/altium/bridge.py *)",
             "Bash({python} {repo}/scripts/keeping.py *)",
-            "Bash({python} {repo}/scripts/project.py *)"
+            "Bash({python} {repo}/scripts/project.py *)",
+            "Bash({python} {repo}/scripts/introspect.py *)",
+            "Bash({python} {repo}/scripts/lineage.py *)"
           ],
           "disallowed": [
             "NotebookEdit"

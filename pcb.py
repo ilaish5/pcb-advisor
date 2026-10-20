@@ -21,6 +21,10 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py rules preset|export|diff   JLC rules preset, .RUL export, board vs rules diff
     python3 pcb.py calc trace-width|divider|led|via|microstrip   engineering calculators
     python3 pcb.py library search|check-package|build-script     parts library tools
+    python3 pcb.py outputs [project]    is every exported file still made from the current design
+    python3 pcb.py usage [project]      what the agent ran, how long, what it cost
+    python3 pcb.py update [--check]     update from GitHub (checked at every serve), roll back if it breaks
+    python3 pcb.py version              which commit this install is on
 
 Everything is local files. Nothing here talks to a server you do not run.
 """
@@ -289,6 +293,26 @@ def cmd_library(args):
     return library.main(args)
 
 
+def cmd_outputs(args):
+    import lineage
+    return lineage.main([args[0] if args else workspace.default_project(), *args[1:]])
+
+
+def cmd_usage(args):
+    import introspect
+    return introspect.main([args[0] if args else workspace.default_project(), *args[1:]])
+
+
+def cmd_update(args):
+    import update
+    return update.main(args)
+
+
+def cmd_version(args):
+    import update
+    return update.main(["version"])
+
+
 COMMANDS = {
     "init": cmd_init, "serve": cmd_serve, "run": cmd_serve, "new": cmd_new, "list": cmd_list,
     "show": cmd_show, "seed": cmd_seed, "engines": cmd_engines, "tools": cmd_tools,
@@ -296,6 +320,7 @@ COMMANDS = {
     "config": cmd_config,
     "skills": cmd_skills, "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
     "rules": cmd_rules, "calc": cmd_calc, "library": cmd_library,
+    "outputs": cmd_outputs, "usage": cmd_usage, "update": cmd_update, "version": cmd_version,
 }
 
 

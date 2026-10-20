@@ -214,6 +214,16 @@ def build(project=None, session=None):
         exports_list = [{"name": f.name, "size": f.stat().st_size,
                          "modified": dt.datetime.fromtimestamp(f.stat().st_mtime).isoformat(timespec="seconds")}
                         for f in sorted(exp_dir.iterdir()) if f.is_file()]
+        try:                                     # where each file came from and whether it still matches the design
+            import lineage
+            rows = lineage.by_name(project)
+            for e in exports_list:
+                row = rows.get(e["name"])
+                if row:
+                    e["lineage"] = {k: row.get(k) for k in ("status", "reasons", "written", "tool", "version")}
+        except Exception as exc:                 # lineage never takes the state down
+            for e in exports_list:
+                e["lineage"] = {"status": "unknown", "reasons": [f"lineage could not be read: {exc}"]}
 
     import preview_pcb
     placement_plan = preview_pcb.load_placement_plan(project)

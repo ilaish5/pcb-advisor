@@ -454,6 +454,8 @@ def export_library(project):
             for f in lib.rglob("*"):
                 if f.is_file():
                     z.write(f, "library/" + f.relative_to(lib).as_posix())
+    import lineage
+    lineage.note(project, path, lambda: [lineage.state_input(project, "library")], "export_library")
     return {"file": path.name, "parts": len(rows), "warnings": warnings}
 
 
@@ -486,6 +488,88 @@ def run_skill(name, project, *args):
 
 
 QUIET = False
+
+# ---------------------------------------------------------------- self-update
+# Checked once in the background at every start; the UI offers the Update button from what this holds.
+UPDATE = {"state": "idle", "result": None}      # idle | checking | done | applying
+UPDATE_LOCK = threading.Lock()
+BUSY = {"chat": 0}                              # engine turns in flight: an update waits for them
+HTTPD = None
+RESTART_EXIT = 75                                  # start.bat starts the server again on this exit code
+RESTART = {"go": False, "args": []}             # set by an applied update: main() starts the new code after shutdown
+
+
+def check_updates(fetch=True):
+    import update
+    with UPDATE_LOCK:
+        if UPDATE["state"] in ("checking", "applying"):
+            return UPDATE["result"]
+        UPDATE["state"] = "checking"
+    try:
+        res = update.check(fetch=fetch)
+    except Exception as exc:                    # never take the server down over an update check
+        res = {"kind": "?", "behind": 0, "can_update": False, "error": str(exc), "reason": ""}
+    UPDATE.update(state="done", result=res)
+    try:
+        import introspect
+        (workspace.home() / introspect.UPDATE_STATUS).write_text(json.dumps(res, ensure_ascii=False, indent=2),
+                                                                  encoding="utf-8")
+    except OSError:
+        pass
+    return res
+
+
+def update_state():
+    import update
+    return {"state": UPDATE["state"], **(UPDATE["result"] or {}), "version": update.version()}
+
+
+def apply_update():
+    """Apply, then restart into the new code. Refused while the agent is answering: the restart would cut it off."""
+    import update
+    if BUSY["chat"]:
+        why = "The agent is answering. Update when it is done."
+        return 409, {"ok": False, "reason": why, "error": why}
+    with UPDATE_LOCK:
+        if UPDATE["state"] in ("checking", "applying"):
+            why = "An update check is running. Try again in a moment."
+            return 409, {"ok": False, "reason": why, "error": why}
+        UPDATE["state"] = "applying"
+    try:
+        res = update.apply()
+    except Exception as exc:                    # apply() reports its own failures; this is the unforeseen one
+        res = {"ok": False, "reason": f"The update failed: {exc}"}
+    finally:
+        UPDATE["state"] = "done"
+    if res["ok"]:
+        UPDATE["result"] = {**(UPDATE["result"] or {}), "behind": 0, "can_update": False, "current": res["to"],
+                            "commits": [], "reason": "Updated; restarting."}
+        res["restarting"] = HTTPD is not None
+        if HTTPD is not None:
+            threading.Timer(0.5, restart).start()
+    else:
+        res["error"] = res.get("reason") or "The update failed."     # the UI's toast shows `error`
+    return (200 if res["ok"] else 400), res
+
+
+def restart():
+    """Stop serving; main() then starts the server again on the updated code."""
+    RESTART["go"] = True
+    HTTPD.shutdown()
+
+
+def _start_again(args):
+    """The same command line, without opening another browser tab: the open page reloads itself."""
+    argv = [sys.executable, str(workspace.REPO / "pcb.py"), "serve", *[a for a in args if a != "--no-browser"],
+            "--no-browser"]
+    if os.name == "nt":
+        if os.environ.get("PCB_ADVISOR_LAUNCHER") == "start.bat":
+            raise SystemExit(RESTART_EXIT)      # start.bat runs the server again in a fresh process
+        # Started by hand: os.execv on Windows starts a detached process and the console window would close under
+        # it; waiting for the child keeps that window (and its Ctrl+C) attached to the running server.
+        import subprocess
+        raise SystemExit(subprocess.call(argv))
+    os.execv(sys.executable, argv)
 
 # What GET /ui/<path> may serve from ui_dir, by file extension (anything else is a 404).
 UI_STATIC_TYPES = {
@@ -676,6 +760,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(422, {"error": str(exc)})
             except Exception as exc:
                 return self._send(422, {"error": str(exc)})
+        if path == "/api/update":                  # the check made at start; ?refresh=1 checks again now
+            if self.query("refresh"):
+                check_updates(fetch=True)
+            return self._send(200, update_state())
+        if path == "/api/introspect":              # what the agent did in this project, what it cost, which version
+            import introspect
+            proj = self.project()
+            return self._send(200, {"summary": introspect.summary(proj), "outputs": introspect.outputs(proj),
+                                    "version": introspect.version()})
         if path == "/api/skills":
             from skills import registry
             return self._send(200, {"skills": registry.listing()})
@@ -997,9 +1090,17 @@ class Handler(BaseHTTPRequestHandler):
                 if ctx:
                     ask = ("[this conversation is about one part; its context]\n"
                            f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
-            res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND)
+            BUSY["chat"] += 1
+            try:
+                res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND)
+            finally:
+                BUSY["chat"] -= 1
             chat_meta = {}
             applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta)
+            if res.get("provider") != "external":         # an outside driver is not an engine turn
+                import introspect
+                introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
+                                  applied=len(applied), proposed=len(proposals), refused=len(refused))
             if res.get("reply") or refused:
                 reply = res.get("reply") or ""
                 if refused:
@@ -1438,6 +1539,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(exc)})
             return self._send(200, res)
 
+        if path == "/api/update":
+            code, res = apply_update()
+            return self._send(code, res)
+
         # ---- settings, sessions, projects
         if path == "/api/config":
             changes = data.get("set") or {}
@@ -1728,7 +1833,8 @@ class _Server(ThreadingHTTPServer):
 
 
 def main(argv=None):
-    global BACKEND, DEFAULT_PROJECT, QUIET
+    global BACKEND, DEFAULT_PROJECT, QUIET, HTTPD
+    RESTART["args"] = list(sys.argv[1:] if argv is None else argv)
 
     cfg = workspace.load()
     ap = argparse.ArgumentParser(prog="serve", description="pcb-advisor server")
@@ -1775,10 +1881,17 @@ def main(argv=None):
         return 0
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    HTTPD = httpd
+    threading.Thread(target=check_updates, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
+        return 0
+    if RESTART["go"]:
+        httpd.server_close()
+        print("updated - starting again", flush=True)
+        _start_again(RESTART["args"])
 
 
 if __name__ == "__main__":

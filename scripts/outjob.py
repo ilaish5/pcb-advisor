@@ -248,6 +248,8 @@ def generate_outjob(project: str, filename: str | None = None, out_dir: pathlib.
     target = out_dir / filename
     content = OUTJOB_TEMPLATE.format(project=project)
     target.write_text(content, encoding="utf-8")
+    import lineage
+    lineage.note(project, target, lambda: [lineage.state_input(project, "outjob")], "outjob")
 
     outputs = [
         {"name": "Schematic Prints", "type": "Schematic Print", "target": "PDF (<project>_Schematics.pdf)"},

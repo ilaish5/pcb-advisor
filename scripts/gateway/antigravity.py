@@ -153,6 +153,25 @@ class AntigravityProvider(Provider):
             return None, "agy returned an empty answer", []
         return str(resp), "", denied
 
+    @staticmethod
+    def _usage(stdout):
+        """Token counts from the result event, when agy reports them (the field names vary between versions)."""
+        names = {"input_tokens": ("input_tokens", "prompt_tokens", "inputTokens", "promptTokenCount"),
+                 "output_tokens": ("output_tokens", "completion_tokens", "outputTokens", "candidatesTokenCount")}
+        for line in reversed((stdout or "").splitlines()):
+            line = line.strip()
+            if not line.startswith("{") or '"result"' not in line:
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            res = ev.get("result") if isinstance(ev.get("result"), dict) else {}
+            raw = next((u for u in (ev.get("usage"), res.get("usage"), ev.get("stats"), res.get("stats"),
+                                    res.get("usageMetadata")) if isinstance(u, dict)), {})
+            return {k: raw[n] for k, ns in names.items() for n in ns if isinstance(raw.get(n), int)}
+        return {}
+
     def complete(self, request: Request) -> Result:
         ok, why = self.available()
         if not ok:
@@ -182,6 +201,9 @@ class AntigravityProvider(Provider):
 
         out, err = proc.stdout or "", (proc.stderr or "").strip()
         text, problem, denied = self._parse(out)
+        usage = self._usage(out)
+        if usage:
+            meta["usage"] = usage
         if denied:
             meta["denied"] = denied
         if proc.returncode != 0 and text is None:
