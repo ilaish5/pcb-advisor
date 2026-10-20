@@ -73,9 +73,10 @@ def run_in_browser(tmp_path, cases, finds, docs):
         pytest.skip("no Chromium browser to run ui/js/markdown.js in")
     esc = re.search(r"^const esc = .*$", CORE, re.M).group(0)
     payload = json.dumps({"cases": cases, "finds": finds, "docs": docs}).replace("<", "\\u003c")
+    md = MARKDOWN.replace("</script", "<\\/script")       # outside the f-string: Python 3.11 allows no backslash there
     page = tmp_path / "md.html"
     page.write_text(f"""<!doctype html><meta charset="utf-8"><pre id="out"></pre>
-<script>{esc}</script><script>{MARKDOWN.replace("</script", "<\\/script")}</script>
+<script>{esc}</script><script>{md}</script>
 <script>
 const input = {payload};
 const out = {{cases: {{}}, finds: [], docs: {{}}}};
