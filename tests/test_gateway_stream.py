@@ -13,6 +13,15 @@ from gateway import events, stream
 from gateway.claude_code import ClaudeCodeProvider
 
 
+@pytest.fixture(autouse=True)
+def engines_on_path(monkeypatch):
+    """The provider tests fake stream.run; the lookup before it must not depend on this machine having the CLIs."""
+    which, resolve = oscompat.which, oscompat.resolve
+    fake = {"claude", "agy"}
+    monkeypatch.setattr(oscompat, "which", lambda c, *a, **k: f"/fake/{c}" if c in fake else which(c, *a, **k))
+    monkeypatch.setattr(oscompat, "resolve", lambda c, *a, **k: f"/fake/{c}" if c in fake else resolve(c, *a, **k))
+
+
 def py(code, *args):
     return [sys.executable, "-u", "-c", code, *args]
 

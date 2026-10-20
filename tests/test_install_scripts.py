@@ -5,6 +5,7 @@ import pathlib
 import re
 import shutil
 import subprocess
+import sys
 
 import pytest
 
@@ -13,7 +14,8 @@ SH = (REPO / "install.sh").read_text(encoding="utf-8")
 PS1 = (REPO / "install.ps1").read_text(encoding="utf-8")
 
 
-@pytest.mark.skipif(not shutil.which("bash"), reason="no bash")
+# On Windows `bash` is usually the WSL launcher, which fails without a distro; the Mac/Linux jobs parse them.
+@pytest.mark.skipif(not shutil.which("bash") or sys.platform == "win32", reason="no real bash")
 @pytest.mark.parametrize("name", ["install.sh", "start.sh"])
 def test_shell_scripts_parse(name):
     assert subprocess.run(["bash", "-n", str(REPO / name)], capture_output=True).returncode == 0
