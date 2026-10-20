@@ -114,9 +114,9 @@ def test_a_zip_install_points_to_the_download(tmp_path):
     assert st["kind"] == "zip" and not st["can_update"] and update.GITHUB in st["reason"]
 
 
-def test_an_unreachable_remote_is_an_error_not_a_hang(repos):
-    origin, install, _ = repos
-    shutil.rmtree(origin)
+def test_an_unreachable_remote_is_an_error_not_a_hang(repos, tmp_path):
+    _, install, _ = repos
+    _git(install, "remote", "set-url", "origin", str(tmp_path / "gone.git"))      # git's object files are read-only on Windows: no rmtree
     st = update.check(repo=install)
     assert st["error"].startswith("Could not reach GitHub") and not st["can_update"]
 

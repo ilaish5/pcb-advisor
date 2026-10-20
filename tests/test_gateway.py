@@ -5,9 +5,18 @@ A provider is transport and nothing else: text in, text out. The rules, the
 state and the action parsing belong to agent.py, which is what makes swapping
 an engine a config change rather than a rewrite.
 """
+import shutil
+
 import pytest
 
 import gateway
+
+
+@pytest.fixture(autouse=True)
+def claude_on_path(monkeypatch):
+    """The CLI tests fake subprocess.run; the CI runners have no `claude` installed, so it is found here too."""
+    real = shutil.which
+    monkeypatch.setattr(shutil, "which", lambda cmd, *a, **k: real(cmd, *a, **k) or (f"/fake/{cmd}" if cmd == "claude" else None))
 
 
 def test_every_registered_engine_describes_itself(home):
