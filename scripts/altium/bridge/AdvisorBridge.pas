@@ -397,28 +397,6 @@ begin
     Log('added to project ' + Path);
 end;
 
-{ OUTJOB path medium basepath: generate the files of one Folder Structure container of the OutJob }
-procedure RunOutJob(Path: String; Medium: String; Base: String);
-var
-    D : IDispatch;
-begin
-    D := Client.GetDocumentByPath(Path);
-    if (D = nil) then D := Client.OpenDocument('OUTPUTJOB', Path);
-    if (D = nil) then
-    begin
-        Say('ERR could not open the OutJob ' + Path);
-        Exit;
-    end;
-    Client.ShowDocument(D);
-    ResetParameters;
-    AddStringParameter('Action', 'Run');
-    AddStringParameter('OutputMedium', Medium);
-    AddStringParameter('ObjectKind', 'OutputBatch');
-    AddStringParameter('OutputBasePath', Base);
-    RunProcess('WorkspaceManager:GenerateReport');
-    Log('outjob ran ' + Medium);
-end;
-
 { ======================================================================== project library (stage L2) }
 
 { pipe separated field accessor, 0-based; '' past the end (a spec file line) }
@@ -500,6 +478,20 @@ begin
     end;
     Log('focus ' + Path);
     Result := True;
+end;
+
+{ OUTJOB path medium basepath: generate the files of one Folder Structure container of the OutJob }
+procedure RunOutJob(Path: String; Medium: String; Base: String);
+begin
+    { GenerateReport runs the FOCUSED OutJob: an already open one left behind the PcbDoc wrote nothing }
+    if (not FocusLib(Path, 'OUTPUTJOB')) then Exit;
+    ResetParameters;
+    AddStringParameter('Action', 'Run');
+    AddStringParameter('OutputMedium', Medium);
+    AddStringParameter('ObjectKind', 'OutputBatch');
+    AddStringParameter('OutputBasePath', Base);
+    RunProcess('WorkspaceManager:GenerateReport');
+    Log('outjob ran ' + Medium);
 end;
 
 procedure SaveLib(Path: String; Kind: String);
