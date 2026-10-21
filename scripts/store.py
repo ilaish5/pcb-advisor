@@ -490,6 +490,9 @@ def validate_diagram(data):
             raise ValueError(f"invalid connector id: {cid!r}")
 
         def validate_endpoint(ep, name):
+            # a bare shape id is the same shorthand add_connector accepts (the agent writes it in full diagrams too)
+            if isinstance(ep, str) and ep in shape_ids:
+                ep = {"shape": ep, "side": "right" if name == "from" else "left"}
             if not isinstance(ep, dict):
                 raise ValueError(f"connector {cid} {name} must be object")
             if "shape" in ep:

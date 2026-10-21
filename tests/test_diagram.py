@@ -250,6 +250,20 @@ def test_validation_rejects_non_finite_numbers():
         })
 
 
+def test_validation_accepts_bare_shape_id_endpoints():
+    # the agent writes add_connector's shorthand ("from": "usb") in whole diagrams too; approving that failed
+    d = store.validate_diagram({
+        "shapes": [{"id": "usb", "type": "block", "x": 0, "y": 0, "w": 100, "h": 50},
+                   {"id": "sw", "type": "block", "x": 200, "y": 0, "w": 100, "h": 50}],
+        "connectors": [{"id": "c1", "from": "usb", "to": "sw", "label": "5V"}]
+    })
+    c = d["connectors"][0]
+    assert c["from"] == {"shape": "usb", "side": "right"}
+    assert c["to"] == {"shape": "sw", "side": "left"}
+    with pytest.raises(ValueError, match="must be object"):
+        store.validate_diagram({"shapes": [], "connectors": [{"id": "c1", "from": "ghost", "to": "ghost"}]})
+
+
 def test_validation_rejects_string_length_overflow():
     with pytest.raises(ValueError, match="text must be string <= 2000 chars"):
         store.validate_diagram({
