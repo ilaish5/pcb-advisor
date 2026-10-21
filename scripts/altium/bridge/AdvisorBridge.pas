@@ -482,9 +482,38 @@ end;
 
 { OUTJOB path medium basepath: generate the files of one Folder Structure container of the OutJob }
 procedure RunOutJob(Path: String; Medium: String; Base: String);
+var
+    P, D : IDispatch;
 begin
+    { an OutJob Altium holds under Free Documents (the project file lists it, the open project does not) has no
+      data source: GenerateReport writes nothing. It joins the open project first. }
+    P := GetWorkspace.DM_GetProjectFromPath(CurPrj);
+    if (P = nil) then
+    begin
+        Say('ERR project not open ' + CurPrj);
+        Exit;
+    end;
+    D := GetWorkspace.DM_GetDocumentFromPath(Path);
+    if (D <> nil) then
+        if (not SameFile(D.DM_Project.DM_ProjectFullPath, CurPrj)) then D := nil;
+    if (D = nil) then
+    begin
+        P.DM_AddSourceDocument(Path);
+        Log('added to project ' + Path);
+    end;
     { GenerateReport runs the FOCUSED OutJob: an already open one left behind the PcbDoc wrote nothing }
     if (not FocusLib(Path, 'OUTPUTJOB')) then Exit;
+    D := GetWorkspace.DM_GetDocumentFromPath(Path);
+    if (D = nil) then
+    begin
+        Say('ERR the OutJob is not in the open project ' + CurPrj);
+        Exit;
+    end;
+    if (not SameFile(D.DM_Project.DM_ProjectFullPath, CurPrj)) then
+    begin
+        Say('ERR the OutJob is open under ' + D.DM_Project.DM_ProjectFullPath + ', not ' + CurPrj);
+        Exit;
+    end;
     ResetParameters;
     AddStringParameter('Action', 'Run');
     AddStringParameter('OutputMedium', Medium);
