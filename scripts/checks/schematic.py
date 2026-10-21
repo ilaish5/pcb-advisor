@@ -504,11 +504,82 @@ def _max_list(items: list, n: int = 12) -> str:
     return ", ".join(items[:n]) + (f" (+{len(items) - n} more)" if len(items) > n else "")
 
 
+def _is_netlist_sheet(doc: Any) -> bool:
+    return isinstance(doc, dict) and isinstance(doc.get("parts"), list) and "wires" not in doc and "pads" not in doc
+
+
+def _netlist_sources(source: Any) -> "tuple[list[dict], str | None] | None":
+    """The tool's own netlist sheets (store.write_sheet) behind a source, or None when it is something else.
+    A sheet dict, a list of them, a sheet .json, a netlist folder of .json, or a project name.
+    Returns (sheets, project name or None)."""
+    if _is_netlist_sheet(source):
+        return [source], None
+    if isinstance(source, list) and source and all(_is_netlist_sheet(d) for d in source):
+        return list(source), None
+    if not isinstance(source, (str, pathlib.Path)):
+        return None
+    p = pathlib.Path(source)
+    files: list[pathlib.Path] = []
+    project = None
+    if p.is_file() and p.suffix.lower() == ".json":
+        files = [p]
+        if p.parent.name == "netlist":
+            project = p.parent.parent.name
+    elif p.is_dir():
+        files = sorted(p.glob("*.json"))
+        if p.name == "netlist":
+            project = p.parent.name
+    elif isinstance(source, str) and not p.suffix and not p.exists():
+        import store  # a project name
+        sheets = [store.load_sheet(source, sid) for sid in store.sheet_ids(source)]
+        sheets = [d for d in sheets if _is_netlist_sheet(d)]
+        return (sheets, source) if sheets else None
+    docs = []
+    for f in files:
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if _is_netlist_sheet(doc):
+            docs.append(doc)
+    return (docs, project) if docs else None
+
+
+def build_netlist_sheets_netlist(sheets: list[dict]) -> dict[str, Any]:
+    """Nets from netlist sheets, in the shape of build_multisheet_schdoc_netlist (what check_schematic reads).
+    A pin with no net is open: it gets a net of its own (auto). Net 'NC' is an intentional no-connect (No ERC)."""
+    nets: dict[str, list[str]] = {}
+    all_pins: list[dict[str, Any]] = []
+    auto_nets: list[str] = []
+    no_erc: list[str] = []
+    for sheet in sheets:
+        for part in sheet.get("parts", []):
+            ref = str(part.get("ref", ""))
+            for pin in part.get("pins", []):
+                num = str(pin.get("num") or pin.get("number") or pin.get("name") or "")
+                tag = f"{ref}-{num}"
+                net = str(pin.get("net") or "").strip()
+                nc = net.upper() in ("NC", "N/C", "NO_ERC")
+                if not net or nc:
+                    net = f"Net{ref}_{num}"
+                    auto_nets.append(net)
+                    if nc:
+                        no_erc.append(tag)
+                if tag in nets.get(net, []):
+                    continue
+                nets.setdefault(net, []).append(tag)
+                all_pins.append({"ref": ref, "number": num, "name": str(pin.get("name") or ""), "tag": tag,
+                                 "net": net, "no_erc": nc, "section": part.get("section", "")})
+    return {"nets": nets, "all_pins": all_pins, "auto_nets": auto_nets, "no_erc_pins": sorted(no_erc),
+            "power_ports_by_net": {}, "objects": [], "unannotated": [], "hierarchical": False}
+
+
 def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
     """
     Run schematic review checks on SchDoc(s) or PcbDoc.
     Source can be a path to .SchDoc/.PcbDoc/.PrjPcb or a folder, a list of paths/dicts,
-    or a parsed dict. board (a PcbDoc path or read_pcbdoc dict) also compares the schematic
+    or a parsed dict. The tool's own netlist sheets work too: a project name, its netlist folder,
+    a sheet .json or a sheet dict with "parts" (a pin with net "" is open, net "NC" is a No ERC pin). board (a PcbDoc path or read_pcbdoc dict) also compares the schematic
     connectivity with the pad nets of that board: board_mismatches and board_netlist_mismatch errors.
     """
     findings: list[dict[str, Any]] = []
@@ -521,7 +592,16 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
     # 1. Determine source type and extract netlist
     sheet_docs: list[dict[str, Any]] = []
     prj = None
-    if isinstance(source, (str, pathlib.Path)):
+    project = None
+    from_netlist = _netlist_sources(source)
+    if from_netlist:
+        net_sheets, project = from_netlist
+        n_sheets = len(net_sheets)
+        sch = build_netlist_sheets_netlist(net_sheets)
+        netlist = sch["nets"]
+        for p_info in sch["all_pins"]:
+            pin_details[p_info["tag"]] = p_info
+    elif isinstance(source, (str, pathlib.Path)):
         p = pathlib.Path(source)
         if p.is_dir():
             paths, prj = _sheet_paths(p)
@@ -632,6 +712,16 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
                         "message": f"IC {ref} power pin {p_info.get('number', '')} ('{p_name}') is unconnected.",
                         "evidence": f"Pin {tag} ({p_name}) has no circuit net connection (net '{assigned_net or 'None'}')",
                     })
+
+    # Check 2b: a transistor switching a coil without a flyback diode
+    bom: list = []
+    if project:
+        try:
+            import store
+            bom = store.bom_lines(project)
+        except Exception:
+            bom = []
+    findings.extend(check_inductive_load_no_flyback(netlist, pin_details, bom))
 
     # Check 3: net labels that connect nothing and ports without a partner on another sheet.
     # Using a label inside a sheet to name a net is normal and is not reported.
@@ -881,10 +971,61 @@ def check_swap_requirements(netlist: dict, parts: dict, facts: dict, swap_text: 
     return out
 
 
+_COLLECTOR_RE = re.compile(r"^(?:C|D|COLLECTOR|DRAIN)$", re.I)
+_MAGNETIC_RE = re.compile(r"magnetic|electromagnetic|coil|transducer|inductive", re.I)
+_PIEZO_RE = re.compile(r"piezo", re.I)
+_LOAD_KIND = {"K": "relay coil", "M": "motor", "BZ": "buzzer"}
+
+
+def _ref_prefix(ref: str) -> str:
+    return re.match(r"[A-Za-z]*", ref).group(0).upper()
+
+
+def check_inductive_load_no_flyback(netlist: dict, pin_details: dict, bom: "list | None" = None) -> list:
+    """A Q* collector/drain on the same net as a relay (K), motor (M) or buzzer (BZ) pin, and no diode (D*) across
+    the load. A buzzer is judged by its BOM description/mpn: magnetic warns, piezo is skipped, unknown is info."""
+    out = []
+    ref_nets: dict[str, set] = {}
+    for net, pins in netlist.items():
+        for t in pins:
+            ref_nets.setdefault(_tag_ref(t), set()).add(net)
+    for net, pins in netlist.items():
+        drivers = [t for t in pins if _ref_prefix(_tag_ref(t)) == "Q"
+                   and _COLLECTOR_RE.match(str(pin_details.get(t, {}).get("name", "")))]
+        if not drivers:
+            continue
+        q = _tag_ref(drivers[0])
+        for load in sorted({_tag_ref(t) for t in pins if _ref_prefix(_tag_ref(t)) in _LOAD_KIND}):
+            other = ref_nets.get(load, set()) - {net}
+            diode_refs = {_tag_ref(t) for t in pins if _ref_prefix(_tag_ref(t)) == "D"}
+            if any(_tag_ref(t) in diode_refs for o in other for t in netlist.get(o, [])):
+                continue
+            sev = "warning"
+            if _ref_prefix(load) == "BZ":
+                line = next((l for l in (bom or []) if load in (l.get("refs") or [])), {})
+                text = f"{line.get('description', '')} {line.get('mpn', '')}"
+                if _PIEZO_RE.search(text) and not _MAGNETIC_RE.search(text):
+                    continue
+                if not _MAGNETIC_RE.search(text):
+                    sev = "info"
+            fix = (f"Add a diode across {load} (e.g. 1N4148 or a Schottky), cathode to the supply side, "
+                   f"anode to net '{net}'.")
+            if sev == "info":
+                msg = (f"{q} switches buzzer {load} on net '{net}' with no diode across it. A magnetic buzzer needs a "
+                       f"flyback diode, a piezo does not (the BOM does not say which this is). {fix}")
+            else:
+                msg = (f"{q} switches {_LOAD_KIND[_ref_prefix(load)]} {load} on net '{net}' with no flyback diode "
+                       f"across it: the switch-off voltage spike can destroy {q}. {fix}")
+            out.append({"id": "inductive_load_no_flyback", "severity": sev, "refs": [load, q], "message": msg,
+                        "evidence": f"{drivers[0]} and {load} share net '{net}'; no D* joins it to {load}'s other net"})
+    return out
+
+
 def main(argv=None):
     oscompat.utf8_stdio()
     ap = argparse.ArgumentParser(description="Schematic netlist and review checks")
-    ap.add_argument("source", help="Path to .SchDoc/.PcbDoc/.PrjPcb or a folder of SchDocs")
+    ap.add_argument("source", help="Path to .SchDoc/.PcbDoc/.PrjPcb or a folder of SchDocs; or the tool's own netlist: "
+                                   "a project name, its netlist folder or a sheet .json")
     ap.add_argument("--board", help="PcbDoc made from these sheets: compare its pad nets with the schematic")
     ap.add_argument("--json", action="store_true", help="Print JSON findings")
     args = ap.parse_args(argv)

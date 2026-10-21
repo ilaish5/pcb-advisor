@@ -40,7 +40,7 @@ A finding without a datasheet page is not a finding; it is a question to the stu
   (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/skills/verify_part.py <project> <bom-key>` - checks the part's pin numbers against the datasheet text.
 - `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` - sheet refs missing from the BOM, pins without a net.
-- `python <repo>/scripts/checks/schematic.py <file>` builds netlist from wire geometry and checks single-pin nets, unconnected IC power, and rail mismatches.
+- `python <repo>/scripts/checks/schematic.py <project or file>` builds the netlist from the project's sheets (before Altium) or a SchDoc's wire geometry, and checks single-pin nets, unconnected IC power, rail mismatches and a switched coil with no flyback diode.
 
 ## References
 - `references/checklist.md` - the checks, how to read each datasheet section, the swap procedure.
