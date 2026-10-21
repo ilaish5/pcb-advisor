@@ -27,6 +27,6 @@ password or token. The installer is safe to run twice: it repairs and never dele
 4. Sign-in. Claude: `claude auth login` (the person completes it in the browser), then `claude auth status`
    must exit 0. Antigravity: the person runs `agy` once and signs in with Google (no status command). The installer
    already sets `agent.provider`; to switch later: `pcb.py config agent.provider antigravity` (see docs/ENGINES.md).
-5. Start the server (`./start.sh` or `start.bat`, in the background), check that http://localhost:8931 answers,
+5. Start the server (`./start.sh` or `.\start.bat`, in the background), check that http://localhost:8931 answers,
    and tell the person to open it. Tell them how to start it next time (double-click `start.bat` / `./start.sh`).
 6. Optional: offer `pcb.py seed` (a finished example project).

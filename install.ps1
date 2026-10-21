@@ -295,7 +295,7 @@ function Install-PcbAdvisor {
     if ($env:PCB_NO_START -eq '1') { return }
     $port = if ($env:PCB_ADVISOR_PORT) { $env:PCB_ADVISOR_PORT } else { '8931' }
     Step "Starting pcb-advisor (http://localhost:$port). Close this window to stop it."
-    & cmd /c start.bat
+    & cmd /c .\start.bat         # .\ : cmd may not search the current folder (NoDefaultCurrentDirectoryInExePath, set by agent shells)
 }
 
 Install-PcbAdvisor -Argv $args
