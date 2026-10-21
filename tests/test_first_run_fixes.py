@@ -149,3 +149,13 @@ def test_blocks_the_student_placed_are_not_moved(empty):
     before = {s["id"]: (s["x"], s["y"]) for s in store.load_idea_working(empty)["diagram"]["shapes"]}
     store.apply_diagram_edit(empty, [{"op": "add_connector", "id": "c", "from": "mcu", "to": "led"}])
     assert {s["id"]: (s["x"], s["y"]) for s in store.load_idea_working(empty)["diagram"]["shapes"]} == before
+
+
+def test_a_citation_in_a_chat_table_cell_is_not_split():
+    # Flash's review table showed raw {{src:...}}: the citation's own | was taken for a cell border
+    import pathlib
+    import re
+    core = (pathlib.Path(__file__).parents[1] / "ui/js/core.js").read_text(encoding="utf-8")
+    split = re.search(r"const cells = l => .*?\.split\(/(.+?)/\)", core).group(1)
+    row = "1 | U1.5 | {{src:STM32L011F4P6.pdf|p. 45, Figure 13}}"
+    assert [c.strip() for c in re.split(split, row)] == ["1", "U1.5", "{{src:STM32L011F4P6.pdf|p. 45, Figure 13}}"]

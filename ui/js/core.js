@@ -145,7 +145,8 @@ function fmt(text, cites) {
 }
 function fmtLines(text) {
   const out = []; let list = null, rows = null;
-  const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => inline(c.trim()));
+  // a citation's own | ({{src:a.pdf|p. 3}}) is not a cell border
+  const cells = l => l.trim().replace(/^\||\|$/g, '').split(/\|(?![^{}]*\}\})/).map(c => inline(c.trim()));
   const flushRows = () => {
     if (!rows) return;
     const [head, ...body] = rows; rows = null;
