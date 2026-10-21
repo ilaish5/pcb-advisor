@@ -69,6 +69,12 @@ def test_an_unknown_domain_is_drawn_neutral_not_refused(empty):
                                                "domain": "quantum"}]})["shapes"][0]["domain"] == ""
 
 
+def test_a_whole_diagram_block_takes_its_domain_colours():
+    s = store.validate_diagram({"shapes": [{"id": "p", "type": "box", "x": 0, "y": 0, "w": 1, "h": 1,
+                                            "domain": "power"}]})["shapes"][0]
+    assert s["fill"] == store.DOMAIN_COLORS["power"]["fill"] and s["stroke"] == store.DOMAIN_COLORS["power"]["stroke"]
+
+
 def test_verify_with_find_for_and_no_pins_is_not_a_pass(empty):
     import verify_part
     store.propose_bom(empty, "U7", {"mpn": "ABCD1234", "refs": ["U7"]}, new=True)

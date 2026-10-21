@@ -442,8 +442,11 @@ def validate_diagram(data):
         if not isinstance(text, str) or len(text) > 2000:
             raise ValueError(f"shape {sid} text must be string <= 2000 chars")
 
-        fill = s.get("fill", "#ffffff")
-        stroke = s.get("stroke", "#1e293b")
+        # a whole diagram from the agent names the domain only: the block takes that domain's colours,
+        # as add_shape gives them (blocks went white after an Approve)
+        dom_colors = DOMAIN_COLORS.get(_domain(s.get("domain")), {"fill": "#ffffff", "stroke": "#1e293b"})
+        fill = s.get("fill", dom_colors["fill"])
+        stroke = s.get("stroke", dom_colors["stroke"])
         if not isinstance(fill, str) or not COLOR_RE.match(fill):
             raise ValueError(f"shape {sid} invalid fill")
         if not isinstance(stroke, str) or not COLOR_RE.match(stroke):
