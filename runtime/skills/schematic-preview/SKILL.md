@@ -17,9 +17,9 @@ The picture is a teaching aid: it shows WHAT to place and HOW to lay it out. The
 ## Steps
 1. Collect the data first: per IC the pin number, pin name and net; per small part the ref, value and the two nets.
    Take pins from the part's datasheet in the project's `sources/` or from the student's library when one is there. Simple parts
-   (R, C, L, LED, diode, ferrite, crystal, generic connector) need none. For an IC with no datasheet, use the well-known pinout of
-   that MPN and package and keep going: the part is saved as `pins_source: "agent"` (unverified). Do not stop and do not ask for the
-   file first; at the end say once "N parts unverified - drop their datasheets in Sources when you have them". If you truly do not
+   (R, C, L, LED, diode, ferrite, crystal, generic connector) need none. For an IC or transistor with no datasheet, fetch it first
+   (`jlc.py part` gives `datasheet_url`; `sources.py get <project> <url> <MPN>.pdf`). If no link works, use the well-known pinout
+   and keep going: the part is saved as `pins_source: "agent"` (unverified); say which datasheet is missing. If you truly do not
    know the pinout of a part, leave that part out and say so; do not invent pins.
    Never wait for a complete sheet: write it early and partial. Draw what is known, leave undecided pins with net "" (shown as an
    open pin) and include parts whose BOM proposals are still pending (shown "pending approval"). The write returns warnings

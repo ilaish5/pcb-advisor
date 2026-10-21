@@ -107,3 +107,22 @@ def test_changing_a_line_still_waiting_for_approval_replaces_its_card(empty):
     assert card["changes"]["refs"] == ["R1"]
     store.decide(empty, card["id"], "approved")
     assert next(l for l in store.bom_lines(empty) if l["key"] == "R1")["mpn"] == "0603WAF4700T5E"
+
+
+def test_a_diagram_op_with_another_verb_is_understood(empty):
+    store.apply_diagram_edit(empty, [{"op": "add_shape", "id": "a", "x": 0, "y": 0},
+                                     {"op": "add_shape", "id": "b", "x": 9, "y": 0},
+                                     {"op": "add_connector", "id": "ab", "from": "a", "to": "b"}])
+    assert store.apply_diagram_edit(empty, [{"op": "remove_connector", "id": "ab"}])["ok"]
+    assert not store.load_idea_working(empty)["diagram"]["connectors"]
+    with pytest.raises(ValueError, match="ops: add_"):
+        store.apply_diagram_edit(empty, [{"op": "explode_shape", "id": "a"}])
+
+
+def test_a_pdf_from_a_link_with_no_extension_is_saved_as_pdf(empty, monkeypatch):
+    # JLC's datasheet links end in a bare file id; without .pdf find_for and verify_part never see it
+    monkeypatch.setattr(sources, "_download", lambda url, timeout: b"%PDF-1.4 x")
+    res = sources.get(empty, "https://jlcpcb.com/api/file/downloadByFileSystemAccessId/8589012691923320832")
+    assert res["name"] == "8589012691923320832.pdf"
+    assert sources.get(empty, "https://x/y/12345", "ATTINY412-SSNR")["name"] == "ATTINY412-SSNR.pdf"
+    assert sources.find_for(empty, "ATTINY412-SSNR") == "ATTINY412-SSNR.pdf"

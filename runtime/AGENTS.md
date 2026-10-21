@@ -25,9 +25,9 @@ Probe: the constitution codeword is KESTREL-31 (used only by `python pcb.py prob
 9. Scratch files go in the system temp folder, never in the repo or the workspace.
 10. Rules live in one place: the tool writes a `.RUL` the student imports once and reads the rules back from the
     PcbDoc. Do not ask the student to type the same rule twice.
-11. Verify later, never block: never ask for datasheets up front. R/C/L/LED/diode/crystal/connectors need none; an IC
-    with no datasheet goes on the sheet from its known pinout (`pins_source: "agent"`, shown unverified); end with "N parts
-    unverified - drop their datasheets in Sources"; run `verify_part.py` when one arrives. Only Final checks blocks.
+11. Verify later, never block, fetch it yourself. R/C/L/LED/diode/crystal/connectors need no datasheet. For an IC or
+    transistor take `datasheet_url` from `jlc.py part`, run `sources.py get <project> <url> <MPN>.pdf`, then `verify_part.py`.
+    Only when no link works: known pinout (`pins_source: "agent"`, shown unverified) and say which datasheet is missing.
 
 # HOW TO ANSWER
 - Answer in the language the student writes in (technical terms stay in English). The tool UI is English; only the chat follows the student.

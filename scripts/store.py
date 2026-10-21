@@ -1737,6 +1737,11 @@ def apply_diagram_edit(project, ops):
         op_name = op.get("op") or op.get("type")
         if not op_name:
             raise ValueError("op requires op or type field")
+        # Sonnet wrote remove_connector; the verb is not worth refusing the whole edit over
+        verb, _, noun = str(op_name).partition("_")
+        verb = {"remove": "delete", "del": "delete", "edit": "update", "modify": "update", "move": "update",
+                "create": "add", "new": "add"}.get(verb, verb)
+        op_name = f"{verb}_{noun}" if noun else op_name
         # a model often escapes the line break twice: "Coin cell\\nCR2032" would show the backslash
         for part in (op, *(v for v in op.values() if isinstance(v, dict))):
             for k in ("text", "label"):
@@ -2227,7 +2232,7 @@ def apply_diagram_edit(project, ops):
                     f["h"] = (max(s["y"] + s["h"] for s in mems) - min(s["y"] for s in mems)) + 2 * pad
                     touched_ids.add(f["id"])
         else:
-            raise ValueError(f"unknown op: {op_name}")
+            raise ValueError(f"unknown op: {op_name} (ops: add_, update_, delete_ + shape, connector or frame; auto_layout)")
 
     valid_diag = validate_diagram({"shapes": shapes, "connectors": connectors, "frames": frames})
     save_diagram_snapshot(project, cur_diag)

@@ -148,8 +148,10 @@ def fetch(url, name=None, timeout=45, project=None):
     folder = folder_of(project)
     where = f"project {project}'s sources" if project else "the shared library"
     name = _safe(name or url.rstrip("/").split("/")[-1] or "document.pdf")
-    path = folder / name
     blob = _download(url, timeout)
+    if "." not in name and b"%PDF-" in blob[:1024]:     # JLC's datasheet links end in a bare file id
+        name += ".pdf"
+    path = folder / name
     _check_kind(url, name, blob)
     # The sidecar describes the DOCUMENT - what it is, where it came from, what
     # it hashes to. All of that is the same on every machine, which is why the
