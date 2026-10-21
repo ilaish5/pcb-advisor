@@ -37,7 +37,8 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
     its `match` is "same"): propose `bom.propose` with `changes`
     `{mpn, lcsc, manufacturer, footprint_lock}` and the reason "order-only swap: same footprint"; the library and the board
     stay as they are. Match "different" or "unknown" is a design change (library rebuild + PCB update): propose it without a
-    `footprint_lock`, and say it changes the board. Never claim "same package" means the same footprint.
+    `footprint_lock`, and say it changes the board. Never claim "same package" means the same footprint, and never call a
+    part you found yourself (a search, a cache) "identical" or a drop-in: only a `match` "same" from order.check is.
 
 ## Scripts
 - `python <repo>/scripts/skills/check_availability.py <project> [LINE ...]` - Searches JLC by MPN, returns stock, unit price at 10 pcs,

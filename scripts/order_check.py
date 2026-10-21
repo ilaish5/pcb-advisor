@@ -24,6 +24,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "skills"))
 import jlc  # noqa: E402
 import partlib  # noqa: E402
+import partlib_order  # noqa: E402
 import store  # noqa: E402
 
 ALTERNATIVES = 3
@@ -40,7 +41,7 @@ def swap_reason(alt, footprint):
 
 
 def _alternative(project, line, alt):
-    m = partlib.footprint_match(project, line["key"], alt.get("code"), cand=alt)
+    m = partlib_order.footprint_match(project, line["key"], alt.get("code"), cand=alt)
     unit = (alt.get("price_breaks") or [{}])[0].get("price")
     return {"mpn": alt.get("mpn"), "code": alt.get("code"), "manufacturer": alt.get("manufacturer"),
             "package": alt.get("package"), "stock": alt.get("stock"), "unit_price": unit,
@@ -72,7 +73,7 @@ def order_check(project, recheck=False):
     if recheck:
         import check_availability
         check_availability.check(project)
-        partlib.restamp_if_same(project)
+        partlib_order.restamp_if_same(project)
     build_qty = int(store.workspace.get("jlc.build_qty", 5))
     out, counts = [], {}
     for l in store.bom(project, write=False):
@@ -96,7 +97,7 @@ def order_check(project, recheck=False):
                     "package": l.get("package"), "qty": q, "need": need, "availability": l.get("availability"),
                     "stock": stock, "risk": l.get("risk") or [], "class": cls, "alternatives": alts,
                     "warnings": ["low stock"] if cls == "ok" and stock < need * LOW_FACTOR else []})
-    return {"lines": out, "counts": counts, "params_stale": partlib.params_notices(project), "checked_at": store.now()}
+    return {"lines": out, "counts": counts, "params_stale": partlib_order.params_notices(project), "checked_at": store.now()}
 
 
 def summary(res):

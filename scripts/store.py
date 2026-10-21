@@ -414,8 +414,8 @@ def _vet_lock(project, line, changes, known):
         return bare, "no footprint lock: a new line or a change with no LCSC code proves nothing"
     if set(changes) - set(ORDER_ONLY):
         return bare, "no footprint lock: the change is more than an order swap (" + ", ".join(sorted(set(changes) - set(ORDER_ONLY))) + ")"
-    import partlib
-    m = partlib.footprint_match(project, line, changes["lcsc"])
+    import partlib_order
+    m = partlib_order.footprint_match(project, line, changes["lcsc"])
     if m["match"] == "same" and m["footprint"] == changes["footprint_lock"]:
         return changes, ""
     return bare, f"no footprint lock: {m['match']} ({m['why']}): a design change"
@@ -983,8 +983,8 @@ def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
 
 
 def _lock_keeps_library(project, line, lock):
-    import partlib
-    return partlib.swap_keeps_library(project, line, lock)
+    import partlib_order
+    return partlib_order.swap_keeps_library(project, line, lock)
 
 
 def decide(project, pid, decision, by="student"):
@@ -1039,8 +1039,8 @@ def decide(project, pid, decision, by="student"):
                 "sources": prop.get("sources"), "proposal": pid})
             if fresh:           # an order-only swap: the library and the board stay as they are
                 try:
-                    import partlib
-                    partlib.stamp_swap(project, prop["line"], changes)
+                    import partlib_order
+                    partlib_order.stamp_swap(project, prop["line"], changes)
                 except Exception as exc:            # the BOM change stands, the library just shows stale
                     note = f"the library was not marked current: {exc}"
             if note:

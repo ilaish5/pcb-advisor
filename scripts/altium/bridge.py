@@ -51,6 +51,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import jlc_upload  # noqa: E402
 import outjob  # noqa: E402
 import partlib  # noqa: E402
+import partlib_order  # noqa: E402
 import project as project_mod  # noqa: E402
 import rule_kinds  # noqa: E402
 import rules as rules_mod  # noqa: E402
@@ -700,8 +701,8 @@ def library_paths(project):
 
 
 def library_stale(project):
-    """True when library/build is missing, was made by other converter code, or is older than the BOM, the supplier
-    checks, a netlist sheet or a vendor zip (one in Sources, or a Downloads zip carrying a BOM line's MPN)."""
+    """True when library/build is missing, was made by other converter code, or is older than the BOM, a netlist sheet or
+    a vendor zip (one in Sources, or a Downloads zip carrying a BOM line's MPN), or a stock check changed a line's LCSC code."""
     lib = partlib.library_dir(project)
     man = lib / "manifest.json"
     if not man.is_file() or not (lib / "build" / "parts.json").is_file():
@@ -714,7 +715,14 @@ def library_stale(project):
     pd = store.pdir(project)
     inputs = [pd / n for n in LIB_INPUTS] + (sorted((pd / "netlist").rglob("*")) if (pd / "netlist").is_dir() else [])
     since = man.stat().st_mtime
-    return any(f.is_file() and f.stat().st_mtime > since for f in inputs) or partlib.vendor_zip_newer(project, since)
+    if partlib.vendor_zip_newer(project, since):
+        return True
+    newer = [f for f in inputs if f.is_file() and f.stat().st_mtime > since]
+    if any(f.name != "supply-log.jsonl" for f in newer):
+        return True
+    if not newer:
+        return False
+    return partlib_order.supply_codes_changed(project)      # a stock check is stale only when it changed a line's LCSC code
 
 
 def _spec_lines(path):
@@ -1010,7 +1018,7 @@ def build_library(project, fetch=True):
     lp = library_paths(project)
     prj = lp["prj"]
     prepared = False
-    if library_stale(project) or partlib.params_stale(project):      # an order-only swap leaves Altium's parameters old
+    if library_stale(project) or partlib_order.params_stale(project):      # an order-only swap leaves Altium's parameters old
         partlib.prepare(project, fetch=fetch)
         prepared = True
     build = partlib.library_dir(project) / "build"
@@ -1060,7 +1068,7 @@ def build_library(project, fetch=True):
                for ln in log if ln.startswith(SAME_NAME)]
     built = _mark_built(project, expected, {}, {}, fresh and installed)
     if fresh and installed:
-        partlib.clear_params_stale(project)
+        partlib_order.clear_params_stale(project)
     res = {"schlib": str(lp["schlib"]), "pcblib": str(lp["pcblib"]), "libpkg": str(lp["libpkg"]), "intlib": str(intlib),
            "folder_3d": str(lp["d3"]), "counts": counts, "intlib_fresh": fresh, "installed": installed,
            "built": sum(built.values()), "lines": len(built), "prepared": prepared, "backup": backup, "issues": issues,

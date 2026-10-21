@@ -18,6 +18,7 @@ import partlib_match  # noqa: E402
 import jlc  # noqa: E402
 import order_check  # noqa: E402
 import partlib  # noqa: E402
+import partlib_order  # noqa: E402
 import serve  # noqa: E402
 import store  # noqa: E402
 from altium import bridge  # noqa: E402
@@ -105,57 +106,57 @@ def test_a_changed_lcsc_makes_the_stock_answer_stale(proj):
 # ---------------------------------------------------------------- footprint identity and match
 
 def test_footprint_of_a_line_is_its_name_and_a_land_pattern_fingerprint(built):
-    fp = partlib.footprint_of(built, "R1")
+    fp = partlib_order.footprint_of(built, "R1")
     assert fp["name"] == "R0603_FAKE" and fp["source"] == "easyeda" and fp["pads"] == 2 and fp["pins"] == ["1", "2"]
-    assert fp["fingerprint"] and fp["fingerprint"] == partlib.footprint_of(built, "R3")["fingerprint"]
-    assert partlib.footprint_of(built, "R2")["source"] == "generated"
-    assert partlib.footprint_of(built, "NOPE") is None
+    assert fp["fingerprint"] and fp["fingerprint"] == partlib_order.footprint_of(built, "R3")["fingerprint"]
+    assert partlib_order.footprint_of(built, "R2")["source"] == "generated"
+    assert partlib_order.footprint_of(built, "NOPE") is None
     a = ["PAD|1|-31.5|20|0|Top Layer|1|0|0|0|0|31.5|35.4|2|", "PAD|2|31.5|20|0|Top Layer|1|0|0|0|0|31.5|35.4|2|", "TRACK|0|0|1|1|5|Top Overlay"]
     turned = ["PAD|2|31.5|20|90|Top Layer|1|0|0|0|0|35.4|31.5|2|", "PAD|1|-31.5|20|90|Top Layer|1|0|0|0|0|35.4|31.5|2|"]
     nudged = [a[0].replace("-31.5", "-32.5"), a[1]]
-    assert partlib.land_fingerprint(a) == partlib.land_fingerprint(turned)         # silk, order and a quarter turn do not count
-    assert partlib.land_fingerprint(a) != partlib.land_fingerprint(nudged)         # 0.01 mil is under the rounding, 1 mil is not
-    assert partlib.land_fingerprint(a) == partlib.land_fingerprint([a[0].replace("31.5", "31.51"), a[1]])
+    assert partlib_order.land_fingerprint(a) == partlib_order.land_fingerprint(turned)         # silk, order and a quarter turn do not count
+    assert partlib_order.land_fingerprint(a) != partlib_order.land_fingerprint(nudged)         # 0.01 mil is under the rounding, 1 mil is not
+    assert partlib_order.land_fingerprint(a) == partlib_order.land_fingerprint([a[0].replace("31.5", "31.51"), a[1]])
     plated, unplated = "PAD|1|0|0|0|Multi-Layer|1|40|0|0|0|80|80|1|", "PAD|1|0|0|0|Multi-Layer|0|40|0|0|0|80|80|1|"
     slot, slot_turned = "PAD|1|0|0|0|Multi-Layer|1|40|2|120|0|80|80|1|", "PAD|1|0|0|0|Multi-Layer|1|40|2|120|90|80|80|1|"
-    assert len({partlib.land_fingerprint([x]) for x in (plated, unplated, slot, slot_turned)}) == 4   # plating, slot and slot turn count
+    assert len({partlib_order.land_fingerprint([x]) for x in (plated, unplated, slot, slot_turned)}) == 4   # plating, slot and slot turn count
     flat, diagonal = "PAD|1|0|0|0|Top Layer|1|0|0|0|0|90|30|2|", "PAD|1|0|0|45|Top Layer|1|0|0|0|0|90|30|2|"
-    assert partlib.land_fingerprint([flat]) != partlib.land_fingerprint([diagonal])                  # 45 degrees is not 0
+    assert partlib_order.land_fingerprint([flat]) != partlib_order.land_fingerprint([diagonal])                  # 45 degrees is not 0
 
 
 def test_match_of_a_part_with_an_easyeda_footprint(built):
     calls = []
     f = fixture_fetch(CANDIDATES, calls)
-    same = partlib.footprint_match(built, "R1", "C101", fetcher=f)
+    same = partlib_order.footprint_match(built, "R1", "C101", fetcher=f)
     assert same["match"] == "same" and same["footprint"] == "R0603_FAKE" and "same function" in same["why"]
     assert (store.pdir(built) / "library" / "easyeda" / "C101" / "lib.kicad_sym").exists()      # cached like prepare's
-    assert partlib.footprint_match(built, "R1", "C102", fetcher=f)["match"] == "different"      # another land pattern
-    pins = partlib.footprint_match(built, "R1", "C200", fetcher=f)
+    assert partlib_order.footprint_match(built, "R1", "C102", fetcher=f)["match"] == "different"      # another land pattern
+    pins = partlib_order.footprint_match(built, "R1", "C200", fetcher=f)
     assert pins["match"] == "different" and "pins" in pins["why"]
     n = len(calls)
-    assert partlib.footprint_match(built, "R1", "C101", fetcher=f)["match"] == "same" and len(calls) == n    # from the cache
+    assert partlib_order.footprint_match(built, "R1", "C101", fetcher=f)["match"] == "same" and len(calls) == n    # from the cache
 
 
 def test_a_match_that_cannot_be_decided_is_unknown_never_same(built, proj):
     f = fixture_fetch(CANDIDATES)
-    assert partlib.footprint_match(built, "R1", "C555", fetcher=f)["match"] == "unknown"       # EasyEDA has nothing
-    assert partlib.footprint_match(built, "R1", "", fetcher=f)["match"] == "unknown"
-    assert partlib.footprint_match(built, "R1", "junk", fetcher=f)["match"] == "unknown"
-    assert partlib.footprint_match(built, "NOPE", "C101", fetcher=f)["match"] == "unknown"    # no footprint in the library
+    assert partlib_order.footprint_match(built, "R1", "C555", fetcher=f)["match"] == "unknown"       # EasyEDA has nothing
+    assert partlib_order.footprint_match(built, "R1", "", fetcher=f)["match"] == "unknown"
+    assert partlib_order.footprint_match(built, "R1", "junk", fetcher=f)["match"] == "unknown"
+    assert partlib_order.footprint_match(built, "NOPE", "C101", fetcher=f)["match"] == "unknown"    # no footprint in the library
 
 
 def test_match_of_a_generated_footprint_goes_by_package_and_pins(built, monkeypatch):
     f = fixture_fetch(CANDIDATES)
     r2 = {"description": "4.7kΩ ±1% 0603 Resistor"}
-    assert partlib.footprint_match(built, "R2", "C101", package="0603", fetcher=f, cand=r2)["match"] == "same"
-    assert partlib.footprint_match(built, "R2", "C101", package="C0603", fetcher=f, cand=r2)["match"] == "same"   # the same package key
+    assert partlib_order.footprint_match(built, "R2", "C101", package="0603", fetcher=f, cand=r2)["match"] == "same"
+    assert partlib_order.footprint_match(built, "R2", "C101", package="C0603", fetcher=f, cand=r2)["match"] == "same"   # the same package key
     calls = []
-    assert partlib.footprint_match(built, "R2", "C101", package="0805", fetcher=fixture_fetch(CANDIDATES, calls))["match"] == "different"
+    assert partlib_order.footprint_match(built, "R2", "C101", package="0805", fetcher=fixture_fetch(CANDIDATES, calls))["match"] == "different"
     assert calls == []                                                                         # no download needed to say it
-    assert partlib.footprint_match(built, "R2", "C200", package="0603", fetcher=f, cand=r2)["match"] == "different"    # three pins
+    assert partlib_order.footprint_match(built, "R2", "C200", package="0603", fetcher=f, cand=r2)["match"] == "different"    # three pins
     monkeypatch.setattr(jlc, "part_by_code", lambda code, transport=None: (_ for _ in ()).throw(OSError("offline")))
-    assert partlib.footprint_match(built, "R2", "C101", fetcher=f)["match"] == "unknown"       # no package to compare
-    assert partlib.footprint_match(built, "R2", "C101", package="Weird-9", fetcher=f, cand=r2)["match"] == "unknown"
+    assert partlib_order.footprint_match(built, "R2", "C101", fetcher=f)["match"] == "unknown"       # no package to compare
+    assert partlib_order.footprint_match(built, "R2", "C101", package="Weird-9", fetcher=f, cand=r2)["match"] == "unknown"
 
 
 # ---------------------------------------------------------------- the footprint pinned on an order-only swap
@@ -176,7 +177,7 @@ def test_prepare_keeps_a_locked_footprint_and_symbol(built, home):
     assert m["R1"]["footprint"] == "R0603_FAKE" and m["R1"]["symbol"] == man_before["R1"]["symbol"]
     assert m["R1"]["step"] == man_before["R1"]["step"] and m["R1"]["lcsc"] == "C101" and m["R1"]["locked"] == "R0603_FAKE"
     assert (lib / "build" / "footprints_spec.txt").read_text(encoding="cp1252") == before
-    assert partlib.footprint_of(built, "R1")["fingerprint"] == partlib.land_fingerprint(
+    assert partlib_order.footprint_of(built, "R1")["fingerprint"] == partlib_order.land_fingerprint(
         partlib._spec_footprints(lib / "build" / "footprints_spec.txt")["R0603_FAKE"]["lines"])
     new_sym = (lib / "build" / "symbols_spec.txt").read_text(encoding="cp1252")
     body = lambda t: t.split("SYMBOL|")[1].split(chr(10), 1)[1]
@@ -284,13 +285,13 @@ def test_recheck_keeps_a_fresh_library_fresh_when_the_code_is_unchanged(orderabl
     def check(project, keys=None):
         store.add_supply(project, "R1", "LCSC", 800, 0.01, "0603WAF1002T5E", source="LCSC C100", code="C100", exact=True)
     monkeypatch.setattr(check_availability, "check", check)
-    assert bridge.library_stale(orderable)                                      # the stock rows above are newer than the manifest
-    partlib.restamp_if_same(orderable)
+    assert not bridge.library_stale(orderable)                                  # the stock rows above changed no code
+    partlib_order.restamp_if_same(orderable)
     assert not bridge.library_stale(orderable)
     order_check.order_check(orderable, recheck=True)
     assert not bridge.library_stale(orderable)                                  # supply-log is newer again, the manifest follows
     store.add_supply(orderable, "R1", "LCSC", 800, 0.01, "0603WAF1002T5E", source="LCSC C999", code="C999", exact=True)
-    assert not partlib.restamp_if_same(orderable) and bridge.library_stale(orderable)     # another code: a design change
+    assert not partlib_order.restamp_if_same(orderable) and bridge.library_stale(orderable)     # another code: a design change
 
 
 def test_the_order_check_action_returns_a_short_summary(orderable):
@@ -302,23 +303,23 @@ def test_the_order_check_action_returns_a_short_summary(orderable):
 
 def test_same_pads_but_another_pin_function_is_different(built):
     f = fixture_fetch(CANDIDATES)
-    own = partlib.footprint_match(built, "U1", "C201", fetcher=f)
+    own = partlib_order.footprint_match(built, "U1", "C201", fetcher=f)
     assert own["match"] == "same", own
-    swapped = partlib.footprint_match(built, "U1", "C202", fetcher=f)                 # pin 3 is VOUT on the line, EN on the candidate
+    swapped = partlib_order.footprint_match(built, "U1", "C202", fetcher=f)                 # pin 3 is VOUT on the line, EN on the candidate
     assert swapped["match"] == "different" and "pin 3" in swapped["why"] and "VOUT" in swapped["why"] and "EN" in swapped["why"]
 
 
 def test_a_generated_ic_footprint_needs_the_candidates_symbol_too(built):
     f = fixture_fetch(CANDIDATES)
-    q1 = partlib.footprint_match(built, "Q1", "C201", package="SOT-23-3", fetcher=f)     # Q1 is a generated SOT-23-3 with G, S, D
+    q1 = partlib_order.footprint_match(built, "Q1", "C201", package="SOT-23-3", fetcher=f)     # Q1 is a generated SOT-23-3 with G, S, D
     assert q1["match"] == "different" and "pin" in q1["why"]                           # VIN/GND/VOUT are not G/S/D
     gone = lambda cid, dest: (False, "EasyEDA answered: part not found")
-    assert partlib.footprint_match(built, "Q1", "C555", package="SOT-23-3", fetcher=gone)["match"] == "unknown"
+    assert partlib_order.footprint_match(built, "Q1", "C555", package="SOT-23-3", fetcher=gone)["match"] == "unknown"
 
 
 def test_a_two_pin_passive_is_compared_by_value_and_kind_not_pin_names(built):
     f = fixture_fetch(CANDIDATES)
-    m = lambda **cand: partlib.footprint_match(built, "R1", "C101", fetcher=f, cand=cand)["match"]
+    m = lambda **cand: partlib_order.footprint_match(built, "R1", "C101", fetcher=f, cand=cand)["match"]
     assert m(description="10 kΩ ±1% 100mW resistor") == "same" and m(description="10K 1% 0.1W Resistor") == "same" and m(description="10000R 1% 1/8W resistor") == "same"
     assert m(description="100kΩ 1% 100mW resistor") == "different"
     assert m(description="10kΩ 1% 100mW NTC thermistor") == "different"                     # a thermistor is not a resistor
@@ -332,18 +333,18 @@ def test_a_two_pin_passive_is_compared_by_value_and_kind_not_pin_names(built):
 
 def test_a_polar_two_pin_part_is_compared_by_pin_names(built):
     f = fixture_fetch(CANDIDATES)
-    d1 = partlib.footprint_match(built, "D1", "C101", package="SOD-123", fetcher=f)       # the BAT54 diode: its own pin names, the candidate has 1/2
+    d1 = partlib_order.footprint_match(built, "D1", "C101", package="SOD-123", fetcher=f)       # the BAT54 diode: its own pin names, the candidate has 1/2
     assert d1["match"] in ("different", "same") and ("pin" in d1["why"] or d1["match"] == "same")
-    names = {p["name"] for p in partlib.footprint_of(built, "D1")["symbol_pins"]}
+    names = {p["name"] for p in partlib_order.footprint_of(built, "D1")["symbol_pins"]}
     assert (d1["match"] == "same") == (names == {"1", "2"})
 
 
 def test_a_library_that_is_not_current_proves_nothing(built):
     f = fixture_fetch(CANDIDATES)
-    assert partlib.footprint_match(built, "R1", "C101", fetcher=f)["match"] == "same"
+    assert partlib_order.footprint_match(built, "R1", "C101", fetcher=f)["match"] == "same"
     log(built, "bom-log.jsonl", {"ts": "2026-10-21T12:00:00", "by": "t", "line": "R1", "changes": {"package": "0805"}})
-    m = partlib.footprint_match(built, "R1", "C101", fetcher=f)
-    assert m["match"] == "unknown" and m["why"] == partlib.NOT_CURRENT
+    m = partlib_order.footprint_match(built, "R1", "C101", fetcher=f)
+    assert m["match"] == "unknown" and m["why"] == partlib_order.NOT_CURRENT
 
 
 @pytest.mark.parametrize("what, change", [("package", {"package": "0805"}), ("value", {"value": "22k"})])
@@ -391,16 +392,16 @@ def test_a_swap_leaves_the_altium_parameters_old_and_says_so(built, monkeypatch)
     rec = store.propose_bom(built, "R1", swap(built))
     store.decide(built, rec["id"], "approved")
     assert not bridge.library_stale(built)
-    stale = partlib.params_stale(built)["R1"]
+    stale = partlib_order.params_stale(built)["R1"]
     assert stale == {"mpn": "0603WAF1002T5E", "lcsc": "C100"}
-    note = partlib.params_notices(built)[0]
+    note = partlib_order.params_notices(built)[0]
     assert "R1" in note and "0603WAF1002T5E" in note and "C100" in note and "export_bom" in note
     assert note in order_check.order_check(built)["params_stale"]
     assert "still show" in partlib.format_status(partlib.status_rows(built))
     m = prep(built, fetcher=fake_fetch([]))                                              # a rebuild keeps the note until Altium is built
     assert m["R1"]["params_stale"] == stale
-    partlib.clear_params_stale(built)
-    assert partlib.params_stale(built) == {}
+    partlib_order.clear_params_stale(built)
+    assert partlib_order.params_stale(built) == {}
 
 
 def test_the_jlc_export_never_takes_a_code_that_is_not_the_exact_part(proj):
@@ -413,12 +414,12 @@ def test_the_jlc_export_never_takes_a_code_that_is_not_the_exact_part(proj):
 
 
 def test_the_restamp_only_follows_supplier_answers(orderable):
-    assert partlib.restamp_if_same(orderable)                                           # only the supply log is newer
+    assert partlib_order.restamp_if_same(orderable)                                           # only the supply log is newer
     assert not bridge.library_stale(orderable)
     back(orderable)
     log(orderable, "bom-log.jsonl", {"ts": "2026-10-21T12:00:00", "by": "t", "line": "R2", "changes": {"value": "5.6k"}})
     stock(orderable, "R2", "RC0603-4K7", 1)
-    assert not partlib.restamp_if_same(orderable) and bridge.library_stale(orderable)  # a BOM change is a design change
+    assert not partlib_order.restamp_if_same(orderable) and bridge.library_stale(orderable)  # a BOM change is a design change
 
 
 def test_the_order_check_goes_by_lcsc_stock(orderable, monkeypatch):
@@ -494,7 +495,26 @@ def test_footprint_match_applies_the_ratings(built, monkeypatch):
     f = fixture_fetch(CANDIDATES)
     real = store.bom_lines
     monkeypatch.setattr(partlib.store, "bom_lines", lambda p, *a, **k: [{**l, "description": "10kΩ ±1% 0.1W resistor"} if l["key"] == "R1" else l for l in real(p, *a, **k)])
-    m = lambda desc: partlib.footprint_match(built, "R1", "C101", fetcher=f, cand={"description": desc})["match"]
+    m = lambda desc: partlib_order.footprint_match(built, "R1", "C101", fetcher=f, cand={"description": desc})["match"]
     assert m("10kΩ ±1% 0.1W resistor") == "same" and m("10kΩ ±1% 0.25W resistor") == "same"
     assert m("10kΩ ±1% 0.063W resistor") == "different" and m("10kΩ ±5% 0.1W resistor") == "different"
     assert m("10kΩ resistor") == "unknown"                                          # says nothing of the rating
+
+
+def test_the_ordering_code_is_not_part_of_the_converter_fingerprint():
+    mods = set(partlib.CONVERTER_MODULES)
+    assert mods == {"partlib.py", "partlib_convert.py", "partlib_generate.py", "partlib_kicad.py"}   # what prepare's output depends on
+    assert not {"partlib_order.py", "partlib_match.py"} & mods
+    assert all((pathlib.Path(partlib.__file__).parent / n).is_file() for n in mods)
+
+
+def test_a_stock_check_makes_the_library_stale_only_when_it_changes_a_code(orderable):
+    back(orderable)
+    assert not bridge.library_stale(orderable)
+    store.add_supply(orderable, "R1", "LCSC", 800, 0.01, "0603WAF1002T5E", source="LCSC C100", code="C100", exact=True)
+    assert not bridge.library_stale(orderable)                                  # the same code: stock news only
+    store.add_supply(orderable, "R1", "LCSC", 800, 0.01, "0603WAF1002T5E", source="LCSC C999", code="C999", exact=True)
+    assert bridge.library_stale(orderable)                                      # another code: a design change
+    back(orderable)
+    log(orderable, "bom-log.jsonl", {"ts": "2026-10-21T12:00:00", "by": "t", "line": "R2", "changes": {"value": "5.6k"}})
+    assert bridge.library_stale(orderable)
