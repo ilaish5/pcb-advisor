@@ -85,7 +85,7 @@ def test_every_error_kind_has_its_card_or_is_drawn_as_a_partial_turn():
         assert f"'{kind}'" in card, kind
     for kind in ("idle_timeout", "total_timeout", "stopped"):
         assert f"'{kind}'" in body("const CHAT_PARTIAL", "const chatIsPartial"), kind
-    assert "/login" in card and "pcb-advisor#install" in card and "retry_at" in card
+    assert "claude auth login" in card and "pcb-advisor#install" in card and "retry_at" in card
     assert "Switch engine" in card and "chat-settings" in card
     assert "chatErrorCard(err) || errorLine(" in CHAT_JS                # an unknown kind keeps today's error line
     assert "Retry" in card and "act: 'retry'" in card

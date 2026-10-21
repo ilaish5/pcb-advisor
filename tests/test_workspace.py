@@ -126,3 +126,8 @@ def test_paths_given_to_an_engine_use_forward_slashes(home):
 def test_the_ui_and_templates_stay_with_the_install(home):
     assert workspace.ui_dir().as_posix().startswith(workspace.REPO.as_posix())
     assert workspace.templates_dir().as_posix().startswith(workspace.REPO.as_posix())
+
+
+def test_a_config_saved_with_a_bom_still_loads(home):
+    (home / "config.json").write_bytes(b'\xef\xbb\xbf{"server": {"port": 9123}}')
+    assert workspace.load(reload=True)["server"]["port"] == 9123

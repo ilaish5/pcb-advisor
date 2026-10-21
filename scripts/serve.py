@@ -891,6 +891,22 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---------------------------------------------------------------- read
     def do_GET(self):
+        self._guarded(self._get)
+
+    def do_POST(self):
+        self._guarded(self._post)
+
+    def _guarded(self, fn):
+        """A project file another program holds open (Windows: an editor) is an answer, not a dropped connection."""
+        try:
+            return fn()
+        except PermissionError as exc:              # a Windows sharing violation; a missing file or a socket error is not
+            if not exc.filename:
+                raise
+            name = pathlib.Path(exc.filename).name
+            return self._send(423, {"error": f"{name} is open in another program ({exc.filename}); close it and try again"})
+
+    def _get(self):
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             return self._send(200, (workspace.ui_dir() / "index.html").read_text(encoding="utf-8"),
@@ -1267,7 +1283,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._send(404, {"error": "not found"})
 
     # ---------------------------------------------------------------- write
-    def do_POST(self):
+    def _post(self):
         path = self.path.split("?")[0]
         proj = self.project()
         sess = self.session(proj)
@@ -1288,6 +1304,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "text required"})
             source_file = data.get("file") or data.get("source")
             about = None if source_file else chat_about(data.get("about"))
+            tkey = (proj, sess)
+            with TURNS_LOCK:
+                running = tkey in TURNS
+            if running:            # before saving: the client queue resends it, so it must not be stored twice
+                return self._send(409, {"error": "this conversation is still answering"})
             user_msg = {"ts": now(), "role": "user", "text": text}
             if source_file:
                 user_msg["source"] = source_file
@@ -1317,11 +1338,6 @@ class Handler(BaseHTTPRequestHandler):
                 if ctx:
                     ask = ("[this conversation is about one part; its context]\n"
                            f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
-            tkey = (proj, sess)
-            with TURNS_LOCK:
-                running = tkey in TURNS
-            if running:
-                return self._send(409, {"error": "this conversation is still answering"})
             turn = _turn_start(tkey)
             BUSY["chat"] += 1
             try:

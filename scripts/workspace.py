@@ -43,7 +43,7 @@ def config_path():
 
 
 def defaults():
-    return json.loads(DEFAULTS_PATH.read_text(encoding="utf-8"))
+    return json.loads(DEFAULTS_PATH.read_text(encoding="utf-8-sig"))
 
 
 # ---------------------------------------------------------------- config
@@ -69,7 +69,7 @@ def load(reload=False):
     path = config_path()
     if path.exists():
         try:
-            cfg = _merge(cfg, json.loads(path.read_text(encoding="utf-8")))
+            cfg = _merge(cfg, json.loads(path.read_text(encoding="utf-8-sig")))
         except json.JSONDecodeError as exc:
             raise SystemExit(f"{path} is not valid JSON: {exc}")
 

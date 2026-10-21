@@ -451,3 +451,36 @@ def test_ui_static_refuses_unknown_extensions_and_missing_files(server):
     assert get_static(server, "/ui/styles/nope.css")[0] == 404
     assert get_static(server, "/ui/js/core.js%00.png")[0] in (403, 404)
     assert get_static(server, "/tabs.js")[0] == 404             # old dead entries are gone
+
+
+# ---------------------------------------------------------------- a file another program holds
+
+def test_a_locked_idea_file_is_an_answer_not_a_dropped_connection(server, lte, monkeypatch):
+    import pathlib
+    store.save_idea(lte, {"agreed": []})
+    store.save_idea_draft(lte, {"agreed": []})
+    real = pathlib.Path.read_text
+
+    def locked(self, *a, **k):
+        if self.name == "idea.json":
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self, *a, **k)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", locked)
+    code, body = post(server, "/api/idea/draft/save", {}, lte)
+    assert code == 423 and "idea.json is open in another program" in body["error"]
+
+
+def test_a_chat_posted_while_a_turn_runs_is_refused_and_not_stored(server, lte, monkeypatch):
+    import serve
+    monkeypatch.setattr(serve.Handler, "session", lambda self, proj: "s1")
+    with serve.TURNS_LOCK:
+        serve.TURNS[(lte, "s1")] = {"cancel": threading.Event()}
+    try:
+        before = len(get(server, "/api/state", lte)[1]["chat"])
+        code, body = post(server, "/api/chat", {"text": "hello again"}, lte)
+        assert code == 409
+        assert len(get(server, "/api/state", lte)[1]["chat"]) == before
+    finally:
+        with serve.TURNS_LOCK:
+            serve.TURNS.pop((lte, "s1"), None)

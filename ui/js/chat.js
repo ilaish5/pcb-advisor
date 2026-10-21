@@ -477,7 +477,7 @@ function chatErrorCard(err) {
   const card = (html, acts) => `<div class="note bad chat-card" role="alert"><span>${html}</span><span class="acts">${acts || ''}${retry}</span></div>`;
   const settings = label => btn(label, {kind: 'link', size: 'sm', act: 'chat-settings', title: 'Settings › Engine'});
   const checks = btn('Run checks', {kind: 'link', size: 'sm', act: 'chat-checks', title: 'Check what is missing and how to fix it'});
-  if (err.kind === 'not_logged_in') return card('Claude Code is not signed in. Open a terminal, run <span class="m">claude</span>, type <span class="m">/login</span>, then press Retry.', checks);
+  if (err.kind === 'not_logged_in') return card('Claude Code is not signed in. Open a terminal, run <span class="m">claude auth login</span>, then press Retry.', checks);
   if (err.kind === 'not_installed') {
     return card('Claude Code is not installed. See the <a href="https://github.com/ilaish5/pcb-advisor#install-about-5-minutes" target="_blank" rel="noopener">install steps</a>, or pick another engine.', checks + settings('Open Settings › Engine'));
   }

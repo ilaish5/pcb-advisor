@@ -204,7 +204,7 @@ def library_status(line, entry):
 def library_manifest(project):
     """library/manifest.json (written by partlib.prepare) as {line: entry}; {} when there is none yet."""
     try:
-        man = json.loads((pdir(project) / "library" / "manifest.json").read_text(encoding="utf-8"))
+        man = json.loads((pdir(project) / "library" / "manifest.json").read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError):
         return {}
     return man if isinstance(man, dict) else {}
@@ -1341,7 +1341,7 @@ def load_idea(project):
     path = pdir(project) / "idea.json"
     if path.exists():
         try:
-            idea = json.loads(path.read_text(encoding="utf-8"))
+            idea = json.loads(path.read_text(encoding="utf-8-sig"))
         except json.JSONDecodeError:
             idea = {}
     else:
@@ -1349,7 +1349,7 @@ def load_idea(project):
         idea = {}
         if old.exists():
             try:
-                o = json.loads(old.read_text(encoding="utf-8"))
+                o = json.loads(old.read_text(encoding="utf-8-sig"))
                 idea = {"goal": o.get("brief", ""), "blocks": o.get("blocks", []),
                         "links": o.get("links", []), "confirmed": bool(o.get("confirmed"))}
             except json.JSONDecodeError:
@@ -1408,7 +1408,7 @@ def load_idea_working(project):
     path = idea_draft_path(project)
     if path.is_file():
         try:
-            d = json.loads(path.read_text(encoding="utf-8"))
+            d = json.loads(path.read_text(encoding="utf-8-sig"))
             if isinstance(d, dict) and isinstance(d.get("idea"), dict):
                 return _idea_defaults(d["idea"])
         except (json.JSONDecodeError, OSError):
@@ -1454,7 +1454,7 @@ def idea_draft_info(project):
     path = idea_draft_path(project)
     if path.is_file():
         try:
-            d = json.loads(path.read_text(encoding="utf-8"))
+            d = json.loads(path.read_text(encoding="utf-8-sig"))
             info["since"] = d.get("started")
             saved, draft = load_idea(project), _idea_defaults(d["idea"])
             info["changes"] = idea_changes(saved, draft)
@@ -1476,7 +1476,7 @@ def save_idea_draft(project, idea):
     started = now()
     if path.is_file():
         try:
-            started = json.loads(path.read_text(encoding="utf-8")).get("started") or started
+            started = json.loads(path.read_text(encoding="utf-8-sig")).get("started") or started
         except (json.JSONDecodeError, OSError):
             pass
     _atomic_write_json(path, {"started": started, "updated": now(), "idea": idea})
@@ -1497,7 +1497,7 @@ def idea_versions(project):
     if not path.is_file():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         return data if isinstance(data, list) else []
     except (json.JSONDecodeError, OSError):
         return []
@@ -1748,7 +1748,7 @@ def diagram_history(project):
     if not path.is_file():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
         return data if isinstance(data, list) else []
     except Exception:
         return []
@@ -1760,7 +1760,7 @@ def save_diagram_snapshot(project, diagram):
     history = []
     if path.is_file():
         try:
-            history = json.loads(path.read_text(encoding="utf-8"))
+            history = json.loads(path.read_text(encoding="utf-8-sig"))
             if not isinstance(history, list):
                 history = []
         except Exception:
@@ -1778,7 +1778,7 @@ def undo_diagram(project):
     if not path.is_file():
         raise ValueError("no undo history")
     try:
-        history = json.loads(path.read_text(encoding="utf-8"))
+        history = json.loads(path.read_text(encoding="utf-8-sig"))
         if not isinstance(history, list) or not history:
             raise ValueError("no undo history")
     except Exception as exc:
@@ -2374,7 +2374,7 @@ def load_sheet(project, sheet):
     if not path.exists():
         return {}
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return {}
 
