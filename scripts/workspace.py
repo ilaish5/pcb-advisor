@@ -237,6 +237,7 @@ def describe(project=None, engine_home=None):
         return p.as_posix()
 
     repo = REPO.as_posix()
+    crepo = oscompat.command_path(REPO)      # what the engine types in a command
     places = [
             {"path": f"{repo}/shared/reference", "write": False,
              "what": "the course reference (git-tracked): AGENTS.md is the topic index; course/ad20-essentials/ is the "
@@ -296,7 +297,7 @@ def describe(project=None, engine_home=None):
         pass
     return {
         "home": str(home()),
-        "repo": str(REPO),
+        "repo": oscompat.command_path(REPO),
         "cwd": str(engine_home) if engine_home else str(REPO),
         "project": pdir.name,
         "places": places,
@@ -319,18 +320,18 @@ def describe(project=None, engine_home=None):
              "what": "write the BOM for a manufacturer"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/render_sheet.py <project> <sheet>"),
              "what": "draw a sheet from its netlist"},
-            {"run": oscompat.py(f"python3 {repo}/scripts/sources.py list {pdir.name}"),
+            {"run": oscompat.py(f"python3 {crepo}/scripts/sources.py list {pdir.name}"),
              "what": "what is already in the shared library and in this project's sources"},
-            {"run": oscompat.py(f"python3 {repo}/scripts/sources.py get {pdir.name} <url> [name]"),
+            {"run": oscompat.py(f"python3 {crepo}/scripts/sources.py get {pdir.name} <url> [name]"),
              "what": "add a datasheet to this project (it is stored in the project's sources/ only). Use this "
                      "rather than curl - it records the url and sha256, which is what makes it citable"},
-            {"run": oscompat.py(f'python3 {repo}/scripts/sources.py verify <name> "<quote>" {pdir.name}'),
+            {"run": oscompat.py(f'python3 {crepo}/scripts/sources.py verify <name> "<quote>" {pdir.name}'),
              "what": "is this quote really in that document? Run it BEFORE you quote"},
             {"run": oscompat.py("python3 {repo}/scripts/trace_width.py <amps> --oz <copper> --rise <degrees>"),
              "what": "IPC-2221 trace width. Run it; never estimate a width yourself"},
-            {"run": oscompat.py(f"python3 {repo}/scripts/lineage.py {pdir.name}"),
+            {"run": oscompat.py(f"python3 {crepo}/scripts/lineage.py {pdir.name}"),
              "what": "is each exported file still made from the current design? Run it before anything goes to JLC"},
-            {"run": oscompat.py(f"python3 {repo}/scripts/introspect.py {pdir.name} [summary|turns|errors|version]"),
+            {"run": oscompat.py(f"python3 {crepo}/scripts/introspect.py {pdir.name} [summary|turns|errors|version]"),
              "what": "about yourself: what you ran, time and cost per turn, failures, the tool version and updates"},
             {"run": oscompat.py("python3 {repo}/scripts/model.py <project>"),
              "what": "the full project state, more than the summary above carries"},

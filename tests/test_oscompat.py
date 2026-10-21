@@ -46,3 +46,21 @@ def test_windows_device_names_never_become_a_project_folder():
     assert workspace.safe_name("CON") == "_CON"
     assert workspace.safe_name("nul.txt") == "_nul.txt"
     assert workspace.safe_name("console") == "console"
+
+
+def test_a_path_with_a_space_becomes_its_short_space_free_form(monkeypatch):
+    monkeypatch.setattr(oscompat, "_short_path", lambda p: r"C:\Users\JOHNSM~1\pcb-advisor")
+    assert oscompat.command_path(r"C:\Users\John Smith\pcb-advisor") == "C:/Users/JOHNSM~1/pcb-advisor"
+    # no space, no change; no short name available, the path stays as it is
+    assert oscompat.command_path("C:/x/pcb") == "C:/x/pcb"
+    monkeypatch.setattr(oscompat, "_short_path", lambda p: None)
+    assert oscompat.command_path("C:/x y/pcb") == "C:/x y/pcb"
+
+
+def test_expand_paths_types_the_short_form_but_keeps_rule_paths_long(monkeypatch):
+    import workspace
+    monkeypatch.setattr(workspace, "REPO", oscompat.pathlib.Path("C:/John Smith/pcb"))
+    monkeypatch.setattr(oscompat, "_short_path", lambda p: "C:/JOHNSM~1/pcb" if "pcb" in str(p) and "projects" not in str(p) else None)
+    out = oscompat.expand_paths("Bash(x {repo}/scripts/a.py *) Edit({repo_rule}/y)")
+    assert "Bash(x C:/JOHNSM~1/pcb/scripts/a.py *)" in out
+    assert "John Smith" in out.split("Edit(")[1]

@@ -1,5 +1,6 @@
 """Claude Code CLI: spawn `claude -p`, take stdout."""
 import json
+import re
 import shutil
 import time
 
@@ -21,6 +22,23 @@ TOOL_FLAGS = (
 # known under `tools` but not a flag of its own: appended to `allowed` (the student's one-click allows)
 TOOL_EXTRA = "allowed_extra"
 TEXT_EVENT_EVERY = 2.0      # seconds between "text"/"thinking" events
+
+
+def _quoted_twins(rules):
+    """Where the repo or projects path still has a space (no 8.3 short name), the engine types it
+    double-quoted; add the rule with that path quoted so it matches too."""
+    import workspace
+    twins = []
+    for p in {oscompat.command_path(workspace.REPO), oscompat.command_path(workspace.projects_dir())}:
+        if " " not in p:
+            continue
+        for r in rules:
+            m = re.search(re.escape(p) + r"[^\s)]*", r)
+            if m:
+                q = r[:m.start()] + '"' + m.group(0) + '"' + r[m.end():]
+                if q not in rules and q not in twins:
+                    twins.append(q)
+    return twins
 
 
 class _Turn:
@@ -181,6 +199,7 @@ class ClaudeCodeProvider(Provider):
                 # not cover; without the twin a script run through it is denied.
                 rules += [f"PowerShell({r[5:]}" for r in rules
                           if r.startswith("Bash(") and f"PowerShell({r[5:]}" not in rules]
+                rules += _quoted_twins(rules)
                 value = ",".join(rules)
             argv += [flag, str(value)]
         return argv

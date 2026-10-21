@@ -115,6 +115,28 @@ def rule_path(path):
     return "/" + posix
 
 
+def _short_path(path):
+    """The Windows 8.3 short form of an existing path, or None (not Windows, 8.3 disabled)."""
+    if not WINDOWS:
+        return None
+    import ctypes
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetShortPathNameW(str(path), buf, len(buf))
+    return buf.value if 0 < n < len(buf) else None
+
+
+def command_path(path):
+    """A path as it is typed in a command line, forward slashes. A space in it breaks the
+    engine's allow-list match (it types the path quoted or backslash-escaped), so on Windows
+    a path with a space becomes its space-free 8.3 short form. Unchanged if there is none."""
+    posix = pathlib.PurePath(path).as_posix()
+    if " " in posix:
+        short = _short_path(path)
+        if short and " " not in short:
+            return pathlib.PurePath(short).as_posix()
+    return posix
+
+
 def expand_paths(command):
     """The {repo} and {projects} placeholders of config/defaults.json. The engine
     runs in its own folder, not in the repo, so the allow-list needs absolute paths.
@@ -126,7 +148,7 @@ def expand_paths(command):
     repo, projects = workspace.REPO, workspace.projects_dir()
     for key, path in (("repo", repo), ("projects", projects)):
         command = command.replace("{%s_rule}" % key, rule_path(path))
-        command = command.replace("{%s}" % key, pathlib.PurePath(path).as_posix())
+        command = command.replace("{%s}" % key, command_path(path))
     return command
 
 
