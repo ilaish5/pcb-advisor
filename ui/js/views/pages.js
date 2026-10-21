@@ -81,8 +81,7 @@ function libRow(r) {
     <td title="${esc(refs.join(', '))}"><span class="ref">${esc(refsLabel(refs) || r.line)}</span>${r.mpn ? `<span class="sub m">${esc(r.mpn)}</span>` : ''}</td>
     ${known ? `<td title="${esc(r.vendor_zip ? 'From ' + r.vendor_zip : '')}">${esc(PG_SOURCE[r.source] || r.source)}</td>` : ''}
     <td>${libModels(r)}</td>
-    <td>${tag(text, tone, known ? '' : (r.issues || LIBTXT[r.status] || ''))}</td>
-    ${known ? `<td class="lib-issues">${libIssues(r)}</td>` : ''}
+    <td${known ? ' class="lib-issues"' : ''}>${tag(text, tone, known ? '' : (r.issues || LIBTXT[r.status] || ''))}${known ? libIssues(r) : ''}</td>
     <td class="act">${libAction(r)}</td></tr>`;
 }
 /* shown after an export: how to get the package into Altium, and what is still unverified */
@@ -114,7 +113,7 @@ function libHTML(container) {
     btn('Export', {size: 'sm', act: 'libexport', disabled: !!libBusy || !rows.length, title: 'Write a package of the library files to compile yourself'});
   const note = libBusy === 'build' ? `<div class="note"><span>Building in Altium. It can take a few minutes and Altium may flash while it works.</span></div>`
     : libNote ? `<div class="note ${libNote.tone}"><span>${esc(libNote.text)}</span></div>` : '';
-  const head = known ? '<th>Part</th><th>Source</th><th>Models</th><th>Status</th><th>What to do</th>' : '<th>Part</th><th>Models</th><th>Status</th>';
+  const head = known ? '<th>Part</th><th>Source</th><th>Models</th><th>Status and what to do</th>' : '<th>Part</th><th>Models</th><th>Status</th>';
   const body = rows.length
     ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr>${head}<th><span class="sr">Action</span></th></tr></thead>
       <tbody>${rows.map(libRow).join('')}</tbody></table></div>`
@@ -446,7 +445,7 @@ async function libRun(kind, path, done) {         // build or prepare: busy stat
 }
 onAct('libbuild', async (el, d, e) => {
   await libRun('build', '/api/library/build', r => `Library built: ${r.built} of ${r.lines} lines, IntLib installed in Altium` +
-    (r.issues_lines ? `. ${r.issues_lines} ${r.issues_lines === 1 ? 'line has' : 'lines have'} issues, see What to do.` : '.'));
+    (r.issues_lines ? `. ${r.issues_lines} ${r.issues_lines === 1 ? 'line has' : 'lines have'} issues, see their status.` : '.'));
 });
 onAct('libprepare', async (el, d, e) => {
   await libRun('prepare', '/api/library/prepare', m => `Library data ready for ${Object.keys(m).length} lines. Press Build library to put it in Altium.`);

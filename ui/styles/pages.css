@@ -3,16 +3,17 @@
 
 /* ---------- library ---------- */
 .lib-tbl td{white-space:nowrap}
+.lib-tbl td:has(.mdls){white-space:normal}
 .lib-tbl tbody tr:focus-visible{outline-offset:-2px}
-.lib-tbl .mdls{display:flex;align-items:center;gap:16px;font-size:12.5px;color:var(--ink-2)}
+.lib-tbl .mdls{display:flex;flex-wrap:wrap;align-items:center;gap:4px 14px;min-width:150px;font-size:12.5px;color:var(--ink-2)}
 .lib-tbl .mdl{display:inline-flex;align-items:center;gap:4px}
 .mdl.ok .i{color:var(--ok)}
 .mdl.no,.mdl.no .i{color:var(--bad)}
 .mdl.dim{color:var(--ink-3)}
 .mdl.dim .i{color:var(--ink-4)}
 .lib-tbl td.act{text-align:right}
-.lib-tbl td.lib-issues{white-space:normal;min-width:260px;max-width:60ch;font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere}
-.lib-issue+.lib-issue{margin-top:4px}
+.lib-tbl td.lib-issues{white-space:normal;min-width:200px;max-width:60ch;font-size:12.5px;color:var(--ink-2);overflow-wrap:anywhere}
+.lib-issue{margin-top:4px}
 .lib-how{margin-bottom:14px}
 .lib-how-b{display:grid;gap:10px;padding:6px 0 4px 14px;font-size:13px;color:var(--ink-2);max-width:68ch}
 .lib-how ol,.lib-how ul{margin:0;padding-left:18px;display:grid;gap:4px}
