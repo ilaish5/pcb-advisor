@@ -64,7 +64,7 @@ def test_an_unknown_domain_is_drawn_neutral_not_refused(empty):
                                            {"op": "add_shape", "id": "odd", "x": 9, "y": 9, "domain": "quantum"}])
     assert res["ok"]
     shapes = {s["id"]: s for s in store.load_idea_working(empty)["diagram"]["shapes"]}
-    assert shapes["swd"]["domain"] == "io" and shapes["odd"]["domain"] == ""
+    assert shapes["swd"]["domain"] == "io" and shapes["odd"].get("domain", "") == ""
     assert store.validate_diagram({"shapes": [{"id": "s", "type": "box", "x": 0, "y": 0, "w": 1, "h": 1,
                                                "domain": "quantum"}]})["shapes"][0]["domain"] == ""
 
