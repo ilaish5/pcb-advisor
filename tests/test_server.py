@@ -283,7 +283,7 @@ def test_a_model_belongs_to_the_engine_it_was_chosen_for(server, lte):
     post(server, "/api/config", {"set": {"agent.provider": "antigravity", "agent.model": "gemini-x"}}, lte)
     assert workspace.get("agent.providers.antigravity.model") == "gemini-x"
     code, body = post(server, "/api/config", {"set": {"agent.provider": "claude_code"}}, lte)
-    assert code == 200 and body["config"]["agent"]["model"] == ""
+    assert code == 200 and body["config"]["agent"]["model"] == "sonnet"          # claude_code's own default
 
 
 def test_an_upload_gets_a_safe_name_and_a_sidecar_with_its_hash(server, lte):

@@ -51,14 +51,16 @@ python pcb.py engines                                  # what is installed and r
 python pcb.py config agent.provider antigravity        # or: claude_code
 ```
 
-Optional model choice:
+Model choice. The defaults are the lighter models, Claude `sonnet` and Antigravity `gemini-3.8-flash-high`: the
+tool is built to work on them. For more accuracy pick a stronger one in Settings > Model (the list comes from
+the engine) or here:
 
 ```powershell
 # Claude Code: a model name or alias, empty = the CLI default
-python pcb.py config agent.providers.claude_code.model sonnet
+python pcb.py config agent.providers.claude_code.model opus
 
 # Antigravity: a name from `agy models`, empty = the CLI default
-python pcb.py config agent.providers.antigravity.model gemini-3.1-pro-high
+python pcb.py config agent.providers.antigravity.model gemini-4-argon-high
 ```
 
 **Antigravity: set either `model` or `effort`, not both.** The model name already contains the level

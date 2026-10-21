@@ -10,7 +10,6 @@ Differences from Claude Code:
     --effort, which has no Claude Code equivalent.
 """
 import json
-import re
 import shutil
 import subprocess
 import time
@@ -22,7 +21,6 @@ from .base import Provider, Request, Result
 
 
 _AGY_MODELS_CACHE = None
-_OFFERED = ("gemini-3.1-pro-high", "gemini-3.8-flash-high")
 
 # what agy accepts for --effort
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -68,11 +66,8 @@ class AntigravityProvider(Provider):
                     _AGY_MODELS_CACHE = []
             else:
                 _AGY_MODELS_CACHE = []
-        # the settings page offers Pro and Flash at high effort; the rest of the
-        # list is for the CLI, not for a student choosing an engine
-        d["models"] = [m for m in _AGY_MODELS_CACHE
-                       if re.fullmatch(r"gemini-[\d.]+-(pro|flash)-high", m["id"])
-                       and m["id"] in _OFFERED] or _AGY_MODELS_CACHE
+        # whatever this agy offers today: a fixed list went stale when gemini-3.1-pro was retired
+        d["models"] = list(_AGY_MODELS_CACHE)
         return d
 
     def _argv(self, request, model):

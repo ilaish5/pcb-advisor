@@ -44,7 +44,7 @@
           "--verbose",
           "--strict-mcp-config"
         ],
-        "model": "",
+        "model": "sonnet",
         "tools": {
           "available": null,
           "allowed": [
@@ -107,7 +107,7 @@
           "text",
           "--dangerously-skip-permissions"
         ],
-        "model": "",
+        "model": "gemini-3.8-flash-high",
         "effort": null
       },
       "openai_api": {

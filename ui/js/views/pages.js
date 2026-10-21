@@ -214,7 +214,9 @@ function setAgentHTML(c) {
   const lang = (c.user && c.user.language) || 'auto';
   return setRow('Engine', setSel('set-provider', 'data-set="agent.provider"', opts, cur ? cur.id : c.engine), {id: 'set-provider'}) +
     (cur && !cur.available ? `<div class="set-hint warn-t">${esc(cur.title || cur.id)} can't run now${cur.reason ? ': ' + esc(cur.reason) : ''}.</div>` : '') +
-    setRow('Model', `<input id="set-model" class="in" data-set="agent.model" value="${esc((c.agent && c.agent.model) || '')}" placeholder="Engine default" autocomplete="off">`, {id: 'set-model'}) +
+    // the engine's own list as suggestions; any other name can still be typed
+    setRow('Model', `<input id="set-model" class="in" data-set="agent.model" list="set-model-list" value="${esc((c.agent && c.agent.model) || '')}" placeholder="Engine default" autocomplete="off">`
+      + `<datalist id="set-model-list">${((cur && cur.models) || []).map(m => `<option value="${esc(m.id)}">${esc(m.name || m.id)}</option>`).join('')}</datalist>`, {id: 'set-model'}) +
     setRow('Approvals', setSel('set-autonomy', 'data-set="agent.autonomy"', [
       ['ask', 'Ask me for every change'],
       ['important', 'Ask only for important changes (parts, Altium, ordering)'],

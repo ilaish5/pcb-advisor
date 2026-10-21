@@ -116,8 +116,14 @@ def test_model_wins_over_effort_and_the_drop_is_reported(home, monkeypatch):
     assert res.meta["dropped"] == ["effort"]
 
 
+def test_the_default_model_is_flash(home, monkeypatch):
+    _, seen = _run(monkeypatch)
+    assert seen["argv"][seen["argv"].index("--model") + 1] == "gemini-3.8-flash-high"
+
+
 def test_effort_reaches_the_cli_only_when_set(home, monkeypatch):
     import workspace
+    workspace.set_value("agent.providers.antigravity.model", "")     # no model: agy picks, effort applies
     _, seen = _run(monkeypatch)
     assert "--effort" not in seen["argv"]
     workspace.set_value("agent.providers.antigravity.effort", "high")
