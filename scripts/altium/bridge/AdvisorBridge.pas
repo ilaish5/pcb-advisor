@@ -1353,6 +1353,24 @@ end;
 
 { ---------------------------------------------------------------- package }
 
+{ Altium resolves a placed part's library by FILE NAME: another installed library of the same name (an older copy of the
+  project) would win. Uninstalls every other one and logs "uninstalled same-name <path>". }
+procedure UninstallSameName(IntLib: String);
+var
+    i : Integer;
+    P : String;
+begin
+    for i := IntegratedLibraryManager.InstalledLibraryCount - 1 downto 0 do
+    begin
+        P := IntegratedLibraryManager.InstalledLibraryPath(i);
+        if (UpperCase(ExtractFileName(P)) = UpperCase(ExtractFileName(IntLib))) and (not SameFile(P, IntLib)) then
+        begin
+            IntegratedLibraryManager.UninstallLibrary(P);
+            Log('uninstalled same-name ' + P);
+        end;
+    end;
+end;
+
 { COMPILE libpkg intlib: closes the package's open documents, compiles and installs the IntLib (ported from LibTool.pas).
   A source document that is open (a Free Document) is silently left out of the IntLib, and a modified one raises a
   "save?" box nobody can answer, so: refuse when one is modified. }
@@ -1393,6 +1411,7 @@ begin
     IntegratedLibraryManager.UninstallLibrary(IntLib);
     Prj.DM_Compile;
     Log('compiled');
+    UninstallSameName(IntLib);
     IntegratedLibraryManager.InstallLibrary(IntLib);
     Log('installed, components=' + IntToStr(IntegratedLibraryManager.GetComponentCount(IntLib)));
 end;
@@ -1406,6 +1425,7 @@ begin
         Exit;
     end;
     IntegratedLibraryManager.UninstallLibrary(IntLib);
+    UninstallSameName(IntLib);
     IntegratedLibraryManager.InstallLibrary(IntLib);
     Log('installed ' + IntLib);
 end;

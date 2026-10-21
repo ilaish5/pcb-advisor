@@ -54,6 +54,7 @@ class Stub:
     def __init__(self, monkeypatch, bad_pads=False, stall_first=False, make_intlib=True, installed=True):
         self.runs, self.bad_pads, self.stalled = [], bad_pads, not stall_first
         self.make_intlib, self.installed, self.fail_commands = make_intlib, installed, False
+        self.same_name = []
         monkeypatch.setattr(bridge, "run_commands", self)
         monkeypatch.setattr(bridge, "read_schlib", self.schlib)
         monkeypatch.setattr(bridge, "read_pcblib", self.pcblib)
@@ -73,6 +74,7 @@ class Stub:
             if c[0] == "COMPILE" and self.make_intlib:
                 pathlib.Path(c[2]).parent.mkdir(parents=True, exist_ok=True)
                 pathlib.Path(c[2]).write_bytes(b"intlib")
+                out += [f"uninstalled same-name {p}" for p in self.same_name]
             if c[0] == "CHECKINST":
                 out.append("INSTALLED yes x" if self.installed else "INSTALLED no x")
         return out
@@ -106,6 +108,15 @@ def test_spec_readers(tmp_path):
     assert bridge.spec_symbols(s)["U1X"] == [("1", "IN", "Input"), ("2", "OUT", "Output"), ("3", "GND", "Power")]
     assert bridge.spec_footprints(f) == {"R0603": 2, "SOT23": 3}
     assert bridge.spec_symbols(tmp_path / "none") == {}
+
+
+def test_an_installed_library_of_the_same_file_name_is_reported_as_removed(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+    stub.same_name = ["C:\\old\\lte-Lib.IntLib"]
+    res = bridge.build_library(lib)
+    assert len(res["notices"]) == 1 and "C:\\old\\lte-Lib.IntLib" in res["notices"][0] and "file name" in res["notices"][0]
+    stub.same_name = []
+    assert bridge.build_library(lib)["notices"] == []
 
 
 def test_a_build_fills_the_specs_sends_the_steps_in_order_and_marks_every_line(lib, monkeypatch):

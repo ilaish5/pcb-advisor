@@ -358,7 +358,18 @@ def library_issue_count(project):
     return sum(1 for e in store.library_manifest(project).values() if e.get("issues") or e.get("built_issues"))
 
 
-def apply_actions(project, actions, sess=None, last_user="", meta=None):
+def _bridge_done(project, op, since):
+    """The newest altium-log.jsonl entry of `op` that succeeded at or after `since` (epoch seconds), else None: a model
+    that ran bridge.py itself in its shell has already done what the action would do."""
+    if not since:
+        return None
+    floor = dt.datetime.fromtimestamp(since).isoformat(timespec="seconds")
+    ok = [r for r in store.read_jsonl(store.pdir(project) / "altium-log.jsonl")
+          if r.get("op") == op and "error" not in r and str(r.get("ts", "")) >= floor]
+    return ok[-1] if ok else None
+
+
+def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
     approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
@@ -447,7 +458,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                     continue
                 issues = library_issue_count(project)
                 applied.append(f"{kind}: {res['built']} of {res['lines']} lines built, IntLib installed"
-                               + (f" ({issues} with issues)" if issues else ""))
+                               + (f" ({issues} with issues)" if issues else "") + "".join(" " + n for n in res.get("notices", [])))
             elif kind == "part.attach_datasheet" and a.get("ref") and a.get("name"):
                 # routine: applies at once; detach (the Unverified panel, /api/parts/detach_datasheet) is the undo
                 res = store.attach_datasheet(project, a["ref"], a["name"], by="agent")
@@ -475,6 +486,11 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                     bridge.add_pcb(project)
                 elif kind == "altium.import_rules":
                     # the PcbDoc is copied to .advisor-backup first; the student's own rules are never deleted
+                    done = _bridge_done(project, "import-rules", turn_start)
+                    if done:
+                        applied.append(f"{kind}: already done earlier in this turn ({len(done.get('created', []))} added, "
+                                       f"{len(done.get('updated', []))} updated)")
+                        continue
                     try:
                         res = bridge.import_rules(project)
                     except (bridge.BridgeError, bridge.AltiumReadError) as exc:
@@ -485,6 +501,10 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                                    + (f", not confirmed: {', '.join(res['unconfirmed'])}" if res["unconfirmed"] else ""))
                     continue
                 elif kind == "altium.run_outjob":
+                    done = _bridge_done(project, "run-outjob", turn_start)
+                    if done:
+                        applied.append(f"{kind}: already done earlier in this turn ({done.get('files', 0)} files)")
+                        continue
                     try:
                         res = bridge.run_outjob(project)
                     except (bridge.BridgeError, bridge.AltiumReadError) as exc:
@@ -503,7 +523,9 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                     refused.append(f"jlc.gerber_zip: {exc}")
                 else:
                     gaps = [m["layer"] for m in res["missing"] if m["level"] == "problem"]
-                    applied.append(f"jlc.gerber_zip:{res['zip']} ({len(res['files'])} files" + (f", missing {', '.join(gaps)}" if gaps else "") + ")")
+                    applied.append(f"jlc.gerber_zip:{res['zip']} ({len(res['files'])} files" + (f", missing {', '.join(gaps)}" if gaps else "") + ")"
+                                   + "".join(f" {m['layer']}: {m['why']}" for m in res["missing"]
+                                             if m["level"] == "problem" and m["why"].startswith("The outline layer")))
             elif kind == "jlc.pickup":
                 import jlc_upload
                 res = jlc_upload.pickup(project, kind=a.get("kind") or None, name=a.get("name") or None)
@@ -1296,7 +1318,8 @@ class Handler(BaseHTTPRequestHandler):
             if partial:      # a half-written actions block is not trusted
                 applied, proposals, refused = [], [], []
             else:
-                applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta)
+                applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta,
+                                                           turn_start=turn["started"])
             if res.get("provider") != "external":         # an outside driver is not an engine turn
                 import introspect
                 introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",

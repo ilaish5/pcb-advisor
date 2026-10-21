@@ -180,6 +180,17 @@ def find_set(project: str) -> dict[str, Any]:
             "drills": sorted(same or dfiles, key=lambda x: x[0].name.lower()), "roots": roots}
 
 
+EMPTY_SCAN_BYTES = 262144
+
+
+def _has_draws(data: bytes) -> bool:
+    """Whether a Gerber has any coordinate data or D01/D03 operation once its comments and %...% parameter blocks
+    (format, apertures) are taken out. A header-only file (Altium's, when nothing was drawn on the layer) has none."""
+    text = re.sub(rb"%.*?%", b"", data, flags=re.S)
+    text = re.sub(rb"G04[^*]*\*", b"", text)
+    return re.search(rb"[XY][-+]?\d|D0[13]\*", text) is not None
+
+
 def _problems(entries: list[dict]) -> tuple[list[dict], list[str]]:
     """What the set lacks and what looks wrong, from the file list ({name, group, layer})."""
     have = {e["layer"] for e in entries}
@@ -193,6 +204,10 @@ def _problems(entries: list[dict]) -> tuple[list[dict], list[str]]:
         lack("Top copper", ".GTL", "problem", "JLC builds the board from the copper layers.")
     if "outline" not in groups:
         lack("Board outline", ".GM1 or .GKO", "problem", "JLC cancels an order without an outline layer.")
+    elif all(e.get("empty") for e in entries if e["group"] == "outline"):
+        lack("Board outline", ".GM1 or .GKO", "problem",
+             "The outline layer has no drawing: draw the board shape on it (Altium: Design » Board Shape » Create "
+             "Primitives From Board Shape, on Mechanical 1) and run the outputs again.")
     if "drill" not in groups:
         lack("NC drill", ".TXT (Excellon)", "problem", "JLC cancels an order without a drill file, unless the board has no holes.")
     if "Top solder mask" not in have:
@@ -221,6 +236,9 @@ def _describe(path: pathlib.Path) -> dict[str, Any]:
             when = dt.datetime(*i.date_time).isoformat(timespec="seconds")
             entries.append({"name": i.filename, "group": c[0] if c else "other", "layer": c[1] if c else "Other",
                             "bytes": i.file_size, "modified": when})
+            if c and c[0] == "outline":
+                with z.open(i) as fh:
+                    entries[-1]["empty"] = not _has_draws(fh.read(EMPTY_SCAN_BYTES))
     missing, warnings = _problems(entries)
     size = path.stat().st_size
     if size > ZIP_LIMIT_MB * 1024 * 1024:

@@ -324,6 +324,21 @@ def test_the_new_actions_route_to_the_bridge_and_report(lte, fake):
     assert applied[1].startswith("altium.run_outjob:") and "OutJob added" in applied[1]
 
 
+def test_an_action_does_not_run_altium_again_when_the_agent_already_ran_the_bridge_this_turn(lte, fake):
+    import time
+    import serve
+    _linked_with_rules_board(lte, fake)
+    start = time.time() - 5
+    bridge.import_rules(lte)
+    bridge.run_outjob(lte)
+    fake.runs.clear()
+    acts = [{"type": "altium.import_rules"}, {"type": "altium.run_outjob"}]
+    applied, _, refused = serve.apply_actions(lte, acts, turn_start=start)
+    assert not refused and not fake.runs and all("already done earlier in this turn" in a for a in applied)
+    applied, _, refused = serve.apply_actions(lte, acts, turn_start=time.time() + 60)     # an older run does not count
+    assert not refused and fake.runs and not any("already done" in a for a in applied)
+
+
 def test_the_new_actions_are_refused_not_raised_without_a_project(lte, fake):
     import serve
     applied, _, refused = serve.apply_actions(lte, [{"type": "altium.import_rules"}, {"type": "altium.run_outjob"}])

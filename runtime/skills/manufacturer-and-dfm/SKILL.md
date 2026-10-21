@@ -33,7 +33,8 @@ description: Prepares the manufacturing package for JLC and walks the student th
    never upload for them. Go one step at a time, as the DFM view lists them (header menu, "How to check at JLC"):
    a. The Gerber zip: action `jlc.gerber_zip` (the same as Outputs > Export > Gerber zip for JLC). It reads the newest
       Gerber and NC drill set of the linked Altium project and writes `exports/<project>_gerbers.zip`. Say what its line
-      reports: files, when they were written, what is missing. No outline, no drill file or no top mask is a fix in Altium
+      reports: files, when they were written, what is missing. No outline (or an outline file with no drawing in it:
+      draw the board shape on Mechanical 1), no drill file or no top mask is a fix in Altium
       (OutJob, Generate content) before any upload. For assembly the BOM and CPL are in Outputs (checked in step 3).
    b. The student opens jlcdfm.com and signs in.
    c. They upload the zip, run PCB DFM (and SMT DFM with the BOM and CPL), and export the PDF report.

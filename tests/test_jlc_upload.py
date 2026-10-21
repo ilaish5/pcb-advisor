@@ -128,6 +128,18 @@ def test_a_missing_outline_is_reported_as_a_problem_and_the_zip_is_still_written
     assert (workspace.project_dir(name) / "exports" / res["zip"]).is_file()
 
 
+def test_an_outline_with_only_a_header_is_a_problem_and_one_with_draws_is_complete(linked):
+    name, out = linked
+    gm1 = out / "Production" / "Gerber" / "TB1.GM1"
+    assert b"D01" in gm1.read_bytes() and jlc_upload.gerber_zip(name)["complete"]
+    gm1.write_bytes(b"G04 Layer: Mechanical 1*\r\n%FSLAX45Y45*%\r\n%MOMM*%\r\n%ADD10C,0.1*%\r\nG01*\r\nD10*\r\nM02*\r\n")
+    res = jlc_upload.gerber_zip(name)
+    gap = next(m for m in res["missing"] if m["layer"] == "Board outline")
+    assert not res["complete"] and gap["level"] == "problem" and "Create Primitives From Board Shape" in gap["why"]
+    gm1.write_bytes(b"%FSLAX45Y45*%\r\n%ADD10C,0.1*%\r\nD10*\r\nX0Y0D02*\r\nX100000D01*\r\nM02*\r\n")
+    assert jlc_upload.gerber_zip(name)["complete"]
+
+
 def test_missing_drill_and_top_mask_are_problems_a_missing_bottom_silk_is_a_note(linked):
     name, out = linked
     for f in (out / "Production" / "NC Drill").iterdir():

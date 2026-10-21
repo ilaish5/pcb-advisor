@@ -290,6 +290,9 @@ def _backup(prj_file, files):
     return str(dest)
 
 
+SAME_NAME = "uninstalled same-name "          # the script's log line for an installed library of our file name
+
+
 def _log(project, op, **fields):
     store.append(project, "altium-log.jsonl", {"ts": store.now(), "by": "altium-bridge", "op": op, **fields})
 
@@ -1052,10 +1055,14 @@ def build_library(project, fetch=True):
                       "restart Altium and build again).")
     if not installed:
         issues.append("Altium does not list the IntLib as installed.")
+    notices = [f"Another installed library had the same name and was removed from Altium's installed list: "
+               f"{ln[len(SAME_NAME):].strip()} (Altium matches libraries by file name)."
+               for ln in log if ln.startswith(SAME_NAME)]
     built = _mark_built(project, expected, {}, {}, fresh and installed)
     res = {"schlib": str(lp["schlib"]), "pcblib": str(lp["pcblib"]), "libpkg": str(lp["libpkg"]), "intlib": str(intlib),
            "folder_3d": str(lp["d3"]), "counts": counts, "intlib_fresh": fresh, "installed": installed,
-           "built": sum(built.values()), "lines": len(built), "prepared": prepared, "backup": backup, "issues": issues}
+           "built": sum(built.values()), "lines": len(built), "prepared": prepared, "backup": backup, "issues": issues,
+           "notices": notices}
     _log(project, "build-library", **res)
     if issues:
         raise BridgeError(" ".join(issues))
