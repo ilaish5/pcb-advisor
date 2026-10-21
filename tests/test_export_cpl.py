@@ -51,3 +51,10 @@ def test_pad_centre_is_the_middle_of_the_pad_box():
         {"ref": None, "x_mm": 99.0, "y_mm": 99.0, "sx_mm": 1.0, "sy_mm": 1.0},
     ]}
     assert export_cpl.pad_centres(doc) == {"J1": ((-0.5 + 11.5) / 2, (-0.5 + 4.5) / 2)}
+
+
+def test_cli_writes_the_csv_into_exports(home, empty, capsys):
+    export_cpl.main([empty, str(FIX / "finished-board.PcbDoc")])
+    out = capsys.readouterr().out
+    assert f"{empty}_cpl.csv" in out
+    assert (home / "projects" / empty / "exports" / f"{empty}_cpl.csv").is_file()

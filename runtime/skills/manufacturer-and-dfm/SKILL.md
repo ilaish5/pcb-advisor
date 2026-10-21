@@ -27,6 +27,8 @@ description: Prepares the manufacturing package for JLC and walks the student th
    d. BOM columns JLC expects: Comment, Designator, Footprint, LCSC Part # (one line per value group). DNP parts and
       test points are left out on purpose and listed. No LCSC number on two lines. Run export_bom.py for the check.
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
+   f. Produce the files before naming them: run export_bom.py (jlc) for the BOM and export_cpl.py for the CPL, then list
+      `exports/`. Tell the student to upload only files that exist there, by their real names. No CPL file: say so, never name one.
 4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
    its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in for the student to approve. Same
    package is not enough: at ordering a swap is free only on the same FOOTPRINT (step 9).
@@ -71,6 +73,8 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - `python <repo>/scripts/order_check.py <project> [--recheck]` per line: stock class and up to 3 alternatives with the footprint match.
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` writes the JLC BOM csv; lists lines left out and lines
   that need an LCSC number.
+- `python <repo>/scripts/skills/export_cpl.py <project> [pcb_file]` writes `exports/<project>_cpl.csv` (JLC pick and place).
+  Without a linked PcbDoc the positions are a stub from the BOM: say so.
 - `python <repo>/scripts/skills/check_availability.py ...` stock and price from JLC, with query time. Quote the time.
 - `python <repo>/scripts/outjob.py <project> [output_dir]` writes an Altium OutJob text file (Gerber, NC drill, JLC BOM, CPL, schematic PDF).
 - `python <repo>/scripts/checks/board.py <pcb_file>` checks outline clearances, connector orientation, decap distances, and CPL rotation sanity.

@@ -15,6 +15,8 @@ SKILLS = [
      "what": "Sheets in the labels-and-short-stubs style, drawn from netlist/<sheet>.json and the BOM."},
     {"name": "Export BOM for manufacturer", "script": "export_bom.py",
      "what": "JLC, PCBWay and generic CSV. Unfitted and unbought lines are listed, not dropped."},
+    {"name": "Export CPL (pick and place) for JLC", "script": "export_cpl.py",
+     "what": "exports/<project>_cpl.csv from the linked PcbDoc: Designator, Mid X, Mid Y, Layer, Rotation, in mm from the board origin."},
     {"name": "Download models", "script": None,
      "what": "SnapEDA, Ultra Librarian: symbol, footprint, STEP. Not built here yet."},
     {"name": "Build part from datasheet", "script": None,

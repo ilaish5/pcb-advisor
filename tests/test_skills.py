@@ -110,3 +110,9 @@ def test_the_skills_page_lists_only_scripts_that_exist(lte):
     rows = {r["name"]: r for r in registry.listing()}
     assert rows["Check availability"]["available"]
     assert not rows["Download models"]["available"]
+
+
+def test_the_skills_page_lists_export_cpl():
+    rows = {r["name"]: r for r in registry.listing()}
+    row = rows["Export CPL (pick and place) for JLC"]
+    assert row["script"] == "export_cpl.py" and row["available"]

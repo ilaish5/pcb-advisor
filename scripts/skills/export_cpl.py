@@ -119,8 +119,9 @@ def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict
 
 def main(argv=None):
     oscompat.utf8_stdio()
-    proj = sys.argv[1] if len(sys.argv) > 1 else "demo"
-    res = export_cpl(proj)
+    args = sys.argv[1:] if argv is None else list(argv)
+    proj = args[0] if args else "demo"
+    res = export_cpl(proj, args[1] if len(args) > 1 else None)
     print(json.dumps(res, ensure_ascii=False, indent=2))
 
 
