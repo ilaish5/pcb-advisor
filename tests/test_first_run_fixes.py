@@ -58,6 +58,17 @@ def test_domain_alias_goes_through_validate_and_edit(empty):
     assert next(s for s in store.load_idea_working(empty)["diagram"]["shapes"] if s["id"] == "t")["domain"] == "sensors"
 
 
+def test_an_unknown_domain_is_drawn_neutral_not_refused(empty):
+    # Sonnet wrote "debug" and the whole first diagram was dropped
+    res = store.apply_diagram_edit(empty, [{"op": "add_shape", "id": "swd", "x": 1, "y": 1, "domain": "debug"},
+                                           {"op": "add_shape", "id": "odd", "x": 9, "y": 9, "domain": "quantum"}])
+    assert res["ok"]
+    shapes = {s["id"]: s for s in store.load_idea_working(empty)["diagram"]["shapes"]}
+    assert shapes["swd"]["domain"] == "io" and shapes["odd"]["domain"] == ""
+    assert store.validate_diagram({"shapes": [{"id": "s", "type": "box", "x": 0, "y": 0, "w": 1, "h": 1,
+                                               "domain": "quantum"}]})["shapes"][0]["domain"] == ""
+
+
 def test_verify_with_find_for_and_no_pins_is_not_a_pass(empty):
     import verify_part
     store.propose_bom(empty, "U7", {"mpn": "ABCD1234", "refs": ["U7"]}, new=True)

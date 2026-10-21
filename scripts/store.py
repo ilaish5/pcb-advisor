@@ -51,11 +51,20 @@ VALID_ENDPOINT_POINTS = VALID_ENDPOINT_SIDES | {"top-left", "top-right", "bottom
 VALID_ALIGN = {"left", "center", "right"}
 VALID_FONT_SIZES = {"S", "M", "L"}
 DOMAIN_ALIASES = {"sensor": "sensors", "microcontroller": "mcu", "controller": "mcu", "supply": "power",
-                  "communication": "comms", "output": "drive", "input": "io"}
+                  "communication": "comms", "output": "drive", "input": "io", "debug": "io",
+                  "programming": "io", "connector": "io", "battery": "power", "display": "ui", "audio": "drive",
+                  "actuator": "drive", "wireless": "rf"}
 VALID_DOMAINS = {
     "power", "sensing", "sensors", "mcu", "comms", "rf",
     "drive", "io", "ui", "sticky", "white", "none", "",
 }
+
+
+def _domain(raw):
+    """A block's colour group; a name the tool does not know is drawn neutral, never a reason to drop the edit."""
+    dom = str(raw or "").strip().lower()
+    dom = DOMAIN_ALIASES.get(dom, dom)
+    return dom if dom in VALID_DOMAINS else ""
 
 DOMAIN_COLORS = {
     "power": {"fill": "#fef3e2", "stroke": "#e67e22"},
@@ -485,13 +494,7 @@ def validate_diagram(data):
             "locked": locked,
         }
         if "domain" in s:
-            dom = s["domain"]
-            if isinstance(dom, str):
-                dom = dom.strip().lower()
-                dom = DOMAIN_ALIASES.get(dom, dom)
-            if not isinstance(dom, str) or dom not in VALID_DOMAINS:
-                raise ValueError(f"shape {sid} invalid domain: {dom!r}")
-            clean_s["domain"] = dom
+            clean_s["domain"] = _domain(s["domain"])
         if "role" in s and isinstance(s["role"], str) and len(s["role"]) <= 200:
             clean_s["role"] = s["role"]
         valid_shapes.append(clean_s)
@@ -1797,11 +1800,7 @@ def apply_diagram_edit(project, ops):
             if len(text) > 2000:
                 raise ValueError("text must be <= 2000 chars")
 
-            raw_dom = str(op.get("domain", "")).strip().lower() if "domain" in op else ""
-            raw_dom = DOMAIN_ALIASES.get(raw_dom, raw_dom)
-            dom = raw_dom if raw_dom in VALID_DOMAINS else ""
-            if "domain" in op and raw_dom not in VALID_DOMAINS:
-                raise ValueError(f"invalid domain: {raw_dom!r}")
+            dom = _domain(op.get("domain"))
             dom_colors = DOMAIN_COLORS.get(dom, {"fill": "#ffffff", "stroke": "#1e293b"})
 
             fill = op.get("fill") or dom_colors["fill"]
@@ -1873,10 +1872,7 @@ def apply_diagram_edit(project, ops):
                     raise ValueError("text <= 2000 chars")
                 shape["text"] = t
             if "domain" in op:
-                dom = str(op["domain"]).strip().lower()
-                dom = DOMAIN_ALIASES.get(dom, dom)
-                if dom not in VALID_DOMAINS:
-                    raise ValueError(f"invalid domain: {dom!r} (use one of {', '.join(sorted(d for d in VALID_DOMAINS if d))})")
+                dom = _domain(op["domain"])
                 shape["domain"] = dom
                 if "fill" not in op and dom in DOMAIN_COLORS:
                     shape["fill"] = DOMAIN_COLORS[dom]["fill"]
