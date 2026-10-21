@@ -1,6 +1,6 @@
 # AI engines: install and configure
 
-The one-command installer in the README already installs Claude Code and offers the sign-in for you. This page is for doing it by hand, or for Antigravity. `python pcb.py doctor` shows what is missing.
+The one-command installer in the README detects Claude Code and Antigravity, asks which one to install if neither is there (`PCB_ENGINE=claude|agy` answers for it), sets the provider and offers the sign-in for you. This page is for doing it by hand, or for Antigravity. `python pcb.py doctor` shows what is missing.
 
 pcb-advisor does not ship a model. It runs an AI **command-line tool** that you install and sign in to
 yourself. Two are supported:

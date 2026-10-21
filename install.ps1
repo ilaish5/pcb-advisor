@@ -4,13 +4,14 @@
 #   .\install.ps1            (from a clone or an unpacked ZIP: repairs it in place; install.bat calls this)
 #
 # Finds Python 3.10+ (offers winget if missing), gets the code (git clone, or the ZIP when git is missing), makes
-# .venv, installs requirements, offers the Claude Code CLI and the sign-in, runs `pcb.py doctor`, starts the server.
+# .venv, installs requirements, detects Claude Code or Antigravity (asks which to install) and offers the sign-in, runs `pcb.py doctor`, starts the server.
 # Questions default to YES (Enter). No administrator rights: winget installs use --scope user.
 #
 # Settings (environment variables, so they also work through `irm | iex`; -Yes and -Dir <folder> work on the file):
 #   PCB_DIR target folder (default: this clone, or %USERPROFILE%\pcb-advisor) | PCB_REPO clone source (default the
-#   GitHub URL; a local path works) | PCB_REF branch or tag | PCB_YES=1 no questions | PCB_NO_CLAUDE=1 skip the
-#   Claude CLI and sign-in | PCB_NO_START=1 do not start the server | PCB_NO_GIT=1 act as if git is missing (ZIP
+#   GitHub URL; a local path works) | PCB_REF branch or tag | PCB_YES=1 no questions | PCB_ENGINE=claude|agy choose
+#   the AI engine without asking (nothing installed and PCB_YES=1 means claude) | PCB_NO_ENGINE=1 skip the engine
+#   install and sign-in (PCB_NO_CLAUDE=1 is the same) | PCB_NO_START=1 do not start the server | PCB_NO_GIT=1 act as if git is missing (ZIP
 #   route) | PCB_ZIP_URL ZIP address or path.
 # This file is plain ASCII on purpose (Windows PowerShell 5.1 reads a BOM-less file as the ANSI code page) and never
 # calls `exit` (under `iex` that would close the student's terminal).
@@ -181,7 +182,7 @@ function Install-PcbAdvisor {
     & $venvPy pcb.py init
     if ($LASTEXITCODE -ne 0) { Fail 'pcb.py init failed'; return }
 
-    # ---- 4. Claude Code CLI + sign-in
+    # ---- 4. AI engine (Claude Code or Antigravity) + sign-in
     function Find-Claude {
         $c = Get-Command claude -ErrorAction SilentlyContinue
         if ($c) { return $c.Source }
@@ -189,18 +190,79 @@ function Install-PcbAdvisor {
         if (Test-Path $p) { return $p }
         return $null
     }
-    if ($env:PCB_NO_CLAUDE -ne '1') {
-        Step 'Claude Code (the AI engine)'
+    function Find-Agy {
+        $c = Get-Command agy -ErrorAction SilentlyContinue
+        if ($c) { return $c.Source }
+        $p = Join-Path $env:LOCALAPPDATA 'agy\bin\agy.exe'
+        if (Test-Path $p) { return $p }
+        return $null
+    }
+    # agent.provider as the person set it in the workspace config.json ('' = never set, so the default applies).
+    function Get-SetProvider {
+        $cfg = if ($env:PCB_ADVISOR_CONFIG) { $env:PCB_ADVISOR_CONFIG }
+               elseif ($env:PCB_ADVISOR_HOME) { Join-Path $env:PCB_ADVISOR_HOME 'config.json' }
+               else { Join-Path $dir 'config.json' }
+        try {
+            $j = Get-Content -Raw -LiteralPath $cfg -ErrorAction Stop | ConvertFrom-Json
+            if ($j.agent -and $j.agent.provider) { return [string]$j.agent.provider }
+        } catch { }
+        return ''
+    }
+    # False when nobody can answer (CI, redirected input, PCB_YES): then there is no question and no interactive step.
+    function Can-Prompt {
+        if ($yes) { return $false }
+        try { if ([Console]::IsInputRedirected) { return $false } } catch { }
+        return $true
+    }
+    if ($env:PCB_NO_CLAUDE -ne '1' -and $env:PCB_NO_ENGINE -ne '1') {
+        Step 'AI engine (Claude Code or Antigravity)'
         $claude = Find-Claude
-        if (-not $claude) {
-            if (Ask 'Claude Code is not installed. Install it now (official installer)?') {
+        $agy = Find-Agy
+        $engine = ''                  # 'claude' or 'agy'
+        $setProvider = $false         # write agent.provider to the config
+        $asked = $false               # the person already said which one, so no second install question
+        $explicit = Get-SetProvider
+        if ($env:PCB_ENGINE -eq 'claude' -or $env:PCB_ENGINE -eq 'agy') {
+            $engine = $env:PCB_ENGINE; $setProvider = $true
+        }
+        elseif ($explicit -eq 'antigravity') { $engine = 'agy'; Say 'The workspace is set to Antigravity; keeping it.' }
+        elseif ($explicit -eq 'claude_code') { $engine = 'claude'; Say 'The workspace is set to Claude Code; keeping it.' }
+        elseif ($claude -and $agy) { $engine = 'claude'; Say 'Both found; using Claude Code. Switch in Settings > Engine.' }
+        elseif ($agy) { $engine = 'agy'; $setProvider = $true; Say 'Only Antigravity (agy) found; setting it as the engine.' }
+        elseif ($claude) { $engine = 'claude' }
+        else {
+            $pick = '1'
+            if (Can-Prompt) {
+                Say 'Which AI engine do you have an account for?'
+                Say '  1) Claude Code (Claude Pro/Max)'
+                Say '  2) Antigravity (Google account)'
+                $pick = Read-Host 'Enter = 1'
+            }
+            if ($pick.Trim() -eq '2') { $engine = 'agy'; $setProvider = $true } else { $engine = 'claude' }
+            $asked = $true
+        }
+        if ($engine -eq 'claude' -and -not $claude) {
+            if ($asked -or (Ask 'Claude Code is not installed. Install it now (official installer)?')) {
                 try { Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression } catch { Say "The Claude Code installer failed ($_). See docs\ENGINES.md." }
                 Refresh-Path
                 $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
                 $claude = Find-Claude
             }
         }
-        if ($claude) {
+        if ($engine -eq 'agy' -and -not $agy) {
+            if ($asked -or (Ask 'Antigravity (agy) is not installed. Install it now (official installer)?')) {
+                try { Invoke-RestMethod https://antigravity.google/cli/install.ps1 | Invoke-Expression } catch { Say "The Antigravity installer failed ($_). See docs\ENGINES.md." }
+                Refresh-Path
+                $env:Path = "$env:LOCALAPPDATA\agy\bin;$env:Path"
+                $agy = Find-Agy
+            }
+        }
+        if ($setProvider) {
+            $prov = if ($engine -eq 'agy') { 'antigravity' } else { 'claude_code' }
+            & $venvPy pcb.py config agent.provider $prov | Out-Null
+            Say "engine set to $prov"
+        }
+        if ($engine -eq 'claude' -and $claude) {
             Say "found $claude"
             & $claude auth status 2>&1 | Out-Null
             if ($LASTEXITCODE -ne 0) {
@@ -211,6 +273,12 @@ function Install-PcbAdvisor {
                 }
             }
             else { Say 'signed in' }
+        }
+        elseif ($engine -eq 'agy' -and $agy) {
+            Say "found $agy"
+            # agy has no status command: the first run opens the Google sign-in in the browser.
+            Say 'To sign in: run `agy` once and sign in with your Google account in the browser, then exit it.'
+            if ((Can-Prompt) -and (Ask 'Run agy now to sign in?')) { & $agy }
         }
     }
 

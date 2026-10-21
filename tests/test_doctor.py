@@ -200,6 +200,17 @@ def test_cli_text_and_exit_codes(tmp_path, monkeypatch, capsys):
     assert doctor.main(["--exit-start"]) == 1
 
 
+def test_an_agy_only_machine_is_ready(tmp_path):
+    p = FakeProbe(tmp_path)
+    p.tools.pop("claude")
+    p.tools["agy"] = "/u/.local/bin/agy"
+    p.cfg["agent.provider"] = "antigravity"
+    res = doctor.run(p)
+    assert res["ok"] and res["can_start"]                   # the missing Claude is only a warning
+    got = by_id(res)
+    assert got["claude"]["status"] == "warn" and got["agy"]["status"] == "ok" and "claude_signin" not in got
+
+
 # ---- the CLI is found where the official installer puts it, with a stale PATH
 
 def test_which_finds_the_installer_folder_when_path_is_stale(tmp_path, monkeypatch):
@@ -211,8 +222,13 @@ def test_which_finds_the_installer_folder_when_path_is_stale(tmp_path, monkeypat
     exe.write_text("")
     assert oscompat.which("claude") == str(exe)
     assert oscompat.resolve("claude") == str(exe)
-    assert oscompat.which("agy") is None                     # only claude has an installer folder
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+    assert oscompat.which("agy") is None
     assert oscompat.resolve("agy") == "agy"
+    agy = (tmp_path / "local" / "agy" / "bin" / "agy.exe") if oscompat.WINDOWS else (tmp_path / ".local" / "bin" / "agy")
+    agy.parent.mkdir(parents=True)
+    agy.write_text("")
+    assert oscompat.which("agy") == str(agy)                 # agy's installer folder, for a stale PATH
 
 
 def test_path_wins_over_the_installer_folder(monkeypatch):

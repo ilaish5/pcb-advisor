@@ -38,7 +38,12 @@ def utf8_stdio():
 
 def _installer_dirs(cmd):
     """Where the official installer puts a CLI, for a terminal opened before it ran
-    (its PATH change reaches only new terminals). Only `claude` has one."""
+    (its PATH change reaches only new terminals). `claude` and `agy` have one."""
+    if cmd == "agy":
+        if WINDOWS:
+            local = os.environ.get("LOCALAPPDATA")
+            return [pathlib.Path(local) / "agy" / "bin" / "agy.exe"] if local else []
+        return [pathlib.Path.home() / ".local" / "bin" / "agy"]
     if cmd != "claude":
         return []
     exe = "claude.exe" if WINDOWS else "claude"

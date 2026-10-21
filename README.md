@@ -11,7 +11,7 @@ It reads your Altium files and can create the Altium project for you (project, e
 
 ## Install (about 5 minutes)
 
-**One command**, in a terminal. It installs what is missing (Python, git, the Claude Code AI engine), sets everything
+**One command**, in a terminal. It installs what is missing (Python, git, an AI engine: it detects Claude Code or Antigravity and asks which to install), sets everything
 up, checks it, and starts the app. It asks before installing anything (Enter = yes) and needs no administrator rights.
 
 - **Windows** (PowerShell):

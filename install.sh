@@ -5,12 +5,13 @@
 #   ./install.sh                      (from a clone or an unpacked ZIP: repairs it in place)
 #
 # What it does: finds Python 3.10+ (offers Homebrew if missing), gets the code (git clone, or the ZIP when git is
-# missing), makes .venv, installs requirements, offers the Claude Code CLI and the sign-in, runs `pcb.py doctor`,
-# and starts the server. Questions default to YES (Enter); answers come from the terminal even under `curl | bash`.
+# missing), makes .venv, installs requirements, detects Claude Code or Antigravity (asks which to install) and offers the sign-in, runs
+# `pcb.py doctor`, and starts the server. Questions default to YES (Enter); answers come from the terminal even under `curl | bash`.
 #
 # Settings (environment): PCB_DIR target folder (default: this clone, or ~/pcb-advisor) | PCB_REPO clone source
 # (default the GitHub URL; a local path works) | PCB_REF branch or tag to check out | PCB_YES=1 no questions |
-# PCB_NO_CLAUDE=1 skip the Claude CLI and sign-in | PCB_NO_START=1 do not start the server | PCB_NO_GIT=1 act as if
+# PCB_ENGINE=claude|agy choose the AI engine without asking (nothing installed and PCB_YES=1 means claude) |
+# PCB_NO_ENGINE=1 skip the engine install and sign-in (PCB_NO_CLAUDE=1 is the same) | PCB_NO_START=1 do not start the server | PCB_NO_GIT=1 act as if
 # git is missing (ZIP route) | PCB_ZIP_URL ZIP address or path (default: the GitHub ZIP of PCB_REF).
 set -u
 
@@ -116,24 +117,78 @@ if [ -d .venv ] && ! .venv/bin/python -m pip --version >/dev/null 2>&1; then rm 
 .venv/bin/python -m pip install --quiet -r requirements.txt || die "installing requirements failed (network or proxy?)"
 .venv/bin/python pcb.py init || die "pcb.py init failed"
 
-# ---- 4. Claude Code CLI + sign-in
+# ---- 4. AI engine (Claude Code or Antigravity) + sign-in
 CLAUDE=""
+AGY=""
 find_claude() {
   CLAUDE="$(command -v claude 2>/dev/null)"
   [ -z "$CLAUDE" ] && [ -x "$HOME/.local/bin/claude" ] && CLAUDE="$HOME/.local/bin/claude"
   return 0
 }
-if [ "${PCB_NO_CLAUDE:-}" != "1" ]; then
-  step "Claude Code (the AI engine)"
+find_agy() {
+  AGY="$(command -v agy 2>/dev/null)"
+  [ -z "$AGY" ] && [ -x "$HOME/.local/bin/agy" ] && AGY="$HOME/.local/bin/agy"
+  return 0
+}
+# agent.provider as the person set it in the workspace config.json (empty = never set, so the default applies).
+set_provider() {
+  .venv/bin/python - <<'PYEOF' 2>/dev/null
+import json, os, pathlib
+cfg = os.environ.get("PCB_ADVISOR_CONFIG") or str(pathlib.Path(os.environ.get("PCB_ADVISOR_HOME") or ".") / "config.json")
+try:
+    print(json.loads(pathlib.Path(cfg).read_text(encoding="utf-8")).get("agent", {}).get("provider", "") or "")
+except (OSError, ValueError, AttributeError):
+    print("")
+PYEOF
+}
+# True when a person can answer (a terminal, and no PCB_YES).
+can_prompt() {
+  [ "${PCB_YES:-}" = "1" ] && return 1
+  { : </dev/tty; } 2>/dev/null
+}
+if [ "${PCB_NO_CLAUDE:-}" != "1" ] && [ "${PCB_NO_ENGINE:-}" != "1" ]; then
+  step "AI engine (Claude Code or Antigravity)"
   find_claude
-  if [ -z "$CLAUDE" ]; then
-    if ask "Claude Code is not installed. Install it now (official installer)?"; then
+  find_agy
+  ENGINE=""          # claude or agy
+  SETPROV=0          # write agent.provider to the config
+  ASKED=0            # the person already said which one, so no second install question
+  EXPLICIT="$(set_provider)"
+  if [ "${PCB_ENGINE:-}" = "claude" ] || [ "${PCB_ENGINE:-}" = "agy" ]; then
+    ENGINE="$PCB_ENGINE"; SETPROV=1
+  elif [ "$EXPLICIT" = "antigravity" ]; then ENGINE=agy; say "The workspace is set to Antigravity; keeping it."
+  elif [ "$EXPLICIT" = "claude_code" ]; then ENGINE=claude; say "The workspace is set to Claude Code; keeping it."
+  elif [ -n "$CLAUDE" ] && [ -n "$AGY" ]; then ENGINE=claude; say "Both found; using Claude Code. Switch in Settings > Engine."
+  elif [ -n "$AGY" ]; then ENGINE=agy; SETPROV=1; say "Only Antigravity (agy) found; setting it as the engine."
+  elif [ -n "$CLAUDE" ]; then ENGINE=claude
+  else
+    PICK=1
+    if can_prompt; then
+      say "Which AI engine do you have an account for?"
+      say "  1) Claude Code (Claude Pro/Max)"
+      say "  2) Antigravity (Google account)"
+      printf 'Enter = 1: ' >/dev/tty
+      read -r PICK </dev/tty || PICK=1
+    fi
+    if [ "$PICK" = "2" ]; then ENGINE=agy; SETPROV=1; else ENGINE=claude; fi
+    ASKED=1
+  fi
+  if [ "$ENGINE" = "claude" ] && [ -z "$CLAUDE" ]; then
+    if [ "$ASKED" = 1 ] || ask "Claude Code is not installed. Install it now (official installer)?"; then
       curl -fsSL https://claude.ai/install.sh | bash || say "The Claude Code installer failed. See docs/ENGINES.md."
       export PATH="$HOME/.local/bin:$PATH"
       find_claude
     fi
   fi
-  if [ -n "$CLAUDE" ]; then
+  if [ "$ENGINE" = "agy" ] && [ -z "$AGY" ]; then
+    # No official mac/linux installer address is documented, so point at the docs instead of guessing one.
+    say "Antigravity (agy) is not installed. Install it as described in docs/ENGINES.md, then run ./install.sh again."
+  fi
+  if [ "$SETPROV" = 1 ]; then
+    if [ "$ENGINE" = "agy" ]; then PROV=antigravity; else PROV=claude_code; fi
+    .venv/bin/python pcb.py config agent.provider "$PROV" >/dev/null && say "engine set to $PROV"
+  fi
+  if [ "$ENGINE" = "claude" ] && [ -n "$CLAUDE" ]; then
     say "found $CLAUDE"
     if ! "$CLAUDE" auth status >/dev/null 2>&1; then
       if { : </dev/tty; } 2>/dev/null || [ "${PCB_YES:-}" = "1" ]; then
@@ -145,6 +200,11 @@ if [ "${PCB_NO_CLAUDE:-}" != "1" ]; then
     else
       say "signed in"
     fi
+  elif [ "$ENGINE" = "agy" ] && [ -n "$AGY" ]; then
+    say "found $AGY"
+    # agy has no status command: the first run opens the Google sign-in in the browser.
+    say "To sign in: run \`agy\` once and sign in with your Google account in the browser, then exit it."
+    if can_prompt && ask "Run agy now to sign in?"; then "$AGY" </dev/tty || true; fi
   fi
 fi
 
