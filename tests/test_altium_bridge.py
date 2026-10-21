@@ -143,10 +143,14 @@ def test_request_is_ascii_and_tabbed(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
     monkeypatch.setattr(bridge, "_running", lambda: True)
     monkeypatch.setattr(bridge.time, "sleep", lambda s: None)
-    (tmp_path / "response.txt").write_text("START\nDONE\n")
-    # the stub Altium answered before we asked; run_commands clears the old answer, so provide it on launch
-    monkeypatch.setattr(bridge.subprocess, "Popen",
-                        lambda *a, **k: (tmp_path / "response.txt").write_text("START\nOK 0\nDONE\n"))
+    # the stub Altium answers on launch (run_commands clears old answers first); while the script runs only the flag
+    # files are looked at, response.txt and log.txt are read once end.flag is there
+
+    def altium(*a, **k):
+        (tmp_path / "response.txt").write_text("START\nOK 0\nDONE\n")
+        (tmp_path / "start.flag").write_text("start.flag")
+        (tmp_path / "end.flag").write_text("end.flag")
+    monkeypatch.setattr(bridge.subprocess, "Popen", altium)
     bridge.run_commands([("FRAME", "p", "1", "2", "3", "4", "café\\nline")])
     assert (tmp_path / "request.txt").read_bytes() == b"FRAME\tp\t1\t2\t3\t4\tcaf?\\nline\r\n"
 

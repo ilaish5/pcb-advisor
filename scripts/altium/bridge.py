@@ -10,6 +10,8 @@ Two-way link to a running Altium Designer: create the project, add documents, dr
     python scripts/altium/bridge.py import-rules <project>       the advisor's rule set into the linked PcbDoc, by rule name
     python scripts/altium/bridge.py run-outjob <project>         Gerber, NC drill, BOM, pick and place into the outputs folder
     python scripts/altium/bridge.py open <project>
+    python scripts/altium/bridge.py build-library <project>      the project's Altium library (SchLib, PcbLib, 3D, LibPkg,
+                                                                 compiled and installed IntLib) next to the Altium project
 
 How: Altium runs a DelphiScript from scripts/altium/bridge/ (`X2.EXE -RScriptingSystem:RunScript(...)`); the request
 and the answer go through files in a fixed folder. The script mechanism is adapted from altium-mcp (MIT, Copyright (c)
@@ -19,6 +21,10 @@ we notice (the script never starts or stops logging), release it with `X2.EXE -R
 import-rules adds or updates the rules the preset, the Rules tab's extra rules and rules-off.json call for (matched by
 name; the student's own rules are never deleted) and reads the PcbDoc back to confirm. run-outjob adds our OutJob
 (scripts/outjob.py) to the project when it has none, then runs its Folder Structure containers.
+
+build-library turns library/build/ (scripts/partlib.py prepare, run first when it is stale) into
+<altium project>/Library/<Project>-Lib.SchLib / .PcbLib / 3D/*.step / .LibPkg and the IntLib, always from the shipped
+templates (bridge/templates), so a rebuild never duplicates parts, then reads the files back to count and check them.
 
 Every write copies the files it will change into <altium project>/.advisor-backup/<time>/ first (undo = copy back)
 and is logged in the advisor project's altium-log.jsonl. Windows with Altium Designer only; elsewhere every
@@ -44,12 +50,14 @@ if str(SCRIPTS_DIR) not in sys.path:
 
 import jlc_upload  # noqa: E402
 import outjob  # noqa: E402
+import partlib  # noqa: E402
 import project as project_mod  # noqa: E402
 import rule_kinds  # noqa: E402
 import rules as rules_mod  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
 from altium import AltiumReadError, registry  # noqa: E402
+from altium.lib import read_pcblib, read_schlib  # noqa: E402
 from altium.prjpcb import read_prjpcb as _read_prjpcb  # noqa: E402
 
 BRIDGE_DIR = pathlib.Path(__file__).resolve().parent / "bridge"
@@ -89,7 +97,8 @@ def _running():
 
 
 def _close_dialogs():
-    """Close the dialog boxes Altium left open (class #32770 or a script error box, owned by X2.EXE), so the next script can run."""
+    """Close the dialog boxes Altium left open (class #32770 or a script error box, owned by X2.EXE), so the next script
+    can run. Returns one "title: text" line per dialog closed; each is logged first, so a stall can be explained."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -99,6 +108,23 @@ def _close_dialogs():
         user32 = ctypes.windll.user32
         closed = []
 
+        def text_of(hwnd):
+            buf = ctypes.create_unicode_buffer(1024)
+            user32.GetWindowTextW(hwnd, buf, 1024)
+            return buf.value.strip()
+
+        def describe(hwnd, cls):
+            parts = []
+
+            @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            def child(h, _):
+                t = text_of(h)
+                if t:
+                    parts.append(t)
+                return True
+            user32.EnumChildWindows(hwnd, child, 0)
+            return f"[{cls}] {text_of(hwnd)}: " + " / ".join(parts)
+
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def each(hwnd, _):
             if user32.IsWindowVisible(hwnd):
@@ -106,29 +132,38 @@ def _close_dialogs():
                 user32.GetClassNameW(hwnd, cls, 64)
                 pid = wintypes.DWORD()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-                if cls.value == "#32770" and pid.value in pids:
-                    user32.PostMessageW(hwnd, 0x0010, 0, 0)       # WM_CLOSE
-                    closed.append(hwnd)
-                elif cls.value == "TMessageForm" and pid.value in pids:     # a script error box: only its OK button ends it
-                    user32.PostMessageW(hwnd, 0x0100, 13, 0)      # WM_KEYDOWN, VK_RETURN
-                    user32.PostMessageW(hwnd, 0x0101, 13, 0)      # WM_KEYUP
-                    closed.append(hwnd)
+                if cls.value in ("#32770", "TMessageForm") and pid.value in pids:
+                    closed.append(describe(hwnd, cls.value))
+                    if cls.value == "#32770":
+                        user32.PostMessageW(hwnd, 0x0010, 0, 0)       # WM_CLOSE
+                    else:                                             # a script error box: only its OK button ends it
+                        user32.PostMessageW(hwnd, 0x0100, 13, 0)      # WM_KEYDOWN, VK_RETURN
+                        user32.PostMessageW(hwnd, 0x0101, 13, 0)      # WM_KEYUP
             return True
 
         user32.EnumWindows(each, 0)
-        return len(closed)
+        for line in closed:
+            DIALOG_LOG.append(line)
+        return closed
     except Exception:
-        return 0
+        return []
+
+
+DIALOG_LOG = []         # every dialog closed this session, "[class] title: text"
 
 
 def release_executor():
-    """Stop a script that Altium left paused after a runtime error (every later script would silently do nothing)."""
-    _close_dialogs()
+    """Stop a script that Altium left paused after a runtime error (every later script would silently do nothing).
+    Closes the dialogs first (and notes what they said), also the script error window, so that a retry can start.
+    Returns the dialog texts."""
+    seen = _close_dialogs()
     try:
         subprocess.Popen(f'"{_exe()}" -REditScript:Stop')
     except OSError:
         pass
     time.sleep(2)
+    seen += _close_dialogs()            # the error window can appear only once the executor is stopped
+    return seen
 
 
 def _ascii(text):
@@ -143,15 +178,26 @@ def _read(path):
         return []
 
 
+def _stat(path):
+    """(size, mtime) of a file, or None. Only a stat: Altium writes log.txt and response.txt without sharing, so we must
+    never open them while the script runs (a read at the wrong moment makes Altium's save fail and the script freeze)."""
+    try:
+        st = os.stat(path)
+        return st.st_size, st.st_mtime_ns
+    except OSError:
+        return None
+
+
 def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300):
     """Send command lines (tab separated fields) to Altium, wait for DONE. Returns the script's log lines.
-    Raises BridgeError with the last step when the script does not start, stops logging or reports an error."""
+    Raises BridgeError with the last step when the script does not start, stops logging or reports an error.
+    While the script runs we only look at whether start.flag / end.flag exist and whether log.txt grows."""
     exe = _exe()
     if not SCRIPT_PROJECT.is_file():
         raise BridgeError(f"bridge script missing: {SCRIPT_PROJECT}")
     with _lock:
         EXCHANGE.mkdir(parents=True, exist_ok=True)
-        for name in ("response.txt", "log.txt"):
+        for name in ("response.txt", "log.txt", "start.flag", "end.flag"):
             (EXCHANGE / name).unlink(missing_ok=True)
         body = "\r\n".join("\t".join(_ascii(f) for f in c) for c in commands) + "\r\n"
         (EXCHANGE / "request.txt").write_bytes(body.encode("ascii"))     # bytes: text mode would double the CR on Windows
@@ -161,32 +207,35 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
             t0 = time.time()
             started = False
             while time.time() - t0 < start_timeout * (8 if cold else 1):
-                if "START" in _read(EXCHANGE / "response.txt"):
+                if (EXCHANGE / "start.flag").exists():
                     started = True
                     break
                 time.sleep(0.5)
             if started:
                 break
-            release_executor()          # a paused executor ignores new scripts: release it and try once more
+            shown = release_executor()          # a paused executor ignores new scripts: release it and try once more
             if attempt == 2:
-                raise BridgeError("Altium did not start the script (a script error or a dialog box was blocking it). "
+                raise BridgeError("Altium did not start the script (a script error or a dialog box was blocking it"
+                                  + (f": {' | '.join(shown)}" if shown else "") + "). "
                                   "I released the script executor and closed dialogs; try again.")
-        t_log, last_size, t0 = time.time(), -1, time.time()
-        while True:
-            resp = _read(EXCHANGE / "response.txt")
-            log = _read(EXCHANGE / "log.txt")
-            errs = [r for r in resp if r.startswith("ERR")]
-            if "DONE" in resp or errs:
-                break
-            if len(log) != last_size:
-                last_size, t_log = len(log), time.time()
+        t_log, last, t0 = time.time(), _stat(EXCHANGE / "log.txt"), time.time()
+        while not (EXCHANGE / "end.flag").exists():
+            now = _stat(EXCHANGE / "log.txt")
+            if now != last:
+                last, t_log = now, time.time()
             if time.time() - t_log > stall_timeout or time.time() - t0 > total_timeout:
-                release_executor()
+                shown = release_executor()
+                log = _read(EXCHANGE / "log.txt")           # the script is stopped now: safe to read
                 raise BridgeError("Altium stopped in the middle of the script, after: "
-                                  f"{log[-1] if log else 'nothing'}. I released the script executor.")
+                                  f"{log[-1] if log else 'nothing'}. I released the script executor."
+                                  + (f" Dialogs: {' | '.join(shown)}" if shown else ""))
             time.sleep(0.5)
+        resp, log = _read(EXCHANGE / "response.txt"), _read(EXCHANGE / "log.txt")
+        errs = [r for r in resp if r.startswith("ERR")]
         if errs:
             raise BridgeError("Altium refused a step: " + "; ".join(e[4:] for e in errs) + f" (last step: {log[-1] if log else '-'})")
+        if "DONE" not in resp:
+            raise BridgeError(f"Altium ended the script without finishing it, after: {log[-1] if log else 'nothing'}.")
         return log
 
 
@@ -629,13 +678,390 @@ def create(project):
     return res
 
 
+# ---------------------------------------------------------------- the project library
+
+TEMPLATES = BRIDGE_DIR / "templates"
+TEMPLATE_SYMBOL = "__ADVISOR_TEMPLATE__"                 # the dummy part each template library holds; removed after the real ones are in
+TEMPLATE_FOOTPRINT = "__ADVISOR_TEMPLATE__"
+LIB_INPUTS = ("bom-log.jsonl", "supply-log.jsonl")      # (and netlist/): what partlib.prepare reads
+
+
+def library_paths(project):
+    """Where the project's Altium library goes: <altium project folder>/Library/<Project>-Lib.*"""
+    prj = _linked(project)
+    name = f"{_file_name(prj.stem, 'Project')}-Lib"
+    folder = prj.parent / "Library"
+    return {"prj": prj, "name": name, "folder": folder, "schlib": folder / f"{name}.SchLib",
+            "pcblib": folder / f"{name}.PcbLib", "libpkg": folder / f"{name}.LibPkg", "d3": folder / "3D",
+            "intlib": folder / f"Project Outputs for {name}" / f"{name}.IntLib"}
+
+
+def library_stale(project):
+    """True when library/build is missing or older than the BOM, the supplier checks or a netlist sheet."""
+    lib = partlib.library_dir(project)
+    man = lib / "manifest.json"
+    if not man.is_file() or not (lib / "build" / "parts.json").is_file():
+        return True
+    pd = store.pdir(project)
+    inputs = [pd / n for n in LIB_INPUTS] + (sorted((pd / "netlist").rglob("*")) if (pd / "netlist").is_dir() else [])
+    return any(f.is_file() and f.stat().st_mtime > man.stat().st_mtime for f in inputs)
+
+
+def _spec_lines(path):
+    try:
+        return pathlib.Path(path).read_text(encoding="cp1252", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def spec_symbols(path):
+    """{symbol: [(pin number, name, type)]} of a symbols_spec.txt"""
+    out, cur = {}, None
+    for ln in _spec_lines(path):
+        f = ln.split("|")
+        if f[0] == "SYMBOL":
+            cur = out.setdefault(f[1], [])
+        elif f[0] == "PIN" and cur is not None:
+            cur.append((f[1], f[2], f[3].replace("eElectric", "")))
+    return out
+
+
+def spec_footprints(path):
+    """{footprint: pad count} of a footprints_spec.txt"""
+    out, cur = {}, None
+    for ln in _spec_lines(path):
+        f = ln.split("|")
+        if f[0] == "FOOTPRINT":
+            cur = f[1]
+            out[cur] = 0
+        elif f[0] == "PAD" and cur is not None:
+            out[cur] += 1
+    return out
+
+
+def check_ansi(lp, build):
+    """Refuse, with the offending text, what Altium would receive as '?'. A path goes to Altium inside the request, which
+    is plain ASCII; the spec files are read as Windows ANSI (cp1252), so a Hebrew name or a Chinese description cannot go in."""
+    bad = []
+    for label, path in (("the Altium project path", lp["prj"]), ("the library folder", lp["folder"])):
+        if not str(path).isascii():
+            bad.append(f"{label} {path} has letters outside plain ASCII")
+    for name, enc in (("symbols_spec.txt", "cp1252"), ("footprints_spec.txt", "cp1252"), ("links.txt", "utf-8"), ("props.txt", "utf-8")):
+        f = build / name
+        if not f.is_file():
+            continue
+        try:
+            text = f.read_bytes().decode(enc)
+            text.encode("cp1252")
+        except UnicodeError as exc:
+            bad.append(f"{name} has text that is not Windows (cp1252) text: {str(exc)[:80]}")
+    try:
+        parts = json.loads((build / "parts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        parts = {}
+    texts = [(f"parameter {k} of {n}", str(v)) for n, s in parts.get("symbols", {}).items() for k, v in s.get("params", {}).items()]
+    texts += [("footprint name", n) for n in parts.get("footprints", {})] + [("symbol name", n) for n in parts.get("symbols", {})]
+    for label, text in texts:
+        try:
+            text.encode("cp1252")
+        except UnicodeEncodeError as exc:
+            bad.append(f"{label} has {exc.object[exc.start]!r}: {text[:60]!r}")
+    if bad:
+        raise BridgeError("Altium's library scripts can only read Windows (cp1252) text and an ASCII path, so I did not "
+                          "build: " + "; ".join(bad[:6]) + ". Rename it, or move the Altium project to a plain-letter folder.")
+
+
+def _write_ansi(path, text):
+    pathlib.Path(path).write_bytes(text.encode("cp1252", "replace"))
+
+
+def library_files(project, lp):
+    """Write the spec files Altium reads (real paths in; single backslashes) into library/build/altium/.
+    Returns (paths, expected) where expected describes what the finished library must hold."""
+    lib = partlib.library_dir(project)
+    build = lib / "build"
+    out = build / "altium"
+    shutil.rmtree(out, ignore_errors=True)
+    out.mkdir(parents=True)
+    parts = json.loads((build / "parts.json").read_text(encoding="utf-8"))
+    sym_spec = (build / "symbols_spec.txt").read_text(encoding="cp1252", errors="replace")
+    fp_spec = (build / "footprints_spec.txt").read_text(encoding="cp1252", errors="replace")
+    _write_ansi(out / "symbols_spec.txt", sym_spec.replace("<SCHLIB>", str(lp["schlib"])))
+    _write_ansi(out / "footprints_spec.txt", fp_spec.replace("<PCBLIB>", str(lp["pcblib"])))
+    _write_ansi(out / "links.txt", (build / "links.txt").read_text(encoding="utf-8"))
+    _write_ansi(out / "props.txt", (build / "props.txt").read_text(encoding="utf-8"))
+    params = [f"{n}|{k}|{v}" for n, s in parts["symbols"].items() for k, v in s.get("params", {}).items() if str(v).strip()]
+    _write_ansi(out / "params.txt", "\r\n".join(params) + "\r\n")
+    links = dict(ln.split("=", 1) for ln in (build / "links.txt").read_text(encoding="utf-8").splitlines() if "=" in ln)
+    props = dict(ln.split("=", 1) for ln in (build / "props.txt").read_text(encoding="utf-8").splitlines() if "=" in ln)
+    lp["d3"].mkdir(parents=True, exist_ok=True)
+    attach = [f"LIB|{lp['pcblib']}"]
+    bodies = {}
+    for fpn, info in parts["footprints"].items():
+        steps = [lib / s for s in info.get("steps", []) if (lib / s).is_file()]
+        if not steps:
+            continue
+        dest = lp["d3"] / f"{_file_name(fpn, 'model')}.step"
+        shutil.copyfile(steps[0], dest)
+        m = info.get("model") or {}
+        seat = m.get("seat", 0 if info.get("tht") else 1)
+        attach.append("FP|" + "|".join(str(v) for v in (fpn, dest, m.get("rx", 0), m.get("ry", 0), m.get("rz", 0),
+                                                        m.get("dx", 0), m.get("dy", 0), seat)))
+        bodies[fpn] = dest.name
+    _write_ansi(out / "attach3d.txt", "\r\n".join(attach) + "\r\n")
+    pins = spec_symbols(out / "symbols_spec.txt")
+    expected = {"symbols": {n: {"pins": pins.get(n, []), "footprint": links.get(n, ""), "props": props.get(n, "|").split("|", 1),
+                                "hide": bool(s.get("hide_pin_names")), "params": s.get("params", {})}
+                            for n, s in parts["symbols"].items()},
+                "footprints": spec_footprints(out / "footprints_spec.txt"), "bodies": bodies}
+    return {k: out / v for k, v in (("symbols", "symbols_spec.txt"), ("footprints", "footprints_spec.txt"), ("links", "links.txt"),
+                                    ("props", "props.txt"), ("params", "params.txt"), ("attach", "attach3d.txt"))}, expected
+
+
+def write_libpkg(lp):
+    text = ("[Design]\r\nVersion=1.0\r\nOutputPath=\r\n\r\n"
+            f"[Document1]\r\nDocumentPath={lp['schlib'].name}\r\n\r\n[Document2]\r\nDocumentPath={lp['pcblib'].name}\r\n")
+    lp["libpkg"].write_bytes(text.encode("ascii"))
+
+
+def verify_library_files(lp, expected):
+    """Read the SchLib and PcbLib back. Returns (problems [str], per-symbol problems {symbol: [str]},
+    per-footprint problems, counts)."""
+    problems, per_symbol, per_fp = [], {}, {}
+    sch, pcb = read_schlib(lp["schlib"]), read_pcblib(lp["pcblib"])
+    syms = {s["name"]: s for s in sch["symbols"]}
+    fps = {f["name"]: f for f in pcb["footprints"]}
+
+    def sym_bad(name, msg):
+        per_symbol.setdefault(name, []).append(msg)
+
+    def fp_bad(name, msg):
+        per_fp.setdefault(name, []).append(msg)
+    for extra in sorted(set(syms) - set(expected["symbols"])):
+        problems.append(f"the SchLib holds a symbol that is not ours: {extra}")
+    for extra in sorted(set(fps) - set(expected["footprints"])):
+        problems.append(f"the PcbLib holds a footprint that is not ours: {extra}")
+    for name, want in expected["symbols"].items():
+        got = syms.get(name)
+        if got is None:
+            sym_bad(name, "not in the SchLib")
+            continue
+        pins = [(p["number"], p["name"], p["electrical"]) for p in got["pins"]]
+        if sorted(pins) != sorted(want["pins"]):
+            sym_bad(name, f"pins differ: {len(pins)} in the library, {len(want['pins'])} in the spec")
+        if len(want["pins"]) == 2 and want["hide"] and any(p["show_name"] for p in got["pins"]):
+            sym_bad(name, "pin names are still shown on a 2-pin part")
+        prefix, comment = (want["props"] + ["", ""])[:2]
+        if got["designator"] != f"{prefix}?":
+            sym_bad(name, f"designator {got['designator']!r}, expected {prefix}?")
+        if got["comment"] != comment:
+            sym_bad(name, f"comment {got['comment']!r}, expected {comment!r}")
+        for k, v in want["params"].items():
+            if str(v).strip() and got["params"].get(k) != str(v).strip():
+                sym_bad(name, f"parameter {k} is {got['params'].get(k)!r}, expected {v!r}")
+        if got["footprints"] != [want["footprint"]]:
+            sym_bad(name, f"footprint link {got['footprints']}, expected {want['footprint']}")
+        elif want["footprint"] not in fps:
+            sym_bad(name, f"linked footprint {want['footprint']} is not in the PcbLib")
+        if got["pinned_paths"]:
+            sym_bad(name, "the footprint link is pinned to a file path")
+    for name, pads in expected["footprints"].items():
+        got = fps.get(name)
+        if got is None:
+            fp_bad(name, "not in the PcbLib")
+            continue
+        if len(got["pads"]) != pads:
+            fp_bad(name, f"{len(got['pads'])} pads in the library, {pads} in the spec")
+        if any(pad["layer"] == 0 for pad in got["pads"]):
+            fp_bad(name, "a pad is on no layer")
+        want_bodies = 1 if name in expected["bodies"] else 0
+        if len(got["bodies"]) != want_bodies:
+            fp_bad(name, f"{len(got['bodies'])} 3D bodies, expected {want_bodies}")
+    counts = {"symbols": len(syms), "footprints": len(fps), "pads": sum(len(f["pads"]) for f in fps.values()),
+              "bodies": sum(len(f["bodies"]) for f in fps.values()), "models": len(pcb["models"])}
+    return problems, per_symbol, per_fp, counts
+
+
+def _mark_built(project, expected, per_symbol, per_fp, ok_intlib):
+    """Write `built` (and `built_issues`) on every line of library/manifest.json; returns {line: bool}."""
+    path = partlib.library_dir(project) / "manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    res = {}
+    for key, e in manifest.items():
+        sym, fp = e.get("symbol"), e.get("footprint")
+        issues = []
+        if not sym:
+            issues.append("no symbol was made for this line")
+        else:
+            issues += per_symbol.get(sym, []) + per_fp.get(fp, [])
+            if sym not in expected["symbols"]:
+                issues.append("not part of this build")
+            if not ok_intlib:
+                issues.append("the IntLib was not compiled and installed")
+        e["built"] = not issues
+        if issues:
+            e["built_issues"] = issues
+        else:
+            e.pop("built_issues", None)
+        res[key] = e["built"]
+    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return res
+
+
+def _check_unlocked(files):
+    """Refuse up front when a library file cannot be opened for writing (Altium still holds it): saying so now beats
+    a script that stalls for minutes on it."""
+    for f in files:
+        if pathlib.Path(f).is_file():
+            try:
+                with open(f, "r+b"):
+                    pass
+            except OSError as exc:
+                raise BridgeError(f"{f} is locked ({exc.strerror or exc}): Altium still has the library open or installed. "
+                                  "Close the library project in Altium (or restart Altium) and build again.") from exc
+
+
+def _mark_failed(project, reason):
+    """Every line of the manifest becomes built: false after a build that did not finish (a stale true would lie)."""
+    path = partlib.library_dir(project) / "manifest.json"
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    for e in manifest.values():
+        if isinstance(e, dict):
+            e["built"] = False
+            e["built_issues"] = [reason]
+    path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def _restore_library(project, lp, backup):
+    """After a failed build: put the previous SchLib, PcbLib, LibPkg, IntLib and 3D models back from the backup and install
+    the old IntLib again. Without a backup (a first build) the half-made files are removed. Returns a sentence for the error."""
+    try:
+        run_commands([("LIBCLOSE", str(lp["libpkg"]), str(lp["schlib"]), str(lp["pcblib"]), str(lp["intlib"]))])
+    except BridgeError:
+        pass
+    try:
+        for step in (lp["d3"].glob("*.step") if lp["d3"].is_dir() else []):
+            step.unlink()
+        if not backup:
+            for k in ("schlib", "pcblib", "libpkg", "intlib"):
+                lp[k].unlink(missing_ok=True)
+            return "There was no earlier library, so the half-made files were removed."
+        for f in pathlib.Path(backup).iterdir():
+            dest = {".schlib": lp["schlib"], ".pcblib": lp["pcblib"], ".libpkg": lp["libpkg"], ".intlib": lp["intlib"]}.get(f.suffix.lower())
+            if f.suffix.lower() == ".step":
+                dest = lp["d3"] / f.name
+            if dest is not None:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dest)
+    except OSError as exc:
+        return f"The earlier library could not be put back ({exc}); it is in {backup}."
+    if (pathlib.Path(backup) / lp["intlib"].name).is_file():
+        try:
+            run_commands([("INSTALL", str(lp["intlib"]))])
+            return "The earlier library was put back and installed again."
+        except BridgeError as exc:
+            return f"The earlier library files were put back but its IntLib is NOT installed in Altium ({exc})."
+    return "The earlier library files were put back."
+
+
+def _create_libraries(project, lp):
+    """Steps 1 and 2 of build_library; safe to run again (every run starts from the templates).
+    Returns (expected, per-symbol problems, per-footprint problems, other problems, counts)."""
+    # 1. nothing of the old library may stay open or installed in Altium; then the files are ours to replace
+    lp["folder"].mkdir(parents=True, exist_ok=True)
+    run_commands([("LIBCLOSE", str(lp["libpkg"]), str(lp["schlib"]), str(lp["pcblib"]), str(lp["intlib"]))])
+    _check_unlocked([lp["intlib"], lp["schlib"], lp["pcblib"], lp["libpkg"]])
+    for old_step in (lp["d3"].glob("*.step") if lp["d3"].is_dir() else []):
+        old_step.unlink()
+    shutil.copyfile(TEMPLATES / "Template.SchLib", lp["schlib"])
+    shutil.copyfile(TEMPLATES / "Template.PcbLib", lp["pcblib"])
+    files, expected = library_files(project, lp)
+    write_libpkg(lp)
+    # 2. footprints, symbols, links, properties, pin names, 3D bodies; then read the two files back
+    cmds = [("FPBATCH", str(lp["pcblib"]), str(files["footprints"])),
+            ("FPREMOVE", str(lp["pcblib"]), TEMPLATE_FOOTPRINT), ("SAVELIB", str(lp["pcblib"]), "PcbLib"),
+            ("SYMBATCH", str(lp["schlib"]), str(files["symbols"])),
+            ("SYMREMOVE", str(lp["schlib"]), TEMPLATE_SYMBOL),
+            ("SYMLINK", str(lp["schlib"]), str(files["links"])),
+            ("SYMPROPS", str(lp["schlib"]), str(files["props"])),
+            ("SYMPARAMS", str(lp["schlib"]), str(files["params"])),
+            ("HIDEPINS", str(lp["schlib"])), ("SAVELIB", str(lp["schlib"]), "SchLib")]
+    if expected["bodies"]:
+        cmds.append(("ATTACH3D", str(files["attach"])))
+    run_commands(cmds, stall_timeout=120, total_timeout=900)
+    return (expected, *verify_library_files(lp, expected))
+
+
+def build_library(project, fetch=True):
+    """Build the project's Altium library from library/build and install the IntLib. Returns the result dict."""
+    lp = library_paths(project)
+    prj = lp["prj"]
+    prepared = False
+    if library_stale(project):
+        partlib.prepare(project, fetch=fetch)
+        prepared = True
+    build = partlib.library_dir(project) / "build"
+    check_ansi(lp, build)
+    syms, fps = spec_symbols(build / "symbols_spec.txt"), spec_footprints(build / "footprints_spec.txt")
+    if not syms or not (build / "parts.json").is_file():
+        raise BridgeError("The library data has no symbols to build. Prepare the part library first and fix its issues.")
+    old = [lp[k] for k in ("schlib", "pcblib", "libpkg", "intlib")] + (sorted(lp["d3"].glob("*.step")) if lp["d3"].is_dir() else [])
+    backup = _backup(prj, old)
+    t0 = time.time() - 2
+    marked = False
+    try:
+        for attempt in (1, 2):         # Altium sometimes stops in the middle of a batch; a rebuild from the templates is safe
+            try:
+                expected, problems, per_symbol, per_fp, counts = _create_libraries(project, lp)
+                break
+            except BridgeError as exc:
+                if attempt == 2 or "stopped in the middle" not in str(exc):
+                    raise
+                _log(project, "build-library", retry=str(exc))
+        if problems or per_symbol or per_fp:
+            _mark_built(project, expected, per_symbol, per_fp, False)
+            marked = True
+            detail = problems + [f"{n}: {'; '.join(m)}" for n, m in {**per_symbol, **per_fp}.items()]
+            raise BridgeError("The library was built but the files read back wrong, so it was not compiled: "
+                              + " | ".join(detail[:8]))
+        # 3. compile and install; then the IntLib file and Altium's list of installed libraries are checked
+        log = run_commands([("COMPILE", str(lp["libpkg"]), str(lp["intlib"])), ("CHECKINST", str(lp["intlib"]))],
+                           stall_timeout=180, total_timeout=900)
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        if not marked:
+            _mark_failed(project, f"the build did not finish: {exc}")
+        note = _restore_library(project, lp, backup)
+        _log(project, "build-library", error=str(exc), backup=backup, restored=note)
+        raise BridgeError(f"{exc} {note}") from exc
+    installed = any(ln.startswith("INSTALLED yes") for ln in log)
+    intlib = lp["intlib"]
+    fresh = intlib.is_file() and intlib.stat().st_size > 0 and intlib.stat().st_mtime >= t0
+    issues = []
+    if not fresh:
+        issues.append(f"The IntLib {intlib} was not written by this build (an installed library can stay locked; "
+                      "restart Altium and build again).")
+    if not installed:
+        issues.append("Altium does not list the IntLib as installed.")
+    built = _mark_built(project, expected, {}, {}, fresh and installed)
+    res = {"schlib": str(lp["schlib"]), "pcblib": str(lp["pcblib"]), "libpkg": str(lp["libpkg"]), "intlib": str(intlib),
+           "folder_3d": str(lp["d3"]), "counts": counts, "intlib_fresh": fresh, "installed": installed,
+           "built": sum(built.values()), "lines": len(built), "prepared": prepared, "backup": backup, "issues": issues}
+    _log(project, "build-library", **res)
+    if issues:
+        raise BridgeError(" ".join(issues))
+    return res
+
+
 # ---------------------------------------------------------------- CLI
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="op", required=True)
     sub.add_parser("status")
-    for op in ("new-project", "add-pcb", "open", "import-rules", "run-outjob"):
+    for op in ("new-project", "add-pcb", "open", "import-rules", "run-outjob", "build-library"):
         sub.add_parser(op).add_argument("project")
     p = sub.add_parser("add-sheet")
     p.add_argument("project")
@@ -659,6 +1085,8 @@ def main(argv=None):
             res = import_rules(a.project)
         elif a.op == "run-outjob":
             res = run_outjob(a.project)
+        elif a.op == "build-library":
+            res = build_library(a.project)
         else:
             res = open_project(a.project)
     except (BridgeError, AltiumReadError) as exc:
