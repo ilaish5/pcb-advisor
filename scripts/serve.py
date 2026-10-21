@@ -446,7 +446,11 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                 from altium import bridge
                 # routine: new files only, and whatever it modifies is copied to .advisor-backup first
                 if kind == "altium.create_project":
-                    bridge.create(project)
+                    res = bridge.create(project)
+                    if res.get("skeleton_error"):
+                        applied.append(kind)
+                        refused.append(f"altium.skeleton: {res['skeleton_error']}")
+                        continue
                 elif kind == "altium.add_sheet":
                     bridge.add_sheet(project, str(a.get("name") or ""))
                 elif kind == "altium.skeleton":
@@ -1767,10 +1771,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/altium/create":
             from altium import bridge
             try:
-                bridge.create(proj)
+                res = bridge.create(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
-            return self._send(200, _altium_state(proj))
+            return self._send(200, {**_altium_state(proj), "warning": res.get("skeleton_error", "")})
 
         if path in ("/api/altium/import-rules", "/api/altium/run-outjob"):
             from altium import bridge

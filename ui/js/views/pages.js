@@ -474,8 +474,12 @@ onAct('altium-create', async (el, d, e) => {
     ALTIUM_DATA = await api('/api/altium/create', {});
     ALTIUM_ERR = null;
     impFor = null;                            // the BOM asks again whether a project is linked
-    toast('Altium project created: ' + pgBase(ALTIUM_DATA.linked.project_file));
-  } catch (err) { /* api() already said why */ }
+    toast('Altium project created: ' + pgBase(ALTIUM_DATA.linked.project_file)
+      + (ALTIUM_DATA.warning ? '. ' + ALTIUM_DATA.warning : ''));
+  } catch (err) {
+    // a failure can come after Altium already wrote and linked the project: show what is there now
+    try { ALTIUM_DATA = await api('/api/altium'); impFor = null; } catch (e2) { /* keep the old view */ }
+  }
   el.disabled = false;
   renderCenter(true);
 });

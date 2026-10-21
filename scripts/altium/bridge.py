@@ -621,7 +621,11 @@ def open_project(project):
 def create(project):
     """new-project + skeleton: what the Create button and the agent's altium.create_project run."""
     res = new_project(project)
-    res["skeleton"] = skeleton(project)
+    try:
+        res["skeleton"] = skeleton(project)
+    except (BridgeError, AltiumReadError) as exc:
+        # the project exists and is linked by now: report the skeleton as a warning, it can be redrawn alone
+        res["skeleton_error"] = f"The project was created, but its title block and frames were not drawn: {exc}"
     return res
 
 

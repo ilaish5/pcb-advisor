@@ -167,6 +167,22 @@ def test_actions_route_to_the_bridge(lte, fake):
     assert "altium.skeleton" in applied and "altium.add_pcb" in applied
 
 
+def test_a_skeleton_that_stalls_still_leaves_the_project_created_and_linked(lte, fake, monkeypatch):
+    import serve
+
+    def stall(project, sheet=None):
+        raise bridge.BridgeError("Altium stopped in the middle of the script, after: title block on.")
+    monkeypatch.setattr(bridge, "skeleton", stall)
+    res = bridge.create(lte)
+    assert project_mod.altium_link(lte)["project_file"] == res["project_file"]
+    assert "title block on" in res["skeleton_error"]
+    project_mod.set_altium_link(lte, project_file="", pcb_file="")
+    for f in pathlib.Path(res["project_file"]).parent.glob("*.PrjPcb"):
+        f.unlink()
+    applied, _, refused = serve.apply_actions(lte, [{"type": "altium.create_project"}])
+    assert applied == ["altium.create_project"] and refused[0].startswith("altium.skeleton:")
+
+
 def test_an_action_without_a_project_is_refused_not_raised(lte, fake):
     import serve
     applied, _, refused = serve.apply_actions(lte, [{"type": "altium.skeleton"}])
