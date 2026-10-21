@@ -358,8 +358,9 @@ def _new_proposal_id(project):
     return pid
 
 
-def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False):
-    """Record a proposal. Nothing about the BOM changes until the student approves."""
+def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False, reserved=()):
+    """Record a proposal. Nothing about the BOM changes until the student approves.
+    `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty)."""
     existing = {l["key"]: l for l in bom_lines(project)}
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
@@ -367,6 +368,21 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):
         changes = {**changes, "refs": [line]}
         before = {**before, "refs": None}
+    # The quantity is the number of refs; "qty": 6 with one ref would order one. Add free refs of the same prefix.
+    refs, want = changes.get("refs"), changes.get("qty")
+    if new and isinstance(refs, list) and refs and isinstance(want, int) and want > len(refs):
+        m = re.fullmatch(r"([A-Za-z]+)\d+", str(refs[0]))
+        if m:
+            taken = {r for l in existing.values() for r in (l.get("refs") or [])}
+            taken |= {r for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
+                      for r in ((p.get("changes") or {}).get("refs") or [])}
+            taken |= set(refs) | set(reserved)
+            refs, n = list(refs), 1
+            while len(refs) < want:
+                if f"{m.group(1)}{n}" not in taken:
+                    refs.append(f"{m.group(1)}{n}")
+                n += 1
+            changes = {**changes, "refs": refs}
     pid = _new_proposal_id(project)
     rec = {"id": pid, "ts": now(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),

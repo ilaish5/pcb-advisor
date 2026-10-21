@@ -110,7 +110,7 @@ any script, the json block with `tools` is required: a number from a script with
 - `{"type": "bom.propose", "line": "D30", "changes": {"mpn": "...", "manufacturer": "...", "package": "..."},
   "reason": "...", "sources": ["file.pdf"], "new": false, "library": {"symbol": true, "footprint": true,
   "step": true, "model_source": "Ultra Librarian"}}` shows a diff card with Approve and Reject. `new: true`
-  proposes a new line. `library` is optional and applied on approval; `verify` and `accepted` in it are dropped.
+  proposes a new line; quantity = number of `refs` (6 LEDs: `"refs": ["D1", ..., "D6"]`). `library` is optional and applied on approval; `verify` and `accepted` in it are dropped.
   Routine ones (no costed MPN) apply at once with Undo; IC/MPN ones wait. Send related proposals in ONE turn.
 - `{"type": "netlist.write", "sheet": "03", "data": {...}}` one sheet: write early, partial (undecided pins net "", pending parts in); state the warnings.
 - `{"type": "library.add", "line": "U4", "changes": {"symbol": true, "footprint": true, "step": false,

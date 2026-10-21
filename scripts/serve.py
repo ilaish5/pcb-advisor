@@ -359,6 +359,10 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
     approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
     applied, proposals, refused = [], [], []
     auto_done = []
+    # refs this turn names, so a line that gets extra refs for its qty does not take one a later line uses
+    reserved = {r for a in actions or [] if isinstance(a, dict) and a.get("type") == "bom.propose"
+                for r in [a.get("line"), *(((a.get("changes") or {}).get("refs") or []) if isinstance(a.get("changes"), dict) else [])]
+                if isinstance(r, str)}
 
     def maybe_auto(rec):
         if not store.may_auto_apply(rec):
@@ -397,7 +401,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
             elif kind == "bom.propose" and a.get("line") and isinstance(a.get("changes"), dict):
                 rec = store.propose_bom(project, a["line"], a["changes"], a.get("reason", ""),
                                         a.get("sources", []), _agent_may_set_library(a.get("library")) or None,
-                                        sess, new=bool(a.get("new")))
+                                        sess, new=bool(a.get("new")), reserved=reserved)
                 proposals.append(rec["id"])
                 applied.append(f"bom.propose:{a['line']}")
                 maybe_auto(rec)

@@ -128,6 +128,17 @@ def test_undo_restores_the_previous_bom_and_is_logged(server, lte):
     assert code == 409 and "already undone" in body["error"]
 
 
+def test_a_new_line_with_qty_gets_free_refs(server, lte):
+    # the quantity is the number of refs: "qty": 3 with one ref used to order one
+    taken = {r for l in store.bom_lines(lte) for r in l.get("refs") or []}
+    rec = store.propose_bom(lte, "D90", {"value": "white", "qty": 3}, new=True, reserved={"D1", "D2"})
+    refs = rec["changes"]["refs"]
+    assert refs[0] == "D90" and len(refs) == 3
+    assert not (set(refs[1:]) & (taken | {"D1", "D2"}))
+    store.decide(lte, rec["id"], "approved")
+    assert store.qty(_bom(lte, "D90")) == 3
+
+
 def test_undo_of_a_new_line_removes_it_and_a_later_change_blocks_an_undo(server, lte):
     new = store.propose_bom(lte, "R90", {"value": "1k", "package": "0603"}, new=True)
     store.decide(lte, new["id"], "approved")
