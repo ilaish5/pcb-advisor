@@ -187,6 +187,24 @@ def library_status(line, entry):
     return "review"
 
 
+def library_manifest(project):
+    """library/manifest.json (written by partlib.prepare) as {line: entry}; {} when there is none yet."""
+    try:
+        man = json.loads((pdir(project) / "library" / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return man if isinstance(man, dict) else {}
+
+
+def manifest_status(status, built):
+    """The library state of a line the build pipeline knows: its own verdict unless the student already accepted the part."""
+    if status in ("std", "ok") or built is None:
+        return status
+    if built.get("status") in ("missing", "error"):
+        return "missing"
+    return "ok" if built.get("built") else "review"
+
+
 def line_availability_and_risk(line, best=None, build_qty=5):
     supply = line.get("supply")
     q = qty(line)
@@ -244,6 +262,7 @@ def bom(project, write=True):
     lines = bom_lines(project)
     supply = supply_for(project)
     lib = library_parts(project)
+    man = library_manifest(project)
     sheets = {}
     for sh in sheet_ids(project):
         for part in load_sheet(project, sh).get("parts", []):
@@ -252,7 +271,7 @@ def bom(project, write=True):
     for l in lines:
         l["supply"] = supply.get(l["key"])
         entry = lib.get(l["key"])
-        l["library"] = library_status(l, entry)
+        l["library"] = manifest_status(library_status(l, entry), man.get(l["key"]))
         l["library_entry"] = entry
         l["pins_status"], l["pins_issues"] = pins_status(l, entry)
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
@@ -2571,17 +2590,25 @@ def nets_of(project, ref):
 # ---------------------------------------------------------------- library view
 
 def library_view(project):
-    """Non-standard parts only, for the Altium library page."""
+    """The Altium library page: with a build manifest, every BOM line and what the build made of it; before one, the
+    non-standard parts only."""
+    man = library_manifest(project)
     rows = []
     for l in bom(project, write=False):
-        if l["library"] == "std":
+        if l["library"] == "std" and not man:
             continue
         e = l.get("library_entry") or {}
+        m = man.get(l["key"]) or {}
+        issues = m.get("issues") or []
+        if m.get("built_issues"):
+            issues = issues + list(m["built_issues"])
         rows.append({"line": l["key"], "refs": l.get("refs", []), "mpn": l.get("mpn"),
-                     "symbol": bool(e.get("symbol")), "footprint": bool(e.get("footprint")),
-                     "step": bool(e.get("step")), "model_source": e.get("model_source", ""),
+                     "symbol": bool(m.get("symbol") or e.get("symbol")), "footprint": bool(m.get("footprint") or e.get("footprint")),
+                     "step": bool(m.get("step") or e.get("step")), "model_source": e.get("model_source", ""),
                      "verify": e.get("verify", "unchecked"), "accepted": bool(e.get("accepted")),
-                     "issues": e.get("issues", ""), "status": l["library"]})
+                     "issues": "; ".join(issues) if m else e.get("issues", ""), "status": l["library"],
+                     "issue_list": issues, "source": m.get("source", ""), "build_status": m.get("status", ""), "built": bool(m.get("built")),
+                     "vendor_zip": m.get("vendor_zip", ""), "package": l.get("package", "")})
     return rows
 
 

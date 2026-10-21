@@ -46,6 +46,7 @@ def home(tmp_path, monkeypatch):
     """A workspace of our own, with the config reloaded to match."""
     monkeypatch.setenv("PCB_ADVISOR_HOME", str(tmp_path))
     monkeypatch.setenv("PCB_ADVISOR_CONFIG", str(tmp_path / "config.json"))
+    monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path / "userhome"))   # no test reads the real Downloads
     import workspace
     workspace.load(reload=True)
     (tmp_path / "projects").mkdir(parents=True, exist_ok=True)

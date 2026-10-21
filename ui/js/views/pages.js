@@ -12,7 +12,7 @@ const PG_COURSE_LIB = 'course/ad20-essentials/m29-integrated-library.en.md';   /
 
 let srcUnmatched = [];                       // uploaded documents no part claimed yet: asked about in Sources
 let srcFilter = 'all', srcBusy = '';        // Sources: which scope is shown, and what is being added right now
-let libBusy = false;
+let libBusy = '', libNote = null;            // Library: what is running ('build' | 'prepare' | 'export'), and the last result {tone, text}
 let ALTIUM_ERR = null, altiumLoading = false, pgSkillsScrolled = false;
 const pgOpen = {};                          // details that stay open across a redraw: {key: true}
 
@@ -47,12 +47,25 @@ async function loadConfig() {
 /* ================================ Library ================================ */
 const PG_LIB = {ok: ['Verified', 'ok'], review: ['To review', 'warn'], missing: ['Missing', 'bad']};
 
+const PG_SOURCE = {easyeda: 'EasyEDA', vendor: 'Vendor zip', kicad: 'KiCad', generated: 'Generated', missing: 'Missing'};
 function libModels(r) {
   const one = (cls, ic, label, title) => `<span class="mdl ${cls}" title="${esc(title)}">${icon(ic, 's')}${esc(label)}</span>`;
   return `<div class="mdls">` +
     one(r.symbol ? 'ok' : 'no', r.symbol ? 'check' : 'x', 'Symbol', r.symbol ? 'Symbol is in the library' : 'No symbol yet') +
     one(r.footprint ? 'ok' : 'no', r.footprint ? 'check' : 'x', 'Footprint', r.footprint ? 'Footprint is in the library' : 'No footprint yet') +
-    (r.step ? one('ok', 'check', '3D', '3D model from a STEP file') : one('dim', 'check', '3D simple', 'A simple 3D body, not a STEP model')) + '</div>';
+    (r.step ? one('ok', 'check', '3D', '3D model from a STEP file') : one('dim', 'check', '3D simple', 'A simple 3D body, not a STEP model')) +
+    (r.build_status ? (r.built ? one('ok', 'check', 'Built', 'In the compiled IntLib') : one('dim', 'x', 'Not built', 'Not in the IntLib yet: build the library')) : '') + '</div>';
+}
+/* a line the build pipeline knows: what the build made of it, in words */
+function libBuildTag(r) {
+  if (r.build_status === 'missing') return ['Missing', 'bad'];
+  if (r.build_status === 'error') return ['Error', 'bad'];
+  if (r.built) return r.build_status === 'warn' ? ['Built, check', 'warn'] : ['Built', 'ok'];
+  return r.build_status === 'warn' ? ['To check', 'warn'] : ['Ready to build', ''];
+}
+function libIssues(r) {
+  const list = r.issue_list || (r.issues ? [r.issues] : []);
+  return list.map(t => `<div class="lib-issue">${mdInline(t)}</div>`).join('');
 }
 /* One quiet action: Verify until the part has passed, then Accept. A part with no symbol has nothing to verify. */
 function libAction(r) {
@@ -61,12 +74,15 @@ function libAction(r) {
   return '';
 }
 function libRow(r) {
-  const [text, tone] = PG_LIB[r.status] || [LIBTXT[r.status] || r.status, ''];
+  const known = !!r.build_status;
+  const [text, tone] = known ? libBuildTag(r) : (PG_LIB[r.status] || [LIBTXT[r.status] || r.status, '']);
   const refs = r.refs || [];
   return `<tr data-key="${esc(r.line)}" tabindex="0" class="${sel === r.line ? 'sel' : ''}"${r.model_source ? ` title="${esc('Model from ' + r.model_source)}"` : ''}>
     <td title="${esc(refs.join(', '))}"><span class="ref">${esc(refsLabel(refs) || r.line)}</span>${r.mpn ? `<span class="sub m">${esc(r.mpn)}</span>` : ''}</td>
+    ${known ? `<td title="${esc(r.vendor_zip ? 'From ' + r.vendor_zip : '')}">${esc(PG_SOURCE[r.source] || r.source)}</td>` : ''}
     <td>${libModels(r)}</td>
-    <td>${tag(text, tone, r.issues || LIBTXT[r.status] || '')}</td>
+    <td>${tag(text, tone, known ? '' : (r.issues || LIBTXT[r.status] || ''))}</td>
+    ${known ? `<td class="lib-issues">${libIssues(r)}</td>` : ''}
     <td class="act">${libAction(r)}</td></tr>`;
 }
 /* shown after an export: how to get the package into Altium, and what is still unverified */
@@ -84,14 +100,26 @@ function libExportHTML() {
 function libHTML(container) {
   const rows = S.library || [];
   const todo = rows.filter(r => r.status !== 'ok').length;
-  const meta = metaLine([{n: rows.length, label: rows.length === 1 ? 'part' : 'parts'},
-    {n: todo, label: 'to review', tone: 'warn', title: 'Parts that are not verified and accepted yet'}]);
-  const primary = btn('Export IntLib', {kind: 'pri', act: 'libexport', disabled: !rows.length, title: 'Write the library package for Altium'});
+  const known = rows.some(r => r.build_status);
+  const open = rows.filter(r => r.build_status === 'missing' || r.build_status === 'error').length;
+  const built = rows.filter(r => r.built).length;
+  const meta = known ? metaLine([{n: rows.length, label: rows.length === 1 ? 'line' : 'lines'}, {n: built, label: 'built'},
+    {n: open, label: 'missing', tone: 'bad', title: 'Lines with no model yet: their issue says what to download'}])
+    : metaLine([{n: rows.length, label: rows.length === 1 ? 'part' : 'parts'},
+      {n: todo, label: 'to review', tone: 'warn', title: 'Parts that are not verified and accepted yet'}]);
+  const primary = btn(libBusy === 'build' ? 'Building...' : 'Build library', {kind: 'pri', act: 'libbuild', disabled: !!libBusy,
+    title: 'Download, convert and generate the models, compile the IntLib in Altium and install it'});
+  const actions = btn(libBusy === 'prepare' ? 'Preparing...' : 'Prepare only', {act: 'libprepare', disabled: !!libBusy,
+    title: 'Get and convert the models without touching Altium'}) +
+    btn('Export', {size: 'sm', act: 'libexport', disabled: !!libBusy || !rows.length, title: 'Write a package of the library files to compile yourself'});
+  const note = libBusy === 'build' ? `<div class="note"><span>Building in Altium. It can take a few minutes and Altium may flash while it works.</span></div>`
+    : libNote ? `<div class="note ${libNote.tone}"><span>${esc(libNote.text)}</span></div>` : '';
+  const head = known ? '<th>Part</th><th>Source</th><th>Models</th><th>Status</th><th>What to do</th>' : '<th>Part</th><th>Models</th><th>Status</th>';
   const body = rows.length
-    ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr><th>Part</th><th>Models</th><th>Status</th><th><span class="sr">Action</span></th></tr></thead>
+    ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr>${head}<th><span class="sr">Action</span></th></tr></thead>
       <tbody>${rows.map(libRow).join('')}</tbody></table></div>`
-    : emptyState('No library parts yet', 'Parts that are not in Altium\'s default libraries show up here with their symbol, footprint and 3D model.');
-  return `${viewHeader({title: 'Library', meta, primary})}<div class="vb">${libExportHTML()}${body}</div>`;
+    : emptyState('No library parts yet', 'Press Build library: every BOM line gets a symbol, a footprint and a 3D model, from EasyEDA, a vendor zip or the generator.');
+  return `${viewHeader({title: 'Library', meta, actions, primary})}<div class="vb">${note}${libExportHTML()}${body}</div>`;
 }
 
 /* ================================ Sources ================================ */
@@ -404,15 +432,34 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
+async function libRun(kind, path, done) {         // build or prepare: busy state while it runs, the result or the error in a note
+  if (libBusy) return;
+  libBusy = kind;
+  libNote = null;
+  renderCenter(true);
+  try {
+    const r = await api(path, {}, {soft: true});
+    libNote = r.error ? {tone: 'bad', text: r.error} : {tone: 'ok', text: done(r)};
+  } catch (err) { libNote = {tone: 'bad', text: String(err.message || err)}; }
+  libBusy = '';
+  await refresh(true);
+}
+onAct('libbuild', async (el, d, e) => {
+  await libRun('build', '/api/library/build', r => `Library built: ${r.built} of ${r.lines} lines, IntLib installed in Altium` +
+    (r.issues_lines ? `. ${r.issues_lines} ${r.issues_lines === 1 ? 'line has' : 'lines have'} issues, see What to do.` : '.'));
+});
+onAct('libprepare', async (el, d, e) => {
+  await libRun('prepare', '/api/library/prepare', m => `Library data ready for ${Object.keys(m).length} lines. Press Build library to put it in Altium.`);
+});
 onAct('libexport', async (el, d, e) => {
   if (libBusy) return;
-  libBusy = true;
+  libBusy = 'export';
   try {
     libExport = await api('/api/library/export', {});
     await refresh(true);                      // the new file also shows up in Outputs
     const url = `/api/export/${encodeURIComponent(libExport.file)}?${q()}`, file = libExport.file;
     toast(`${file} exported`, {label: 'Download', onClick: () => fileDownload(url, file)});
-  } finally { libBusy = false; }
+  } finally { libBusy = ''; }
 });
 onAct('src-filter', async (el, d, e) => {
   srcFilter = d.value || 'all'; renderCenter(true);

@@ -3,10 +3,13 @@
 For every BOM line the tool gets a symbol, a footprint and (when EasyEDA has one) a STEP model:
   1. EasyEDA by the line's LCSC C-number, through easyeda2kicad run as a subprocess (no login). A failure is
      reported and the line falls through to 2; there is no retry around a block. Downloads are untrusted data.
-  2. Generated: an IPC-7351 nominal footprint for the standard packages and a standard-shape or box symbol
+  2. A vendor zip (SnapEDA, Ultra Librarian, Component Search Engine, Mouser/DigiKey) the student downloaded once:
+     found by the MPN in its file name in the project's Sources or in Downloads, unpacked safely into library/vendor/,
+     its KiCad symbol, footprint and STEP converted like EasyEDA's. These sites need a log-in, so the tool asks.
+  3. Generated: an IPC-7351 nominal footprint for the standard packages and a standard-shape or box symbol
      (pins from the project's netlist sheets).
-  3. Otherwise status "missing" with the reason. Nothing is invented.
-Output, all under projects/<name>/library/: easyeda/<Cxxxx>/ (downloads), build/ (the spec files stage L2 feeds
+  4. Otherwise status "missing" with the reason. Nothing is invented.
+Output, all under projects/<name>/library/: easyeda/<Cxxxx>/ (downloads), vendor/<MPN>/ (unpacked zips), build/ (the spec files stage L2 feeds
 to Altium: symbols_spec.txt, footprints_spec.txt, links.txt, props.txt, parts.json) and manifest.json.
 The LIBRARY|/FPLIB| lines carry the placeholders <SCHLIB>/<PCBLIB>; stage L2 fills in the real paths.
 
@@ -20,8 +23,12 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.parse
+import zipfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import sources  # noqa: E402
 import store  # noqa: E402
 from partlib_convert import clean, convert_footprint, convert_symbols, safe_name  # noqa: E402
 from partlib_kicad import fetch_kicad, kicad_footprint  # noqa: E402
@@ -30,6 +37,9 @@ from partlib_generate import PASSIVE_PREFIX, POWER_NAME, footprint_for, package_
 LCSC_RE = re.compile(r"^C\d{2,9}$")
 RATING_PREFIX = ("R", "C", "L")                 # these show their value as the comment, the rest their MPN
 FETCH_TIMEOUT = 180
+ZIP_MAX_BYTES = 50 * 1024 * 1024                # a vendor zip is untrusted: cap what it may unpack to
+ZIP_MAX_MEMBERS = 1000
+DOWNLOADS_DAYS = 30                             # a zip in Downloads counts for this long
 
 
 def library_dir(project):
@@ -96,19 +106,28 @@ def _description(line):
 
 def _easyeda_part(dest):
     """Read the first symbol, its footprint and STEP from a downloaded lib. Returns (symbol, footprint, step_path)."""
-    sym = convert_symbols((dest / "lib.kicad_sym").read_text(encoding="utf-8"))[0]
-    mods = sorted((dest / "lib.pretty").glob("*.kicad_mod"))
+    return _kicad_part(dest / "lib.kicad_sym", sorted((dest / "lib.pretty").glob("*.kicad_mod")),
+                       list((dest / "lib.3dshapes").glob("*")))
+
+
+def _kicad_part(sym_file, mods, steps, any_step=False):
+    """Convert a KiCad symbol file, its footprint (the one the symbol names, else the first) and the STEP the footprint
+    points at (any_step: else the first STEP there is). Returns (symbol, footprint, step_path)."""
+    sym = convert_symbols(sym_file.read_text(encoding="utf-8"))[0]
     pick = next((m for m in mods if m.stem == sym["footprint"]), mods[0] if mods else None)
     if pick is None:
         raise ValueError("no footprint in the download")
     fp = convert_footprint(pick.read_text(encoding="utf-8"))
     fp["name"] = _plain_name(fp["name"])
+    steps = [c for c in steps if c.suffix.lower() in (".step", ".stp")]
     step = None
     if fp["model"]:
         stem = pathlib.PurePosixPath(fp["model"]["file"].replace("\\", "/")).stem
-        for cand in (dest / "lib.3dshapes").glob("*"):
-            if cand.stem == stem and cand.suffix.lower() in (".step", ".stp"):
+        for cand in steps:
+            if cand.stem == stem:
                 step = cand
+    if step is None and any_step and steps:
+        step = steps[0]
     return sym, fp, step
 
 
@@ -156,6 +175,162 @@ class Build:
         return name
 
 
+# ---------------------------------------------------------------- vendor zips
+
+def _mpn_keys(mpn):
+    """What a zip name is looked for by: the normalized MPN, then the MPN without its packaging suffix (min 5 chars)."""
+    norm = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+    keys = [norm(mpn)] if len(norm(mpn)) >= 4 else []
+    base = re.split(r"[-/]", mpn.strip())[:-1]
+    if base and len(norm("".join(base))) >= 5:
+        keys.append(norm("".join(base)))
+    return keys
+
+
+def vendor_search_links(mpn):
+    q = urllib.parse.quote(mpn.strip(), safe="")
+    return {"Component Search Engine": f"https://componentsearchengine.com/search?term={q}",
+            "SnapEDA": f"https://www.snapeda.com/search/?q={q}",
+            "Ultra Librarian": f"https://www.ultralibrarian.com/search?q={q}"}
+
+
+def vendor_hint(mpn):
+    """What the student does for a part no EasyEDA download or generator covers."""
+    if not (mpn or "").strip():
+        return "the BOM line has no MPN, so no vendor model can be looked for; add the MPN"
+    links = "; ".join(f"{n} {u}" for n, u in vendor_search_links(mpn).items())
+    return (f"download the part's KiCad model once ({links}): choose the KiCad format, log in if the site asks, "
+            "the zip lands in Downloads; then build the library again")
+
+
+def _recent_downloads():
+    """Zips in the user's Downloads folder changed within DOWNLOADS_DAYS, newest first."""
+    cutoff, out = time.time() - DOWNLOADS_DAYS * 86400, []
+    try:
+        out = [f for f in (pathlib.Path.home() / "Downloads").glob("*.zip") if f.is_file() and f.stat().st_mtime >= cutoff]
+    except OSError:
+        pass
+    return sorted(out, key=lambda f: f.stat().st_mtime, reverse=True)
+
+
+def _project_zips(project):
+    folder = sources.folder_of(project)
+    zips = [f for f in folder.glob("*.zip") if f.is_file()] if folder.is_dir() else []
+    return sorted(zips, key=lambda f: f.stat().st_mtime, reverse=True)
+
+
+def _zip_for(mpn, zips):
+    """The first zip whose normalized name carries the MPN (the full MPN before the trimmed one)."""
+    for key in _mpn_keys(mpn):
+        # separators may differ, but the MPN is a whole word: LM35 is not in LM358_KiCad.zip
+        word = re.compile(r"(?<![a-z0-9])" + "[^a-z0-9]*".join(key) + r"(?![a-z0-9])")
+        for f in zips:
+            if word.search(f.stem.lower()):
+                return f
+    return None
+
+
+def find_vendor_zip(project, mpn):
+    """The vendor zip for an MPN: the project's Sources first, else a recent one in Downloads, which is copied into
+    Sources (hashed like any source) so the project keeps it. None when there is none."""
+    sources.adopt(project)
+    hit = _zip_for(mpn, _project_zips(project))
+    if hit:
+        return hit
+    hit = _zip_for(mpn, _recent_downloads())
+    if not hit:
+        return None
+    folder = sources.folder_of(project)
+    folder.mkdir(parents=True, exist_ok=True)
+    dst, n = folder / hit.name, 1
+    while dst.exists() and dst.read_bytes() != hit.read_bytes():
+        dst = folder / f"{hit.stem}-{n}{hit.suffix}"
+        n += 1
+    if not dst.exists():
+        shutil.copy2(hit, dst)
+    sources.adopt(project)
+    return dst
+
+
+def vendor_zip_newer(project, since):
+    """True when a zip in Sources or library/vendor, or a Downloads zip carrying a BOM line's MPN, is newer than `since`."""
+    vendor = library_dir(project) / "vendor"
+    zips = _project_zips(project) + (list(vendor.rglob("*.zip")) if vendor.is_dir() else [])
+    if any(f.stat().st_mtime > since for f in zips):
+        return True
+    fresh = [f for f in _recent_downloads() if f.stat().st_mtime > since]
+    return bool(fresh) and any(_zip_for(l.get("mpn") or "", fresh) for l in store.bom_lines(project))
+
+
+def safe_extract(zip_path, dest):
+    """Unpack an untrusted zip into a fresh dest: no absolute paths, no .., no links, capped size and member count.
+    Nothing in it is executed. Raises ValueError saying why it was refused."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    root = dest.resolve()
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            infos = z.infolist()
+            if len(infos) > ZIP_MAX_MEMBERS:
+                raise ValueError(f"it has {len(infos)} files (more than {ZIP_MAX_MEMBERS})")
+            if sum(i.file_size for i in infos) > ZIP_MAX_BYTES:
+                raise ValueError(f"it unpacks to more than {ZIP_MAX_BYTES // 2**20} MB")
+            total = 0
+            for i in infos:
+                name = i.filename.replace("\\", "/")
+                if name.startswith("/") or re.match(r"[A-Za-z]:", name) or ".." in name.split("/"):
+                    raise ValueError(f"member '{i.filename}' points outside the folder")
+                if i.is_dir() or (i.external_attr >> 16) & 0o170000 == 0o120000:     # folders; symlinks are skipped
+                    continue
+                target = (root / name).resolve()
+                if root not in target.parents:
+                    raise ValueError(f"member '{i.filename}' points outside the folder")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(i) as src, open(target, "wb") as out:
+                    while chunk := src.read(65536):                 # the header's size can lie: count what is written
+                        total += len(chunk)
+                        if total > ZIP_MAX_BYTES:
+                            raise ValueError(f"it unpacks to more than {ZIP_MAX_BYTES // 2**20} MB")
+                        out.write(chunk)
+    except (zipfile.BadZipFile, OSError, RuntimeError) as exc:
+        raise ValueError(f"it is not a readable zip ({exc})") from exc
+
+
+def _vendor_part(build, e, mpn, zip_path, lib):
+    """Symbol, footprint and STEP from a vendor zip's KiCad files: (pins, gfx, footprint name), or None with the reason
+    in e["issues"] (the line then falls through to the generator)."""
+    dest = lib / "vendor" / (safe_name(mpn) or "part")
+    e["vendor_zip"] = zip_path.name
+    try:
+        safe_extract(zip_path, dest)
+    except ValueError as exc:
+        e["issues"].append(f"vendor zip {zip_path.name} was not used: {exc}")
+        return None
+    files = [f for f in sorted(dest.rglob("*")) if f.is_file()]
+    kinds = lambda *suf: [f for f in files if f.suffix.lower() in suf]
+    syms, mods, steps = kinds(".kicad_sym"), kinds(".kicad_mod"), kinds(".step", ".stp")
+    if not syms or not mods:
+        found = sorted({f.suffix.lower() for f in files if f.suffix}) or ["nothing"]
+        e["issues"].append(f"vendor zip {zip_path.name} has no KiCad symbol and footprint (it holds {', '.join(found)}); "
+                           "choose the KiCad format on the vendor's download page and build again")
+        return None
+    try:
+        sym, fp, step = _kicad_part(syms[0], mods, steps, any_step=True)
+    except (ValueError, KeyError, IndexError, TypeError, OSError, UnicodeError):
+        e["issues"].append(f"vendor zip {zip_path.name}: its KiCad files could not be read; "
+                           "download the KiCad format again and build again")
+        return None
+    fpname = build.add_footprint(fp, "vendor", step, safe_name(mpn))
+    if step and not build.footprints[fpname]["steps"]:
+        build.footprints[fpname]["steps"].append(step)
+    if fp["model"] is not None:
+        build.footprints[fpname].setdefault("model", fp["model"])
+    e["source"] = "vendor"
+    e["issues"] += fp.get("notes", [])
+    return sym["pins"], sym["gfx"], fpname
+
+
 # ---------------------------------------------------------------- prepare
 
 def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None):
@@ -179,7 +354,7 @@ def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None
         prev = by_mpn.get(mpn.lower())
         if prev and manifest[prev]["symbol"]:               # the same MPN on another line: one library part
             src = manifest[prev]
-            e.update({k: src[k] for k in ("symbol", "footprint", "step", "source", "status")})
+            e.update({k: src[k] for k in ("symbol", "footprint", "step", "source", "status", "vendor_zip") if k in src})
             e["issues"] = list(src["issues"])
             build.symbols[src["symbol"]].setdefault("lines", [prev]).append(key)
             continue
@@ -207,6 +382,10 @@ def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None
                                        "the next step is a vendor zip (a log-in site) in Sources")
             elif not e["issues"]:
                 e["issues"].append(f"EasyEDA {lcsc}: not downloaded")
+        if got is None and line.get("mpn"):
+            zip_path = find_vendor_zip(project, mpn)
+            if zip_path:
+                got = _vendor_part(build, e, mpn, zip_path, lib)
         if got is None:
             got = _generate(build, e, line, prefix, sheets.get(refs[0], []), (lib, kicad_fetcher, fetch, refresh))
         if got is None:
@@ -270,7 +449,7 @@ def _generate(build, e, line, prefix, pins, ctx):
     key = package_key(pkg)
     if not key:
         e["issues"].append((f"package '{pkg}' is not one the tool generates" if pkg else "the BOM line has no package")
-                           + "; put a vendor zip with the part's files in Sources")
+                           + "; " + vendor_hint(line.get("mpn")))
         return None
     if (key, prefix) not in build.generated:               # one footprint per package (and KiCad chip family)
         name, notes = _kicad_footprint(build, key, prefix, ctx)
@@ -284,7 +463,7 @@ def _generate(build, e, line, prefix, pins, ctx):
     sym = symbol_for(prefix, f"{line.get('mpn', '')} {line.get('description', '')}", pins, npads)
     if sym is None:
         e["issues"].append(f"no netlist pins found for {line.get('refs', [line['key']])[0]} and the shape is not "
-                           "a standard one; the pin list is needed")
+                           "a standard one; the pin list is needed, or " + vendor_hint(line.get("mpn")))
         return None
     e["source"] = source
     e["issues"] += notes + sym[2]

@@ -353,6 +353,11 @@ ALTIUM_ACTIONS = ("altium.create_project", "altium.add_sheet", "altium.skeleton"
                   "altium.import_rules", "altium.run_outjob")
 
 
+def library_issue_count(project):
+    """How many lines of the part library manifest still carry an issue."""
+    return sum(1 for e in store.library_manifest(project).values() if e.get("issues") or e.get("built_issues"))
+
+
 def apply_actions(project, actions, sess=None, last_user="", meta=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
@@ -432,6 +437,17 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None):
                 else:
                     store.add_library(project, a["line"], _agent_may_set_library(a.get("changes")))
                     applied.append(f"library.add:{a['line']}")
+            elif kind == "library.build":
+                # routine: the build backs up the library files and restores them when it fails
+                from altium import bridge
+                try:
+                    res = bridge.build_library(project)
+                except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
+                    refused.append(f"{kind}: {exc}")
+                    continue
+                issues = library_issue_count(project)
+                applied.append(f"{kind}: {res['built']} of {res['lines']} lines built, IntLib installed"
+                               + (f" ({issues} with issues)" if issues else ""))
             elif kind == "part.attach_datasheet" and a.get("ref") and a.get("name"):
                 # routine: applies at once; detach (the Unverified panel, /api/parts/detach_datasheet) is the undo
                 res = store.attach_datasheet(project, a["ref"], a["name"], by="agent")
@@ -1507,6 +1523,23 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/library/export":
             return self._send(200, export_library(proj))
+
+        if path == "/api/library/prepare":
+            import partlib
+            try:
+                return self._send(200, partlib.prepare(proj))
+            except (OSError, ValueError) as exc:
+                return self._send(500, {"error": f"the library data could not be prepared: {exc}"})
+
+        if path == "/api/library/build":
+            from altium import bridge
+            try:
+                res = bridge.build_library(proj)
+            except (bridge.BridgeError, bridge.AltiumReadError) as exc:
+                return self._send(400, {"error": str(exc)})
+            except OSError as exc:
+                return self._send(500, {"error": f"the library build failed: {exc}"})
+            return self._send(200, {**res, "issues_lines": library_issue_count(proj)})
 
         if path == "/api/skill":
             try:

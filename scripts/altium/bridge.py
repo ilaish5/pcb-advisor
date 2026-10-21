@@ -697,14 +697,16 @@ def library_paths(project):
 
 
 def library_stale(project):
-    """True when library/build is missing or older than the BOM, the supplier checks or a netlist sheet."""
+    """True when library/build is missing or older than the BOM, the supplier checks, a netlist sheet or a vendor zip
+    (one in Sources, or a Downloads zip carrying a BOM line's MPN)."""
     lib = partlib.library_dir(project)
     man = lib / "manifest.json"
     if not man.is_file() or not (lib / "build" / "parts.json").is_file():
         return True
     pd = store.pdir(project)
     inputs = [pd / n for n in LIB_INPUTS] + (sorted((pd / "netlist").rglob("*")) if (pd / "netlist").is_dir() else [])
-    return any(f.is_file() and f.stat().st_mtime > man.stat().st_mtime for f in inputs)
+    since = man.stat().st_mtime
+    return any(f.is_file() and f.stat().st_mtime > since for f in inputs) or partlib.vendor_zip_newer(project, since)
 
 
 def _spec_lines(path):

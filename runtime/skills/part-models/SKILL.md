@@ -19,8 +19,9 @@ description: Finds and checks the symbol, footprint and 3D model of a part, and 
    (b) KiCad official library: best STEP for connectors and standard packages. (c) Vendor or aggregator: SnapEDA, Ultra Librarian,
    SamacSys, the maker's site.
 3. Download by hand when the site needs a login, a CAPTCHA or a quota (SnapEDA, Ultra Librarian, SamacSys, many maker sites).
-   Link-and-return: give the student the exact page link and what to pick (Altium format, with STEP), ask them to download the
+   Link-and-return: give the student the exact page link and what to pick (KiCad format, with STEP), ask them to download the
    zip and return it in the UI; the tool stores it with a hash and files it in the project. Do not try to get around those sites.
+   Ask for the KiCad format: the tool reads a zip from Sources or Downloads by the MPN in its name, then `library.build` makes the part.
 4. Check the package: the footprint name and its drawn pad count, pitch and body size must equal the datasheet land pattern for the
    ORDERING CODE package, not only the part family. Compare 3 numbers: pad count, pitch, body size.
 5. Check pin 1 and pin names: pin 1 of the symbol, of the footprint and of the 3D body must be the same corner as the datasheet drawing.

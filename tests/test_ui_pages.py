@@ -51,7 +51,7 @@ def test_one_primary_button_per_view():
     """Library and Sources each have exactly one primary action; Settings has none (it saves as you type)."""
     lib = func_body(PAGES, "libHTML")
     src = func_body(PAGES, "sourcesHTML")
-    assert lib.count("kind: 'pri'") == 1 and "Export IntLib" in lib
+    assert lib.count("kind: 'pri'") == 1 and "Build library" in lib
     assert src.count("kind: 'pri'") == 1 and "Add" in src
     for settings in (func_body(PAGES, "settingsBody"), func_body(PAGES, "setAgentHTML"), func_body(PAGES, "setAltiumHTML")):
         assert "kind: 'pri'" not in settings

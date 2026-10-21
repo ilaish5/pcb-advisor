@@ -66,6 +66,7 @@
             "Bash({python} {repo}/scripts/verify_sources.py *)",
             "Bash({python} {repo}/scripts/jlc.py *)",
             "Bash({python} {repo}/scripts/library.py *)",
+            "Bash({python} {repo}/scripts/partlib.py *)",
             "Bash({python} {repo}/scripts/rules.py *)",
             "Bash({python} {repo}/scripts/calc.py *)",
             "Bash({python} {repo}/scripts/checks/*.py *)",

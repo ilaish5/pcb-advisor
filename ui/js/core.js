@@ -202,7 +202,7 @@ function render(force) {
   document.title = S.title + ' · PCB Advisor';
   renderNav();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy, libBusy, libNote]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
 // go('workspace', 'bom') or go('bom') shows a stage in the main sheet; go('library') a page. See shell.js.
