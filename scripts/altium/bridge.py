@@ -11,7 +11,8 @@ Two-way link to a running Altium Designer: create the project, add documents, dr
     python scripts/altium/bridge.py run-outjob <project>         Gerber, NC drill, BOM, pick and place into the outputs folder
     python scripts/altium/bridge.py open <project>
     python scripts/altium/bridge.py build-library <project>      the project's Altium library (SchLib, PcbLib, 3D, LibPkg,
-                                                                 compiled and installed IntLib) next to the Altium project
+                                                                 compiled IntLib, installed and added to the Altium
+                                                                 project as a project library) next to the Altium project
 
 How: Altium runs a DelphiScript from scripts/altium/bridge/ (`X2.EXE -RScriptingSystem:RunScript(...)`); the request
 and the answer go through files in a fixed folder. The script mechanism is adapted from altium-mcp (MIT, Copyright (c)
@@ -335,6 +336,31 @@ def _find_doc(prj_file, name_or_id, kind=".schdoc"):
     return None
 
 
+def _doc_key(prj, rel):
+    """A PrjPcb DocumentPath as one comparable string: relative to the PrjPcb folder, slashes and case ignored."""
+    return os.path.normcase(os.path.normpath(str(prj.parent / pathlib.Path(str(rel).replace("\\", "/")))))
+
+
+def intlib_in_project(prj, intlib):
+    """True when the PrjPcb file lists the IntLib as one of its documents (a project library)."""
+    want = _doc_key(prj, intlib)
+    return any(_doc_key(prj, d) == want for d in read_prjpcb(prj)["documents"])
+
+
+def add_intlib_to_project(prj, intlib):
+    """Make the IntLib a document of the Altium project. Altium's installed-libraries list does not feed the schematic ECO
+    (Update PCB says Footprint Not Found); a project library does. Idempotent. Returns True when the saved PrjPcb lists it."""
+    prj, intlib = pathlib.Path(prj), pathlib.Path(intlib)
+    try:
+        if not intlib.is_file() or not prj.is_file():
+            return False
+        if not intlib_in_project(prj, intlib):
+            run_commands([("PROJECT", str(prj)), ("ADDDOC", str(prj), str(intlib)), ("SAVEPRJ", str(prj))])
+        return intlib_in_project(prj, intlib)
+    except (BridgeError, AltiumReadError, OSError, ValueError):
+        return False
+
+
 def new_project(project):
     """Create the Altium project for an advisor project: PrjPcb, one PcbDoc, one SchDoc per sheet. Links it."""
     meta = project_mod.load_meta(project)
@@ -357,7 +383,11 @@ def new_project(project):
         raise BridgeError("Altium ran the script but the project does not list all its documents: "
                           f"{summary['documents']}. Check Altium for a dialog box.")
     project_mod.set_altium_link(project, project_file=str(prj), pcb_file=str(pcb))
-    _log(project, "new-project", project_file=str(prj), documents=summary["documents"])
+    intlib = library_paths(project)["intlib"]
+    lib_in = add_intlib_to_project(prj, intlib) if intlib.is_file() else None      # a library built before the project existed
+    if lib_in:
+        summary = read_prjpcb(prj)
+    _log(project, "new-project", project_file=str(prj), documents=summary["documents"], library_in_project=lib_in)
     return {"project_file": str(prj), "pcb_file": str(pcb), "documents": summary["documents"]}
 
 
@@ -1104,11 +1134,17 @@ def build_library(project, fetch=True):
     notices = [f"Another installed library had the same name and was removed from Altium's installed list: "
                f"{ln[len(SAME_NAME):].strip()} (Altium matches libraries by file name)."
                for ln in log if ln.startswith(SAME_NAME)]
+    # the installed list is not what the schematic ECO reads: the IntLib must be a library of the Altium project itself
+    in_project = add_intlib_to_project(prj, intlib) if fresh else False
+    if not in_project:
+        issues.append(f"The project library is not part of {prj.name}: the ECO will say Footprint Not Found. "
+                      f"Add {intlib} to the project in Altium (Projects panel, right-click the project, Add Existing to Project) and save it.")
     built = _mark_built(project, expected, {}, {}, fresh and installed)
     if fresh and installed:
         partlib_order.clear_params_stale(project)
     res = {"schlib": str(lp["schlib"]), "pcblib": str(lp["pcblib"]), "libpkg": str(lp["libpkg"]), "intlib": str(intlib),
            "folder_3d": str(lp["d3"]), "counts": counts, "intlib_fresh": fresh, "installed": installed,
+           "in_project": in_project,
            "built": sum(built.values()), "lines": len(built), "prepared": prepared, "backup": backup, "issues": issues,
            "notices": notices}
     _log(project, "build-library", **res)

@@ -3,6 +3,7 @@ The Altium bridge, with Altium itself stubbed: what we write, what we ask Altium
 (The real thing needs Windows and Altium Designer; it was run live by hand, see scripts/altium/bridge.py.)
 """
 import json
+import os
 import pathlib
 import threading
 import urllib.request
@@ -36,7 +37,7 @@ class FakeAltium:
             elif c[0] == "ADDDOC":
                 with open(self.prj, "a", encoding="ascii", newline="") as fh:
                     n = self.prj.read_text(encoding="ascii").count("[Document") + 1
-                    fh.write(f"\r\n[Document{n}]\r\nDocumentPath={pathlib.Path(c[2]).name}\r\n")
+                    fh.write(f"\r\n[Document{n}]\r\nDocumentPath={os.path.relpath(c[2], self.prj.parent)}\r\n")
             elif c[0] == "OUTJOB":                  # Altium's own folder next to the project: one Gerber per layer
                 out = self.prj.parent / f"Project Outputs for {self.prj.stem}" / "Gerber"
                 out.mkdir(parents=True, exist_ok=True)
@@ -68,6 +69,24 @@ def test_new_project_writes_the_project_and_one_sheet_per_advisor_sheet(lte, fak
     assert project_mod.altium_link(lte)["project_file"] == str(prj)
     assert project_mod.altium_link(lte)["pcb_file"].endswith(".PcbDoc")
     assert any(e["op"] == "new-project" for e in store.read_jsonl(store.pdir(lte) / "altium-log.jsonl"))
+
+
+def test_new_project_adds_an_existing_intlib_to_the_project_once(lte, fake, home):
+    name = bridge._file_name(project_mod.load_meta(lte).get("title") or lte, bridge._file_name(lte, "Project"))
+    intlib = home / "altium" / name / "Library" / f"Project Outputs for {name}-Lib" / f"{name}-Lib.IntLib"
+    intlib.parent.mkdir(parents=True)
+    intlib.write_bytes(b"intlib")
+    bridge.new_project(lte)
+    prj = bridge._linked(lte)
+    assert [c[0] for c in fake.flat()].count("ADDDOC") == 1
+    assert intlib.name in read_prjpcb(prj)["other"][0]
+    assert bridge.add_intlib_to_project(prj, intlib) is True
+    assert [c[0] for c in fake.flat()].count("ADDDOC") == 1
+
+
+def test_new_project_without_an_intlib_adds_none(lte, fake):
+    bridge.new_project(lte)
+    assert "ADDDOC" not in [c[0] for c in fake.flat()]
 
 
 def test_no_sheets_gives_one_main_sheet(empty, fake):

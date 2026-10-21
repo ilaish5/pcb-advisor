@@ -55,6 +55,7 @@ class Stub:
         self.runs, self.bad_pads, self.stalled = [], bad_pads, not stall_first
         self.make_intlib, self.installed, self.fail_commands = make_intlib, installed, False
         self.same_name = []
+        self.adddoc, self.doc_path = True, "Library\\Project Outputs for lte-Lib\\lte-Lib.IntLib"
         monkeypatch.setattr(bridge, "run_commands", self)
         monkeypatch.setattr(bridge, "read_schlib", self.schlib)
         monkeypatch.setattr(bridge, "read_pcblib", self.pcblib)
@@ -75,6 +76,9 @@ class Stub:
                 pathlib.Path(c[2]).parent.mkdir(parents=True, exist_ok=True)
                 pathlib.Path(c[2]).write_bytes(b"intlib")
                 out += [f"uninstalled same-name {p}" for p in self.same_name]
+            if c[0] == "ADDDOC" and self.adddoc:
+                with open(c[1], "a", encoding="ascii", newline="") as fh:
+                    fh.write(f"\r\n[Document1]\r\nDocumentPath={self.doc_path}\r\n")
             if c[0] == "CHECKINST":
                 out.append("INSTALLED yes x" if self.installed else "INSTALLED no x")
         return out
@@ -127,7 +131,7 @@ def test_a_build_fills_the_specs_sends_the_steps_in_order_and_marks_every_line(l
     assert res["counts"] == {"symbols": 2, "footprints": 2, "pads": 5, "bodies": 1, "models": 1}
     names = stub.names()
     assert names[0] == "LIBCLOSE"                           # nothing of the old library stays open or installed
-    assert names[-2:] == ["COMPILE", "CHECKINST"]
+    assert names[-5:] == ["COMPILE", "CHECKINST", "PROJECT", "ADDDOC", "SAVEPRJ"]
     for step in ("FPBATCH", "SYMBATCH", "SYMLINK", "SYMPROPS", "SYMPARAMS", "HIDEPINS", "ATTACH3D"):
         assert step in names and names.index(step) < names.index("COMPILE")
     assert names.index("FPBATCH") < names.index("FPREMOVE")          # the dummy goes only after the real parts are in
@@ -337,3 +341,29 @@ def test_the_readers_read_the_shipped_templates():
     assert [s["name"] for s in sch["symbols"]] == [bridge.TEMPLATE_SYMBOL]
     pcb = read_pcblib(bridge.TEMPLATES / "Template.PcbLib")
     assert [f["name"] for f in pcb["footprints"]] == [bridge.TEMPLATE_FOOTPRINT]
+
+
+def test_the_build_adds_the_intlib_to_the_project_and_says_so(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+    res = bridge.build_library(lib)
+    assert res["in_project"] is True
+    adds = [c for run in stub.runs for c in run if c[0] in ("ADDDOC", "SAVEPRJ")]
+    assert [c[0] for c in adds] == ["ADDDOC", "SAVEPRJ"] and adds[0][2].endswith("lte-Lib.IntLib")
+    assert [e for e in store.read_jsonl(store.pdir(lib) / "altium-log.jsonl") if e["op"] == "build-library"][-1]["in_project"] is True
+
+
+def test_the_build_leaves_a_project_that_already_lists_the_intlib_alone(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+    prj = bridge._linked(lib)
+    prj.write_bytes(b"\xef\xbb\xbf[Design]\r\n[Document1]\r\nDocumentPath=LIBRARY/project outputs for LTE-LIB/LTE-LIB.intlib\r\n")
+    assert bridge.build_library(lib)["in_project"] is True
+    assert "ADDDOC" not in stub.names() and "SAVEPRJ" not in stub.names()
+
+
+def test_the_build_says_when_the_project_still_lacks_the_intlib(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+    stub.adddoc = False
+    with pytest.raises(bridge.BridgeError, match="not part of lte.PrjPcb.*Footprint Not Found"):
+        bridge.build_library(lib)
+    last = [e for e in store.read_jsonl(store.pdir(lib) / "altium-log.jsonl") if e["op"] == "build-library"][-1]
+    assert last["in_project"] is False and any("Footprint Not Found" in i for i in last["issues"])

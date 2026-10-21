@@ -18,21 +18,21 @@ description: Plans and explains the single project library (one library with eve
 2. Naming is fixed by the tool: part name = the MPN, footprint name = the package or the maker's name, unique across the library.
    Generic R, C, L get one part per value and package. Every part carries `MPN`, `Manufacturer`, `LCSC`, `Description` and `Comment`.
 3. Build it: the action `library.build` (or `python <repo>/scripts/altium/bridge.py build-library <project>`). The tool downloads what it can
-   (EasyEDA by LCSC code, KiCad's official footprints), reads vendor zips, generates the rest, compiles the IntLib through Altium and installs it.
+   (EasyEDA by LCSC code, KiCad footprints), reads vendor zips, generates the rest, compiles the IntLib through Altium and adds it to the project.
    Never tell the student to build the library by hand or to run a script in Altium. Altium must be open; a failure restores the old files.
 4. For a line that is `missing` or has an issue, give the vendor links from its issue text (Component Search Engine, SnapEDA, Ultra Librarian).
    Ask the student to choose the KiCad format, log in once if the site asks, and download: the zip lands in Downloads and the tool finds it
    by the MPN in its file name (or the student drops it in Sources). Then run `library.build` again. Do not try to get around the log-in.
 5. After the build read the table again: counts of built lines against BOM lines, and each remaining issue. Report differences honestly.
-6. Give the install check: the library is in Components panel > Installed Libraries, and one dragged part shows its footprint and 3D in
-   the PCB panel. Then Update PCB: expect no "Footprint Not Found". Cite the AD20 manual for menu names.
+6. Give the check: the IntLib is under Libraries in the Projects panel (Altium's installed list alone does not feed Update PCB), and one
+   dragged part shows its footprint and 3D in the PCB panel. Then Update PCB: expect no "Footprint Not Found". Cite the AD20 manual.
 7. When a part changes later, run `library.build` again; the tool rebuilds only when the BOM, a netlist sheet or a vendor zip changed.
    Remind the student to run Update From Libraries for placed parts.
 8. Record what exists with `library.add` per non-standard part. Never mark parts verified or accepted.
 
 ## Scripts
 - `python <repo>/scripts/partlib.py status <project>` - the per-line library table; `prepare <project> [--no-fetch] [--refresh]` makes the data without Altium.
-- `python <repo>/scripts/altium/bridge.py build-library <project>` - builds, compiles and installs the library (same as the `library.build` action).
+- `python <repo>/scripts/altium/bridge.py build-library <project>` - builds, compiles, installs and adds the library to the project (= `library.build`).
 - `python <repo>/scripts/skills/verify_part.py <project> <line>` - exists today; pins against the datasheet text for one part.
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` - exists today; the BOM with the LCSC column. Shows which lines lack the code.
 - (planned, stage I8) a library check that reports links to missing footprints, symbols with no footprint, duplicate footprint names,
