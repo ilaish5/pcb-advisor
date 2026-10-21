@@ -126,3 +126,26 @@ def test_a_pdf_from_a_link_with_no_extension_is_saved_as_pdf(empty, monkeypatch)
     assert res["name"] == "8589012691923320832.pdf"
     assert sources.get(empty, "https://x/y/12345", "ATTINY412-SSNR")["name"] == "ATTINY412-SSNR.pdf"
     assert sources.find_for(empty, "ATTINY412-SSNR") == "ATTINY412-SSNR.pdf"
+
+
+def _row_of_blocks_around_a_hub():
+    ids = ["bat", "mcu", "temp", "door", "buzzer", "led"]
+    ops = [{"op": "add_shape", "id": i, "x": 100 + 200 * n, "y": 100, "w": 160, "h": 68} for n, i in enumerate(ids)]
+    links = [("bat", "mcu"), ("mcu", "temp"), ("door", "mcu"), ("mcu", "buzzer"), ("mcu", "led")]
+    return ops + [{"op": "add_connector", "id": f"c{n}", "from": a, "to": b} for n, (a, b) in enumerate(links)]
+
+
+def test_a_first_diagram_drawn_as_one_row_around_a_hub_is_laid_out(empty):
+    # Sonnet and Flash both put every block in one row: the MCU's links ran through the sensor and looked like a chain
+    store.apply_diagram_edit(empty, _row_of_blocks_around_a_hub())
+    shapes = store.load_idea_working(empty)["diagram"]["shapes"]
+    assert not store._hidden_links(shapes, store.load_idea_working(empty)["diagram"]["connectors"])
+    x = {s["id"]: s["x"] for s in shapes}
+    assert x["bat"] == x["door"] < x["mcu"] < x["temp"] == x["buzzer"] == x["led"]
+
+
+def test_blocks_the_student_placed_are_not_moved(empty):
+    store.apply_diagram_edit(empty, _row_of_blocks_around_a_hub()[:6])
+    before = {s["id"]: (s["x"], s["y"]) for s in store.load_idea_working(empty)["diagram"]["shapes"]}
+    store.apply_diagram_edit(empty, [{"op": "add_connector", "id": "c", "from": "mcu", "to": "led"}])
+    assert {s["id"]: (s["x"], s["y"]) for s in store.load_idea_working(empty)["diagram"]["shapes"]} == before

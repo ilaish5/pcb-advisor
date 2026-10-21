@@ -178,7 +178,7 @@ function reqRowHTML(i, idx) {
   return `<li class="req-row${proposed ? ' is-proposed' : ''}" tabindex="${idx === 0 ? 0 : -1}" data-index="${idx}" data-topic="${esc(i.topic)}" title="${esc(by)}">
       <span class="req-drag-handle" title="Drag to reorder" aria-label="Drag to reorder">${icon('grip')}</span>
       <div class="req-main">
-        <div class="req-view"><p class="req-line" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : draftMark(mark[i.topic])}<b class="req-topic">${esc(i.topic)}</b> <span class="req-text">${esc(i.text)}</span></p></div>
+        <div class="req-view"><p class="req-line" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : draftMark(mark[i.topic])}<b class="req-topic">${esc(i.topic)}</b> <span class="req-text" dir="auto">${esc(i.text)}</span></p></div>
         <div class="req-edit-form" hidden>
           <input type="text" class="in req-edit-topic" value="${esc(i.topic)}" maxlength="60" placeholder="Topic" aria-label="Topic">
           <textarea class="in req-edit-text" maxlength="1000" rows="3" placeholder="Requirement" aria-label="Requirement" title="Enter saves, Shift+Enter adds a line, Esc cancels" dir="auto">${esc(i.text)}</textarea>
@@ -200,7 +200,7 @@ function descHTML() {
       btn('Dismiss', {size: 'sm', act: 'dismiss-desc', title: 'Remove this proposal'})
     : (goal ? btn('', {size: 'sm', icon: 'edit', act: 'edit-desc', title: 'Edit description'}) : '');
   const content = goal
-    ? `<p class="desc-text" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : draftMark(((S.idea_draft || {}).marks || {}).goal)}${esc(goal)}</p>`
+    ? `<p class="desc-text" dir="auto">${proposed ? tag('Proposed', 'warn') + ' ' : draftMark(((S.idea_draft || {}).marks || {}).goal)}<span dir="auto">${esc(goal)}</span></p>`
     : `<button type="button" class="desc-empty" data-act="edit-desc">Describe the board in a few sentences</button>`;
   return `<div class="desc-block${proposed ? ' is-proposed' : ''}"${titleAttr}>
       <div class="desc-main">
