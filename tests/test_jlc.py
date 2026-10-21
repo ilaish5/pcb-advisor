@@ -232,3 +232,8 @@ def test_an_out_of_stock_exact_mpn_is_still_returned(home):
         return {"data": {"componentPageInfo": {"list": rows + [
             {"componentCode": "C777", "componentModelEn": "ALIKE", "stockCount": 0}]}}}
     assert jlc.part("ALIKE", transport=transport)["code"] == "C777"
+
+
+def test_a_count_prefix_is_dropped_when_rewording():
+    assert jlc._rephrasings("2xAAA battery holder")[0] == "AAA battery holder"
+    assert jlc._rephrasings("4xAA") == ["AA"]

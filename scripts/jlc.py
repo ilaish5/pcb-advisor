@@ -202,11 +202,11 @@ def _fetch(keyword, size, transport, requested=None):
 def _rephrasings(keyword):
     """JLC matches words in order and ranks zero-stock placeholders first: "0603 LED green"
     finds only placeholders while "LED 0603" finds the real parts. A few cheap rewordings."""
-    words = keyword.split()
+    words = [re.sub(r"(?i)^\d+x(?=[a-z])", "", w) for w in keyword.split()]     # "2xAAA" is "AAA" to JLC
     if len(words) < 2:
-        return []
-    out = [" ".join(reversed(words))] + [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
-    return list(dict.fromkeys(w for w in out if w and w != keyword))[:4]
+        return [words[0]] if words and words[0] != keyword else []
+    out = [" ".join(words), " ".join(reversed(words))] + [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
+    return list(dict.fromkeys(w for w in out if w and w != keyword))[:5]
 
 
 _LIB_RANK = {"Basic": 0, "Preferred": 1}
