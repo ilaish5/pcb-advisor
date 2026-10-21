@@ -43,6 +43,7 @@ def lib(lte, home, monkeypatch):
     (ldir / "manifest.json").write_text(json.dumps({
         "C1": {"symbol": "R10K", "footprint": "R0603"}, "U1": {"symbol": "U1X", "footprint": "SOT23"},
         "X9": {"symbol": None, "footprint": None}}), encoding="utf-8")
+    (ldir / "converter.txt").write_text(bridge.partlib.converter_fingerprint() + "\n", encoding="utf-8")
     return lte
 
 

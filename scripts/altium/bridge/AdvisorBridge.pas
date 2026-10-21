@@ -469,6 +469,7 @@ end;
 function FocusLib(Path: String; Kind: String): Boolean;
 var
     D, V : IDispatch;
+    N : Integer;
 begin
     Result := False;
     D := Client.GetDocumentByPath(Path);
@@ -478,9 +479,15 @@ begin
         Say('ERR cannot open ' + Path);
         Exit;
     end;
-    Client.ShowDocument(D);
-    Sleep(500);
-    V := Client.CurrentView;
+    { the focus can lag behind ShowDocument (a SchLib saved a moment ago still in front): ask again }
+    for N := 1 to 5 do
+    begin
+        Client.ShowDocument(D);
+        Sleep(500);
+        V := Client.CurrentView;
+        if (V <> nil) then
+            if SameFile(V.OwnerDocument.FileName, Path) then Break;
+    end;
     if (V = nil) then
     begin
         Say('ERR no focused document after opening ' + Path);

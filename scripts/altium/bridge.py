@@ -697,11 +697,16 @@ def library_paths(project):
 
 
 def library_stale(project):
-    """True when library/build is missing or older than the BOM, the supplier checks, a netlist sheet or a vendor zip
-    (one in Sources, or a Downloads zip carrying a BOM line's MPN)."""
+    """True when library/build is missing, was made by other converter code, or is older than the BOM, the supplier
+    checks, a netlist sheet or a vendor zip (one in Sources, or a Downloads zip carrying a BOM line's MPN)."""
     lib = partlib.library_dir(project)
     man = lib / "manifest.json"
     if not man.is_file() or not (lib / "build" / "parts.json").is_file():
+        return True
+    try:
+        if (lib / "converter.txt").read_text(encoding="utf-8").strip() != partlib.converter_fingerprint():
+            return True
+    except OSError:
         return True
     pd = store.pdir(project)
     inputs = [pd / n for n in LIB_INPUTS] + (sorted((pd / "netlist").rglob("*")) if (pd / "netlist").is_dir() else [])

@@ -17,6 +17,7 @@ The LIBRARY|/FPLIB| lines carry the placeholders <SCHLIB>/<PCBLIB>; stage L2 fil
   python scripts/partlib.py status <project>
 """
 import argparse
+import hashlib
 import json
 import pathlib
 import re
@@ -40,6 +41,14 @@ FETCH_TIMEOUT = 180
 ZIP_MAX_BYTES = 50 * 1024 * 1024                # a vendor zip is untrusted: cap what it may unpack to
 ZIP_MAX_MEMBERS = 1000
 DOWNLOADS_DAYS = 30                             # a zip in Downloads counts for this long
+
+
+def converter_fingerprint():
+    """Short hash of the converter code: a library built by older code is stale."""
+    h = hashlib.sha256()
+    for n in ("partlib.py", "partlib_convert.py", "partlib_generate.py"):
+        h.update((pathlib.Path(__file__).parent / n).read_bytes())
+    return h.hexdigest()[:12]
 
 
 def library_dir(project):
@@ -414,6 +423,7 @@ def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None
                 elif e["status"] == "ok" and not (p["kind"] == "3d" and e["source"] != "easyeda"):
                     e["status"] = "warn"
     (lib / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    (lib / "converter.txt").write_text(converter_fingerprint() + "\n", encoding="utf-8")   # not in manifest.json: its values are all lines
     return manifest
 
 

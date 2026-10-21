@@ -155,6 +155,15 @@ def test_a_new_zip_makes_the_library_stale(proj, home):
     assert bridge.library_stale(proj) is True
 
 
+def test_a_changed_converter_makes_the_library_stale(proj, home, monkeypatch):
+    prep(proj, fetcher=fake_fetch([]))
+    assert bridge.library_stale(proj) is False
+    monkeypatch.setattr(partlib, "converter_fingerprint", lambda: "other")
+    assert bridge.library_stale(proj) is True
+    (home / "projects" / proj / "library" / "converter.txt").write_text("other\n")
+    assert bridge.library_stale(proj) is False
+
+
 def test_a_matching_zip_in_downloads_makes_it_stale_but_an_unrelated_one_does_not(proj, home):
     prep(proj, fetcher=fake_fetch([]))
     man = home / "projects" / proj / "library" / "manifest.json"
