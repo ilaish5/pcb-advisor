@@ -246,7 +246,7 @@ def test_import_rules_sends_the_preset_and_extras_minus_the_disabled_ones(lte, f
         {"name": "Poly_Conn", "kind": "PolygonConnect", "values": {}}]), encoding="utf-8")
     res = bridge.import_rules(lte)
     cmds = fake.flat()
-    assert cmds[0] == ("PROJECT", str(prj)) and cmds[-1] == ("SAVE", str(pcb))
+    assert cmds[0] == ("PROJECT", str(prj)) and cmds[-2:] == [("SAVE", str(pcb)), ("RULESIN", str(pcb))]
     sent = {c[3]: c for c in cmds if c[0] == "RULE"}
     assert off not in sent and set(names) - {off} <= set(sent)               # the rule that is off is not written
     assert sent["Silk_Silk"][1:3] == (str(pcb), "SilkToSilkClearance") and "SilkToSilkClearance=80000" in sent["Silk_Silk"]
@@ -374,3 +374,76 @@ def test_api_import_rules_and_run_outjob(lte, fake, monkeypatch):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# ---- rules that the file has but Altium's open board lacks, and rules gone from the file
+
+def _in_memory(names, total=None):
+    return [f"RULEIN {n}" for n in names] + [f"RULESIN {len(names) if total is None else total}"]
+
+
+def test_rules_in_altium_parses_the_log_and_ignores_a_partial_or_missing_list():
+    assert bridge.rules_in_altium(["> RULESIN", "RULEIN Clearance 6mil", "RULEIN Width", "RULESIN 2"]) == ["Clearance 6mil", "Width"]
+    assert bridge.rules_in_altium(["RULESIN none"]) is None and bridge.rules_in_altium([]) is None
+    assert bridge.rules_in_altium(["RULEIN a", "RULESIN 2"]) is None             # cut short
+
+
+def test_import_rules_ends_with_the_in_memory_listing(lte, fake):
+    _, pcb = _linked_with_rules_board(lte, fake)
+    bridge.import_rules(lte)
+    assert fake.flat()[-2:] == [("SAVE", str(pcb)), ("RULESIN", str(pcb))]
+
+
+def test_import_rules_flags_a_rule_the_file_has_but_altiums_board_does_not(lte, fake, monkeypatch):
+    _, pcb = _linked_with_rules_board(lte, fake)
+    todo, _ = bridge.rule_plan(lte, pcb)
+    names = [rec["NAME"] for rec, _ in todo]
+    lost = names[0]
+    mem = [names[1:]]
+
+    def run(cmds, **k):                  # Altium wrote the file (the read-back confirms every rule); memory lacks the first
+        monkeypatch.setattr(bridge.rules_mod, "read_pcbdoc",
+                            lambda p: {"rules": [dict(rec, NAME=rec["NAME"]) for rec, _ in todo]})
+        return _in_memory(mem[0])
+    monkeypatch.setattr(bridge, "run_commands", run)
+    res = bridge.import_rules(lte)
+    assert res["not_in_altium"] == [lost] and lost in res["unconfirmed"]
+    assert lost in res["message"] and "Import again" in res["message"] and "would drop" in res["message"]
+    mem[0] = names
+    res = bridge.import_rules(lte)
+    assert res["not_in_altium"] == [] and not res["message"] and lost not in res["unconfirmed"]
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **k: ["RULESIN none"])      # board not open: no verdict from memory
+    assert bridge.import_rules(lte)["not_in_altium"] == []
+
+
+def test_rules_missing_lists_the_advisor_rules_the_pcbdoc_file_lacks(lte, fake, monkeypatch):
+    _, pcb = _linked_with_rules_board(lte, fake)
+    todo, _ = bridge.rule_plan(lte, pcb)
+    have = {r["NAME"] for r in bridge.rules_mod.read_pcbdoc(pcb)["rules"]}
+    recs = bridge._plan_records(lte, pcb)
+    miss = bridge.rules_missing(lte)
+    assert miss and not set(miss) & have and set(miss) >= {rec["NAME"] for rec, _ in todo} - have
+    monkeypatch.setattr(bridge, "_plan_records", lambda project, pcb: [r for r in recs if r["NAME"] in have])
+    assert bridge.rules_missing(lte) == []
+
+
+def test_rules_missing_is_empty_without_a_pcbdoc(lte, fake):
+    assert bridge.rules_missing(lte) == []
+
+
+def test_run_outjob_warns_when_the_rules_are_gone_from_the_pcbdoc(lte, fake, monkeypatch):
+    _linked_with_rules_board(lte, fake)
+    res = bridge.run_outjob(lte)
+    assert res["warnings"] and "no longer in the PcbDoc" in res["warnings"][0] and "Altium's defaults" in res["warnings"][0]
+    monkeypatch.setattr(bridge, "rules_missing", lambda project: [])
+    assert bridge.run_outjob(lte)["warnings"] == []
+
+
+def test_the_agent_action_result_carries_the_outjob_warning(lte, fake, monkeypatch):
+    import serve
+    _linked_with_rules_board(lte, fake)
+    applied, _, refused = serve.apply_actions(lte, [{"type": "altium.run_outjob"}])
+    assert not refused and "WARNING" in applied[0] and "no longer in the PcbDoc" in applied[0]
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **k: _in_memory([]))
+    applied, _, _ = serve.apply_actions(lte, [{"type": "altium.import_rules"}])
+    assert "Altium's open board does not have" in applied[0]

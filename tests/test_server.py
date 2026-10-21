@@ -324,6 +324,7 @@ def test_rules_endpoints(server, lte):
     assert "preset" in res
     assert len(res["preset"]["rules"]) >= 7
     assert "diff" in res
+    assert res["missing_in_pcb"] == []                  # no PcbDoc linked: nothing to report
 
     # POST /api/rules/extra
     code, res = post(server, "/api/rules/extra", {

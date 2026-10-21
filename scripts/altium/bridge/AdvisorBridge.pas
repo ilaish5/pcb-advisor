@@ -13,7 +13,7 @@
 
   Commands:  PROJECT prj | SCH path | PCB path | SAVEPRJ prj | CLEAR path | PARAM path name value
              FRAME path x y w h text | TITLEBLOCK path | SAVE path | PING
-             RULE pcb kind name scope1 scope2 priority prop=value... | ADDDOC prj path | OUTJOB path medium basepath
+             RULE pcb kind name scope1 scope2 priority prop=value... | RULESIN pcb | ADDDOC prj path | OUTJOB path medium basepath
 
   Library commands (stage L2, see "project library" below):
              LIBCLOSE libpkg schlib pcblib intlib | FPBATCH pcblib spec | FPREMOVE pcblib name
@@ -123,6 +123,11 @@ begin
     end;
     D.Modified := True;
     D.DoFileSave('');
+    if D.Modified then
+    begin
+        Say('ERR Altium did not save ' + Path + ' (a command may still be active in it)');
+        Exit;
+    end;
     Log('saved ' + Path);
 end;
 
@@ -339,7 +344,20 @@ begin
     else Say('ERR unknown rule property ' + Name);
 end;
 
-{ RULE pcb kind name scope1 scope2 priority prop=value ...  updates the rule of that name, else adds one (the priority field is unused: Altium refuses it) }
+{ A whole number, optionally negative: checked before StrToInt, whose failure inside PreProcess/PostProcess would leave
+  the editor in a command (every later save then asks about a copy) }
+function IsInt(S: String): Boolean;
+var
+    i : Integer;
+begin
+    Result := (S <> '') and (S <> '-');
+    for i := 1 to Length(S) do
+        if not (((S[i] >= '0') and (S[i] <= '9')) or ((i = 1) and (S[i] = '-'))) then Result := False;
+end;
+
+{ RULE pcb kind name scope1 scope2 priority prop=value ...  updates the rule of that name, else adds one (the priority field is unused: Altium refuses it).
+  The editor's own model is told (PreProcess, BoardRegisteration / BeginModify+EndModify messages, PostProcess), as altium-mcp does:
+  a rule only added to the board object can be missing from what a later save from Altium writes. No Exit between PreProcess and PostProcess. }
 procedure ApplyRule(Line: String);
 var
     B, R : IDispatch;
@@ -355,14 +373,28 @@ begin
     end;
     R := FindRule(B, Field(Line, 3));
     Old := (R <> nil);
-    if Old then
-        R.BeginModify
-    else
-        R := NewRule(Field(Line, 2));
+    if not Old then R := NewRule(Field(Line, 2));
     if (R = nil) then
     begin
         Say('ERR rule kind not supported ' + Field(Line, 2));
         Exit;
+    end;
+    i := 7;
+    while (Field(Line, i) <> '') do
+    begin
+        Item := Field(Line, i);
+        if not IsInt(Copy(Item, Pos('=', Item) + 1, Length(Item))) then
+        begin
+            Say('ERR rule value is not a whole number ' + Item);
+            Exit;
+        end;
+        i := i + 1;
+    end;
+    PCBServer.PreProcess;
+    if Old then
+    begin
+        PCBServer.SendMessageToRobots(R.I_ObjectAddress, c_Broadcast, PCBM_BeginModify, c_NoEventData);
+        R.BeginModify;
     end;
     R.Name := Field(Line, 3);
     R.Scope1Expression := Field(Line, 4);
@@ -376,10 +408,47 @@ begin
         i := i + 1;
     end;
     if Old then
-        R.EndModify
+    begin
+        R.EndModify;
+        PCBServer.SendMessageToRobots(R.I_ObjectAddress, c_Broadcast, PCBM_EndModify, c_NoEventData);
+    end
     else
+    begin
         B.AddPCBObject(R);
+        PCBServer.SendMessageToRobots(B.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, R.I_ObjectAddress);
+    end;
+    PCBServer.PostProcess;
     Log('rule ' + Field(Line, 3));
+end;
+
+{ RULESIN pcb  the names of the rules on the board Altium holds in memory (not the file): log lines "RULEIN name", then
+  "RULESIN n" (the end marker). "RULESIN none" when that board is not open. }
+procedure RulesIn(Path: String);
+var
+    B, It, R : IDispatch;
+    N : Integer;
+begin
+    B := nil;
+    if (PCBServer <> nil) then B := PCBServer.GetPCBBoardByPath(Path);
+    if (B = nil) then
+    begin
+        Log('RULESIN none');
+        Exit;
+    end;
+    N := 0;
+    It := B.BoardIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(eRuleObject));
+    It.AddFilter_LayerSet(AllLayers);
+    It.AddFilter_Method(eProcessAll);
+    R := It.FirstPCBObject;
+    while (R <> nil) do
+    begin
+        Log('RULEIN ' + R.Name);
+        N := N + 1;
+        R := It.NextPCBObject;
+    end;
+    B.BoardIterator_Destroy(It);
+    Log('RULESIN ' + IntToStr(N));
 end;
 
 { An existing document (an OutJob) becomes part of the project }
@@ -1486,6 +1555,7 @@ begin
                  StrToInt(Field(Line, 4)), StrToInt(Field(Line, 5)),
                  StringReplace(Field(Line, 6), '\n', #13#10, REPLACEALL))
     else if (Cmd = 'RULE') then ApplyRule(Line)
+    else if (Cmd = 'RULESIN') then RulesIn(Field(Line, 1))
     else if (Cmd = 'ADDDOC') then AddDocument(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'OUTJOB') then RunOutJob(Field(Line, 1), Field(Line, 2), Field(Line, 3))
     else if (Cmd = 'LIBCLOSE') then LibClose(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))

@@ -503,7 +503,8 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                         continue
                     applied.append(f"{kind}: {len(res['created'])} added, {len(res['updated'])} updated"
                                    + (f", {len(res['skipped'])} skipped ({', '.join(x['name'] for x in res['skipped'])})" if res["skipped"] else "")
-                                   + (f", not confirmed: {', '.join(res['unconfirmed'])}" if res["unconfirmed"] else ""))
+                                   + (f", not confirmed: {', '.join(res['unconfirmed'])}" if res["unconfirmed"] else "")
+                                   + (f". {res['message']}" if res.get("message") else ""))
                     continue
                 elif kind == "altium.run_outjob":
                     done = _bridge_done(project, "run-outjob", turn_start)
@@ -515,7 +516,8 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                     except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                         refused.append(f"{kind}: {exc}")
                         continue
-                    applied.append(f"{kind}: {len(res['files'])} files" + (" (OutJob added to the project)" if res["added"] else ""))
+                    applied.append(f"{kind}: {len(res['files'])} files" + (" (OutJob added to the project)" if res["added"] else "")
+                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", [])))
                     continue
                 else:
                     bridge.open_project(project)
@@ -1185,6 +1187,10 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             off = _preset_off(proj)
+            missing_in_pcb = []
+            if linked_pcb:
+                from altium import bridge
+                missing_in_pcb = bridge.rules_missing(proj)      # what Import would write that the PcbDoc file lacks
             diff = rules_mod.diff_rules(board_rules, [r for r in preset.get("rules", []) if r.get("name") not in off], board_geom=doc)
             return self._send(200, {
                 "preset": preset,
@@ -1194,6 +1200,7 @@ class Handler(BaseHTTPRequestHandler):
                 "standards": ipc_standards.info(),
                 "diff": diff,
                 "linked_pcb": linked_pcb,
+                "missing_in_pcb": missing_in_pcb,
             })
         if path == "/api/rules/standard":           # what a standard preset would add (nothing is stored)
             import ipc_standards

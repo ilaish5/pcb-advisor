@@ -551,13 +551,39 @@ def _json_list(project, name):
     return val if isinstance(val, list) else []
 
 
+def _plan_records(project, pcb):
+    off = {n for n in _json_list(project, "rules-off.json") if isinstance(n, str)}
+    preset = [r for r in rules_mod.get_preset_rule_records(project_mod.board(project)) if r.get("NAME") not in off]
+    return rule_kinds.append_extra_records(rules_mod.board_rul_records(pcb, preset), _json_list(project, "rules.json"))
+
+
+def rules_missing(project):
+    """Names of the advisor rules import_rules writes that the linked PcbDoc FILE does not have ([] without a PcbDoc)."""
+    try:
+        pcb = _project_pcb(project)
+        have = {r.get("NAME") for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
+        return [r["NAME"] for r in _plan_records(project, pcb)
+                if r.get("RULEKIND") in RULE_PROPS and r.get("NAME") and r["NAME"] not in have and _rule_values(r) is not None]
+    except (BridgeError, AltiumReadError, OSError):
+        return []
+
+
+def rules_in_altium(log):
+    """Rule names of Altium's in-memory board from a RULESIN run's log, or None when the log has no complete list."""
+    names, total = [], None
+    for ln in log:
+        if ln.startswith("RULEIN "):
+            names.append(ln[7:])
+        elif ln.startswith("RULESIN ") and ln[8:].strip().isdigit():
+            total = int(ln[8:])
+    return names if total is not None and total == len(names) else None
+
+
 def rule_plan(project, pcb):
     """What the PcbDoc needs: ([(record, script values)] to add or change, [{name, kind, why}] skipped). The record set is
     what the Download .RUL gives (preset minus the rules turned off, existing rules of the same kind and scope updated,
     extra rules added); a rule the board already has in the same state is left alone."""
-    off = {n for n in _json_list(project, "rules-off.json") if isinstance(n, str)}
-    preset = [r for r in rules_mod.get_preset_rule_records(project_mod.board(project)) if r.get("NAME") not in off]
-    records = rule_kinds.append_extra_records(rules_mod.board_rul_records(pcb, preset), _json_list(project, "rules.json"))
+    records = _plan_records(project, pcb)
     board = {r.get("NAME"): r for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
     todo, skipped = [], []
     for rec in records:
@@ -585,7 +611,7 @@ def rule_commands(pcb, todo):
     cmds = [("RULE", str(pcb), rec["RULEKIND"], rec["NAME"], rec.get("SCOPE1EXPRESSION", "All"),
              rec.get("SCOPE2EXPRESSION", "All"), str(rules_mod._prio(rec)), *[f"{k}={v}" for k, v in vals.items()])
             for rec, vals in todo]
-    return cmds + [("SAVE", str(pcb))]
+    return cmds + [("SAVE", str(pcb)), ("RULESIN", str(pcb))]
 
 
 def import_rules(project):
@@ -593,20 +619,28 @@ def import_rules(project):
     prj = _linked(project)
     pcb = _project_pcb(project)
     todo, skipped = rule_plan(project, pcb)
-    res = {"created": [], "updated": [], "skipped": skipped, "unconfirmed": [], "backup": ""}
+    res = {"created": [], "updated": [], "skipped": skipped, "unconfirmed": [], "not_in_altium": [], "backup": "", "message": ""}
     if not todo:
         return res
     before = {r.get("NAME") for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
     res["backup"] = _backup(prj, [pcb])
-    run_commands([("PROJECT", str(prj)), *rule_commands(pcb, todo)])
+    log = run_commands([("PROJECT", str(prj)), *rule_commands(pcb, todo)])
+    mem = rules_in_altium(log or [])         # what Altium holds in memory: a save from Altium writes this, not our file
     after = {r.get("NAME"): r for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
     for rec, vals in todo:
         got = after.get(rec["NAME"])
         (res["updated"] if rec["NAME"] in before else res["created"]).append(rec["NAME"])
         if got is None or not _same_values(vals, _rule_values(got) or {}):
             res["unconfirmed"].append(rec["NAME"])      # Altium did not keep what we wrote: the Rules tab will show it
+        if mem is not None and rec["NAME"] not in mem:
+            res["not_in_altium"].append(rec["NAME"])
+            if rec["NAME"] not in res["unconfirmed"]:
+                res["unconfirmed"].append(rec["NAME"])
+    if res["not_in_altium"]:
+        res["message"] = (f"Altium's open board does not have {', '.join(res['not_in_altium'])}: a save from Altium would drop "
+                          "them. Import again with the board open.")
     _log(project, "import-rules", pcb=str(pcb), backup=res["backup"], skipped=[s["name"] for s in skipped],
-         **{k: res[k] for k in ("created", "updated", "unconfirmed")})
+         **{k: res[k] for k in ("created", "updated", "unconfirmed", "not_in_altium")})
     return res
 
 
@@ -661,8 +695,12 @@ def run_outjob(project):
             files += [str(pathlib.Path(dirpath, n)) for n in names if pathlib.Path(dirpath, n).stat().st_mtime >= t0]
     if not files:
         raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
-    _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup)
-    return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup}
+    missing = rules_missing(project)
+    warnings = [f"The JLC rules ({', '.join(missing)}) are no longer in the PcbDoc; DRC and outputs ran against Altium's "
+                "defaults. Import the rules again."] if missing else []
+    _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing)
+    return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
+            "warnings": warnings}
 
 
 def open_project(project):

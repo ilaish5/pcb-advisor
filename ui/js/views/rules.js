@@ -81,6 +81,7 @@ function rulesHeader(rd) {
     {n: sm.preset, label: `${(rd.preset && rd.preset.name) || 'JLC'} preset rule${sm.preset === 1 ? '' : 's'}`, title: 'Picked from this board\'s layer count, copper weight and mask colour'},
     !linked && {always: true, label: 'No board linked'},
     linked && {n: sm.differ, label: 'differ on your board', tone: 'warn', title: 'Missing from the board, or different from the preset with no JLC minimum to judge them by'},
+    linked && {n: (rd.missing_in_pcb || []).length, label: 'missing from the PcbDoc', tone: 'bad', title: (rd.missing_in_pcb || []).join(', ') + ': DRC and outputs use Altium's defaults for these. Apply the rules in Altium again.'},
     linked && {n: sm.below, label: 'below JLC minimum', tone: 'bad', title: 'The fab may reject or alter these'},
     linked && !sm.differ && !sm.below && {always: true, label: 'Your board matches the preset'},
   ]);
@@ -96,6 +97,8 @@ function rulesDiffRow(d) {
   const name = d.rule || d.Rule || '', kind = d.kind || d.Kind || '';
   const bv = d['board value'] || d.board_value || '', pv = d['preset value'] || d.preset_value || '';
   const none = v => v && !/^[-–—\s]+$/.test(v) ? v.split(', ').map(esc).join('<br>') : '<span class="muted">—</span>';    // "Min: 5mil, Max: 40mil" on two lines
+  const gone = r.key === 'missing' && (RULES_DATA && RULES_DATA.missing_in_pcb || []).includes(name);
+  if (gone) r.text = 'Missing from the PcbDoc';
   const tagHTML = r.key === 'match' ? `<span class="muted" title="Matches">${icon('check', 's')}<span class="sr">Matches</span></span>` : tag(r.text, r.tone);
   const inline = d.detail && (r.attention || r.key === 'stricter');     // a match or an extra says it all in its tag; the title has the text
   return `<tr>
@@ -369,7 +372,8 @@ onAct('rules-apply-altium', async (el, d, e) => {      // Altium writes the PcbD
     const n = r.created.length + r.updated.length;
     toast(n ? `Altium: ${r.created.length} rule${r.created.length === 1 ? '' : 's'} added, ${r.updated.length} updated.` : 'Altium already has these rules.');
     if (r.skipped.length) toast(`Skipped ${r.skipped.length}: ${r.skipped.map(x => x.name).join(', ')} (${r.skipped[0].why}).`, null, {bad: true});
-    if (r.unconfirmed.length) toast(`Altium did not keep: ${r.unconfirmed.join(', ')}.`, null, {bad: true});
+    if (r.message) toast(r.message, null, {bad: true});
+    else if (r.unconfirmed.length) toast(`Altium did not keep: ${r.unconfirmed.join(', ')}.`, null, {bad: true});
   } catch (err) { /* the error toast already said why */ }
   el.disabled = false;
   loadRules(true);

@@ -99,7 +99,7 @@ async function outRunExporter(f) {         // one api exporter; returns true whe
 }
 async function outRunAltium() {            // Altium writes the Gerbers; true when it did
   toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
-  try { await api('/api/altium/run-outjob', {}); return true; } catch (err) { return false; }   // the error toast already said why
+  try { const r = await api('/api/altium/run-outjob', {}); (r.warnings || []).forEach(w => toast(w, null, {bad: true})); return true; } catch (err) { return false; }   // the error toast already said why
 }
 let outRemaking = false;
 async function outRemake(files) {          // files: the lineage rows to make again, in order; one confirm for the edited ones
@@ -200,6 +200,7 @@ onAct('gen-altium-outputs', async (el, d, e) => {      // Altium writes the file
   try {
     const r = await api('/api/altium/run-outjob', {});
     await outWrote(`Altium wrote ${r.files.length} files${r.added ? ' (OutJob added to the project)' : ''}.`);
+    (r.warnings || []).forEach(w => toast(w, null, {bad: true}));
   } catch (err) { /* the error toast already said why */ }
   el.disabled = false;
   renderCenter(true);
