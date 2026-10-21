@@ -1,0 +1,13 @@
+(kicad_symbol_lib (version 20211014) (generator test)
+  (symbol "VendorLdo_C200" (in_bom yes) (on_board yes)
+    (property "Reference" "U" (id 0) (at 0 0 0))
+    (property "Footprint" "lib:LDO_FAKE" (id 2) (at 0 0 0))
+    (property "MPN" "LDO33" (id 3) (at 0 0 0))
+    (symbol "VendorLdo_C200_0_1"
+      (rectangle (start -5.08 2.54) (end 5.08 -2.54) (stroke (width 0)) (fill (type background)))
+      (pin power_in line (at -7.62 1.27 0) (length 2.54) (name "VIN" (effects (font (size 1 1)))) (number "1" (effects (font (size 1 1)))))
+      (pin power_in line (at -7.62 -1.27 0) (length 2.54) (name "GND" (effects (font (size 1 1)))) (number "2" (effects (font (size 1 1)))))
+      (pin passive line (at 7.62 1.27 180) (length 2.54) (name "VOUT" (effects (font (size 1 1)))) (number "3" (effects (font (size 1 1)))))
+    )
+  )
+)
