@@ -1010,7 +1010,7 @@ def build_library(project, fetch=True):
     lp = library_paths(project)
     prj = lp["prj"]
     prepared = False
-    if library_stale(project):
+    if library_stale(project) or partlib.params_stale(project):      # an order-only swap leaves Altium's parameters old
         partlib.prepare(project, fetch=fetch)
         prepared = True
     build = partlib.library_dir(project) / "build"
@@ -1059,6 +1059,8 @@ def build_library(project, fetch=True):
                f"{ln[len(SAME_NAME):].strip()} (Altium matches libraries by file name)."
                for ln in log if ln.startswith(SAME_NAME)]
     built = _mark_built(project, expected, {}, {}, fresh and installed)
+    if fresh and installed:
+        partlib.clear_params_stale(project)
     res = {"schlib": str(lp["schlib"]), "pcblib": str(lp["pcblib"]), "libpkg": str(lp["libpkg"]), "intlib": str(intlib),
            "folder_3d": str(lp["d3"]), "counts": counts, "intlib_fresh": fresh, "installed": installed,
            "built": sum(built.values()), "lines": len(built), "prepared": prepared, "backup": backup, "issues": issues,

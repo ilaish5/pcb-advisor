@@ -28,7 +28,8 @@ description: Prepares the manufacturing package for JLC and walks the student th
       test points are left out on purpose and listed. No LCSC number on two lines. Run export_bom.py for the check.
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
 4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
-   its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in (same package) for the student to approve.
+   its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in for the student to approve. Same
+   package is not enough: at ordering a swap is free only on the same FOOTPRINT (step 9).
 5. The JLC check, done with the student at the end. The account is theirs: never log in, never ask for a password,
    never upload for them. Go one step at a time, as the DFM view lists them (header menu, "How to check at JLC"):
    a. The Gerber zip: action `jlc.gerber_zip` (the same as Outputs > Export > Gerber zip for JLC). It reads the newest
@@ -54,7 +55,20 @@ description: Prepares the manufacturing package for JLC and walks the student th
 8. Fix at the source: copper or silk in the board; rotation in the CPL offset table (not in the board); LCSC number
    in the BOM. Regenerate and re-upload. A re-uploaded CPL may be ignored by the preview: upload the Gerber zip again too.
 
+9. The order step, after the Gerber zip and a clean DFM: action `order.check` (`"recheck": true` asks JLC again first).
+   Its line says, per bought line, ok, swap_free, design_change or no_alternative. Design and ordering are separate: the
+   design fixes value, package and pins and the library is built from it; at ordering the MPN or LCSC code may change
+   FREELY when the new part has the same footprint (same land pattern and pins), with no schematic, library or board
+   change. For a swap_free line propose `bom.propose` with `changes` `{mpn, lcsc, manufacturer, footprint_lock}` (the
+   footprint name from the Order check panel), reason "order-only swap: same footprint". The server re-proves the
+   footprint AND the pin functions (or value and kind of a plain passive) and drops the lock otherwise; the student still
+   approves. After a swap Altium's own part parameters still show the old MPN/code until the next library build: the JLC
+   BOM comes from the advisor's `export_bom`, never from Altium's BOM (order.check lists such lines in `params_stale`).
+   A design_change line (other or unproven footprint)
+   needs a library rebuild and a PCB update in Altium: say so, never present it as a plain swap. Export the BOM again after.
+
 ## Scripts
+- `python <repo>/scripts/order_check.py <project> [--recheck]` per line: stock class and up to 3 alternatives with the footprint match.
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` writes the JLC BOM csv; lists lines left out and lines
   that need an LCSC number.
 - `python <repo>/scripts/skills/check_availability.py ...` stock and price from JLC, with query time. Quote the time.

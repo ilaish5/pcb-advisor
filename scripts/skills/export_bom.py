@@ -5,8 +5,8 @@ Export the BOM for a manufacturer.
 
 Writes projects/<project>/exports/<project>_BOM_<format>.csv. Lines that are not
 fitted (DNP) or not bought (test pads) are left out and listed in the output, so
-nothing disappears silently. JLC needs an LCSC part number: it comes from the last
-availability check, else from the code declared on the line (an import from Altium);
+nothing disappears silently. JLC needs an LCSC part number: it is the code declared on the line (an import
+from Altium, an order swap), else the one the last availability check found for the line's current MPN;
 a line without one is listed under "needs_lcsc".
 """
 import csv
@@ -28,14 +28,20 @@ FORMATS = {
 
 
 def lcsc_code(project, key, line=None):
-    """The code of the last stock check; failing that, the one declared on the line."""
+    """The code declared on the line; failing that, the one of the last stock check of the line's current MPN.
+    A code checked for another MPN, or a hit that is not the exact part, is never exported."""
+    declared = ((line or {}).get("lcsc") or "").strip()
+    if declared:
+        return declared
+    mpn = ((line or {}).get("mpn") or "").strip().lower()
     code = ""
     for ev in store.read_jsonl(store.pdir(project) / "supply-log.jsonl"):
-        if ev.get("line") == key and ev.get("supplier") == "LCSC":
+        if (ev.get("line") == key and ev.get("supplier") == "LCSC" and (ev.get("mpn") or "").strip().lower() == mpn
+                and ev.get("exact") is not False and not ev.get("code_mismatch")):
             m = re.search(r"C\d{3,}", ev.get("source") or "")
             if m:
                 code = m.group(0)
-    return code or (line or {}).get("lcsc") or ""
+    return code
 
 
 def rows(project, fmt="generic"):

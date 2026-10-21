@@ -109,7 +109,7 @@ function bomHeader(t) {
 }
 function bomFoot() {
   const at = checkedAt(), st = at ? bomStamp(at) : null;
-  return `<p class="bom-foot${st && st.stale ? ' stale' : ''}"${st && st.stale ? ' title="Prices change. Check stock again before you order."' : ''}>Prices at qty 10, excl. shipping. ${st ? `Checked ${esc(st.text)}.` : 'Not checked yet.'}</p>`;
+  return `<p class="bom-foot${st && st.stale ? ' stale' : ''}"${st && st.stale ? ' title="Prices change. Check stock again before you order."' : ''}>Prices at qty 10, excl. shipping. ${st ? `Checked ${esc(st.text)}.` : 'Not checked yet.'} ${btn('Before you order', {kind: 'link', size: 'sm', act: 'order-open', title: 'Stock again, and in-stock alternatives by footprint'})}</p>`;
 }
 function bomHTML(container) {
   const t = S.totals;
@@ -142,6 +142,28 @@ function altsHTML(d) {
     const more = [a.code ? `<span class="m">${esc(a.code)}</span>` : '', esc(a.library_type), `${num(a.stock)} in stock`].filter(Boolean).join(' · ');
     return `<li><div class="alt-t"><span class="m alt-mpn">${esc(a.mpn)}</span>${meta ? `<span>${meta}</span>` : ''}<span>${more}</span></div>
       <div class="alt-e"><span class="num">${money(unit)}</span>${btn('Propose', {kind: 'line', size: 'sm', act: 'propose-alt', i})}</div></li>`;
+  }).join('')}</ul>`;
+}
+/* Before you order: design fixes value + package + pins, ordering may swap the MPN / LCSC code freely on the SAME footprint
+   (no library or board change). Another or unproven footprint is a design change. */
+const ORDER_CLASS = {swap_free: ['Swap possible', 'warn'], design_change: ['Design change', 'bad'], no_alternative: ['No alternative', 'bad']};
+function orderHTML(d) {
+  if (d.loading) return loadingLine('Checking what you can order');
+  if (d.error) return errorLine('check the order', d.error, btn('Retry', {size: 'sm', act: 'order-open'}));
+  const all = d.result.lines, todo = all.filter(l => ORDER_CLASS[l.class]), unchecked = all.filter(l => l.class === 'unchecked').length;
+  const head = `<p class="muted">${todo.length ? `${bomPl(todo.length, 'line')} to fix before you order.` : 'Every checked line is in stock.'}${unchecked ? ` ${bomPl(unchecked, 'line')} not checked yet.` : ''}</p>
+    <div class="acts">${btn('Check stock again', {kind: 'line', size: 'sm', act: 'order-open', recheck: '1'})}</div>`;
+  const notes = (d.result.params_stale || []).map(n => `<p class="muted">${esc(n)}</p>`).join('');
+  return head + notes + `<ul class="alts">${todo.map(l => {
+    const [text, tone] = ORDER_CLASS[l.class];
+    const alts = l.alternatives.map((a, i) => {
+      const meta = [a.manufacturer, a.package, a.code].filter(v => v && !/^[-—]+$/.test(v)).map(esc).join(' · ');
+      const act = a.match === 'same' ? btn('Swap (same footprint)', {kind: 'line', size: 'sm', act: 'order-swap', line: l.line, i})
+        : `<span class="muted" title="${esc(a.why)}">Changes the board: library + PCB update</span>`;
+      return `<div class="alt-t"><span class="m alt-mpn">${esc(a.mpn)}</span><span>${meta}</span><span>${num(a.stock)} in stock</span></div>
+        <div class="alt-e"><span class="num">${money(a.unit_price)}</span>${act}</div>`;
+    }).join('');
+    return `<li><div class="alt-t"><span class="m">${esc(refsLabel(l.refs || []))}</span><span class="m">${esc(l.mpn || '')}</span>${tag(text, tone, `Needs ${l.need}, ${num(l.stock)} in stock`)}</div>${alts}</li>`;
   }).join('')}</ul>`;
 }
 function compareHTML(d) {
@@ -191,6 +213,10 @@ function bomDrawerHTML() {
     title = 'Alternatives';
     sub = [l ? `<span class="m">${esc(refsLabel(l.refs || []))}</span>` : esc(d.line), d.mpn ? `<span class="m">${esc(d.mpn)}</span>` : ''].filter(Boolean).join(' · ');
     body = altsHTML(d);
+  } else if (d.kind === 'order') {
+    title = 'Before you order';
+    sub = 'Swap the part freely only on the same footprint';
+    body = orderHTML(d);
   } else if (d.kind === 'compare') {
     title = 'Compare prices';
     sub = `Parts cost per board at qty ${d.result ? d.result.qty_break : 10}, excl. shipping`;
@@ -332,7 +358,8 @@ onAct('propose-alt', async (el, d, e) => {
   const line = bomDrawer.line;
   const res = await api('/api/bom/propose', {
     line,
-    changes: {mpn: alt.mpn, package: alt.package, description: alt.description || ''},
+    changes: {mpn: alt.mpn, package: alt.package, description: alt.description || '',
+      ...(alt.code ? {lcsc: alt.code} : {}), ...(alt.manufacturer && !/^[-—]+$/.test(alt.manufacturer) ? {manufacturer: alt.manufacturer} : {})},
     reason: `Alternative part proposed: ${alt.code} (${alt.library_type || 'Standard'})`,
     sources: [`JLC ${alt.code}`]
   });
@@ -345,6 +372,40 @@ onAct('propose-alt', async (el, d, e) => {
   return;
 });
 
+onAct('order-open', async (el, d, e) => {
+  const mine = {kind: 'order', loading: true};
+  openBomDrawer(mine);
+  try {
+    const r = d.recheck === '1' ? await api('/api/order/check', {recheck: true}, {soft: true}) : await api('/api/order/check', undefined, {soft: true});
+    if (bomDrawer !== mine) return;
+    if (r && r.lines) Object.assign(mine, {loading: false, result: r}); else Object.assign(mine, {loading: false, error: (r && r.error) || 'no answer'});
+  } catch (err) {
+    if (bomDrawer !== mine) return;
+    Object.assign(mine, {loading: false, error: err.message || 'no answer'});
+  }
+  if (d.recheck === '1') { try { setState(await api('/api/state')); } catch (err) { /* the table shows the old answer */ } }
+  paintBomDrawer(); return;
+});
+onAct('order-swap', async (el, d, e) => {      // an order-only swap: the footprint is proven again on the server
+  const row = bomDrawer && bomDrawer.kind === 'order' && bomDrawer.result.lines.find(l => l.line === d.line);
+  const alt = row && row.alternatives[+d.i];
+  if (!alt || alt.match !== 'same') return;
+  const res = await api('/api/bom/propose', {
+    line: d.line,
+    changes: {mpn: alt.mpn, lcsc: alt.code, ...(alt.manufacturer && !/^[-—]+$/.test(alt.manufacturer) ? {manufacturer: alt.manufacturer} : {}), footprint_lock: alt.footprint},
+    reason: `order-only swap: same footprint ${alt.footprint} (${alt.code}, ${alt.stock} in stock)`,
+    sources: [`JLC ${alt.code}`]
+  });
+  setState(res);
+  bomDrawer = null;
+  if (bomPrevSel && sel == null && lineByKey(bomPrevSel)) sel = bomPrevSel;
+  bomPrevSel = null;
+  render(true);
+  const kept = res.proposed && res.proposed.footprint_lock;       // the server proves the footprint again, and says when it could not
+  toast(kept ? `Proposed ${alt.mpn} for ${d.line}. The footprint stays. Approve it in the chat.`
+    : `Proposed ${alt.mpn} for ${d.line} as a design change: ${(res.proposed && res.proposed.lock_note) || 'the footprint is not proven the same'}. Approve it in the chat.`);
+  return;
+});
 onAct('imp-open', async (el, d, e) => {
   openBomDrawer({kind: 'import'});
   loadImportInfo(true); return;

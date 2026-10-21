@@ -543,7 +543,7 @@ def test_which_paths_a_request_from_the_browser_may_name(empty, tmp_path):
 
 # ---------------------------------------------------------------- the declared LCSC code
 
-def test_a_jlc_export_uses_the_declared_code_and_the_stock_check_wins(lte):
+def test_a_jlc_export_uses_the_declared_code_and_the_stock_check_fills_the_gap(lte):
     assert "U5" in export_bom.export(lte, "jlc")["needs_lcsc"]
     store.edit_bom(lte, "U5", "lcsc", "C44955")
     res = export_bom.export(lte, "jlc")
@@ -554,7 +554,10 @@ def test_a_jlc_export_uses_the_declared_code_and_the_stock_check_wins(lte):
     store.add_supply(lte, "U5", "LCSC", 10, 0.4, "TXS0104EPWR", source="LCSC C99999")
     export_bom.export(lte, "jlc")
     text = path.read_text(encoding="utf-8")
-    assert "C99999" in text and "C44955" not in text                  # what was last looked up beats what was declared
+    assert "C44955" in text and "C99999" not in text                  # the declared code is the student's choice: it wins
+    store.edit_bom(lte, "U5", "lcsc", "")
+    export_bom.export(lte, "jlc")
+    assert "C99999" in path.read_text(encoding="utf-8")               # with none declared, the check of this MPN fills the gap
 
 
 def test_a_new_mpn_voids_the_declared_code(empty):

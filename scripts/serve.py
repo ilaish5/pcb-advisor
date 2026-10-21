@@ -358,6 +358,11 @@ def library_issue_count(project):
     return sum(1 for e in store.library_manifest(project).values() if e.get("issues") or e.get("built_issues"))
 
 
+def _truthy(v):
+    """A flag from JSON or a model: true, 1, "true", "yes" are on; "false", "0", "", None are off."""
+    return v is True or v == 1 or str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
 def _bridge_done(project, op, since):
     """The newest altium-log.jsonl entry of `op` that succeeded at or after `since` (epoch seconds), else None: a model
     that ran bridge.py itself in its shell has already done what the action would do."""
@@ -526,6 +531,12 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                     applied.append(f"jlc.gerber_zip:{res['zip']} ({len(res['files'])} files" + (f", missing {', '.join(gaps)}" if gaps else "") + ")"
                                    + "".join(f" {m['layer']}: {m['why']}" for m in res["missing"]
                                              if m["level"] == "problem" and m["why"].startswith("The outline layer")))
+            elif kind == "order.check":
+                import order_check
+                try:
+                    applied.append("order.check: " + order_check.summary(order_check.order_check(project, recheck=_truthy(a.get("recheck")))))
+                except Exception as exc:        # a supplier being down must not stop the turn
+                    refused.append(f"order.check: {exc}")
             elif kind == "jlc.pickup":
                 import jlc_upload
                 res = jlc_upload.pickup(project, kind=a.get("kind") or None, name=a.get("name") or None)
@@ -1075,6 +1086,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, alts)
             except Exception as exc:
                 return self._send(500, {"error": str(exc)})
+        if path == "/api/order/check":
+            import order_check
+            try:
+                return self._send(200, order_check.order_check(self.project()))      # read only: a recheck is a POST
+            except Exception as exc:
+                return self._send(500, {"error": str(exc)})
         if path == "/api/final/unverified":
             return self._send(200, {"unverified": store.unverified_parts(self.project())})
         if path == "/api/final/incomplete":
@@ -1511,6 +1528,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._send(200, {"error": str(exc), "url": url})
 
+        if path == "/api/order/check":          # asks the suppliers again: it writes the supply log, so it is not a GET
+            import order_check
+            try:
+                return self._send(200, order_check.order_check(proj, recheck=_truthy(data.get("recheck"))))
+            except Exception as exc:
+                return self._send(500, {"error": str(exc)})
+
         if path == "/api/bom/propose":
             line_key = data.get("line")
             changes = data.get("changes") or {}
@@ -1525,7 +1549,8 @@ class Handler(BaseHTTPRequestHandler):
                     "text": f"Proposed alternative for {line_key}: {changes.get('mpn') or ''}",
                     "proposals": [rec["id"]]
                 })
-                return self._send(200, state())
+                return self._send(200, {**state(), "proposed": {"id": rec["id"], "footprint_lock": rec["changes"].get("footprint_lock") or "",
+                                                                "lock_note": rec.get("lock_note", "")}})
             except Exception as exc:
                 return self._send(400, {"error": str(exc)})
 

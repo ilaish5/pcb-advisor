@@ -203,7 +203,7 @@ def check(project, keys=None):
                              QTY_BREAK, source=f"{supplier} {r.get('code') or ''}".strip(),
                              library_type=r.get("library_type"), package=r.get("package"),
                              code=r.get("code"), datasheet_url=r.get("datasheet_url"),
-                             exact=r.get("exact"), code_mismatch=r.get("code_mismatch"))
+                             exact=r.get("exact"), code_mismatch=r.get("code_mismatch"), declared=declared)
             results.append({"line": line["key"], "supplier": supplier, "mpn": mpn, "stock": r["stock"],
                             "price": r["price"], "code": r.get("code"), "exact": r.get("exact"),
                             **({"warning": "code_mpn_mismatch", "message": r["code_mismatch"]}

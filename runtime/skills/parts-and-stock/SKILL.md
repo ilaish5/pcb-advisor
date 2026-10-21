@@ -31,6 +31,13 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
 9. For "Standard only" or any assembly-service question say what is known: the scripts do not return that field. Tell the student where
    to look on the JLC parts or BOM-upload page, and mark it "unknown until checked".
 10. If the JLC query fails, say so and store nothing. A line that was not checked must never look like "no stock".
+11. Design vs ordering, by footprint. While designing, a line is fixed by value + package + pins. At ordering (action
+    `order.check`) a line out of stock or short may take another MPN / LCSC code FREELY when the alternative has the
+    same footprint and function (identical land pattern, and same pin names, or for a plain passive the same value, kind and ratings;
+    its `match` is "same"): propose `bom.propose` with `changes`
+    `{mpn, lcsc, manufacturer, footprint_lock}` and the reason "order-only swap: same footprint"; the library and the board
+    stay as they are. Match "different" or "unknown" is a design change (library rebuild + PCB update): propose it without a
+    `footprint_lock`, and say it changes the board. Never claim "same package" means the same footprint.
 
 ## Scripts
 - `python <repo>/scripts/skills/check_availability.py <project> [LINE ...]` - Searches JLC by MPN, returns stock, unit price at 10 pcs,

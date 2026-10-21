@@ -79,10 +79,13 @@ DOMAIN_COLORS = {
 }
 
 BOM_FIELDS = ("refs", "value", "description", "mpn", "manufacturer", "package",
-              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role", "lcsc")
+              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role", "lcsc", "footprint_lock")
 # `lcsc` is a code the student or an import declared for the line; what LCSC answered is in supply-log
 # a change to one of these makes the old stock/price answer stale
-SUPPLY_KEYS = ("mpn",)
+SUPPLY_KEYS = ("mpn", "lcsc")
+# `footprint_lock` is the footprint name an order-only swap proved "same" (design vs ordering: partlib keeps it);
+# a change of one of these without a new lock voids the old one: the part is a design change again
+LOCK_BREAKS = ("mpn", "lcsc", "package", "value")
 CODE_RISK = "LCSC code is another part"       # the risk tag for a supply answer with `code_mismatch`
 SUPPLIERS = ("LCSC", "Mouser", "DigiKey")
 
@@ -132,7 +135,10 @@ def bom_lines(project):
             lines.pop(key, None)
             continue
         line = lines.setdefault(key, {"key": key, "refs": []})
-        line.update(ev.get("changes") or {})
+        ch = ev.get("changes") or {}
+        if "footprint_lock" not in ch and any(k in ch for k in LOCK_BREAKS):
+            line.pop("footprint_lock", None)
+        line.update(ch)
     for line in lines.values():
         # a line approved without references is still known by its key when that is a designator
         if not line.get("refs") and re.fullmatch(r"[A-Za-z]+\d+", line["key"]):
@@ -140,15 +146,23 @@ def bom_lines(project):
     return list(lines.values())
 
 
+def _supply_fits(ev, line):
+    """A supply answer belongs to the MPN it was asked for (as written) and, when it records one, the declared LCSC
+    code (any case, any spaces)."""
+    norm = lambda v: str(v or "").strip().upper()
+    return all((ev.get(k) == line.get(k)) if k == "mpn" else (k not in ev or norm(ev[k]) == norm(line.get(k)))
+               for k in SUPPLY_KEYS)
+
+
 def supply_for(project):
-    """Latest answer per (line, supplier), only while it still matches the MPN.
-    A line whose MPN changed since the last check has no supply: the UI shows
+    """Latest answer per (line, supplier), only while it still matches the MPN and the declared LCSC code.
+    A line whose MPN or code changed since the last check has no supply: the UI shows
     "checking" until a skill run answers for the new part."""
     by_key = {l["key"]: l for l in bom_lines(project)}
     out = {}
     for ev in read_jsonl(pdir(project) / "supply-log.jsonl"):
         line = by_key.get(ev.get("line"))
-        if not line or ev.get("mpn") != line.get("mpn"):
+        if not line or not _supply_fits(ev, line):
             continue
         item = {
             "stock": ev.get("stock"), "unit_price": ev.get("unit_price"),
@@ -386,6 +400,27 @@ def _new_proposal_id(project):
     return pid
 
 
+ORDER_ONLY = ("mpn", "lcsc", "manufacturer", "footprint_lock")      # what an order-only swap may change
+
+
+def _vet_lock(project, line, changes, known):
+    """(changes, note). A `footprint_lock` is kept only when the change touches nothing but the order fields and the
+    footprint match is proven now ("same" footprint and function, for the LCSC code of the change, on a library built
+    for the current BOM); else it is dropped, the part is a design change as without a lock, and the note says why."""
+    bare = {k: v for k, v in changes.items() if k != "footprint_lock"}
+    if not changes.get("footprint_lock"):
+        return bare, ""
+    if not known or not changes.get("lcsc"):
+        return bare, "no footprint lock: a new line or a change with no LCSC code proves nothing"
+    if set(changes) - set(ORDER_ONLY):
+        return bare, "no footprint lock: the change is more than an order swap (" + ", ".join(sorted(set(changes) - set(ORDER_ONLY))) + ")"
+    import partlib
+    m = partlib.footprint_match(project, line, changes["lcsc"])
+    if m["match"] == "same" and m["footprint"] == changes["footprint_lock"]:
+        return changes, ""
+    return bare, f"no footprint lock: {m['match']} ({m['why']}): a design change"
+
+
 def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False, reserved=()):
     """Record a proposal. Nothing about the BOM changes until the student approves.
     `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty)."""
@@ -400,6 +435,7 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
                 append(project, "proposals.jsonl", {"id": p["id"], "ts": now(), "status": "rejected", "by": "superseded"})
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
+    changes, lock_note = _vet_lock(project, line, changes, line in existing)
     before = {k: existing.get(line, {}).get(k) for k in changes}
     if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):
         changes = {**changes, "refs": [line]}
@@ -423,6 +459,8 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     rec = {"id": pid, "ts": now(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),
            "library": library or None, "session": session, "status": "pending"}
+    if lock_note:
+        rec["lock_note"] = lock_note
     return append(project, "proposals.jsonl", rec)
 
 
@@ -944,6 +982,11 @@ def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
     return append(project, "proposals.jsonl", rec)
 
 
+def _lock_keeps_library(project, line, lock):
+    import partlib
+    return partlib.swap_keeps_library(project, line, lock)
+
+
 def decide(project, pid, decision, by="student"):
     """Approve or reject. Approving appends to bom-log.jsonl (and library-log.jsonl) - that is
     the only way an agent-proposed change reaches the BOM. `by` is "student" for a click and
@@ -982,11 +1025,27 @@ def decide(project, pid, decision, by="student"):
                                                 "after_hash": _idea_hash(load_idea_working(project))})
         else:
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
+            changes, note, fresh = dict(prop["changes"]), "", False
+            if changes.get("footprint_lock"):       # proven again now: the library may have changed since the proposal
+                try:
+                    changes, note = _vet_lock(project, prop["line"], changes, True)
+                    fresh = bool(changes.get("footprint_lock")) and _lock_keeps_library(project, prop["line"], changes["footprint_lock"])
+                except Exception as exc:            # the proof failing is no proof: a design change
+                    changes, note = {k: v for k, v in changes.items() if k != "footprint_lock"}, f"no footprint lock: {exc}"
             append(project, "bom-log.jsonl", {
                 "ts": now(), "by": "agent-approved", "line": prop["line"],
-                "changes": _drop_stale_lcsc(project, prop["line"], dict(prop["changes"])),
+                "changes": _drop_stale_lcsc(project, prop["line"], changes),
                 "before": prop.get("before"), "reason": prop.get("reason"),
                 "sources": prop.get("sources"), "proposal": pid})
+            if fresh:           # an order-only swap: the library and the board stay as they are
+                try:
+                    import partlib
+                    partlib.stamp_swap(project, prop["line"], changes)
+                except Exception as exc:            # the BOM change stands, the library just shows stale
+                    note = f"the library was not marked current: {exc}"
+            if note:
+                print(f"decide {pid}: {note}", file=sys.stderr)
+                prop = {**prop, "lock_note": note}
             if prop.get("library"):
                 append(project, "library-log.jsonl", {
                     "ts": now(), "by": "agent-approved", "line": prop["line"],
@@ -1208,6 +1267,8 @@ def edit_bom(project, line, field, value):
     """The student edits a cell. Allowed fields only; recorded as by=student."""
     if field not in BOM_FIELDS:
         raise ValueError(f"not an editable BOM field: {field}")
+    if field == "footprint_lock":
+        raise ValueError("footprint_lock is set only by a proposal that proves the footprint is the same")
     existing = {l["key"]: l for l in bom_lines(project)}
     if line not in existing:
         raise KeyError(f"no BOM line {line!r}")
@@ -1223,7 +1284,8 @@ def edit_bom(project, line, field, value):
 
 
 def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, source="skill",
-               library_type=None, package=None, code=None, datasheet_url=None, exact=None, code_mismatch=None):
+               library_type=None, package=None, code=None, datasheet_url=None, exact=None, code_mismatch=None,
+               declared=None):
     rec = {
         "ts": now(), "line": line, "mpn": mpn, "supplier": supplier, "stock": stock,
         "unit_price": unit_price, "qty_break": qty_break, "source": source,
@@ -1234,6 +1296,7 @@ def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, so
     if datasheet_url is not None: rec["datasheet_url"] = datasheet_url
     if exact is not None: rec["exact"] = exact
     if code_mismatch: rec["code_mismatch"] = code_mismatch      # the declared code is another part than the MPN
+    if declared is not None: rec["lcsc"] = declared             # the code the line declared when this was asked
     return append(project, "supply-log.jsonl", rec)
 
 
