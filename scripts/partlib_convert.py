@@ -192,14 +192,17 @@ def convert_footprint(text):
             pct = str(round(float(one(it, "roundrect_rratio")[1]) * 200)) if it[3] == "roundrect" else ""
             drill = one(it, "drill")
             if it[2] in ("thru_hole", "np_thru_hole") and drill:
-                nums = [v for v in drill[1:] if re.fullmatch(r"[-\d.]+", str(v))]
-                if len(drill) > 1 and drill[1] == "oval":
-                    notes.append("slot hole drawn as a round hole")
-                hole, layer, plated = mil(max(map(float, nums))), "Multi-Layer", 1 if it[2] == "thru_hole" else 0
+                nums = [float(v) for v in drill[1:] if re.fullmatch(r"[-\d.]+", str(v))]
+                hole, htype, hw, hrot = mil(max(nums)), 0, 0, 0
+                if len(nums) > 1 and nums[0] != nums[1]:        # drill oval X Y: a slot, long axis along the larger
+                    hole, htype, hw, hrot = mil(min(nums[:2])), 2, mil(max(nums[:2])), 90 if nums[1] > nums[0] else 0
+                layer, plated = "Multi-Layer", 1 if it[2] == "thru_hole" else 0
+                if plated and size and float(size[1]) <= nums[0] and float(size[2]) <= nums[-1]:
+                    plated = 0                                  # no annular ring: a mechanical hole
                 tht = True
             else:
-                hole, layer, plated = 0, "Top Layer", 1
-            lines.append(f"PAD|{clean(it[1], 20)}|{X(at[1])}|{Y(at[2])}|{rot}|{layer}|{plated}|{hole}|0|0|0|"
+                hole, htype, hw, hrot, layer, plated = 0, 0, 0, 0, "Top Layer", 1
+            lines.append(f"PAD|{clean(it[1], 20)}|{X(at[1])}|{Y(at[2])}|{rot}|{layer}|{plated}|{hole}|{htype}|{hw}|{hrot}|"
                          f"{mil(size[1])}|{mil(size[2])}|{shape}|{pct}")
         elif k == "fp_line" and lay:
             s, e = one(it, "start"), one(it, "end")

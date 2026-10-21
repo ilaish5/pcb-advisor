@@ -48,6 +48,23 @@ def test_footprint_flips_y_keeps_relative_coords_and_widens_silk():
     assert fp["model"]["seat"] == 1 and fp["model"]["rz"] == 90             # KiCad -90 -> Altium 90
 
 
+def _pads_of(*pads):
+    body = "".join(pads)
+    return conv.convert_footprint(f'(module X (layer F.Cu){body})')["lines"]
+
+
+def test_oval_drill_becomes_a_real_slot_and_ringless_thru_hole_is_unplated():
+    v = _pads_of('(pad 13 thru_hole oval (at -4.32 -1.80 0.00) (size 1.000 2.100) (layers *.Cu *.Mask)(drill oval 0.6 1.7))')[0].split("|")
+    assert v[6] == "1" and v[8] == "2" and float(v[7]) == pytest.approx(0.6 * MM, abs=0.01)
+    assert float(v[9]) == pytest.approx(1.7 * MM, abs=0.01) and v[10] == "90"
+    h = _pads_of('(pad 1 thru_hole oval (at 0 0) (size 2.1 1.0) (layers *.Cu *.Mask)(drill oval 1.7 0.6))')[0].split("|")
+    assert h[8] == "2" and float(h[7]) == pytest.approx(0.6 * MM, abs=0.01) and h[10] == "0"
+    r = _pads_of('(pad 2 thru_hole circle (at 0 0) (size 1.6 1.6) (layers *.Cu *.Mask)(drill 0.8))')[0].split("|")
+    assert r[6] == "1" and r[8] == "0" and r[9] == "0" and float(r[7]) == pytest.approx(0.8 * MM, abs=0.01)
+    m = _pads_of('(pad "" thru_hole circle (at -2.89 -1.30) (size 0.65 0.65) (drill 0.65) (layers *.Cu *.Mask))')[0].split("|")
+    assert m[6] == "0" and m[8] == "0"
+
+
 def test_text_is_cp1252_safe_and_has_no_pipe():
     assert conv.clean("10k\u03a9 1%") == "10kohm 1%"
     s = conv.clean("a|b\u2192c")
@@ -195,7 +212,7 @@ def test_prepare_manifest_sharing_and_missing(proj, home):
     assert any("C999" in i for i in m["U3"]["issues"]) and any("QFN-48" in i for i in m["U3"]["issues"])
     assert m["U2"]["source"] == "generated" and m["U2"]["footprint"] == "SOIC-8"
     assert m["Q1"]["footprint"] == "SOT-23-3" and m["U1"]["footprint"] == "LDO_FAKE"
-    assert m["J1"]["source"] == "easyeda" and any("slot hole" in i for i in m["J1"]["issues"])   # oval drill converts
+    assert m["J1"]["source"] == "easyeda" and not any("slot hole" in i for i in m["J1"]["issues"])   # oval drill is a real slot
     assert m["X1"]["status"] == "missing"
     assert "float" not in m["X1"]["issues"][0] and "Error" not in m["X1"]["issues"][0]
     assert m["X1"]["issues"][0].endswith("vendor zip (a log-in site) in Sources")
