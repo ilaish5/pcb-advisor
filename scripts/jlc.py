@@ -183,17 +183,8 @@ def _parse_part(c, requested_mpn=None):
     }
 
 
-def search(keyword, n=10, transport=None):
-    """Search JLC components by keyword or MPN, returning list of parsed match dicts."""
-    keyword_str = (keyword or "").strip()
-    if not keyword_str:
-        return []
-
-    cached = _get_cached(keyword_str, n)
-    if cached is not None:
-        return cached
-
-    body = {"keyword": keyword_str, "currentPage": 1, "pageSize": n, "searchSource": "search"}
+def _fetch(keyword, size, transport, requested=None):
+    body = {"keyword": keyword, "currentPage": 1, "pageSize": size, "searchSource": "search"}
     raw = _call_transport(transport, JLC_URL, body)
 
     # Validate raw response structure
@@ -205,10 +196,54 @@ def search(keyword, n=10, transport=None):
     raw_list = page_info.get("list")
     if raw_list is None and isinstance(data, list):
         raw_list = data
-    if raw_list is None:
-        raw_list = []
+    return [_parse_part(c, requested_mpn=requested or keyword) for c in raw_list or []]
 
-    results = [_parse_part(c, requested_mpn=keyword_str) for c in raw_list]
+
+def _rephrasings(keyword):
+    """JLC matches words in order and ranks zero-stock placeholders first: "0603 LED green"
+    finds only placeholders while "LED 0603" finds the real parts. A few cheap rewordings."""
+    words = keyword.split()
+    if len(words) < 2:
+        return []
+    out = [" ".join(reversed(words))] + [" ".join(words[:i] + words[i + 1:]) for i in range(len(words))]
+    return list(dict.fromkeys(w for w in out if w and w != keyword))[:4]
+
+
+_LIB_RANK = {"Basic": 0, "Preferred": 1}
+
+
+def search(keyword, n=10, transport=None):
+    """Search JLC components by keyword or MPN, returning list of parsed match dicts.
+    Parts in stock come first, an exact MPN and those matching more of the words first
+    (Basic and Preferred before Extended); otherwise JLC's own order is kept."""
+    keyword_str = (keyword or "").strip()
+    if not keyword_str:
+        return []
+
+    cached = _get_cached(keyword_str, n)
+    if cached is not None:
+        return cached
+
+    words = keyword_str.lower().split()
+
+    def missing(h):
+        text = " ".join((h["mpn"], h["package"], h["description"])).lower()
+        return sum(w not in text for w in words)
+
+    size = max(n, 50)
+    hits = _fetch(keyword_str, size, transport)
+    if not any(h["stock"] > 0 and not missing(h) for h in hits):
+        for alt in _rephrasings(keyword_str):
+            hits += [h for h in _fetch(alt, size, transport, keyword_str) if h["stock"] > 0]
+    seen, merged = set(), []
+    for h in hits:
+        if h["code"] not in seen:
+            seen.add(h["code"])
+            merged.append(h)
+    # stock first: an out-of-stock placeholder named "GreenLED" must not lead a "green LED" search
+    merged.sort(key=lambda h: (h["stock"] <= 0, not h["exact"], missing(h), _LIB_RANK.get(h["library_type"], 2)))
+    results = merged[:n]
+    results += [h for h in merged[n:] if h["exact"]]     # part() still finds an MPN that is out of stock
     _set_cached(keyword_str, n, results)
     return results
 

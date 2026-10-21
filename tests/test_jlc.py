@@ -186,3 +186,49 @@ def test_jlc_alternatives_ordering_and_exclusion(home):
     assert codes[0] in ("C1003", "C1004")
     assert codes[1] in ("C1003", "C1004")
     assert codes[2] == "C1002"
+
+
+def test_search_puts_parts_in_stock_before_zero_stock_placeholders(home):
+    def transport(url, body, **kw):
+        assert body["pageSize"] >= 50
+        return {"data": {"componentPageInfo": {"list": [
+            {"componentCode": "C99001", "componentModelEn": "GREEN", "stockCount": 0, "componentLibraryType": "expand"},
+            {"componentCode": "C2", "componentModelEn": "EXT-G", "stockCount": 900, "componentLibraryType": "expand"},
+            {"componentCode": "C1", "componentModelEn": "KT-0603G", "stockCount": 5000, "componentLibraryType": "base"},
+        ]}}}
+    assert [h["code"] for h in jlc.search("0603 LED green", n=3, transport=transport)] == ["C1", "C2", "C99001"]
+
+
+def test_search_rewords_when_nothing_found_is_in_stock(home):
+    # JLC matched "0603 LED green" only to placeholders; "LED 0603" finds the real parts
+    asked = []
+
+    def transport(url, body, **kw):
+        asked.append(body["keyword"])
+        if body["keyword"] == "0603 LED green":
+            return {"data": {"componentPageInfo": {"list": [
+                {"componentCode": "C99001", "componentModelEn": "GREEN", "stockCount": 0}]}}}
+        if body["keyword"] == "LED green":
+            return {"data": {"componentPageInfo": {"list": [
+                {"componentCode": "C12624", "componentModelEn": "KT-0603G", "stockCount": 471144}]}}}
+        return {"data": {"componentPageInfo": {"list": []}}}
+    res = jlc.search("0603 LED green", n=5, transport=transport)
+    assert res[0]["code"] == "C12624" and "C99001" in [h["code"] for h in res]
+    assert asked[0] == "0603 LED green" and len(asked) <= 5
+
+
+def test_search_with_one_word_does_not_reword(home):
+    asked = []
+
+    def transport(url, body, **kw):
+        asked.append(body["keyword"])
+        return {"data": {"componentPageInfo": {"list": []}}}
+    assert jlc.search("NOPART123", transport=transport) == [] and asked == ["NOPART123"]
+
+
+def test_an_out_of_stock_exact_mpn_is_still_returned(home):
+    def transport(url, body, **kw):
+        rows = [{"componentCode": f"C{i}", "componentModelEn": f"ALIKE{i}", "stockCount": 10} for i in range(30)]
+        return {"data": {"componentPageInfo": {"list": rows + [
+            {"componentCode": "C777", "componentModelEn": "ALIKE", "stockCount": 0}]}}}
+    assert jlc.part("ALIKE", transport=transport)["code"] == "C777"
