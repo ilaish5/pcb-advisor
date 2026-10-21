@@ -93,3 +93,17 @@ def test_adopt_skips_non_documents(empty):
     for n in ("Thumbs.db", "desktop.ini", ".hidden", "notes.md", "a.PDF"):
         (folder / n).write_bytes(b"x")
     assert sources.adopt(empty) == ["a.PDF"]
+
+
+def test_changing_a_line_still_waiting_for_approval_replaces_its_card(empty):
+    # Sonnet proposed R1 (1k, new), then 470R for R1 without new: and was refused
+    store.propose_bom(empty, "R1", {"mpn": "0603WAF1001T5E", "value": "1k"}, new=True)
+    first = store.proposals(empty)[-1]["id"]
+    store.propose_bom(empty, "R1", {"mpn": "0603WAF4700T5E", "value": "470"})
+    rows = {p["id"]: p for p in store.proposals(empty)}
+    assert rows[first]["status"] == "rejected" and rows[first]["decided_by"] == "superseded"
+    card = store.proposals(empty)[-1]
+    assert card["status"] == "pending" and card["new"] and card["changes"]["mpn"] == "0603WAF4700T5E"
+    assert card["changes"]["refs"] == ["R1"]
+    store.decide(empty, card["id"], "approved")
+    assert next(l for l in store.bom_lines(empty) if l["key"] == "R1")["mpn"] == "0603WAF4700T5E"

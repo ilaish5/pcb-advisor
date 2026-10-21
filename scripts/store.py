@@ -371,6 +371,14 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     """Record a proposal. Nothing about the BOM changes until the student approves.
     `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty)."""
     existing = {l["key"]: l for l in bom_lines(project)}
+    if line not in existing:
+        # a line still waiting for approval: this card replaces it, carrying what it already said
+        waiting = [p for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
+                   and p.get("new") and p.get("line") == line]
+        if waiting:
+            changes, library, new = {**(waiting[-1].get("changes") or {}), **changes}, library or waiting[-1].get("library"), True
+            for p in waiting:
+                append(project, "proposals.jsonl", {"id": p["id"], "ts": now(), "status": "rejected", "by": "superseded"})
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
     before = {k: existing.get(line, {}).get(k) for k in changes}
