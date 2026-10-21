@@ -25,17 +25,18 @@ TEXT_EVENT_EVERY = 2.0      # seconds between "text"/"thinking" events
 
 
 def _quoted_twins(rules):
-    """Where the repo or projects path still has a space (no 8.3 short name), the engine types it
-    double-quoted; add the rule with that path quoted so it matches too."""
+    """Where the repo or projects path has a space, the engine types the full path double-quoted, even
+    when the rules use the 8.3 short name (Sonnet did); add each rule with that quoted path so it matches too."""
     import workspace
     twins = []
-    for p in {oscompat.command_path(workspace.REPO), oscompat.command_path(workspace.projects_dir())}:
-        if " " not in p:
+    for path in (workspace.REPO, workspace.projects_dir()):
+        used, full = oscompat.command_path(path), str(path).replace("\\", "/")
+        if " " not in full:
             continue
         for r in rules:
-            m = re.search(re.escape(p) + r"[^\s)]*", r)
+            m = re.search(re.escape(used) + r"[^\s)]*", r)
             if m:
-                q = r[:m.start()] + '"' + m.group(0) + '"' + r[m.end():]
+                q = r[:m.start()] + '"' + full + m.group(0)[len(used):] + '"' + r[m.end():]
                 if q not in rules and q not in twins:
                     twins.append(q)
     return twins

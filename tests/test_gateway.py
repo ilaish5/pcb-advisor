@@ -163,3 +163,16 @@ def test_a_repo_path_with_a_space_and_no_short_name_also_gets_a_quoted_rule(home
     allowed = seen["argv"][seen["argv"].index("--allowedTools") + 1].split(",")
     assert any(f'"C:/x y/pcb/scripts/' in a and a.startswith("Bash(") for a in allowed)
     assert any(f' C:/x y/pcb/scripts/' in a for a in allowed)     # the plain form stays
+
+
+def test_a_short_named_repo_still_allows_the_full_quoted_path(home, monkeypatch):
+    # the rules use C:/XY~1/pcb, but Sonnet typed "C:/x y/pcb/scripts/jlc.py" and was denied
+    import oscompat
+    import workspace
+    monkeypatch.setattr(workspace, "REPO", oscompat.pathlib.Path("C:/x y/pcb"))
+    monkeypatch.setattr(oscompat, "_short_path", lambda p: str(p).replace("x y", "XY~1"))
+    seen = fake_stream(monkeypatch, stdout="ok")
+    assert gateway.route(gateway.Request(prompt="x", timeout=5), name="claude_code").ok
+    allowed = seen["argv"][seen["argv"].index("--allowedTools") + 1].split(",")
+    assert any(" C:/XY~1/pcb/scripts/jlc.py" in a for a in allowed)
+    assert any('"C:/x y/pcb/scripts/jlc.py' in a and a.startswith("PowerShell(") for a in allowed)
