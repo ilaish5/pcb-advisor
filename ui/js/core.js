@@ -133,8 +133,10 @@ function chip(name, where) {
 const unesc = s => s.replace(/&(amp|lt|gt|quot|#39);/g, (m, e) => ({amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'"}[e]));
 function inline(t) {
   // t is escaped text. Citations and refs become buttons; **bold** and `code` are the only markup.
+  // a chip is a button (inline-block): punctuation after it moves before it, or a wrapped chip leaves "." alone on a line
   return t
-    .replace(/\{\{src:([^|}]+)(?:\|([^}]*))?\}\}/g, (m, n, w) => chip(unesc(n.trim()), unesc((w || '').trim())))
+    .replace(/(\s*)\{\{src:([^|}]+)(?:\|([^}]*))?\}\}([.,;:!?]*)/g,
+             (m, sp, n, w, p) => (p ? p + ' ' : sp) + chip(unesc(n.trim()), unesc((w || '').trim())))
     .replace(/\{\{ref:([^}]+)\}\}/g, (m, r) => `<button class="ref" data-ref="${r}">${r}</button>`)
     .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
     .replace(/`([^`]+)`/g, '<span class="m">$1</span>');

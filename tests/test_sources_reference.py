@@ -203,10 +203,11 @@ def test_the_chat_chip_pattern_reads_a_name_with_folders():
     must keep the slashes of a reference name, and so must the server's."""
     import model
     core = (REPO / "ui" / "js" / "core.js").read_text(encoding="utf-8")
-    js = re.search(r"\.replace\(/(\\\{\\\{src:.*?)/g, \(m, n, w\)", core).group(1)
-    for pattern in (js, model.CITE.pattern):
-        m = re.search(pattern, "see {{src:jlc/pcb-capabilities.en.md|§ Traces and spacing}} for it")
-        assert m and m.group(1) == "jlc/pcb-capabilities.en.md" and m.group(2) == "§ Traces and spacing"
+    js = re.search(r"\.replace\(/(\(\\s\*\)\\\{\\\{src:.*?)/g,\s*\(m, sp, n, w, p\)", core).group(1)
+    for pattern, first in ((js, 2), (model.CITE.pattern, 1)):     # the chat's pattern also takes the space before and the punctuation after
+        m = re.search(pattern, "see {{src:jlc/pcb-capabilities.en.md|§ Traces and spacing}}. Then")
+        assert m and m.group(first) == "jlc/pcb-capabilities.en.md" and m.group(first + 1) == "§ Traces and spacing"
+    assert re.search(js, "it {{src:a.md}}.").group(4) == "."                # the "." goes before the chip, not alone on a line
     assert re.search(r"const srcByName = n => \(S\.sources \|\| \[\]\)\.find\(s => s\.name === n\)", core)
 
 
