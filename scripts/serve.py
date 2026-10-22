@@ -374,6 +374,19 @@ def _bridge_done(project, op, since):
     return ok[-1] if ok else None
 
 
+def _quote_holds(said, last_user) -> bool:
+    """idea.confirm's quote must be words the student wrote: the whole of a short message ("מאשר", "yes"), otherwise at
+    least 2 words or 8 characters matched as whole words, so "y" or "es" inside a longer message does not count."""
+    edge = " .,!?;:()-" + chr(34) + chr(39) + chr(9) + chr(10)
+    q = re.sub(r"\s+", " ", str(said or "").lower()).strip(edge)
+    u = re.sub(r"\s+", " ", str(last_user or "").lower()).strip(edge)
+    if len(q) < 2:
+        return False
+    if q == u:
+        return True
+    return (len(q) >= 8 or " " in q) and re.search(r"(?<!\w)" + re.escape(q) + r"(?!\w)", u) is not None
+
+
 def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
@@ -407,8 +420,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 applied.append("idea.describe")
             elif kind == "idea.confirm":
                 # only after the student said yes: the quote must be in what they just wrote
-                said = (a.get("student_said") or "").strip().lower()
-                if said and said in (last_user or "").lower():
+                if _quote_holds(a.get("student_said"), last_user):
                     if store.load_idea_working(project).get("agreed"):
                         store.confirm_idea(project)
                         applied.append("idea.confirm")
@@ -1165,6 +1177,7 @@ class Handler(BaseHTTPRequestHandler):
             proj = self.project()
             import rules as rules_mod
             import rule_kinds, ipc_standards
+            from checks import board as board_checks
             preset = rules_mod.get_jlc_preset(project_mod.board(proj))   # 2 or multilayer, copper weight, mask colour
             rules_file = model.project_dir(proj) / "rules.json"
             extra = _extra_rules_load(rules_file)
@@ -1201,6 +1214,7 @@ class Handler(BaseHTTPRequestHandler):
                 "diff": diff,
                 "linked_pcb": linked_pcb,
                 "missing_in_pcb": missing_in_pcb,
+                "drill_check": board_checks.check_drills(doc) if doc else [],
             })
         if path == "/api/rules/standard":           # what a standard preset would add (nothing is stored)
             import ipc_standards
@@ -1369,6 +1383,8 @@ class Handler(BaseHTTPRequestHandler):
                 if refused:
                     reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
                 rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
+                if refused:
+                    rec["refused"] = refused
                 if res.get("error"):
                     rec["error"] = True       # the engine did not answer: the chat offers Retry instead of showing this as a reply
                 if chat_meta.get("diagram_touched"):

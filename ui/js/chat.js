@@ -321,7 +321,10 @@ function msgHTML(m, undoTs) {
     // the agent thinks the idea is agreed: the student confirms with one click (no quote check)
     const ready = (m.applied || []).includes('idea.ready') && S.idea && !S.idea.confirmed
       ? `<div class="undo">${btn('Confirm idea', {size: 'sm', kind: 'line', icon: 'check', act: 'chat-confirm-idea', disabled: !((S.idea.agreed || []).length), title: 'Save the draft and mark the idea as agreed'})}</div>` : '';
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
+    const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => `<span class="chat-act ok" title="Applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`)
+      .concat((m.refused || []).map(a => `<span class="chat-act bad" title="Not applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`));
+    const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }

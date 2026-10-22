@@ -57,6 +57,15 @@ PASSIVE_REF = re.compile(r"^(?:R|C|L|D|FB|TP|LED|F|RN|RV)\d", re.I)
 CAP_REF = re.compile(r"^C[A-Za-z]*\d")   # C1, CC2, Co2, COSC1
 
 
+# JLC minimums (shared/reference/jlc/pcb-capabilities.en.md, "Drills, vias and annular ring", read 2026-10-14; P1 = capabilities page)
+JLC_MIN_DRILL_MM = 0.15        # smallest drill, 2-layer and multilayer ordinary process
+JLC_MIN_VIA_DIA_MM = 0.25      # via diameter at that drill; ring = (dia - hole) / 2 = 0.05
+JLC_MIN_VIA_RING_MM = 0.05     # via ring follows the via diameter rule (diameter >= hole + 0.1), not the PTH ring
+JLC_MIN_PTH_RING_MM = 0.15     # absolute min plated pad ring (multilayer 1 oz); 2-layer 1 oz is 0.18, 0.25 recommended
+JLC_MIN_PTH_RING_2L_MM = 0.18
+JLC_MIN_NPTH_MM = 0.50         # smallest non-plated hole
+
+
 def is_connector(comp: dict[str, Any]) -> bool:
     ref = comp.get("ref", "")
     pattern = comp.get("pattern", "")
@@ -362,6 +371,7 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
     findings.extend(check_edge_components(doc, bounds, connector_specs=connector_specs))
     findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm))
     findings.extend(check_cpl_rotation_sanity(doc))
+    findings.extend(check_drills(doc))
 
     return {
         "file": doc.get("file", ""),
@@ -371,6 +381,45 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
         "net_count": len(doc.get("nets", [])),
         "bounds_mm": bounds,
     }
+
+
+def check_drills(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per via and drilled pad against the JLC minimums above: hole too small, ring too thin, plated pad with no
+    ring (copper not larger than the hole). The reader gives no slot shape, so slots are not checked."""
+    out = []
+
+    def add(id_, ref, msg, evidence):
+        out.append({"id": id_, "severity": "error", "refs": [ref] if ref else [], "message": msg, "evidence": evidence})
+
+    for p in doc.get("drilled_pads") or []:
+        hole, size, plated = p.get("hole_mm") or 0, p.get("min_size_mm") or 0, bool(p.get("plated"))
+        who = f"{p.get('ref') or '?'}-{p.get('name') or '?'}"
+        where = f"at ({p.get('x_mm')}, {p.get('y_mm')}) mm"
+        ev = f"hole {hole:g} mm, copper {size:g} mm, {'plated' if plated else 'unplated'}"
+        if plated:
+            if hole < JLC_MIN_DRILL_MM:
+                add("drill_too_small", p.get("ref"), f"{who} {where}: hole {hole:g} mm is below the JLC minimum drill {JLC_MIN_DRILL_MM:g} mm.", ev)
+            ring = round((size - hole) / 2, 4)
+            if size <= hole:
+                add("plated_pad_no_ring", p.get("ref"), f"{who} {where}: plated pad has no copper ring (copper {size:g} mm, hole {hole:g} mm); JLC cannot plate it.", ev)
+            elif ring < JLC_MIN_PTH_RING_MM:
+                add("annular_ring_too_thin", p.get("ref"), f"{who} {where}: annular ring {ring:g} mm is below the JLC minimum {JLC_MIN_PTH_RING_MM:g} mm.", ev)
+            elif ring < JLC_MIN_PTH_RING_2L_MM:
+                out.append({"id": "annular_ring_thin_2layer", "severity": "warning", "refs": [p["ref"]] if p.get("ref") else [],
+                            "message": f"{who} {where}: annular ring {ring:g} mm is below the 2-layer minimum {JLC_MIN_PTH_RING_2L_MM:g} mm (multilayer minimum {JLC_MIN_PTH_RING_MM:g} mm).", "evidence": ev})
+        elif hole < JLC_MIN_NPTH_MM:
+            add("npth_too_small", p.get("ref"), f"{who} {where}: unplated hole {hole:g} mm is below the JLC minimum {JLC_MIN_NPTH_MM:g} mm.", ev)
+    for v in doc.get("vias") or []:
+        hole, dia = v.get("hole_mm") or 0, v.get("dia_mm") or 0
+        where = f"via at ({v.get('x_mm')}, {v.get('y_mm')}) mm" + (f" net {v['net']}" if v.get("net") else "")
+        ev = f"hole {hole:g} mm, diameter {dia:g} mm"
+        if hole < JLC_MIN_DRILL_MM:
+            add("drill_too_small", None, f"{where}: hole {hole:g} mm is below the JLC minimum drill {JLC_MIN_DRILL_MM:g} mm.", ev)
+        if dia < JLC_MIN_VIA_DIA_MM:
+            add("via_too_small", None, f"{where}: diameter {dia:g} mm is below the JLC minimum {JLC_MIN_VIA_DIA_MM:g} mm.", ev)
+        elif round((dia - hole) / 2, 4) < JLC_MIN_VIA_RING_MM:
+            add("annular_ring_too_thin", None, f"{where}: ring {round((dia - hole) / 2, 4):g} mm is below the JLC via minimum {JLC_MIN_VIA_RING_MM:g} mm.", ev)
+    return out
 
 
 def parse_placement_csv(text: str) -> list[dict[str, Any]]:

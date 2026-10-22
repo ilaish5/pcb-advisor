@@ -598,6 +598,15 @@ def rules_missing(project):
         return []
 
 
+def drill_problems(project):
+    """Messages for vias and holes JLC cannot make, read from the linked PcbDoc file ([] without one). Runs with the outputs."""
+    try:
+        from checks import board
+        return [f["message"] for f in board.check_drills(rules_mod.read_pcbdoc(_project_pcb(project))) if f["severity"] == "error"]
+    except (BridgeError, AltiumReadError, OSError, ImportError):
+        return []
+
+
 def rules_in_altium(log):
     """Rule names of Altium's in-memory board from a RULESIN run's log, or None when the log has no complete list."""
     names, total = [], None
@@ -728,6 +737,9 @@ def run_outjob(project):
     missing = rules_missing(project)
     warnings = [f"The JLC rules ({', '.join(missing)}) are no longer in the PcbDoc; DRC and outputs ran against Altium's "
                 "defaults. Import the rules again."] if missing else []
+    drills = drill_problems(project)
+    if drills:
+        warnings.append(f"{len(drills)} hole(s) JLC cannot make: " + "; ".join(drills[:5]) + (" ..." if len(drills) > 5 else ""))
     _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing)
     return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
             "warnings": warnings}

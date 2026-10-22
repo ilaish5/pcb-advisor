@@ -302,3 +302,42 @@ def test_edge_checks_use_the_board_shape_only_when_it_holds_the_parts():
     rb = board.check_board(fixtures / "rules-board.PcbDoc")
     assert [f for f in rb["findings"] if f["id"] == "board_shape_does_not_hold_parts"]
     assert rb["bounds_mm"][2] > 200
+
+
+# ---------------------------------------------------------------- drills (JLC minimums)
+
+def dpad(hole, size, plated=True, ref="J1", name="1"):
+    return {"ref": ref, "name": name, "x_mm": 1.0, "y_mm": 2.0, "hole_mm": hole, "min_size_mm": size, "plated": plated}
+
+
+def drill_ids(doc):
+    return [(f["id"], f["refs"]) for f in board.check_drills(doc)]
+
+
+def test_drill_check_passes_a_good_pad_and_via():
+    doc = {"drilled_pads": [dpad(0.8, 1.4), dpad(3.2, 3.2, plated=False)], "vias": [{"hole_mm": 0.3, "dia_mm": 0.6}]}
+    assert board.check_drills(doc) == []
+
+
+def test_drill_check_flags_a_hole_below_the_jlc_minimum():
+    res = board.check_drills({"drilled_pads": [dpad(0.1, 0.6)], "vias": []})
+    assert res[0]["id"] == "drill_too_small" and res[0]["refs"] == ["J1"]
+    assert "J1-1" in res[0]["message"] and "0.1 mm" in res[0]["message"] and "0.15 mm" in res[0]["message"]
+    assert drill_ids({"drilled_pads": [dpad(0.3, 1.0, plated=False)]}) == [("npth_too_small", ["J1"])]
+    assert drill_ids({"vias": [{"hole_mm": 0.1, "dia_mm": 0.4, "x_mm": 1, "y_mm": 2}]}) == [("drill_too_small", [])]
+
+
+def test_drill_check_flags_a_plated_pad_with_no_ring_and_a_thin_ring():
+    assert drill_ids({"drilled_pads": [dpad(1.0, 1.0)]}) == [("plated_pad_no_ring", ["J1"])]
+    assert drill_ids({"drilled_pads": [dpad(1.0, 0.9)]}) == [("plated_pad_no_ring", ["J1"])]
+    res = board.check_drills({"drilled_pads": [dpad(1.0, 1.2)]})                 # ring 0.1 mm
+    assert res[0]["id"] == "annular_ring_too_thin" and "0.1 mm" in res[0]["message"] and "0.15 mm" in res[0]["message"]
+    assert drill_ids({"drilled_pads": [dpad(1.0, 1.34)]})[0][0] == "annular_ring_thin_2layer"   # 0.17: ok multilayer only
+    assert drill_ids({"vias": [{"hole_mm": 0.15, "dia_mm": 0.2}]}) == [("via_too_small", [])]
+    assert drill_ids({"vias": [{"hole_mm": 0.3, "dia_mm": 0.38}]}) == [("annular_ring_too_thin", [])]
+
+
+def test_the_finished_board_has_no_drill_findings():
+    res = check_board(FIXTURES / "finished-board.PcbDoc")
+    assert not [f for f in res["findings"] if f["id"] in {"drill_too_small", "npth_too_small", "via_too_small",
+                "plated_pad_no_ring", "annular_ring_too_thin", "annular_ring_thin_2layer"}]

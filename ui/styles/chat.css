@@ -42,6 +42,10 @@
 .msg.agent .txt ul,.msg.agent .txt ol{margin:6px 0;padding-inline-start:20px}
 .msg.agent .txt li+li{margin-top:3px}
 .msg .undo{margin-top:6px}
+.msg .acts{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+.chat-act{max-width:100%;padding:1px 8px;border-radius:var(--r-sm);font-size:var(--t-xs);overflow-wrap:anywhere}
+.chat-act.ok{background:var(--ok-soft);color:var(--ok)}
+.chat-act.bad{background:var(--bad-soft);color:var(--bad)}
 
 .chat .ref{font-family:var(--f-mono);font-weight:600;color:var(--ink);border-radius:3px;text-align:left}
 .chat .ref:hover{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}

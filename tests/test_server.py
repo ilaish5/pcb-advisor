@@ -495,3 +495,25 @@ def test_a_chat_posted_while_a_turn_runs_is_refused_and_not_stored(server, lte, 
     finally:
         with serve.TURNS_LOCK:
             serve.TURNS.pop((lte, "s1"), None)
+
+
+def test_confirm_quote_must_be_words_the_student_wrote(home, empty):
+    import serve
+    for said, user in [("y", "Yes, confirmed, y"), ("es", "yes please"), ("yes,", "I said yes, but wait"), ("confirm", "unconfirmed")]:
+        assert not serve._quote_holds(said, user), (said, user)
+    assert serve._quote_holds("מאשר", "מאשר")                  # the whole short message
+    assert serve._quote_holds("yes, confirm", "Yes, confirm.")
+    assert serve._quote_holds("yes confirm", "ok, yes confirm it")
+    assert not serve._quote_holds("", "yes") and not serve._quote_holds("yes", "")
+    store.propose_idea(empty, "Power", "Li-ion", by="agent")
+    applied, _, _ = serve.apply_actions(empty, [{"type": "idea.confirm", "student_said": "y"}], last_user="yes, y")
+    assert applied == ["idea.ready"] and not store.load_idea(empty)["confirmed"]
+
+
+def test_a_refused_action_is_stored_on_the_message_record(server, lte, monkeypatch):
+    import agent
+    monkeypatch.setattr(agent, "respond", lambda *a, **k: {
+        "reply": "Done.", "tools": [], "actions": [{"type": "jlc.no_such_action"}]})
+    _, st = post(server, "/api/chat", {"text": "go"}, lte)
+    last = st["chat"][-1]
+    assert last["refused"] and "jlc.no_such_action" in last["refused"][0] and "(Not applied:" in last["text"]
