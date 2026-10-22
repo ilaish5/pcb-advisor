@@ -273,6 +273,19 @@ def test_order_check_classifies_each_line(orderable):
     assert res["counts"]["swap_free"] == 1 and "R1 swap_free" in order_check.summary(res)
 
 
+def test_a_reversed_pin_alternative_is_never_a_free_swap_but_the_identical_one_is(orderable, monkeypatch):
+    """The live mistake: the model called a part with the same pads but another pin 3 (C vs E, G/S/D order) 'the same'."""
+    alts = {"U1": [alt("C202", "REVERSED-PINS", 9000, "SOT-23-3", description="LDO 3.3V"),
+                   alt("C102", "WIDER-PADS", 9000, "SOT-23-3", description="LDO 3.3V")]}
+    monkeypatch.setattr(jlc, "alternatives", lambda line, n=5, transport=None: alts.get(line["key"], []))
+    by = {l["line"]: l for l in order_check.order_check(orderable)["lines"]}
+    assert by["U1"]["class"] == "design_change"
+    assert {a["code"]: a["match"] for a in by["U1"]["alternatives"]} == {"C202": "different", "C102": "different"}
+    alts["U1"] = [alt("C201", "SAME-PINS", 9000, "SOT-23-3", description="LDO 3.3V")]
+    by = {l["line"]: l for l in order_check.order_check(orderable)["lines"]}
+    assert by["U1"]["class"] == "swap_free" and by["U1"]["alternatives"][0]["match"] == "same"
+
+
 def test_a_same_footprint_alternative_with_too_little_stock_is_no_swap(orderable, monkeypatch):
     monkeypatch.setattr(jlc, "alternatives", lambda line, n=5, transport=None: [alt("C101", "SAME-RES", 2)] if line["key"] == "R1" else [])
     by = {l["line"]: l for l in order_check.order_check(orderable)["lines"]}

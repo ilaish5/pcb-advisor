@@ -116,3 +116,10 @@ def test_the_skills_page_lists_export_cpl():
     rows = {r["name"]: r for r in registry.listing()}
     row = rows["Export CPL (pick and place) for JLC"]
     assert row["script"] == "export_cpl.py" and row["available"]
+
+
+def test_the_manufacturing_skill_makes_the_cpl_before_naming_it():
+    """The live mistake: the student was told to upload a CPL that was never written."""
+    import pathlib
+    text = (pathlib.Path(__file__).resolve().parent.parent / "runtime" / "skills" / "manufacturer-and-dfm" / "SKILL.md").read_text(encoding="utf-8")
+    assert "export_cpl.py" in text and "Produce the files before naming them" in text and "No CPL file: say so, never name one" in text

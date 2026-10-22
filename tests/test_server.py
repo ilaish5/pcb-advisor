@@ -269,6 +269,16 @@ def test_a_confirm_without_a_quote_is_not_shown_as_a_refusal(server, lte, monkey
     assert "Not applied" not in st["chat"][-1]["text"] and "idea.ready" in st["chat"][-1]["applied"]
 
 
+def test_a_refused_action_is_named_in_the_reply_and_kept_out_of_the_applied_list(server, lte, monkeypatch):
+    """The model's text is written before the action results: a refused action must still be visible to the student."""
+    import agent
+    monkeypatch.setattr(agent, "respond", lambda *a, **k: {
+        "reply": "Done, the Gerbers are being produced.", "tools": [], "actions": [{"type": "jlc.no_such_action"}]})
+    _, st = post(server, "/api/chat", {"text": "make the gerbers"}, lte)
+    last = st["chat"][-1]
+    assert "(Not applied: jlc.no_such_action" in last["text"] and last["applied"] == []
+
+
 # ---------------------------------------------------------------- the rest of the surface
 
 def test_the_browser_cannot_set_a_config_key_that_is_not_its_own(server, lte):
