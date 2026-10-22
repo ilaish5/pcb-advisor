@@ -607,6 +607,27 @@ def drill_problems(project):
         return []
 
 
+def design_problems(project):
+    """Messages for a PcbDoc that does not carry the design: the agent's netlist (intent) against the board's pads, and
+    the SchDocs (nets with one pin) and SchDoc-vs-board connectivity. [] without a PcbDoc. Runs with the outputs."""
+    try:
+        from checks import schematic
+        pcb = rules_mod.read_pcbdoc(_project_pcb(project))
+        out = [f["message"] for f in schematic.check_intent_vs_board([store.load_sheet(project, s) for s in store.sheet_ids(project)], pcb)
+               if f["severity"] == "error"]
+    except (BridgeError, AltiumReadError, OSError, ImportError):
+        return []
+    try:
+        prj = _linked(project)
+        if read_prjpcb(prj)["sheets"]:
+            res = schematic.check_schematic(prj, board=pcb)
+            out += [f["message"] for f in res["findings"]
+                    if f["id"] == "board_netlist_mismatch" or (f["id"] == "single_pin_net" and f["message"].startswith("Net '"))]
+    except Exception:                                   # an unreadable SchDoc must not hide the intent findings
+        pass
+    return out
+
+
 def rules_in_altium(log):
     """Rule names of Altium's in-memory board from a RULESIN run's log, or None when the log has no complete list."""
     names, total = [], None
@@ -740,6 +761,10 @@ def run_outjob(project):
     drills = drill_problems(project)
     if drills:
         warnings.append(f"{len(drills)} hole(s) JLC cannot make: " + "; ".join(drills[:5]) + (" ..." if len(drills) > 5 else ""))
+    design = design_problems(project)
+    if design:
+        warnings.append(f"The board does not match the design ({len(design)} problem(s)): " + " | ".join(design[:5])
+                        + (" ..." if len(design) > 5 else "") + " Fix this before ordering.")
     _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing)
     return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
             "warnings": warnings}

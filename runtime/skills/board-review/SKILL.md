@@ -41,6 +41,7 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
   (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/trace_width.py ...` IPC-2221 trace width for a current; use it instead of estimating.
 - `python <repo>/scripts/model.py <project>` prints project state (BOM, parts, notes) to read the part list.
+- `python <repo>/scripts/checks/board.py <pcb_file> --design <project>` lists nets, pins, parts the board lacks. Run it with every DRC review.
 - `python <repo>/scripts/checks/board.py <pcb_file>` checks connector opening vs nearest edge normal, decap distance to IC power pin, and CPL rotation sanity.
 - Never run Altium, Altium scripts or the GUI. The student runs DRC and sends the result.
 

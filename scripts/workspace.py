@@ -307,7 +307,8 @@ def describe(project=None, engine_home=None):
             {"run": oscompat.py("python3 {repo}/scripts/dfm.py ingest <project> <pdf>"),
              "what": "ingest JLCDFM report PDF into slices and triage table"},
             {"run": oscompat.py("python3 {repo}/scripts/checks/board.py <pcb_file>"),
-             "what": "run physical board checks (connectors, decap distance, CPL rotation)"},
+             "what": "run physical board checks (connectors, decap distance, CPL rotation). Add --design <project> to also compare "
+                     "the board with the design: a net, pin or part the PcbDoc lacks is an error (a clean DRC does NOT show this: no net, no unrouted net)"},
             {"run": oscompat.py("python3 {repo}/scripts/checks/schematic.py <source>"),
              "what": "build netlist and check single-pin nets, unconnected IC power pins, pin-net mismatches"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/check_availability.py <project> [LINE ...]"),

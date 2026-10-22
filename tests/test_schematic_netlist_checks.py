@@ -81,3 +81,68 @@ def test_cli_takes_a_project_name(empty):
     write(empty, driver(False))
     out = subprocess.run([sys.executable, str(schematic.__file__), empty], capture_output=True, text=True, encoding="utf-8")
     assert json.loads(out.stdout)["net_count"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Design intent against the board: the USB-LED case (R3 on the schematic had no pins, so the board lost V_LED and R3's 5V)
+# ---------------------------------------------------------------------------
+def usb_led_sheet():
+    return {"id": "01", "sections": [{"id": "A", "title": "T"}], "notes": [], "parts": [
+        {"ref": "J1", "section": "A", "kind": "conn", "pins": [
+            pin("A4B9", "VBUS", "+5V"), pin("B4A9", "VBUS", "+5V"), pin("A1B12", "GND", "GND"),
+            pin("A6", "DP1", "NC"), pin("A7", "DN1", "")]},
+        {"ref": "R3", "section": "A", "kind": "passive", "pins": [pin("1", "1", "+5V"), pin("2", "2", "V_LED")]},
+        {"ref": "D1", "section": "A", "kind": "led", "pins": [pin("1", "K", "GND"), pin("2", "A", "V_LED")]},
+    ]}
+
+
+def usb_led_board(connected):
+    rows = [("J1", "A4B9", "+5V"), ("J1", "B4A9", "+5V"), ("J1", "A1B12", "GND"), ("J1", "A6", None), ("J1", "A7", None),
+            ("D1", "1", "GND"), ("D1", "2", "V_LED"),
+            ("R3", "1", "+5V" if connected else None), ("R3", "2", "V_LED" if connected else None)]
+    return {"pads": [{"ref": r, "name": n, "net": net} for r, n, net in rows]}
+
+
+def test_a_board_missing_the_led_connections_is_an_error_naming_the_net_and_pins():
+    findings = schematic.design_vs_board([usb_led_sheet()], usb_led_board(False))
+    errs = [f for f in findings if f["severity"] == "error"]
+    text = " ".join(f["message"] for f in errs)
+    assert {f["id"] for f in errs} == {"design_net_mismatch"}
+    assert "V_LED" in text and "R3-1" in text and "R3-2" in text and "+5V" in text
+    assert not [f for f in findings if "A6" in f["message"] or "A7" in f["message"]]      # NC / open pins are never flagged
+
+
+def test_a_matching_board_has_no_findings_and_the_folder_forms_work(tmp_path):
+    assert schematic.design_vs_board([usb_led_sheet()], usb_led_board(True)) == []
+    proj = tmp_path / "USB-LED"
+    (proj / "netlist").mkdir(parents=True)
+    (proj / "netlist" / "01.json").write_text(json.dumps(usb_led_sheet()), encoding="utf-8")
+    for source in (proj, proj / "netlist", proj / "netlist" / "01.json"):
+        assert schematic.check_schematic(source)["net_count"] == 5
+        assert schematic.design_vs_board(source, usb_led_board(True)) == []
+        bad = schematic.check_schematic(source, board=usb_led_board(False))
+        assert {f["id"] for f in bad["findings"] if f["severity"] == "error"} == {"design_net_mismatch"}
+
+
+def test_missing_part_wrong_net_short_and_unknown_pin():
+    board = usb_led_board(True)
+    board["pads"] = [p for p in board["pads"] if p["ref"] != "D1"]
+    ids_ = {f["id"]: f for f in schematic.design_vs_board([usb_led_sheet()], board)}
+    assert ids_["design_part_missing"]["refs"] == ["D1"] and ids_["design_part_missing"]["severity"] == "error"
+    board = usb_led_board(True)
+    next(p for p in board["pads"] if (p["ref"], p["name"]) == ("R3", "2"))["net"] = "GND"        # V_LED pin on GND
+    found = {f["id"]: f for f in schematic.design_vs_board([usb_led_sheet()], board)}
+    assert "should be on 'V_LED' but is on 'GND'" in found["design_net_mismatch"]["message"]
+    assert "design_nets_shorted" in found and "GND" in found["design_nets_shorted"]["message"]
+    board = usb_led_board(True)
+    next(p for p in board["pads"] if (p["ref"], p["name"]) == ("R3", "1"))["name"] = "P1"        # numbering that does not match
+    unk = [f for f in schematic.design_vs_board([usb_led_sheet()], board) if f["id"] == "design_pin_unknown"]
+    assert unk and unk[0]["severity"] == "warning" and "R3" in unk[0]["refs"] and "1" in unk[0]["message"]
+
+
+def test_a_merged_pin_number_matches_its_split_pads():
+    sheet = {"parts": [{"ref": "J1", "pins": [pin("A4B9", "VBUS", "+5V"), pin("B8", "X", "+5V")]}, {"ref": "J2", "pins": [pin("A4/B9", "V", "+5V"), pin("B8", "X", "+5V")]}]}
+    board = {"pads": [{"ref": "J1", "name": "A4", "net": "+5V"}, {"ref": "J1", "name": "B9", "net": "+5V"},
+                      {"ref": "J1", "name": "B8", "net": "+5V"}]}
+    board["pads"] += [{"ref": "J2", "name": "A4B9", "net": "+5V"}, {"ref": "J2", "name": "B8", "net": "+5V"}]
+    assert schematic.check_intent_vs_board([sheet], board) == []

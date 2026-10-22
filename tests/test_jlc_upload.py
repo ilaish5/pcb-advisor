@@ -519,3 +519,15 @@ def test_the_new_markup_has_no_inline_style_and_no_hex_colour():
         assert not re.search(r'style\s*=\s*["\']', src) and "style=" not in src
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", CHECKS_CSS)
     assert "var(--" in CHECKS_CSS[CHECKS_CSS.index(".dfm-steps"):]
+
+
+def test_the_gerber_zip_warns_when_the_board_does_not_match_the_design(linked, monkeypatch):
+    from altium import bridge
+    name, _ = linked
+    monkeypatch.setattr(bridge, "design_problems", lambda project: ["Design and board disagree on net 'V_LED': R3-2 has no net."])
+    res = jlc_upload.gerber_zip(name)
+    assert any("does not match the design" in w and "V_LED" in w for w in res["warnings"])
+    applied, _, _ = serve.apply_actions(name, [{"type": "jlc.gerber_zip"}])
+    assert "WARNING: The board does not match the design" in applied[0]
+    monkeypatch.setattr(bridge, "design_problems", lambda project: [])
+    assert not [w for w in jlc_upload.gerber_zip(name)["warnings"] if "design" in w]

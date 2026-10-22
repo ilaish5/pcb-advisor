@@ -468,6 +468,131 @@ def _board_findings(cmp: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+_NC_NETS = ("NC", "N/C", "NO_ERC")
+_PIN_TOKEN_RE = re.compile(r"[A-Za-z]+\d+")
+
+
+def _board_pad_index(pcb_doc: dict[str, Any]) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    out: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for pad in pcb_doc.get("pads", []):
+        ref = pad.get("ref")
+        if ref:
+            out.setdefault(str(ref), {}).setdefault(str(pad.get("name", "")), []).append(pad)
+    return out
+
+
+def _pads_of_pin(by_name: dict[str, list[dict[str, Any]]], num: str) -> list[dict[str, Any]]:
+    """The pads a netlist pin number stands for: the pad of that designator, else (a merged pin such as
+    'A4B9' on a board that has 'A4' and 'B9' pads) the pads named by its parts. [] when none fits."""
+    if num in by_name:
+        return by_name[num]
+    joined = re.sub(r"[^A-Za-z0-9]", "", num)                  # 'A4/B9' is the pad 'A4B9'
+    if joined != num and joined in by_name:
+        return by_name[joined]
+    parts = _PIN_TOKEN_RE.findall(num)
+    if len(parts) > 1 and "".join(parts) == joined:
+        found = [pad for t in parts for pad in by_name.get(t, [])]
+        if found:
+            return found
+    return []
+
+
+def check_intent_vs_board(sheets: list[dict], pcb_doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Design intent (the netlist sheets the agent wrote) against the PcbDoc's pads. Findings:
+    design_part_missing (error: a part with connections is not on the board), design_net_mismatch (error: a pin's pad
+    has no net or another net than its intended net, or the board joins fewer pins than the design), design_nets_shorted
+    (error: two intended nets on one board net), design_pin_unknown (warning: a pin number no pad has).
+    A pin with net NC or no net is intentionally open and never reported."""
+    by_ref = _board_pad_index(pcb_doc)
+    intent: dict[str, list[tuple[str, str]]] = collections.OrderedDict()      # net -> [(ref, num)]
+    unknown: dict[str, list[str]] = collections.OrderedDict()
+    missing_parts: list[str] = []
+    pads_of: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for sheet in sheets:
+        for part in sheet.get("parts", []):
+            ref = str(part.get("ref", ""))
+            wired = [(str(p.get("num") or p.get("number") or p.get("name") or ""), str(p.get("net") or "").strip())
+                     for p in part.get("pins", [])]
+            wired = [(num, net) for num, net in wired if net and net.upper() not in _NC_NETS]
+            if not wired:
+                continue
+            if ref not in by_ref:
+                if ref not in missing_parts:
+                    missing_parts.append(ref)
+                continue
+            for num, net in wired:
+                pads = _pads_of_pin(by_ref[ref], num)
+                if not pads:
+                    unknown.setdefault(ref, []).append(num)
+                    continue
+                pads_of[(ref, num)] = pads
+                if (ref, num) not in intent.setdefault(net, []):
+                    intent[net].append((ref, num))
+
+    out: list[dict[str, Any]] = []
+    for ref in missing_parts:
+        out.append({"id": "design_part_missing", "severity": "error", "refs": [ref],
+                    "message": f"{ref} is in the design but not on the board: its connections cannot be made. "
+                               "Update the PcbDoc from the schematic.",
+                    "evidence": f"{ref} has no pad in the PcbDoc"})
+    for ref, nums in unknown.items():
+        out.append({"id": "design_pin_unknown", "severity": "warning", "refs": [ref],
+                    "message": f"{ref} pin(s) {', '.join(nums)} of the design match no pad on the board (different pin "
+                               "numbering?): not compared.",
+                    "evidence": f"pads of {ref}: {_max_list(sorted(by_ref[ref]), 12)}"})
+
+    board_nets_of: dict[str, set[str]] = collections.defaultdict(set)         # board net -> intended nets on it
+    for net, pins in intent.items():
+        pads = [(f"{r}-{n}", pad) for r, n in pins for pad in pads_of[(r, n)]]
+        on = collections.Counter(pad.get("net") for _, pad in pads if pad.get("net"))
+        for b in on:
+            board_nets_of[b].add(net)
+        if not on:
+            main = None
+        elif on.get(net):
+            main = net
+        else:
+            main = on.most_common(1)[0][0]
+        none_pins = [tag for tag, pad in pads if not pad.get("net")]
+        wrong = [(tag, pad["net"]) for tag, pad in pads if pad.get("net") and pad["net"] != main]
+        joined = sorted({tag for tag, pad in pads if main and pad.get("net") == main})
+        too_few = len(pins) >= 2 and len(joined) < 2
+        if not (none_pins or wrong or too_few):
+            continue
+        bits = []
+        if not on:
+            bits.append(f"net '{net}' is not on the board at all")
+        elif too_few:
+            bits.append(f"net '{net}' joins only {_max_list(joined, 8)} on the board")
+        if none_pins:
+            bits.append(f"{_max_list(none_pins, 8)} should be on '{net}' but the pad has no net")
+        if wrong:
+            bits.append("; ".join(f"{t} should be on '{net}' but is on '{b}'" for t, b in wrong[:6]))
+        refs = sorted({r for r, _ in pins})
+        out.append({"id": "design_net_mismatch", "severity": "error", "refs": refs,
+                    "message": f"Design and board disagree on net '{net}': " + "; ".join(bits) + ". The connection is missing on the board.",
+                    "evidence": f"design pins on '{net}': {_max_list([f'{r}-{n}' for r, n in pins], 10)}; board nets: "
+                                + (_max_list([f"{k} x{v}" for k, v in on.items()], 6) or "none")})
+    for b, nets in board_nets_of.items():
+        if len(nets) > 1:
+            pins = [f"{r}-{n}" for net in sorted(nets) for r, n in intent[net]]
+            out.append({"id": "design_nets_shorted", "severity": "error",
+                        "refs": sorted({r for net in nets for r, _ in intent[net]}),
+                        "message": f"Board net '{b}' joins nets the design keeps apart: {', '.join(sorted(nets))}.",
+                        "evidence": _max_list(pins, 10)})
+    return out
+
+
+def design_vs_board(project_or_sheets: Any, board: Any) -> list[dict[str, Any]]:
+    """check_intent_vs_board from a project name / folder / netlist folder / sheet(s) and a PcbDoc (path or read_pcbdoc
+    dict). [] when there is no design intent to compare."""
+    got = _netlist_sources(project_or_sheets)
+    if not got:
+        return []
+    pcb_doc = board if isinstance(board, dict) else read_pcbdoc(board)
+    return check_intent_vs_board(got[0], pcb_doc)
+
+
 # ---------------------------------------------------------------------------
 # Source loading
 # ---------------------------------------------------------------------------
@@ -526,6 +651,8 @@ def _netlist_sources(source: Any) -> "tuple[list[dict], str | None] | None":
         if p.parent.name == "netlist":
             project = p.parent.parent.name
     elif p.is_dir():
+        if p.name != "netlist" and (p / "netlist").is_dir():       # a project folder: its netlist/ is the design
+            project, p = p.name, p / "netlist"
         files = sorted(p.glob("*.json"))
         if p.name == "netlist":
             project = p.parent.name
@@ -785,8 +912,11 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
     if board is not None and sch:
         pcb_doc = board if isinstance(board, dict) else read_pcbdoc(board)
         board_cmp = compare_with_board(sch, pcb_doc)
-        findings.extend(_board_findings(board_cmp))
-        missing = board_cmp["only_in_schematic"]
+        if from_netlist:                                  # the design intent: named nets, pins, parts
+            findings.extend(check_intent_vs_board(net_sheets, pcb_doc))
+        else:
+            findings.extend(_board_findings(board_cmp))
+        missing = [] if from_netlist else board_cmp["only_in_schematic"]
         if missing:
             findings.append({
                 "id": "board_pins_missing",

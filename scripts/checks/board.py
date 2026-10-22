@@ -480,9 +480,14 @@ def main(argv=None):
     ap.add_argument("--outline", nargs=4, type=float, metavar=("X1", "Y1", "X2", "Y2"), help="Board outline min_x min_y max_x max_y (mm)")
     ap.add_argument("--json", action="store_true", help="Print JSON findings")
     ap.add_argument("--decap-max-mm", type=float, default=DECAP_MAX_DIST_MM, help=f"Max decoupling cap distance to the supplied pad (default {DECAP_MAX_DIST_MM:g} mm)")
+    ap.add_argument("--design", help="The design to compare the board with: a project name, its folder or netlist folder "
+                                     "(adds design_* findings: a net or part the board lacks)")
     args = ap.parse_args(argv)
 
     res = check_board(args.pcb, outline_mm=args.outline, decap_max_dist_mm=args.decap_max_mm)
+    if args.design:
+        from checks import schematic
+        res["findings"].extend(schematic.design_vs_board(args.design, args.pcb))
     if args.json or True:
         print(json.dumps(res, ensure_ascii=False, indent=2))
 

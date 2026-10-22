@@ -544,7 +544,8 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                     gaps = [m["layer"] for m in res["missing"] if m["level"] == "problem"]
                     applied.append(f"jlc.gerber_zip:{res['zip']} ({len(res['files'])} files" + (f", missing {', '.join(gaps)}" if gaps else "") + ")"
                                    + "".join(f" {m['layer']}: {m['why']}" for m in res["missing"]
-                                             if m["level"] == "problem" and m["why"].startswith("The outline layer")))
+                                             if m["level"] == "problem" and m["why"].startswith("The outline layer"))
+                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", []) if w.startswith("The board does not match")))
             elif kind == "order.check":
                 import order_check
                 try:
@@ -1205,6 +1206,10 @@ class Handler(BaseHTTPRequestHandler):
                 from altium import bridge
                 missing_in_pcb = bridge.rules_missing(proj)      # what Import would write that the PcbDoc file lacks
             diff = rules_mod.diff_rules(board_rules, [r for r in preset.get("rules", []) if r.get("name") not in off], board_geom=doc)
+            design_check = []
+            if linked_pcb:
+                from altium import bridge
+                design_check = bridge.design_problems(proj)    # the board against the design (netlist and SchDocs)
             return self._send(200, {
                 "preset": preset,
                 "extra": extra,
@@ -1215,6 +1220,7 @@ class Handler(BaseHTTPRequestHandler):
                 "linked_pcb": linked_pcb,
                 "missing_in_pcb": missing_in_pcb,
                 "drill_check": board_checks.check_drills(doc) if doc else [],
+                "design_check": design_check,
             })
         if path == "/api/rules/standard":           # what a standard preset would add (nothing is stored)
             import ipc_standards

@@ -296,6 +296,14 @@ def gerber_zip(project: str) -> dict[str, Any]:
     if found["drills"] and found["drills"][0][0].parent != found["gerbers"][0][0].parent:
         res["drill_source"] = str(found["drills"][0][0].parent)
     res["built_now"] = True
+    try:
+        from altium import bridge
+        design = bridge.design_problems(project)
+    except Exception:                                    # the zip is still made; this only adds a warning
+        design = []
+    if design:
+        res["warnings"].append(f"The board does not match the design ({len(design)} problem(s)): " + " | ".join(design[:5])
+                               + (" ..." if len(design) > 5 else "") + " These Gerbers would be made without those connections.")
     import lineage
     pcb = lineage.linked_pcb(project)
     rec = lineage.note(project, out, lambda: [lineage.file_input("drill" if classify(p.name)[0] == "drill" else "gerber", p)

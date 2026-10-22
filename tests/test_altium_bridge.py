@@ -455,6 +455,7 @@ def test_run_outjob_warns_when_the_rules_are_gone_from_the_pcbdoc(lte, fake, mon
     res = bridge.run_outjob(lte)
     assert res["warnings"] and "no longer in the PcbDoc" in res["warnings"][0] and "Altium's defaults" in res["warnings"][0]
     monkeypatch.setattr(bridge, "rules_missing", lambda project: [])
+    monkeypatch.setattr(bridge, "design_problems", lambda project: [])      # (the fixture's sheets are not on its fixture board)
     assert bridge.run_outjob(lte)["warnings"] == []
 
 
@@ -466,3 +467,34 @@ def test_the_agent_action_result_carries_the_outjob_warning(lte, fake, monkeypat
     monkeypatch.setattr(bridge, "run_commands", lambda cmds, **k: _in_memory([]))
     applied, _, _ = serve.apply_actions(lte, [{"type": "altium.import_rules"}])
     assert "Altium's open board does not have" in applied[0]
+
+
+def _usb_led_design(lte, monkeypatch, connected):
+    """The linked project's netlist has R3 on +5V / V_LED; its PcbDoc (read stubbed) has the pads with or without the nets."""
+    sheet = {"sections": [{"id": "A", "title": "T"}], "notes": [], "parts": [
+        {"section": "A", "ref": "R3", "pins": [{"num": "1", "name": "1", "net": "+5V"}, {"num": "2", "name": "2", "net": "V_LED"}]},
+        {"section": "A", "ref": "D1", "pins": [{"num": "1", "name": "K", "net": "GND"}, {"num": "2", "name": "A", "net": "V_LED"}]}]}
+    for sid in store.sheet_ids(lte):
+        (store.netlist_dir(lte) / f"{sid}.json").unlink()
+    store.write_sheet(lte, "01", sheet)
+    rows = [("R3", "1", "+5V" if connected else None), ("R3", "2", "V_LED" if connected else None),
+            ("D1", "1", "GND"), ("D1", "2", "V_LED")]
+    monkeypatch.setattr(bridge.rules_mod, "read_pcbdoc", lambda p: {"rules": [], "pads": [{"ref": r, "name": n, "net": v} for r, n, v in rows]})
+
+
+def test_run_outjob_warns_when_the_board_does_not_carry_the_design(lte, fake, monkeypatch):
+    _linked_with_rules_board(lte, fake)
+    _usb_led_design(lte, monkeypatch, connected=False)
+    res = bridge.run_outjob(lte)
+    warn = " ".join(res["warnings"])
+    assert "does not match the design" in warn and "V_LED" in warn and "R3-1" in warn and "R3-2" in warn
+    import serve
+    applied, _, _ = serve.apply_actions(lte, [{"type": "altium.run_outjob"}])
+    assert "WARNING: The board does not match the design" in applied[0]
+
+
+def test_run_outjob_has_no_design_warning_for_a_matching_board(lte, fake, monkeypatch):
+    _linked_with_rules_board(lte, fake)
+    _usb_led_design(lte, monkeypatch, connected=True)
+    assert not [w for w in bridge.run_outjob(lte)["warnings"] if "design" in w]
+    assert bridge.design_problems(lte) == []
