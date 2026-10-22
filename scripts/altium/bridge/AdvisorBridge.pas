@@ -1749,6 +1749,498 @@ begin
     Sch.RegisterSchObjectInContainer(N);
 end;
 
+{ ---------------------------------------------------------------- PCB placement and routing (scripts/altium/layout.py makes the lines)
+  Every command works on the board of the path. Positions are mm. }
+
+function MmCoord(S: String): Integer;
+begin
+    Result := MilsToCoord(SFloat(S) / 0.0254);
+end;
+
+{ what a student can have drawn on a board is not ours to count or wipe: only components and copper (signal layers, vias) are }
+function PcbIsCopper(O: IDispatch; Kind: Integer): Boolean;
+begin
+    Result := False;
+    if (Kind <> eComponentObject) and (Kind <> eNetObject) then
+        if O.InComponent then Exit;                  { the copper of a footprint belongs to the footprint: never counted, never removed }
+    Result := True;
+    if (Kind = eComponentObject) or (Kind = eViaObject) or (Kind = eNetObject) then Exit;
+    if (Kind = eRegionObject) and (O.Kind <> eRegionKind_Copper) then
+    begin
+        Result := False;
+        Exit;
+    end;
+    Result := (O.Layer = eTopLayer) or (O.Layer = eBottomLayer) or ((O.Layer >= eMidLayer1) and (O.Layer <= eMidLayer30));
+end;
+
+function PcbObjCount(B: IDispatch; Kind: Integer): Integer;
+var
+    It, O : IDispatch;
+begin
+    Result := 0;
+    It := B.BoardIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(Kind));
+    It.AddFilter_LayerSet(AllLayers);
+    It.AddFilter_Method(eProcessAll);
+    O := It.FirstPCBObject;
+    while (O <> nil) do
+    begin
+        if PcbIsCopper(O, Kind) then Result := Result + 1;
+        O := It.NextPCBObject;
+    end;
+    B.BoardIterator_Destroy(It);
+end;
+
+{ removes every object of a kind from the board, one at a time (an iterator does not survive a removal) }
+procedure PcbRemoveKind(B: IDispatch; Kind: Integer);
+var
+    It, O : IDispatch;
+    L     : TInterfaceList;
+    i     : Integer;
+begin
+    L := TInterfaceList.Create;          { collected first (an iterator does not survive a removal), then removed: linear, not quadratic }
+    It := B.BoardIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(Kind));
+    It.AddFilter_LayerSet(AllLayers);
+    It.AddFilter_Method(eProcessAll);
+    O := It.FirstPCBObject;
+    while (O <> nil) do
+    begin
+        if PcbIsCopper(O, Kind) then L.Add(O);
+        O := It.NextPCBObject;
+    end;
+    B.BoardIterator_Destroy(It);
+    PCBServer.PreProcess;
+    for i := 0 to L.Count - 1 do
+    begin
+        O := L.Items[i];
+        B.RemovePCBObject(O);
+    end;
+    PCBServer.PostProcess;
+    L.Free;
+end;
+
+function PcbPlacedCount(B: IDispatch): Integer;
+begin
+    Result := PcbObjCount(B, eComponentObject) + PcbObjCount(B, eTrackObject) + PcbObjCount(B, eViaObject)
+              + PcbObjCount(B, eArcObject) + PcbObjCount(B, ePolyObject) + PcbObjCount(B, eRegionObject) + PcbObjCount(B, eFillObject);
+end;
+
+{ PCBCHECK path replace: the board may be placed on. Refused when Altium holds unsaved changes in it or anything is on it and
+  replace is not 1. Logs the outline box (mils) so that the Python side can tell the placeholder outline of a new board from a drawn one. }
+procedure PcbCheck(Path: String; Replace: String; Mode: String);
+var
+    B, D, O, R, S1, S2 : IDispatch;
+    n, i, rectok       : Integer;
+begin
+    D := Client.GetDocumentByPath(Path);
+    if (D <> nil) then
+        if (IntToStr(D.Modified) <> '0') then
+        begin
+            Say('ERR the board is open in Altium with unsaved changes; save or close it first. Nothing was changed');
+            Exit;
+        end;
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    n := PcbPlacedCount(B);
+    if (Mode = 'route') then n := n - PcbObjCount(B, eComponentObject);        { routing: only the copper counts, parts are meant to be there }
+    O := B.BoardOutline;
+    R := O.BoundingRectangle;
+    rectok := 0;                                   { four points and every edge horizontal or vertical: a real rectangle }
+    if (O.PointCount = 4) then
+    begin
+        rectok := 1;
+        for i := 0 to 3 do
+        begin
+            S1 := O.Segments[i];
+            S2 := O.Segments[(i + 1) mod 4];
+            if (S1.vx <> S2.vx) and (S1.vy <> S2.vy) then rectok := 0;
+        end;
+        if (R.Right = R.Left) or (R.Top = R.Bottom) then rectok := 0;
+    end;
+    Log('pcbcheck rect=' + IntToStr(rectok) + ' objects=' + IntToStr(n) + ' parts=' + IntToStr(PcbObjCount(B, eComponentObject)) + ' tracks=' + IntToStr(PcbObjCount(B, eTrackObject)) + ' vias=' + IntToStr(PcbObjCount(B, eViaObject)) + ' arcs=' + IntToStr(PcbObjCount(B, eArcObject))
+        + ' polys=' + IntToStr(PcbObjCount(B, ePolyObject)) + ' regions=' + IntToStr(PcbObjCount(B, eRegionObject)) + ' fills=' + IntToStr(PcbObjCount(B, eFillObject))
+        + ' outline_pts=' + IntToStr(O.PointCount) + ' box_mil=' + IntToStr(CoordToMils(R.Left)) + ',' + IntToStr(CoordToMils(R.Bottom)) + ','
+        + IntToStr(CoordToMils(R.Right)) + ',' + IntToStr(CoordToMils(R.Top)));
+    if (n > 0) and (Replace <> '1') then
+    begin
+        if (Mode = 'route') then Say('ERR the board already has ' + IntToStr(n) + ' tracks, vias or pours; nothing was changed')
+        else Say('ERR the board already has ' + IntToStr(n) + ' parts or copper objects; nothing was changed');
+        Exit;
+    end;
+end;
+
+function NetOf(B: IDispatch; Name: String): IDispatch;
+var
+    It, N : IDispatch;
+begin
+    Result := nil;
+    It := B.BoardIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(eNetObject));
+    It.AddFilter_LayerSet(AllLayers);
+    It.AddFilter_Method(eProcessAll);
+    N := It.FirstPCBObject;
+    while (N <> nil) and (Result = nil) do
+    begin
+            if (N.Name = Name) then Result := N;
+        N := It.NextPCBObject;
+    end;
+    B.BoardIterator_Destroy(It);
+    if (Result = nil) then
+    begin
+        Result := PCBServer.PCBObjectFactory(eNetObject, eNoDimension, eCreate_Default);
+        Result.Name := Name;
+        B.AddPCBObject(Result);
+    end;
+end;
+
+{ ROUTEBEGIN path replace: with replace 1 the copper on signal layers (tracks, vias, arcs, pours, copper regions, fills) goes; parts stay }
+procedure PcbRouteBegin(Path: String; Replace: String);
+var
+    B : IDispatch;
+    n : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    n := PcbPlacedCount(B) - PcbObjCount(B, eComponentObject);
+    if (n > 0) and (Replace <> '1') then
+    begin
+        Say('ERR the board already has ' + IntToStr(n) + ' tracks, vias or pours; nothing was changed');
+        Exit;
+    end;
+    if (n > 0) then
+    begin
+        PcbRemoveKind(B, eTrackObject);
+        Log('removed tracks');
+        PcbRemoveKind(B, eViaObject);
+        Log('removed vias');
+        PcbRemoveKind(B, eArcObject);
+        PcbRemoveKind(B, ePolyObject);
+        PcbRemoveKind(B, eRegionObject);
+        PcbRemoveKind(B, eFillObject);
+        Log('removed the rest of the copper');
+    end;
+    Log('routebegin ' + IntToStr(n) + ' objects removed');
+end;
+
+{ TRACK path layer x1 y1 x2 y2 width net }
+procedure PcbTrack(Path: String; Layer: String; X1, Y1, X2, Y2, W, NetName: String);
+var
+    B, T, N : IDispatch;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    N := NetOf(B, NetName);
+    PCBServer.PreProcess;
+    T := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);
+    T.X1 := MmCoord(X1);
+    T.Y1 := MmCoord(Y1);
+    T.X2 := MmCoord(X2);
+    T.Y2 := MmCoord(Y2);
+    T.Width := MmCoord(W);
+    if (Layer = 'bottom') then T.Layer := eBottomLayer else T.Layer := eTopLayer;
+    B.AddPCBObject(T);
+    T.Net := N;
+    N.AddPCBObject(T);
+    PCBServer.SendMessageToRobots(B.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, T.I_ObjectAddress);
+    PCBServer.PostProcess;
+end;
+
+{ VIA path x y diameter hole net: a through via, top to bottom }
+procedure PcbVia(Path: String; X, Y, Dia, Hole, NetName: String);
+var
+    B, V, N : IDispatch;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    N := NetOf(B, NetName);
+    PCBServer.PreProcess;
+    V := PCBServer.PCBObjectFactory(eViaObject, eNoDimension, eCreate_Default);
+    V.X := MmCoord(X);
+    V.Y := MmCoord(Y);
+    V.Size := MmCoord(Dia);
+    V.HoleSize := MmCoord(Hole);
+    V.LowLayer := eTopLayer;
+    V.HighLayer := eBottomLayer;
+    B.AddPCBObject(V);
+    V.Net := N;
+    N.AddPCBObject(V);
+    PCBServer.SendMessageToRobots(B.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, V.I_ObjectAddress);
+    PCBServer.PostProcess;
+end;
+
+{ POLY path layer net x0 y0 x1 y1: a solid copper pour of the net on the layer over the box, poured over the same net only, dead copper
+  removed, poured once the tracks are there (the pour keeps the board's clearance rule around everything else) }
+procedure PcbPoly(Path: String; Layer: String; NetName: String; X0, Y0, X1, Y1: String);
+var
+    B, P, N, S : IDispatch;
+    i          : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    N := NetOf(B, NetName);
+    PCBServer.PreProcess;
+    P := PCBServer.PCBObjectFactory(ePolyObject, eNoDimension, eCreate_Default);
+    P.PolyHatchStyle := ePolySolid;
+    P.PourOver := ePolygonPourOver_SameNet;
+    P.RemoveDead := True;
+    if (Layer = 'bottom') then P.Layer := eBottomLayer else P.Layer := eTopLayer;
+    P.PointCount := 4;
+    for i := 0 to 3 do
+    begin
+        S := P.Segments[i];
+        S.Kind := ePolySegmentLine;
+        if (i = 0) or (i = 3) then S.vx := MmCoord(X0) else S.vx := MmCoord(X1);
+        if (i = 0) or (i = 1) then S.vy := MmCoord(Y0) else S.vy := MmCoord(Y1);
+        P.Segments[i] := S;
+    end;
+    B.AddPCBObject(P);
+    P.Net := N;
+    N.AddPCBObject(P);
+    PCBServer.SendMessageToRobots(B.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, P.I_ObjectAddress);
+    P.Rebuild;
+    PCBServer.PostProcess;
+    Log('poly ' + NetName + ' ' + Layer + ' ' + X0 + ' ' + Y0 + ' ' + X1 + ' ' + Y1);
+end;
+
+procedure PcbBegin(Path: String; Replace: String);
+var
+    B : IDispatch;
+    n : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    n := PcbPlacedCount(B);
+    if (n > 0) and (Replace <> '1') then
+    begin
+        Say('ERR the board already has ' + IntToStr(n) + ' parts or copper objects; nothing was changed');
+        Exit;
+    end;
+    if (n > 0) then
+    begin
+        PcbRemoveKind(B, eTrackObject);
+        Log('removed tracks');
+        PcbRemoveKind(B, eViaObject);
+        Log('removed vias');
+        PcbRemoveKind(B, eArcObject);
+        Log('removed arcs');
+        PcbRemoveKind(B, ePolyObject);
+        Log('removed polys');
+        PcbRemoveKind(B, eRegionObject);
+        Log('removed regions');
+        PcbRemoveKind(B, eFillObject);
+        Log('removed fills');
+        PcbRemoveKind(B, eComponentObject);
+        Log('removed components');
+        PcbRemoveKind(B, eNetObject);
+    end;
+    Log('pcbbegin ' + IntToStr(n) + ' objects removed');
+end;
+
+{ OUTLINE path x0 y0 x1 y1: the four corners of the board outline (a new board starts with a four point placeholder) }
+procedure PcbOutline(Path: String; X0, Y0, X1, Y1: String);
+var
+    B, O, S : IDispatch;
+    i       : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    O := B.BoardOutline;
+    if (O.PointCount <> 4) then
+    begin
+        Say('ERR the board outline has ' + IntToStr(O.PointCount) + ' points, not the 4 of a rectangle; nothing was changed');
+        Exit;
+    end;
+    PCBServer.PreProcess;
+    O.Invalidate;
+    for i := 0 to 3 do
+    begin
+        S := O.Segments[i];
+        if (i = 0) or (i = 3) then S.vx := MmCoord(X0) else S.vx := MmCoord(X1);
+        if (i = 0) or (i = 1) then S.vy := MmCoord(Y0) else S.vy := MmCoord(Y1);
+        O.Segments[i] := S;
+    end;
+    O.Rebuild;
+    O.Validate;
+    PCBServer.PostProcess;
+    Log('outline ' + X0 + ' ' + Y0 + ' ' + X1 + ' ' + Y1);
+end;
+
+{ PLACEFP path ref footprint pcblib x y rot libref: the footprint comes from the project PcbLib and is linked the way Update PCB
+  links it (designator, source designator, library reference, footprint library) so that a later Update PCB matches it }
+procedure PcbPlace(Path: String; Ref: String; Pattern: String; PcbLib: String; X, Y, Rot, LibRef, Value, LX, LY, LH, LLine, SrcId, SrcPath: String);
+var
+    B, Lib, C, It, P : IDispatch;
+    n                : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    if (B.GetPcbComponentByRefDes(Ref) <> nil) then
+    begin
+        Say('ERR ' + Ref + ' is already on the board');
+        Exit;
+    end;
+    Lib := PCBServer.LoadCompFromLibrary(Pattern, PcbLib);
+    if (Lib = nil) then
+    begin
+        Say('ERR ' + Ref + ': footprint ' + Pattern + ' not found in ' + PcbLib);
+        Exit;
+    end;
+    PCBServer.PreProcess;
+    C := PCBServer.PCBObjectFactory(eComponentObject, eNoDimension, eCreate_Default);
+    C.Pattern := Pattern;
+    C.Name.Text := Ref;
+    C.Layer := eTopLayer;
+    n := 0;
+    It := Lib.GroupIterator_Create;
+    P := It.FirstPCBObject;
+    while (P <> nil) do
+    begin
+        C.AddPCBObject(P.Replicate);
+        n := n + 1;
+        P := It.NextPCBObject;
+    end;
+    Lib.GroupIterator_Destroy(It);
+    B.AddPCBObject(C);
+    C.SourceDesignator := Ref;
+    C.SourceLibReference := LibRef;
+    C.SourceFootprintLibrary := ExtractFileName(PcbLib);
+    if (SrcId <> '') then C.SourceUniqueId := SrcId;
+    if (SrcPath <> '') then C.SourceHierarchicalPath := SrcPath;
+    C.MoveToXY(MmCoord(X), MmCoord(Y));
+    C.Rotation := SFloat(Rot);
+    if (Value <> '') then C.Comment.Text := Value;
+    C.CommentOn := False;
+    C.NameOn := True;
+    if (LH <> '') then
+    begin
+        C.Name.UseTTFonts := False;
+        C.Name.Rotation := 0;
+        C.Name.Size := MmCoord(LH);
+        C.Name.Width := MmCoord(LLine);
+        C.Name.XLocation := MmCoord(LX) - MmCoord(FloatToStr(Length(Ref) * 0.6 * SFloat(LH) / 2));
+        C.Name.YLocation := MmCoord(LY) - MmCoord(FloatToStr(SFloat(LH) / 2));
+    end;
+    PCBServer.SendMessageToRobots(B.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, C.I_ObjectAddress);
+    PCBServer.PostProcess;
+    Log('placed ' + Ref + ' ' + Pattern + ' primitives=' + IntToStr(n));
+end;
+
+procedure PcbPadNet(Path: String; Ref: String; PadName: String; NetName: String);
+var
+    B, C, P, N, It : IDispatch;
+    k              : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    C := B.GetPcbComponentByRefDes(Ref);
+    if (C = nil) then
+    begin
+        Say('ERR ' + Ref + ' is not on the board');
+        Exit;
+    end;
+    k := 0;
+    PCBServer.PreProcess;
+    N := NetOf(B, NetName);
+    It := C.GroupIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(ePadObject));
+    P := It.FirstPCBObject;
+    while (P <> nil) do
+    begin
+        if (P.Name = PadName) then
+        begin
+            P.Net := N;
+            N.AddPCBObject(P);          { without this the pad shows the net in Altium but the saved file has none }
+            k := k + 1;
+        end;
+        P := It.NextPCBObject;
+    end;
+    C.GroupIterator_Destroy(It);
+    PCBServer.PostProcess;
+    if (k = 0) then Say('ERR ' + Ref + ': the footprint ' + C.Pattern + ' has no pad ' + PadName)
+    else Log('padnet ' + Ref + '-' + PadName + ' ' + NetName + ' x' + IntToStr(k));
+end;
+
+{ PCBEXTENT path ref: the bounding box Altium itself gives the placed part (without its designator and comment), mils }
+procedure PcbExtent(Path: String; Ref: String);
+var
+    B, C, R : IDispatch;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    C := B.GetPcbComponentByRefDes(Ref);
+    if (C = nil) then
+    begin
+        Say('ERR ' + Ref + ' is not on the board');
+        Exit;
+    end;
+    R := C.BoundingRectangleNoNameComment;
+    Log('extent ' + Ref + ' ' + IntToStr(CoordToMils(R.Left)) + ' ' + IntToStr(CoordToMils(R.Bottom)) + ' ' + IntToStr(CoordToMils(R.Right)) + ' '
+        + IntToStr(CoordToMils(R.Top)));
+end;
+
+{ DRC path report: the batch design rule check by script (no dialog); the text report is written to report }
+procedure PcbDrc(Path: String; Report: String);
+var
+    B  : IDispatch;
+    ok : Boolean;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    if FileExists(Report) then DeleteFile(Report);
+    ok := B.RunBatchDesignRuleCheck(Report, eDRC_Text, False, False);       { False also means 'violations found' }
+    if (not FileExists(Report)) then
+    begin
+        Say('ERR the design rule check did not write its report');
+        Exit;
+    end;
+    Log('drc ' + Report + ' clean=' + BoolToStr(ok, True));
+end;
+
 procedure Dispatch(Line: String);
 var
     Cmd : String;
@@ -1800,6 +2292,21 @@ begin
         DrawPower(Field(Line, 1), StrToInt(Field(Line, 2)), StrToInt(Field(Line, 3)), StrToInt(Field(Line, 4)),
                   StrToInt(Field(Line, 5)), Field(Line, 6))
     else if (Cmd = 'NOERC') then DrawNoErc(Field(Line, 1), StrToInt(Field(Line, 2)), StrToInt(Field(Line, 3)))
+    else if (Cmd = 'PCBCHECK') then PcbCheck(Field(Line, 1), Field(Line, 2), Field(Line, 3))
+    else if (Cmd = 'ROUTEBEGIN') then PcbRouteBegin(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'TRACK') then
+        PcbTrack(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7), Field(Line, 8))
+    else if (Cmd = 'VIA') then PcbVia(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
+    else if (Cmd = 'POLY') then PcbPoly(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7))
+    else if (Cmd = 'PCBBEGIN') then PcbBegin(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'OUTLINE') then PcbOutline(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5))
+    else if (Cmd = 'PLACEFP') then
+        PcbPlace(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7), Field(Line, 8),
+                 Field(Line, 9), Field(Line, 10), Field(Line, 11), Field(Line, 12), Field(Line, 13), Field(Line, 14), Field(Line, 15))
+    else if (Cmd = 'PCBEXTENT') then PcbExtent(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'PADNET') then PcbPadNet(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
+    else if (Cmd = 'PCBSAVE') then SaveByPath(Field(Line, 1))
+    else if (Cmd = 'DRC') then PcbDrc(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'PING') then Log('ping')
     else Say('ERR unknown command ' + Cmd);
 end;

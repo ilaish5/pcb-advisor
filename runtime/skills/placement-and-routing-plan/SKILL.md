@@ -6,7 +6,23 @@ description: Produces a placement plan (order, zones, connector edges, decouplin
 # Placement and critical-net routing plan
 
 `<repo>` is the repo path from the WORKSPACE section of the prompt. The tool plans and draws; the student places and routes in
-Altium. You never move parts and never route. Show the plan picture BEFORE the student touches the board.
+Altium. You move parts only when the student says so (see Offer to place); you route only when the student says so (see Offer to place:
+the agent's own router, not Altium's autorouter). Show the plan picture BEFORE the student touches the board.
+
+## Offer to place
+After the plan, ask ONE question in the student's language: "Do you place the parts in Altium yourself, or should I place them?"
+Stop and wait. Only on their answer: "you" = run `{"type": "altium.place_pcb", "student_said": "<most of their message>"}`
+(refused when they say they do it themselves, or the quote is a fragment). It places the netlist parts from the project library
+with their nets, creates the board outline from the idea's board size when the PcbDoc has none (an existing outline is kept),
+saves, and reads the file back against the netlist. Needs `library.build` and Altium open, no unsaved changes in the PcbDoc. Refuses a
+board that already has parts or tracks; `"replace": true` only with `"replace_said"` = their words (replace/redo/מחדש). Routing is a
+separate question, asked after the parts are placed: "route the board yourself, or should I?" Only on their answer (a route word in their
+quote) run `{"type": "altium.route_pcb", "student_said": "<their words>"}`. It uses its own router (2 layers, widths, clearances and
+vias from the board's rules, JLC numbers when none), draws tracks and vias, saves, reads the file back and runs Altium's design rule check:
+it counts as done only with 0 open nets and no new clearance/short/width errors. When a net cannot be routed nothing is drawn and
+you tell the student which nets and why (tighter rules, more room, a third layer); `"partial": true` + `"partial_said"` only when they agree to
+keep a partial result. Existing tracks: refused unless `"replace": true` + `"replace_said"`. Never say the board is routed when it reports a
+failure. Then use board-review.
 
 ## When to use
 - Update PCB / ECO is done (parts sit beside the board) and the student asks how to arrange them.

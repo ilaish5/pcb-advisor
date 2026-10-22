@@ -350,7 +350,7 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
 
 
 ALTIUM_ACTIONS = ("altium.create_project", "altium.add_sheet", "altium.skeleton", "altium.add_pcb", "altium.open",
-                  "altium.import_rules", "altium.run_outjob")      # (+ altium.draw_schematic, which has its own guard)
+                  "altium.import_rules", "altium.run_outjob")      # (+ altium.draw_schematic, altium.place_pcb, altium.route_pcb: each has its own consent guard)
 
 
 def library_issue_count(project):
@@ -393,23 +393,59 @@ REDRAW_WORD = re.compile(r"replace|redraw|re-draw|overwrite|start over|מחדש|
 ASK_FIRST = "Ask the student first: draw the schematic themselves in Altium, or should you draw it? Run this only after their answer, with student_said = a quote of it."
 
 
-def _draw_consent(a, last_user):
-    """'' when the student's last message really asked the agent to draw (or, for replace, to draw over the old sheet), else why not.
-    The quote must be most of their message (a fragment of "I'll draw it myself" is not a yes), and a message that says they draw it
-    themselves is never one. "לבד" is not a negation: "תשרטט לבד" = you draw it."""
+SELF_PLACE = re.compile(r"myself|\bi[\u2019']?ll place|i will place|\bi place|\bi[\u2019']?ll do the placement|בעצמי|אני אמקם|אמקם אני"
+                        r"|\bdon[\u2019']?t place|\bdo not place|אל תמקם|לא למקם|לא תמקם|אני לא רוצה ש", re.I)
+SELF_ROUTE = re.compile(r"myself|\bi[\u2019']?ll route|i will route|\bi route|\bi[\u2019']?ll do the routing|בעצמי|אני אנתב|אנתב אני"
+                        r"|\bdon[\u2019']?t route|\bdo not route|אל תנתב|לא לנתב|לא תנתב|אני לא רוצה ש", re.I)
+REPLACE_WORD = re.compile(r"replace|redo|overwrite|start over|re-?place|re-?route|מחדש|תחליף|תמחק|להחליף|תמקם מחדש|תנתב מחדש", re.I)
+ASK_PLACE = ("Ask the student first: place the parts on the board themselves in Altium, or should you place them? "
+             "Run this only after their answer, with student_said = a quote of it.")
+ASK_ROUTE = ("Ask the student first: route the board themselves in Altium, or should you route it? This is a separate question from "
+             "placing the parts. Run this only after their answer, with student_said = a quote of it.")
+PLACE_WORD = re.compile(r"\bplac(?:e|ing|ement)\b|\bposition|lay ?out|מקם|תמקם|למקם|אמקם|מיקום|השמה|פלייסמנט", re.I)
+ROUTE_WORD = re.compile(r"\brout(?:e|ing)\b|auto-?rout|נתב|תנתב|לנתב|אנתב|ניתוב|ראוט", re.I)
+CONSENT = {   # kind -> (they do it themselves, they say replace, ask text, what replace wipes, what it is, a word their message must have)
+    "draw": (SELF_DRAW, REDRAW_WORD, ASK_FIRST, "sheet", "draw it", None),
+    "place": (SELF_PLACE, REPLACE_WORD, ASK_PLACE, "board's parts and copper", "place them", PLACE_WORD),
+    "route": (SELF_ROUTE, REPLACE_WORD, ASK_ROUTE, "board's tracks", "route it", ROUTE_WORD),
+}
+
+
+PARTIAL_WORD = re.compile(r"partial|חלקי|מה שאפשר|what you can", re.I)       # a yes to "keep a half-routed board" says so in the words
+
+
+def _partial_consent(a, last_user):
+    """Keeping a half-routed board needs partial: true and partial_said = the student's own words, and those words say partial."""
+    said = a.get("partial_said")
+    return (_truthy(a.get("partial")) and bool(said) and _quote_holds(said, last_user)
+            and PARTIAL_WORD.search(str(said)) is not None)
+
+
+def _consent(kind, a, last_user):
+    """'' when the student's last message really asked the agent to do `kind` ("draw" the schematic, "place" the parts, "route" the
+    board) or, for replace, to do it over what is there, else why not. The quote must be most of their message (a fragment of "I'll
+    draw it myself" is not a yes), and a message that says they do it themselves is never one. "לבד" is not a negation: "תשרטט לבד"
+    = you draw it. Placing and routing are separate questions: each action needs its own answer."""
+    self_re, replace_re, ask, wipes, verb, need = CONSENT[kind]
     norm = lambda t: re.sub(r"\s+", " ", str(t or "").lower()).strip(" .,!?;:()-\"'")
     q, u = norm(a.get("student_said")), norm(last_user)
     if not _quote_holds(a.get("student_said"), last_user) or len(q) < 0.5 * len(u):
-        return ASK_FIRST
-    if SELF_DRAW.search(u):
-        return "The student said they will draw it themselves. Do not draw; help them with the manual steps."
+        return ask
+    if need is not None and not need.search(u):        # "yes" to the schematic question is not a yes to placing or routing
+        return ask
+    if self_re.search(u):
+        return f"The student said they will do it themselves. Do not {verb.split()[0]}; help them with the manual steps."
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
-        # the redraw word itself is a short quote ("מחדש"): whole words of their message are enough here
-        if not r or not REDRAW_WORD.search(r) or re.search(r"(?<!\w)" + re.escape(r) + r"(?!\w)", u) is None:
-            return ("The sheet is only drawn over when the student says so: ask whether the old drawing may be replaced, then run this with "
-                    "replace_said = a quote of their words (replace, redraw, overwrite, start over / מחדש, תחליף, תמחק).")
+        # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here
+        if not r or not replace_re.search(r) or re.search(r"(?<!\w)" + re.escape(r) + r"(?!\w)", u) is None:
+            return (f"The {wipes} are only wiped when the student says so: ask whether what is there may be replaced, then run this with "
+                    "replace_said = a quote of their words (replace, redo, overwrite, start over / מחדש, תחליף, תמחק).")
     return ""
+
+
+def _draw_consent(a, last_user):
+    return _consent("draw", a, last_user)
 
 
 def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None):
@@ -527,6 +563,30 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 applied.append(f"{kind}: {res['parts']} parts and {len(res['nets'])} nets drawn on {len(res['sheets'])} sheet(s), "
                                "saved and checked against the netlist"
                                + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res["warnings"] else ""))
+            elif kind in ("altium.place_pcb", "altium.route_pcb"):
+                # the agent places / routes the board in Altium only when the student said so in their own words, separately for
+                # each (asked first: do it yourself or should I?). replace needs that too and never happens by default.
+                from altium import bridge
+                step = "place" if kind == "altium.place_pcb" else "route"
+                why = _consent(step, a, last_user)
+                if why:
+                    refused.append(f"{kind}: not run. {why}")
+                    continue
+                try:
+                    if step == "place":
+                        res = bridge.place_pcb(project, replace=_truthy(a.get("replace")))
+                    else:
+                        keep = _partial_consent(a, last_user)
+                        res = bridge.route_pcb(project, replace=_truthy(a.get("replace")), keep_partial=keep)
+                except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
+                    refused.append(f"{kind}: {exc}")
+                    continue
+                if step == "place":
+                    applied.append(f"{kind}: {len(res['placed'])} parts placed" + (", outline created" if res["outline_created"] else ", outline kept")
+                                   + ", saved and checked against the netlist"
+                                   + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res["warnings"] else ""))
+                else:
+                    applied.append(f"{kind}: {res['summary']}")
             elif kind in ALTIUM_ACTIONS:
                 from altium import bridge
                 # routine: new files only, and whatever it modifies is copied to .advisor-backup first

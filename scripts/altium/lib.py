@@ -95,7 +95,17 @@ def _blocks(d, i, n):
 
 def _footprint_objects(d):
     """Walk a footprint's Data stream: {"pads", "tracks", "arcs", "regions", "texts", "fills", "vias", "bodies"}."""
-    res = {"pads": [], "tracks": 0, "arcs": 0, "regions": 0, "texts": 0, "fills": 0, "vias": 0, "bodies": [], "layers": {}}
+    res = {"pads": [], "tracks": 0, "arcs": 0, "regions": 0, "texts": 0, "fills": 0, "vias": 0, "bodies": [], "layers": {},
+           "extent": {}}
+    ext = res["extent"]            # {"silk" | "mech" | "body": [x0, y0, x1, y1] in mils, relative to the footprint origin}
+
+    def grow(kind, x, y):
+        b = ext.setdefault(kind, [x, y, x, y])
+        b[0], b[1], b[2], b[3] = min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)
+
+    def layer_kind(layer):
+        return "silk" if layer in (33, 34) else "mech" if 57 <= layer <= 72 else None
+
     n = struct.unpack("<I", d[:4])[0]
     i = 4 + n
     while i < len(d):
@@ -116,8 +126,16 @@ def _footprint_objects(d):
                 res["layers"][blk[0]] = res["layers"].get(blk[0], 0) + 1
             if kind == 4:
                 res["tracks"] += 1
+                if len(blk) >= 33 and layer_kind(blk[0]):
+                    x1, y1, x2, y2 = struct.unpack("<4i", blk[13:29])
+                    for x, y in ((x1, y1), (x2, y2)):
+                        grow(layer_kind(blk[0]), x / MIL, y / MIL)
             elif kind == 1:
                 res["arcs"] += 1
+                if len(blk) >= 41 and layer_kind(blk[0]):
+                    cx, cy, r = struct.unpack("<3i", blk[13:25])
+                    for x, y in ((cx - r, cy - r), (cx + r, cy + r)):          # the full circle: never smaller than the arc
+                        grow(layer_kind(blk[0]), x / MIL, y / MIL)
             elif kind == 11:
                 res["regions"] += 1
             elif kind == 6:
@@ -127,6 +145,13 @@ def _footprint_objects(d):
             else:
                 text = blk.decode("cp1252", "replace")
                 props = kv(text[text.find("|"):].split("\0")[0] if "|" in text else "")
+                end = blk.find(b"\0", max(blk.find(b"|"), 0))
+                if blk.find(b"|") >= 0 and end > 0 and end + 5 <= len(blk):       # the body outline: count, then (x, y) doubles, 1/10000 mil
+                    cnt = struct.unpack("<I", blk[end + 1:end + 5])[0]
+                    if 0 < cnt < 1000 and end + 5 + 16 * cnt <= len(blk):
+                        for k in range(cnt):
+                            bx, by = struct.unpack("<2d", blk[end + 5 + 16 * k:end + 21 + 16 * k])
+                            grow("body", bx / MIL, by / MIL)
                 res["bodies"].append({"model": props.get("MODEL.NAME", ""), "id": props.get("MODELID", ""),
                                       "standoff": props.get("STANDOFFHEIGHT", ""), "height": props.get("OVERALLHEIGHT", ""),
                                       "rot": [props.get("MODEL.3D.ROTX", ""), props.get("MODEL.3D.ROTY", ""), props.get("MODEL.3D.ROTZ", "")],

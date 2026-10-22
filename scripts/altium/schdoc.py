@@ -179,6 +179,7 @@ def read_schdoc(path) -> dict:
 
             components.append({
                 "ref": ref,
+                "unique_id": r.get("UNIQUEID", ""),
                 "lib_ref": lib_ref,
                 "comment": comment,
                 "description": description,

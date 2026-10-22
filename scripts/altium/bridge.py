@@ -64,6 +64,7 @@ import workspace  # noqa: E402
 from altium import AltiumReadError, registry  # noqa: E402
 from altium.lib import read_pcblib, read_schlib  # noqa: E402
 from altium.prjpcb import read_prjpcb as _read_prjpcb  # noqa: E402
+from altium.schdoc import read_schdoc  # noqa: E402
 
 BRIDGE_DIR = pathlib.Path(__file__).resolve().parent / "bridge"
 SCRIPT_PROJECT = BRIDGE_DIR / "AdvisorBridge.PrjScr"
@@ -616,6 +617,373 @@ def draw_schematic(project, sheet=None, replace=False):
     if problems:
         raise BridgeError(f"Drawn and saved {parts} parts, but the sheet does not match the netlist: " + "; ".join(problems[:6])
                           + (f" (+{len(problems) - 6} more)" if len(problems) > 6 else ""))
+    return res
+
+
+# ---------------------------------------------------------------- placing the parts on the PCB
+
+NEW_BOARD_BOX_MIL = (1000, 1000, 7000, 5000)       # the outline a new PcbDoc starts with: a placeholder, not a drawn board
+MM_PER_MIL = 0.0254
+
+
+def _pcbcheck_info(log):
+    """What the PCBCHECK step logged: {objects, parts, tracks, points, box_mil (x0, y0, x1, y1)} (None when it did not log)."""
+    for line in reversed(log):
+        if line.startswith("pcbcheck "):
+            kv = dict(re.findall(r"(\w+)=(\S+)", line))
+            try:
+                box = tuple(int(v) for v in kv["box_mil"].split(","))
+                pts = int(kv["outline_pts"])
+                # rect=1: the four points are an axis aligned rectangle (the Pascal side checks the corners); a log without the
+                # flag (older script) can only say how many points there are
+                return {"objects": int(kv["objects"]), "parts": int(kv["parts"]), "tracks": int(kv["tracks"]),
+                        "points": pts, "box_mil": box, "rect": (kv["rect"] == "1") if "rect" in kv else pts == 4}
+            except (KeyError, ValueError):
+                return None
+    return None
+
+
+def parse_drc(path):
+    """The batch design rule check text report: {"rules": {rule text: count}, "violations": [message], "unrouted": n, "total": n}."""
+    try:
+        text = pathlib.Path(path).read_text(encoding="cp1252", errors="replace")
+    except OSError:
+        return None
+    rules, violations = {}, []
+    for line in text.splitlines():
+        parts = line.split("|")
+        if len(parts) == 3 and parts[0].startswith("Rule Violations") and parts[2].strip().isdigit():
+            rules[parts[1].strip()] = int(parts[2])
+        elif len(parts) >= 4 and parts[1] == "" and parts[2] == "":
+            violations.append(f"{parts[0].strip()}: {parts[3].strip()}")
+    total = sum(rules.values())
+    unrouted = sum(v for k, v in rules.items() if k.startswith("Un-Routed Net"))
+    return {"rules": rules, "violations": violations, "unrouted": unrouted, "total": total}
+
+
+def _netlist_parts(project):
+    """[{ref, footprint, symbol, pins}] of every netlist sheet: the footprint and symbol come from the library manifest."""
+    manifest = store.library_manifest(project)
+    key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
+    parts, seen = [], set()
+    for _sid, _title, sh in _sheets(project):
+        for p in sh.get("parts", []):
+            if not isinstance(p, dict) or not p.get("ref") or p["ref"] in seen:
+                continue
+            seen.add(p["ref"])
+            m = manifest.get(key.get(p["ref"])) or {}
+            parts.append({"ref": p["ref"], "footprint": m.get("footprint") or "", "symbol": m.get("symbol") or "",
+                          "lib_ref": m.get("symbol") or "", "pins": p.get("pins", [])})
+    return parts
+
+
+def _board_size(project):
+    from altium import layout
+    path = store.pdir(project) / "idea.json"
+    try:
+        idea = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        idea = {}
+    return layout.board_size(idea)
+
+
+def _clearance_mm(project):
+    try:
+        return float(project_mod.board(project).get("min_clearance_mm") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _revert(prj, pcb, what):
+    try:
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+        return f" The unfinished board was closed in Altium without saving; the file on disk is as it was."
+    except BridgeError:
+        return f" Close the board in Altium WITHOUT saving: it is half {what}."
+
+
+def _restore(prj, pcb, backup):
+    """Put the backed-up PcbDoc back after a placement that did not verify: Altium closes the board without saving, then the file
+    is copied back. True when the file on disk is the backup again."""
+    saved = pathlib.Path(backup) / pathlib.Path(pcb).name
+    if not saved.is_file():
+        return False
+    try:
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+    except BridgeError:
+        pass
+    try:
+        shutil.copy2(saved, pcb)
+    except OSError:
+        return False
+    return True
+
+
+def _sch_links(prj):
+    """{ref: (SchDoc unique id, sheet name)} of the components drawn in the project's SchDocs: what ECO stores in a placed part
+    (SourceUniqueId, SourceHierarchicalPath) so that a later Update PCB finds the part instead of adding it twice."""
+    out = {}
+    try:
+        for sh in read_prjpcb(prj)["sheets"]:
+            path = pathlib.Path(sh) if pathlib.Path(sh).is_absolute() else pathlib.Path(prj).parent / sh
+            if not path.is_file():
+                continue
+            for c in read_schdoc(path).get("components", []):
+                if c.get("ref") and c.get("unique_id"):
+                    out.setdefault(c["ref"], (c["unique_id"], path.stem))
+    except Exception:                                    # no drawn schematic yet: the part is placed without the link
+        pass
+    return out
+
+
+def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3):
+    """Place `parts` ([{ref, footprint, lib_ref, pins}]) from the PcbLib on the PcbDoc, create the outline from `size` when the board
+    only has the placeholder outline of a new PcbDoc (an outline somebody drew is kept), save, and read the file back.
+    Refuses a board that already has parts or copper unless replace is true; the PcbDoc is copied to .advisor-backup first.
+    Returns {"placed", "outline", "outline_created", "warnings", "backup", "problems", "drc"}; problems non-empty = placed but
+    the saved file does not match the netlist."""
+    from altium import layout
+    from altium.pcbdoc import read_pcbdoc
+    prj, pcb, pcblib = pathlib.Path(prj), pathlib.Path(pcb), pathlib.Path(pcblib)
+    if not pcblib.is_file():
+        raise BridgeError("The project library is not built yet: run library.build first, the footprints are placed from it.")
+    if not parts:
+        raise BridgeError("There are no parts in the netlist to place: write the netlist first (netlist.write).")
+    bad = layout.text_problems(parts)
+    if bad:
+        raise BridgeError("; ".join(bad[:6]))
+    fps = {f["name"]: f for f in read_pcblib(pcblib)["footprints"]}
+    missing = sorted({p["ref"] for p in parts if p.get("footprint") not in fps})
+    if missing:
+        raise BridgeError(f"No footprint in the project library for {', '.join(missing[:8])}: run library.build first.")
+    log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
+    info = _pcbcheck_info(log)
+    if info is None:
+        raise BridgeError("Altium did not report the state of the board.")
+    placeholder = info["box_mil"] == NEW_BOARD_BOX_MIL and info["points"] == 4 and info["parts"] == 0
+    if info["box_mil"] == NEW_BOARD_BOX_MIL and info["points"] == 4 and info["parts"] > 0:
+        raise BridgeError("The board has parts and an outline of exactly the size of a new board: I cannot tell whether that outline was "
+                          "drawn on purpose. Ask the student whether it is the real board outline.")
+    if not placeholder and not info["rect"]:
+        raise BridgeError("The board outline is not a rectangle, so I cannot tell whether the parts fit inside it. Draw a rectangular "
+                          "outline in Altium (or delete the outline so I create one from the board size) and try again.")
+    warnings = []
+    if placeholder:
+        outline = layout.plan_outline(size)
+        if outline is None:
+            raise BridgeError("The board has no outline yet and the project does not say how big the board is (idea: board size). "
+                              "Ask the student for the width and height in mm, or draw the outline in Altium first.")
+        create = True
+    else:
+        outline = [round(v * MM_PER_MIL, 3) for v in info["box_mil"]]
+        create = False
+    plan = layout.plan_placement(parts, fps, outline, clearance_mm=clearance_mm, connector_dirs=connector_dirs,
+                                 edge_copper_mm=edge_copper_mm)
+    if plan["errors"]:
+        raise BridgeError("The parts cannot be placed: " + "; ".join(plan["errors"][:6]))
+    warnings += plan["warnings"]
+    backup = _backup(prj, [pcb])
+    links = _sch_links(prj)
+    parts = [dict(p, uid=links[p["ref"]][0], sheet=links[p["ref"]][1]) if p["ref"] in links else p for p in parts]
+    cmds = layout.plan_commands(pcb, outline, create, plan["places"], fps, parts, pcblib, replace=replace)
+    try:
+        run_commands([("PROJECT", str(prj))] + cmds, total_timeout=900)
+    except BridgeError as exc:
+        raise BridgeError(str(exc) + _revert(prj, pcb, "placed")) from exc
+    problems = []
+    try:
+        saved = read_pcbdoc(pcb, geometry=True)
+    except (AltiumReadError, OSError) as exc:
+        back = _restore(prj, pcb, backup) if backup else False
+        raise BridgeError(f"Placed and saved, but the PcbDoc could not be read back: {exc}"
+                          + (" The board file was put back as it was before (backup kept)." if back else f" The backup is in {backup}.")) from exc
+    problems += layout.verify_layout(saved, parts, outline, clearance_mm, places=plan["places"], footprints=fps,
+                                     edge_copper_mm=edge_copper_mm)
+    try:                                                 # the outline Altium really holds, after the save
+        after = _pcbcheck_info(run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1")]))
+    except BridgeError:
+        after = None
+    if after is not None:
+        got = [v * MM_PER_MIL for v in after["box_mil"]]
+        if any(abs(a - b) > 0.05 for a, b in zip(got, outline)) or not after["rect"]:
+            problems.append(f"the saved board outline is {[round(v, 2) for v in got]} mm with {after['points']} points, planned {outline}")
+    try:
+        from checks import board as board_checks
+        drills = [f["message"] for f in board_checks.check_drills(saved)]
+    except Exception:                                    # a check that cannot run must not hide the placement result
+        drills = []
+    restored = False
+    if problems and backup:
+        restored = _restore(prj, pcb, backup)
+    return {"placed": [p["ref"] for p in plan["places"]], "outline": outline, "outline_created": create, "warnings": warnings,
+            "backup": backup, "problems": problems, "pads": len(saved.get("pads", [])), "restored": restored,
+            "places": plan["places"], "drill_findings": drills}
+
+
+def place_pcb(project, replace=False):
+    """altium.place_pcb: the netlist's parts on the project's PcbDoc (footprints from the project PcbLib, linked and netted like
+    Update PCB does it), board outline from the idea's board size when the PcbDoc has none yet."""
+    prj = _linked(project)
+    pcb = _project_pcb(project)
+    lp = library_paths(project)
+    parts = _netlist_parts(project)
+    links = _sch_links(prj)
+    undrawn = sorted({p["ref"] for p in parts if p["ref"] not in links})
+    if undrawn:                  # parts placed without their schematic link are added a second time by the first Update PCB
+        raise BridgeError("The schematic is not drawn in Altium for " + ", ".join(undrawn[:8]) + (" ..." if len(undrawn) > 8 else "")
+                          + ": draw it first (altium.draw_schematic, with the student's agreement). A part placed without the link to its "
+                          "schematic symbol is duplicated by the first Update PCB. Nothing was changed.")
+    res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace)
+    _log(project, "place-pcb", pcb=str(pcb), parts=len(res["placed"]), outline=res["outline"], replace=bool(replace),
+         backup=res["backup"], problems=res["problems"], warnings=res["warnings"])
+    res["warnings"] = res["warnings"] + [f"drill check: {m}" for m in res["drill_findings"][:6]] +         [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    if res["problems"]:
+        raise BridgeError(f"Placed {len(res['placed'])} parts but the saved board does not check out: "
+                          + "; ".join(res["problems"][:6]) + (f" (+{len(res['problems']) - 6} more)" if len(res["problems"]) > 6 else "")
+                          + (" The board file was put back as it was before (backup kept)." if res["restored"] else " The backup is in " + str(res["backup"]) + "."))
+    return res
+
+
+DRC_WATCHED = ("Clearance Constraint", "Short-Circuit", "Un-Routed Net", "Width Constraint", "Hole To Hole", "Minimum Annular Ring")
+
+
+def _drc_counts(res):
+    """{watched rule: count} of a parse_drc result (prefix match: Altium appends the rule values to the name)."""
+    out = {}
+    for name, n in (res or {}).get("rules", {}).items():
+        for w in DRC_WATCHED:
+            if name.startswith(w):
+                out[w] = out.get(w, 0) + n
+    return out
+
+
+def _partial_ok(problem):
+    """A problem that a partly routed board (agreed with the student) has by definition: nets left open."""
+    return problem.startswith("not routed") or "open nets" in problem or "un-routed connection" in problem
+
+
+def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True):
+    """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
+    script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
+    Altium's batch design rule check (no new clearance / short / width / un-routed violations over the check made before routing).
+    A net that cannot be routed is reported with the reason; without keep_partial nothing is drawn then. Any failed check puts the
+    backed-up file back. Returns {routed, failed, tracks, vias, problems, restored, backup, drc_before, drc_after, summary, ...}."""
+    import tempfile
+    from altium import layout, route
+    from altium.pcbdoc import read_pcbdoc
+    prj, pcb = pathlib.Path(prj), pathlib.Path(pcb)
+    log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0", "route")])   # unsaved / existing copper
+    info = _pcbcheck_info(log)
+    if info is None:
+        raise BridgeError("Altium did not report the state of the board.")
+    if info["parts"] == 0:
+        raise BridgeError("There are no parts on the board: place the parts first (altium.place_pcb).")
+    if not info["rect"] or info["box_mil"] == NEW_BOARD_BOX_MIL:
+        raise BridgeError("The board outline is not a rectangle drawn for this board (or is still the placeholder of a new board): "
+                          "place the parts first so that it gets its outline.")
+    box = [v * MM_PER_MIL for v in info["box_mil"]]
+    doc = read_pcbdoc(pcb)
+    if replace:      # the copper that is about to be removed is no obstacle: only what belongs to a footprint stays
+        doc = dict(doc, tracks=[t for t in doc.get("tracks", []) if t.get("in_component")],
+                   arcs=[a for a in doc.get("arcs", []) if a.get("in_component")], vias=[],
+                   fills=[f for f in doc.get("fills", []) if f.get("in_component")],
+                   regions=[g for g in doc.get("regions", []) if g.get("in_component")])
+    if not doc.get("nets"):
+        raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
+    rules = route.rules_from_doc(doc)
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
+    drc_before = _drc_counts(run_drc(prj, pcb, tmp / "before.txt"))
+    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
+    pour_net = route.pour_net_for(doc) if pour else None
+    res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
+           "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k != "net_width"}, "backup": "", "problems": [],
+           "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net}
+    if plan["failed"] and not keep_partial:
+        res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
+        return res
+    bad = route.violations(doc, plan["items"], rules, box)          # our own exact check of what we are about to draw
+    if bad:
+        res["problems"] = ["the route would break the rules (nothing drawn): " + "; ".join(bad[:5])]
+        res["summary"] = res["problems"][0]
+        return res
+    res["backup"] = _backup(prj, [pcb])
+    try:
+        run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
+                                                                     edge=rules["edge"]), total_timeout=1500)
+    except BridgeError as exc:
+        raise BridgeError(str(exc) + _revert(prj, pcb, "routed")) from exc
+    res["written"] = True
+    probs = []
+    open_nets = []
+    after = {}
+    try:        # whatever goes wrong from here on (read back, reload, the check itself) puts the backed-up board back
+        saved = read_pcbdoc(pcb, geometry=True)
+        open_nets = layout.unrouted(saved)
+        if open_nets:
+            probs.append("the saved board still has open nets: " + "; ".join(f"{n} ({', '.join(t[:4])})" for n, t in open_nets[:5]))
+        try:    # Altium checks connectivity from what it loaded: close the board (saved, nothing lost) so the check reads the file again
+            run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+        except BridgeError as exc:
+            probs.append(f"the board could not be reloaded for the design rule check: {exc}")
+        drc = run_drc(prj, pcb, tmp / "after.txt")
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        res["restored"] = _restore(prj, pcb, res["backup"])
+        res["problems"] = [f"after drawing, the board could not be read back or checked ({exc})"]
+        res["summary"] = res["problems"][0] + (" The board file was put back as it was before (backup kept)." if res["restored"]
+                                              else f" The backup is in {res['backup']}.")
+        res["written"] = True
+        return res
+    after = _drc_counts(drc)
+    res["drc_after"] = after
+    if after.get("Un-Routed Net", 0) > 0:
+        probs.append(f"Altium's design rule check reports {after['Un-Routed Net']} un-routed connections")
+    for w in ("Clearance Constraint", "Short-Circuit", "Width Constraint"):
+        if after.get(w, 0) > drc_before.get(w, 0):
+            probs.append(f"Altium's design rule check reports {after[w] - drc_before.get(w, 0)} new {w} violations "
+                         f"({'; '.join(v for v in drc['violations'] if w.split()[0].lower() in v.lower())[:300]})")
+    try:
+        from checks import board as board_checks
+        res["drills"] = [f["message"] for f in board_checks.check_drills(saved)]
+    except Exception:
+        pass
+    if plan["failed"]:
+        probs.append("not routed: " + "; ".join(f"{n} ({why})" for n, why in plan["failed"]))
+    res["problems"] = probs
+    if probs and not (keep_partial and all(_partial_ok(p) for p in probs)):
+        res["restored"] = _restore(prj, pcb, res["backup"])
+    res["summary"] = (f"{len(plan['routed'])} nets routed with {res['tracks']} tracks and {res['vias']} vias"
+                      + (f", {pour_net} poured on the bottom layer" if pour_net else "") + f", saved; own check: "
+                      f"{'no open nets' if not open_nets else str(len(open_nets)) + ' open nets'}; Altium DRC: "
+                      f"{after.get('Un-Routed Net', 0)} un-routed, {after.get('Clearance Constraint', 0)} clearance, "
+                      f"{after.get('Short-Circuit', 0)} short ({drc_before.get('Clearance Constraint', 0)} clearance before routing)")
+    return res
+
+
+def route_pcb(project, replace=False, keep_partial=False):
+    """altium.route_pcb: the placed board routed by the agent's router (see route_on). Raises BridgeError with the reason when it did
+    not end up with a fully routed, rule-clean board; the file is then as it was (backup kept)."""
+    prj = _linked(project)
+    pcb = _project_pcb(project)
+    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial)
+    _log(project, "route-pcb", pcb=str(pcb), routed=res["routed"], failed=[n for n, _ in res["failed"]], tracks=res["tracks"],
+         vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],
+         restored=res["restored"], drc_before=res["drc_before"], drc_after=res["drc_after"])
+    if res["problems"] or res["failed"] or not res["written"]:
+        raise BridgeError(res["summary"] if not res["written"] else
+                          "The route does not check out: " + "; ".join(res["problems"][:5])
+                          + (" The board file was put back as it was before (backup kept)." if res["restored"]
+                             else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
+                             else f" Backup in {res['backup']}."))
+    res["warnings"] = [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    return res
+
+
+def run_drc(prj, pcb, report):
+    """The design rule check of Altium on the board, by script (no dialog). Returns parse_drc(report)."""
+    run_commands([("PROJECT", str(prj)), ("DRC", str(pcb), str(report))])
+    res = parse_drc(report)
+    if res is None:
+        raise BridgeError("Altium did not write the design rule check report.")
     return res
 
 

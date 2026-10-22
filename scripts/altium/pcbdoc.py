@@ -142,6 +142,8 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
         track_blob = _optional_stream(ole, "Tracks6/Data")
         arc_blob = _optional_stream(ole, "Arcs6/Data")
         text_blob = _optional_stream(ole, "Texts6/Data")
+        region_blob = _optional_stream(ole, "Regions6/Data")
+        fill_blob = _optional_stream(ole, "Fills6/Data")
 
     components = []
     for ci, c in enumerate(raw_comps):
@@ -213,6 +215,10 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
             "y_mm": y_mm,
             "sx_mm": sx_mm,
             "sy_mm": sy_mm,
+            "rot": round(struct.unpack("<d", s5[52:60])[0] % 360, 3) if len(s5) >= 60 else 0.0,
+            "shape": s5[49] if len(s5) > 49 else 2,          # top shape: 1 round, 2 rectangular, 3 octagonal, 9 rounded rectangle
+            "hole_mm": round(struct.unpack("<i", s5[45:49])[0] / 10000 * 0.0254, 4) if len(s5) >= 49 else 0.0,
+            "plated": bool(s5[60]) if len(s5) > 60 else True,
         })
 
     return {
@@ -227,7 +233,8 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
         "tracks": parse_tracks(track_blob, nets),
         "arcs": parse_arcs(arc_blob, nets),
         "texts": parse_texts(text_blob, raw_comps),
-        "regions": [],
+        "regions": parse_regions(region_blob, nets),
+        "fills": parse_fills(fill_blob, nets),
     }
 
 
@@ -338,6 +345,7 @@ def parse_tracks(blob: bytes, nets: list[str]) -> list[dict]:
             out.append({
                 "layer": layer,
                 "net": net_name,
+                "in_component": struct.unpack("<H", rec[7:9])[0] != 0xFFFF,
                 "x1_mm": round(x1 * _MIL4_TO_MM, 4),
                 "y1_mm": round(y1 * _MIL4_TO_MM, 4),
                 "x2_mm": round(x2 * _MIL4_TO_MM, 4),
@@ -367,12 +375,67 @@ def parse_arcs(blob: bytes, nets: list[str]) -> list[dict]:
             out.append({
                 "layer": layer,
                 "net": net_name,
+                "in_component": struct.unpack("<H", rec[7:9])[0] != 0xFFFF,
                 "cx_mm": round(cx * _MIL4_TO_MM, 4),
                 "cy_mm": round(cy * _MIL4_TO_MM, 4),
                 "r_mm": round(r * _MIL4_TO_MM, 4),
                 "a1": round(a1, 2),
                 "a2": round(a2, 2),
                 "width_mm": round(w * _MIL4_TO_MM, 4),
+            })
+    except Exception:
+        pass
+    return out
+
+
+def parse_fills(blob: bytes, nets: list[str]) -> list[dict]:
+    """Read-only list of rectangular fills (Fills6): layer, net, corners (mm), rotation, and whether it belongs to a component."""
+    out = []
+    try:
+        for rec in _primitive_records(blob or b""):
+            if len(rec) < 37:
+                continue
+            net_idx = struct.unpack("<H", rec[3:5])[0]
+            x1, y1, x2, y2 = struct.unpack("<4i", rec[13:29])
+            out.append({
+                "layer": rec[0],
+                "net": nets[net_idx] if (net_idx != 0xFFFF and 0 <= net_idx < len(nets)) else None,
+                "in_component": struct.unpack("<H", rec[7:9])[0] != 0xFFFF,
+                "x1_mm": round(x1 * _MIL4_TO_MM, 4), "y1_mm": round(y1 * _MIL4_TO_MM, 4),
+                "x2_mm": round(x2 * _MIL4_TO_MM, 4), "y2_mm": round(y2 * _MIL4_TO_MM, 4),
+                "rot": round(struct.unpack("<d", rec[29:37])[0], 2),
+            })
+    except Exception:
+        pass
+    return out
+
+
+def parse_regions(blob: bytes, nets: list[str]) -> list[dict]:
+    """Read-only list of regions (Regions6): layer, net, kind (0 copper, others cutouts), the outline points (mm), whether it belongs to
+    a component or to a poured polygon (poured copper is not fixed copper: it is redone around the tracks)."""
+    out = []
+    try:
+        for rec in _primitive_records(blob or b""):
+            if len(rec) < 26:
+                continue
+            tl = struct.unpack("<I", rec[18:22])[0]
+            text = rec[22:22 + tl].decode("latin-1", "replace")
+            props = dict(kv.split("=", 1) for kv in text.strip("\x00").split("|") if "=" in kv)
+            n = struct.unpack("<I", rec[22 + tl:26 + tl])[0]
+            data = rec[26 + tl:]
+            pts = []
+            if props.get("ISSHAPEBASED", "FALSE").upper() != "TRUE" and len(data) >= 16 * n:
+                for k in range(n):
+                    x, y = struct.unpack("<dd", data[16 * k:16 * k + 16])
+                    pts.append((round(x * _MIL4_TO_MM, 4), round(y * _MIL4_TO_MM, 4)))
+            net_idx = struct.unpack("<H", rec[3:5])[0]
+            out.append({
+                "layer": rec[0],
+                "net": nets[net_idx] if (net_idx != 0xFFFF and 0 <= net_idx < len(nets)) else None,
+                "polygon": struct.unpack("<H", rec[5:7])[0] != 0xFFFF,
+                "in_component": struct.unpack("<H", rec[7:9])[0] != 0xFFFF,
+                "kind": int(props.get("KIND", "0") or 0),
+                "points_mm": pts,
             })
     except Exception:
         pass
