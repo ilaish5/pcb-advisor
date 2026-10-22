@@ -324,7 +324,9 @@ function msgHTML(m, undoTs) {
     const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => `<span class="chat-act ok" title="Applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`)
       .concat((m.refused || []).map(a => `<span class="chat-act bad" title="Not applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
+    // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here
+    const text = (m.refused || []).length ? m.text.replace(/\n*\(Not applied: [\s\S]*\)\s*$/, '') : m.text;
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }
@@ -411,6 +413,12 @@ function renderThread(force) {
     box.innerHTML = html;
     chatHtml = html;
     box.scrollTop = grew || nearEnd ? box.scrollHeight : top;
+    // fonts and the suggestion row settle after this: stay at the end, or the last reply's chips sit below the fold
+    if (grew || nearEnd) {
+      const stick = () => { box.scrollTop = box.scrollHeight; };
+      requestAnimationFrame(stick);
+      document.fonts?.ready.then(stick);
+    }
   }
   if (chatSeen.session === S.session && S.chat.length > chatSeen.count) {       // announce only what arrived, never a re-render
     const fresh = S.chat.slice(chatSeen.count).filter(m => m.role === 'agent' && m.text && !m.error && !m.decision);
