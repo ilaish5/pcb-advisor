@@ -325,8 +325,8 @@ function msgHTML(m, undoTs) {
       .concat((m.refused || []).map(a => `<span class="chat-act bad" title="Not applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
     // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here
-    const text = (m.refused || []).length ? m.text.replace(/\n*\(Not applied: [\s\S]*\)\s*$/, '') : m.text;
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
+    if ((m.refused || []).length && m.text) m = {...m, text: m.text.replace(/\n*\(Not applied: [\s\S]*\)\s*$/, '')};
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }
