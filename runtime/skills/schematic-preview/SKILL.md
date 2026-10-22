@@ -57,6 +57,10 @@ lay it out. Who puts it into Altium is the student's choice (step 11): they redr
       drawn: say which, and fix the netlist or draw that part by hand. A refusal because the library lacks a symbol, a pin count
       differs, or the sheet does not fit one A4 page: say what is missing and fix that (library, netlist, a second sheet),
       never work around it with a script in Altium.
+    - NEXT STEP after the schematic is drawn (never tell the student to do Design > Update PCB by hand, that is not the offer):
+      ask ONE question in their language: "Should I place the parts on the board, or will you (Update PCB)?" Then stop and wait.
+      "You place them" = follow the `placement-and-routing-plan` skill (`altium.place_pcb`, only on their answer); "myself" = then
+      and only then explain Design > Update PCB.
     - Afterwards the student can check it with `schematic-review`. The layout is simple (a grid per section), readable, not optimized:
       say so, they may move parts by hand.
 

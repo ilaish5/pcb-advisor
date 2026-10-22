@@ -1832,6 +1832,8 @@ procedure PcbCheck(Path: String; Replace: String; Mode: String);
 var
     B, D, O, R, S1, S2 : IDispatch;
     n, i, rectok       : Integer;
+    straight           : Integer;
+    bx0, bx1, by0, by1 : Integer;
 begin
     D := Client.GetDocumentByPath(Path);
     if (D <> nil) then
@@ -1850,6 +1852,27 @@ begin
     if (Mode = 'route') then n := n - PcbObjCount(B, eComponentObject);        { routing: only the copper counts, parts are meant to be there }
     O := B.BoardOutline;
     R := O.BoundingRectangle;
+    { BoundingRectangle is cached: right after OUTLINE changed the corners (same session, before the file is reopened) it still
+      holds the old box although the corners and the saved file are new. Straight edges: take the box from the corners. }
+    straight := 1;
+    for i := 0 to O.PointCount - 1 do
+        if (O.Segments[i].Kind <> 0) then straight := 0;
+    if (straight = 1) and (O.PointCount >= 3) then
+    begin
+        bx0 := O.Segments[0].vx; bx1 := bx0; by0 := O.Segments[0].vy; by1 := by0;
+        for i := 1 to O.PointCount - 1 do
+        begin
+            S1 := O.Segments[i];
+            if (S1.vx < bx0) then bx0 := S1.vx;
+            if (S1.vx > bx1) then bx1 := S1.vx;
+            if (S1.vy < by0) then by0 := S1.vy;
+            if (S1.vy > by1) then by1 := S1.vy;
+        end;
+    end
+    else
+    begin
+        bx0 := R.Left; bx1 := R.Right; by0 := R.Bottom; by1 := R.Top;
+    end;
     rectok := 0;                                   { four points and every edge horizontal or vertical: a real rectangle }
     if (O.PointCount = 4) then
     begin
@@ -1860,12 +1883,12 @@ begin
             S2 := O.Segments[(i + 1) mod 4];
             if (S1.vx <> S2.vx) and (S1.vy <> S2.vy) then rectok := 0;
         end;
-        if (R.Right = R.Left) or (R.Top = R.Bottom) then rectok := 0;
+        if (bx1 = bx0) or (by1 = by0) then rectok := 0;
     end;
     Log('pcbcheck rect=' + IntToStr(rectok) + ' objects=' + IntToStr(n) + ' parts=' + IntToStr(PcbObjCount(B, eComponentObject)) + ' tracks=' + IntToStr(PcbObjCount(B, eTrackObject)) + ' vias=' + IntToStr(PcbObjCount(B, eViaObject)) + ' arcs=' + IntToStr(PcbObjCount(B, eArcObject))
         + ' polys=' + IntToStr(PcbObjCount(B, ePolyObject)) + ' regions=' + IntToStr(PcbObjCount(B, eRegionObject)) + ' fills=' + IntToStr(PcbObjCount(B, eFillObject))
-        + ' outline_pts=' + IntToStr(O.PointCount) + ' box_mil=' + IntToStr(CoordToMils(R.Left)) + ',' + IntToStr(CoordToMils(R.Bottom)) + ','
-        + IntToStr(CoordToMils(R.Right)) + ',' + IntToStr(CoordToMils(R.Top)));
+        + ' outline_pts=' + IntToStr(O.PointCount) + ' box_mil=' + IntToStr(CoordToMils(bx0)) + ',' + IntToStr(CoordToMils(by0)) + ','
+        + IntToStr(CoordToMils(bx1)) + ',' + IntToStr(CoordToMils(by1)));
     if (n > 0) and (Replace <> '1') then
     begin
         if (Mode = 'route') then Say('ERR the board already has ' + IntToStr(n) + ' tracks, vias or pours; nothing was changed')
