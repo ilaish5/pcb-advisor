@@ -67,7 +67,10 @@ from altium.prjpcb import read_prjpcb as _read_prjpcb  # noqa: E402
 from altium.schdoc import read_schdoc  # noqa: E402
 
 BRIDGE_DIR = pathlib.Path(__file__).resolve().parent / "bridge"
-SCRIPT_PROJECT = BRIDGE_DIR / "AdvisorBridge.PrjScr"
+SCRIPT_PROJECT = BRIDGE_DIR / "AdvisorBridge.PrjScr"      # the shipped source; Altium runs a staged copy (stage_script)
+SCRIPT_FILES = ("AdvisorBridge.PrjScr", "AdvisorBridge.pas")
+STAGE_PREFIX = "AdvisorBridge-"
+STAGE_KEEP = 2
 EXCHANGE = pathlib.Path(os.environ.get("PUBLIC") or r"C:\Users\Public") / "pcb-advisor-bridge"   # the .pas uses the same
 TAG = "[advisor]"                       # first word of every text frame we draw; how a re-run finds its own frames
 BACKUP_DIR = ".advisor-backup"
@@ -91,6 +94,52 @@ def _exe():
         if inst.get("exe"):
             return inst["exe"]
     raise BridgeError("Altium Designer was not found. Set its folder in Settings (altium.install_path).")
+
+
+def stage_root():
+    """Where the content-addressed script copies live (not the install folder: that one is replaced by updates)."""
+    base = os.environ.get("LOCALAPPDATA") or str(pathlib.Path.home() / "AppData" / "Local")
+    return pathlib.Path(base) / "pcb-advisor" / "script-stage"
+
+
+def stage_script(src_dir=None, root=None, keep=STAGE_KEEP):
+    """Copy AdvisorBridge.PrjScr + .pas into <root>/AdvisorBridge-<sha12 of both>/ and return the staged .PrjScr path.
+    Altium keeps the compiled script of a script project it has opened, so a changed .pas under the same path is never
+    reloaded (new commands fail as 'unknown command'). A different content gives a different project path, which Altium
+    loads fresh. Same content -> same path (nothing copied twice). Older staged folders beyond `keep` are deleted
+    (newest by use first; the one just staged always stays)."""
+    import hashlib
+    src_dir = pathlib.Path(src_dir) if src_dir else BRIDGE_DIR
+    root = pathlib.Path(root) if root else stage_root()
+    h = hashlib.sha256()
+    for name in SCRIPT_FILES:
+        f = src_dir / name
+        if not f.is_file():
+            raise BridgeError(f"bridge script missing: {f}")
+        h.update(name.encode("ascii") + b"\x00" + f.read_bytes() + b"\x00")
+    dest = root / f"{STAGE_PREFIX}{h.hexdigest()[:12]}"
+    if not all((dest / n).is_file() for n in SCRIPT_FILES):
+        tmp = root / f".tmp-{os.getpid()}-{time.time_ns()}"
+        tmp.mkdir(parents=True, exist_ok=True)
+        try:
+            for name in SCRIPT_FILES:
+                shutil.copy2(src_dir / name, tmp / name)
+            if dest.exists():
+                shutil.rmtree(dest, ignore_errors=True)
+            tmp.rename(dest)
+        except OSError:
+            shutil.rmtree(tmp, ignore_errors=True)
+            if not all((dest / n).is_file() for n in SCRIPT_FILES):
+                raise
+    try:
+        os.utime(dest, None)            # "last used", so cleanup keeps the copies still in use
+        olds = sorted((d for d in root.iterdir() if d.is_dir() and d.name.startswith(STAGE_PREFIX) and d != dest),
+                      key=lambda d: d.stat().st_mtime, reverse=True)
+        for d in olds[max(0, keep - 1):]:
+            shutil.rmtree(d, ignore_errors=True)
+    except OSError:
+        pass
+    return dest / "AdvisorBridge.PrjScr"
 
 
 def _running():
@@ -199,8 +248,7 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
     Raises BridgeError with the last step when the script does not start, stops logging or reports an error.
     While the script runs we only look at whether start.flag / end.flag exist and whether log.txt grows."""
     exe = _exe()
-    if not SCRIPT_PROJECT.is_file():
-        raise BridgeError(f"bridge script missing: {SCRIPT_PROJECT}")
+    script = stage_script()            # a changed script is a new project path: Altium loads it fresh
     with _lock:
         EXCHANGE.mkdir(parents=True, exist_ok=True)
         for name in ("response.txt", "log.txt", "start.flag", "end.flag"):
@@ -209,7 +257,7 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
         (EXCHANGE / "request.txt").write_bytes(body.encode("ascii"))     # bytes: text mode would double the CR on Windows
         cold = not _running()          # Altium has to start first: that takes a while
         for attempt in (1, 2):
-            subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{SCRIPT_PROJECT}"|ProcName="AdvisorBridge>Run")')
+            subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
             t0 = time.time()
             started = False
             while time.time() - t0 < start_timeout * (8 if cold else 1):
@@ -246,10 +294,15 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
 
 
 def status():
-    out = {"windows": sys.platform == "win32", "exe": "", "running": False, "executor": "not tested", "error": ""}
+    out = {"windows": sys.platform == "win32", "exe": "", "running": False, "executor": "not tested", "error": "", "script": ""}
     try:
         out["exe"] = _exe()
     except BridgeError as exc:
+        out["error"] = str(exc)
+        return out
+    try:
+        out["script"] = str(stage_script())
+    except (BridgeError, OSError) as exc:
         out["error"] = str(exc)
         return out
     out["running"] = _running()
