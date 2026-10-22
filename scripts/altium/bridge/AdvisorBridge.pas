@@ -21,6 +21,9 @@
              SYMPARAMS schlib paramsfile | HIDEPINS schlib | ATTACH3D spec | SAVELIB path kind
              COMPILE libpkg intlib | CHECKINST intlib
 
+  Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace | PLACE path ref libref schlib x y pins
+             WIRE path x1 y1 x2 y2 | NETLABEL path x y rot text | POWER path x y rot style text | NOERC path x y
+
   The create-footprints-batch and create-symbols-batch code below (LibFootprintsBatch, LibMakeSymbol,
   LibSymbolsBatch and their helpers PField, SFloat, PinElec, PinOrient) is ported from altium-mcp,
   server/AltiumScript/pcb_utils.pas and schematic_utils.pas:
@@ -1536,6 +1539,216 @@ begin
         Log('INSTALLED no ' + IntLib);
 end;
 
+{ ---- drawing a sheet: parts from the project SchLib, wire stubs, net labels, power ports, No ERC.
+  The layout and every coordinate come from Python (scripts/altium/draw.py); this side only creates the objects. ---- }
+
+function RotOf(N: Integer): Integer;
+begin
+    if (N = 1) then Result := eRotate90
+    else if (N = 2) then Result := eRotate180
+    else if (N = 3) then Result := eRotate270
+    else Result := eRotate0;
+end;
+
+function CountKind(Sch: IDispatch; Kind: Integer): Integer;
+var
+    It, O : IDispatch;
+begin
+    Result := 0;
+    It := Sch.SchIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(Kind));
+    O := It.FirstSchObject;
+    while (O <> nil) do
+    begin
+        Result := Result + 1;
+        O := It.NextSchObject;
+    end;
+    Sch.SchIterator_Destroy(It);
+end;
+
+{ removes every object of a kind, one at a time (an iterator does not survive a removal) }
+procedure RemoveKind(Sch: IDispatch; Kind: Integer);
+var
+    It, O, Found : IDispatch;
+begin
+    repeat
+        Found := nil;
+        It := Sch.SchIterator_Create;
+        It.AddFilter_ObjectSet(MkSet(Kind));
+        Found := It.FirstSchObject;
+        Sch.SchIterator_Destroy(It);
+        if (Found <> nil) then Sch.RemoveSchObject(Found);
+    until (Found = nil);
+end;
+
+{ everything the drawing commands make or wipe, counted (a sheet with wires and labels but no part is not empty either) }
+function DrawnCount(Sch: IDispatch): Integer;
+begin
+    Result := CountKind(Sch, eSchComponent) + CountKind(Sch, eWire) + CountKind(Sch, eNetLabel) + CountKind(Sch, ePowerObject)
+              + CountKind(Sch, eNoERC) + CountKind(Sch, eJunction) + CountKind(Sch, ePort);
+end;
+
+{ DRAWCHECK path replace: the sheet may be drawn on. Refused when Altium holds unsaved changes in it (a backup of the file would
+  not cover them) or when anything is on it and replace is not 1. Changes nothing. }
+procedure DrawCheck(Path: String; Replace: String);
+var
+    Sch, D : IDispatch;
+    n      : Integer;
+begin
+    D := Client.GetDocumentByPath(Path);
+    if (D <> nil) then
+        if (IntToStr(D.Modified) <> '0') then      { 'if D.Modified' reads a true value as false here }
+        begin
+            Say('ERR the sheet is open in Altium with unsaved changes; save or close it first. Nothing was changed');
+            Exit;
+        end;
+    Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    n := DrawnCount(Sch);
+    if (n > 0) and (Replace <> '1') then
+    begin
+        Say('ERR the sheet already has ' + IntToStr(n) + ' objects (parts, wires, labels); nothing was changed');
+        Exit;
+    end;
+    Log('drawcheck ' + IntToStr(n) + ' objects');
+end;
+
+{ DRAWBEGIN path replace: the sheet is wiped only when replace is 1 (DRAWCHECK ran before, this is the second lock) }
+procedure DrawBegin(Path: String; Replace: String);
+var
+    Sch : IDispatch;
+    n   : Integer;
+begin
+    Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    n := DrawnCount(Sch);
+    if (n > 0) and (Replace <> '1') then
+    begin
+        Say('ERR the sheet already has ' + IntToStr(n) + ' objects (parts, wires, labels); nothing was changed');
+        Exit;
+    end;
+    if (n > 0) then
+    begin
+        RemoveKind(Sch, eSchComponent);
+        RemoveKind(Sch, eWire);
+        RemoveKind(Sch, eNetLabel);
+        RemoveKind(Sch, ePowerObject);
+        RemoveKind(Sch, eNoERC);
+        RemoveKind(Sch, eJunction);
+        RemoveKind(Sch, ePort);
+    end;
+    ClearFrames(Path);
+    Log('drawbegin ' + IntToStr(n) + ' objects removed');
+end;
+
+{ PLACE path ref libref schlib x y pins: the component comes from the SchLib FILE (an IntLib name or path gives nil, and a
+  part placed any other way has no pins). It must have the pin count the library symbol has, or the run stops. }
+procedure PlacePart(Path: String; Ref: String; LibRef: String; SchLib: String; X, Y, Pins: Integer);
+var
+    Sch  : IDispatch;
+    C    : ISch_Component;
+    Got  : Integer;
+begin
+    Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    C := SchServer.LoadComponentFromLibrary(LibRef, SchLib);
+    if (C = nil) then
+    begin
+        Say('ERR ' + Ref + ': symbol ' + LibRef + ' not found in ' + SchLib);
+        Exit;
+    end;
+    C.Designator.Text := Ref;
+    Sch.AddSchObject(C);
+    C.MoveToXY(MilsToCoord(X), MilsToCoord(Y));       { after the add: this moves the pins too, setting Location does not }
+    Got := PinCountOf(C);
+    if (Got <> Pins) then
+    begin
+        Say('ERR ' + Ref + ' (' + LibRef + ') was placed with ' + IntToStr(Got) + ' pins, the library symbol has ' + IntToStr(Pins));
+        Exit;
+    end;
+    Log('placed ' + Ref + ' ' + LibRef + ' pins=' + IntToStr(Got));
+end;
+
+procedure DrawWire(Path: String; X1, Y1, X2, Y2: Integer);
+var
+    Sch, W : IDispatch;
+begin
+    Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    W := SchServer.SchObjectFactory(eWire, eCreate_Default);
+    W.InsertVertex := 1;
+    W.SetState_Vertex(1, Point(MilsToCoord(X1), MilsToCoord(Y1)));
+    W.InsertVertex := 2;
+    W.SetState_Vertex(2, Point(MilsToCoord(X2), MilsToCoord(Y2)));
+    Sch.RegisterSchObjectInContainer(W);
+end;
+
+procedure DrawNetLabel(Path: String; X, Y, Rot: Integer; Txt: String);
+var
+    Sch, L : IDispatch;
+begin
+    Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    L := SchServer.SchObjectFactory(eNetLabel, eCreate_Default);
+    L.Location := Point(MilsToCoord(X), MilsToCoord(Y));
+    L.Text := Txt;
+    L.Orientation := RotOf(Rot);
+    Sch.RegisterSchObjectInContainer(L);
+end;
+
+procedure DrawPower(Path: String; X, Y, Rot, Style: Integer; Txt: String);
+var
+    Sch, P : IDispatch;
+begin
+    Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    P := SchServer.SchObjectFactory(ePowerObject, eCreate_Default);
+    P.Location := Point(MilsToCoord(X), MilsToCoord(Y));
+    P.Text := Txt;
+    P.Style := Style;
+    P.Orientation := RotOf(Rot);
+    Sch.RegisterSchObjectInContainer(P);
+end;
+
+procedure DrawNoErc(Path: String; X, Y: Integer);
+var
+    Sch, N : IDispatch;
+begin
+    Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    N := SchServer.SchObjectFactory(eNoERC, eCreate_Default);
+    N.Location := Point(MilsToCoord(X), MilsToCoord(Y));
+    Sch.RegisterSchObjectInContainer(N);
+end;
+
 procedure Dispatch(Line: String);
 var
     Cmd : String;
@@ -1573,6 +1786,20 @@ begin
     else if (Cmd = 'INSTALL') then LibInstall(Field(Line, 1))
     else if (Cmd = 'CHECKINST') then LibCheckInstalled(Field(Line, 1))
     else if (Cmd = 'FPINFO') then LibFootprintInfo(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'DRAWCHECK') then DrawCheck(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'REVERT') then CloseDocByPath(Field(Line, 1))
+    else if (Cmd = 'DRAWBEGIN') then DrawBegin(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'PLACE') then
+        PlacePart(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), StrToInt(Field(Line, 5)),
+                  StrToInt(Field(Line, 6)), StrToInt(Field(Line, 7)))
+    else if (Cmd = 'WIRE') then
+        DrawWire(Field(Line, 1), StrToInt(Field(Line, 2)), StrToInt(Field(Line, 3)), StrToInt(Field(Line, 4)), StrToInt(Field(Line, 5)))
+    else if (Cmd = 'NETLABEL') then
+        DrawNetLabel(Field(Line, 1), StrToInt(Field(Line, 2)), StrToInt(Field(Line, 3)), StrToInt(Field(Line, 4)), Field(Line, 5))
+    else if (Cmd = 'POWER') then
+        DrawPower(Field(Line, 1), StrToInt(Field(Line, 2)), StrToInt(Field(Line, 3)), StrToInt(Field(Line, 4)),
+                  StrToInt(Field(Line, 5)), Field(Line, 6))
+    else if (Cmd = 'NOERC') then DrawNoErc(Field(Line, 1), StrToInt(Field(Line, 2)), StrToInt(Field(Line, 3)))
     else if (Cmd = 'PING') then Log('ping')
     else Say('ERR unknown command ' + Cmd);
 end;

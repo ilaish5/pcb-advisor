@@ -350,7 +350,7 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
 
 
 ALTIUM_ACTIONS = ("altium.create_project", "altium.add_sheet", "altium.skeleton", "altium.add_pcb", "altium.open",
-                  "altium.import_rules", "altium.run_outjob")
+                  "altium.import_rules", "altium.run_outjob")      # (+ altium.draw_schematic, which has its own guard)
 
 
 def library_issue_count(project):
@@ -385,6 +385,31 @@ def _quote_holds(said, last_user) -> bool:
     if q == u:
         return True
     return (len(q) >= 8 or " " in q) and re.search(r"(?<!\w)" + re.escape(q) + r"(?!\w)", u) is not None
+
+
+SELF_DRAW = re.compile(r"myself|\bi[\u2019']?ll draw|i will draw|\bi draw|בעצמי|אני אשרטט|אני אצייר|אשרטט אני"
+                       r"|\bdon[’']?t draw|\bdo not draw|אל תשרטט|אל תצייר|לא לשרטט|לא תשרטט|אני לא רוצה ש", re.I)
+REDRAW_WORD = re.compile(r"replace|redraw|re-draw|overwrite|start over|מחדש|תחליף|תמחק|להחליף", re.I)
+ASK_FIRST = "Ask the student first: draw the schematic themselves in Altium, or should you draw it? Run this only after their answer, with student_said = a quote of it."
+
+
+def _draw_consent(a, last_user):
+    """'' when the student's last message really asked the agent to draw (or, for replace, to draw over the old sheet), else why not.
+    The quote must be most of their message (a fragment of "I'll draw it myself" is not a yes), and a message that says they draw it
+    themselves is never one. "לבד" is not a negation: "תשרטט לבד" = you draw it."""
+    norm = lambda t: re.sub(r"\s+", " ", str(t or "").lower()).strip(" .,!?;:()-\"'")
+    q, u = norm(a.get("student_said")), norm(last_user)
+    if not _quote_holds(a.get("student_said"), last_user) or len(q) < 0.5 * len(u):
+        return ASK_FIRST
+    if SELF_DRAW.search(u):
+        return "The student said they will draw it themselves. Do not draw; help them with the manual steps."
+    if _truthy(a.get("replace")):
+        r = norm(a.get("replace_said"))
+        # the redraw word itself is a short quote ("מחדש"): whole words of their message are enough here
+        if not r or not REDRAW_WORD.search(r) or re.search(r"(?<!\w)" + re.escape(r) + r"(?!\w)", u) is None:
+            return ("The sheet is only drawn over when the student says so: ask whether the old drawing may be replaced, then run this with "
+                    "replace_said = a quote of their words (replace, redraw, overwrite, start over / מחדש, תחליף, תמחק).")
+    return ""
 
 
 def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None):
@@ -486,6 +511,22 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                     applied.append(f"thread.open:{a['anchor']}")
                 else:
                     refused.append(f"thread.open: nothing to anchor to at {a['anchor']}")
+            elif kind == "altium.draw_schematic":
+                # the agent draws the sheet in Altium only when the student said so, in their own words (asked first: draw it
+                # yourself or should I?). replace needs that too, and never happens by default: a drawing is never wiped.
+                from altium import bridge
+                why = _draw_consent(a, last_user)
+                if why:
+                    refused.append(f"{kind}: not run. {why}")
+                    continue
+                try:
+                    res = bridge.draw_schematic(project, a.get("sheet") or None, replace=_truthy(a.get("replace")))
+                except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
+                    refused.append(f"{kind}: {exc}")
+                    continue
+                applied.append(f"{kind}: {res['parts']} parts and {len(res['nets'])} nets drawn on {len(res['sheets'])} sheet(s), "
+                               "saved and checked against the netlist"
+                               + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res["warnings"] else ""))
             elif kind in ALTIUM_ACTIONS:
                 from altium import bridge
                 # routine: new files only, and whatever it modifies is copied to .advisor-backup first

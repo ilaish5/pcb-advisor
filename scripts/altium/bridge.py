@@ -7,6 +7,9 @@ Two-way link to a running Altium Designer: create the project, add documents, dr
     python scripts/altium/bridge.py add-sheet <project> <name> | add-pcb <project>
     python scripts/altium/bridge.py skeleton <project> [<sheet>]  title block, parameters, one text frame per section;
                                                                  no components, safe to repeat
+    python scripts/altium/bridge.py draw-schematic <project> [<sheet>] [--replace]
+                                                                 the netlist drawn as a schematic: parts from the project SchLib,
+                                                                 a stub + net label / power port per pin, checked after the save
     python scripts/altium/bridge.py import-rules <project>       the advisor's rule set into the linked PcbDoc, by rule name
     python scripts/altium/bridge.py run-outjob <project>         Gerber, NC drill, BOM, pick and place into the outputs folder
     python scripts/altium/bridge.py open <project>
@@ -512,6 +515,108 @@ def skeleton(project, sheet=None):
     run_commands(cmds)
     _log(project, "skeleton", sheets=[str(d) for d, _, _ in todo], created=[str(d) for d in new_docs], backup=backup)
     return {"sheets": [str(d) for d, _, _ in todo], "created": [str(d) for d in new_docs], "backup": backup}
+
+
+# ---------------------------------------------------------------- drawing the schematic
+
+DRAWN_KINDS = ("components", "wires", "net_labels", "power_ports", "ports", "junctions", "no_erc")   # what a redraw wipes
+
+
+def _sheet_symbols(project, sheet, lib_symbols):
+    """{ref: library symbol dict} for the parts of one netlist sheet: BOM line -> library manifest -> the SchLib's symbol."""
+    manifest = store.library_manifest(project)
+    key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
+    out = {}
+    for part in sheet.get("parts", []):
+        ref = part.get("ref")
+        sym = (manifest.get(key.get(ref)) or {}).get("symbol")
+        if sym and sym in lib_symbols:
+            out[ref] = lib_symbols[sym]
+    return out
+
+
+def draw_schematic(project, sheet=None, replace=False):
+    """Draw the netlist sheet(s) of the project in Altium: every part from the project SchLib (pin count checked), a wire stub
+    on every connected pin ending in a power port or a net label, a No ERC cross on NC pins. Then the saved SchDoc is read back
+    and compared with the netlist. Refuses a sheet that already has components unless replace is true (the old SchDoc is
+    copied to .advisor-backup first). The SchDoc comes from the PrjPcb (a new one is added when there is none)."""
+    from altium import draw
+    from altium.schdoc import read_schdoc
+    prj = _linked(project)
+    lp = library_paths(project)
+    if not lp["schlib"].is_file():
+        raise BridgeError("The project library is not built yet: run library.build first, the parts are drawn from it.")
+    planned = _sheets(project)
+    if sheet is not None:
+        planned = [s for s in planned if s[0] == str(sheet)]
+    if not planned:
+        raise BridgeError("There is no netlist sheet to draw" + (f" (no sheet {sheet})" if sheet is not None else "")
+                          + ": write the netlist first (netlist.write).")
+    bom_refs = {r for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
+    lib_symbols = {s["name"]: s for s in read_schlib(lp["schlib"])["symbols"]}
+    manifest = store.library_manifest(project)
+    key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
+    plans, existing, new_docs = [], [], []
+    for sid, title, sh in planned:
+        errors, _ = store.check_sheet(sh, bom_refs)
+        if errors:
+            raise BridgeError(f"Sheet {sid} cannot be drawn: " + "; ".join(errors[:6]))
+        doc = _find_doc(prj, sid)
+        if doc is None:
+            doc = prj.parent / _sch_name(sid, title)
+            new_docs.append(doc)
+        elif doc.is_file():
+            existing.append(doc)
+            have = sum(len(read_schdoc(doc).get(k, [])) for k in DRAWN_KINDS)
+            if have and not replace:
+                raise BridgeError(f"{doc.name} already has {have} objects (parts, wires, labels). I never wipe a drawing: say so if it "
+                                  "should be redrawn (replace), the old file is kept in .advisor-backup.")
+        plan = draw.plan_sheet(sh, _sheet_symbols(project, sh, lib_symbols), lp["schlib"], doc, replace=replace)
+        if plan["errors"]:
+            raise BridgeError(f"Sheet {sid} cannot be drawn: " + "; ".join(plan["errors"][:8]))
+        plans.append((sid, doc, plan, {r: (manifest.get(key.get(r)) or {}).get("footprint") for r in key}))
+    backup = _backup(prj, existing + ([prj] if new_docs else []))
+    if existing:        # Altium's own view first: unsaved changes in an open sheet, or anything on it, stop the run before it touches anything
+        run_commands([("PROJECT", str(prj))] + [("DRAWCHECK", str(d), "1" if replace else "0") for d in existing])
+    cmds = [("PROJECT", str(prj))] + [("SCH", str(d)) for d in new_docs]
+    for _, _, plan, _fp in plans:
+        cmds += plan["commands"]
+    if new_docs:
+        cmds.append(("SAVEPRJ", str(prj)))
+    try:
+        run_commands(cmds, total_timeout=900)
+    except BridgeError as exc:
+        # a half-drawn sheet must not be saveable by the student: close it without saving (the file on disk is still the old one)
+        closed = ""
+        try:
+            run_commands([("PROJECT", str(prj))] + [("REVERT", str(d)) for _, d, _, _ in plans])
+            closed = " The unfinished sheet was closed in Altium without saving; the file on disk is as it was."
+        except BridgeError:
+            closed = " Close the sheet in Altium WITHOUT saving: it is half drawn."
+        raise BridgeError(str(exc) + closed) from exc
+    problems, warnings, parts, nets = [], [], 0, set()
+    for sid, doc, plan, fps in plans:
+        warnings += plan["warnings"]
+        parts += len(plan["parts"])
+        nets |= set(plan["expected"])
+        try:
+            saved = read_schdoc(doc)
+        except (AltiumReadError, OSError) as exc:
+            problems.append(f"sheet {sid}: the saved SchDoc could not be read back: {exc}")
+            continue
+        problems += [f"sheet {sid}: {m}" for m in draw.verify_sheet(plan, saved, fps)]
+        if str(sid).strip():
+            from checks.schematic import check_schematic
+            found = [f for f in check_schematic(doc)["findings"] if f.get("severity") == "error"]
+            problems += [f"sheet {sid}: {f['message']}" for f in found[:5]]
+    _log(project, "draw-schematic", sheets=[str(d) for _, d, _, _ in plans], parts=parts, nets=len(nets), replace=bool(replace),
+         created=[str(d) for d in new_docs], backup=backup, problems=problems, warnings=warnings)
+    res = {"sheets": [str(d) for _, d, _, _ in plans], "parts": parts, "nets": sorted(nets), "warnings": warnings,
+           "problems": problems, "backup": backup, "created": [str(d) for d in new_docs]}
+    if problems:
+        raise BridgeError(f"Drawn and saved {parts} parts, but the sheet does not match the netlist: " + "; ".join(problems[:6])
+                          + (f" (+{len(problems) - 6} more)" if len(problems) > 6 else ""))
+    return res
 
 
 # ---------------------------------------------------------------- the rules
@@ -1201,6 +1306,10 @@ def main(argv=None):
     p = sub.add_parser("add-sheet")
     p.add_argument("project")
     p.add_argument("name")
+    p = sub.add_parser("draw-schematic")
+    p.add_argument("project")
+    p.add_argument("sheet", nargs="?")
+    p.add_argument("--replace", action="store_true")
     p = sub.add_parser("skeleton")
     p.add_argument("project")
     p.add_argument("sheet", nargs="?")
@@ -1216,6 +1325,8 @@ def main(argv=None):
             res = add_pcb(a.project)
         elif a.op == "skeleton":
             res = skeleton(a.project, a.sheet)
+        elif a.op == "draw-schematic":
+            res = draw_schematic(a.project, a.sheet, a.replace)
         elif a.op == "import-rules":
             res = import_rules(a.project)
         elif a.op == "run-outjob":
