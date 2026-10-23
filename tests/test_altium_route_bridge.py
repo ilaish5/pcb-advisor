@@ -124,3 +124,17 @@ def test_pascal_has_the_pour_and_the_rectangle_check():
     assert "procedure PcbPoly" in src and "Cmd = 'POLY'" in src and "RemoveDead := True" in src
     chk = src[src.index("procedure PcbCheck"):src.index("function NetOf")]
     assert "rect=" in chk and "S1.vx <> S2.vx" in chk
+
+
+def test_route_pcb_asks_for_the_jlc_rules_first(monkeypatch):
+    """Widths, clearances and vias come from the board rules: with Altium's defaults (rules not imported) nothing is routed."""
+    import pytest
+    from altium import bridge
+    monkeypatch.setattr(bridge, "_linked", lambda p: "x.PrjPcb")
+    monkeypatch.setattr(bridge, "_project_pcb", lambda p: "x.PcbDoc")
+    monkeypatch.setattr(bridge, "rules_missing", lambda p: ["JLC Clearance", "JLC Via"])
+    called = []
+    monkeypatch.setattr(bridge, "route_on", lambda *a, **k: called.append(1))
+    with pytest.raises(bridge.BridgeError, match="Import the JLC rules first"):
+        bridge.route_pcb("p")
+    assert not called

@@ -1041,6 +1041,10 @@ def route_pcb(project, replace=False, keep_partial=False):
     not end up with a fully routed, rule-clean board; the file is then as it was (backup kept)."""
     prj = _linked(project)
     pcb = _project_pcb(project)
+    missing = rules_missing(project)      # widths, clearances and vias come from the board rules: Altium's defaults are not JLC's
+    if missing:
+        raise BridgeError("Import the JLC rules first (altium.import_rules), then route: the board does not have "
+                          + ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "") + ". Nothing was changed.")
     res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial)
     _log(project, "route-pcb", pcb=str(pcb), routed=res["routed"], failed=[n for n, _ in res["failed"]], tracks=res["tracks"],
          vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],
