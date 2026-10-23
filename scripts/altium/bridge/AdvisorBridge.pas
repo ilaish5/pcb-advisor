@@ -126,10 +126,12 @@ begin
     end;
     D.Modified := True;
     D.DoFileSave('');
-    if D.Modified then
+    { saved is saved: a mark that stays on (the save itself, a repour, a rule check) would make the next step refuse the board as
+      'unsaved changes'; the Python side reads the file back after every save, so a save that did not happen shows there }
+    if (IntToStr(D.Modified) <> '0') then
     begin
-        Say('ERR Altium did not save ' + Path + ' (a command may still be active in it)');
-        Exit;
+        D.SetModified(False);
+        Log('cleared the modified mark left after the save');
     end;
     Log('saved ' + Path);
 end;
@@ -607,6 +609,7 @@ begin
     end;
     D.SetModified(True);
     D.DoFileSave(Kind);
+    if (IntToStr(D.Modified) <> '0') then D.SetModified(False);        { saved is saved: see SaveByPath }
     Log('saved ' + Path);
 end;
 
@@ -2329,7 +2332,28 @@ begin
     Log('drc ' + Report + ' clean=' + BoolToStr(ok, True));
 end;
 
-procedure Dispatch(Line: String);
+{ 1 when Altium holds the document open with unsaved changes (0 when closed or clean) }
+function DocDirty(Path: String): Integer;
+var
+    D : IDispatch;
+begin
+    Result := 0;
+    D := Client.GetDocumentByPath(Path);
+    if (D <> nil) then
+        if (IntToStr(D.Modified) <> '0') then Result := 1;
+end;
+
+{ DOCSTATE path: logs whether Altium holds the document open with unsaved changes. Changes nothing. }
+procedure DocState(Path: String);
+var
+    D : IDispatch;
+begin
+    D := Client.GetDocumentByPath(Path);
+    if (D = nil) then Log('docstate closed')
+    else Log('docstate open modified=' + IntToStr(DocDirty(Path)));
+end;
+
+procedure DispatchStep(Line: String);
 var
     Cmd : String;
 begin
@@ -2396,8 +2420,32 @@ begin
     else if (Cmd = 'PADNET') then PcbPadNet(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
     else if (Cmd = 'PCBSAVE') then SaveByPath(Field(Line, 1))
     else if (Cmd = 'DRC') then PcbDrc(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'DOCSTATE') then DocState(Field(Line, 1))
     else if (Cmd = 'PING') then Log('ping')
     else Say('ERR unknown command ' + Cmd);
+end;
+
+procedure Dispatch(Line: String);
+var
+    Cmd : String;
+    Was : Integer;
+    D   : IDispatch;
+begin
+    Cmd := Field(Line, 0);
+    Was := 0;
+    { a read-only step must leave the document as it found it: the batch DRC and the read-backs can mark an unchanged document modified }
+    if (Cmd = 'DRC') or (Cmd = 'PCBEXTENT') or (Cmd = 'PCBCHECK') or (Cmd = 'FPINFO') or (Cmd = 'DRAWCHECK') then Was := DocDirty(Field(Line, 1)) + 1;
+    DispatchStep(Line);
+    if (Was = 1) and (not Failed) then
+    begin
+        D := Client.GetDocumentByPath(Field(Line, 1));
+        if (D <> nil) then
+            if (IntToStr(D.Modified) <> '0') then
+            begin
+                D.SetModified(False);
+                Log('cleared the modified mark a read-only ' + Cmd + ' left');
+            end;
+    end;
 end;
 
 procedure Run;

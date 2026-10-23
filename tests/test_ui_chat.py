@@ -131,3 +131,8 @@ def test_the_chat_stylesheet_only_styles_the_chat():
     allowed = (".chat", ".conv", ".msgs", ".msg", ".thread-h", ".runs", ".prop", ".composer", ".sug", ".box", ".chip-x", ".send", ".chat-")
     stray = [s.strip() for s in selectors if not s.strip().startswith(allowed)]
     assert stray == [], f"chat.css styles things outside the chat: {stray}"
+
+
+def test_an_applied_result_with_a_warning_is_an_amber_chip_with_the_warning():
+    assert "m.warned" in CHAT_JS and "chat-act warn" in CHAT_JS and "applied with warnings" in CHAT_JS
+    assert re.search(r"\.chat-act\.warn\{[^}]*var\(--warn-soft\)[^}]*var\(--warn\)", CHAT_CSS)      # same tokens as the tag.warn: AA in both themes

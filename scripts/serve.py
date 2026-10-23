@@ -449,6 +449,23 @@ def _draw_consent(a, last_user):
     return _consent("draw", a, last_user)
 
 
+_WARN_RE = re.compile(r"\(\s*(?:\d+\s+)?warnings?:\s*(.*)\)\s*$|WARNING:\s*(.*)$|(\(\d+ with issues\))|(missing [^()]*)|(Could not[^;]*)", re.I | re.S)
+
+
+def warning_of(item):
+    """The warning an applied action's result carries ('' when none): '(2 warnings: ...)', 'WARNING: ...', 'missing <layer>',
+    'Could not ...', 'with issues'. The chat shows such a result as an amber chip, never as a plain green 'done'."""
+    m = _WARN_RE.search(item or "")
+    if not m:
+        return ""
+    return next((g for g in m.groups() if g), "").strip() or "see the result"
+
+
+def warned_map(applied):
+    """{applied result: warning text} for the results that carry one (stored on the chat record as 'warned')."""
+    return {a: w for a in applied for w in [warning_of(a)] if w}
+
+
 def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
@@ -587,7 +604,8 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                                    + ", saved and checked against the netlist"
                                    + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res["warnings"] else ""))
                 else:
-                    applied.append(f"{kind}: {res['summary']}")
+                    applied.append(f"{kind}: {res['summary']}"
+                                   + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res.get("warnings") else ""))
             elif kind in ALTIUM_ACTIONS:
                 from altium import bridge
                 # routine: new files only, and whatever it modifies is copied to .advisor-backup first
@@ -647,7 +665,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                     applied.append(f"jlc.gerber_zip:{res['zip']} ({len(res['files'])} files" + (f", missing {', '.join(gaps)}" if gaps else "") + ")"
                                    + "".join(f" {m['layer']}: {m['why']}" for m in res["missing"]
                                              if m["level"] == "problem" and m["why"].startswith("The outline layer"))
-                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", []) if w.startswith("The board does not match")))
+                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", [])[:4]))
             elif kind == "order.check":
                 import order_check
                 try:
@@ -1498,6 +1516,8 @@ class Handler(BaseHTTPRequestHandler):
                 if refused:
                     reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
                 rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
+                if warned_map(applied):
+                    rec["warned"] = warned_map(applied)
                 if refused:
                     rec["refused"] = refused
                 if res.get("error"):

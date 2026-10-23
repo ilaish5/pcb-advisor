@@ -46,6 +46,7 @@
 .chat-act{max-width:100%;padding:1px 8px;border-radius:var(--r-sm);font-size:var(--t-xs);overflow-wrap:anywhere}
 .chat-act.ok{background:var(--ok-soft);color:var(--ok)}
 .chat-act.bad{background:var(--bad-soft);color:var(--bad)}
+.chat-act.warn{background:var(--warn-soft);color:var(--warn)}
 
 .chat .ref{font-family:var(--f-mono);font-weight:600;color:var(--ink);border-radius:3px;text-align:left}
 .chat .ref:hover{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}

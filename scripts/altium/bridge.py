@@ -246,7 +246,7 @@ def _stat(path):
         return None
 
 
-READ_ONLY = {"PING", "PROJECT", "PCBCHECK", "PCBEXTENT", "FPINFO", "DRAWCHECK", "CHECKINST", "DRC"}   # all other commands change Altium
+READ_ONLY = {"PING", "PROJECT", "PCBCHECK", "PCBEXTENT", "FPINFO", "DRAWCHECK", "CHECKINST", "DRC", "DOCSTATE"}   # all other commands change Altium
 _server = False
 
 

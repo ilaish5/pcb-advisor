@@ -321,7 +321,11 @@ function msgHTML(m, undoTs) {
     // the agent thinks the idea is agreed: the student confirms with one click (no quote check)
     const ready = (m.applied || []).includes('idea.ready') && S.idea && !S.idea.confirmed
       ? `<div class="undo">${btn('Confirm idea', {size: 'sm', kind: 'line', icon: 'check', act: 'chat-confirm-idea', disabled: !((S.idea.agreed || []).length), title: 'Save the draft and mark the idea as agreed'})}</div>` : '';
-    const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => `<span class="chat-act ok" title="Applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`)
+    // an applied result that carries a warning is amber and shows it in full: "done" must never hide what Altium or a check flagged
+    const warned = m.warned || {};
+    const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => warned[a]
+      ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(a.split(/[:( ]/)[0])} applied with warnings:</b> ${esc(warned[a])}</span>`
+      : `<span class="chat-act ok" title="Applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`)
       .concat((m.refused || []).map(a => `<span class="chat-act bad" title="Not applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
     // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here

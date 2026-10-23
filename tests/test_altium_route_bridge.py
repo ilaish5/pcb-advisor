@@ -138,3 +138,17 @@ def test_route_pcb_asks_for_the_jlc_rules_first(monkeypatch):
     with pytest.raises(bridge.BridgeError, match="Import the JLC rules first"):
         bridge.route_pcb("p")
     assert not called
+
+
+def test_a_read_only_step_leaves_the_modified_mark_as_it_found_it():
+    """The script remembers whether Altium held the document with unsaved changes before a read-only step (DRC, read-backs, checks)
+    and clears the mark the step may have left; the Python side lists DOCSTATE as read-only."""
+    import re as _re
+    src = _pas()
+    m = _re.search(r"procedure Dispatch\(Line: String\);.*?\nend;", src, _re.S)
+    assert m, "Dispatch wrapper missing"
+    body = m.group(0)
+    assert "DocDirty(" in body and "DispatchStep(Line)" in body and "SetModified(False)" in body
+    for cmd in ("DRC", "PCBEXTENT", "PCBCHECK"):
+        assert f"Cmd = '{cmd}'" in body
+    assert "DOCSTATE" in src and "DOCSTATE" in bridge.READ_ONLY
