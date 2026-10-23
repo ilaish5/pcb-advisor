@@ -29,7 +29,16 @@ OPEN_MIN_MM = 0.8
 CONNECTOR_OVERHANG_MM = 1.0   # a connector's body may stick out of the outline this far, on its mating side only
 _GND = re.compile(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", re.I)
 _RAIL = re.compile(r"^[+-]\d|^\d+V\d*$|^(?:VCC|VDD|VBUS|VBAT|VIN|VSYS|VDDA|VCCA|AVDD|DVDD)\w*$", re.I)
-_SIZE = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:x|X|×|by)\s*(\d+(?:[.,]\d+)?)\s*mm")
+_Q = "[\"״”“'׳]{1,2}"
+_UNIT = rf"(?:mm|cm|ממ|מ{_Q}מ|ס{_Q}מ|סמ)"      # mm cm מ"מ ממ ס"מ סמ
+_NUM = r"(\d+(?:[.,]\d+)?)"
+# "30x25", "30 X 25 mm", "30mm × 25mm", "30 על 25 מ\"מ", "3,5 by 2 cm": two numbers with a separator between them
+_SIZE = re.compile(rf"(?<![\w.,]){_NUM}\s*({_UNIT})?\s*(?:[xX×*]|\bby\b|על)\s*{_NUM}\s*({_UNIT})?(?![\w])", re.I)
+_HE = "א-ת"
+# English words; Hebrew words whole (one prefix letter allowed: הכרטיס, בלוח), "לוח זמנים" (a schedule) is not a board
+_BOARD_WORD = re.compile(r"\b(?:board|pcb|outline|dimensions?)\b|(?<![" + _HE + r"])[והבלמשכ]?"
+                         r"(?:גודל|מידות|כרטיס|לוח(?!\s+זמנים))"
+                         r"(?![" + _HE + "])", re.I)       # board pcb outline dimensions | גודל מידות כרטיס לוח
 
 
 def is_gnd(net):
@@ -44,20 +53,42 @@ def is_connector(ref):
     return bool(re.match(r"^(?:J|P|CON|TERM|USB)\d", ref, re.I))
 
 
+
+def _sizes_in(text, topic=""):
+    """(w, h) mm candidates in one piece of text. The sentence (or the topic) must talk about the board, the unit (mm, cm, מ"מ, ס"מ; none = mm)
+    is converted, and both sides must be 10..500 mm."""
+    out = []
+    for sentence in re.split(r"[;\n]|\.\s|׃", str(text or "")):
+        talks = bool(_BOARD_WORD.search(f"{topic} {sentence}"))
+        for m in _SIZE.finditer(sentence):
+            w, h = float(m.group(1).replace(",", ".")), float(m.group(3).replace(",", "."))
+            u1, u2 = (m.group(2) or "").lower(), (m.group(4) or "").lower()
+            u1, u2 = u1 or u2, u2 or u1                # a unit written once covers both sides, two units may differ
+            w, h = w * (10 if u1 == "cm" or u1.startswith("ס") else 1), h * (10 if u2 == "cm" or u2.startswith("ס") else 1)
+            if talks and 10 <= w <= 500 and 10 <= h <= 500:
+                out.append((w, h))
+    return out
+
+
 def board_size(idea):
-    """(width_mm, height_mm) from idea["board"] = {"width_mm", "height_mm"}, else the first 'W x H mm' in a requirement whose
-    topic or text mentions the board size, else None. Never a guess."""
+    """(width_mm, height_mm) from idea["board"] = {"width_mm", "height_mm"}, else the first 'W x H' in the agreed list, the
+    requirements or the goal/description (English or Hebrew, mm or cm), else None. Never a guess."""
     idea = idea or {}
     b = idea.get("board")
     if isinstance(b, dict) and b.get("width_mm") and b.get("height_mm"):
         return float(b["width_mm"]), float(b["height_mm"])
-    for r in idea.get("requirements", []) or []:
-        text = str(r.get("text", ""))
-        if not re.search(r"board|pcb|size|outline", f"{r.get('topic', '')} {text}", re.I):
-            continue
-        m = _SIZE.search(text)
-        if m:
-            return float(m.group(1).replace(",", ".")), float(m.group(2).replace(",", "."))
+    for key in ("requirements", "agreed"):
+        for r in idea.get(key, []) or []:
+            if isinstance(r, dict):
+                found = _sizes_in(r.get("text"), r.get("topic", ""))
+            else:
+                found = _sizes_in(r)
+            if found:
+                return found[0]
+    for key in ("goal", "describe", "description", "brief"):
+        found = _sizes_in(idea.get(key))
+        if found:
+            return found[0]
     return None
 
 

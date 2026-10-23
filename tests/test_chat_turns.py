@@ -235,7 +235,7 @@ def test_respond_forwards_options_and_returns_the_turn_meta(empty, monkeypatch):
     opts = seen["req"].options
     assert opts["cancel"] is cancel and opts["on_event"] == events.append and opts["idle_timeout"] == 180
     assert seen["req"].timeout == 900
-    assert res["partial"] is True and res["reply"] == "partial words" and res["actions"] == []
+    assert res["partial"] is True and res["reply"].startswith("partial words") and res["error"] is True and res["actions"] == []
     assert res["steps"] == ["Reading a.md"] and res["error_kind"] == "idle_timeout"
     assert res["denied"] == [{"tool": "Bash"}] and res["retry_at"].startswith("2026")
 

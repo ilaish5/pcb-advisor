@@ -23,7 +23,8 @@ TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
 def child_env():
     """Environment for the engine CLI. Every Python the engine starts - our own
     scripts, run through its shell - then reads and prints UTF-8 too."""
-    return {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    env = {k: v for k, v in os.environ.items() if k != "PCB_ADVISOR_DEV"}      # the developer switch never reaches an agent
+    return {**env, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
 
 
 def utf8_stdio():

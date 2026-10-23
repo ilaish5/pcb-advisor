@@ -158,6 +158,7 @@ def test_frames_layout_fits_the_sheet():
 
 def test_request_is_ascii_and_tabbed(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
+    monkeypatch.setattr(bridge, "_server", True)
     monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
     monkeypatch.setattr(bridge, "_running", lambda: True)

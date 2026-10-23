@@ -27,6 +27,7 @@
     "provider": "claude_code",
     "engine_home": "",
     "timeout_seconds": 900,
+    "protect_tool_files": true,
     "idle_timeout_seconds": 180,
     "history_messages": 8,
     "autonomy": "important",

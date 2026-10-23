@@ -68,7 +68,7 @@ lay it out. Who puts it into Altium is the student's choice (step 11): they redr
 - `python <repo>/scripts/preview_sch.py <schdoc> [--output <out.svg>]` - renders a linked Altium .SchDoc to interactive SVG.
 - `python <repo>/scripts/skills/render_sheet.py <project> <sheet>` - renders `netlist/<sheet>.json` to `artifacts/sheet-<sheet>.svg`.
 - `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` - lists sheet refs missing from the BOM.
-- Action `altium.draw_schematic` (CLI: `bridge.py draw-schematic <project> [<sheet>] [--replace]`) draws the sheet in Altium; only after step 11.
+- Action `altium.draw_schematic` draws the sheet in Altium; only after step 11.
 
 ## References
 - `<repo>/shared/reference/AGENTS.md` - topic index (read "Schematic anatomy" and "Schematic best practice" rows).

@@ -30,6 +30,9 @@ build-library turns library/build/ (scripts/partlib.py prepare, run first when i
 <altium project>/Library/<Project>-Lib.SchLib / .PcbLib / 3D/*.step / .LibPkg and the IntLib, always from the shipped
 templates (bridge/templates), so a rebuild never duplicates parts, then reads the files back to count and check them.
 
+Only the server changes Altium: the CLI above is for the person running the tool, and an agent working in the student's
+shell gets "Altium changes go through actions". Developers set PCB_ADVISOR_DEV=1 to use the writing operations by hand.
+
 Every write copies the files it will change into <altium project>/.advisor-backup/<time>/ first (undo = copy back)
 and is logged in the advisor project's altium-log.jsonl. Windows with Altium Designer only; elsewhere every
 operation says so instead of failing obscurely. Components and routes are never touched.
@@ -243,10 +246,31 @@ def _stat(path):
         return None
 
 
+READ_ONLY = {"PING", "PROJECT", "PCBCHECK", "PCBEXTENT", "FPINFO", "DRAWCHECK", "CHECKINST", "DRC"}   # all other commands change Altium
+_server = False
+
+
+def allow_writes():
+    """Called once by the server process: from then on this process may send Altium-changing commands (its actions and the
+    student's own buttons). Other processes (the agent's shell, the CLI) cannot, unless PCB_ADVISOR_DEV=1."""
+    global _server
+    _server = True
+
+
+def _check_writes_allowed(commands):
+    if _server or os.environ.get("PCB_ADVISOR_DEV") == "1":
+        return
+    bad = sorted({str(c[0]).upper() for c in commands if str(c[0]).upper() not in READ_ONLY})
+    if bad:
+        raise BridgeError("Altium changes go through actions (altium.draw_schematic, altium.place_pcb, altium.route_pcb, "
+                          "library.build, ...); the CLI is read-only for agents. Refused: " + ", ".join(bad) + ". Nothing was changed.")
+
+
 def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300):
     """Send command lines (tab separated fields) to Altium, wait for DONE. Returns the script's log lines.
     Raises BridgeError with the last step when the script does not start, stops logging or reports an error.
     While the script runs we only look at whether start.flag / end.flag exist and whether log.txt grows."""
+    _check_writes_allowed(commands)
     exe = _exe()
     script = stage_script()            # a changed script is a new project path: Altium loads it fresh
     with _lock:
@@ -825,7 +849,7 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
         outline = layout.plan_outline(size)
         if outline is None:
             raise BridgeError("The board has no outline yet and the project does not say how big the board is (idea: board size). "
-                              "Ask the student for the width and height in mm, or draw the outline in Altium first.")
+                              "Ask the student for the board width and height in mm (do not guess), record it with idea.update, or draw the outline in Altium first. Nothing was changed.")
         create = True
     else:
         outline = [round(v * MM_PER_MIL, 3) for v in info["box_mil"]]

@@ -313,3 +313,59 @@ def test_verify_every_pad_of_a_shared_number_and_the_plan():
     plan = [{"ref": "J1", "x": 10, "y": 10, "rot": 0}, {"ref": "R1", "x": 26, "y": 12, "rot": 90}]
     out = " | ".join(layout.verify_layout(saved([("J1", 10, 10, 0, None), ("R1", 25, 12, 0, None)]), PP, [0, 0, 40, 30], places=plan))
     assert "R1 sits at (25, 12) turned 0, the plan says (26, 12) turned 90" in out
+
+
+# The relevant fields of the real Blink-555 idea.json (the size was only in goal and agreed, in Hebrew, "30x25 מ\"מ").
+BLINK_555 = {
+    "goal": "כרטיס הבהוב מבוסס טיימר NE555 בתצורת astable, מוזן מ-USB-C (5V), מהבהב LED אדום בתדר של כ-1Hz. גודל מוערך 30x25 מ\"מ, 2 שכבות, הרכבת SMT ב-JLCPCB.",
+    "agreed": [
+        {"topic": "Power", "text": "הזנת 5V מחיבור USB-C (Power only עם נגדי 5.1kΩ CC ל-GND) (assumed)"},
+        {"topic": "Frequency & Duty Cycle", "text": "תדר הבהוב של כ-1Hz, אסימטרי קל (~60% ON) ללא דיודה נוספת (assumed)"},
+        {"topic": "PCB & Assembly", "text": "כרטיס 2 שכבות, כ-30x25 מ\"מ, רכיבי SMT צד עליון בלבד להרכבה ב-JLCPCB (assumed)"},
+    ],
+}
+
+
+def test_board_size_real_blink_555_idea():
+    assert layout.board_size(BLINK_555) == (30.0, 25.0)
+    assert layout.board_size({"goal": BLINK_555["goal"]}) == (30.0, 25.0)
+    assert layout.board_size({"agreed": BLINK_555["agreed"]}) == (30.0, 25.0)
+
+
+def test_board_size_units_separators_and_languages():
+    def req(text, topic="Board"):
+        return {"requirements": [{"topic": topic, "text": text}]}
+    assert layout.board_size(req("כרטיס קטן, בערך 30 על 25 מ\"מ, שני שכבות", "")) == (30.0, 25.0)
+    assert layout.board_size(req("גודל 30×25 מ״מ")) == (30.0, 25.0)
+    assert layout.board_size(req("מידות: 40 X 20 ממ", "")) == (40.0, 20.0)
+    assert layout.board_size(req("size 3,5 x 2 cm")) == (35.0, 20.0)
+    assert layout.board_size(req("לוח 5 על 4 ס\"מ", "")) == (50.0, 40.0)
+    assert layout.board_size(req("board 45.5 by 30.25 mm", "")) == (45.5, 30.25)
+    assert layout.board_size({"describe": "small board, 30*25 mm, 2 layers"}) == (30.0, 25.0)
+    assert layout.board_size(req("30mm x 25mm", "PCB")) == (30.0, 25.0)
+    assert layout.board_size({"board": {"width_mm": 50, "height_mm": 30}, **BLINK_555}) == (50.0, 30.0)
+
+
+def test_board_size_ignores_numbers_that_are_not_a_size():
+    for text in ("USB-C 5V, blink at 1Hz, 47k resistor", "גודל קטן, 2x LED, 5V", "R1 10k x 2 pieces, size small",
+                 "5 x 7 mm part", "כרטיס 2 שכבות, 1.6 מ\"מ עובי", "נגד 47k על 5V"):
+        assert layout.board_size({"requirements": [{"topic": "Board", "text": text}], "goal": text}) is None, text
+    assert layout.board_size({"goal": "LED 20x15"}) is None
+    assert layout.board_size({}) is None
+
+
+def test_board_size_word_rules_and_mixed_units():
+    def req(text, topic=""):
+        return {"requirements": [{"topic": topic, "text": text}]}
+    # "size" alone is not the board: an OLED has a size too
+    assert layout.board_size(req("OLED size 128x64 pixels", "Display")) is None
+    assert layout.board_size(req("OLED 128x64 size")) is None
+    # Hebrew words count only as whole words: "במידה ו" is "if", "לוח זמנים" is a schedule
+    assert layout.board_size(req("במידה ו-40x30 מתאים נשתמש בו")) is None
+    assert layout.board_size(req("לוח זמנים 40x30 מ\"מ")) is None
+    assert layout.board_size(req("הכרטיס 40x30 מ\"מ")) == (40.0, 30.0)
+    assert layout.board_size(req("בלוח 40 על 30 מ\"מ")) == (40.0, 30.0)
+    # each number has its own unit
+    assert layout.board_size(req("board 30mm x 2.5cm")) == (30.0, 25.0)
+    assert layout.board_size(req("board 3cm x 25mm")) == (30.0, 25.0)
+    assert layout.board_size(req("board 3 x 2.5 cm")) == (30.0, 25.0)

@@ -34,6 +34,7 @@ import model             # noqa: E402
 import project as project_mod  # noqa: E402
 import session as session_mod  # noqa: E402
 import sources           # noqa: E402
+import tool_guard        # noqa: E402
 import store             # noqa: E402
 import workspace         # noqa: E402
 
@@ -1467,13 +1468,18 @@ class Handler(BaseHTTPRequestHandler):
                     ask = ("[this conversation is about one part; its context]\n"
                            f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
             turn = _turn_start(tkey)
+            guard = tool_guard.begin()
             BUSY["chat"] += 1
+            tool_edited, tool_unrestored = [], []
             try:
                 res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND, cancel=turn["cancel"],
                                     on_event=lambda ev, k=tkey: _turn_event(k, ev))
             finally:
                 BUSY["chat"] -= 1
                 _turn_end(tkey)
+                tool_edited, tool_unrestored = tool_guard.end(guard)     # the agent never keeps an edit of the tool's own files
+            if tool_edited or tool_unrestored:
+                print(f"[guard] the agent edited system files: restored {tool_edited}, not restorable {tool_unrestored}", file=sys.stderr, flush=True)
             chat_meta = {}
             partial = bool(res.get("partial"))
             if partial:      # a half-written actions block is not trusted
@@ -1481,6 +1487,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta,
                                                            turn_start=turn["started"])
+            if tool_edited or tool_unrestored:
+                refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
             if res.get("provider") != "external":         # an outside driver is not an engine turn
                 import introspect
                 introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
@@ -2304,6 +2312,13 @@ class _Server(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"
 
 
+def _server_mode():
+    """This process is the server: only it may change Altium (actions and the student's own buttons). The agent's shell,
+    the bridge CLI and other processes never get this."""
+    from altium import bridge
+    bridge.allow_writes()
+
+
 def main(argv=None):
     global BACKEND, DEFAULT_PROJECT, QUIET, HTTPD
     RESTART["args"] = list(sys.argv[1:] if argv is None else argv)
@@ -2321,6 +2336,7 @@ def main(argv=None):
     ap.add_argument("--quiet", action="store_true", help="do not log requests")
     a = ap.parse_args(argv)
     QUIET = a.quiet
+    _server_mode()
 
     DEFAULT_PROJECT = workspace.safe_name(a.project_opt or a.project or cfg["server"]["default_project"])
     port = a.port_opt or a.port or int(cfg["server"]["port"])

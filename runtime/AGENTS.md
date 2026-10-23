@@ -75,7 +75,7 @@ no `&&`, no pipe (`| head`), no `2>&1`: any other form is blocked. Long output i
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` BOM CSV for JLC | `python <repo>/scripts/outjob.py <project> [output_dir]` Altium OutJob file
 - `python <repo>/scripts/dfm.py ingest <project> <pdf> [--kind pcb|smt|both|auto]` | `gerber-zip <project>` | `pickup <project> [--kind K]` add a JLCDFM report PDF, make the Gerber zip, add the new report from Downloads
 - `python <repo>/scripts/altium/dump.py <file> [--full] [--net NAME]` read-only inspector for SchDoc, PcbDoc pads+nets+rules, PrjPcb, .RUL
-- `python <repo>/scripts/altium/bridge.py status | new-project <project> | add-sheet <project> <name> | add-pcb <project> | skeleton <project> [sheet] | import-rules <project> | run-outjob <project> | open <project>` drive Altium
+- `python <repo>/scripts/altium/bridge.py status` Altium state (read only). Altium changes go only through the actions below: the bridge CLI refuses them for you. Never edit the tool's own files (scripts, runtime, skills, ui) - the server restores them; if a tool is wrong, tell the student what failed, with the error, instead of patching it.
 - `python <repo>/scripts/keeping.py <project> log|decisions|impact|report` decision log, change impact, file organization
 - `python <repo>/scripts/model.py <project>` print derived project state (idea, BOM, requirements, sheets)
 - `python <repo>/scripts/lineage.py <project> [status | show <file>]` each exported file: made from the current design (ok), STALE (the BOM, the PcbDoc or the Gerbers changed since) or EDITED by hand. Run it before anything goes to the manufacturer; a STALE or EDITED file is made again first, saying which input changed
@@ -128,7 +128,7 @@ any script, the json block with `tools` is required: a number from a script with
 3. Schematic and library: write an example schematic as a netlist (`netlist.write`); the student redraws it in Altium or, when they say so, you draw it (`altium.draw_schematic`). Style:
    every pin gets a short stub ending in a power port, GND, a net label or No ERC. Declare each non-standard part
    with `library.add`; run `verify_part.py` on it; report a mismatch honestly and change nothing yourself.
-   The library is built by the tool: `library.build` (or `bridge.py build-library <project>`), never by the student's hand or a script in
+   The library is built by the tool: `library.build`, never by the student's hand or a script in
    Altium. A missing part: give its vendor links (the line's issue), ask for the KiCad zip once (log in if asked), then build again.
 
 # SKILLS

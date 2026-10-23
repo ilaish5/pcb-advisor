@@ -17,7 +17,7 @@ description: Plans and explains the single project library (one library with eve
    Source is easyeda, vendor (a zip the student downloaded), kicad or generated; `missing` lines have no model yet.
 2. Naming is fixed by the tool: part name = the MPN, footprint name = the package or the maker's name, unique across the library.
    Generic R, C, L get one part per value and package. Every part carries `MPN`, `Manufacturer`, `LCSC`, `Description` and `Comment`.
-3. Build it: the action `library.build` (or `python <repo>/scripts/altium/bridge.py build-library <project>`). The tool downloads what it can
+3. Build it: the action `library.build`. The tool downloads what it can
    (EasyEDA by LCSC code, KiCad footprints), reads vendor zips, generates the rest, compiles the IntLib through Altium and adds it to the project.
    Never tell the student to build the library by hand or to run a script in Altium. Altium must be open; a failure restores the old files.
 4. For a line that is `missing` or has an issue, give the vendor links from its issue text (Component Search Engine, SnapEDA, Ultra Librarian).
@@ -32,7 +32,6 @@ description: Plans and explains the single project library (one library with eve
 
 ## Scripts
 - `python <repo>/scripts/partlib.py status <project>` - the per-line library table; `prepare <project> [--no-fetch] [--refresh]` makes the data without Altium.
-- `python <repo>/scripts/altium/bridge.py build-library <project>` - builds, compiles, installs and adds the library to the project (= `library.build`).
 - `python <repo>/scripts/skills/verify_part.py <project> <line>` - exists today; pins against the datasheet text for one part.
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` - exists today; the BOM with the LCSC column. Shows which lines lack the code.
 - (planned, stage I8) a library check that reports links to missing footprints, symbols with no footprint, duplicate footprint names,

@@ -351,9 +351,16 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     if meta.get("partial"):
         # stopped or timed out: keep what was written, trust no half-written actions block
         reply = re.sub(r"```json.*?(```|$)", "", res.text or "", flags=re.S).strip()
-        return {"reply": reply, "actions": [], "tools": [], "partial": True,
-                "backend": res.provider or name, "provider": res.provider or name, "model": res.model,
-                **turn, **took}
+        out = {"reply": reply, "actions": [], "tools": [], "partial": True,
+               "backend": res.provider or name, "provider": res.provider or name, "model": res.model,
+               **turn, **took}
+        if meta.get("error_kind") in ("total_timeout", "idle_timeout"):
+            # a turn that ran out of time answered nothing: an error with the Retry path, not a quiet success
+            why = ("The agent ran out of time (%d s)" % int(timeout or workspace.get("agent.timeout_seconds", 900))
+                   if meta["error_kind"] == "total_timeout" else f"The agent stopped answering ({res.error})")
+            out["reply"] = (reply + "\n\n" if reply else "") + f"[{res.provider or name}] {why}; no actions were applied (files the agent produced with tools before the timeout may remain)."
+            out["error"] = True
+        return out
     if not res.ok:
         return {"reply": f"[{res.provider or name}] {res.error}", "actions": [],
                 "backend": res.provider or name, "provider": res.provider or name,
