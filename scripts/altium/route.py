@@ -37,6 +37,7 @@ DEFAULTS = {"clearance": 0.127, "width": 0.127, "width_min": 0.127, "width_max":
             "hole_clear": 0.25}
 POWER_WIDTH = 0.3          # rail nets are routed at least this wide when the board has room and no rule says otherwise
 VIA_COST = 30.0
+CROSS_COST = 25.0          # relaxed search: entering a cell that holds another net's track (the nets to rip up are those crossed)
 THRU_COST = 2.0            # a change of layer inside a through hole pad: no via, only the cost of leaving the layer
 TURN_45, TURN_90 = 0.3, 0.7
 MARGINS = (0.05, 0.1, 0.2, 0.3, 0.45, 0.6)        # extra distance asked of a net that the exact check found too close to something
@@ -405,52 +406,88 @@ class Router:
         return True
 
     # ---- search
+    def _blocked(self, net, relaxed):
+        """Per layer, a bytearray over the grid: 1 where a track centre of this net cannot be (fixed copper of another net, and tracks
+        routed so far unless relaxed)."""
+        out = []
+        for l in (TOP, BOT):
+            S = self.S[l]
+            if relaxed:
+                out.append(bytearray([1 if (v != -1 and v != net) else 0 for v in S]))
+            else:
+                D = self.D[l]
+                out.append(bytearray([1 if ((v != -1 and v != net) or (d != -1 and d != net)) else 0 for v, d in zip(S, D)]))
+        return out
+
+    def _dilate(self, arr, offs):
+        """arr (1 = blocked, grid order) grown by the cell offsets: a cell is 1 when any cell at one of the offsets is 1, or when that
+        cell is off the board. Done on one big integer (a byte per cell, the grid padded with blocked cells) so that it is a few dozen
+        shifts instead of millions of lookups."""
+        nx, ny = self.nx, self.ny
+        m = max(max(abs(dx), abs(dy)) for dx, dy in offs)
+        w = ny + 2 * m
+        pad = bytearray(b"") * ((nx + 2 * m) * w)
+        for ix in range(nx):
+            o = (ix + m) * w + m
+            pad[o:o + ny] = arr[ix * ny:(ix + 1) * ny]
+        big = int.from_bytes(pad, "little")
+        acc = 0
+        for dx, dy in offs:
+            k = 8 * (dx * w + dy)
+            acc |= (big << k) if k >= 0 else (big >> -k)
+        raw = (acc & ((1 << (8 * len(pad))) - 1)).to_bytes(len(pad), "little")
+        out = bytearray(nx * ny)
+        for ix in range(nx):
+            o = (ix + m) * w + m
+            out[ix * ny:(ix + 1) * ny] = raw[o:o + ny]
+        return out
+
     def astar(self, net, sources, goals, width, relaxed=False, deadline=None, max_pops=None, margin=0.0):
         """Cheapest path (list of (layer, cell)) from any source cell to any goal cell, or None (self.status says why: "none" there is
         no way, "limit" the search limit was reached, "time" the time given ran out). relaxed: tracks routed so far are passable (used
         to find which nets are in the way). margin: extra distance kept from everything (used to re-route a net the exact check found
         too close to something)."""
         ny, nx, n = self.ny, self.nx, self.n
-        max_pops = max_pops or max(300000, 8 * n)
+        max_pops = max_pops or max(300000, 4 * n)
         extra = max(0.0, (width - self.wb) / 2) + margin
-        wide = self.reach(extra) if extra > 1e-9 else None
         via_r = self.rules["via_dia"] / 2
-        vring = self.reach(max(0.0, via_r - self.wb / 2) + margin)
         tht = self.tht.get(net, ())
         novia = self.novia
-        gl = sorted(goals)
-        sample = gl[:: max(1, len(gl) // 4)] + [gl[-1]]
-        gpts = [(g[1] // ny, g[1] % ny) for g in sample]
-        S, D = self.S, self.D
         self.status = "none"
+        base = self._blocked(net, relaxed)                    # base[l][i]: 1 = a track centre cannot be there
+        wide = [self._dilate(base[l], self.reach(extra)) for l in (TOP, BOT)] if extra > 1e-9 else base
+        if relaxed:
+            vblock = [None, None]
+        else:
+            vo = self.reach(max(0.0, via_r - self.wb / 2) + margin)
+            d0, d1 = self._dilate(base[TOP], vo), self._dilate(base[BOT], vo)
+            vblock = bytes(a | b | c for a, b, c in zip(d0, d1, novia))
+        # which cells hold another net's routed track (relaxed search only: crossing it is allowed, at a price)
+        foreign = [None, None]
+        if relaxed:
+            for l in (TOP, BOT):
+                foreign[l] = bytearray([1 if (v != -1 and v != net) else 0 for v in self.D[l]])
+        if not self._connected(net, sources, goals, base, wide, vblock, tht, relaxed):
+            return None
+        gx = [g[1] // ny for g in goals]
+        gy = [g[1] % ny for g in goals]
+        gx0, gx1, gy0, gy1 = min(gx), max(gx), min(gy), max(gy)
 
-        def h(l, i):
+        def h(i):
             ix, iy = i // ny, i % ny
-            best = 1e18
-            for gx, gy in gpts:
-                dx, dy = abs(ix - gx), abs(iy - gy)
-                v = (dx + dy) + (SQ2 - 2) * min(dx, dy)
-                if v < best:
-                    best = v
-            return best
+            dx = max(gx0 - ix, 0, ix - gx1)
+            dy = max(gy0 - iy, 0, iy - gy1)
+            return (dx + dy) + (SQ2 - 2) * (dx if dx < dy else dy)
 
-        def free(l, i):
-            s = S[l][i]
-            if s != -1 and s != net:
-                return False
-            if not relaxed:
-                d = D[l][i]
-                if d != -1 and d != net:
-                    return False
-            return True
-
-        heap, best, parent = [], {}, {}
+        heap, best, parent, came = [], {}, {}, {}
         goalset = set(goals)
         for (l, i) in sorted(sources):
-            k = (l * n + i) * 9 + 8
+            k = l * n + i
             best[k] = 0.0
-            heapq.heappush(heap, (h(l, i), 0.0, k))
+            came[k] = 8
+            heapq.heappush(heap, (h(i), 0.0, k))
         pops = 0
+        dirs = list(enumerate(DIRS))
         while heap:
             f, gc, k = heapq.heappop(heap)
             if gc > best.get(k, 1e18) + 1e-9:
@@ -462,28 +499,26 @@ class Router:
             if deadline and pops % 2000 == 0 and time.time() > deadline:
                 self.status = "time"
                 return None
-            st, d = divmod(k, 9)
-            l, i = divmod(st, n)
+            l, i = divmod(k, n)
             if (l, i) in goalset:
                 path = [(l, i)]
                 while k in parent:
                     k = parent[k]
-                    st = k // 9
-                    path.append((st // n, st % n))
+                    path.append((k // n, k % n))
                 return path[::-1]
             ix, iy = i // ny, i % ny
-            for nd, (dx, dy) in enumerate(DIRS):
+            bl, wl = base[l], wide[l]
+            d = came[k]
+            fl = foreign[l]
+            for nd, (dx, dy) in dirs:
                 a, b = ix + dx, iy + dy
                 if not (0 <= a < nx and 0 <= b < ny):
                     continue
                 j = a * ny + b
-                if not free(l, j):                               # the goal cells too: a pad cell too close to a neighbour is no goal
+                if wl[j]:                                        # the goal cells too: a pad cell too close to a neighbour is no goal
                     continue
                 if dx and dy:                                    # a diagonal must not cut between two blocked cells
-                    if not (free(l, ix * ny + b) and free(l, a * ny + iy)):
-                        continue
-                if wide is not None:
-                    if not all(0 <= a + ox < nx and 0 <= b + oy < ny and free(l, (a + ox) * ny + b + oy) for ox, oy in wide):
+                    if bl[ix * ny + b] or bl[a * ny + iy]:
                         continue
                 cost = gc + (SQ2 if dx and dy else 1.0)
                 if d != 8 and d != nd:
@@ -491,28 +526,61 @@ class Router:
                     if t > 2:
                         continue
                     cost += TURN_45 if t == 1 else TURN_90
-                nk = (l * n + j) * 9 + nd
+                if fl is not None and fl[j]:
+                    cost += CROSS_COST
+                nk = l * n + j
                 if cost < best.get(nk, 1e18) - 1e-9:
                     best[nk] = cost
                     parent[nk] = k
-                    heapq.heappush(heap, (cost + h(l, j), cost, nk))
+                    came[nk] = nd
+                    heapq.heappush(heap, (cost + h(j), cost, nk))
             o = 1 - l
-            if free(o, i):
+            if not base[o][i]:
                 if i in tht:                                     # inside a through hole pad of the net: the pad is the change of layer
                     cost = gc + THRU_COST
                 elif relaxed:
                     cost = gc + VIA_COST if not novia[i] else None
-                elif not novia[i] and self.ring_ok(net, l, ix, iy, vring) and self.ring_ok(net, o, ix, iy, vring):
+                elif not vblock[i]:
                     cost = gc + VIA_COST
                 else:
                     cost = None
                 if cost is not None:
-                    nk = (o * n + i) * 9 + 8
+                    nk = o * n + i
                     if cost < best.get(nk, 1e18) - 1e-9:
                         best[nk] = cost
                         parent[nk] = k
-                        heapq.heappush(heap, (cost + h(o, i), cost, nk))
+                        came[nk] = 8
+                        heapq.heappush(heap, (cost + h(i), cost, nk))
         return None
+
+    def _connected(self, net, sources, goals, base, wide, vblock, tht, relaxed):
+        """A cheap flood fill (4 neighbours, vias where they could be) from the sources: is any goal reachable at all? A search that
+        has no way would otherwise try every cell of the board before saying so."""
+        ny, nx, n = self.ny, self.nx, self.n
+        novia = self.novia
+        seen = [bytearray(n), bytearray(n)]
+        stack = []
+        for l, i in sources:
+            if not seen[l][i]:
+                seen[l][i] = 1
+                stack.append((l, i))
+        goalset = set(goals)
+        while stack:
+            l, i = stack.pop()
+            if (l, i) in goalset:
+                return True
+            wl, sl = wide[l], seen[l]
+            ix, iy = divmod(i, ny)
+            for j, ok in ((i + ny, ix + 1 < nx), (i - ny, ix > 0), (i + 1, iy + 1 < ny), (i - 1, iy > 0)):
+                if ok and not sl[j] and not wl[j]:
+                    sl[j] = 1
+                    stack.append((l, j))
+            o = 1 - l
+            if not seen[o][i] and not base[o][i] and (i in tht or (not novia[i] if relaxed else not vblock[i])):
+                seen[o][i] = 1
+                stack.append((o, i))
+        self.status = "none"
+        return False
 
     # ---- one net
     def route_net(self, net, width, relaxed=False, deadline=None, margin=0.0):

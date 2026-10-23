@@ -125,3 +125,40 @@ def test_router_ends_tracks_inside_an_oval_pad():
     res = route.plan_routes(doc, [0, 0, 20, 14], rules(), seconds=20)
     assert res["routed"] == ["G"]
     assert layout.unrouted(as_board(doc, res["items"])) == []
+
+
+def _soic8(ref, cx, cy, nets):
+    """SOIC-8 (1.27 mm pitch, 5.4 mm between the pad rows): pins 1-4 along the bottom row, 5-8 back along the top."""
+    out = []
+    for k in range(4):
+        out.append(pad(ref, str(k + 1), cx - 1.905 + k * 1.27, cy - 2.7, nets[k], 0.6, 1.6))
+        out.append(pad(ref, str(8 - k), cx - 1.905 + k * 1.27, cy + 2.7, nets[7 - k], 0.6, 1.6))
+    return out
+
+
+def dense_board():
+    """Two SOIC-8 and 15 0603 passives on 40 x 30 mm, with the roomy numbers of a student's project (0.254 clearance, 1.27 via)."""
+    u1 = ["GND", "N1", "N2", "N3", "N4", "N5", "N6", "+5V"]
+    u2 = ["GND", "N4", "N7", "N2", "N8", "N9", "N5", "+5V"]
+    pads = _soic8("U1", 12, 15, u1) + _soic8("U2", 28, 15, u2)
+    parts = [("N1", "GND"), ("N3", "+5V"), ("N6", "GND"), ("N7", "+5V"), ("N8", "GND"), ("N9", "+5V"), ("N1", "N6"), ("N3", "N7"),
+             ("N2", "GND"), ("N4", "+5V"), ("N5", "GND"), ("N8", "N9"), ("N7", "GND"), ("N6", "+5V"), ("N9", "GND")]
+    for k, (a, b) in enumerate(parts):
+        x, y = 5 + (k % 5) * 7.5, 5 if k < 5 else 25 if k < 10 else 9.5
+        if k >= 10:
+            x = 8 + (k - 10) * 6
+        pads += [pad(f"R{k}", "1", x, y, a, 0.8, 0.95), pad(f"R{k}", "2", x + 1.6, y, b, 0.8, 0.95)]
+    return {"pads": pads}
+
+
+def test_dense_two_soic_and_fifteen_passives_routes_within_budget():
+    """The class of board a student draws (it ran out of time at the old router): all nets, rule-clean, in seconds not minutes."""
+    import time
+    doc, box = dense_board(), [0, 0, 40, 30]
+    r = rules(clearance=0.254, width=0.254, width_min=0.254, via_dia=1.27, via_hole=0.71)
+    t0 = time.time()
+    res = route.plan_routes(doc, box, r, seconds=60)
+    assert not res["failed"], res["failed"]
+    assert time.time() - t0 < 30
+    assert route.violations(doc, res["items"], r, box) == []
+    assert layout.unrouted(as_board(doc, res["items"])) == []
