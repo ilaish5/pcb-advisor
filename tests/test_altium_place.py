@@ -79,9 +79,12 @@ def test_place_on_a_new_board_creates_the_outline_and_checks_it_after_the_save(t
     monkeypatch.setattr(bridge, "read_pcblib", lambda p: {"footprints": [fp]})
     monkeypatch.setattr(bridge, "_sch_links", lambda prj: {})
     monkeypatch.setattr(bridge, "_backup", lambda prj, files: None)
-    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: {"pads": [1]})
+    state = {"box": (1000, 1000, 7000, 5000), "parts": 0, "cmds": [], "drawn": []}
+
+    def read(p, geometry=False):
+        return {"pads": [1], "tracks": state["drawn"]}
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", read)
     monkeypatch.setattr(layout, "verify_layout", lambda *a, **k: [])
-    state = {"box": (1000, 1000, 7000, 5000), "parts": 0, "cmds": []}
 
     def altium(cmds, **kw):                 # a new board holds the placeholder; OUTLINE changes it; PCBCHECK reports what it holds
         log = []
@@ -89,6 +92,11 @@ def test_place_on_a_new_board_creates_the_outline_and_checks_it_after_the_save(t
             state["cmds"].append(c[0])
             if c[0] == "OUTLINE":
                 state["box"] = tuple(round(float(v) / 0.0254) for v in c[2:6])
+            if c[0] == "OUTLINEDRAW" and not state["drawn"]:
+                state["draw_cmd"] = c
+                x0, y0, x1, y1 = (float(v) for v in c[2:6])
+                state["drawn"] = [dict(layer=57, x1_mm=a, y1_mm=b, x2_mm=cc, y2_mm=d, in_component=False)
+                                  for a, b, cc, d in ((x0, y0, x1, y0), (x1, y0, x1, y1), (x1, y1, x0, y1), (x0, y1, x0, y0))]
             if c[0] == "PLACEFP":
                 state["parts"] += 1
             if c[0] == "PCBCHECK":
@@ -100,3 +108,67 @@ def test_place_on_a_new_board_creates_the_outline_and_checks_it_after_the_save(t
     res = bridge.place_on(tmp_path / "P.PrjPcb", pcb, lib, parts, size=(30, 25))
     assert res["problems"] == [] and res["outline_created"] and res["outline"] == [0.0, 0.0, 30.0, 25.0]
     assert "OUTLINE" in state["cmds"] and state["box"] == (0, 0, 1181, 984)
+    assert state["cmds"].index("OUTLINEDRAW") == state["cmds"].index("OUTLINE") + 1      # the shape is drawn on Mechanical 1 too
+    assert state["draw_cmd"][2:] == ("0", "0", "30", "25", "0.15")
+
+
+def test_place_on_reports_a_board_whose_outline_layer_stays_empty(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    from altium import layout
+    lib = tmp_path / "L.PcbLib"
+    lib.write_bytes(b"x")
+    pcb = tmp_path / "B.PcbDoc"
+    pcb.write_bytes(b"pcb")
+    fp = {"name": "FP", "pads": [{"x": 0, "y": 0, "xsize": 40, "ysize": 40, "rotation": 0, "name": "1"}], "extent": {}}
+    monkeypatch.setattr(bridge, "read_pcblib", lambda p: {"footprints": [fp]})
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {})
+    monkeypatch.setattr(bridge, "_backup", lambda prj, files: None)
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: {"pads": [1]})
+    monkeypatch.setattr(layout, "verify_layout", lambda *a, **k: [])
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: ["pcbcheck rect=1 objects=0 parts=0 tracks=0 outline_pts=4 box_mil=1000,1000,7000,5000"]
+                        if cmds[-1][0] == "PCBCHECK" else [])
+    res = bridge.place_on(tmp_path / "P.PrjPcb", pcb, lib, [{"ref": "R1", "footprint": "FP", "lib_ref": "R", "pins": []}], size=(30, 25))
+    assert any("no drawing" in p for p in res["problems"])
+
+
+def _rect_tracks(x0, y0, x1, y1, layer=57, comp=False):
+    return [dict(layer=layer, x1_mm=a, y1_mm=b, x2_mm=c, y2_mm=d, in_component=comp)
+            for a, b, c, d in ((x0, y0, x1, y0), (x1, y0, x1, y1), (x1, y1, x0, y1), (x0, y1, x0, y0))]
+
+
+def test_outline_drawing_problems():
+    from altium import layout
+    box = [0, 0, 30, 25]
+    assert layout.outline_drawing_problems({"tracks": _rect_tracks(*box)}, box) == []
+    assert "no drawing" in layout.outline_drawing_problems({"tracks": []}, box)[0]
+    assert "no drawing" in layout.outline_drawing_problems({"tracks": _rect_tracks(*box, comp=True) + _rect_tracks(*box, layer=1)}, box)[0]
+    assert "is [0, 0, 31, 25]" in layout.outline_drawing_problems({"tracks": _rect_tracks(0, 0, 31, 25)}, box)[0]
+    open_ = _rect_tracks(*box)[:3]
+    assert "not a closed" in layout.outline_drawing_problems({"tracks": open_}, box)[0]
+
+
+def test_repair_outline_draws_only_on_an_empty_layer_of_a_rectangular_board(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    pcb = tmp_path / "B.PcbDoc"
+    pcb.write_bytes(b"pcb")
+    docs = {"tracks": []}
+    sent = []
+    monkeypatch.setattr(bridge, "_backup", lambda prj, files: "bk")
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: docs)
+
+    def altium(cmds, **kw):
+        sent.append([c[0] for c in cmds])
+        for c in cmds:
+            if c[0] == "OUTLINEDRAW":
+                docs["tracks"] = _rect_tracks(*(float(v) for v in c[2:6]))
+        return ["pcbcheck rect=1 objects=3 parts=3 tracks=0 outline_pts=4 box_mil=0,0,1181,984"] if cmds[-1][0] == "PCBCHECK" else []
+    monkeypatch.setattr(bridge, "run_commands", altium)
+    res = bridge.repair_outline(tmp_path / "P.PrjPcb", pcb)
+    assert res["drawn"] and res["backup"] == "bk" and res["box"] == [0.0, 0.0, 29.997, 24.994]
+    assert sent[-1] == ["PROJECT", "OUTLINEDRAW", "PCBSAVE"]
+    sent.clear()
+    assert not bridge.repair_outline(tmp_path / "P.PrjPcb", pcb)["drawn"] and sent == []      # a drawing is there now: untouched
+    docs["tracks"] = []                                  # not a rectangle: a warning, nothing sent but the check
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append(cmds) or ["pcbcheck rect=0 objects=3 parts=3 tracks=0 outline_pts=6 box_mil=0,0,1181,984"])
+    res = bridge.repair_outline(tmp_path / "P.PrjPcb", pcb)
+    assert not res["drawn"] and "not a plain rectangle" in res["warning"] and all(c[0] != "OUTLINEDRAW" for run in sent for c in run)

@@ -862,7 +862,12 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     backup = _backup(prj, [pcb])
     links = _sch_links(prj)
     parts = [dict(p, uid=links[p["ref"]][0], sheet=links[p["ref"]][1]) if p["ref"] in links else p for p in parts]
-    cmds = layout.plan_commands(pcb, outline, create, plan["places"], fps, parts, pcblib, replace=replace)
+    try:                                                 # did somebody already draw the outline? (it is then never touched)
+        before_tracks, before_arcs = layout.outline_layer_free(read_pcbdoc(pcb))
+        had_drawing = bool(before_tracks or before_arcs)
+    except (AltiumReadError, OSError):
+        had_drawing = False
+    cmds = layout.plan_commands(pcb, outline, create, plan["places"], fps, parts, pcblib, replace=replace, draw_outline=True)
     try:
         run_commands([("PROJECT", str(prj))] + cmds, total_timeout=900)
     except BridgeError as exc:
@@ -876,6 +881,11 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
                           + (" The board file was put back as it was before (backup kept)." if back else f" The backup is in {backup}.")) from exc
     problems += layout.verify_layout(saved, parts, outline, clearance_mm, places=plan["places"], footprints=fps,
                                      edge_copper_mm=edge_copper_mm)
+    drawing = layout.outline_drawing_problems(saved, outline)      # a closed drawing of the board shape on the outline layer
+    if had_drawing:                                      # the student's own drawing stays; a mismatch is theirs to look at
+        warnings += drawing
+    else:
+        problems += drawing
     try:                                                 # the outline Altium really holds, after the save
         after = _pcbcheck_info(run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1")]))
     except BridgeError:
@@ -1276,9 +1286,65 @@ def outjob_containers(path):
     return out
 
 
+def repair_outline(prj, pcb):
+    """A board placed before the outline was drawn has its board shape set but nothing on Mechanical 1, so the outline Gerber
+    (.GM1) comes out empty. When that layer holds no drawing of its own and the board shape is a real rectangle, draw the shape
+    there (4 tracks, like Design > Board Shape > Create Primitives From Board Shape), save with a backup and read the file back.
+    Anything else is left alone. Returns {"drawn": bool, "backup": str, "warning": str}."""
+    from altium import layout
+    from altium.pcbdoc import read_pcbdoc
+    out = {"drawn": False, "backup": "", "warning": ""}
+    try:
+        doc = read_pcbdoc(pcb)
+    except (AltiumReadError, OSError):
+        return out
+    tracks, arcs = layout.outline_layer_free(doc)
+    if tracks or arcs:
+        return out                                       # somebody's drawing: never touched (a mismatch is reported by the checks)
+    info = _pcbcheck_info(run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1")]))     # refuses unsaved changes
+    if info is None or (info["box_mil"] == NEW_BOARD_BOX_MIL and info["parts"] == 0):
+        return out                                       # no board yet (the placeholder of a new PcbDoc): nothing to draw
+    if not info["rect"] or info["box_mil"] == NEW_BOARD_BOX_MIL:
+        out["warning"] = ("The outline layer (Mechanical 1) has no drawing and the board shape is not a plain rectangle (or still the "
+                          "placeholder of a new board), so I did not draw it: use Design > Board Shape > Create Primitives From Board Shape "
+                          "in Altium, or the outline Gerber will be empty.")
+        return out
+    box = [round(v * MM_PER_MIL, 3) for v in info["box_mil"]]
+    backup = _backup(prj, [pcb])
+    cmds = [("PROJECT", str(prj)), ("OUTLINEDRAW", str(pcb)) + tuple(f"{v:g}" for v in box) + (f"{layout.OUTLINE_WIDTH_MM:g}",),
+            ("PCBSAVE", str(pcb))]
+    try:
+        run_commands(cmds)
+        probs = layout.outline_drawing_problems(read_pcbdoc(pcb), box)
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        probs = [str(exc)]
+    if probs:
+        back = _restore(prj, pcb, backup) if backup else False
+        out["warning"] = ("I tried to draw the missing board outline on Mechanical 1 but it did not check out (" + "; ".join(probs[:3]) + ")"
+                          + ("; the board file was put back as it was." if back else "; the backup is in " + str(backup) + "."))
+        return out
+    return {"drawn": True, "backup": backup, "warning": "", "box": box}
+
+
 def run_outjob(project):
-    """Run the project's OutJob (ours is added first when it has none). Returns {outjob, added, containers, files, backup}."""
+    """Run the project's OutJob (ours is added first when it has none). Before the outputs, a board whose outline layer is empty gets
+    its rectangular board shape drawn on Mechanical 1 (repair_outline). Returns {outjob, added, containers, files, backup, warnings,
+    outline_drawn}."""
     prj = _linked(project)
+    outline_note, outline_drawn = [], False
+    try:
+        try:
+            pcb_file = _project_pcb(project)
+        except BridgeError:
+            pcb_file = None                              # no PcbDoc in the project: nothing to repair
+        fix = repair_outline(prj, pcb_file) if pcb_file else {"drawn": False, "warning": ""}
+        outline_drawn = fix["drawn"]
+        if fix["drawn"]:
+            outline_note.append(f"The outline layer (Mechanical 1) was empty: drew the board shape {fix['box']} mm there (backup {fix['backup']}).")
+        elif fix["warning"]:
+            outline_note.append(fix["warning"])
+    except BridgeError as exc:
+        outline_note.append(f"Could not check the outline layer ({exc}); if the outline Gerber is empty, draw the board shape on Mechanical 1.")
     summary = read_prjpcb(prj)
     target, added, backup = None, False, ""
     for rel in summary["outjobs"]:
@@ -1310,8 +1376,8 @@ def run_outjob(project):
     if not files:
         raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
     missing = rules_missing(project)
-    warnings = [f"The JLC rules ({', '.join(missing)}) are no longer in the PcbDoc; DRC and outputs ran against Altium's "
-                "defaults. Import the rules again."] if missing else []
+    warnings = outline_note + ([f"The JLC rules ({', '.join(missing)}) are no longer in the PcbDoc; DRC and outputs ran against Altium's "
+                                "defaults. Import the rules again."] if missing else [])
     drills = drill_problems(project)
     if drills:
         warnings.append(f"{len(drills)} hole(s) JLC cannot make: " + "; ".join(drills[:5]) + (" ..." if len(drills) > 5 else ""))
@@ -1321,7 +1387,7 @@ def run_outjob(project):
                         + (" ..." if len(design) > 5 else "") + " Fix this before ordering.")
     _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing)
     return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
-            "warnings": warnings}
+            "warnings": warnings, "outline_drawn": outline_drawn}
 
 
 def open_project(project):

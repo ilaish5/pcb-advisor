@@ -465,7 +465,45 @@ def _decap_target(ref, info, placed, pad_xy):
     return best[1] if best else None
 
 
-def plan_commands(doc, outline, create_outline, places, footprints, parts, pcblib, replace=False):
+OUTLINE_LAYER = 57          # Mechanical 1: the layer the shipped OutJob plots as the board outline (.GM1; layer id 16908289)
+OUTLINE_WIDTH_MM = 0.15     # JLC: draw the outline 0.15 mm wide (same as scripts/jlc_testboard.py)
+
+
+def outline_layer_free(doc):
+    """(tracks, arcs) a PcbDoc holds on the outline layer that are not part of a footprint: somebody's outline drawing."""
+    tracks = [t for t in doc.get("tracks", []) if t.get("layer") == OUTLINE_LAYER and not t.get("in_component")]
+    arcs = [a for a in doc.get("arcs", []) if a.get("layer") == OUTLINE_LAYER and not a.get("in_component")]
+    return tracks, arcs
+
+
+def outline_drawing_problems(doc, outline, tol=0.05):
+    """What is wrong with the outline layer (Mechanical 1) of a read-back PcbDoc against the board shape `outline` [x0, y0, x1, y1] mm:
+    nothing drawn, drawn but not closed, or not the board shape (box off by more than tol mm). [] when it is a closed drawing of it."""
+    tracks, arcs = outline_layer_free(doc)
+    if not tracks and not arcs:
+        return ["the outline layer (Mechanical 1) has no drawing: the board shape is set but nothing is drawn, so the outline Gerber "
+                "(.GM1) comes out empty"]
+    xs = [v for t in tracks for v in (t["x1_mm"], t["x2_mm"])]
+    ys = [v for t in tracks for v in (t["y1_mm"], t["y2_mm"])]
+    for a in arcs:       # an arc on the outline: its circle box is a safe outer bound for the extent check
+        r = a.get("r_mm") or 0
+        xs += [a.get("cx_mm", 0) - r, a.get("cx_mm", 0) + r]
+        ys += [a.get("cy_mm", 0) - r, a.get("cy_mm", 0) + r]
+    box = [min(xs), min(ys), max(xs), max(ys)]
+    probs = []
+    if any(abs(a - b) > tol for a, b in zip(box, outline)):
+        probs.append(f"the outline drawn on Mechanical 1 is {[round(v, 2) for v in box]} mm, the board shape is {[round(v, 2) for v in outline]} mm")
+    if not arcs:
+        ends = {}
+        for t in tracks:
+            for p in ((round(t["x1_mm"] / tol), round(t["y1_mm"] / tol)), (round(t["x2_mm"] / tol), round(t["y2_mm"] / tol))):
+                ends[p] = ends.get(p, 0) + 1
+        if not tracks or any(n % 2 for n in ends.values()):
+            probs.append("the outline drawn on Mechanical 1 is not a closed shape (loose line ends)")
+    return probs
+
+
+def plan_commands(doc, outline, create_outline, places, footprints, parts, pcblib, replace=False, draw_outline=False):
     """Script lines for the bridge. PCBBEGIN doc replace; OUTLINE doc x0 y0 x1 y1 (mm); PLACEFP doc ref footprint pcblib x y rot
     libref sourceid; PADNET doc ref pad net; PCBSAVE doc. A footprint is placed from the project PcbLib and linked like ECO does
     (designator, source designator, library reference, footprint library) and each pad gets its net from the netlist so a later
@@ -475,6 +513,8 @@ def plan_commands(doc, outline, create_outline, places, footprints, parts, pcbli
     cmds = [("PCBBEGIN", d, "1" if replace else "0")]
     if create_outline and outline:
         cmds.append(("OUTLINE", d) + tuple(f"{v:g}" for v in outline))
+    if draw_outline and outline:         # the bridge draws nothing when the layer already holds a drawing
+        cmds.append(("OUTLINEDRAW", d) + tuple(f"{v:g}" for v in outline) + (f"{OUTLINE_WIDTH_MM:g}",))
     for pl in places:
         p = by_ref[pl["ref"]]
         cmds.append(("PLACEFP", d, pl["ref"], pl["footprint"], str(pcblib), f"{pl['x']:g}", f"{pl['y']:g}", f"{pl['rot']:g}",

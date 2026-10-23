@@ -2117,6 +2117,71 @@ begin
     Log('outline ' + X0 + ' ' + Y0 + ' ' + X1 + ' ' + Y1);
 end;
 
+{ number of free (not part of a footprint) tracks and arcs on Mechanical 1 }
+function PcbOutlineLayerCount(B: IDispatch): Integer;
+var
+    It, O : IDispatch;
+    k     : Integer;
+begin
+    Result := 0;
+    for k := 0 to 1 do
+    begin
+        It := B.BoardIterator_Create;
+        if (k = 0) then It.AddFilter_ObjectSet(MkSet(eTrackObject)) else It.AddFilter_ObjectSet(MkSet(eArcObject));
+        It.AddFilter_LayerSet(MkSet(eMechanical1));
+        It.AddFilter_Method(eProcessAll);
+        O := It.FirstPCBObject;
+        while (O <> nil) do
+        begin
+            if (not O.InComponent) then Result := Result + 1;
+            O := It.NextPCBObject;
+        end;
+        B.BoardIterator_Destroy(It);
+    end;
+end;
+
+{ OUTLINEDRAW path x0 y0 x1 y1 width: the rectangle as four closed tracks on Mechanical 1 (what Design > Board Shape > Create Primitives
+  From Board Shape draws; the OutJob's outline Gerber .GM1 comes from that layer). A drawing somebody made there is never touched:
+  nothing is drawn when the layer already holds a free track or arc. Logs "outlinedraw drawn=4" or "outlinedraw drawn=0 existing=N". }
+procedure PcbOutlineDraw(Path: String; X0, Y0, X1, Y1, W: String);
+var
+    B, T : IDispatch;
+    n, i : Integer;
+    ax, ay, bx, by : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    n := PcbOutlineLayerCount(B);
+    if (n > 0) then
+    begin
+        Log('outlinedraw drawn=0 existing=' + IntToStr(n));
+        Exit;
+    end;
+    PCBServer.PreProcess;
+    for i := 0 to 3 do
+    begin
+        if (i = 0) then begin ax := MmCoord(X0); ay := MmCoord(Y0); bx := MmCoord(X1); by := MmCoord(Y0); end;
+        if (i = 1) then begin ax := MmCoord(X1); ay := MmCoord(Y0); bx := MmCoord(X1); by := MmCoord(Y1); end;
+        if (i = 2) then begin ax := MmCoord(X1); ay := MmCoord(Y1); bx := MmCoord(X0); by := MmCoord(Y1); end;
+        if (i = 3) then begin ax := MmCoord(X0); ay := MmCoord(Y1); bx := MmCoord(X0); by := MmCoord(Y0); end;
+        T := PCBServer.PCBObjectFactory(eTrackObject, eNoDimension, eCreate_Default);
+        T.X1 := ax;
+        T.Y1 := ay;
+        T.X2 := bx;
+        T.Y2 := by;
+        T.Width := MmCoord(W);
+        T.Layer := eMechanical1;
+        B.AddPCBObject(T);
+        PCBServer.SendMessageToRobots(B.I_ObjectAddress, c_Broadcast, PCBM_BoardRegisteration, T.I_ObjectAddress);
+    end;
+    PCBServer.PostProcess;
+    Log('outlinedraw drawn=4 existing=0');
+end;
+
 { PLACEFP path ref footprint pcblib x y rot libref: the footprint comes from the project PcbLib and is linked the way Update PCB
   links it (designator, source designator, library reference, footprint library) so that a later Update PCB matches it }
 procedure PcbPlace(Path: String; Ref: String; Pattern: String; PcbLib: String; X, Y, Rot, LibRef, Value, LX, LY, LH, LLine, SrcId, SrcPath: String);
@@ -2323,6 +2388,7 @@ begin
     else if (Cmd = 'POLY') then PcbPoly(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7))
     else if (Cmd = 'PCBBEGIN') then PcbBegin(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'OUTLINE') then PcbOutline(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5))
+    else if (Cmd = 'OUTLINEDRAW') then PcbOutlineDraw(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
     else if (Cmd = 'PLACEFP') then
         PcbPlace(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7), Field(Line, 8),
                  Field(Line, 9), Field(Line, 10), Field(Line, 11), Field(Line, 12), Field(Line, 13), Field(Line, 14), Field(Line, 15))

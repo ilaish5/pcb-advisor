@@ -46,7 +46,8 @@ class FakeAltium:
         return []
 
     def flat(self):
-        return [c for run in self.runs for c in run]
+        """every command sent, without the read-only PCBCHECK round trip (own run) that run_outjob makes for an empty outline layer"""
+        return [c for run in self.runs if run[-1][0] != "PCBCHECK" for c in run]
 
 
 @pytest.fixture
