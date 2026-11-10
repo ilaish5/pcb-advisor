@@ -27,7 +27,8 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
 4. Classify nets: power by current, sensitive (analog, crystal, feedback, reset), noisy (switch node, clocks, relay/coil), RF/high speed.
    Auto-named nets appear only after the first Update PCB (ECO); add them to the rules then, or label the nets in the schematic.
 5. Calculate with the scripts below. Show the formula, the inputs (current, temperature rise, copper weight, layer) and the result
-   rounded UP. State that IPC-2221 and IPC-2152 differ and which one was used.
+   rounded UP. Say it is the older IPC-2221 chart fit: it ignores nearby planes and board thickness, and its chart range is
+   up to about 35 A and 10-100 C rise. IPC-2152 is the current standard and is not implemented here.
 6. Build the rule table: `Rule | Scope | Min/Pref/Max | Why | Source`. Specific rules get higher priority than the board default
    (Altium rule priorities: course m19 19.3.2).
 7. Produce the `.RUL` when the tool supports it (see Scripts). Tell the student the import path in Altium (verified AD26): Design > Rules, right-click
@@ -47,7 +48,7 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
 - `python <repo>/scripts/rules.py export <output.RUL> [--board <PcbDoc>] [--project <name>]` - export the preset to a .RUL file.
   With --board it is the full board rule set with JLC values (import with "Replace existing rules").
 - `python <repo>/scripts/rules.py preset [--project <name>]` - print the preset. `--layers <n>` and `--oz <n>` override the project's board.
-- `python <repo>/scripts/calc.py trace-width <amps> [--rise <C>] [--oz <n>]` - IPC-2152 trace width in mm and mil.
+- `python <repo>/scripts/calc.py trace-width <amps> [--rise <C>] [--oz <n>]` - IPC-2221 trace width in mm and mil (same number as trace_width.py).
 - `python <repo>/scripts/calc.py divider <vin> <vout>` - voltage divider resistor calculation with standard E24 values.
 - `python <repo>/scripts/calc.py led <v_supply> <v_forward> <i_ma>` - LED series resistor and power rating.
 - `python <repo>/scripts/calc.py via <drill_mm> [--rise <C>]` - via barrel current-carrying capacity.

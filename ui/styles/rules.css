@@ -45,6 +45,8 @@
 .calc-main b{font-weight:600;font-variant-numeric:tabular-nums}
 .calc-main .muted{font-size:var(--t-md)}
 .calc-src{margin-top:4px !important;font-size:12px;line-height:1.45}
+.calc-warn{margin-top:8px !important;padding:6px 10px;border-radius:6px;background:var(--warn-soft);color:var(--ink);font-size:13px;line-height:1.45}
+.calc-warn b{color:var(--warn);font-weight:600}
 
 /* a narrow sheet (the side sheet): the diff becomes a list, one rule per block, instead of a table that scrolls sideways */
 .rules-vb .sec-h{flex-wrap:wrap;row-gap:2px}

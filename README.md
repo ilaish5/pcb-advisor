@@ -7,7 +7,7 @@ An AI co-pilot for your PCB project (Altium Designer + JLCPCB). You chat with an
 it helps you refine the idea, pick parts that are in stock at JLC, check the schematic and layout against
 datasheets, prepare Altium rules and outputs, and understand the manufacturer's DFM report.
 
-It reads your Altium files and can create the Altium project for you (project, empty PCB, sheets with a skeleton and no components, through `scripts/altium/bridge.py`); it never places components, routes or orders.
+It reads your Altium files and can create the Altium project for you (project, empty PCB, sheets with a skeleton, through `scripts/altium/bridge.py`). When you choose it, the agent also draws the schematic, places the parts and routes the board in Altium; you can do any of these yourself instead. It never places the order: that is yours.
 
 ## Install (about 5 minutes)
 
@@ -39,7 +39,7 @@ the one command that fixes each item; the same list is in the app under Settings
 
 Double-click `start.bat` (macOS/Linux: `./start.sh`); the installer already started it the first time. The browser opens at http://localhost:8931.
 Create a project, describe your board in the chat, and follow the tabs from left to right:
-Idea, BOM, Schematic, Placement, Rules, Altium outputs, Final checks.
+Idea, BOM, Schematic, Layout, Rules, Outputs, DFM.
 
 The install comes with an example project, "LED chaser" (USB-C, NE555, CD4017, 10 LEDs): idea, BOM and a schematic sheet, no Altium files yet.
 

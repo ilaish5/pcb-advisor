@@ -488,8 +488,17 @@ def _generate(build, e, line, prefix, pins, ctx):
     npads = len({ln.split("|")[1] for ln in build.footprints[fpname]["fp"]["lines"] if ln.startswith("PAD|")})
     sym = symbol_for(prefix, f"{line.get('mpn', '')} {line.get('description', '')}", pins, npads)
     if sym is None:
-        e["issues"].append(f"no netlist pins found for {line.get('refs', [line['key']])[0]} and the shape is not "
-                           "a standard one; the pin list is needed, or " + vendor_hint(line.get("mpn")))
+        ref = line.get('refs', [line['key']])[0]
+        if prefix == "Q" and not pins:
+            e["issues"].append(f"the pinout of {ref} is unknown: its pins are read from the schematic sheet or the "
+                               "datasheet, so attach the datasheet or give the pin functions (G/D/S or B/C/E per pin); "
+                               + vendor_hint(line.get("mpn")))
+        elif prefix in ("D", "LED", "TVS", "ZD") and len(pins) == 2:
+            e["issues"].append(f"the cathode of {ref} is pin 2, but the generated footprint marks pad 1 as the "
+                               "cathode: use the manufacturer's footprint (EasyEDA or a vendor zip)")
+        else:
+            e["issues"].append(f"no netlist pins found for {ref} and the shape is not "
+                               "a standard one; the pin list is needed, or " + vendor_hint(line.get("mpn")))
         return None
     e["source"] = source
     e["issues"] += notes + sym[2]

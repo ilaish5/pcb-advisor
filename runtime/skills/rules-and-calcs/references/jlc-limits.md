@@ -90,7 +90,7 @@ A thinner prepreg gives narrower 50 ohm lines (easier on fine-pitch pads). Use t
 
 ## Calculators
 - Width for current: IPC-2221 (`trace_width.py`): A = (I / (k x dT^0.44))^(1/0.725) in mil^2, k = 0.048 outer, 0.024 inner.
-  IPC-2152 is the newer standard and usually allows narrower traces with a plane nearby; say which one you used.
+  It is the older IPC-2221 chart fit; it ignores nearby planes and board thickness; valid up to about 35 A, 10-100 C rise, 400 mil width. IPC-2152 is the current standard and is not implemented here.
 - Microstrip / CPWG / differential impedance: needs dielectric height, Er, trace thickness. Course: unit4 [17]-[19].
   Always confirm in the fab's calculator: https://jlcpcb.com/impedance.
 - Divider: Vout = Vref x (1 + R1/R2); pick E24/E96 values, compute the real Vout and its error; keep the divider current well

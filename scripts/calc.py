@@ -1,7 +1,7 @@
 """Engineering calculators for PCB design.
 
 Calculators:
-  1. trace_width_ipc2152: IPC-2152 trace current carrying capacity
+  1. trace_width_ipc2221: IPC-2221 trace width for a current (arithmetic in trace_width.py)
   2. voltage_divider: Resistor divider calculation with E24 standard values
   3. led_resistor: Series current-limiting resistor for LEDs
   4. via_current: Via barrel current carrying capacity
@@ -13,6 +13,11 @@ Each function returns a dict containing at minimum:
 import argparse
 import math
 import sys
+
+import trace_width
+
+# JLCPCB: "18 um average copper in the barrel" (shared/reference/jlc/pcb-capabilities.en.md, P1)
+PLATING_UM_JLC = 18.0
 
 # Standard E24 decade multipliers (1.0 to 9.1)
 E24_BASE = [
@@ -43,18 +48,16 @@ def nearest_e24(target: float, round_up: bool = False) -> float:
     return min(all_vals, key=lambda v: abs(v - target))
 
 
-def trace_width_ipc2152(
+def trace_width_ipc2221(
     current_a: float,
     temp_rise_c: float = 10.0,
     copper_oz: float = 1.0,
     internal: bool = False,
 ) -> dict:
-    """Calculate trace width according to IPC-2152 universal charts.
+    """Trace width from the IPC-2221 formula I = k * dT^0.44 * A^0.725.
 
-    A = (I / (k * dT^b))^(1/c) in mil^2.
-    For external/with plane: k=0.060, b=0.39, c=0.63.
-    For internal: k=0.024, b=0.44, c=0.725.
-    1 oz copper thickness = 1.378 mil (0.035 mm).
+    A in mil^2, k = 0.048 external / 0.024 internal, 1 oz copper = 1.378 mil.
+    The arithmetic lives in trace_width.py (the one implementation).
     """
     if current_a <= 0:
         raise ValueError("current_a must be positive")
@@ -63,19 +66,17 @@ def trace_width_ipc2152(
     if copper_oz <= 0:
         raise ValueError("copper_oz must be positive")
 
-    if internal:
-        k, b, c = 0.024, 0.44, 0.725
-        formula = "A = (I / (0.024 * dT^0.44))^(1/0.725) [mil^2], width = A / (oz * 1.378 mil)"
-        source = "IPC-2152 Section 5 / Figure 5-1 (Internal conductors)"
-    else:
-        k, b, c = 0.060, 0.39, 0.63
-        formula = "A = (I / (0.060 * dT^0.39))^(1/0.63) [mil^2], width = A / (oz * 1.378 mil)"
-        source = "IPC-2152 Section 5 / Figure 5-1 (External conductors with thermal plane)"
+    layer = "internal" if internal else "external"
+    width_mm = trace_width.width_mm(current_a, layer, temp_rise_c, copper_oz)
+    width_mil = width_mm / 0.0254
 
-    area_mil2 = (current_a / (k * (temp_rise_c ** b))) ** (1.0 / c)
-    thickness_mil = copper_oz * 1.378
-    width_mil = area_mil2 / thickness_mil
-    width_mm = width_mil * 0.0254
+    warnings = []
+    if current_a > 35.0:
+        warnings.append("current above 35 A: outside the IPC-2221 chart range")
+    if not 10.0 <= temp_rise_c <= 100.0:
+        warnings.append("temperature rise outside 10-100 C: outside the IPC-2221 chart range")
+    if width_mil > 400.0:
+        warnings.append("width above 400 mil: outside the IPC-2221 chart range")
 
     return {
         "value": round(width_mm, 4),
@@ -84,9 +85,11 @@ def trace_width_ipc2152(
         "current_a": float(current_a),
         "temp_rise_c": float(temp_rise_c),
         "copper_oz": float(copper_oz),
-        "layer": "internal" if internal else "external",
-        "formula": formula,
-        "source": source,
+        "layer": layer,
+        "formula": trace_width.FORMULA,
+        "source": trace_width.SOURCE,
+        "limits": trace_width.LIMITS,
+        "warnings": warnings,
     }
 
 
@@ -194,12 +197,14 @@ def led_resistor(
 def via_current(
     drill_mm: float,
     temp_rise_c: float = 10.0,
-    plating_thickness_um: float = 25.0,
+    plating_thickness_um: float = PLATING_UM_JLC,
 ) -> dict:
     """Calculate via barrel current-carrying capacity.
 
-    A_barrel = pi * drill_diameter * plating_thickness
-    I_max = 0.048 * dT^0.44 * A^0.725 (IPC-2152 / IPC-2221 barrel capacity)
+    drill_mm is the finished hole diameter (the size JLCPCB quotes).
+    A_barrel = pi * (d + t) * t  (annulus: outer diameter d + 2t, inner d)
+    I_max = 0.048 * dT^0.44 * A^0.725  (IPC-2221 external formula applied to the
+    barrel copper area; an estimate, IPC-2221 has no via-specific rating)
     """
     if drill_mm <= 0:
         raise ValueError("drill_mm must be positive")
@@ -210,9 +215,16 @@ def via_current(
 
     drill_mil = drill_mm / 0.0254
     plating_mil = plating_thickness_um / 25.4
-    area_mil2 = math.pi * drill_mil * plating_mil
+    area_mil2 = math.pi * (drill_mil + plating_mil) * plating_mil
 
     i_max = 0.048 * (temp_rise_c ** 0.44) * (area_mil2 ** 0.725)
+
+    if plating_thickness_um == PLATING_UM_JLC:
+        plating_note = (f"Plating thickness {plating_thickness_um:g} um is the JLCPCB-stated average barrel copper "
+                        "(shared/reference/jlc/pcb-capabilities.en.md, source P1).")
+    else:
+        plating_note = (f"Plating thickness {plating_thickness_um:g} um is an assumption you supplied; JLCPCB states "
+                        f"{PLATING_UM_JLC:g} um average barrel copper. Check it against your order.")
 
     return {
         "value": round(i_max, 3),
@@ -221,8 +233,11 @@ def via_current(
         "drill_mm": float(drill_mm),
         "temp_rise_c": float(temp_rise_c),
         "plating_thickness_um": float(plating_thickness_um),
-        "formula": "A_barrel = pi * d_drill * t_plating; I_max = 0.048 * dT^0.44 * A_barrel^0.725",
-        "source": "IPC-2152 / IPC-2221 Via Current-Carrying Capacity",
+        "formula": "A_barrel = pi * (d_hole + t_plating) * t_plating; I_max = 0.048 * dT^0.44 * A_barrel^0.725",
+        "source": "Estimate: IPC-2221 external formula applied to the via barrel copper area",
+        "plating_note": plating_note,
+        "limits": "Not a standard via rating; using the external-trace constant (k = 0.048) on a barrel is an approximation. "
+                  "Ignores heat sinking into planes and the pads. " + plating_note,
     }
 
 
@@ -235,7 +250,7 @@ def microstrip_impedance(
     """Calculate characteristic impedance of a surface microstrip line using IPC-2141.
 
     Formula: Z0 = (87 / sqrt(Er + 1.41)) * ln(5.98 * h / (0.8 * w + t))
-    Valid for 0.1 < w/h < 3.0.
+    Commonly stated as valid for 0.1 < w/h < 2.0 and 1 < Er < 15; outside that a warning is returned.
     """
     if width_mm <= 0:
         raise ValueError("width_mm must be positive")
@@ -251,6 +266,15 @@ def microstrip_impedance(
 
     z0 = (87.0 / math.sqrt(er + 1.41)) * math.log(numerator / denominator)
 
+    warnings = []
+    ratio = width_mm / height_mm
+    if not 0.1 < ratio < 2.0:
+        warnings.append(f"w/h = {ratio:.2f} is outside the commonly stated range 0.1 to 2.0; "
+                        "the result is an extrapolation and may be inaccurate")
+    if not 1.0 < er < 15.0:
+        warnings.append(f"Er = {er:g} is outside the commonly stated range 1 to 15; "
+                        "the result may be inaccurate")
+
     return {
         "value": round(z0, 2),
         "z0_ohm": round(z0, 2),
@@ -260,6 +284,9 @@ def microstrip_impedance(
         "er": float(er),
         "formula": "Z0 = (87 / sqrt(Er + 1.41)) * ln(5.98 * h / (0.8 * w + t))",
         "source": "IPC-2141 Section 3.2.1 Surface Microstrip Approximation",
+        "w_over_h": round(ratio, 3),
+        "in_range": not warnings,
+        "warnings": warnings,
     }
 
 
@@ -270,7 +297,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="calc")
 
     # Trace width
-    p_tw = sub.add_parser("trace-width", help="IPC-2152 trace width calculator")
+    p_tw = sub.add_parser("trace-width", help="IPC-2221 trace width calculator")
     p_tw.add_argument("amps", type=float, help="Current in amperes")
     p_tw.add_argument("--rise", type=float, default=10.0, help="Allowed temperature rise in C")
     p_tw.add_argument("--oz", type=float, default=1.0, help="Copper weight in oz")
@@ -293,7 +320,7 @@ def main(argv=None):
     p_via = sub.add_parser("via", help="Via current capacity calculator")
     p_via.add_argument("drill_mm", type=float, help="Via drill hole diameter (mm)")
     p_via.add_argument("--rise", type=float, default=10.0, help="Allowed temperature rise (C)")
-    p_via.add_argument("--plating", type=float, default=25.0, help="Plating thickness (um)")
+    p_via.add_argument("--plating", type=float, default=PLATING_UM_JLC, help="Plating thickness (um, default: JLCPCB 18)")
 
     # Microstrip
     p_ms = sub.add_parser("microstrip", help="Surface microstrip characteristic impedance")
@@ -305,10 +332,13 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     if args.calc == "trace-width":
-        res = trace_width_ipc2152(args.amps, args.rise, args.oz, args.internal)
-        print(f"Trace width (IPC-2152): {res['value']} mm ({res['width_mil']} mil)")
+        res = trace_width_ipc2221(args.amps, args.rise, args.oz, args.internal)
+        print(f"Trace width (IPC-2221): {res['value']} mm ({res['width_mil']} mil)")
         print(f"Formula: {res['formula']}")
         print(f"Source:  {res['source']}")
+        print(f"Limits:  {res['limits']}")
+        for w in res["warnings"]:
+            print(f"Warning: {w}")
         return 0
 
     elif args.calc == "divider":

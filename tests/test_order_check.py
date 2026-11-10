@@ -64,6 +64,36 @@ def back(proj):
     os.utime(pd / "library" / "manifest.json", (now - 10, now - 10))
 
 
+def manifest_at(proj, offset):
+    """The manifest's mtime set explicitly (seconds from now): a file system clock tick can make two writes tie."""
+    t = time.time() + offset
+    os.utime(store.pdir(proj) / "library" / "manifest.json", (t, t))
+
+
+@pytest.fixture
+def stamps_are_later(monkeypatch):
+    """The code under test stamps the manifest "after the log", which is a tie when both happen in one clock tick:
+    its stamps are made explicitly 5 s ahead, so the test checks the decision, not the clock."""
+    real_utime, real_swap = os.utime, partlib_order.stamp_swap
+
+    class Clock:
+        def __getattr__(self, name):
+            return getattr(os, name)
+
+        @staticmethod
+        def utime(path, times=None, **kw):
+            if times is None and not kw:
+                times = (time.time() + 5,) * 2
+            return real_utime(path, times, **kw)
+
+    def swap_later(project, key, changes):
+        real_swap(project, key, changes)
+        manifest_at(project, 5)
+
+    monkeypatch.setattr(partlib_order, "os", Clock())
+    monkeypatch.setattr(partlib_order, "stamp_swap", swap_later)
+
+
 @pytest.fixture
 def built(proj, home):
     prep(proj, fetcher=fake_fetch([]))
@@ -200,7 +230,7 @@ def test_a_lock_that_does_not_match_the_last_build_is_not_honoured(built):
     assert "C101" in calls
 
 
-def test_an_approved_order_only_swap_does_not_stale_the_library(built, monkeypatch):
+def test_an_approved_order_only_swap_does_not_stale_the_library(built, monkeypatch, stamps_are_later):
     monkeypatch.setattr(partlib, "fetch_one", fixture_fetch(CANDIDATES))
     rec = store.propose_bom(built, "R1", swap(built), reason="order-only swap: same footprint")
     assert rec["changes"]["footprint_lock"] == "R0603_FAKE" and store.classify_proposal(rec) == "important"
@@ -210,6 +240,7 @@ def test_an_approved_order_only_swap_does_not_stale_the_library(built, monkeypat
     assert line["mpn"] == "NEW-RES" and line["lcsc"] == "C101" and line["footprint_lock"] == "R0603_FAKE"
     assert not bridge.library_stale(built)
     assert json.loads((store.pdir(built) / "library" / "manifest.json").read_text())["R1"]["lcsc"] == "C101"
+    manifest_at(built, -10)                                                                 # the edit below is the later write
     store.edit_bom(built, "R1", "mpn", "ANOTHER")                                           # a plain edit voids the lock
     assert "footprint_lock" not in next(l for l in store.bom_lines(built) if l["key"] == "R1")
     assert bridge.library_stale(built)
@@ -292,7 +323,7 @@ def test_a_same_footprint_alternative_with_too_little_stock_is_no_swap(orderable
     assert by["R1"]["class"] == "no_alternative" and by["R1"]["alternatives"] == []      # 2 in stock for a build of 5
 
 
-def test_recheck_keeps_a_fresh_library_fresh_when_the_code_is_unchanged(orderable, monkeypatch):
+def test_recheck_keeps_a_fresh_library_fresh_when_the_code_is_unchanged(orderable, monkeypatch, stamps_are_later):
     import check_availability
 
     def check(project, keys=None):
@@ -303,6 +334,7 @@ def test_recheck_keeps_a_fresh_library_fresh_when_the_code_is_unchanged(orderabl
     assert not bridge.library_stale(orderable)
     order_check.order_check(orderable, recheck=True)
     assert not bridge.library_stale(orderable)                                  # supply-log is newer again, the manifest follows
+    manifest_at(orderable, -10)                                                 # the new stock row below is the later write
     store.add_supply(orderable, "R1", "LCSC", 800, 0.01, "0603WAF1002T5E", source="LCSC C999", code="C999", exact=True)
     assert not partlib_order.restamp_if_same(orderable) and bridge.library_stale(orderable)     # another code: a design change
 

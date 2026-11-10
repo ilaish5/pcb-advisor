@@ -246,7 +246,7 @@ function setAgentHTML(c) {
       + `<datalist id="set-model-list">${((cur && cur.models) || []).map(m => `<option value="${esc(m.id)}">${esc(m.name || m.id)}</option>`).join('')}</datalist>`, {id: 'set-model'}) +
     setRow('Approvals', setSel('set-autonomy', 'data-set="agent.autonomy"', [
       ['ask', 'Ask me for every change'],
-      ['important', 'Ask only for important changes (parts, Altium, ordering)'],
+      ['important', 'Ask for anything that changes the design or the build'],
       ['auto', 'Do everything except ordering and deleting']], (c.agent && c.agent.autonomy) || 'important'), {id: 'set-autonomy'}) +
     doctorHTML() +
     setRow('Language', setSel('set-language', 'data-set="user.language"', PG_LANGS, lang), {id: 'set-language'}) +

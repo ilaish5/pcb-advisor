@@ -1380,7 +1380,7 @@ class Handler(BaseHTTPRequestHandler):
             t = q.get("type", "")
             try:
                 if t == "trace_width":
-                    res = calc.trace_width_ipc2152(
+                    res = calc.trace_width_ipc2221(
                         float(q.get("current", q.get("amps", 1.0))),
                         float(q.get("rise", 10.0)),
                         float(q.get("oz", 1.0)),
@@ -1402,7 +1402,7 @@ class Handler(BaseHTTPRequestHandler):
                     res = calc.via_current(
                         float(q.get("drill_mm", q.get("drill", 0.3))),
                         float(q.get("rise", 10.0)),
-                        float(q.get("plating_um", 25.0)),
+                        float(q.get("plating_um", calc.PLATING_UM_JLC)),
                     )
                 elif t == "microstrip":
                     res = calc.microstrip_impedance(
@@ -2274,7 +2274,7 @@ class Handler(BaseHTTPRequestHandler):
             t = data.get("type", "")
             try:
                 if t == "trace_width":
-                    res = calc.trace_width_ipc2152(
+                    res = calc.trace_width_ipc2221(
                         float(data.get("current", data.get("amps", 1.0))),
                         float(data.get("rise", 10.0)),
                         float(data.get("oz", 1.0)),
@@ -2296,7 +2296,7 @@ class Handler(BaseHTTPRequestHandler):
                     res = calc.via_current(
                         float(data.get("drill_mm", data.get("drill", 0.3))),
                         float(data.get("rise", 10.0)),
-                        float(data.get("plating_um", 25.0)),
+                        float(data.get("plating_um", calc.PLATING_UM_JLC)),
                     )
                 elif t == "microstrip":
                     res = calc.microstrip_impedance(

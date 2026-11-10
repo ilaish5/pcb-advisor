@@ -99,12 +99,14 @@ def footprint_for(key):
         cx, pw, ph, bw, bh = DIODES[key]
         y = max(ph, bh) / 2 + 0.2
         silk = [_track(-cx, y, cx, y, "Top Overlay"), _track(-cx, -y, cx, -y, "Top Overlay")]
+        bx = -cx - pw / 2 - 0.16                                # cathode bar beyond pad 1 (inside the courtyard), as the symbol draws pin 1
+        silk.append(_track(bx, -y, bx, y, "Top Overlay"))
         return _finish(key, desc, [(1, -cx, 0, pw, ph), (2, cx, 0, pw, ph)], (bw, bh), silk)
     if key in SOT:
         pitch, cx, pw, ph, bw, bl = SOT[key]
         n = int(key[-1])
         if n == 3:
-            pads = [(1, -cx, pitch / 2, pw, ph), (2, -cx, -pitch / 2, pw, ph), (3, cx, 0, pw, ph)]
+            pads = [(1, -cx, pitch, pw, ph), (2, -cx, -pitch, pw, ph), (3, cx, 0, pw, ph)]   # JEDEC TO-236: pins 1-2 are 2 pitches apart
         else:
             rows = [pitch, 0, -pitch]
             pads = [(i + 1, -cx, rows[i], pw, ph) for i in range(3)]
@@ -179,7 +181,8 @@ def _pin(num, name, ptype, orient, x, y, length):
 
 
 def two_pin_symbol(prefix, hint, pins):
-    """R / C / L / diode / generic two-pin shapes. pins: [(num,name)] in order; returns (pins, gfx, issues)."""
+    """R / C / L / diode / generic two-pin shapes. pins: [(num,name)] in order; returns (pins, gfx, issues),
+    or None when the sheet's cathode is not pin 1 (the generated footprint would disagree)."""
     (n1, nm1), (n2, nm2) = (list(pins) + [("1", "1"), ("2", "2")])[:2]
     issues = []
     left, right = (n1, nm1), (n2, nm2)
@@ -187,12 +190,17 @@ def two_pin_symbol(prefix, hint, pins):
     if prefix in ("D", "LED", "TVS", "ZD"):
         shape = "diode"
         # SOD/chip diode pad 1 is the cathode; sheet pin names A/K override
-        names = {nm1.upper(): (n1, nm1), nm2.upper(): (n2, nm2)}
+        role = lambda nm: {"A": "A", "AN": "A", "ANODE": "A", "+": "A", "K": "K", "C": "K", "CAT": "K", "CATHODE": "K",
+                           "-": "K"}.get(nm.strip().upper(), nm.upper())
+        names = {role(nm1): (n1, nm1), role(nm2): (n2, nm2)}
         if {"A", "K"} <= set(names):
             left, right = names["A"], names["K"]
+            if right[0] != "1":                         # the generated footprint marks pad 1 as the cathode
+                return None
         else:
             left, right = (n2, nm2), (n1, nm1)
-            issues.append("diode: pin 1 drawn as cathode, check the datasheet")
+            issues.append("unverified: pin 1 drawn as the cathode (the netlist does not name A/K); "
+                          + ("LED polarity differs between makers, " if prefix == "LED" else "") + "check the datasheet")
     elif prefix in ("C",):
         shape = "cap"
     elif prefix in ("L", "FB"):
@@ -220,24 +228,40 @@ def two_pin_symbol(prefix, hint, pins):
 def transistor_symbol(name_hint, pins):
     """3-pin Q: gate/base left, drain/collector top, source/emitter bottom. pins: [(num,name)] or []."""
     issues = []
-    if not pins:
-        pins = [("1", "G"), ("2", "S"), ("3", "D")]
-        issues.append("transistor pins assumed 1=G 2=S 3=D, check the datasheet")
-    role = {}
-    for num, nm in pins:
+    role, names = {}, set()
+    for num, nm in pins:                  # the pin functions come only from the caller (netlist sheet), never from pad order
         u = (nm or "").upper()
-        role["g" if u in ("G", "B", "GATE", "BASE") else "d" if u in ("D", "C", "DRAIN", "COLLECTOR")
-             else "s" if u in ("S", "E", "SOURCE", "EMITTER") else "?"] = (num, nm)
-    if set(role) != {"g", "d", "s"}:
+        r = ("g" if u in ("G", "B", "GATE", "BASE") else "d" if u in ("D", "C", "DRAIN", "COLLECTOR")
+             else "s" if u in ("S", "E", "SOURCE", "EMITTER") else "?")
+        role[r] = (num, nm)
+        names.add("bjt" if u in ("B", "C", "E", "BASE", "COLLECTOR", "EMITTER") else "fet" if r != "?" else "")
+    if set(role) != {"g", "d", "s"} or len(names - {""}) != 1:
         return None
-    pch = bool(re.search(r"p[-_ ]?ch|pnp|p-?mos|\bp\b", name_hint or "", re.I))
+    bjt = "bjt" in names
+    h = name_hint or ""
+    if bjt:                               # polarity from the type; unknown polarity gets no arrow head
+        pol = "p" if re.search(r"\bpnp\b", h, re.I) else "n" if re.search(r"\bnpn\b", h, re.I) else ""
+    else:
+        pol = ("p" if re.search(r"\bp[-_ ]?ch(annel)?\b|\bp-?mos(fet)?\b|\bp\b", h, re.I)
+               else "n" if re.search(r"\bn[-_ ]?ch(annel)?\b|\bn-?mos(fet)?\b|\bn\b", h, re.I) else "")
+    if not pol:
+        issues.append(f"unverified: polarity ({'NPN or PNP' if bjt else 'N or P channel'}) not known, drawn without an "
+                      "arrow; check the datasheet")
     p = [_pin(role["g"][0], role["g"][1], "Passive", "eRotate180", -100, 0, 200),
          _pin(role["d"][0], role["d"][1], "Passive", "eRotate90", 0, 100, 200),
          _pin(role["s"][0], role["s"][1], "Passive", "eRotate270", 0, -100, 200)]
+    if bjt:
+        g = [["polyline", "1", "1", -100, 0, -40, 0], ["polyline", "1", "1", -40, -60, -40, 60],
+             ["polyline", "1", "1", -40, 20, 0, 60, 0, 100], ["polyline", "1", "1", -40, -20, 0, -60, 0, -100]]
+        if pol:                           # emitter arrow: out of the base for NPN, into it for PNP
+            g.append(["polygon", "1", "1", "1", -6, -54, -19, -24, -36, -41] if pol == "n" else
+                     ["polygon", "1", "1", "1", -34, -26, -4, -39, -21, -56])
+        return p, g, issues
     g = [["polyline", "1", "1", -100, 0, -40, 0], ["polyline", "1", "1", -40, -80, -40, 80],
          ["polyline", "1", "1", 0, -100, 0, 100]]
-    g.append(["polygon", "1", "1", "1", -5, 0, -35, 20, -35, -20] if pch else
-             ["polygon", "1", "1", "1", -35, 0, -5, 20, -5, -20])
+    if pol:
+        g.append(["polygon", "1", "1", "1", -5, 0, -35, 20, -35, -20] if pol == "p" else
+                 ["polygon", "1", "1", "1", -35, 0, -5, 20, -5, -20])
     return p, g, issues
 
 
@@ -289,8 +313,8 @@ def symbol_for(prefix, hint, sheet_pins, npads):
     n = len(sp) or npads
     pairs = [(p["num"], p["name"]) for p in sp]
     if n == 2:
-        a, b, c = two_pin_symbol(prefix, hint, pairs)
-        return a, b, c + issues
+        two = two_pin_symbol(prefix, hint, pairs)
+        return (two[0], two[1], two[2] + issues) if two else None
     if prefix == "Q" and n == 3:
         t = transistor_symbol(hint, pairs)
         if t:

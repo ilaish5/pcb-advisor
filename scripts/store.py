@@ -1062,9 +1062,10 @@ def decide(project, pid, decision, by="student"):
 #   ask        none (every proposal waits for Approve)
 #   important  ROUTINE ones are applied at once; IMPORTANT and CRITICAL wait            (default)
 #   auto       ROUTINE and IMPORTANT are applied; only CRITICAL waits
-# Levels: routine = passive values, BOM edits that do not choose a costed part, diagram, notes ...
-#         important = choosing or changing a part with an MPN/LCSC code (costs money), confirming the
-#         idea, anything that writes Altium files; critical = ordering/upload to the manufacturer,
+# Levels: routine = BOM edits that only describe a line (note, description, datasheet), diagram, notes ...
+#         important = a new BOM line, or a real change to what is built or connected (value, package, MPN/LCSC,
+#         manufacturer, refs, quantity, DNP, library), confirming the idea, anything that writes Altium files;
+#         critical = ordering/upload to the manufacturer,
 #         deleting data. An unknown kind is treated as important.
 AUTONOMY_MODES = ("ask", "important", "auto")
 DEFAULT_AUTONOMY = "important"
@@ -1075,8 +1076,30 @@ def autonomy():
     return mode if mode in AUTONOMY_MODES else DEFAULT_AUTONOMY
 
 
-def _real(v):
-    return isinstance(v, str) and v.strip() not in ("", "—", "-")
+# BOM fields that only describe a line: a change to one of them alters neither what is built nor how it is
+# connected. Every other field a BOM proposal touches (value, package, mpn, lcsc, manufacturer, refs, qty, dnp,
+# nobuy, library, footprint_lock, a rating such as voltage or tolerance, anything unknown) is "important".
+BOM_DESCRIPTIVE = ("description", "note", "notes", "datasheet", "role", "sheet",
+                   "stock", "unit_price", "library_type", "datasheet_url")
+# compared exactly apart from spaces: "1M" and "1m" are different values, and the stock check keys on the MPN as written
+BOM_CASE_SENSITIVE = ("value", "mpn")
+# keys of a proposal's `library` that only say where a model came from; symbol, footprint, step (the 3D model),
+# verify, accepted, pins_accepted and anything unknown change what is built or how it is trusted: "important"
+LIBRARY_DESCRIPTIVE = ("model_source", "issues")
+
+
+def _same_field(key, new, old):
+    """True when a proposed value is the one the line already has (spaces, case and an empty marker do not count)."""
+    def norm(v):
+        if isinstance(v, (list, tuple, set)):
+            return sorted((norm(x) for x in v), key=repr)
+        if isinstance(v, bool) or v is None:
+            return bool(v)
+        s = re.sub(r"\s+", "", str(v))
+        if s in ("", "—", "-"):
+            return False
+        return s if key in BOM_CASE_SENSITIVE else s.casefold()
+    return norm(new) == norm(old)
 
 
 def classify_proposal(prop):
@@ -1088,9 +1111,13 @@ def classify_proposal(prop):
         ch, before = prop.get("changes") or {}, prop.get("before") or {}
         if ch.get("deleted") or ch.get("remove"):
             return "critical"
-        for key in ("mpn", "lcsc"):          # a costed part is chosen (new line) or swapped
-            if _real(ch.get(key)) and str(ch[key]).strip() != str(before.get(key) or "").strip():
+        if prop.get("new"):                  # a new line adds a part to the BOM
+            return "important"
+        for key, val in ch.items():          # a real change to anything that is built or connected
+            if key not in BOM_DESCRIPTIVE and not _same_field(key, val, before.get(key)):
                 return "important"
+        if any(k not in LIBRARY_DESCRIPTIVE for k in (prop.get("library") or {})):
+            return "important"               # a symbol, footprint or 3D model that is merged into the library
         return "routine"
     if kind in ("idea_diagram", "description", "note", "rules", "rules_extra", "sheet", "diagram"):
         return "routine"

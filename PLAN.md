@@ -359,7 +359,7 @@ pin names and top/bottom net labels crowd and get cut to one letter (known limit
 
 `), round trip
    with the I3 reader, diff of the board's rules against the preset; CLI `pcb.py rules`.
-2. `scripts/calc.py`: IPC-2152 trace width, divider, LED resistor, via current, microstrip impedance; each answer
+2. `scripts/calc.py`: IPC-2221 trace width, divider, LED resistor, via current, microstrip impedance; each answer
    carries the formula and its source. CLI `pcb.py calc`.
 3. `scripts/library.py`: model search links, package mismatch check (BOM vs JLC vs datasheet), IntLib build script +
    README into `exports/`. CLI `pcb.py library`.

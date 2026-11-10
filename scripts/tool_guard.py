@@ -175,8 +175,12 @@ def _restore(snap):
     after = _zip_state(root, snap["extra"])
     for rel in sorted(set(before) | set(after)):
         b, a = before.get(rel), after.get(rel)
-        if b is not None and a is not None and b[:2] == a[:2]:
-            continue
+        if b is not None and a is not None:
+            if b[2] is not None and a[2] is not None:       # bytes are kept: they decide (same size and tick can still differ)
+                if b[2] == a[2]:
+                    continue
+            elif b[:2] == a[:2]:
+                continue
         path = root / rel
         if b is None:                           # new file: remove only code, the tool may write other files by itself
             if rel.endswith(CODE_SUFFIX):

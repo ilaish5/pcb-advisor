@@ -103,8 +103,8 @@ While a turn runs, type two more messages and press Enter after each. Expected: 
    button reads "Generate the outputs in Altium first"; pressing it runs the OutJob in Altium, then the zip is
    made again and the row turns Current. Without a linked project the button is disabled with an explanation.
 
-## 10. The installer (`install.ps1`, wave 3) — never run on Windows before
-This is the most important section: no line of `install.ps1` has run anywhere yet (the Mac has no PowerShell).
+## 10. The installer (`install.ps1`, wave 3) — one student install done, the cases below not recorded
+This is the most important section. `install.ps1` has run once on Windows as a simulated student install from GitHub (`%TEMP%\pcb inst one`, port 8978; see docs/E2E-2026-10-21.md and docs/STATUS-2026-10-23.md). That run left no results file, so the cases below (non-admin one-liner, no git, `install.bat`, repair on a second run) still need a recorded result each.
 Use a NEW folder for each run, never the clone from section 0. Before every run, in that PowerShell window:
 `$env:PCB_ADVISOR_HOME="$env:TEMP\pcb-inst-home"; $env:PCB_ADVISOR_PORT="8978"`
 (the owner's everyday copy may be running on 8931; the port variable keeps the test away from it).

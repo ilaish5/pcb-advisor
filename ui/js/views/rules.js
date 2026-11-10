@@ -245,7 +245,7 @@ const CALCS = [
   {id: 'via', title: 'Via current',
     fields: [{k: 'drill', label: 'Drill (mm)', step: 0.05, def: 0.3}, {k: 'rise', label: 'Temperature rise (°C)', step: 1, def: 10}],
     query: v => `type=via&drill_mm=${v.drill}&rise=${v.rise}`,
-    show: r => ({main: `${r.current_a} A`, sub: `maximum through the barrel (area ${r.barrel_area_mil2} mil²)`})},
+    show: r => ({main: `${r.current_a} A`, sub: `maximum through the barrel (area ${r.barrel_area_mil2} mil², assumed ${r.plating_thickness_um} µm plating)`})},
   {id: 'ms', title: 'Microstrip impedance',
     fields: [{k: 'w', label: 'Trace width (mm)', step: 0.05, def: 0.3}, {k: 'h', label: 'Height above plane (mm)', step: 0.05, def: 0.2}, {k: 'er', label: 'Dielectric constant', step: 0.1, def: 4.4}],
     query: v => `type=microstrip&width_mm=${v.w}&height_mm=${v.h}&er=${v.er}`,
@@ -263,7 +263,9 @@ function calcOutHTML(o) {
   if (!o) return '';
   if (o.note) return `<p class="muted">${esc(o.note)}</p>`;
   if (o.error) return `<p class="warn-t">${esc(o.error)}</p>`;
-  return `<p class="calc-main"><b>${esc(o.main)}</b> <span class="muted">${esc(o.sub)}</span></p><p class="calc-src muted">${esc(o.formula)}<br>${esc(o.source)}</p>`;
+  const warns = (o.warnings || []).map(w => `<p class="calc-warn" role="alert"><b>Check this:</b> ${esc(w)}</p>`).join('');
+  const lim = o.limits ? `<br>${esc(o.limits)}` : '';
+  return `<p class="calc-main"><b>${esc(o.main)}</b> <span class="muted">${esc(o.sub)}</span></p>${warns}<p class="calc-src muted">${esc(o.formula)}<br>${esc(o.source)}${lim}</p>`;
 }
 function calcPaint(id) {
   const box = $('#res-' + id);
@@ -286,7 +288,7 @@ async function runCalculator(d) {      // d.calc = the calculator id; the inputs
     res = {error: 'The calculator did not answer. Try again.'};
   }
   if (seq !== calcSeq[c.id]) return;   // a newer entry is already on its way
-  calcOut[c.id] = res && !res.error ? {...c.show(res), formula: res.formula, source: res.source} : {error: (res && res.error) || 'No answer.'};
+  calcOut[c.id] = res && !res.error ? {...c.show(res), formula: res.formula, source: res.source, limits: res.limits, warnings: res.warnings} : {error: (res && res.error) || 'No answer.'};
   calcPaint(c.id);
 }
 function calcSchedule(id) {            // about 300 ms after the last keystroke

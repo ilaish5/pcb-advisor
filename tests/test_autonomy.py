@@ -12,16 +12,19 @@ import workspace
 from test_server import server, post  # noqa: F401  (server is a fixture)
 
 
-def prop(kind="bom", changes=None, before=None, new=False):
-    return {"kind": kind, "line": "X1", "changes": changes or {}, "before": before or {}, "new": new}
+def prop(kind="bom", changes=None, before=None, new=False, library=None):
+    return {"kind": kind, "line": "X1", "changes": changes or {}, "before": before or {}, "new": new,
+            "library": library or None}
 
 
 CLASSIFY = [
-    (prop(changes={"value": "10k"}, before={"value": "1k"}), "routine"),
-    (prop(changes={"package": "0603", "value": "1uF"}, new=True), "routine"),
-    (prop(changes={"note": "check", "dnp": True}), "routine"),
+    # a change to what is built or connected waits for the student (was "routine" before: value, package, new line, refs, dnp)
+    (prop(changes={"value": "10k"}, before={"value": "1k"}), "important"),
+    (prop(changes={"package": "0603", "value": "1uF"}, new=True), "important"),
+    (prop(changes={"note": "check", "dnp": True}), "important"),
+    (prop(changes={"note": "check"}), "routine"),
     (prop(changes={"datasheet": "x.pdf"}), "routine"),
-    (prop(changes={"refs": ["R1"]}), "routine"),
+    (prop(changes={"refs": ["R1"]}), "important"),
     (prop(changes={"mpn": "STM32G031F6P6"}, new=True), "important"),            # new IC
     (prop(changes={"mpn": "AP2112K"}, before={"mpn": "LM1117"}), "important"),  # MPN change
     (prop(changes={"mpn": "AP2112K"}, before={"mpn": "AP2112K"}), "routine"),   # same MPN again
@@ -43,13 +46,84 @@ def test_classification_table(p, level):
     assert store.classify_proposal(p) == level
 
 
+@pytest.mark.parametrize("field,new,old", [
+    ("value", "10k", "1k"), ("package", "0805", "0603"), ("footprint", "R0805", "R0603"),
+    ("mpn", "AP2112K", "LM1117"), ("lcsc", "C2", "C1"), ("manufacturer", "TI", "ST"),
+    ("qty", 4, 2), ("refs", ["R1", "R2"], ["R1"]), ("dnp", True, False), ("nobuy", True, None),
+    ("library", "std", "review"), ("footprint_lock", "FP-B", "FP-A"),
+    ("voltage", "50V", "16V"), ("tolerance", "1%", "5%"), ("power", "0.25W", "0.1W"),
+    ("anything_unknown", "x", "y"),
+])
+def test_a_real_change_to_a_built_field_is_important(field, new, old):
+    assert store.classify_proposal(prop(changes={field: new}, before={field: old})) == "important"
+    assert store.classify_proposal(prop(changes={field: new})) == "important"       # the field was not set before
+
+
+@pytest.mark.parametrize("field", ["description", "note", "notes", "datasheet", "role", "sheet",
+                                   "stock", "unit_price", "library_type", "datasheet_url"])
+def test_a_descriptive_field_stays_routine(field):
+    assert store.classify_proposal(prop(changes={field: "new text"}, before={field: "old text"})) == "routine"
+
+
+@pytest.mark.parametrize("field,new,old", [
+    ("value", "10k", "10k"), ("value", " 10 k ", "10k"), ("package", "0603", " 0603 "), ("package", "sot-23", "SOT-23"),
+    ("manufacturer", "yageo", "Yageo"), ("lcsc", "c123", "C123"), ("refs", ["R2", "R1"], ["R1", "R2"]),
+    ("qty", 3, "3"), ("dnp", False, None), ("footprint_lock", "", None), ("mpn", "—", ""),
+])
+def test_a_no_op_change_stays_routine(field, new, old):
+    assert store.classify_proposal(prop(changes={field: new}, before={field: old})) == "routine"
+
+
+def test_a_library_change_is_important_even_with_a_descriptive_bom_change():
+    assert store.classify_proposal(prop(changes={"note": "n"}, library={"footprint": "R0805"})) == "important"
+    assert store.classify_proposal(prop(changes={}, library={"symbol": True})) == "important"
+
+
+@pytest.mark.parametrize("key", ["symbol", "footprint", "step", "verify", "accepted", "pins_accepted", "unknown_key"])
+def test_a_library_key_that_affects_the_build_is_important(key):
+    assert store.classify_proposal(prop(changes={"note": "n"}, library={key: True})) == "important"
+
+
+def test_a_descriptive_library_note_stays_routine():
+    assert store.classify_proposal(prop(changes={"note": "n"}, library={"model_source": "Ultra Librarian"})) == "routine"
+    assert store.classify_proposal(prop(changes={"note": "n"}, library={"issues": "none"})) == "routine"
+    assert store.classify_proposal(prop(changes={"note": "n"}, library={})) == "routine"
+
+
+def test_a_list_mixing_none_and_text_does_not_raise():
+    assert store._same_field("refs", ["R1", None], [None, "R1"])
+    assert store.classify_proposal(prop(changes={"refs": ["R1", None]}, before={"refs": ["R1", "R2"]})) == "important"
+
+
+def test_case_matters_for_a_value_and_an_mpn():
+    assert store.classify_proposal(prop(changes={"value": "1M"}, before={"value": "1m"})) == "important"
+    assert store.classify_proposal(prop(changes={"mpn": "ap2112k"}, before={"mpn": "AP2112K"})) == "important"
+
+
+def test_clearing_a_set_field_is_a_change():
+    assert store.classify_proposal(prop(changes={"mpn": "—"}, before={"mpn": "AP2112K"})) == "important"
+    assert store.classify_proposal(prop(changes={"dnp": False}, before={"dnp": True})) == "important"
+
+
+def test_one_real_change_among_descriptive_ones_makes_it_important():
+    p = prop(changes={"note": "n", "value": "2k"}, before={"note": "", "value": "1k"})
+    assert store.classify_proposal(p) == "important"
+    assert store.classify_proposal(prop(changes={"note": "n", "value": "1k"}, before={"value": "1k"})) == "routine"
+
+
+def test_a_new_line_is_important_and_a_delete_stays_critical():
+    assert store.classify_proposal(prop(changes={"note": "n"}, new=True)) == "important"
+    assert store.classify_proposal(prop(changes={"deleted": True, "value": "1k"}, before={"value": "1k"})) == "critical"
+    assert store.classify_proposal(prop(changes={"remove": True})) == "critical"
+
+
 @pytest.mark.parametrize("mode,level,auto", [
     ("ask", "routine", False), ("ask", "important", False), ("ask", "critical", False),
     ("important", "routine", True), ("important", "important", False), ("important", "critical", False),
     ("auto", "routine", True), ("auto", "important", True), ("auto", "critical", False),
 ])
 def test_what_each_mode_lets_through(mode, level, auto):
-    p = {"routine": prop(changes={"value": "1"}), "important": prop(changes={"mpn": "A1"}),
+    p = {"routine": prop(changes={"note": "1"}), "important": prop(changes={"mpn": "A1"}),
          "critical": prop(kind="order")}[level]
     assert store.may_auto_apply(p, mode) is auto
 
@@ -77,22 +151,32 @@ def _first_with_value(project):
     return next(l for l in store.bom_lines(project) if l.get("value"))
 
 
-def test_important_mode_applies_a_routine_proposal_and_holds_an_ic(server, lte, monkeypatch):
+def test_important_mode_applies_a_note_and_holds_a_value_change_and_an_ic(server, lte, monkeypatch):
     l = _first_with_value(lte)
     _agent_says(monkeypatch, [
-        {"type": "bom.propose", "line": l["key"], "changes": {"value": "123k"}, "reason": "r"},
+        {"type": "bom.propose", "line": l["key"], "changes": {"note": "checked by agent"}, "reason": "r"},
         {"type": "bom.propose", "line": "U99", "new": True, "changes": {"mpn": "NEWIC1", "package": "SOT-23"}},
     ])
     code, st = post(server, "/api/chat", {"text": "go"}, lte)
     assert code == 200
     by_line = {p["line"]: p for p in st["proposals"]}
     assert by_line[l["key"]]["status"] == "approved" and by_line[l["key"]]["decided_by"] == "auto"
-    assert _bom(lte, l["key"])["value"] == "123k"
+    assert _bom(lte, l["key"])["note"] == "checked by agent"
     assert by_line["U99"]["status"] == "pending"                       # an IC waits
     assert not any(x["key"] == "U99" for x in store.bom_lines(lte))
     # the log is the one an Approve click writes
     entry = [e for e in store.read_jsonl(store.pdir(lte) / "bom-log.jsonl") if e.get("proposal") == by_line[l["key"]]["id"]]
-    assert entry and entry[0]["by"] == "agent-approved" and entry[0]["before"]["value"] == l["value"]
+    assert entry and entry[0]["by"] == "agent-approved" and "note" in entry[0]["before"]
+
+
+def test_important_mode_holds_a_value_change_until_approved(server, lte, monkeypatch):
+    l = _first_with_value(lte)
+    _agent_says(monkeypatch, [{"type": "bom.propose", "line": l["key"], "changes": {"value": "123k"}, "reason": "r"}])
+    code, st = post(server, "/api/chat", {"text": "go"}, lte)
+    assert code == 200 and st["proposals"][-1]["status"] == "pending"
+    assert _bom(lte, l["key"])["value"] == l["value"]
+    code, st = post(server, "/api/proposals/batch", {"ids": [st["proposals"][-1]["id"]], "decision": "approved"}, lte)
+    assert code == 200 and st["results"][0]["ok"] and _bom(lte, l["key"])["value"] == "123k"     # the card's Approve works
 
 
 def test_ask_mode_keeps_every_proposal_pending(server, lte, monkeypatch):
