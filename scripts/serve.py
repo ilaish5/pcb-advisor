@@ -74,9 +74,13 @@ COMPACTING_LOCK = threading.Lock()
 ALLOW_LOCK = threading.Lock()
 
 
-def _turn_start(key):
+def _new_turn():
     t = time.time()
-    turn = {"started": t, "last": t, "steps": [], "current": None, "cancel": threading.Event()}
+    return {"started": t, "last": t, "steps": [], "current": None, "cancel": threading.Event()}
+
+
+def _turn_start(key):
+    turn = _new_turn()
     with TURNS_LOCK:
         TURNS[key] = turn
     return turn
@@ -696,7 +700,111 @@ STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.s
                "altium.route_pcb": "Routing the board", "netlist.write": "Writing the netlist"}
 
 
+def _warn_tail(res):
+    """" (N warnings: first four)" when the bridge result has warnings, else "": the same words in the chat and on the step buttons."""
+    w = res.get("warnings") or []
+    return f" ({len(w)} warnings: {'; '.join(w[:4])})" if w else ""
+
+
+def draw_summary(res):
+    return (f"{res['parts']} parts and {len(res['nets'])} nets drawn on {len(res['sheets'])} sheet(s), saved and checked against the netlist"
+            + _warn_tail(res))
+
+
+def place_summary(res):
+    return (f"{len(res['placed'])} parts placed" + (", outline created" if res["outline_created"] else ", outline kept")
+            + ", saved and checked against the netlist" + _warn_tail(res))
+
+
+def route_summary(res):
+    return f"{res['summary']}" + _warn_tail(res)
+
+
+STEP_SUMMARY = {"draw": draw_summary, "place": place_summary, "route": route_summary}
+NEEDS_REPLACE = re.compile(r"already has \d+ objects \(parts, wires, labels\)"                 # draw: bridge.draw_schematic / DRAWCHECK
+                           r"|the board already has \d+ (?:parts or copper objects|tracks, vias or pours)")   # place / route: PCBCHECK
+
+
+def needs_replace(exc):
+    """True when the bridge refused only because the drawing / placement / copper is already there and replace was off. The refusal
+    is a plain BridgeError (no code): this one function is the only place that knows its wording (pinned by a test)."""
+    return NEEDS_REPLACE.search(str(exc)) is not None
+
+
+# Altium runs one script at a time and every operation shares one exchange folder: a second operation started while a draw / place /
+# route is running stops it or reads its files half written. The bridge's own lock only covers a single command batch, so whoever
+# starts an operation (a step button, another Altium button, a chat turn applying its actions) holds this for all of it.
+STEP_LOCK = threading.Lock()
+ALTIUM_BUSY = "Altium is still working on another step; wait for it to finish and try again."
+STEP_NAMES = {"draw": "Drew the schematic", "place": "Placed the parts", "route": "Routed the board"}
+
+
+def altium_start(project):
+    """A button is about to drive Altium: '' with STEP_LOCK held (the caller releases it), or why it cannot start now. The agent may
+    look at Altium while it answers, and that stops a running script, so no button starts while the chat answers for this project."""
+    with TURNS_LOCK:              # with the checks in /api/chat under the same lock: a turn and a button operation never start together
+        if any(k[0] == project for k in TURNS):
+            return "The chat is still answering for this project and may be using Altium; wait for it to finish."
+        return "" if STEP_LOCK.acquire(blocking=False) else ALTIUM_BUSY
+
+
+def run_step_button(project, sess, step, data):
+    """The Draw / Place / Route buttons: the click is the consent, so no wording check. Returns (status, body)."""
+    from altium import bridge
+    busy = altium_start(project)
+    if busy:
+        return 409, {"error": busy}
+    try:
+        replace = _truthy(data.get("replace"))
+        try:
+            if step == "draw":
+                res = bridge.draw_schematic(project, data.get("sheet") or None, replace=replace)
+            elif step == "place":
+                res = bridge.place_pcb(project, replace=replace)
+            else:               # keep_partial is never set here: half a route stays only when the student agreed to that in words (chat)
+                res = bridge.route_pcb(project, replace=replace)
+        except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
+            body = {"error": str(exc)}
+            if needs_replace(exc) and not replace:
+                body["needs_replace"] = True
+            return 400, body
+        except Exception as exc:      # a bug in the planning code is an answer too, not a dropped connection; the page reads the files again
+            return 500, {"error": f"The step stopped on an unexpected error ({type(exc).__name__}: {exc}). Look at the file in Altium before "
+                                  "trying again; whatever it changed was copied to .advisor-backup first."}
+        summary = STEP_SUMMARY[step](res)
+        # the agent reads this conversation on its next turn: a note there says the step is done, so it does not offer it again.
+        # "applied" makes it an applied action like the chat's: consent given in words before it is used up (earlier_student_messages)
+        try:
+            applied = [f"{_CONSENT_ACTION[step]}: {summary}"]
+            note = {"ts": now(), "role": "agent", "by": "button", "applied": applied,
+                    "text": f"{STEP_NAMES[step]} in Altium because the student pressed the button: {summary}"}
+            if warned_map(applied):       # the chip in the chat is amber, as for the same result from a chat turn
+                note["warned"] = warned_map(applied)
+            say(project, sess, note)
+        except Exception as exc:      # Altium did the step: a note that could not be written must not turn that into a failure
+            print(f"(the note about the {step} button step was not written: {exc})")
+        return 200, {**res, "summary": summary, "warnings": list(res.get("warnings") or [])}
+    finally:
+        STEP_LOCK.release()
+
+
+def _uses_altium(kind):
+    return isinstance(kind, str) and (kind.startswith("altium.") or kind == "library.build")
+
+
 def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None):
+    """The server is the only writer: see _apply_actions. A turn whose actions drive Altium holds STEP_LOCK while they run; when
+    something else holds it, those actions are refused and the rest still applies."""
+    wants = any(_uses_altium(a.get("type")) for a in actions or [] if isinstance(a, dict))
+    held = wants and STEP_LOCK.acquire(blocking=False)
+    try:
+        return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held)
+    finally:
+        if held:
+            STEP_LOCK.release()
+
+
+def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, altium_free=True):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
     approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
@@ -723,6 +831,9 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
         if cancel is not None and cancel.is_set():      # Stop: what has not started does not run (a running Altium step is not interrupted)
             refused.append(f"{kind}: stopped by the student before it ran")
             continue
+        if _uses_altium(kind) and not altium_free:
+            refused.append(f"{kind}: not run. Another step is still running in Altium (started with a button); try again when it has finished")
+            continue                                # two Altium operations at once would write the same files
         if on_step and kind in STEP_LABELS:        # the slow steps show in the chat's progress line
             on_step(STEP_LABELS[kind])
         try:
@@ -816,9 +927,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
                     continue
-                applied.append(f"{kind}: {res['parts']} parts and {len(res['nets'])} nets drawn on {len(res['sheets'])} sheet(s), "
-                               "saved and checked against the netlist"
-                               + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res["warnings"] else ""))
+                applied.append(f"{kind}: " + draw_summary(res))
             elif kind in ("altium.place_pcb", "altium.route_pcb"):
                 # the agent places / routes the board in Altium only when the student said so in their own words, separately for
                 # each (asked first: do it yourself or should I?). replace needs that too and never happens by default.
@@ -837,13 +946,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
                     continue
-                if step == "place":
-                    applied.append(f"{kind}: {len(res['placed'])} parts placed" + (", outline created" if res["outline_created"] else ", outline kept")
-                                   + ", saved and checked against the netlist"
-                                   + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res["warnings"] else ""))
-                else:
-                    applied.append(f"{kind}: {res['summary']}"
-                                   + (f" ({len(res['warnings'])} warnings: {'; '.join(res['warnings'][:4])})" if res.get("warnings") else ""))
+                applied.append(f"{kind}: " + STEP_SUMMARY[step](res))
             elif kind in ALTIUM_ACTIONS:
                 from altium import bridge
                 # routine: new files only, and whatever it modifies is copied to .advisor-backup first
@@ -1701,43 +1804,51 @@ class Handler(BaseHTTPRequestHandler):
             source_file = data.get("file") or data.get("source")
             about = None if source_file else chat_about(data.get("about"))
             tkey = (proj, sess)
-            with TURNS_LOCK:
+            with TURNS_LOCK:       # the checks and the registration together: a step button never slips in between them
                 running = tkey in TURNS
+                stepping = STEP_LOCK.locked()
+                if not running and not stepping:
+                    turn = TURNS[tkey] = _new_turn()
             if running:            # before saving: the client queue resends it, so it must not be stored twice
                 return self._send(409, {"error": "this conversation is still answering"})
-            user_msg = {"ts": now(), "role": "user", "text": text}
-            if source_file:
-                user_msg["source"] = source_file
-            if about:
-                user_msg["about"] = about
-            generated = _truthy(data.get("generated"))      # a button wrote this text: the reply language follows what the student typed
-            if generated:
-                user_msg["generated"] = True
-            say(proj, sess, user_msg)
-            m = model.build(project=proj, session=sess)
-            ask = text
-            row = next((r for r in m["sessions"] if r["id"] == sess), {})
-            if source_file:
-                src_text = ""
-                try:
-                    src_text = sources.text_of(source_file, folder=model.project_dir(proj) / "sources")
-                except Exception:
-                    pass
-                if src_text:
-                    ask = (f"[this conversation is about file '{source_file}'; its content]\n"
-                           f"{src_text[:12000]}\n\n{text}")
-                else:
-                    ask = f"[this conversation is about file '{source_file}']\n\n{text}"
-            elif about:
-                ask = about_context(proj, about) + text
-            elif row.get("anchor"):
-                ref = (store.bom_lines(proj) and next(
-                    (l["refs"][0] for l in store.bom_lines(proj) if l["key"] == row["anchor"] and l.get("refs")), None))
-                ctx = model.part_context(proj, ref) if ref else None
-                if ctx:
-                    ask = ("[this conversation is about one part; its context]\n"
-                           f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
-            turn = _turn_start(tkey)
+            if stepping:           # the agent may look at Altium while it answers, and that stops the script that is running there
+                return self._send(409, {"error": "Altium is busy with another step; send this again when it has finished"})
+            try:
+                user_msg = {"ts": now(), "role": "user", "text": text}
+                if source_file:
+                    user_msg["source"] = source_file
+                if about:
+                    user_msg["about"] = about
+                generated = _truthy(data.get("generated"))      # a button wrote this text: the reply language follows what the student typed
+                if generated:
+                    user_msg["generated"] = True
+                say(proj, sess, user_msg)
+                m = model.build(project=proj, session=sess)
+                ask = text
+                row = next((r for r in m["sessions"] if r["id"] == sess), {})
+                if source_file:
+                    src_text = ""
+                    try:
+                        src_text = sources.text_of(source_file, folder=model.project_dir(proj) / "sources")
+                    except Exception:
+                        pass
+                    if src_text:
+                        ask = (f"[this conversation is about file '{source_file}'; its content]\n"
+                               f"{src_text[:12000]}\n\n{text}")
+                    else:
+                        ask = f"[this conversation is about file '{source_file}']\n\n{text}"
+                elif about:
+                    ask = about_context(proj, about) + text
+                elif row.get("anchor"):
+                    ref = (store.bom_lines(proj) and next(
+                        (l["refs"][0] for l in store.bom_lines(proj) if l["key"] == row["anchor"] and l.get("refs")), None))
+                    ctx = model.part_context(proj, ref) if ref else None
+                    if ctx:
+                        ask = ("[this conversation is about one part; its context]\n"
+                               f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
+            except BaseException:
+                _turn_end(tkey)
+                raise
             try:             # _turn_end runs exactly once, whatever fails between the start and the end of apply_actions
                 guard = tool_guard.begin()
                 BUSY["chat"] += 1
@@ -2018,12 +2129,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/library/build":
             from altium import bridge
+            busy = altium_start(proj)
+            if busy:
+                return self._send(409, {"error": busy})
             try:
                 res = bridge.build_library(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
             except OSError as exc:
                 return self._send(500, {"error": f"the library build failed: {exc}"})
+            finally:
+                STEP_LOCK.release()
             return self._send(200, {**res, "issues_lines": library_issue_count(proj)})
 
         if path == "/api/skill":
@@ -2288,21 +2404,35 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/altium/create":
             from altium import bridge
+            busy = altium_start(proj)
+            if busy:
+                return self._send(409, {"error": busy})
             try:
                 res = bridge.create(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
+            finally:
+                STEP_LOCK.release()
             return self._send(200, {**_altium_state(proj), "warning": res.get("skeleton_error", "")})
+
+        if path in ("/api/altium/draw-schematic", "/api/altium/place", "/api/altium/route"):
+            code, body = run_step_button(proj, sess, path.rsplit("/", 1)[1].replace("draw-schematic", "draw"), data)
+            return self._send(code, body)
 
         if path in ("/api/altium/import-rules", "/api/altium/run-outjob"):
             from altium import bridge
             blocked = store.manufacturing_block(proj) if path.endswith("outjob") else ""
             if blocked:
                 return self._send(409, {"error": blocked})
+            busy = altium_start(proj)
+            if busy:
+                return self._send(409, {"error": busy})
             try:
                 res = bridge.import_rules(proj) if path.endswith("rules") else bridge.run_outjob(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
+            finally:
+                STEP_LOCK.release()
             return self._send(200, res)
 
         if path == "/api/update":

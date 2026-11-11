@@ -304,6 +304,66 @@ const pvZoomHTML = kind => `<div class="pv-zoom" role="group" aria-label="Zoom">
   btn('', {icon: 'zoomin', size: 'sm', title: 'Zoom in', act: kind + '-zoom-in'}) +
   btn('', {icon: 'fit', size: 'sm', title: 'Fit to view', act: kind + '-zoom-fit'}) + '</div>';
 
+/* ---------- the Altium step buttons: the click is the consent (the agent asks in words instead) ---------- */
+const PV_STEPS = {
+  draw: {url: '/api/altium/draw-schematic', page: 'sch', doing: 'Drawing', ask: 'Replacing redraws every sheet that already has a drawing, from the netlist; each file as it is now is copied to .advisor-backup first.', label: 'Draw in Altium', again: 'Replace the existing drawing', busy: 'Altium is drawing the schematic. It may take a minute and flash while it works.',
+         title: 'Altium draws the netlist on the schematic sheet, with the parts from the project library, and the saved sheet is checked against the netlist. Any file it changes is copied to .advisor-backup first.'},
+  place: {url: '/api/altium/place', page: 'pcb', doing: 'Placing', ask: 'Replacing removes the parts and copper on the board and places again; the file as it is now is copied to .advisor-backup first.', label: 'Place parts', again: 'Replace the existing placement', busy: 'Altium is placing the parts. It may take a minute and flash while it works.',
+          title: 'Altium places the parts of the netlist on the PcbDoc, and makes the board outline from the board size when there is none. The saved board is checked. The PcbDoc is copied to .advisor-backup first.'},
+  route: {url: '/api/altium/route', page: 'pcb', doing: 'Routing', ask: 'Replacing removes the tracks, vias and pours and routes again; the file as it is now is copied to .advisor-backup first.', label: 'Route board', again: 'Replace the existing routes', busy: 'Altium is routing the board. Routing can take a couple of minutes and Altium will flash while it works.',
+          title: 'Draws the tracks and vias on the placed board, plus a ground pour when it can, then checks the result with the design rule check. The PcbDoc is copied to .advisor-backup before it draws, and put back if a check fails.'},
+};
+let pvBusy = '';             // the step Altium is working on now: its line stays on the page until the answer comes
+let pvNote = {};             // page ('sch' | 'pcb') -> {kind, text, warnings, replace}: what the last step answered, kept until dismissed
+function pvAltiumLinked() {       // only when an Altium project is linked; the link is read once, then the view redraws
+  if (!ALTIUM_DATA && !ALTIUM_ERR && typeof loadAltium === 'function') loadAltium().then(() => { if (ALTIUM_DATA && ALTIUM_DATA.linked) renderCenter(true); });
+  return !!(ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file);
+}
+function pvStepBtn(step) {
+  const c = PV_STEPS[step];
+  return pvAltiumLinked() ? btn(pvBusy === step ? c.doing : c.label, {kind: 'line', act: 'altium-step', step, title: c.title, disabled: pvBusy ? true : undefined}) : '';
+}
+function pvStepNote(page) {       // under the header: Altium is working, or what the last step answered
+  const busy = pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${loadingLine(PV_STEPS[pvBusy].busy)}</div>` : '';
+  const n = pvNote[page];
+  if (busy || !n) return busy;
+  const acts = (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
+    btn(n.replace ? 'Keep it' : 'Dismiss', {size: 'sm', act: 'altium-step-dismiss', page});
+  const warns = (n.warnings || []).slice(4).map(w => `<br>Warning: ${esc(w)}`).join('');
+  return `<div class="pv-note"><div class="note ${n.kind}" role="${n.kind === 'bad' ? 'alert' : 'status'}"><span>${esc(n.text)}${warns}</span><span class="acts">${acts}</span></div></div>`;
+}
+async function pvRunStep(step, replace) {
+  const c = PV_STEPS[step];
+  if (pvBusy) return;
+  pvBusy = step;
+  delete pvNote[c.page];
+  renderCenter(true);
+  let r = null, lost = false;
+  try { r = await api(c.url, {replace: !!replace}, {soft: true}); } catch (err) { lost = true; }
+  pvBusy = '';
+  if (r && r.needs_replace) {
+    // never replaced without a second click: the note says what is there and offers it. The first sentence says what is there; the rest is worded for the chat
+    pvNote[c.page] = {kind: 'warn', text: r.error.split('. ')[0].replace(/\.$/, '') + '. ' + c.ask, replace: step};
+  } else {
+    if (lost) pvNote[c.page] = {kind: 'bad', text: 'Lost contact with the server while Altium was working. The step may still be running or may have finished: look at the board in Altium, and at the chat for its result, before starting it again.'};
+    else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: (r && r.error) || 'no answer from the server'};
+    else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (r.summary || 'done.'), warnings: r.warnings || []};
+    // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
+    try { await refresh(true); } catch (err) { /* the note still says what happened */ }
+    if (typeof loadAltium === 'function') loadAltium(true);      // a draw can add a sheet to the project
+    svgCache = {key: '', text: ''}; pvSchErr = ''; pcbSvgCache = {key: '', text: ''}; pvPcbErr = '';       // the picture is read again
+  }
+  renderCenter(true);
+}
+onAct('altium-step', async (el, d, e) => {
+  if (el.disabled || !PV_STEPS[d.step]) return;
+  await pvRunStep(d.step, d.replace === '1');
+});
+onAct('altium-step-dismiss', async (el, d, e) => {
+  delete pvNote[d.page];
+  renderCenter(true);
+});
+
 function schHTML(container) {
   const sheets = S.sheets || [];
   if (!sheets.length) return `<div class="pv">${viewHeader({title: 'Schematic'})}${emptyState('No schematic yet', 'The agent draws the sheets once the parts are chosen.')}</div>`;
@@ -315,7 +375,7 @@ function schHTML(container) {
   const tabs = sheets.length > 1 ? `<div class="pv-tabs" role="tablist" aria-label="Sheets">${sheets.map(s =>
     `<button type="button" role="tab" class="pv-tab" aria-selected="${s.id === sheetId}" tabindex="${s.id === sheetId ? 0 : -1}" data-act="sch-sheet" data-sheet="${esc(s.id)}" title="${esc(pvSheetLabel(s) + (s.altium ? ' (read from Altium)' : ' (plan)'))}">${esc(pvTabLabel(s, sheets))}</button>`).join('')}</div>` : '';
   return `<div class="pv" data-pv="sch">` +
-    viewHeader({title: 'Schematic', meta: metaLine([{n: sheets.length, label: sheets.length === 1 ? 'sheet' : 'sheets'}])}) + tabs +
+    viewHeader({title: 'Schematic', meta: metaLine([{n: sheets.length, label: sheets.length === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + pvStepNote('sch') + tabs +
     `<div class="pv-stage"><div class="pv-canvas sch-canvas" id="schwrap" tabindex="0" aria-label="Schematic sheet ${esc(sheetId)}. Scroll to zoom, drag to pan.">${inner}</div>${pvZoomHTML('sch')}</div></div>`;
 }
 const pvSheetKey = () => sheetId + '|' + JSON.stringify(lines().map(l => [l.key, l.mpn, l.value, l.dnp])) + JSON.stringify((S.sheets || []).map(s => Object.keys(s.parts || {}).length));
@@ -436,7 +496,7 @@ function pcbHTML(container) {
   const inner = pvPcbErr ? `<div class="pv-note">${errorLine('draw the layout', pvPcbErr, btn('Try again', {size: 'sm', act: 'pcb-retry'}))}</div>` : formatPcbPreview(text);
   const zoom = text || pvPcbErr ? pvZoomHTML('pcb') : '';
   return `<div class="pv" data-pv="pcb">` +
-    viewHeader({title: 'Layout', meta, actions: seg(layers, Object.keys(pcbLayers).filter(k => pcbLayers[k]), {act: 'toggle-layer', label: 'Layers'})}) +
+    viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + seg(layers, Object.keys(pcbLayers).filter(k => pcbLayers[k]), {act: 'toggle-layer', label: 'Layers'})}) + pvStepNote('pcb') +
     `<div class="pv-stage"><div class="pv-canvas pcb-canvas" id="pcbwrap" tabindex="0" aria-label="PCB layout. Scroll to zoom, drag to pan.">${inner}</div>${zoom}</div></div>`;
 }
 async function loadPcb(container) {

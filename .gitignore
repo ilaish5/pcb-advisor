@@ -22,3 +22,7 @@ shared/cache/
 # Private material tied to one real student project (replay fixtures, bench run outputs, notes).
 # Stays on the owner's machine; the bench skips cleanly when it is missing.
 local/
+
+# The server's own update check and update history: state of this machine, not of the code.
+update-status.json
+update-log.jsonl
