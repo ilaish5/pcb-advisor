@@ -963,7 +963,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     backed-up file back. Returns {routed, failed, tracks, vias, problems, restored, backup, drc_before, drc_after, summary, ...}."""
     import tempfile
     from altium import layout, route
-    from altium.pcbdoc import read_pcbdoc
+    from altium.pcbdoc import read_pcbdoc, poured_copper
     prj, pcb = pathlib.Path(prj), pathlib.Path(pcb)
     log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0", "route")])   # unsaved / existing copper
     info = _pcbcheck_info(log)
@@ -990,7 +990,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     pour_net = route.pour_net_for(doc) if pour else None
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k != "net_width"}, "backup": "", "problems": [],
-           "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net}
+           "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": ""}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
@@ -1034,6 +1034,19 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         if after.get(w, 0) > drc_before.get(w, 0):
             probs.append(f"Altium's design rule check reports {after[w] - drc_before.get(w, 0)} new {w} violations "
                          f"({'; '.join(v for v in drc['violations'] if w.split()[0].lower() in v.lower())[:300]})")
+    if pour_net:       # Altium can accept the polygon and still leave it empty: look for copper in the saved file
+        try:
+            filled = poured_copper(pcb)
+        except (AltiumReadError, OSError):
+            filled = None
+        if filled is None:      # not checked is not the same as empty
+            res["pour"] = None
+            res["pour_warning"] = (f"the {pour_net} pour could not be checked in the saved file: look at the bottom layer in Altium, "
+                                   "and repour it with Tools > Polygon Pours > Repour All if it is empty")
+        elif not filled:
+            res["pour"] = None
+            res["pour_warning"] = (f"the {pour_net} pour was drawn but Altium did not fill it (no copper): repour it in Altium with "
+                                   "Tools > Polygon Pours > Repour All, or route without it")
     try:
         from checks import board as board_checks
         res["drills"] = [f["message"] for f in board_checks.check_drills(saved)]
@@ -1045,7 +1058,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if probs and not (keep_partial and all(_partial_ok(p) for p in probs)):
         res["restored"] = _restore(prj, pcb, res["backup"])
     res["summary"] = (f"{len(plan['routed'])} nets routed with {res['tracks']} tracks and {res['vias']} vias"
-                      + (f", {pour_net} poured on the bottom layer" if pour_net else "") + f", saved; own check: "
+                      + (f", {pour_net} poured on the bottom layer" if res["pour"] else "") + f", saved; own check: "
                       f"{'no open nets' if not open_nets else str(len(open_nets)) + ' open nets'}; Altium DRC: "
                       f"{after.get('Un-Routed Net', 0)} un-routed, {after.get('Clearance Constraint', 0)} clearance, "
                       f"{after.get('Short-Circuit', 0)} short ({drc_before.get('Clearance Constraint', 0)} clearance before routing)")
@@ -1071,7 +1084,7 @@ def route_pcb(project, replace=False, keep_partial=False):
                           + (" The board file was put back as it was before (backup kept)." if res["restored"]
                              else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
                              else f" Backup in {res['backup']}."))
-    res["warnings"] = [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
     return res
 
 

@@ -231,9 +231,20 @@ function navHTML() {
     `<button type="button" class="nitem" data-page="settings" data-nav="settings"${here === 'settings' ? ' aria-current="page"' : ''} title="Settings"><span class="no">${icon('gear', 's')}</span><span class="lbl">Settings</span></button>` +
     `</div>`;
 }
+// A late redraw of the nav (rules, triage and update data arrive a moment after the page loads) between the mouse going down and
+// coming up on a button replaces that button: the browser then sends no click, so the first click on a stage was lost.
+// The nav is not redrawn while the mouse is down on it; it catches up on release.
+let navPressed = false;
+document.addEventListener('pointerdown', e => { navPressed = !!(e.target.closest && e.target.closest('#nav')); }, true);
+document.addEventListener('pointerup', () => {
+  if (!navPressed) return;
+  navPressed = false;
+  setTimeout(() => renderNav(), 0);       // after the click event of this press has run
+}, true);
+document.addEventListener('pointercancel', () => { navPressed = false; }, true);
 function renderNav() {
   const nav = $('#nav');
-  if (!nav || !S || uiBusy()) return;
+  if (!nav || !S || uiBusy() || navPressed) return;
   const html = navHTML();
   if (html === lastNavHTML && nav.firstChild) return;   // the 4s poll must not touch the DOM when nothing changed
   const focused = nav.contains(document.activeElement) ? document.activeElement.dataset.nav : null;

@@ -105,6 +105,34 @@ def _roots(project: str) -> list[pathlib.Path]:
     return out
 
 
+def outputs_summary(project: str) -> dict[str, Any]:
+    """What the linked Altium project's outputs folder holds now: per sub folder (Gerber, NC Drill, BOM, ...) the file count and the
+    newest write time. Read only. {"root": "", "folders": [], "files": 0, "newest": ""} when there is no folder."""
+    out: dict[str, Any] = {"root": "", "folders": [], "files": 0, "newest": ""}
+    roots = _roots(project)
+    if not roots:
+        return out
+    out["root"] = str(roots[0])
+    folders: dict[str, dict[str, Any]] = {}
+    for root in roots[:1]:
+        for dirpath, dirs, names in os.walk(root):
+            rel = os.path.relpath(dirpath, root)
+            # an outputs folder is shallow: a link to a whole drive must not be walked
+            dirs[:] = [] if rel != "." else [d for d in dirs if d.lower() != ".advisor-backup"][:50]
+            for n in names[:2000]:
+                try:
+                    mt = pathlib.Path(dirpath, n).stat().st_mtime
+                except OSError:
+                    continue
+                f = folders.setdefault("" if rel == "." else rel.replace("\\", "/"), {"files": 0, "mtime": 0.0})
+                f["files"] += 1
+                f["mtime"] = max(f["mtime"], mt)
+    out["folders"] = [{"folder": k or ".", "files": v["files"], "newest": _iso(v["mtime"])} for k, v in sorted(folders.items())]
+    out["files"] = sum(v["files"] for v in folders.values())
+    out["newest"] = _iso(max((v["mtime"] for v in folders.values()), default=0)) if folders else ""
+    return out
+
+
 def _is_excellon(path: pathlib.Path) -> bool:
     try:
         with open(path, "rb") as fh:
@@ -317,11 +345,27 @@ def gerber_zip(project: str) -> dict[str, Any]:
 # ---------------------------------------------------------------- 2. the report in Downloads
 
 def downloads_dir() -> pathlib.Path:
-    """Where the browser saves: `workspace.downloads_dir` in config.json, else the user's Downloads folder."""
+    """Where the browser saves: `workspace.downloads_dir` in config.json, else the user's Downloads folder (on Windows the
+    folder the shell points to: it can be moved or redirected, e.g. to a network share)."""
     raw = workspace.get("workspace.downloads_dir") or ""
     if raw:
         return pathlib.Path(os.path.expandvars(str(raw))).expanduser()
-    return pathlib.Path.home() / "Downloads"
+    shell = _shell_downloads()
+    return shell if shell and shell.is_dir() else pathlib.Path.home() / "Downloads"
+
+
+def _shell_downloads() -> pathlib.Path | None:
+    """The Downloads folder Windows itself points to; None elsewhere or when it is not set."""
+    if os.name != "nt":
+        return None
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            shell = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
+        return pathlib.Path(os.path.expandvars(str(shell))) if shell else None
+    except OSError:
+        return None
 
 
 def _arrived(st: os.stat_result) -> float:

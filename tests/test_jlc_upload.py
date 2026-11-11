@@ -331,6 +331,11 @@ def test_a_missing_downloads_folder_is_said_not_raised(empty, tmp_path):
 
 
 def test_the_downloads_folder_comes_from_the_config_else_the_users_downloads(home, monkeypatch):
+    monkeypatch.setattr(jlc_upload, "_shell_downloads", lambda: home / "moved")      # Windows moved or redirected the folder
+    assert jlc_upload.downloads_dir() == pathlib.Path.home() / "Downloads"           # a folder that is gone is not used
+    (home / "moved").mkdir()
+    assert jlc_upload.downloads_dir() == home / "moved"
+    monkeypatch.setattr(jlc_upload, "_shell_downloads", lambda: None)
     assert jlc_upload.downloads_dir() == pathlib.Path.home() / "Downloads"
     monkeypatch.setenv("JLC_TEST_DL", str(home / "dl"))
     workspace.set_value("workspace.downloads_dir", "%JLC_TEST_DL%" if os.name == "nt" else "$JLC_TEST_DL")

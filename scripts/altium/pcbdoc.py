@@ -238,6 +238,16 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
     }
 
 
+def poured_copper(path, layer: int = 32) -> int:
+    """How many poured-copper records (Regions6 / ShapeBasedRegions6 records that belong to a polygon, whatever their net field says:
+    Altium leaves it empty on poured pieces) the saved file holds on `layer` (32 = bottom). 0 means a polygon may be drawn but
+    Altium did not fill it."""
+    with open_doc(pathlib.Path(path)) as ole:
+        blobs = [_optional_stream(ole, "Regions6/Data"), _optional_stream(ole, "ShapeBasedRegions6/Data")]
+    return sum(1 for blob in blobs for rec in _primitive_records(blob)
+               if len(rec) >= 9 and rec[0] == layer and struct.unpack("<H", rec[5:7])[0] != 0xFFFF)
+
+
 def _optional_stream(ole, name: str) -> bytes:
     """Read an OLE stream, or b'' when it is absent or unreadable."""
     try:

@@ -728,6 +728,10 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                                    + (f". {res['message']}" if res.get("message") else ""))
                     continue
                 elif kind == "altium.run_outjob":
+                    blocked = store.manufacturing_block(project)
+                    if blocked:
+                        refused.append(f"{kind}: {blocked}")
+                        continue
                     done = _bridge_done(project, "run-outjob", turn_start)
                     if done:
                         applied.append(f"{kind}: already done earlier in this turn ({done.get('files', 0)} files)")
@@ -745,6 +749,10 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 applied.append(kind + (f":{a['name']}" if kind == "altium.add_sheet" else ""))
             elif kind == "jlc.gerber_zip":
                 import jlc_upload
+                blocked = store.manufacturing_block(project)
+                if blocked:
+                    refused.append(f"jlc.gerber_zip: {blocked}")
+                    continue
                 try:
                     res = jlc_upload.gerber_zip(project)
                 except jlc_upload.UploadError as exc:
@@ -1380,6 +1388,9 @@ class Handler(BaseHTTPRequestHandler):
                             "url": f"/api/export/{f.name}",
                         })
             return self._send(200, {"exports": files})
+        if path == "/api/altium/outputs":            # what Altium's outputs folder holds now (folders, file counts, newest time)
+            import jlc_upload
+            return self._send(200, jlc_upload.outputs_summary(self.project()))
         if path == "/api/jlc/gerber-zip":            # the zip made last time (files, when written, what is missing); nothing is built
             import jlc_upload
             return self._send(200, jlc_upload.zip_info(self.project()))
@@ -2125,6 +2136,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ("/api/altium/import-rules", "/api/altium/run-outjob"):
             from altium import bridge
+            blocked = store.manufacturing_block(proj) if path.endswith("outjob") else ""
+            if blocked:
+                return self._send(409, {"error": blocked})
             try:
                 res = bridge.import_rules(proj) if path.endswith("rules") else bridge.run_outjob(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
@@ -2304,6 +2318,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/jlc/gerber-zip":            # build exports/<p>_gerbers.zip from the linked Altium outputs (read only)
             import jlc_upload
+            blocked = store.manufacturing_block(proj)
+            if blocked:
+                return self._send(409, {"error": blocked})
             try:
                 return self._send(200, jlc_upload.gerber_zip(proj))
             except jlc_upload.UploadError as exc:

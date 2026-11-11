@@ -2649,6 +2649,18 @@ def unverified_parts(project, verify_new=True):
              "issues": l.get("pins_issues", "")} for l in lines]
 
 
+def manufacturing_block(project):
+    """"" when manufacturing outputs (Altium OutJob, Gerber zip) may be made; else the message that says why not: parts on the board
+    whose pins nobody verified (the DFM page's Unverified parts list, without DNP / do-not-buy lines)."""
+    skip = {l["key"] for l in bom(project, write=False) if l.get("dnp") or l.get("nobuy")}
+    rows = [r for r in unverified_parts(project) if r["line"] not in skip]
+    if not rows:
+        return ""
+    refs = [ref for r in rows for ref in (r.get("refs") or [r["line"]])]
+    return (f"{len(refs)} {'part has' if len(refs) == 1 else 'parts have'} unverified pins: {', '.join(refs[:12])}{' ...' if len(refs) > 12 else ''}. "
+            "Open DFM > Unverified parts and add the datasheet or accept the pins, then generate again.")
+
+
 def accept_pins(project, key):
     """The student accepts the agent's pins as is."""
     add_library(project, key, {"pins_accepted": True}, by="student")

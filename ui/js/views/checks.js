@@ -155,7 +155,8 @@ function dfmUnverified() {
 function dfmUnverifiedHTML() {
   const rows = dfmUnverified();
   if (!rows.length) return '';
-  const docs = (S.sources || []).filter(s => s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
+  // only this project's own documents: the shared reference library (course material, guides) holds no datasheet of a part
+  const docs = (S.sources || []).filter(s => s.scope === 'project' && s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
   const item = l => `<li class="unv-row"><span class="m">${esc(refsLabel(l.refs))}</span> ${esc(l.mpn || l.value || '')}
     <span class="unv-why" title="${esc(l.pins_issues || '')}">${l.pins_status === 'mismatch' ? 'Pins conflict with ' + esc(l.datasheet || 'the datasheet') + ': ' + esc(l.pins_issues || '') : esc(l.pins_issues || 'Pins from the agent; add the datasheet to verify')}</span>
     ${btn('Accept as is', {kind: 'line', size: 'sm', act: 'accept-pins', line: l.key, title: 'You checked these pins yourself'})}

@@ -97,13 +97,33 @@ def test_route_commands_are_sent_with_the_pour_when_ground_has_three_pads(tmp_pa
     doc = {"nets": ["A", "GND"], "rules": [], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A"), pad("C1", "1", 5, 9, "GND"),
                                                          pad("C2", "1", 10, 9, "GND"), pad("C3", "1", 15, 9, "GND")]}
     monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 4)          # Altium filled the polygon
     sent = []
     monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append(cmds) or
                         ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"])
     res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
-    assert res["pour"] == "GND"
+    assert res["pour"] == "GND" and "GND poured on the bottom layer" in res["summary"] and not res["pour_warning"]
     assert any(c[0] == "POLY" and c[3] == "GND" for cmds in sent for c in cmds)
     assert route.pour_net_for({"pads": doc["pads"][:2]}) is None
+
+
+def test_a_pour_with_no_copper_in_the_saved_file_is_not_reported_as_poured(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    _route_fakes(monkeypatch, tmp_path)
+    doc = {"nets": ["A", "GND"], "rules": [], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A"), pad("C1", "1", 5, 9, "GND"),
+                                                         pad("C2", "1", 10, 9, "GND"), pad("C3", "1", 15, 9, "GND")]}
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 0)          # polygon drawn, Regions6 empty
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert res["pour"] is None and "poured" not in res["summary"]
+    assert "did not fill it (no copper)" in res["pour_warning"] and "Repour All" in res["pour_warning"]
+
+
+def test_poured_copper_counts_polygon_regions_on_the_layer_from_the_file():
+    import pathlib
+    from altium.pcbdoc import poured_copper
+    fx = pathlib.Path(__file__).parent / "fixtures" / "altium" / "finished-board.PcbDoc"
+    assert poured_copper(fx, 32) > 0 and poured_copper(fx, 7) == 0
 
 
 def _pas():

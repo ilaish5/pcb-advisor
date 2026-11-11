@@ -155,15 +155,38 @@ function outRow(f, showTimes, showLin) {
     <td class="num">${esc(outSize(f.size))}</td>
     <td><div class="row-acts">${showLin ? outRemakeBtn(f) : ''}<a class="btn icon sm out-dl" href="${esc(outUrl(f.name))}" download="${esc(f.name)}" title="Download ${esc(f.name)}" aria-label="Download ${esc(f.name)}">${icon('download')}</a></div></td></tr>`;
 }
+/* ---------- what Altium wrote into its own outputs folder ("Project Outputs for ..."), read from the server ---------- */
+let OUT_ALT = null, outAltFor = null, outAltNote = null;      // OUT_ALT: {root, folders:[{folder, files, newest}], files, newest}; outAltNote: {text, bad} of the last run
+async function outLoadAlt() {
+  const p = PROJECT;
+  outAltFor = p;
+  let r = null;
+  try { r = await api('/api/altium/outputs', undefined, {soft: true}); } catch (err) { r = null; }
+  if (p !== PROJECT) return;
+  OUT_ALT = r && !r.error ? r : {root: '', folders: [], files: 0, newest: ''};
+  if (mainView() === 'outputs' || sideView() === 'outputs') renderCenter(true);
+}
+function outAltHTML() {
+  if (outAltFor !== PROJECT) { OUT_ALT = null; outAltNote = null; }
+  if (OUT_ALT === null && outAltFor !== PROJECT) outLoadAlt();
+  const note = outAltNote ? `<div class="note ${outAltNote.bad ? 'bad' : 'ok'}" role="${outAltNote.bad ? 'alert' : 'status'}"><span>${esc(outAltNote.text)}</span></div>` : '';
+  const a = OUT_ALT;
+  if (!a || !a.files) return note;
+  const rows = a.folders.map(f => `<tr><td class="out-n">${esc(f.folder)}</td><td class="num">${f.files}</td><td class="muted" title="${esc(outFull(f.newest))}"><time datetime="${esc(f.newest)}" data-ago>${esc(outAgo(f.newest))}</time></td></tr>`).join('');
+  return note + `<section class="sec"><div class="sec-h"><h2>In Altium's outputs folder</h2><div class="meta"><span><b>${a.files}</b> ${a.files === 1 ? 'file' : 'files'}</span><span title="${esc(outFull(a.newest))}">newest ${esc(outAgo(a.newest))}</span></div></div>
+    <p class="muted out-root">${esc(a.root)}</p>
+    <table class="tbl rows out-tbl"><thead><tr><th>Folder</th><th class="num">Files</th><th>Newest</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+}
 function outputsHTML(container) {
   const files = S.exports || [];
+  const alt = outAltHTML();
   if (!files.length) {
-    return viewHeader({title: 'Outputs'}) + emptyState('Nothing exported yet', 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+    return viewHeader({title: 'Outputs'}) + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB}) + outAltiumBtn() + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()));
   }
   const showTimes = files.some(f => f.modified), showLin = files.some(f => f.lineage);
   return `${outHeader(files)}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
-    <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}</tbody></table></div>`;
+    <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}</tbody></table>${alt}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
@@ -199,11 +222,12 @@ onAct('gen-altium-outputs', async (el, d, e) => {      // Altium writes the file
   toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
   try {
     const r = await api('/api/altium/run-outjob', {});
-    await outWrote(`Altium wrote ${r.files.length} files${r.added ? ' (OutJob added to the project)' : ''}.`);
+    outAltNote = {text: `Altium wrote ${r.files.length} files${r.added ? ' (OutJob added to the project)' : ''}.`, bad: false};
+    await outWrote(outAltNote.text);
     (r.warnings || []).forEach(w => toast(w, null, {bad: true}));
-  } catch (err) { /* the error toast already said why */ }
+  } catch (err) { outAltNote = {text: `Couldn't generate the outputs: ${err.message}`, bad: true}; }      // the error toast said it too
   el.disabled = false;
-  renderCenter(true);
+  await outLoadAlt();
 });
 onAct('remake', async (el, d, e) => {
   const f = (S.exports || []).find(x => x.name === d.name);

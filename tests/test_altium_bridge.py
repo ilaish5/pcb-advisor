@@ -50,6 +50,15 @@ class FakeAltium:
         return [c for run in self.runs if run[-1][0] != "PCBCHECK" for c in run]
 
 
+_REAL_BLOCK = store.manufacturing_block
+
+
+@pytest.fixture(autouse=True)
+def _unblocked(monkeypatch):
+    """The fixture project has unverified parts; only the tests of the block itself look at it."""
+    monkeypatch.setattr(store, "manufacturing_block", lambda project: "")
+
+
 @pytest.fixture
 def fake(monkeypatch, home):
     f = FakeAltium()
@@ -500,3 +509,65 @@ def test_run_outjob_has_no_design_warning_for_a_matching_board(lte, fake, monkey
     _usb_led_design(lte, monkeypatch, connected=True)
     assert not [w for w in bridge.run_outjob(lte)["warnings"] if "design" in w]
     assert bridge.design_problems(lte) == []
+
+
+# ---- manufacturing outputs wait for the unverified parts
+
+def test_manufacturing_outputs_are_blocked_while_parts_are_unverified(lte, fake, monkeypatch):
+    from http.server import ThreadingHTTPServer
+    import serve
+    monkeypatch.setattr(store, "manufacturing_block", _REAL_BLOCK)
+    monkeypatch.setattr(serve, "QUIET", True)
+    _linked_with_rules_board(lte, fake)
+    msg = store.manufacturing_block(lte)
+    assert msg.startswith("3 parts have unverified pins: ") and "Open DFM > Unverified parts" in msg
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    def post(path):
+        req = urllib.request.Request(f"{base}{path}?project={lte}", method="POST", data=b"{}",
+                                     headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    try:
+        for path in ("/api/altium/run-outjob", "/api/jlc/gerber-zip"):
+            code, body = post(path)
+            assert code == 409 and body["error"] == msg
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    fake.runs.clear()
+    applied, _, refused = serve.apply_actions(lte, [{"type": "altium.run_outjob"}, {"type": "jlc.gerber_zip"}])
+    assert not applied and len(refused) == 2 and all(msg in r for r in refused)
+    assert not fake.runs                                         # Altium was not asked to run anything
+
+
+def test_no_block_without_unverified_parts_and_do_not_buy_lines_do_not_count(lte, monkeypatch):
+    monkeypatch.setattr(store, "manufacturing_block", _REAL_BLOCK)
+    rows = [{"line": "k1", "refs": ["D1"], "mpn": "", "status": "unverified", "issues": ""},
+            {"line": "k2", "refs": ["R9"], "mpn": "", "status": "unverified", "issues": ""}]
+    monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: rows)
+    monkeypatch.setattr(store, "bom", lambda project, write=True: [{"key": "k2", "dnp": True}])
+    assert "1 part has unverified pins: D1." in store.manufacturing_block(lte)
+    monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: [])
+    assert store.manufacturing_block(lte) == ""
+
+
+def test_api_altium_outputs_lists_the_folder_altium_wrote(lte, tmp_path, monkeypatch):
+    import jlc_upload
+    prj = tmp_path / "Board"
+    out = prj / "Project Outputs for Board"
+    (out / "Gerber").mkdir(parents=True)
+    (out / "NC Drill").mkdir()
+    (out / "Gerber" / "a.GTL").write_text("x")
+    (out / "Gerber" / "a.GBL").write_text("x")
+    (out / "NC Drill" / "a.TXT").write_text("x")
+    project_mod.set_altium_link(lte, project_file=str(prj / "Board.PrjPcb"), pcb_file="", outputs_dir=str(prj / "Outputs"))   # the stale folder
+    res = jlc_upload.outputs_summary(lte)
+    assert res["root"] == str(out) and res["files"] == 3 and res["newest"]
+    assert {f["folder"]: f["files"] for f in res["folders"]} == {"Gerber": 2, "NC Drill": 1}

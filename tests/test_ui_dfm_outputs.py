@@ -137,7 +137,7 @@ def test_outputs_has_one_primary_a_files_table_and_no_banner():
     # when: the state's own export items carry it (model.build), so the view makes no call of its own
     # (the "Make again" exporters, outRunExporter and outRunAltium, are the one other place that calls the server)
     plain = OUTPUTS[:OUTPUTS.index("async function outRunExporter")] + OUTPUTS[OUTPUTS.index("let outRemaking"):]
-    assert "fetch" not in OUTPUTS and "api(" not in plain.replace("await api('/api/outjob/generate', {})", "").replace("await api('/api/cpl/export', {})", "").replace("await api('/api/altium/run-outjob', {})", "")
+    assert "fetch" not in OUTPUTS and "api(" not in plain.replace("await api('/api/outjob/generate', {})", "").replace("await api('/api/cpl/export', {})", "").replace("await api('/api/altium/run-outjob', {})", "").replace("await api('/api/altium/outputs', undefined, {soft: true})", "")
     row = _block(OUTPUTS, "outRow")
     assert "f.modified" in row and "f.modified" in OUTPUTS[OUTPUTS.index("function outputsHTML"):]
     assert "/api/exports" not in OUTPUTS and "outTimes" not in OUTPUTS and "loadExportTimes" not in OUTPUTS
