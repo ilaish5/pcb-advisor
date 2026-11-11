@@ -12,14 +12,16 @@ the agent's own router, not Altium's autorouter). Show the plan picture BEFORE t
 ## Offer to place
 Right after the schematic is drawn (`altium.draw_schematic`) the next offer is this one: "Should I place the parts on the board,
 or will you (Update PCB)?" Never send the student to Design > Update PCB unasked.
-After the plan, ask ONE question in the student's language: "Do you place the parts in Altium yourself, or should I place them?"
-Stop and wait. Only on their answer: "you" = run `{"type": "altium.place_pcb", "student_said": "<most of their message>"}`
+After the plan, unless they already said who places (this turn or earlier: then do not ask, send the action
+with that quote), ask ONE question in the student's language: "Do you place the parts in Altium yourself, or should I place them?"
+Stop and wait. On their answer or their earlier instruction: "you" = run `{"type": "altium.place_pcb", "student_said": "<most of their message>"}`
 (refused when they say they do it themselves, or the quote is a fragment). It places the netlist parts from the project library
 with their nets, creates the board outline from the idea's board size when the PcbDoc has none (an existing outline is kept),
 saves, and reads the file back against the netlist. Needs `library.build` and Altium open, no unsaved changes in the PcbDoc. Refuses a
 board that already has parts or tracks; `"replace": true` only with `"replace_said"` = their words (replace/redo/מחדש). Routing is a
-separate question, asked after the parts are placed: "route the board yourself, or should I?" Only on their answer (a route word in their
-quote) run `{"type": "altium.route_pcb", "student_said": "<their words>"}`. Run `altium.import_rules` before it (routing is
+separate question, asked after the parts are placed: "route the board yourself, or should I?"
+Only when they said who routes, now or earlier (a route word in their
+quote; ask only if they never said) run `{"type": "altium.route_pcb", "student_said": "<their words>"}`. Run `altium.import_rules` before it (routing is
 refused on Altium's default rules). It uses its own router (2 layers, widths, clearances and vias from the board's rules), draws
 tracks and vias, saves, reads the file back and runs Altium's design rule check:
 it counts as done only with 0 open nets and no new clearance/short/width errors. When a net cannot be routed nothing is drawn and

@@ -391,7 +391,9 @@ def _quote_holds(said, last_user) -> bool:
 SELF_DRAW = re.compile(r"myself|\bi[\u2019']?ll draw|i will draw|\bi draw|בעצמי|אני אשרטט|אני אצייר|אשרטט אני"
                        r"|\bdon[’']?t draw|\bdo not draw|אל תשרטט|אל תצייר|לא לשרטט|לא תשרטט|אני לא רוצה ש", re.I)
 REDRAW_WORD = re.compile(r"replace|redraw|re-draw|overwrite|start over|מחדש|תחליף|תמחק|להחליף", re.I)
-ASK_FIRST = "Ask the student first: draw the schematic themselves in Altium, or should you draw it? Run this only after their answer, with student_said = a quote of it."
+QUOTE_MISSING = ("student_said must be a verbatim quote (most of it) of ONE student message of this conversation since the last time "
+                 "this ran, and that message must tell you to {verb}; no such quote was found. If they already said so, send the quote; ")
+ASK_FIRST = QUOTE_MISSING.format(verb="draw the schematic") + "only if they never said who draws: Ask the student first, draw it themselves in Altium or should you draw it? Run this only after their answer."
 
 
 SELF_PLACE = re.compile(r"myself|\bi[\u2019']?ll place|i will place|\bi place|\bi[\u2019']?ll do the placement|בעצמי|אני אמקם|אמקם אני"
@@ -399,10 +401,12 @@ SELF_PLACE = re.compile(r"myself|\bi[\u2019']?ll place|i will place|\bi place|\b
 SELF_ROUTE = re.compile(r"myself|\bi[\u2019']?ll route|i will route|\bi route|\bi[\u2019']?ll do the routing|בעצמי|אני אנתב|אנתב אני"
                         r"|\bdon[\u2019']?t route|\bdo not route|אל תנתב|לא לנתב|לא תנתב|אני לא רוצה ש", re.I)
 REPLACE_WORD = re.compile(r"replace|redo|overwrite|start over|re-?place|re-?route|מחדש|תחליף|תמחק|להחליף|תמקם מחדש|תנתב מחדש", re.I)
-ASK_PLACE = ("Ask the student first: place the parts on the board themselves in Altium, or should you place them? "
-             "Run this only after their answer, with student_said = a quote of it.")
-ASK_ROUTE = ("Ask the student first: route the board themselves in Altium, or should you route it? This is a separate question from "
-             "placing the parts. Run this only after their answer, with student_said = a quote of it.")
+ASK_PLACE = (QUOTE_MISSING.format(verb="place the parts (the message needs a place word)") + "only if they never said who places: Ask the student first, place the parts "
+             "on the board themselves in Altium or should you place them? Run this only after their answer.")
+ASK_ROUTE = (QUOTE_MISSING.format(verb="route the board (the message needs a route word)") + "only if they never said who routes: Ask the student first, route the board "
+             "themselves in Altium or should you route it? A separate question from placing. Run this only after their answer.")
+DRAW_WORD = re.compile(r"draw|sketch|schematic|תצייר|תשרטט|צייר|שרטט|לצייר|לשרטט|אצייר|אשרטט|סכמה|סכימה", re.I)
+EARLIER_NEED = {"draw": DRAW_WORD}      # a message from an earlier turn must name the action: a bare "yes" there answered something else
 PLACE_WORD = re.compile(r"\bplac(?:e|ing|ement)\b|\bposition|lay ?out|מקם|תמקם|למקם|אמקם|מיקום|השמה|פלייסמנט", re.I)
 ROUTE_WORD = re.compile(r"\brout(?:e|ing)\b|auto-?rout|נתב|תנתב|לנתב|אנתב|ניתוב|ראוט", re.I)
 CONSENT = {   # kind -> (they do it themselves, they say replace, ask text, what replace wipes, what it is, a word their message must have)
@@ -422,20 +426,123 @@ def _partial_consent(a, last_user):
             and PARTIAL_WORD.search(str(said)) is not None)
 
 
-def _consent(kind, a, last_user):
-    """'' when the student's last message really asked the agent to do `kind` ("draw" the schematic, "place" the parts, "route" the
-    board) or, for replace, to do it over what is there, else why not. The quote must be most of their message (a fragment of "I'll
-    draw it myself" is not a yes), and a message that says they do it themselves is never one. "לבד" is not a negation: "תשרטט לבד"
-    = you draw it. Placing and routing are separate questions: each action needs its own answer."""
+SELF_START = "The student said they will"
+_WHO = {"draw": "draws", "place": "places", "route": "routes"}
+_ACTION_ANY = {"draw": DRAW_WORD, "place": PLACE_WORD, "route": ROUTE_WORD}
+_BOARD_WORD = re.compile(r"\bpcb\b|\bboard\b|לוח|\blayout\b", re.I)
+_OTHER_ACTION = {      # words that name ANOTHER action: a self-do clause with only these leaves this one alone
+    "draw": re.compile(PLACE_WORD.pattern + "|" + ROUTE_WORD.pattern + "|" + _BOARD_WORD.pattern, re.I),
+    "place": re.compile(DRAW_WORD.pattern + "|" + ROUTE_WORD.pattern, re.I),
+    "route": re.compile(DRAW_WORD.pattern + "|" + PLACE_WORD.pattern, re.I)}
+_CLAUSE = re.compile(r"[,;.!?\n]+|\s+(?=ו)|\s+(?:and|but|while|אבל)\s+", re.I)
+_STOP = re.compile(r"\bno\b|\bnope\b|\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?mind\b|\bcancel\b|\bdon[’']?t\b|\bdo not\b"
+                   r"|(?<!\w)(?:לא|חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב)(?!\w)|אל ת\S+", re.I)
+_SENT = re.compile(r"[^.!?\n]+[.!?]*")
+_FILLER = re.compile(r"^(?:(?:ok|okay|yes|yeah|sure|so|well|fine|כן|בסדר|אוקיי|טוב)[,\s]+)+", re.I)
+_QUESTION = re.compile(r"^(?:how|what|why|can|could|should|would|is|are|do|does|when|where|which|who|איך|מה|למה|האם|אפשר|כיצד|מתי|איפה)(?!\w)", re.I)
+_INSTR_HE = {"draw": "תצייר|תשרטט|צייר|שרטט", "place": "תמקם|מקם|תניח|הנח", "route": "תנתב|נתב"}
+_VERB_EN = {"draw": "draw", "place": "place", "route": "route"}
+_OBJECT = {"draw": re.compile(r"\bschematics?\b|\bsheet\b|סכמה|סכימה", re.I),
+           "place": re.compile(r"\bparts\b|\bcomponents\b|\bboard\b|\bpcb\b|רכיבים|לוח|חלקים", re.I),
+           "route": re.compile(r"\bboard\b|\bpcb\b|\btracks\b|\btraces\b|לוח|מסלולים", re.I)}
+_INSTR = {k: re.compile(r"(?<!\w)(?:" + _INSTR_HE[k] + r")(?!\w)|(?:^|\b(?:you|please|then|now|just|ahead and|and)\s+(?:\w+\s+)?)" + _VERB_EN[k] + r"\b", re.I)
+          for k in _VERB_EN}
+_BLOCK_DIAGRAM = re.compile(r"block diagram|דיאגרמ", re.I)
+
+
+def _is_question(sentence):
+    s = _FILLER.sub("", sentence.strip().lower()).strip(" -\"'")
+    return "?" in sentence or _QUESTION.match(s) is not None
+
+
+def _instruction(kind, text):
+    """True when a sentence of `text` that is no question tells the agent to do `kind` and names its object (an earlier message:
+    "how do I route this?", "explain the schematic", "you draw the block diagram" are no instruction)."""
+    for sent in _SENT.findall(str(text or "")):
+        if _is_question(sent):
+            continue
+        s = _FILLER.sub("", sent.strip().lower())
+        if _INSTR[kind].search(s) and _OBJECT[kind].search(s):
+            return True
+    return False
+
+
+def _self_verdict(kind, text):
+    """'self' when a clause that names this action says the student does it (or does not want the agent to), 'unsure' when such a
+    clause names no action at all or only the board ("I'll do the PCB myself"), '' when none: a self-do about another action does not count."""
+    self_re = CONSENT[kind][0]
+    for clause in _CLAUSE.split(str(text or "")):
+        if not self_re.search(clause):
+            continue
+        if _ACTION_ANY[kind].search(clause):
+            return "self"
+        if _OTHER_ACTION[kind].search(clause):
+            continue
+        return "unsure"
+    return ""
+
+
+def _self_text(kind, verdict):
+    verb = CONSENT[kind][4].split()[0]
+    if verdict == "self":
+        return f"{SELF_START} do it themselves. Do not {verb}; help them with the manual steps."
+    return (f"{SELF_START} do something themselves and it is not clear that it is not this action. Do not {verb}; "
+            f"ask the student who {_WHO[kind]}: they themselves in Altium or should you? Run this only after their answer.")
+
+
+def _consent(kind, a, last_user, earlier=()):
+    """'' when a student message really asked the agent to do `kind` ("draw" the schematic, "place" the parts, "route" the board) or,
+    for replace, to do it over what is there, else why not. The quote is checked against the last message first, then against
+    `earlier` (the student's messages of this conversation since `kind` last ran, newest first): a clear instruction given one
+    turn before (a library build in between) still counts, but such a message must be an instruction to the agent for this action
+    (no question, an imperative, the right object). The current message, and every message newer than the quote, cancels with a
+    do-it-myself (about this action) or a no / wait / stop."""
+    why = _consent_one(kind, a, last_user, False)
+    if not why:
+        return ""
+    if why.startswith(SELF_START):
+        return why
+    verb = CONSENT[kind][4].split()[0]
+    verdict = _self_verdict(kind, last_user)
+    if verdict:
+        return _self_text(kind, verdict)
+    if _STOP.search(str(last_user or "")):
+        return f"The student's last message says no, wait or stop. Do not {verb}; ask the student what they want first."
+    for u in earlier:
+        w = _consent_one(kind, a, u, True)
+        if not w:
+            return ""
+        if w.startswith(SELF_START):
+            return w
+        verdict = _self_verdict(kind, u)
+        if verdict:
+            return _self_text(kind, verdict)
+        if _STOP.search(u):
+            return f"The student said no, wait or stop after that. Do not {verb}; ask the student what they want first."
+    return why
+
+
+def _consent_one(kind, a, last_user, earlier_turn):
     self_re, replace_re, ask, wipes, verb, need = CONSENT[kind]
+    if earlier_turn:
+        need = need or EARLIER_NEED[kind]
     norm = lambda t: re.sub(r"\s+", " ", str(t or "").lower()).strip(" .,!?;:()-\"'")
     q, u = norm(a.get("student_said")), norm(last_user)
     if not _quote_holds(a.get("student_said"), last_user) or len(q) < 0.5 * len(u):
         return ask
     if need is not None and not need.search(u):        # "yes" to the schematic question is not a yes to placing or routing
         return ask
-    if self_re.search(u):
-        return f"The student said they will do it themselves. Do not {verb.split()[0]}; help them with the manual steps."
+    if earlier_turn and not _instruction(kind, last_user):
+        return ask
+    word = need or _ACTION_ANY[kind]
+    sents = [x for x in _SENT.findall(str(last_user or "")) if word.search(x)]
+    if sents and all(_is_question(x) for x in sents):      # "how do I route this?" asks, it does not tell
+        return ask
+    if kind == "draw" and _BLOCK_DIAGRAM.search(u) and not _OBJECT["draw"].search(u):
+        return ask
+    verdict = _self_verdict(kind, last_user)
+    if verdict:
+        return _self_text(kind, verdict)
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
         # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here
@@ -445,8 +552,50 @@ def _consent(kind, a, last_user):
     return ""
 
 
-def _draw_consent(a, last_user):
-    return _consent("draw", a, last_user)
+def _draw_consent(a, last_user, earlier=()):
+    return _consent("draw", a, last_user, earlier)
+
+
+_CONSENT_ACTION = {"draw": "altium.draw_schematic", "place": "altium.place_pcb", "route": "altium.route_pcb"}
+
+
+def consent_words(chat, last_user):
+    """The current message as consent evidence: '' when a button wrote it (flagged generated in the stored chat)."""
+    recs = list(chat or [])
+    if recs and recs[-1].get("role") == "user" and recs[-1].get("text") == last_user and recs[-1].get("generated"):
+        return ""
+    return last_user
+
+
+def earlier_student_messages(chat, kind, last_user=""):
+    """The student's messages of this conversation before the current one (newest first), back to the last time the action of `kind`
+    was applied (that run used up what they said). `chat` = the stored records; the current message may be the last of them."""
+    recs = list(chat or [])
+    if recs and recs[-1].get("role") == "user" and recs[-1].get("text") == last_user:
+        recs = recs[:-1]
+    out = []
+    for r in reversed(recs):
+        if r.get("role") == "agent" and any(str(x).startswith(_CONSENT_ACTION[kind]) for x in r.get("applied") or []):
+            break
+        if r.get("role") == "user" and r.get("text") and not r.get("generated"):      # a button's text is not the student's words
+            out.append(str(r["text"]))
+    return out
+
+
+_TABLE_REFS = re.compile(r"^\s*\|\s*((?:[A-Z]{1,3}\d{1,3})(?:\s*,\s*[A-Z]{1,3}\d{1,3})+)\s*\|", re.M)
+
+
+def refs_missing_from_bom(project, reply):
+    """Designators that the first cell of a table row in the reply lists together ("| C1, C2 | 100nF |") but that no BOM line (nor a
+    pending BOM proposal) holds: one line proposed for several identical parts with only the first ref. [] when all are covered."""
+    named = [r.strip() for row in _TABLE_REFS.findall(reply or "") for r in row.split(",")]
+    if not named:
+        return []
+    held = {r for l in store.bom_lines(project) for r in [l["key"], *(l.get("refs") or [])]}
+    for p in store.proposals(project):
+        if p.get("kind") == "bom" and p.get("status") == "pending":
+            held |= {p.get("line"), *((p.get("changes") or {}).get("refs") or [])}
+    return [r for r in dict.fromkeys(named) if r not in held]
 
 
 _WARN_RE = re.compile(r"\(\s*(?:\d+\s+)?warnings?:\s*(.*)\)\s*$|WARNING:\s*(.*)$|(\(\d+ with issues\))|(missing [^()]*)|(Could not[^;]*)", re.I | re.S)
@@ -547,7 +696,7 @@ STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.s
                "altium.route_pcb": "Routing the board", "netlist.write": "Writing the netlist"}
 
 
-def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None):
+def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
     approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
@@ -658,7 +807,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 # the agent draws the sheet in Altium only when the student said so, in their own words (asked first: draw it
                 # yourself or should I?). replace needs that too, and never happens by default: a drawing is never wiped.
                 from altium import bridge
-                why = _draw_consent(a, last_user)
+                why = _draw_consent(a, consent_words(chat, last_user), earlier_student_messages(chat, "draw", last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
                     continue
@@ -675,7 +824,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 # each (asked first: do it yourself or should I?). replace needs that too and never happens by default.
                 from altium import bridge
                 step = "place" if kind == "altium.place_pcb" else "route"
-                why = _consent(step, a, last_user)
+                why = _consent(step, a, consent_words(chat, last_user), earlier_student_messages(chat, step, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
                     continue
@@ -683,7 +832,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                     if step == "place":
                         res = bridge.place_pcb(project, replace=_truthy(a.get("replace")))
                     else:
-                        keep = _partial_consent(a, last_user)
+                        keep = _partial_consent(a, consent_words(chat, last_user))
                         res = bridge.route_pcb(project, replace=_truthy(a.get("replace")), keep_partial=keep)
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
@@ -1561,6 +1710,9 @@ class Handler(BaseHTTPRequestHandler):
                 user_msg["source"] = source_file
             if about:
                 user_msg["about"] = about
+            generated = _truthy(data.get("generated"))      # a button wrote this text: the reply language follows what the student typed
+            if generated:
+                user_msg["generated"] = True
             say(proj, sess, user_msg)
             m = model.build(project=proj, session=sess)
             ask = text
@@ -1591,7 +1743,7 @@ class Handler(BaseHTTPRequestHandler):
                 BUSY["chat"] += 1
                 tool_edited, tool_unrestored = [], []
                 try:
-                    res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND, cancel=turn["cancel"],
+                    res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND, cancel=turn["cancel"], typed=text, generated=generated,
                                         on_event=lambda ev, k=tkey: _turn_event(k, ev))
                 finally:
                     BUSY["chat"] -= 1
@@ -1605,16 +1757,24 @@ class Handler(BaseHTTPRequestHandler):
                 else:            # the turn stays open while the actions run, so the chat shows which step is running
                     applied, proposals, refused = apply_actions(
                         proj, res.get("actions"), sess, last_user=text, meta=chat_meta, turn_start=turn["started"],
-                        on_step=lambda label, k=tkey: _turn_event(k, {"label": label}), cancel=turn["cancel"])
+                        on_step=lambda label, k=tkey: _turn_event(k, {"label": label}), cancel=turn["cancel"],
+                        chat=m["chat"])
             finally:
                 _turn_end(tkey)
             if tool_edited or tool_unrestored:
                 refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
+            if proposals and not partial:
+                try:
+                    gone = refs_missing_from_bom(proj, res.get("reply"))
+                except Exception:          # a check of the reply must never lose the reply or the applied marker
+                    gone = []
+                if gone:
+                    applied.append(f"bom.check: WARNING: {', '.join(gone)} named in the reply but in no BOM line (add it to the line's refs)")
             if res.get("provider") != "external":         # an outside driver is not an engine turn
                 import introspect
                 introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
                                   applied=len(applied), proposed=len(proposals), refused=len(refused))
-            if res.get("reply") or refused or partial:
+            if res.get("reply") or refused or partial or applied:       # an action that ran leaves its marker: it uses up the consent
                 reply = res.get("reply") or ""
                 if refused:
                     reply += "\n\n(Not applied: " + "; ".join(refused) + ")"

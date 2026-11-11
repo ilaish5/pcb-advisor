@@ -172,3 +172,172 @@ def test_a_read_only_step_leaves_the_modified_mark_as_it_found_it():
     for cmd in ("DRC", "PCBEXTENT", "PCBCHECK"):
         assert f"Cmd = '{cmd}'" in body
     assert "DOCSTATE" in src and "DOCSTATE" in bridge.READ_ONLY
+
+
+def _gnd_doc():
+    return {"nets": ["A", "GND"], "rules": [], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A"), pad("C1", "1", 5, 9, "GND"),
+                                                         pad("C2", "1", 10, 9, "GND"), pad("C3", "1", 15, 9, "GND")]}
+
+
+def test_the_board_is_reloaded_before_the_tracks_and_the_pour_are_drawn(tmp_path, monkeypatch):
+    """T28: a board placed in the same Altium session kept the placing script's pad nets and the pour shorted other-net through-hole pads."""
+    import altium.pcbdoc as pcbdoc
+    _route_fakes(monkeypatch, tmp_path)
+    doc = _gnd_doc()
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 4)
+    sent = []
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append([c[0] for c in cmds]) or
+                        ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"])
+    bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    draw = next(i for i, c in enumerate(sent) if "ROUTEBEGIN" in c)
+    assert sent[draw - 1] == ["PROJECT", "REVERT"]
+
+
+def test_a_pour_that_breaks_the_rules_is_taken_off_and_the_tracks_stay(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    calls = _route_fakes(monkeypatch, tmp_path)
+    from altium import layout
+    monkeypatch.setattr(layout, "unrouted", lambda d: [])        # the fake read-back has no tracks
+    doc = _gnd_doc()
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    sent = []
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 0 if any("POLYDEL" in c for c in sent) else 4)
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append([c[0] for c in cmds]) or
+                        ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"])
+    drcs = []
+
+    def fake_drc(prj, pcb, report):
+        drcs.append(1)
+        if len(drcs) == 2:          # after drawing: the pour is too close to a pad of another net
+            return {"rules": {"Clearance Constraint (Gap=6mil)": 2, "Short-Circuit Constraint": 1},
+                    "violations": ["Clearance Constraint (Gap=6mil): (Collision < 6mil) Between Pad J1-1 And Polygon Region (14 hole(s)) Bottom Layer"] * 2
+                    + ["Short-Circuit Constraint: Between Pad J1-1 And Polygon Region Bottom Layer"], "unrouted": 0, "total": 3}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0}
+
+    monkeypatch.setattr(bridge, "run_drc", fake_drc)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert any("POLYDEL" in c for c in sent) and len(drcs) == 3
+    assert not res["problems"] and not res["restored"] and calls["restore"] == 0
+    assert res["pour"] is None and "taken off" in res["pour_warning"] and "poured" not in res["summary"]
+
+
+def test_a_rule_break_that_is_not_the_pour_still_restores_the_board(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    calls = _route_fakes(monkeypatch, tmp_path)
+    doc = _gnd_doc()
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 4)
+    sent = []
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append([c[0] for c in cmds]) or
+                        ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"])
+    n = []
+
+    def fake_drc(prj, pcb, report):
+        n.append(1)
+        if len(n) == 2:
+            return {"rules": {"Clearance Constraint (Gap=6mil)": 1}, "violations": ["Clearance Constraint (Gap=6mil): Between Track A And Track B"],
+                    "unrouted": 0, "total": 1}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0}
+
+    monkeypatch.setattr(bridge, "run_drc", fake_drc)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert not any("POLYDEL" in c for c in sent) and res["restored"] and calls["restore"] == 1 and res["problems"]
+
+
+def test_a_stale_board_shape_means_no_pour_with_the_reason(tmp_path, monkeypatch):
+    """Dark sensor LED: Altium held the placeholder shape 25.4..177.8 mm, so every polygon stayed empty (T24)."""
+    import altium.pcbdoc as pcbdoc
+    _route_fakes(monkeypatch, tmp_path)
+    from altium import layout
+    monkeypatch.setattr(layout, "unrouted", lambda d: [])        # the fake read-back has no tracks
+    doc = _gnd_doc()
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "board_shape_box", lambda path: [25.4, 25.4, 177.8, 127.0])
+    sent = []
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append(cmds) or
+                        ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"])
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert not any(c[0] == "POLY" for cmds in sent for c in cmds)
+    assert res["pour"] is None and "board shape Altium holds" in res["pour_warning"] and "Redefine Board Shape" in res["pour_warning"]
+    assert not res["problems"]
+
+
+def test_board_shape_box_reads_the_region_record_or_says_nothing(tmp_path):
+    import struct
+    from altium import pcbdoc
+    blob = b"|LAYERSTACKID={ABC}" + b"\x00" + struct.pack("<I", 4) + struct.pack("<8d", 0, 0, 1e7, 0, 1e7, 5e6, 0, 5e6)
+    monkey = pcbdoc.open_doc
+
+    class Ole:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    pcbdoc.open_doc = lambda p: Ole()
+    real = pcbdoc._optional_stream
+    try:
+        pcbdoc._optional_stream = lambda ole, name: blob
+        assert pcbdoc.board_shape_box("x") == [0.0, 0.0, 25.4, 12.7]
+        pcbdoc._optional_stream = lambda ole, name: b""
+        assert pcbdoc.board_shape_box("x") is None
+    finally:
+        pcbdoc.open_doc, pcbdoc._optional_stream = monkey, real
+
+
+def _pour_broken_fakes(monkeypatch, tmp_path, copper_after, read_after_raises=False):
+    """The pour breaks the rules (DRC 2), POLYDEL runs, then the file is read again: `copper_after` polygon records are left."""
+    import altium.pcbdoc as pcbdoc
+    from altium import layout
+    calls = _route_fakes(monkeypatch, tmp_path)
+    monkeypatch.setattr(layout, "unrouted", lambda d: [])
+    sent = []
+    doc = _gnd_doc()
+
+    def read(path, geometry=False):
+        if read_after_raises and any("POLYDEL" in c for c in sent):
+            raise AltiumReadError(str(path), "cannot read")
+        return dict(doc, tracks=[], vias=[])
+
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", read)
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: copper_after if any("POLYDEL" in c for c in sent) else 4)
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append([c[0] for c in cmds]) or
+                        ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"])
+    n = []
+
+    def fake_drc(prj, pcb, report):
+        n.append(1)
+        if len(n) == 2:
+            return {"rules": {"Short-Circuit Constraint": 1}, "violations": ["Short-Circuit Constraint: Between Pad J1-1 And Polygon Region"],
+                    "unrouted": 0, "total": 1}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0}
+
+    monkeypatch.setattr(bridge, "run_drc", fake_drc)
+    return calls, sent
+
+
+def test_a_pour_taken_off_is_checked_in_the_file_for_left_over_polygon_copper(tmp_path, monkeypatch):
+    calls, _ = _pour_broken_fakes(monkeypatch, tmp_path, copper_after=3)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert res["problems"] and res["restored"] and calls["restore"] == 1       # polygon copper left: the pour is not off, the board goes back
+
+
+def test_a_failed_read_back_after_taking_the_pour_off_restores_the_backup(tmp_path, monkeypatch):
+    calls, _ = _pour_broken_fakes(monkeypatch, tmp_path, copper_after=0, read_after_raises=True)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert calls["restore"] == 1 and res["restored"] and "put back" in res["summary"]
+
+
+def test_unsaved_edits_made_while_planning_stop_the_route_before_the_revert(tmp_path, monkeypatch):
+    """PCBCHECK ran before the DRC and the planning; REVERT closes without a prompt: the state is asked again just before it."""
+    _route_fakes(monkeypatch, tmp_path)
+    sent = []
+
+    def run(cmds, **kw):
+        sent.append([c[0] for c in cmds])
+        if cmds[-1][0] == "DOCSTATE":
+            return ["docstate open modified=1"]
+        return ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"]
+
+    monkeypatch.setattr(bridge, "run_commands", run)
+    with pytest.raises(bridge.BridgeError, match="unsaved changes"):
+        bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert ["PROJECT", "REVERT"] not in sent and not any("ROUTEBEGIN" in c for c in sent)

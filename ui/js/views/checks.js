@@ -435,7 +435,7 @@ onAct('ask-dfm', async (el, d, e) => {
   return;
 });
 onAct('ask-dfm-report', async (el, d, e) => {
-  askAbout({kind: 'dfm', id: d.stem, label: d.stem, text: 'List the findings of this report in the DFM table, then tell me which ones look real.'});
+  askAbout({kind: 'dfm', id: d.stem, label: d.stem, send: true, text: 'List the findings of this report in the DFM table, then tell me which ones look real.'});
   return;
 });
 onAct('ask-jlc-upload', async (el, d, e) => {

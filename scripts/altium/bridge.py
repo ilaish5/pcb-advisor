@@ -963,7 +963,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     backed-up file back. Returns {routed, failed, tracks, vias, problems, restored, backup, drc_before, drc_after, summary, ...}."""
     import tempfile
     from altium import layout, route
-    from altium.pcbdoc import read_pcbdoc, poured_copper
+    from altium.pcbdoc import read_pcbdoc, poured_copper, board_shape_box
     prj, pcb = pathlib.Path(prj), pathlib.Path(pcb)
     log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0", "route")])   # unsaved / existing copper
     info = _pcbcheck_info(log)
@@ -988,9 +988,20 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     drc_before = _drc_counts(run_drc(prj, pcb, tmp / "before.txt"))
     plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
     pour_net = route.pour_net_for(doc) if pour else None
+    pour_skipped = ""
+    if pour_net:       # a pour is clipped to the board shape Altium holds: when that is not the outline we route in, nothing gets poured
+        try:
+            shape = board_shape_box(pcb)
+        except (AltiumReadError, OSError):
+            shape = None
+        if shape and any(abs(a - b) > 0.1 for a, b in zip(shape, box)):
+            pour_skipped = (f"no {pour_net} pour: the board shape Altium holds ({', '.join(f'{v:g}' for v in shape)} mm) is not the board outline "
+                            f"({', '.join(f'{v:g}' for v in box)} mm), so a pour would stay empty. Redefine the board shape in Altium (Design > Board "
+                            "Shape > Redefine Board Shape) and route again if you want a ground plane")
+            pour_net = None
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k != "net_width"}, "backup": "", "problems": [],
-           "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": ""}
+           "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
@@ -1001,9 +1012,19 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         return res
     res["backup"] = _backup(prj, [pcb])
     try:
+        # A board that was placed in this same Altium session is still held with the pad nets of the placing script: a pour made on
+        # it keeps no clearance from other-net through-hole pads (seen 2026-11-11, T28: the DRC found shorts to J1-1 and J2-1). The
+        # board is saved and unchanged here (checked again just now: the first PCBCHECK ran before the DRC and the planning, minutes ago,
+        # and REVERT closes without asking), so closing it and drawing on the file's own state is safe.
+        state = run_commands([("PROJECT", str(prj)), ("DOCSTATE", str(pcb))])
+        if any(l.startswith("docstate open modified=1") for l in state):
+            raise BridgeError("The board is open in Altium with unsaved changes; save or close it first. Nothing was changed.")
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
         run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
                                                                      edge=rules["edge"]), total_timeout=1500)
     except BridgeError as exc:
+        if str(exc).startswith("The board is open in Altium with unsaved changes"):      # nothing was drawn: leave the student's edits alone
+            raise
         raise BridgeError(str(exc) + _revert(prj, pcb, "routed")) from exc
     res["written"] = True
     probs = []
@@ -1027,13 +1048,48 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         res["written"] = True
         return res
     after = _drc_counts(drc)
+
+    def drc_problems(after, drc):
+        out = []
+        if after.get("Un-Routed Net", 0) > 0:
+            out.append(f"Altium's design rule check reports {after['Un-Routed Net']} un-routed connections")
+        for w in ("Clearance Constraint", "Short-Circuit", "Width Constraint"):
+            if after.get(w, 0) > drc_before.get(w, 0):
+                out.append(f"Altium's design rule check reports {after[w] - drc_before.get(w, 0)} new {w} violations "
+                           f"({'; '.join(v for v in drc['violations'] if w.split()[0].lower() in v.lower())[:300]})")
+        return out
+
+    new_probs = drc_problems(after, drc)
+    if pour_net and new_probs:       # the pour may be all that is wrong: take only the polygon off, keep the tracks, and check again
+        only_pour = all(after.get(w, 0) - drc_before.get(w, 0) <= sum(1 for v in drc["violations"] if v.startswith(w) and "polygon" in v.lower())
+                        for w in ("Clearance Constraint", "Short-Circuit", "Width Constraint")) and after.get("Un-Routed Net", 0) == 0
+        if only_pour:
+            try:
+                run_commands([("PROJECT", str(prj)), ("POLYDEL", str(pcb)), ("PCBSAVE", str(pcb))])
+                run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+                drc2 = run_drc(prj, pcb, tmp / "after-nopour.txt")
+                saved2 = read_pcbdoc(pcb, geometry=True)       # the numbers below come from the file as it is now, without the polygon
+                open2 = layout.unrouted(saved2)
+                left = poured_copper(pcb)
+            except (BridgeError, AltiumReadError, OSError) as exc:
+                res["restored"] = _restore(prj, pcb, res["backup"])
+                res["problems"] = [f"the {pour_net} pour broke the rules and taking it off failed ({exc})"]
+                res["summary"] = res["problems"][0] + (" The board file was put back as it was before (backup kept)." if res["restored"]
+                                                      else f" The backup is in {res['backup']}.")
+                return res
+            else:
+                after2 = _drc_counts(drc2)
+                new_probs2 = drc_problems(after2, drc2)
+                if not new_probs2 and not left:        # no polygon copper may be left in the file
+                    after, drc, new_probs = after2, drc2, []
+                    saved, open_nets = saved2, open2
+                    if open_nets:
+                        probs.append("the saved board still has open nets: " + "; ".join(f"{n} ({', '.join(t[:4])})" for n, t in open_nets[:5]))
+                    res["pour"], pour_net = None, None
+                    res["pour_warning"] = ("the ground pour was taken off again: Altium's design rule check found it too close to other copper. "
+                                           "All GND pads are connected by tracks; add a pour in Altium (Place > Polygon Pour) if you want a ground plane")
     res["drc_after"] = after
-    if after.get("Un-Routed Net", 0) > 0:
-        probs.append(f"Altium's design rule check reports {after['Un-Routed Net']} un-routed connections")
-    for w in ("Clearance Constraint", "Short-Circuit", "Width Constraint"):
-        if after.get(w, 0) > drc_before.get(w, 0):
-            probs.append(f"Altium's design rule check reports {after[w] - drc_before.get(w, 0)} new {w} violations "
-                         f"({'; '.join(v for v in drc['violations'] if w.split()[0].lower() in v.lower())[:300]})")
+    probs += new_probs
     if pour_net:       # Altium can accept the polygon and still leave it empty: look for copper in the saved file
         try:
             filled = poured_copper(pcb)

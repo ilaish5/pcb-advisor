@@ -369,3 +369,44 @@ def test_board_size_word_rules_and_mixed_units():
     assert layout.board_size(req("board 30mm x 2.5cm")) == (30.0, 25.0)
     assert layout.board_size(req("board 3cm x 25mm")) == (30.0, 25.0)
     assert layout.board_size(req("board 3 x 2.5 cm")) == (30.0, 25.0)
+
+
+def test_regulator_with_tab_and_two_caps_keeps_both_caps_next_to_its_pins():
+    """T31: on a 30x20 mm board a big terminal block took the middle, the regulator ended up on the right edge and the output cap was
+    17 mm away ('no closer room'). The plan is made again with the connectors on other sides and the one with both caps near wins."""
+    def real(name, pads, silk, mech, body):
+        return {"name": name, "pads": [{"name": n, "x": x / MIL, "y": y / MIL, "xsize": w / MIL, "ysize": h / MIL, "layer": ly}
+                                       for n, x, y, w, h, ly in pads],
+                "extent": {"silk": silk, "mech": mech, "body": body}}
+    fps = {"C0805": real("C0805", [("1", -1.0, 0, 1.41, 1.35, 1), ("2", 1.0, 0, 1.41, 1.35, 1)], [-77.166, -35.434, 77.166, 35.434],
+                         [-39.37, -24.409, 39.37, 24.409], [-39.37, -25.59, 39.37, 25.59]),
+           "R0603": real("R0603", [("1", -0.75, 0, 0.81, 0.86, 1), ("2", 0.75, 0, 0.81, 0.86, 1)], [-54.724, -25.984, 54.724, 25.984],
+                         [-31.496, -15.748, 31.496, 15.748], [-31.89, -16.14, 31.89, 15.748]),
+           "LED0603": real("LED0603", [("2", -0.85, 0, 0.8, 0.8, 1), ("1", 0.85, 0, 0.8, 0.8, 1)], [-71.654, -33.858, 69.685, 33.858],
+                           [-31.496, -15.748, 31.496, 15.748], [-31.89, -15.748, 31.89, 16.14]),
+           "SOT223": real("SOT223", [("4", -2.97, 0, 2.34, 3.6, 1), ("3", 2.97, 2.3, 2.5, 1.1, 1), ("2", 2.97, 0, 2.5, 1.1, 1),
+                                     ("1", 2.97, -2.3, 2.5, 1.1, 1)], [-61.811, -131.102, 135.039, 131.102], [-72.835, -127.953, 64.961, 127.953],
+                          [-139.95, -127.95, 139.95, 127.95]),
+           "TB": real("TB", [("1", -2.54, 0, 2.0, 2.0, 74), ("2", 2.54, 0, 2.0, 2.0, 74)], [-223.622, -178.346, 200.0, 222.047],
+                      [-205.118, -177.165, 205.118, 216.535], [-323.622, -177.165, 100.04, 216.535]),
+           "HDR": real("HDR", [("2", 1.27, 0, 1.8, 1.8, 74), ("1", -1.27, 0, 1.8, 1.8, 74)], [-101.181, -51.181, 100.0, 50.0],
+                       [-100.0, -50.0, 100.0, 50.0], [-100.0, -50.0, 100.39, 50.0])}
+    parts = [part("J1", "TB", ["+5V", "GND"]), part("C1", "C0805", ["+5V", "GND"]),
+             part("U1", "SOT223", ["GND", "+3V3", "+5V", "+3V3"]), part("C2", "C0805", ["+3V3", "GND"]),
+             part("J2", "HDR", ["+3V3", "GND"]), part("R1", "R0603", ["+3V3", "LED_A"]), part("D1", "LED0603", ["LED_A", "GND"])]
+    plan = layout.plan_placement(parts, fps, [0, 0, 30, 20], clearance_mm=0.2)
+    assert not plan["errors"], plan
+    assert not [w for w in plan["warnings"] if "decoupling" in w], plan["warnings"]
+    at = {p["ref"]: p for p in plan["places"]}
+    assert dist(at, "C1", "U1") < 9 and dist(at, "C2", "U1") < 9          # next to the regulator, not on the far side of the board
+
+
+def test_two_ics_on_one_supply_net_get_one_cap_each_first():
+    """Both caps used to land beside the first IC: the number of caps an IC already has now counts in the score."""
+    parts = [part("U1", "QFN", ["+3V3", "+3V3", "+3V3", "+3V3", "X", "NC"]), part("U2", "QFN", ["SDA", "GND", "SDA", "SCL", "Y", "+3V3"]),
+             part("C1", "C0402", ["+3V3", "GND"]), part("C2", "C0402", ["+3V3", "GND"])]       # U1 has four supply pads: room for both caps
+    plan = layout.plan_placement(parts, FPS, [0, 0, 60, 30])
+    assert not plan["errors"], plan
+    at = {p["ref"]: p for p in plan["places"]}
+    near = {c: min(("U1", "U2"), key=lambda u: dist(at, c, u)) for c in ("C1", "C2")}
+    assert {near["C1"], near["C2"]} == {"U1", "U2"}, (near, plan["warnings"])

@@ -248,6 +248,25 @@ def poured_copper(path, layer: int = 32) -> int:
                if len(rec) >= 9 and rec[0] == layer and struct.unpack("<H", rec[5:7])[0] != 0xFFFF)
 
 
+def board_shape_box(path):
+    """[x0, y0, x1, y1] mm of the board shape Altium holds in BoardRegions6 (what a pour is clipped to; it is not always the outline
+    that Board6 and the PCBCHECK report: a board whose shape was left at the placeholder of a new board, 25.4..177.8 mm, got no pour
+    at all, seen 2026-11-11), or None when the stream is not the plain four point rectangle record this reads."""
+    with open_doc(pathlib.Path(path)) as ole:
+        blob = _optional_stream(ole, "BoardRegions/Data")
+    i = blob.find(b"LAYERSTACKID=")
+    j = blob.find(b"}", i) if i >= 0 else -1
+    rest = blob[j + 1:] if j >= 0 else b""
+    if len(rest) < 69 or struct.unpack("<I", rest[1:5])[0] != 4:
+        return None
+    xs = struct.unpack("<8d", rest[5:69])
+    px, py = xs[0::2], xs[1::2]
+    if any(abs(v) > 1e10 or v != v for v in xs):
+        return None
+    k = 0.0254 / 10000                      # internal units (1/10000 mil) to mm
+    return [round(min(px) * k, 3), round(min(py) * k, 3), round(max(px) * k, 3), round(max(py) * k, 3)]
+
+
 def _optional_stream(ole, name: str) -> bytes:
     """Read an OLE stream, or b'' when it is absent or unreadable."""
     try:

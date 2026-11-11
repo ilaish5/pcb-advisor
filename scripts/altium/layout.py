@@ -18,6 +18,8 @@ EDGE_MM = 1.0           # parts keep this far from the board edge (connectors ma
 GAP_MM = 0.6            # clearance between two courtyards (never below the JLC clearance rule passed in)
 COURT_MM = 0.25         # courtyard margin around pads
 STEP_MM = 0.5           # search grid
+CAP_SHARE_MM = 10.0     # a decoupling cap's score grows by this for every cap its IC already has (one cap per IC first)
+DECAP_NEAR_MM = 5.0      # a decoupling cap farther than this from its supply pin gets a warning (and the plan another try)
 MAX_FILL = 0.55         # courtyard area / board area above which we refuse: nothing is left for routing
 MIL = 0.0254
 LABEL_H = 1.0          # designator text height, mm (line 0.15 mm)
@@ -207,6 +209,22 @@ def _label_rect(box, ref, side):
 
 
 def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, connector_dirs=None, edge_copper_mm=EDGE_COPPER_MM):
+    """The placement (see _plan_placement). Connectors go to the edges first and a big one can take the room a regulator needs for its
+    caps: when a decoupling cap does not get next to its supply pin (or a part finds no place), the plan is made again with the
+    connectors starting on another side of the board (up to three more), and the best of the four is returned (the first one on a tie)."""
+    best, best_key = None, None
+    for shift in range(4):
+        plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift)
+        far = sum(1 for w in plan["warnings"] if "decoupling cap is" in w)
+        key = (len(plan["errors"]), far)
+        if best is None or key < best_key:
+            best, best_key = plan, key
+        if key == (0, 0) or not any(is_connector(p["ref"]) for p in parts):
+            break
+    return best
+
+
+def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift):
     """Places every part inside the outline, by its real extent (pads, silkscreen, courtyard, 3D body) plus the strip its designator
     needs, so no two parts and no designator overlap.
     parts: netlist parts [{ref, footprint, pins: [{num, net}]}]; footprints: {footprint name: read_pcblib footprint};
@@ -310,7 +328,7 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
     for n, ref in enumerate(conns):
         done = False
         face0 = (connector_dirs or {}).get(ref, info[ref]["open"])
-        for s, face in sides[n % 4:] + sides[:n % 4]:
+        for s, face in sides[(n + shift) % 4:] + sides[:(n + shift) % 4]:
             rot = (face - (face0 or 0)) % 360
             b = rot_box(info[ref]["box"], rot)
             pb = rot_box(info[ref]["padbox"], rot)
@@ -349,6 +367,29 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
         if not done:
             errors.append(f"{ref}: no room for the connector on an edge of the board")
 
+    caps = [r for r in rest if _decap_rail(info[r])]
+    others = [r for r in rest if r not in caps]
+
+    assigned = {}       # (IC, supply net) -> decoupling caps already given to it: caps spread one per IC before a second one goes to the same IC
+
+    def place_cap(ref, rmax=None):
+        """(target pin, free place) of a decoupling cap: every supply pin of its net is a candidate (a regulator's output is a pin and a
+        big tab), the pin with the lowest score wins: distance to its nearest free place plus CAP_SHARE_MM for each cap its IC already
+        has. Falls back to the middle of what it shares nets with."""
+        rail = _decap_rail(info[ref])
+        cands = _decap_targets(ref, info, placed, pad_xy) or [(*toward_middle(_target(ref, info, placed, centre, (cx, cy))), None)]
+        tgt, hit, best, owner = None, None, None, None
+        for cx_, cy_, ic in cands:
+            h = find(ref, cx_, cy_, rmax=rmax)
+            if h is None:
+                continue
+            score = math.hypot(h[0] - cx_, h[1] - cy_) + CAP_SHARE_MM * assigned.get((ic, rail), 0)
+            if best is None or score < best - 1e-9:
+                tgt, hit, best, owner = (cx_, cy_), h, score, ic
+        if hit is not None:
+            assigned[owner, rail] = assigned.get((owner, rail), 0) + 1
+        return tgt, hit
+
     # 2. ICs: nearest the middle, then around what they share nets with
     for ref in ics:
         tgt = toward_middle(_target(ref, info, placed, centre, (cx, cy)))
@@ -359,15 +400,13 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
         commit(ref, *hit[:3], side=hit[3])
 
     # 3. decoupling caps first (beside the supply pin), then the others by how tied they are to placed parts
-    caps = [r for r in rest if _decap_rail(info[r])]
-    others = [r for r in rest if r not in caps]
     others.sort(key=lambda r: -len(_shared(r, info, placed)))
     for ref in caps + others:
         if ref in caps:
-            tgt = _decap_target(ref, info, placed, pad_xy) or toward_middle(_target(ref, info, placed, centre, (cx, cy)))
+            tgt, hit = place_cap(ref)
         else:
             tgt = toward_middle(_target(ref, info, placed, centre, (cx, cy)))
-        hit = find(ref, *tgt)
+            hit = find(ref, *tgt)
         if hit is None:
             errors.append(f"{ref}: no free place inside the board; make the board bigger")
             continue
@@ -375,7 +414,7 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
         if ref in caps:
             hx, hy = tgt
             d = math.hypot(hit[0] - hx, hit[1] - hy)
-            if d > 5.0:
+            if d > DECAP_NEAR_MM:
                 warnings.append(f"{ref}: decoupling cap is {d:.1f} mm from its supply pin (no closer room)")
     for ref in placed:
         if ref in keep:
@@ -449,20 +488,18 @@ def _decap_rail(i):
     return None
 
 
-def _decap_target(ref, info, placed, pad_xy):
+def _decap_targets(ref, info, placed, pad_xy):
+    """The supply pins a decoupling cap can sit beside, as (x, y, IC ref): every pin on its rail net of every placed IC."""
     rail = _decap_rail(info[ref])
-    best = None
+    found = []
     for o, i in info.items():
         if o not in placed or o == ref or not re.match(r"^(?:U|IC|Q|M|MOD)\d", o, re.I):
             continue
         for name, (_, _, net) in i["pads"].items():
             if net == rail:
                 x, y = pad_xy(o, name)
-                taken = sum(1 for r2, pl in placed.items() if r2 != o and abs(pl["x"] - x) < 4 and abs(pl["y"] - y) < 4 and r2.startswith("C"))
-                key = (taken, 0)
-                if best is None or key < best[0]:
-                    best = (key, (x, y))
-    return best[1] if best else None
+                found.append((x, y, o))
+    return found
 
 
 OUTLINE_LAYER = 57          # Mechanical 1: the layer the shipped OutJob plots as the board outline (.GM1; layer id 16908289)

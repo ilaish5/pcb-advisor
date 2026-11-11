@@ -66,7 +66,7 @@ def fake_blocking_respond(monkeypatch, partial_text="half an answer"):
     import serve
     started = threading.Event()
 
-    def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None):
+    def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None, **_kw):
         on_event({"kind": "tool", "label": "Running calc.py a", "tool": "Bash", "ts": time.time()})
         on_event({"kind": "tool", "label": "Reading datasheet.pdf", "tool": "Read", "ts": time.time()})
         started.set()

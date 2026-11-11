@@ -2049,6 +2049,23 @@ begin
     Log('poly ' + NetName + ' ' + Layer + ' ' + X0 + ' ' + Y0 + ' ' + X1 + ' ' + Y1);
 end;
 
+{ POLYDEL path: removes every polygon (the pour); tracks, vias and pads stay. Logs "polydel N". }
+procedure PcbPolyDelete(Path: String);
+var
+    B : IDispatch;
+    n : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    n := PcbObjCount(B, ePolyObject);
+    PcbRemoveKind(B, ePolyObject);
+    Log('polydel ' + IntToStr(n));
+end;
+
 procedure PcbBegin(Path: String; Replace: String);
 var
     B : IDispatch;
@@ -2410,6 +2427,7 @@ begin
         PcbTrack(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7), Field(Line, 8))
     else if (Cmd = 'VIA') then PcbVia(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
     else if (Cmd = 'POLY') then PcbPoly(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7))
+    else if (Cmd = 'POLYDEL') then PcbPolyDelete(Field(Line, 1))
     else if (Cmd = 'PCBBEGIN') then PcbBegin(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'OUTLINE') then PcbOutline(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5))
     else if (Cmd = 'OUTLINEDRAW') then PcbOutlineDraw(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))

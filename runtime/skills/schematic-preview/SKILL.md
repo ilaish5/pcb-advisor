@@ -15,6 +15,10 @@ lay it out. Who puts it into Altium is the student's choice (step 11): they redr
 - Not for: checking a sheet they already drew (use `schematic-review`); placing parts on the PCB (`placement-and-routing-plan`).
 
 ## Steps
+Asked to DRAW the schematic in Altium: send it in ONE turn, in this order: `altium.create_project` (if none), `library.build`,
+`netlist.write` (pins by exact name; the server fills the numbers from the built symbols), `altium.draw_schematic` with the student's quote.
+Never split it over turns, never say "I'll write the netlist next turn" or tell the student to write "continue".
+
 1. Collect the data first: per IC the pin number, pin name and net; per small part the ref, value and the two nets.
    Take pins from the part's datasheet in the project's `sources/` or from the student's library when one is there. Simple parts
    (R, C, L, LED, diode, ferrite, crystal, generic connector) need none. For an IC or transistor with no datasheet, fetch it first
@@ -43,8 +47,9 @@ lay it out. Who puts it into Altium is the student's choice (step 11): they redr
 9. Tell the student how to redraw it in Altium: place the parts, then wire only the short stub and name it (Place > Net Label,
    Place > Power Port); cite the AD20 manual step. Say the grey cross-sheet hints are not drawn objects.
 10. Send the image path plus a short table (see Output). Say clearly: generated from data, verify with Alt+Click on a net.
-11. End the preview with ONE question, in the student's language: "Do you want to draw this in Altium yourself, or should I draw it?"
-    Then stop and wait. Never draw before the answer, and never answer for them.
+11. If the student has NOT said who draws (in this turn or any earlier turn of this conversation), end the preview with ONE question, in
+    their language: "Do you want to draw this in Altium yourself, or should I draw it?" Then stop and wait; never answer for them.
+    If they already said it ("תצייר אתה", "you draw it"), do NOT ask again: run the chain above now, quoting that message.
     - "Myself" (or no clear answer): the manual path, steps 9-10 stay as they are; do not run the action.
     - "You draw it": run `{"type": "altium.draw_schematic", "student_said": "<their words, most of their last message>"}` (add
       `"sheet": "01"` for one sheet). The action is refused when the quote is only a fragment, or when their message says they draw it
@@ -95,7 +100,8 @@ lay it out. Who puts it into Altium is the student's choice (step 11): they redr
 - Pin electrical types matter later: passives imported as Input cause "floating input pins" or "no driving source" ERC messages.
   Mention it when the student uses a downloaded library, and send them to `schematic-review`.
 - Grid: a part placed off the 100 mil grid gives "Off grid" warnings; tell the student to keep the snap grid on.
-- Do not run `altium.draw_schematic` because the preview looks good: the student chooses, in their own words. "ok" or "continue" is not a choice.
+- Do not run `altium.draw_schematic` because the preview looks good: the student chooses, in their own words
+  ("ok" or "continue" is not a choice), but once they chose, never ask again.
 - Do not draw more than the student needs: a block diagram first, detail sheets only for blocks they ask for.
 
 ## Output

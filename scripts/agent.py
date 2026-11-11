@@ -299,9 +299,22 @@ def _add_dirs(project):
     return out
 
 
-def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None):
+HEBREW = re.compile("[֐-׿]")
+
+
+def reply_language_line(typed, history=(), generated=False):
+    """'Reply language: Hebrew' when the student's last TYPED message has Hebrew letters, else '' (English is the default).
+    A button-generated prompt (generated=True) is skipped: the language of the last typed message in `history` counts."""
+    text = typed
+    if generated:
+        text = next((m.get("text") for m in reversed(list(history)) if m.get("role") == "user" and not m.get("generated")
+                     and m.get("text")), "")
+    return "Reply language: Hebrew\n" if HEBREW.search(text or "") else ""
+
+
+def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None, typed=None, generated=False):
     """(state, message) -> {reply, actions}. `backend` names an engine; None
-    means whatever `agent.provider` is set to."""
+    means whatever `agent.provider` is set to. `typed` = the student's own text without the context the server adds."""
     name = gateway.resolve(backend)
     if name == "external":
         return {"reply": None, "actions": [], "backend": name, "provider": name}
@@ -325,7 +338,7 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
         parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project"), engine_home))
     parts.append("--- CURRENT STATE ---\n" + _summary(model))
     parts.append("--- CONVERSATION SO FAR ---\n" + convo)
-    parts.append("--- STUDENT SAYS ---\n" + message + "\n")
+    parts.append("--- STUDENT SAYS ---\n" + message + "\n" + reply_language_line(message if typed is None else typed, history, generated))
     prompt = "\n\n".join(parts)
 
     # The engine lives in its own folder, where only the instructions and skills are (sync() above).

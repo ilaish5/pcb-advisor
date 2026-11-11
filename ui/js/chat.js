@@ -53,6 +53,12 @@ function askAbout(ctx) {
   if (!ctx) return;
   const kind = CHAT_CHIPS[ctx.kind] ? ctx.kind : null;
   const id = String(ctx.id ?? ctx.label ?? '').trim();
+  if (ctx.send && ctx.text && kind && id) {      // a button's own question: sent at once, marked generated (the reply language follows what the student typed)
+    if (typeof showChat === 'function') showChat();
+    setView('chat');
+    send(ctx.text, {ctx: {kind, id, label: String(ctx.label || id)}, generated: true});
+    return;
+  }
   if (kind && id) chatSetChip({kind, id, label: String(ctx.label || id)});
   if (typeof showChat === 'function') showChat();
   setView('chat');
@@ -614,12 +620,14 @@ async function send(text, opts) {
   const entry = {role: 'user', text, ts: new Date().toISOString()};
   if (ctx && ctx.kind === 'file') entry.source = ctx.id;
   else if (ctx) entry.about = {kind: ctx.kind, id: ctx.id, label: ctx.label};
+  if (opts && opts.generated) entry.generated = true;
   S.chat = [...S.chat, entry];
   renderChat(true);
   try {
     const payload = {text};
     if (ctx && ctx.kind === 'file') { payload.file = ctx.id; payload.source = ctx.id; }
     else if (ctx) payload.about = entry.about;
+    if (entry.generated) payload.generated = true;
     const res = await api('/api/chat', payload, {soft: true});      // soft: the error is drawn under the box, not toasted
     if (!res || res.error) throw new Error((res && res.error) || 'no answer');
     setState(res);
