@@ -81,7 +81,7 @@ function rulesHeader(rd) {
     {n: sm.preset, label: `${(rd.preset && rd.preset.name) || 'JLC'} preset rule${sm.preset === 1 ? '' : 's'}`, title: 'Picked from this board\'s layer count, copper weight and mask colour'},
     !linked && {always: true, label: 'No board linked'},
     linked && {n: sm.differ, label: 'differ on your board', tone: 'warn', title: 'Missing from the board, or different from the preset with no JLC minimum to judge them by'},
-    linked && {n: (rd.missing_in_pcb || []).length, label: 'missing from the PcbDoc', tone: 'bad', title: (rd.missing_in_pcb || []).join(', ') + ': DRC and outputs use Altium's defaults for these. Apply the rules in Altium again.'},
+    linked && {n: (rd.missing_in_pcb || []).length, label: 'missing from the PcbDoc', tone: 'bad', title: (rd.missing_in_pcb || []).join(', ') + ": DRC and outputs use Altium's defaults for these. Apply the rules in Altium again."},
     linked && {n: sm.below, label: 'below JLC minimum', tone: 'bad', title: 'The fab may reject or alter these'},
     linked && !sm.differ && !sm.below && {always: true, label: 'Your board matches the preset'},
   ]);
