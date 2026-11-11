@@ -163,6 +163,7 @@ def test_the_pages_have_the_buttons_and_hit_the_endpoints():
     assert "r.needs_replace" in run and "replace: !!replace" in run and "r.summary" in run and "r.warnings" in run
     assert "confirm(" not in run and "alert(" not in run
     # replace is sent only by the Replace button of the note, never by the header button
+    assert "replace(/^Altium refused a step: /, '')" in run and "nothing was changed" in run      # the note drops the script's step log
     assert "refresh(true)" in run and "loadAltium(true)" in run and "Lost contact with the server" in run
     assert "pvRunStep(d.step, d.replace === '1')" in js
     header = js[js.index("function pvStepBtn"):js.index("function pvStepNote")]

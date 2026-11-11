@@ -343,7 +343,8 @@ async function pvRunStep(step, replace) {
   pvBusy = '';
   if (r && r.needs_replace) {
     // never replaced without a second click: the note says what is there and offers it. The first sentence says what is there; the rest is worded for the chat
-    pvNote[c.page] = {kind: 'warn', text: r.error.split('. ')[0].replace(/\.$/, '') + '. ' + c.ask, replace: step};
+    const found = r.error.replace(/^Altium refused a step: /, '').replace(/; nothing was changed[^]*$/, '').split('. ')[0].replace(/\.$/, '');       // without the script's own step log
+    pvNote[c.page] = {kind: 'warn', text: found.charAt(0).toUpperCase() + found.slice(1) + '. ' + c.ask, replace: step};
   } else {
     if (lost) pvNote[c.page] = {kind: 'bad', text: 'Lost contact with the server while Altium was working. The step may still be running or may have finished: look at the board in Altium, and at the chat for its result, before starting it again.'};
     else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: (r && r.error) || 'no answer from the server'};
