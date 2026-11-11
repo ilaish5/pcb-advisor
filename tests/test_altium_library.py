@@ -294,6 +294,18 @@ def test_a_script_that_stops_logging_is_released_and_its_dialogs_are_reported(mo
         bridge.run_commands([("PING",)], stall_timeout=-1)
 
 
+def test_a_blocking_altium_message_box_tells_the_student_what_to_do(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
+    monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
+    monkeypatch.setattr(bridge, "_running", lambda: True)
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
+    monkeypatch.setattr(bridge.time, "sleep", lambda s: None)
+    monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 100)).__next__)
+    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Information: OK"])
+    with pytest.raises(bridge.BridgeError, match=r"sign in.*close any message box.*try again.*\[TMessageForm\] Information: OK"):
+        bridge.run_commands([("PING",)])
+
+
 def test_the_shipped_templates_hold_no_leftovers_of_a_real_part_or_another_computer():
     for name in ("Template.SchLib", "Template.PcbLib"):
         data = (bridge.TEMPLATES / name).read_bytes()

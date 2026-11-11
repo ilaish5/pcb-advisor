@@ -21,6 +21,11 @@ lay it out. Who puts it into Altium is the student's choice (step 11): they redr
    (`jlc.py part` gives `datasheet_url`; `sources.py get <project> <url> <MPN>.pdf`). If no link works, use the well-known pinout
    and keep going: the part is saved as `pins_source: "agent"` (unverified); say which datasheet is missing. If you truly do not
    know the pinout of a part, leave that part out and say so; do not invent pins.
+   Pin NUMBERS of a connector or IC with a downloaded symbol: you may write the netlist in the same turn as `library.build`, naming
+   the pins by their exact datasheet/symbol names; the server fills the numbers from the built symbol by name (a warning says so;
+   an ambiguous or unmatched name is refused with the real number=name pairs). Action order in one turn: `library.build`, then
+   `netlist.write`, then `altium.draw_schematic`. If the library is already built, read `<project>/library/build/symbols_spec.txt` first
+   (`PIN|number|name|...`) and use those numbers. Never invent numbers.
    Never wait for a complete sheet: write it early and partial. Draw what is known, leave undecided pins with net "" (shown as an
    open pin) and include parts whose BOM proposals are still pending (shown "pending approval"). The write returns warnings
    (open pins, parts not in the BOM yet); tell the student in one line, e.g. "sheet written, 3 open pins, U5 waits for approval".

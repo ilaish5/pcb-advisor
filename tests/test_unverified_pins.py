@@ -65,3 +65,65 @@ def test_unverified_badge_in_the_schematic(empty):
     _sheet(empty)
     svg = render_sheet.render_sheet(store.load_sheet(empty, "01"), store.bom_lines(empty))
     assert svg.count("add the datasheet to verify") == 1
+
+
+def _jd_sheet(empty, d_names=("A", "K")):
+    _add(empty, "J1", "USB-C-16P")
+    _add(empty, "D1", "LED0603")
+    _add(empty, "R1", "RC0603")
+    pins = lambda a, b: [{"num": "1", "name": a, "net": "N1"}, {"num": "2", "name": b, "net": "GND"}]
+    sheet = {"sections": [{"id": "A", "title": "T"}], "parts": [
+        {"ref": "J1", "section": "A", "pins": pins("VBUS", "GND")},
+        {"ref": "D1", "section": "A", "pins": pins(*d_names)},
+        {"ref": "R1", "section": "A", "pins": pins("1", "2")}]}
+    assert store.write_sheet(empty, "01", sheet)["ok"]
+
+
+def _symbol(empty, names):
+    import partlib
+    lib = partlib.library_dir(empty)
+    (lib / "build").mkdir(parents=True, exist_ok=True)
+    (lib / "manifest.json").write_text('{"D1": {"symbol": "LED-SYM"}}', encoding="utf-8")
+    pins = "".join(f"PIN|{i}|{n}|eElectricPassive|0|0|0|1|100\n" for i, n in enumerate(names, 1))
+    (lib / "build" / "symbols_spec.txt").write_text(f"SYMBOL|LED-SYM|x|1\n{pins}", encoding="cp1252")
+
+
+def test_connector_and_led_without_datasheet_are_listed_resistor_is_not(empty):
+    _jd_sheet(empty)
+    out = {u["line"]: u for u in store.unverified_parts(empty)}
+    assert set(out) == {"J1", "D1"} and out["J1"]["status"] == out["D1"]["status"] == "unverified"
+    assert "no datasheet" in out["J1"]["issues"] and "polarity" in out["D1"]["issues"]
+    assert "library symbol" not in out["D1"]["issues"]
+
+
+def test_led_polarity_matching_the_library_symbol_is_worded_precisely(empty):
+    _jd_sheet(empty)
+    _symbol(empty, ["A", "K"])
+    d1 = {u["line"]: u for u in store.unverified_parts(empty)}["D1"]
+    assert "match the library symbol LED-SYM" in d1["issues"] and "no datasheet" in d1["issues"]
+    _symbol(empty, ["K", "A"])                     # swapped numbers: no claim of a match
+    assert "match the library symbol" not in {u["line"]: u for u in store.unverified_parts(empty)}["D1"]["issues"]
+
+
+def test_accepting_clears_connector_and_led(empty):
+    _jd_sheet(empty)
+    store.accept_pins(empty, "J1")
+    store.accept_pins(empty, "D1")
+    assert store.unverified_parts(empty) == []
+
+
+def test_diode_never_runs_the_datasheet_text_check(empty):
+    import verify_part
+    store.propose_bom(empty, "D1", {"mpn": "LED-RED", "refs": ["D1"]}, new=True)
+    store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
+    before = len(store.library_log(empty)) if hasattr(store, "library_log") else None
+    r = verify_part.verify(empty, "D1")
+    assert r["verify"] == "unchecked"
+    assert (store.library_parts(empty).get("D1") or {}).get("verify") is None
+
+
+def test_connector_with_datasheet_stays_unverified_until_verified():
+    line = {"refs": ["J1"], "key": "J1", "datasheet": "usb.pdf"}
+    assert store.pins_status(line, {"verify": "unchecked"})[0] == "unverified"
+    assert store.pins_status(line, {"verify": "pass"})[0] == ""
+    assert store.pins_status(line, {"pins_accepted": True})[0] == ""

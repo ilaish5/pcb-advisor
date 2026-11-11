@@ -683,6 +683,20 @@ def format_status(manifest):
                         for k, e in manifest.items() for p in [e.get("params_stale")] if p])
 
 
+def model_check(lcsc):
+    """Print whether EasyEDA has a model for an LCSC code (downloaded into a temp folder and discarded). Exit 0 = symbol and footprint exist."""
+    import tempfile
+    lcsc = lcsc.strip().upper()
+    with tempfile.TemporaryDirectory() as tmp:
+        ok, msg = fetch_one(lcsc, pathlib.Path(tmp) / lcsc)
+        if not ok:
+            print(f"{lcsc}: NO EasyEDA model ({msg}); choose another part or expect a vendor zip")
+            return 1
+        steps = list((pathlib.Path(tmp) / lcsc).rglob("*.step")) + list((pathlib.Path(tmp) / lcsc).rglob("*.stp"))
+        print(f"{lcsc}: EasyEDA model found: symbol and footprint" + (", 3D STEP" if steps else ", no 3D STEP"))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Project part library: prepare the symbols, footprints and 3D models.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -692,10 +706,14 @@ def main(argv=None):
     p.add_argument("--refresh", action="store_true", help="download again even if a part is already there")
     s = sub.add_parser("status", help="print the per-line table from manifest.json")
     s.add_argument("project")
+    m = sub.add_parser("model", help="check that EasyEDA has a symbol, footprint and 3D model for an LCSC code (before proposing it)")
+    m.add_argument("lcsc")
     try:
         a = ap.parse_args(argv)
     except SystemExit as e:
         return 1 if e.code else 0
+    if a.cmd == "model":
+        return model_check(a.lcsc)
     if not store.pdir(a.project).is_dir():
         print(f"no such project: {a.project}", file=sys.stderr)
         return 1

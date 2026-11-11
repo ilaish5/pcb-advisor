@@ -157,7 +157,7 @@ function dfmUnverifiedHTML() {
   if (!rows.length) return '';
   const docs = (S.sources || []).filter(s => s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
   const item = l => `<li class="unv-row"><span class="m">${esc(refsLabel(l.refs))}</span> ${esc(l.mpn || l.value || '')}
-    <span class="unv-why" title="${esc(l.pins_issues || '')}">${l.pins_status === 'mismatch' ? 'Pins conflict with ' + esc(l.datasheet || 'the datasheet') + ': ' + esc(l.pins_issues || '') : 'Pins from the agent; add the datasheet to verify'}</span>
+    <span class="unv-why" title="${esc(l.pins_issues || '')}">${l.pins_status === 'mismatch' ? 'Pins conflict with ' + esc(l.datasheet || 'the datasheet') + ': ' + esc(l.pins_issues || '') : esc(l.pins_issues || 'Pins from the agent; add the datasheet to verify')}</span>
     ${btn('Accept as is', {kind: 'line', size: 'sm', act: 'accept-pins', line: l.key, title: 'You checked these pins yourself'})}
     ${docs.length ? `<select class="in quiet" data-pick-ds="${esc(l.key)}" aria-label="Pick a datasheet for ${esc(refsLabel(l.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}"${d === l.datasheet ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
   return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>

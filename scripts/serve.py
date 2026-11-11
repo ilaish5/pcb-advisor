@@ -466,7 +466,88 @@ def warned_map(applied):
     return {a: w for a in applied for w in [warning_of(a)] if w}
 
 
-def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None):
+def bom_value_warning(project, a):
+    """' (warning: ...)' when a bom.propose line for a resistor, capacitor or inductor has no value ('5.1k'), else ''.
+    The student sees the value, not the MPN; the proposal still goes through."""
+    ch = a.get("changes") or {}
+    refs = ch.get("refs") if isinstance(ch.get("refs"), list) and ch.get("refs") else [a["line"]]
+    if not re.match(r"[RCL]\d", str(refs[0]).upper()):
+        return ""
+    have = next((l.get("value") for l in store.bom_lines(project) if l["key"] == a["line"]), "")
+    if str(ch.get("value") or have or "").strip():
+        return ""
+    return f' (warning: {a["line"]} has no value such as "5.1k" or "100nF"; the student sees only the MPN)'
+
+
+def _renumber_by_name(part, symbol):
+    """Rewrite the netlist pin numbers of a part from the symbol when every pin NAME matches exactly one symbol pin
+    (case-insensitive, exact, unique both ways). True when done; False (part untouched) on any ambiguity or unmatched name."""
+    pins = part["pins"]
+    wanted = [str(p.get("name") or "").strip().upper() for p in pins]
+    if not pins or not all(wanted) or len(set(wanted)) != len(wanted):
+        return False
+    chosen = []
+    for w in wanted:
+        hit = [lp for lp in symbol["pins"] if str(lp.get("name") or "").strip().upper() == w]
+        if len(hit) != 1:
+            return False
+        chosen.append(str(hit[0]["number"]))
+    if len(set(chosen)) != len(chosen):
+        return False
+    for p, num in zip(pins, chosen):
+        p["number" if "number" in p and "num" not in p else "num"] = num
+    return True
+
+
+def netlist_symbol_errors(project, data, notes=None):
+    """Errors for parts of a netlist sheet whose BOM line already has a built library symbol and whose pins do not fit it
+    (a pin number the symbol lacks, a swapped pin name): the draw step's own comparison (draw.pin_nets), run at write time,
+    each error listing the symbol's real number/name pairs. [] when there is no built library or no symbol for a part.
+    A part whose numbers the symbol lacks but whose pin names each match one symbol pin is renumbered in data from the symbol
+    (a note goes to `notes`). A symbol built for an older MPN/LCSC of the line is skipped."""
+    import partlib
+    from altium import draw
+    spec = partlib._spec_symbols(partlib.library_dir(project) / "build" / "symbols_spec.txt")
+    if not spec:
+        return []
+    man = store.library_manifest(project)
+    lines = {r: l for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
+    key = {r: l["key"] for r, l in lines.items()}
+    out = []
+    for part in data.get("parts") or []:
+        if not isinstance(part, dict) or not isinstance(part.get("pins"), list):
+            continue
+        entry = man.get(key.get(part.get("ref"))) or {}
+        name = entry.get("symbol")
+        if not name or name not in spec:
+            continue
+        line = lines.get(part.get("ref")) or {}
+        if any(entry.get(f) and line.get(f) and str(entry[f]).strip().lower() != str(line[f]).strip().lower() for f in ("mpn", "lcsc")):
+            continue                  # the part changed since the build: the symbol is stale, library.build comes first
+        symbol = {"name": name, "pins": [{"number": p["num"], "name": p["name"]} for p in spec[name]["pins"]]}
+        try:
+            errs = draw.pin_nets(part, symbol)[2]
+            if errs and any("has no pin in library symbol" in e for e in errs) and _renumber_by_name(part, symbol):
+                errs = draw.pin_nets(part, symbol)[2]
+                if not errs and notes is not None:
+                    notes.append(f"{part['ref']}: pin numbers taken from the library symbol {name} (matched by pin name)")
+        except (KeyError, TypeError, AttributeError):
+            continue
+        if errs:
+            real = ", ".join(f"{p['number']}={p['name']}" for p in symbol["pins"])
+            out.append("; ".join(errs[:3]) + f". Pins of {part['ref']} in the library symbol {name}: {real}. "
+                       "Use these numbers (run library.build again if the part changed)")
+    return out
+
+
+# what the progress line says while a slow action runs (the engine's turn is already over by then)
+STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.skeleton": "Drawing the sheet frames",
+               "library.build": "Building the project library in Altium", "altium.draw_schematic": "Drawing the schematic in Altium",
+               "altium.place_pcb": "Placing the parts on the board", "altium.import_rules": "Importing the JLC rules",
+               "altium.route_pcb": "Routing the board", "netlist.write": "Writing the netlist"}
+
+
+def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
     approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
@@ -486,10 +567,15 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
         except (ValueError, KeyError) as exc:
             refused.append(f"auto-apply of {rec['id']} failed, it waits for you: {exc}")
 
-    for a in actions or []:
+    for a in actions or []:             # in the listed order: library.build, then netlist.write, then altium.draw_schematic
         if not isinstance(a, dict):
             continue
         kind = a.get("type")
+        if cancel is not None and cancel.is_set():      # Stop: what has not started does not run (a running Altium step is not interrupted)
+            refused.append(f"{kind}: stopped by the student before it ran")
+            continue
+        if on_step and kind in STEP_LABELS:        # the slow steps show in the chat's progress line
+            on_step(STEP_LABELS[kind])
         try:
             if kind == "idea.propose" and a.get("topic") and a.get("text"):
                 store.propose_idea(project, a["topic"], a["text"], by="agent")
@@ -515,7 +601,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                                         a.get("sources", []), _agent_may_set_library(a.get("library")) or None,
                                         sess, new=bool(a.get("new")), reserved=reserved)
                 proposals.append(rec["id"])
-                applied.append(f"bom.propose:{a['line']}")
+                applied.append(f"bom.propose:{a['line']}" + bom_value_warning(project, a))
                 maybe_auto(rec)
             elif kind == "idea.diagram" and isinstance(a.get("changes"), dict):
                 rec = store.propose_idea_diagram(project, a["changes"], a.get("reason", "Diagram update proposed"),
@@ -532,9 +618,12 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
                 if meta is not None and isinstance(res, dict) and res.get("touched"):
                     meta.setdefault("diagram_touched", []).extend(res["touched"])
             elif kind == "netlist.write" and a.get("sheet") and isinstance(a.get("data"), dict):
-                res = store.write_sheet_logged(project, a["sheet"], a["data"])
+                notes = []
+                sym_errors = netlist_symbol_errors(project, a["data"], notes)
+                res = {"ok": False, "errors": sym_errors} if sym_errors else store.write_sheet_logged(project, a["sheet"], a["data"])
                 if res["ok"]:
-                    note = f" (warnings: {'; '.join(res['warnings'][:8])})" if res.get("warnings") else ""
+                    warns = [*notes, *(res.get("warnings") or [])]
+                    note = f" (warnings: {'; '.join(warns[:8])})" if warns else ""
                     applied.append(f"netlist.write:{res['sheet']}{note}")
                 else:
                     refused.append(f"netlist.write:{a['sheet']} refused: " + "; ".join(res["errors"][:8]))
@@ -1486,25 +1575,28 @@ class Handler(BaseHTTPRequestHandler):
                     ask = ("[this conversation is about one part; its context]\n"
                            f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
             turn = _turn_start(tkey)
-            guard = tool_guard.begin()
-            BUSY["chat"] += 1
-            tool_edited, tool_unrestored = [], []
-            try:
-                res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND, cancel=turn["cancel"],
-                                    on_event=lambda ev, k=tkey: _turn_event(k, ev))
+            try:             # _turn_end runs exactly once, whatever fails between the start and the end of apply_actions
+                guard = tool_guard.begin()
+                BUSY["chat"] += 1
+                tool_edited, tool_unrestored = [], []
+                try:
+                    res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND, cancel=turn["cancel"],
+                                        on_event=lambda ev, k=tkey: _turn_event(k, ev))
+                finally:
+                    BUSY["chat"] -= 1
+                    tool_edited, tool_unrestored = tool_guard.end(guard)     # the agent never keeps an edit of the tool's own files
+                if tool_edited or tool_unrestored:
+                    print(f"[guard] the agent edited system files: restored {tool_edited}, not restorable {tool_unrestored}", file=sys.stderr, flush=True)
+                chat_meta = {}
+                partial = bool(res.get("partial"))
+                if partial:      # a half-written actions block is not trusted
+                    applied, proposals, refused = [], [], []
+                else:            # the turn stays open while the actions run, so the chat shows which step is running
+                    applied, proposals, refused = apply_actions(
+                        proj, res.get("actions"), sess, last_user=text, meta=chat_meta, turn_start=turn["started"],
+                        on_step=lambda label, k=tkey: _turn_event(k, {"label": label}), cancel=turn["cancel"])
             finally:
-                BUSY["chat"] -= 1
                 _turn_end(tkey)
-                tool_edited, tool_unrestored = tool_guard.end(guard)     # the agent never keeps an edit of the tool's own files
-            if tool_edited or tool_unrestored:
-                print(f"[guard] the agent edited system files: restored {tool_edited}, not restorable {tool_unrestored}", file=sys.stderr, flush=True)
-            chat_meta = {}
-            partial = bool(res.get("partial"))
-            if partial:      # a half-written actions block is not trusted
-                applied, proposals, refused = [], [], []
-            else:
-                applied, proposals, refused = apply_actions(proj, res.get("actions"), sess, last_user=text, meta=chat_meta,
-                                                           turn_start=turn["started"])
             if tool_edited or tool_unrestored:
                 refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
             if res.get("provider") != "external":         # an outside driver is not an engine turn

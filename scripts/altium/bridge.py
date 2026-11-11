@@ -293,6 +293,12 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
                 break
             shown = release_executor()          # a paused executor ignores new scripts: release it and try once more
             if attempt == 2:
+                if any(s.startswith("[TMessageForm]") for s in shown):
+                    # Altium's own message box: its text is a TLabel (not a window), so it cannot be read. On a cold start the
+                    # usual cause is that Altium is not signed in to an account / licence (seen 2026-11-11).
+                    raise BridgeError("Altium did not start the script because a message box in Altium is blocking it (its text cannot "
+                                      "be read from here). Open Altium, sign in if it asks you to, close any message box that is "
+                                      "open, and then try again. Dialog: " + " | ".join(shown))
                 raise BridgeError("Altium did not start the script (a script error or a dialog box was blocking it"
                                   + (f": {' | '.join(shown)}" if shown else "") + "). "
                                   "I released the script executor and closed dialogs; try again.")

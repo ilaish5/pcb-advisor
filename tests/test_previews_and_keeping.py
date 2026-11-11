@@ -245,6 +245,23 @@ def test_board_shape_comes_from_board6():
     assert preview_pcb.board6_outline({"VX0": "0mil", "VY0": "0mil"}) is None
 
 
+def test_board6_drops_stale_closing_vertex():
+    """30 x 25 mm board whose closing vertex still held the default (1000, 1000) mil drew as a triangle."""
+    rec = {"VX0": "0mil", "VY0": "0mil", "VX1": "1181.1024mil", "VY1": "0mil",
+           "VX2": "1181.1024mil", "VY2": "984.252mil", "VX3": "0mil", "VY3": "984.252mil",
+           "VX4": "1000mil", "VY4": "1000mil"}
+    pts = preview_pcb.board6_outline(rec)
+    assert pts == [(0.0, 0.0), (30.0, 0.0), (30.0, 25.0), (0.0, 25.0)]
+    rec["VX4"], rec["VY4"] = "0mil", "0mil"
+    assert preview_pcb.board6_outline(rec) == pts
+
+
+def test_board6_plain_rectangle_keeps_its_fourth_corner():
+    rec = {"VX0": "0mil", "VY0": "0mil", "VX1": "1181.1024mil", "VY1": "0mil",
+           "VX2": "1181.1024mil", "VY2": "984.252mil", "VX3": "0mil", "VY3": "984.252mil"}
+    assert preview_pcb.board6_outline(rec) == [(0.0, 0.0), (30.0, 0.0), (30.0, 25.0), (0.0, 25.0)]
+
+
 # ---------------------------------------------------------------------------------------------------
 # The two server-drawn pictures are inlined into the page, so their <style> is global there.
 # These pin the contract: every rule is scoped to the picture, colours come from the page's tokens

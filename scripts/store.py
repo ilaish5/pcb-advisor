@@ -287,7 +287,7 @@ def bom(project, write=True):
         entry = lib.get(l["key"])
         l["library"] = manifest_status(library_status(l, entry), man.get(l["key"]))
         l["library_entry"] = entry
-        l["pins_status"], l["pins_issues"] = pins_status(l, entry)
+        l["pins_status"], l["pins_issues"] = pins_status(l, entry, project)
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
         l["role"] = l.get("role") or ""
 
@@ -2529,12 +2529,56 @@ def is_simple_ref(ref):
     return bool(prefix) and prefix.group(0).upper() in SIMPLE_PREFIXES
 
 
-def pins_status(line, entry):
-    """('', '') for a simple part or one not on a sheet yet; else ('verified'|'accepted'|'unverified'|'mismatch', issues)."""
+POLARISED_PREFIXES = ("D", "LED")           # two-pin parts whose pin 1/2 is not interchangeable
+CONNECTOR_PREFIXES = ("J", "P")             # pins are named by the agent unless a datasheet is linked
+_POLARITY = {"A": "A", "ANODE": "A", "K": "K", "C": "K", "CATHODE": "K"}
+
+
+def _prefix_of(ref):
+    m = re.match(r"[A-Za-z]+", ref or "")
+    return m.group(0).upper() if m else ""
+
+
+def _polarity_note(project, line):
+    """Precise wording for a diode/LED line without a datasheet: whether its A/K pins agree with a library symbol's pin names."""
+    ref = (line.get("refs") or [""])[0]
+    base = f"{ref}: polarity (anode/cathode) was not verified against a datasheet"
+    if not project:
+        return base
+    try:
+        import partlib
+        sym = (library_manifest(project).get(line["key"]) or {}).get("symbol")
+        spec = partlib._spec_symbols(partlib.library_dir(project) / "build" / "symbols_spec.txt").get(sym) if sym else None
+        part = next((p for sh in sheet_ids(project) for p in load_sheet(project, sh).get("parts", []) if p.get("ref") == ref), None)
+    except (OSError, KeyError, ValueError, ImportError):
+        return base
+    if not spec or not part:
+        return base
+    lib = {str(p["num"]): _POLARITY.get(str(p["name"]).strip().upper()) for p in spec["pins"]}
+    net = {str(p.get("num", p.get("number", ""))): _POLARITY.get(str(p.get("name") or "").strip().upper()) for p in part.get("pins", [])}
+    if set(lib.values()) == {"A", "K"} and net and all(net[n] and net[n] == lib.get(n) for n in net) and set(net.values()) == {"A", "K"}:
+        return f"{ref}: pins A/K match the library symbol {sym}, but no datasheet confirms the polarity"
+    return base
+
+
+def pins_status(line, entry, project=None):
+    """('', '') for a simple part or one not on a sheet yet; else ('verified'|'accepted'|'unverified'|'mismatch', issues).
+    Simple parts (R, C, L ...) are '' too, except a connector (J, P) with no datasheet and a diode/LED (D, LED) whose
+    polarity no datasheet confirms: those are 'unverified' (the Unverified list), with the reason in issues."""
     refs = line.get("refs") or []
-    if not refs or all(is_simple_ref(r) for r in refs):
+    if not refs:
         return "", ""
     entry = entry or {}
+    if all(is_simple_ref(r) for r in refs):
+        kinds = {_prefix_of(r) for r in refs}
+        conn, pol = kinds & set(CONNECTOR_PREFIXES), kinds & set(POLARISED_PREFIXES)
+        if not (conn or pol) or entry.get("pins_accepted") or entry.get("verify") == "pass":
+            return "", ""
+        if entry.get("verify") == "mismatch":
+            return "mismatch", entry.get("issues", "")
+        if conn:
+            return "unverified", f"{refs[0]}: no datasheet linked, the pin numbers and names were never verified"
+        return "unverified", _polarity_note(project, line)
     if entry.get("verify") == "pass":
         return "verified", ""
     if entry.get("verify") == "mismatch":
@@ -2577,6 +2621,11 @@ def refresh_pins_source(project):
                 json.dumps({**sheet, "parts": marked}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _polarised_only(line):
+    refs = line.get("refs") or []
+    return bool(refs) and all(_prefix_of(r) in POLARISED_PREFIXES for r in refs)
+
+
 def unverified_parts(project, verify_new=True):
     """Every BOM line on a sheet whose pins are not verified or accepted. With verify_new, a datasheet that has
     appeared since is used first (verify_part), which clears the mark or raises the conflicting pins."""
@@ -2588,6 +2637,8 @@ def unverified_parts(project, verify_new=True):
         import verify_part
         ran = False
         for l in lines:
+            if _polarised_only(l):         # a regex over a datasheet cannot tell anode from cathode: only the student's accept clears it
+                continue
             if l["pins_status"] == "unverified" and (l.get("datasheet") or sources.find_for(project, l.get("mpn"))):
                 verify_part.verify(project, l["key"])
                 ran = True

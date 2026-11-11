@@ -103,6 +103,13 @@ const propLower = s => /^[A-Z]{2,}/.test(s) ? s : s.charAt(0).toLowerCase() + s.
 const propShow = v => Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'yes' : 'no') : (v === null || v === undefined) ? '' : String(v);
 const propPlural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
+/* The fields a proposal really changes: a value equal to the current one (after trimming) is not a change and is not listed or counted. */
+function propChangedKeys(p) {
+  const keys = Object.keys(p.changes || {});
+  if (p.new || !p.before) return keys;
+  return keys.filter(k => propShow(p.before[k]).trim() !== propShow(p.changes[k]).trim());
+}
+
 /* How many blocks and links a diagram proposal touches: added, removed or moved/renamed, compared with what is on the canvas now. */
 function propDiagramDelta(p) {
   const ch = p.changes || {}, bf = p.before || {};
@@ -135,7 +142,7 @@ function propDiagramText(p) {
 function diffHTML(p) {
   if (!p) return '';
   const diagram = p.kind === 'idea_diagram';
-  const keys = Object.keys(p.changes || {});
+  const keys = propChangedKeys(p);
   const ref = diagram ? '' : ((lineByKey(p.line) || {}).refs || [p.line])[0];
   const refBtn = ref ? `<button type="button" class="ref" data-ref="${esc(ref)}">${esc(p.new ? p.line : ref)}</button>` : '';
   const labels = keys.map(k => propLabel(k));
@@ -171,7 +178,7 @@ function diffHTML(p) {
 function propSummary(p) {
   if (p.kind === 'idea_diagram') return 'Diagram changes';
   const ref = ((lineByKey(p.line) || {}).refs || [p.line])[0];
-  const keys = Object.keys(p.changes || {}).filter(k => k !== 'refs' || p.new);
+  const keys = propChangedKeys(p).filter(k => k !== 'refs' || p.new);
   return `${p.new ? 'New ' : ''}${ref}: ${keys.map(k => propLabel(k).toLowerCase() + ' ' + propShow(p.changes[k])).join(', ')}`;
 }
 function propGroupTitle(ps) {
@@ -304,6 +311,23 @@ function toolsHTML(items) {
   const step = t => `<li><span class="${t.st === 'warn' ? 'warn-t' : 'ok-t'}">${icon(t.st === 'warn' ? 'alert' : 'check', 's')}</span><span>${esc(t.t)}${t.d ? ` <span class="d">${esc(t.d)}</span>` : ''}</span></li>`;
   return `<details class="runs"><summary>${mark}<span>${esc(items[0].t)} · ${items.length} steps</span></summary><ul>${items.map(step).join('')}</ul></details>`;
 }
+/* The chip under an agent reply, in words: "bom.propose:R1" is "BOM proposal: R1". The server's text after the kind
+   (counts, file names) is kept as the detail; an unknown kind is its name, humanised. */
+const CHAT_ACT_LABELS = {
+  'bom.propose': 'BOM proposal', 'netlist.write': 'Netlist written: sheet', 'library.add': 'Library: part added',
+  'library.build': 'Library built', 'part.attach_datasheet': 'Datasheet attached', 'thread.open': 'Conversation opened',
+  'idea.propose': 'Idea proposal', 'idea.describe': 'Idea described', 'idea.confirm': 'Idea confirmed', 'idea.diagram': 'Diagram drawn',
+  'idea.diagram.edit': 'Diagram changed', 'altium.draw_schematic': 'Altium: schematic drawn', 'altium.place_pcb': 'Altium: place parts',
+  'altium.route_pcb': 'Altium: route', 'altium.skeleton': 'Altium: project skeleton', 'altium.add_sheet': 'Altium: sheet added',
+  'jlc.gerber_zip': 'Gerber zip made', 'jlc.pickup': 'JLC report picked up', 'order.check': 'Order check', 'dfm.triage': 'DFM findings sorted',
+};
+function chatActLabel(a) {
+  const s = String(a), m = s.match(/^([a-z_]+(?:\.[a-z_]+)+)\s*(?::\s*(.*))?$/is);
+  if (!m) return s.length > 120 ? s.slice(0, 120) + '…' : s;
+  const name = CHAT_ACT_LABELS[m[1]] || (m[1].replace(/[._]+/g, ' ').replace(/^./, c => c.toUpperCase()));
+  const rest = (m[2] || '').trim();
+  return rest ? `${name}${name.endsWith(':') || /sheet$/.test(name) ? ' ' : ': '}${rest.length > 120 ? rest.slice(0, 120) + '…' : rest}` : name;
+}
 function msgHTML(m, undoTs) {
   if (m.role === 'user') {
     const about = m.source ? `<div class="about">About ${chip(m.source, '')}</div>`
@@ -325,8 +349,9 @@ function msgHTML(m, undoTs) {
     const warned = m.warned || {};
     const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => warned[a]
       ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(a.split(/[:( ]/)[0])} applied with warnings:</b> ${esc(warned[a])}</span>`
-      : `<span class="chat-act ok" title="Applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`)
-      .concat((m.refused || []).map(a => `<span class="chat-act bad" title="Not applied">${esc(a.length > 80 ? a.slice(0, 80) + '…' : a)}</span>`));
+      : `<span class="chat-act ok" title="${esc(a)}">${esc(chatActLabel(a))}</span>`)
+      .concat((m.refused || []).map(a => `<span class="chat-act bad" title="Not applied">${esc(a)}</span>` +
+        (/^(altium|library)\./.test(a) && live ? btn('Retry', {kind: 'link', size: 'sm', act: 'suggest', text: 'Run this again: ' + String(a).slice(0, 300)}) : '')));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
     // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here
     if ((m.refused || []).length && m.text) m = {...m, text: m.text.replace(/\n*\(Not applied: [\s\S]*\)\s*$/, '')};
@@ -557,6 +582,17 @@ function renderChat(force) {
 }
 
 /* ---------- sending ---------- */
+/* An action that changed Altium or the library leaves the pictures in the open Schematic / Layout view stale:
+   drop what they cached so the next render draws them again (the BOM view already reads the new state). */
+const CHAT_REDRAW = /^(altium\.(place_pcb|draw_schematic|route_pcb)|library\.build)\b/;
+async function chatReloadViews(m) {
+  if (!m || m.role !== 'agent' || !(m.applied || []).some(a => CHAT_REDRAW.test(String(a)))) return;
+  svgCache = {key: '', text: ''};
+  pcbSvgCache = {key: '', text: ''};
+  pvSchErr = '';
+  pvPcbErr = '';
+  try { await loadAltium(true); } catch (e) { /* the pictures are drawn from the old link */ }
+}
 /* send(text) uses the chip in the composer; send(text, {ctx}) uses that context instead (Retry). */
 async function send(text, opts) {
   text = (text || '').trim();
@@ -588,6 +624,7 @@ async function send(text, opts) {
     if (!res || res.error) throw new Error((res && res.error) || 'no answer');
     setState(res);
     outcome = chatOutcome(S.chat.at(-1));
+    chatReloadViews(S.chat.at(-1)).catch(() => {});      // not awaited: a hung Altium read must not block send()
     const mountEl = document.querySelector('.diagram-mount-point');
     if (mountEl && mountEl._diagramEditor && res && res.idea && res.idea.diagram) {
       mountEl._diagramEditor.updateData(res.idea.diagram, res.diagram_touched || []);

@@ -162,3 +162,42 @@ def test_dense_two_soic_and_fifteen_passives_routes_within_budget():
     assert time.time() - t0 < 30
     assert route.violations(doc, res["items"], r, box) == []
     assert layout.unrouted(as_board(doc, res["items"])) == []
+
+
+def _fine_row(pitch, w=0.3, h=1.0):
+    """A row of 8 fine pitch pads (like a USB-C receptacle); the two middle ones are the nets CC1 and CC2, going to parts 4 mm up."""
+    nets = ["G", "V", "D1", "CC1", "CC2", "D2", "V", "G"]
+    pads = [pad("J1", str(i + 1), 10 + (i - 3.5) * pitch, 5, n, w, h) for i, n in enumerate(nets)]
+    pads += [pad("R1", "1", 9.5, 10, "CC1"), pad("R2", "1", 10.5, 10, "CC2")]
+    return {"pads": pads}
+
+
+def test_fine_pitch_pad_escapes_along_its_axis_and_keeps_clearance():
+    """0.5 mm pitch, 0.3 mm pads, 0.2 mm clearance: a centred 0.2032 mm track keeps 0.248 mm from the neighbours; the router must find it."""
+    doc, box = _fine_row(0.5), [0, 0, 20, 14]
+    r = rules(clearance=0.2, width=0.2032, width_min=0.2032)
+    res = route.plan_routes(doc, box, r, seconds=30)
+    assert "CC1" in res["routed"] and "CC2" in res["routed"], res["failed"]
+    assert route.violations(doc, res["items"], r, box) == []
+    assert layout.unrouted(as_board(doc, res["items"])) == [] or all(n[0] not in ("CC1", "CC2") for n in layout.unrouted(as_board(doc, res["items"])))
+    shapes = route.fixed_shapes(doc, r)
+    for it in res["items"]:
+        if it["kind"] != "track":
+            continue
+        for s in shapes:                                   # exact, on our own: no segment is nearer than the clearance to another net
+            if s["net"] != it["net"]:
+                d = route._dist(s["geo"], (it["x1"], it["y1"]), (it["x2"], it["y2"])) - it["width"] / 2
+                assert d >= 0.2 - 1e-3, (it, s["tag"], d)
+    cc1 = [i for i in res["items"] if i["net"] == "CC1" and i["kind"] == "track"]
+    assert any(abs(i["x1"] - 9.75) < 1e-6 and abs(i["x2"] - 9.75) < 1e-6 for i in cc1)      # leaves the pad straight up along its centre line
+
+
+def test_fine_pitch_pad_with_no_legal_track_is_refused():
+    """0.4 mm pitch, 0.3 mm pads: 0.4 - 0.15 - 0.1016 = 0.148 mm < 0.2 mm, no legal track exists: refused, nothing drawn for those nets."""
+    doc, box = _fine_row(0.4), [0, 0, 20, 14]
+    r = rules(clearance=0.2, width=0.2032, width_min=0.2032)
+    res = route.plan_routes(doc, box, r, seconds=30)
+    failed = dict(res["failed"])
+    assert "CC1" in failed and "CC2" in failed
+    assert not [i for i in res["items"] if i["net"] in ("CC1", "CC2")]
+    assert route.violations(doc, res["items"], r, box) == []

@@ -132,6 +132,15 @@ def board6_outline(rec: dict) -> list[tuple[float, float]] | None:
         else:
             pts.append((_mil(rec[f"VX{i}"]), _mil(rec[f"VY{i}"])))
         i += 1
+    # Board6 may carry one closing vertex after the real ones: a copy of vertex 0, or stale from the default
+    # board (seen on 2026-11-11 as (1000, 1000) turning 30x25 into a triangle, outside the others' bounding box).
+    # A plain rectangle with no closing vertex keeps all its corners.
+    if i >= 4 and str(rec.get(f"KIND{i - 1}", "0")).strip() != "1":
+        rest = pts[:-1]
+        xs, ys = [p[0] for p in rest], [p[1] for p in rest]
+        last = pts[-1]
+        if last == pts[0] or not (min(xs) <= last[0] <= max(xs) and min(ys) <= last[1] <= max(ys)):
+            pts = rest
     if len(pts) < 3 or len({p for p in pts}) < 3:
         return None
     return [(round(x * 0.0254, 4), round(y * 0.0254, 4)) for x, y in pts]

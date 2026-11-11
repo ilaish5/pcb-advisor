@@ -230,6 +230,7 @@ class Router:
         self.g = g = pitch
         self.rules = rules
         self.x0, self.y0 = box[0], box[1]
+        self.box = box
         self.nx, self.ny = int((box[2] - box[0]) / g) + 1, int((box[3] - box[1]) / g) + 1
         self.n = self.nx * self.ny
         self.wb = rules["width"]
@@ -582,23 +583,105 @@ class Router:
         self.status = "none"
         return False
 
+    # ---- fine pitch pads
+    def _clean(self, net, l, pts, width, margin, relaxed):
+        """The polyline `pts` as a track of this width on layer l keeps clearance (+ margin) from all other copper and the board edge,
+        by exact geometry (not the grid)."""
+        hw, clear, edge, box = width / 2, self.clear + margin + 2e-4, self.rules["edge"], self.box
+        for x, y in pts:
+            if x - hw < box[0] + edge or x + hw > box[2] - edge or y - hw < box[1] + edge or y + hw > box[3] - edge:
+                return False
+        for a, b in zip(pts, pts[1:]) if len(pts) > 1 else [(pts[0], pts[0])]:
+            for s in self.shapes:
+                if s["net"] != net and l in s["layers"] and _dist(s["geo"], a, b) - hw < clear:
+                    return False
+            if relaxed:
+                continue
+            for other, r in self.routed.items():
+                if other == net:
+                    continue
+                for it in r["items"]:
+                    if it["kind"] == "track" and it["layer"] == LAYER_CODE[l]:
+                        if _seg_seg(a, b, (it["x1"], it["y1"]), (it["x2"], it["y2"])) - (it["width"] + width) / 2 < clear:
+                            return False
+                    elif it["kind"] == "via" and _pt_seg(it["x"], it["y"], a[0], a[1], b[0], b[1]) - it["dia"] / 2 - hw < clear:
+                        return False
+        return True
+
+    def _escape(self, net, nid, pad, width, margin, relaxed):
+        """A fine pitch SMD pad has no grid cell the grid search may use (the neighbours' keep-off is wider than the pitch leaves), yet a
+        straight track along the pad's long axis, centred on the pad, can be legal. Try one: from the pad centre along the axis (either
+        way) to the first grid row/column where the cell is usable, then sideways to that cell; kept only when the exact geometry keeps
+        the clearance. {"escape": points, "layer", "cell"} for the shortest legal one, else None (the pad stays unroutable)."""
+        if len(pad["layers"]) != 1:
+            return None
+        r, l = pad["rect"], pad["layers"][0]
+        w, h = r[2] - r[0], r[3] - r[1]
+        if abs(w - h) < 1e-6:
+            return None                                      # no long axis
+        px, py = pad["x"], pad["y"]
+        fx, fy = math.floor((px - self.x0) / self.g + 1e-9), math.floor((py - self.y0) / self.g + 1e-9)
+        cx, cy = self.cell_of(px, py)
+        best = None
+        for sign in (1, -1):
+            for k in range(0, 31):
+                done = False
+                for side in (0, 1):                              # the two grid lines either side of the axis
+                    if h > w:
+                        ix, iy = fx + side, cy + sign * k
+                        e = (px, self.y0 + iy * self.g)
+                        dist = (e[1] - py) * sign
+                    else:
+                        ix, iy = cx + sign * k, fy + side
+                        e = (self.x0 + ix * self.g, py)
+                        dist = (e[0] - px) * sign
+                    if dist <= 1e-9 or not (0 <= ix < self.nx and 0 <= iy < self.ny):
+                        continue
+                    i = self.idx(ix, iy)
+                    if not self.usable(nid, l, i, width, margin, relaxed):
+                        continue
+                    pts = [(px, py)]
+                    for q in (e, self.xy(i)):
+                        q = (round(q[0], 4), round(q[1], 4))
+                        if math.hypot(q[0] - pts[-1][0], q[1] - pts[-1][1]) > 1e-9:
+                            pts.append(q)
+                    if self._clean(net, l, pts, width, margin, relaxed):
+                        if best is None or dist < best[0] - 1e-9:
+                            best = (dist, {"escape": pts, "layer": l, "cell": i})
+                        done = True
+                        break
+                if done:
+                    break
+        return best[1] if best else None
+
     # ---- one net
     def route_net(self, net, width, relaxed=False, deadline=None, margin=0.0):
         """Join every pad of `net`. Returns (path list of segments-as-cell-paths, pad stubs, None) or (None, None, reason)."""
         pads = self.pads[net]
         nid = self.netid[net]
         use = lambda pad: {(l, c) for l, cs in pad["cells"].items() for c in cs if self.usable(nid, l, c, width, margin, relaxed)}
-        tree = use(pads[0])
+        paths, stubs, escaped = [], [], set()
+
+        def start(pad):
+            cells = use(pad)
+            if cells:
+                return cells
+            esc = self._escape(net, nid, pad, width, margin, relaxed)
+            if esc:
+                stubs.append(esc)
+                escaped.add(id(pad))
+                return {(esc["layer"], esc["cell"])}
+            return cells
+        tree = start(pads[0])
         if not tree:
             return None, None, f"pad {pads[0]['tag']} is too close to other copper for a {width:g} mm track"
         joined, todo = [pads[0]], pads[1:]
-        paths, stubs = [], []
-        if pads[0]["stub"]:
+        if pads[0]["stub"] and id(pads[0]) not in escaped:     # an escape replaces the unchecked cell-to-centre stub
             stubs.append(pads[0])
         while todo:
             todo.sort(key=lambda p: (min(abs(p["x"] - q["x"]) + abs(p["y"] - q["y"]) for q in joined), p["tag"]))
             tgt = todo.pop(0)
-            goals = use(tgt)
+            goals = start(tgt)
             if not goals:
                 return None, None, f"pad {tgt['tag']} is too close to other copper for a {width:g} mm track"
             path = self.astar(nid, tree, goals, width, relaxed=relaxed, deadline=deadline, margin=margin)
@@ -609,7 +692,7 @@ class Router:
             tree |= set(path)
             tree |= goals
             joined.append(tgt)
-            if tgt["stub"]:
+            if tgt["stub"] and id(tgt) not in escaped:
                 stubs.append(tgt)
         return paths, stubs, None
 
@@ -629,7 +712,17 @@ class Router:
                     run.append(b)
             self._emit(net, run, width, items)
             cells += path
-        for pad in stubs:                                          # a tiny pad: the last cell is not on its centre
+        for pad in stubs:
+            if "escape" in pad:                                    # a fine pitch pad: out along its axis, checked exactly
+                pts = pad["escape"]
+                for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+                    items.append({"kind": "track", "layer": LAYER_CODE[pad["layer"]], "x1": x1, "y1": y1, "x2": x2, "y2": y2, "width": width,
+                                  "net": net})
+                    steps = max(1, int(math.hypot(x2 - x1, y2 - y1) / (self.g / 2)))
+                    for k in range(steps + 1):                     # its cells, so that later nets keep clear of it
+                        cells.append((pad["layer"], self.idx(*self.cell_of(x1 + (x2 - x1) * k / steps, y1 + (y2 - y1) * k / steps))))
+                continue
+            # a tiny pad: the last cell is not on its centre
             c = next(iter(pad["cells"][pad["layers"][0]]))
             ls = [l for (l, q) in cells if q == c]
             l = ls[0] if ls else pad["layers"][0]
@@ -673,6 +766,27 @@ class Router:
         self.D = [[-1] * self.n, [-1] * self.n]
         for net in self.routed:
             self._stamp_net(net)
+
+    def escape_blockers(self, net, stubs, width):
+        """The routed nets whose tracks or vias an escape (fine pitch pad stub, found while ignoring routed tracks) would be too close to,
+        by the same exact geometry as _clean."""
+        hit, clear = set(), self.clear + 2e-4
+        hw = width / 2
+        for st in stubs or []:
+            if "escape" not in st:
+                continue
+            pts, code = st["escape"], LAYER_CODE[st["layer"]]
+            for a, b in zip(pts, pts[1:]):
+                for other, r in self.routed.items():
+                    if other == net:
+                        continue
+                    for it in r["items"]:
+                        if it["kind"] == "track" and it["layer"] == code:
+                            if _seg_seg(a, b, (it["x1"], it["y1"]), (it["x2"], it["y2"])) - (it["width"] + width) / 2 < clear:
+                                hit.add(other)
+                        elif it["kind"] == "via" and _pt_seg(it["x"], it["y"], a[0], a[1], b[0], b[1]) - it["dia"] / 2 - hw < clear:
+                            hit.add(other)
+        return hit
 
     def blockers(self, net, path):
         """The routed nets whose copper is within clearance of a path found while ignoring routed tracks."""
@@ -759,7 +873,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         if not failed or time.time() > deadline:
             break
         n = failed.pop(0)
-        paths, _, reason = rt.route_net(n, rules["width"], relaxed=True, deadline=deadline)
+        paths, esc_stubs, reason = rt.route_net(n, rules["width"], relaxed=True, deadline=deadline)
         if paths is None:
             why[n] = reason + ": blocked by fixed copper (pads, board edge), not by other tracks"
             failed.append(n)
@@ -767,6 +881,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         blockers = set()
         for p in paths:
             blockers |= rt.blockers(n, p)
+        blockers |= rt.escape_blockers(n, esc_stubs, rules["width"])      # a fine pitch pad's escape can be what a track blocks
         blockers = {b for b in blockers if ripped.get(b, 0) < 3}
         if not blockers:
             why[n] = (why.get(n) or "no way") + " (no track of another net to move)"

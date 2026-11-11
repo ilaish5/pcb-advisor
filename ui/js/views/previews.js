@@ -292,6 +292,13 @@ function pvLabel(ref) {
 
 /* ---------- schematic ---------- */
 const pvSheetLabel = s => s.title && s.title !== s.id ? `${s.id} ${s.title}` : s.id;
+/* The plan sheet (netlist preview) and the sheet read from Altium can carry the same name: when both exist they are
+   "01 Plan" and "01 Altium"; the full name stays as the tooltip. */
+function pvTabLabel(s, all) {
+  if (!(all || []).some(x => x.altium) || !(all || []).some(x => !x.altium)) return pvSheetLabel(s);
+  const num = (String(s.altium ? (s.file || s.id) : s.id).trim().match(/^\S+/) || [''])[0].replace(/\.schdoc$/i, '');
+  return `${num} ${s.altium ? 'Altium' : 'Plan'}`;
+}
 const pvZoomHTML = kind => `<div class="pv-zoom" role="group" aria-label="Zoom">` +
   btn('', {icon: 'zoomout', size: 'sm', title: 'Zoom out', act: kind + '-zoom-out'}) +
   btn('', {icon: 'zoomin', size: 'sm', title: 'Zoom in', act: kind + '-zoom-in'}) +
@@ -306,7 +313,7 @@ function schHTML(container) {
     : pvSchErr ? `<div class="pv-note">${errorLine('draw the schematic', pvSchErr, btn('Try again', {size: 'sm', act: 'sch-retry'}))}</div>`
     : `<div class="pv-note">${loadingLine('Drawing the schematic')}</div>`;
   const tabs = sheets.length > 1 ? `<div class="pv-tabs" role="tablist" aria-label="Sheets">${sheets.map(s =>
-    `<button type="button" role="tab" class="pv-tab" aria-selected="${s.id === sheetId}" tabindex="${s.id === sheetId ? 0 : -1}" data-act="sch-sheet" data-sheet="${esc(s.id)}">${esc(pvSheetLabel(s))}</button>`).join('')}</div>` : '';
+    `<button type="button" role="tab" class="pv-tab" aria-selected="${s.id === sheetId}" tabindex="${s.id === sheetId ? 0 : -1}" data-act="sch-sheet" data-sheet="${esc(s.id)}" title="${esc(pvSheetLabel(s) + (s.altium ? ' (read from Altium)' : ' (plan)'))}">${esc(pvTabLabel(s, sheets))}</button>`).join('')}</div>` : '';
   return `<div class="pv" data-pv="sch">` +
     viewHeader({title: 'Schematic', meta: metaLine([{n: sheets.length, label: sheets.length === 1 ? 'sheet' : 'sheets'}])}) + tabs +
     `<div class="pv-stage"><div class="pv-canvas sch-canvas" id="schwrap" tabindex="0" aria-label="Schematic sheet ${esc(sheetId)}. Scroll to zoom, drag to pan.">${inner}</div>${pvZoomHTML('sch')}</div></div>`;

@@ -30,6 +30,9 @@ def verify(project, key):
     line = next((l for l in store.bom_lines(project) if l["key"] == key), None)
     if not line:
         raise SystemExit(f"no BOM line {key!r}")
+    if store._polarised_only(line):
+        # a regex cannot tell anode from cathode: only the student's accept clears a diode/LED, nothing is written
+        return {"line": key, "verify": "unchecked", "issues": "polarity of a diode/LED is confirmed by the student, not by text matching"}
     ds = line.get("datasheet") or sources.find_for(project, line.get("mpn"))
     if not ds:
         result = {"verify": "unchecked", "issues": "no datasheet stored for this part"}

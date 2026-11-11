@@ -27,7 +27,10 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
    option in the same package, high cost share, possible Standard-only assembly.
 7. For each flagged line search alternatives: same package and electrical specs, in stock, preferably Basic. Compare the key
    specs against the datasheet of both parts before proposing. Give at most 2 alternatives per line with the reason.
-8. Propose changes with `bom.propose` (reason + sources). Never change the BOM yourself; the student approves.
+8. Propose changes with `bom.propose` (reason + sources). Never change the BOM yourself; the student approves. Every line has `value` ("5.1k") and `role`
+   ("CC1 pull-down"): the student sees those, not the MPN.
+   Before proposing a part with a non-generated package (IC, connector, module), run `python <repo>/scripts/partlib.py model <LCSC code>`
+   (EasyEDA symbol, footprint, 3D); prefer a part that has a model. Not checked: say so in the proposal note.
 9. For "Standard only" or any assembly-service question say what is known: the scripts do not return that field. Tell the student where
    to look on the JLC parts or BOM-upload page, and mark it "unknown until checked".
 10. If the JLC query fails, say so and store nothing. A line that was not checked must never look like "no stock".
