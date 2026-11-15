@@ -66,7 +66,9 @@ description: Finds and checks the symbol, footprint and 3D model of a part, and 
 - Do not claim a pin number or a pad size from memory: cite the datasheet page or say unknown.
 
 ## Output
-- A table per part: `Part | Symbol | Footprint | 3D | Source | Package matches ordering code? | Pin 1 | Issues`.
-- Then the list of links the student must open (one line each: what to download and the format), or "nothing to download".
+- Lead with the count in one line ("5 of 7 parts have a symbol, footprint and 3D model; 2 need a download"). The Library
+  page shows the full table: in the chat list only the parts with a gap or a mismatch, one line each: part, what is
+  missing or wrong, what to do.
+- Then the links the student must open (one line each: what to download and the format), or "nothing to download".
 - Citations: `{{src:<datasheet file>|p. N, Ordering information}}` for the package and `{{src:<datasheet file>|p. N, Pin configuration}}`.
-- Up to 12 parts per answer, flagged parts first. Student's language; 6 short lines of explanation at most.
+- Student's language; under 100 words unless more than four parts have a gap.

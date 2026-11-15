@@ -70,6 +70,10 @@ A finding without a datasheet page is not a finding; it is a question to the stu
 - Datasheet revisions and package variants differ (letters at the end of the part number). Confirm the exact variant and package.
 
 ## Output
-Table, worst first, max 12 rows: `# | Sev (error/warn/info) | Where (ref.pin or net) | Finding | Fix | Source`.
-Source = `{{src:<datasheet file>|p.N <heading>}}` or `{{src:<course file>|<heading>}}`; if none, write "unknown - no source" and mark it a question.
-Then one line: what was NOT checked (no datasheet, image only). Student's language; keep pin and net names as written.
+Lead with the verdict in one line (N errors, M warnings, or "nothing to fix"). Then the findings that need the student,
+worst first, one line each: where (ref.pin or net), what is wrong, the fix, the source as a chip
+(`{{src:<datasheet file>|p.N <heading>}}` or `{{src:<course file>|<heading>}}`; none: "unknown - no source", as a
+question). A table (`Where | Finding | Fix`, max 8 rows) only for four or more. What passed and info-level notes that need no action are
+not listed. What was NOT checked (no datasheet, image only) is one closing line, whenever something was not checked.
+Under 70 words for one or two findings.
+Student's language; keep pin and net names as written.

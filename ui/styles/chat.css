@@ -47,6 +47,11 @@
 .chat-act.ok{background:var(--ok-soft);color:var(--ok)}
 .chat-act.bad{background:var(--bad-soft);color:var(--bad)}
 .chat-act.warn{background:var(--warn-soft);color:var(--warn)}
+.chat-act>summary{cursor:pointer;list-style:none}
+.chat-act>summary::-webkit-details-marker{display:none}
+.chat-act>summary .more{text-decoration:underline}
+.chat-act[open]>summary{display:inline}
+.chat-act[open]>summary .more{display:none}
 
 .chat .ref{font-family:var(--f-mono);font-weight:600;color:var(--ink);border-radius:3px;text-align:left}
 .chat .ref:hover{text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}

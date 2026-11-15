@@ -107,6 +107,9 @@ description: Prepares the manufacturing package for JLC and walks the student th
   Altium DRC does not.
 
 ## Output
-Pre-upload table: `File | Check | Result (OK / problem / not checked) | Fix`. DFM triage table, one row per red item:
-`Item | Where | Real or false | Why (proof) | Fix`. Stock/price lines carry `JLC query <time>`. Max 15 rows, then 3 lines
-of next steps. Cite `{{src:<file>|<heading>}}`; say unknown for JLC limits you were not given.
+Lead with the verdict in one line (ready to upload / N things to fix first). Pre-upload: only the rows that are a problem
+or not checked, as `File | Problem | Fix`; what passed is one line with the count. DFM triage, one row per red item that
+is real or uncertain: `Item | Where | Real? (why) | Fix`; items that are clearly false are one line together, with the
+reason. Max 8 rows, the real ones first; when more are real or uncertain, add "N more to look at: see the DFM page" (the DFM page
+holds the full table). Stock/price lines carry `JLC query <time>`. Cite
+`{{src:<file>|<heading>}}`; say unknown for JLC limits you were not given. End with the one next step.

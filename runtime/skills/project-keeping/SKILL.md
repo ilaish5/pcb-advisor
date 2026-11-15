@@ -61,6 +61,7 @@ description: Keeps the project folder in order, records who decided what and why
 - Do not call a part verified or accepted: the script verifies, the student accepts.
 
 ## Output
-Folder order: a tree, max 20 lines, with the move list `from -> to`. Decision entry: one line in the log format of step 4.
-Change impact: table `Item | Affected? | Why | File to edit | Source`, max 15 rows. Final organization: list of
-outputs with present / missing. Cite `{{src:<file>|<heading>}}`. Answer in the student's language.
+Folder order: a tree, max 12 lines, with the move list `from -> to`. Decision entry: one line in the log format of step 4.
+Change impact: only what IS affected, one line each (`item: why, file to edit`), then one line for what is not. Final
+organization: the missing outputs by name, the present ones as a count. Cite `{{src:<file>|<heading>}}`. Answer in the
+student's language.

@@ -61,7 +61,9 @@ description: Plans and explains the single project library (one library with eve
 - Keep alternates in the library as order-day fallbacks, and record which part is placed for each designator.
 
 ## Output
-- A part table: `Part (MPN) | Symbol | Footprint | 3D | LCSC | Status (ready / gap, with the skill to fix)`.
-- Which parts are missing and what the student must download (links), then the result of `library.build`.
-- Install check steps cited like `{{src:m29-integrated-library.en.md|29.3}}`.
-- A final checklist of 4 lines: counts to compare, one part to drag, "Update PCB" result, parameters present. Under 250 words.
+- Lead with the result in one line (library built: N of M parts ready) when the build already ran (CURRENT STATE); when you
+  start it this turn, say you started it: its real result appears under your message. The Library page shows the full table: in the chat
+  list only the parts with a gap, one line each: part, what is missing, what the student downloads (link).
+- Install check: the steps as a short numbered list, cited like `{{src:m29-integrated-library.en.md|29.3}}`, only when
+  the student asks how to check or the build just finished for the first time.
+- Under 100 words unless more than four parts have a gap.

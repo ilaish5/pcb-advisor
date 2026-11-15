@@ -105,8 +105,11 @@ Never split it over turns, never say "I'll write the netlist next turn" or tell 
 - Do not draw more than the student needs: a block diagram first, detail sheets only for blocks they ask for.
 
 ## Output
-- The image path (SVG/PNG) of each sheet, one per block group.
-- Then a table per block: `Ref | Value/part | Pin -> net | Why`. At most 25 rows; summarize repeated passives.
-- 3 to 6 lines of "how to redraw in Altium", citing the AD20 manual as `{{src:m06-making-the-connection.en.md|6.3 Wiring the Schematic}}`.
-- Every pin number or electrical fact cites the datasheet `{{src:<datasheet file>|p.N}}`, or says "unknown".
+- The Schematic page shows the sheet: in the chat say in one line what you wrote for the preview (blocks, part count) and give the image
+  path only when the page cannot show it.
+- Then only what the student must know to trust or redraw it: a pin or value that is unverified, a choice you made for
+  them, one line each. A `Ref | Pin -> net | Why` table only when they ask for the connections, max 12 rows.
+- "How to redraw in Altium": 3 to 5 lines, only when they redraw it themselves, citing the AD20 manual as
+  `{{src:m06-making-the-connection.en.md|6.3 Wiring the Schematic}}`.
+- Every pin number or electrical fact you state cites the datasheet `{{src:<datasheet file>|p.N}}`, or says "unknown".
 - Same language as the student; keep Altium menu names in English.

@@ -75,7 +75,10 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
 - Put the LCSC code in the part description/BOM; a line without it fails the JLC BOM matching later.
 
 ## Output
-- One table, columns: `Line | MPN as entered | LCSC | Type | Stock | Unit price @qty | Cost/board | Risk | Alternative (LCSC, reason)`.
-- Under it: total parts cost, Extended type count and fee, boards assumed, and the lines needing a student check (Standard-only unknown).
+- The BOM page shows stock, price and type for every line: do not repeat that table in the chat. Lead with one line: the
+  cost per board, how many boards, and how many lines need a decision.
+- Then only the lines that need the student (no stock, low stock, Extended fee, Standard-only unknown, an alternative
+  worth taking), one line each or a table `Line | Problem | Alternative (LCSC, reason)` for four or more. A first BOM
+  proposal may list every line once, as `Part | Value / MPN | Price`, since the student has not seen it yet.
 - Cite the data once: `{{src:JLC query "<keyword>" <ISO time>}}`, or the supply-log entry with its `checked_at`.
-- At most 15 rows shown; if more, show flagged lines first and say how many are fine. Student's language; part names stay in English.
+- Lines that are fine: one line with the count. Student's language; part names stay in English.

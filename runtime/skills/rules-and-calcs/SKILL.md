@@ -91,7 +91,9 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
   ring" in red). Mention these when explaining a red DFM mark, and send the student to `manufacturer-and-dfm`.
 
 ## Output
-- Rule table, max 25 rows: `Rule | Scope | Min / Pref / Max | Why | Source`. Source = `{{src:<file>|<heading>}}` or JLC page + date.
-- Calculation: 3 lines (formula, inputs, result rounded up) plus the source of the formula (IPC standard or course heading).
-- Files: path of the `.RUL` when produced, and the one line on how to import it. Diff: three short lists.
+- The Rules page shows the whole rule set: in the chat give only the rules the student asked about or that differ from
+  the board, as `Rule | Value | Why`, max 8 rows, the source as a chip (`{{src:<file>|<heading>}}` or JLC page + date).
+- Calculation: the result first with its unit, then one line with the inputs and the formula's source (IPC standard or
+  course heading). No derivation unless asked.
+- Files: path of the `.RUL` when produced, and the one line on how to import it. Diff: only what differs.
 - Say plainly which numbers are unverified. Student's language; rule kinds keep Altium's English names.

@@ -73,6 +73,7 @@ Question list (pick, do not ask all):
 - Do not ask 30 questions, and do not ask before drafting. A draft the student can correct beats a questionnaire they must answer.
 
 ## Output
-- The draft actions, then at most 3 questions in the student's language. Per question: `Question - why it matters - default used in the draft`.
-- One last line: the next step and the skill that handles it. About 200 words at most.
+- The draft actions, then at most 3 questions in the student's language, one line each: the question and the default the
+  draft uses. Add why it matters only when the student could not guess it.
+- One last line: the next step. About 100 words at most; the draft itself is on the Idea page, do not retell it.
 - A claim about a chip's boot mode or pins needs a datasheet citation or the word "unknown".

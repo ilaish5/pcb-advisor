@@ -334,6 +334,15 @@ function chatActLabel(a) {
   const rest = (m[2] || '').trim();
   return rest ? `${name}${name.endsWith(':') || /sheet$/.test(name) ? ' ' : ': '}${rest.length > 120 ? rest.slice(0, 120) + '…' : rest}` : name;
 }
+/* A refused action: what failed and why, short. Altium's own text (a DRC list runs to 600 characters) opens on a click, so
+   nothing is hidden and nothing has to be read to find the reason. */
+function chatRefusedHTML(a) {
+  const s = String(a);
+  if (s.length <= 220) return `<span class="chat-act bad" title="Not applied">${esc(s)}</span>`;
+  let cut = s.slice(0, 220).replace(/[\s;,(:][^\s;,(:]*$/, '');
+  if (cut.length < 160) cut = s.slice(0, 220);          // no place to break (a long path): the reason still shows
+  return `<details class="chat-act bad" title="Not applied"><summary>${esc(cut)}<span class="more">… more</span></summary>${esc(s.slice(cut.length))}</details>`;
+}
 function msgHTML(m, undoTs) {
   if (m.role === 'user') {
     const about = m.source ? `<div class="about">About ${chip(m.source, '')}</div>`
@@ -356,7 +365,7 @@ function msgHTML(m, undoTs) {
     const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => warned[a]
       ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(a.split(/[:( ]/)[0])} applied with warnings:</b> ${esc(warned[a])}</span>`
       : `<span class="chat-act ok" title="${esc(a)}">${esc(chatActLabel(a))}</span>`)
-      .concat((m.refused || []).map(a => `<span class="chat-act bad" title="Not applied">${esc(a)}</span>` +
+      .concat((m.refused || []).map(a => chatRefusedHTML(a) +
         (/^(altium|library)\./.test(a) && live ? btn('Retry', {kind: 'link', size: 'sm', act: 'suggest', text: 'Run this again: ' + String(a).slice(0, 300)}) : '')));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
     // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here

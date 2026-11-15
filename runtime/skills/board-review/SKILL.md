@@ -68,6 +68,10 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 - A pour split on a plane layer breaks the return path of any signal that crosses it, also from the neighbour layer.
 
 ## Output
-Table, max 12 rows: `Area | Finding | Evidence | Verdict (OK / fix / unknown) | Fix`. Evidence is a datasheet page,
-course heading or the student's image, as `{{src:<file>|<heading or page>}}`. Then 2 lines: what to re-check after the
-fix, and what you could not see. Answer in the student's language.
+The chat is a narrow side panel: lead with the verdict in one line ("One thing to fix: J1 faces inward"), then only the
+findings that need the student, worst first, one line each: what is wrong, where, the fix, with the evidence as a chip
+(`{{src:<file>|<heading or page>}}`, or the student's image). A table (`Finding | Where | Fix`, max 8 rows) only for
+four or more findings. What passed is not listed: "the rest of what I checked is fine" inside the verdict line is enough. A check that
+belongs to a later stage (rotation in the JLC preview) is not a finding now: leave it out. What you could not check
+(no DRC result, bottom side not seen) goes into the next action ("then run the DRC and send me the list"), not into a
+line of its own. End with that one next action. Under 70 words for one or two findings. Answer in the student's language.

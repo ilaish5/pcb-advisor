@@ -92,7 +92,10 @@ failure. Then use board-review.
   for the stack-up and compute the width in `rules-and-calcs`.
 
 ## Output
-- Picture path (top view) and a table: `Zone | Parts | Position (mm from lower-left) | Why`; anchors table: `Ref | Edge | Rotation | Check`.
-- Routing plan: `Order | Net | Layer | Width / spacing | Vias | Return path | Source`. Max 15 rows each.
+- The picture path (top view), then the plan in the order the student will do it, one line per zone or anchor: what goes
+  where (mm from lower-left, edge, rotation) and the reason in a few words. A table (`Parts | Position | Why`) only for
+  five or more zones.
+- Routing plan: only the nets that need care (power, clock, USB, sensitive), one line each: net, layer, width, what to
+  watch. "Everything else: default width, any layer" is one line. Max 8 lines.
 - Source = `{{src:<course file>|<heading>}}` or `{{src:<datasheet>|p.N}}`; a rule of thumb with no source is labelled "practice".
-- End with the three things the student does first in Altium. Student's language; Altium names in English.
+- End with the first thing the student does in Altium. Student's language; Altium names in English.
