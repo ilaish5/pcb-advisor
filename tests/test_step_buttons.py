@@ -298,3 +298,307 @@ def test_a_chat_turn_is_registered_before_anything_slow_and_a_step_button_waits_
         pass                      # the handler lets the error go: the connection drops
     assert seen == {"registered": True, "button": 409} and spy == []
     assert not [k for k in serve.TURNS if k[0] == empty]
+
+
+# ---- preparations: a button runs by itself what its step needs first (library build, add PcbDoc, import rules)
+
+BUILT = {"built": 7, "lines": 7, "notices": []}
+IMPORTED = {"created": ["A", "B"], "updated": ["C"], "skipped": [], "unconfirmed": [], "message": ""}
+LIB_SENTENCE = "library.build: 7 of 7 lines built, IntLib installed"
+RULES_SENTENCE = "altium.import_rules: 2 added, 1 updated"
+
+
+def button_notes(project):
+    return [m for m in session_mod.load_chat(project, session_mod.current(project, None)) if m.get("by") == "button"]
+
+
+@pytest.fixture
+def world(monkeypatch, tmp_path, spy):
+    """The file checks the plan reads, and fake bridge calls that record the order, the replace they got and whether STEP_LOCK was held."""
+    w = {"schlib": True, "stale": False, "pcb": True, "rules": [], "log": [], "fail": {}}
+    schlib = tmp_path / "L.SchLib"
+    monkeypatch.setattr(bridge, "library_paths", lambda p: {"schlib": schlib, "pcblib": schlib})
+    monkeypatch.setattr(bridge, "library_stale", lambda p: w["stale"])        # true after almost every edit: never a reason to rebuild
+    monkeypatch.setattr(bridge, "read_prjpcb", lambda prj: {"pcbs": ["P.PcbDoc"] if w["pcb"] else []})
+    monkeypatch.setattr(bridge, "_linked", lambda p: tmp_path / "P.PrjPcb")
+
+    def project_pcb(p):
+        if not w["pcb"]:
+            raise bridge.BridgeError("The linked Altium project has no PcbDoc yet. Add one first (add-pcb).")
+        return tmp_path / "P.PcbDoc"
+    monkeypatch.setattr(bridge, "_project_pcb", project_pcb)
+    monkeypatch.setattr(bridge, "rules_missing", lambda p: w["rules"])
+    monkeypatch.setattr(bridge, "rules_never_imported", lambda p: bool(w["rules"]) and not w.get("some_rules"))
+
+    def fake(name, res):
+        def f(project, *a, **k):
+            w["log"].append((name, serve.STEP_LOCK.locked(), k.get("replace")))
+            if name in w["fail"]:
+                raise bridge.BridgeError(w["fail"][name])
+            return dict(res)
+        monkeypatch.setattr(bridge, name, f)
+    fake("build_library", BUILT)
+    fake("add_pcb", {"file": str(tmp_path / "P.PcbDoc"), "backup": ""})
+    fake("import_rules", IMPORTED)
+    for name, res in (("draw_schematic", DRAWN), ("place_pcb", PLACED), ("route_pcb", ROUTED)):
+        fake(name, res)
+
+    def sync():                       # the SchLib file the plan looks for
+        if w["schlib"]:
+            schlib.write_text("x")
+        elif schlib.exists():
+            schlib.unlink()
+    w["sync"] = sync
+    sync()
+    return w
+
+
+def ran(w):
+    return [n for n, _, _ in w["log"]]
+
+
+@pytest.mark.parametrize("step,setup,expected", [
+    ("draw", {}, ["draw_schematic"]),
+    ("draw", {"schlib": False}, ["build_library", "draw_schematic"]),
+    ("draw", {"stale": True}, ["draw_schematic"]),                       # a library that is only older than the BOM is not rebuilt
+    ("place", {}, ["place_pcb"]),
+    ("place", {"stale": True, "pcb": False}, ["add_pcb", "place_pcb"]),
+    ("place", {"schlib": False, "pcb": False}, ["build_library", "add_pcb", "place_pcb"]),
+    ("route", {"rules": ["X"], "some_rules": True}, ["route_pcb"]),       # imported before, one rule missing: the student's edit stays
+    ("place", {"pcb": False}, ["add_pcb", "place_pcb"]),
+    ("place", {"schlib": False}, ["build_library", "place_pcb"]),
+    ("route", {}, ["route_pcb"]),
+    ("route", {"rules": ["X"]}, ["import_rules", "route_pcb"]),
+    ("route", {"stale": True, "schlib": False, "pcb": False}, ["route_pcb"]),     # routing prepares only the rules, nothing else
+])
+def test_the_plan_runs_only_the_needed_preparations_in_order(server, empty, world, step, setup, expected):
+    world.update(setup)
+    world["sync"]()
+    assert call(server, "POST", ENDPOINTS[step], empty, {})[0] == 200
+    assert ran(world) == expected
+
+
+def test_drawing_is_not_a_preparation_for_place_nor_placing_for_route(empty, world):
+    world.update(schlib=False, pcb=False, rules=["X"])
+    world["sync"]()
+    assert serve.step_plan(empty, "place") == ["library.build", "altium.add_pcb"]
+    assert serve.step_plan(empty, "route") == ["altium.import_rules"]
+
+
+def test_a_planning_check_that_raises_plans_nothing(empty, monkeypatch):
+    def boom(*a, **k):
+        raise bridge.BridgeError("The project is not linked")
+    monkeypatch.setattr(bridge, "library_paths", boom)
+    monkeypatch.setattr(bridge, "_linked", boom)
+    monkeypatch.setattr(bridge, "rules_missing", lambda p: (_ for _ in ()).throw(RuntimeError("x")))
+    assert [serve.step_plan(empty, s) for s in ("draw", "place", "route")] == [[], [], []]
+
+
+def test_preparations_never_replace_and_the_step_does(server, empty, world):
+    world.update(schlib=False, pcb=False)
+    world["sync"]()
+    assert call(server, "POST", ENDPOINTS["place"], empty, {"replace": True})[0] == 200
+    assert world["log"] == [("build_library", True, None), ("add_pcb", True, None), ("place_pcb", True, True)]
+    world["log"].clear()
+    world.update(rules=["X"])
+    assert call(server, "POST", ENDPOINTS["route"], empty, {"replace": True})[0] == 200
+    assert world["log"] == [("import_rules", True, None), ("route_pcb", True, True)]
+
+
+def test_the_lock_is_held_from_the_first_preparation_to_the_end_and_freed(server, empty, world):
+    world.update(schlib=False, pcb=False)
+    world["sync"]()
+    assert call(server, "POST", ENDPOINTS["place"], empty, {})[0] == 200
+    assert [held for _, held, _ in world["log"]] == [True, True, True] and not serve.STEP_LOCK.locked()
+
+
+def test_the_answer_lists_what_was_prepared_with_the_chat_sentences(server, empty, world):
+    world.update(schlib=False, pcb=False)
+    world["sync"]()
+    code, body = call(server, "POST", ENDPOINTS["place"], empty, {})
+    assert code == 200 and body["summary"] == serve.place_summary(PLACED) and body["warnings"] == PLACED["warnings"]
+    assert body["prepared"] == [LIB_SENTENCE, "altium.add_pcb"]
+    world.update(rules=["X"])
+    assert call(server, "POST", ENDPOINTS["route"], empty, {})[1]["prepared"] == [RULES_SENTENCE]
+    world.update(schlib=True)
+    world["sync"]()
+    assert "prepared" not in call(server, "POST", ENDPOINTS["draw"], empty, {})[1]          # nothing was needed: the answer is as before
+    assert serve.library_build_summary(empty, BUILT) == "7 of 7 lines built, IntLib installed"
+    assert serve.import_rules_summary({**IMPORTED, "skipped": [{"name": "S"}], "unconfirmed": ["U"], "message": "m"}) == \
+        "2 added, 1 updated, 1 skipped (S), not confirmed: U. m"
+
+
+def test_the_chat_path_says_the_same_sentences_for_library_and_rules(empty, world):
+    applied, _, refused = serve.apply_actions(empty, [{"type": "library.build"}, {"type": "altium.import_rules"}])
+    assert applied == [LIB_SENTENCE, RULES_SENTENCE] and not refused
+
+
+def test_the_note_carries_the_preparations_then_the_step_and_marks_warnings(server, empty, world):
+    world.update(schlib=False, pcb=False)
+    world["sync"]()
+    assert call(server, "POST", ENDPOINTS["place"], empty, {})[0] == 200
+    note = button_notes(empty)[0]
+    assert note["applied"] == [LIB_SENTENCE, "altium.add_pcb", "altium.place_pcb: " + serve.place_summary(PLACED)]
+    assert note["warned"] == serve.warned_map(note["applied"]) and list(note["warned"].values()) == ["w2; w3"]
+    assert note["text"].startswith("Placed the parts in Altium after building the library and adding a PcbDoc because the student pressed the button: ")
+
+
+@pytest.mark.parametrize("step,setup,fail,done,error", [
+    ("place", {"schlib": False, "pcb": False}, "build_library", [], "Building the library failed: boom. The parts were not placed."),
+    ("place", {"schlib": False, "pcb": False}, "add_pcb", ["build_library"], "The library was built. Adding the PcbDoc failed: boom. The parts were not placed."),
+    ("route", {"rules": ["X"]}, "import_rules", [], "Importing the JLC rules failed: boom. The board was not routed."),
+    ("draw", {"schlib": False}, "build_library", [], "Building the library failed: boom. The schematic was not drawn."),
+])
+def test_a_failing_preparation_stops_the_chain(server, empty, world, step, setup, fail, done, error):
+    world.update(setup)
+    world["sync"]()
+    world["fail"][fail] = "boom. "
+    code, body = call(server, "POST", ENDPOINTS[step], empty, {"replace": True})
+    assert code == 400 and "needs_replace" not in body and body["error"] == error
+    assert ran(world) == done + [fail] and not serve.STEP_LOCK.locked()          # the later steps never ran
+    notes = button_notes(empty)
+    if done:
+        assert len(notes) == 1 and notes[0]["applied"] == [LIB_SENTENCE] and "building the library" in notes[0]["text"]
+    else:
+        assert not notes
+
+
+def test_a_preparation_refusal_that_looks_like_already_there_is_not_needs_replace(server, empty, world):
+    world["rules"] = ["X"]
+    world["fail"]["import_rules"] = "the board already has 7 tracks, vias or pours; nothing was changed"
+    code, body = call(server, "POST", ENDPOINTS["route"], empty, {})
+    assert code == 400 and "needs_replace" not in body
+
+
+def test_a_step_failing_after_preparations_keeps_its_own_error_and_notes_the_preparations(server, empty, world):
+    world.update(schlib=False)
+    world["sync"]()
+    refusal = "the board already has 4 parts or copper objects; nothing was changed (last step: pcbcheck)"
+    world["fail"]["place_pcb"] = refusal
+    code, body = call(server, "POST", ENDPOINTS["place"], empty, {})
+    assert code == 400 and body["error"] == refusal and body["needs_replace"] is True
+    assert body["prepared"] == [LIB_SENTENCE] and body["done_first"] == "The library was built."
+    note = button_notes(empty)[0]
+    assert note["applied"] == [LIB_SENTENCE] and "place_pcb" not in " ".join(note["applied"])
+
+
+def test_an_unexpected_error_in_a_preparation_is_a_500_and_frees_the_lock(server, empty, world, monkeypatch):
+    world["rules"] = ["X"]
+    monkeypatch.setattr(bridge, "import_rules", lambda *a, **k: (_ for _ in ()).throw(KeyError("k")))
+    code, body = call(server, "POST", ENDPOINTS["route"], empty, {})
+    assert code == 500 and "Importing the JLC rules failed" in body["error"] and "KeyError" in body["error"] and not serve.STEP_LOCK.locked()
+
+
+def test_step_status_shows_the_live_list_then_the_result_once(server, empty, world, monkeypatch):
+    assert call(server, "GET", "/api/altium/step-status", empty)[1] == {"running": False}
+    started, release = threading.Event(), threading.Event()
+
+    def slow(p, *a, **k):
+        started.set()
+        release.wait(10)
+        return dict(IMPORTED)
+    monkeypatch.setattr(bridge, "import_rules", slow)
+    world["rules"] = ["X"]
+    first = {}
+    t = threading.Thread(target=lambda: first.update(r=call(server, "POST", ENDPOINTS["route"], empty, {})), daemon=True)
+    t.start()
+    assert started.wait(5)
+    st = call(server, "GET", "/api/altium/step-status", empty)[1]
+    assert st["running"] is True and st["step"] == "route"
+    assert [(x["key"], x["state"]) for x in st["steps"]] == [("altium.import_rules", "running"), ("altium.route_pcb", "waiting")]
+    assert [x["label"] for x in st["steps"]] == ["Importing the JLC rules", "Routing the board"]
+    assert call(server, "GET", "/api/altium/step-status?take=1", empty)[1]["running"] is True       # take never clears a run in progress
+    release.set()
+    t.join(10)
+    assert first["r"][0] == 200
+    assert call(server, "GET", "/api/altium/step-status", empty)[1] == {"running": False}           # delivered with the POST answer: gone
+
+
+def test_a_finished_run_is_read_once_by_a_page_that_missed_the_answer_and_never_reaches_the_next_run(empty, world):
+    code, body, _ = serve.run_step_button(empty, None, "route", {})              # in process: the answer is never "delivered" over HTTP
+    assert code == 200
+    st = serve.step_status(empty)
+    assert st["running"] is False and st["summary"] == body["summary"] and [x["state"] for x in st["steps"]] == ["done"]
+    assert serve.step_status(empty, take=True)["summary"] == body["summary"]
+    assert serve.step_status(empty) == {"running": False}
+    world["fail"]["route_pcb"] = "nope"
+    serve.run_step_button(empty, None, "route", {})
+    assert serve.step_status(empty)["error"] == "nope"
+    world["fail"].clear()
+    world["rules"] = ["X"]
+    serve.run_step_button(empty, None, "route", {})                            # the next run replaces the old record
+    st = serve.step_status(empty)
+    assert "error" not in st and [x["key"] for x in st["steps"]] == ["altium.import_rules", "altium.route_pcb"]
+
+
+def test_a_failed_run_marks_the_failed_step_and_skips_the_rest(empty, world):
+    world.update(schlib=False, pcb=False)
+    world["sync"]()
+    world["fail"]["add_pcb"] = "no"
+    assert serve.run_step_button(empty, None, "place", {})[0] == 400
+    st = serve.step_status(empty)
+    assert [x["state"] for x in st["steps"]] == ["done", "failed", "skipped"] and st["running"] is False and "Adding the PcbDoc failed" in st["error"]
+
+
+def test_a_busy_refusal_does_not_touch_the_record_of_the_running_step(server, empty, world):
+    serve._run_begin(empty, "route", ["altium.route_pcb"])
+    assert serve.STEP_LOCK.acquire(blocking=False)
+    try:
+        assert call(server, "POST", ENDPOINTS["draw"], empty, {})[0] == 409
+    finally:
+        serve.STEP_LOCK.release()
+    assert serve.step_status(empty)["running"] is True
+
+
+def test_the_page_polls_the_run_while_busy_and_resumes_after_a_reload():
+    js = ui_js()
+    assert "/api/altium/step-status" in js
+    poll = js[js.index("function pvPollStart"):js.index("function pvAltiumLinked")]
+    assert "setInterval(" in poll and "1500" in poll and "clearInterval(" in poll and "!pvBusy" in poll and "soft: true" in poll
+    run = js[js.index("async function pvRunStep"):js.index("async function pvFinish")]
+    assert "pvPollStart(false)" in run and "pvPollStop()" in run and "pvFinish(" in run
+    assert "refresh(true)" in js[js.index("async function pvFinish"):js.index("async function pvResume")]      # the same path for both ways in
+    resume = js[js.index("async function pvResume"):js.index("onAct('altium-step'")]
+    assert "step-status?take=1" in resume and "pvBusy = r.step" in resume and "pvPollStart(true)" in resume and "pvFinish(" in resume
+    assert "pvResume()" in js[js.index("function pvStepNote"):js.index("async function pvRunStep")]       # asked once, when the pages render
+    assert "pvPrepNames(r)" in js and "built the library" in js and "first + " in js
+
+
+def test_a_result_that_cannot_be_put_into_words_is_an_answer_and_no_record_stays_running(empty, world, monkeypatch):
+    monkeypatch.setattr(bridge, "route_pcb", lambda p, replace=False, keep_partial=False: {"warnings": []})      # no "summary" key
+    code, body, _ = serve.run_step_button(empty, None, "route", {})
+    assert code == 500 and "could not be read" in body["error"] and not serve.STEP_LOCK.locked()
+    assert serve.step_status(empty)["running"] is False
+
+
+def test_an_answer_clears_only_its_own_run(empty, world):
+    _, _, first = serve.run_step_button(empty, None, "route", {})
+    _, _, second = serve.run_step_button(empty, None, "route", {})
+    assert first and second and first != second
+    serve.step_ack(empty, first)                      # the first answer arrives late: the second run's record is not its to clear
+    assert serve.step_status(empty).get("step") == "route"
+    serve.step_ack(empty, second)
+    assert serve.step_status(empty) == {"running": False}
+
+
+def test_a_preparation_that_worked_is_not_reported_failed_when_its_sentence_cannot_be_made(empty, world, monkeypatch):
+    world["rules"] = ["X"]
+    monkeypatch.setattr(serve, "import_rules_summary", lambda res: 1 / 0)
+    code, body, _ = serve.run_step_button(empty, None, "route", {})
+    assert code == 200 and ran(world) == ["import_rules", "route_pcb"] and body["prepared"] == ["altium.import_rules"]
+
+
+def test_the_page_that_was_reloaded_never_stays_busy_and_long_refusals_are_cut_readably():
+    js = ui_js()
+    poll = js[js.index("function pvPollStart"):js.index("function pvPollStop")]
+    assert "else if (resumed) {" in poll and "{gone: true}" in poll and "pvPollStop();" in poll      # ended and already taken: stop, say so
+    gone = js[js.index("else if (r && r.gone)"):js.index("else if (!r || r.error)")]
+    assert "kind: 'warn'" in gone and "kind: 'ok'" not in gone and "finished" not in gone      # ended, never "succeeded": this page did not see the answer
+    cut = js[js.index("function chatRefusedHTML"):js.index("function msgHTML")]
+    assert "if (cut.length < 160) cut = s.slice(0, 220);" in cut and "<details" in cut and "esc(s.slice(cut.length))" in cut
+
+
+
+def test_a_body_that_is_not_an_object_runs_the_plain_step_and_touches_no_older_record(empty, world):
+    code, body, run_id = serve.run_step_button(empty, None, "route", ["replace"])
+    assert code == 200 and ran(world) == ["route_pcb"] and world["log"][0][2] is False and run_id

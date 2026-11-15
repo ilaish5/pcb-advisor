@@ -315,6 +315,28 @@ const PV_STEPS = {
 };
 let pvBusy = '';             // the step Altium is working on now: its line stays on the page until the answer comes
 let pvNote = {};             // page ('sch' | 'pcb') -> {kind, text, warnings, replace}: what the last step answered, kept until dismissed
+const PV_PREP = {'library.build': 'built the library', 'altium.add_pcb': 'added a PcbDoc', 'altium.import_rules': 'imported the JLC rules'};
+const pvPrepNames = r => (r.prepared || []).map(x => PV_PREP[String(x).split(':')[0]]).filter(Boolean).join(' and ');
+let pvTimer = null, pvRun = null, pvRunSig = '', pvResumed = false;       // pvRun: what the server says about the run in progress (its list of steps)
+function pvPollStart(resumed) {       // while a step runs: ask the server how far it is, about every 1.5 s; a failed read is ignored
+  if (pvTimer) return;
+  pvTimer = setInterval(async () => {
+    if (!pvBusy) { pvPollStop(); return; }
+    let r = null;
+    try { r = await api('/api/altium/step-status' + (resumed ? '?take=1' : ''), undefined, {soft: true}); } catch (err) { return; }
+    if (!pvBusy || !pvTimer || !r) return;
+    if (r.running) {
+      const sig = JSON.stringify((r.steps || []).map(x => x.state));
+      pvRun = r;
+      if (sig !== pvRunSig) { pvRunSig = sig; renderCenter(true); }          // only when a step changed: the picture is not redrawn for nothing
+    } else if (resumed) {        // a reloaded page: the run ended. Its answer is here, or the page that started it already took it
+      const step = pvBusy;
+      pvPollStop();
+      await pvFinish(step, r.step ? r : {gone: true}, false);
+    }
+  }, 1500);
+}
+function pvPollStop() { if (pvTimer) clearInterval(pvTimer); pvTimer = null; pvRun = null; pvRunSig = ''; }
 function pvAltiumLinked() {       // only when an Altium project is linked; the link is read once, then the view redraws
   if (!ALTIUM_DATA && !ALTIUM_ERR && typeof loadAltium === 'function') loadAltium().then(() => { if (ALTIUM_DATA && ALTIUM_DATA.linked) renderCenter(true); });
   return !!(ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file);
@@ -323,8 +345,15 @@ function pvStepBtn(step) {
   const c = PV_STEPS[step];
   return pvAltiumLinked() ? btn(pvBusy === step ? c.doing : c.label, {kind: 'line', act: 'altium-step', step, title: c.title, disabled: pvBusy ? true : undefined}) : '';
 }
+function pvStepLine(st, i, all) {       // one line of the live list: done, running (spinner) or waiting; the step itself keeps its long hint
+  const text = esc(st.state === 'running' && i === all.length - 1 ? PV_STEPS[pvBusy].busy : st.label + (st.state === 'done' && st.note ? ': ' + st.note : ''));
+  if (st.state === 'running') return `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${text}</div>`;
+  return `<div class="loading"><span aria-hidden="true">${st.state === 'done' ? '✓' : '&middot;'}</span>${text}${st.state === 'waiting' ? ' (waiting)' : ''}</div>`;
+}
 function pvStepNote(page) {       // under the header: Altium is working, or what the last step answered
-  const busy = pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${loadingLine(PV_STEPS[pvBusy].busy)}</div>` : '';
+  pvResume();
+  const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
+  const busy = pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || loadingLine(PV_STEPS[pvBusy].busy)}</div>` : '';
   const n = pvNote[page];
   if (busy || !n) return busy;
   const acts = (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
@@ -338,23 +367,41 @@ async function pvRunStep(step, replace) {
   pvBusy = step;
   delete pvNote[c.page];
   renderCenter(true);
+  pvPollStart(false);
   let r = null, lost = false;
   try { r = await api(c.url, {replace: !!replace}, {soft: true}); } catch (err) { lost = true; }
+  pvPollStop();
+  await pvFinish(step, r, lost);
+}
+async function pvFinish(step, r, lost) {       // the answer of a step (from its own POST, or read after a reload): the note, then the pages read again
+  const c = PV_STEPS[step];
   pvBusy = '';
+  const first = r && r.done_first ? r.done_first + ' ' : '';        // a preparation ran and then the step itself stopped
   if (r && r.needs_replace) {
     // never replaced without a second click: the note says what is there and offers it. The first sentence says what is there; the rest is worded for the chat
     const found = r.error.replace(/^Altium refused a step: /, '').replace(/; nothing was changed[^]*$/, '').split('. ')[0].replace(/\.$/, '');       // without the script's own step log
-    pvNote[c.page] = {kind: 'warn', text: found.charAt(0).toUpperCase() + found.slice(1) + '. ' + c.ask, replace: step};
+    pvNote[c.page] = {kind: 'warn', text: first + found.charAt(0).toUpperCase() + found.slice(1) + '. ' + c.ask, replace: step};
   } else {
     if (lost) pvNote[c.page] = {kind: 'bad', text: 'Lost contact with the server while Altium was working. The step may still be running or may have finished: look at the board in Altium, and at the chat for its result, before starting it again.'};
-    else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: (r && r.error) || 'no answer from the server'};
-    else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (r.summary || 'done.'), warnings: r.warnings || []};
+    else if (r && r.gone) pvNote[c.page] = {kind: 'warn', text: 'The step ended while this page was loading, and its answer went to the page that started it. Look at the board in Altium, and at the chat, before starting it again.'};       // ended, not "succeeded": this page never saw the answer
+    else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server')};
+    else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || []};
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
     try { await refresh(true); } catch (err) { /* the note still says what happened */ }
     if (typeof loadAltium === 'function') loadAltium(true);      // a draw can add a sheet to the project
     svgCache = {key: '', text: ''}; pvSchErr = ''; pcbSvgCache = {key: '', text: ''}; pvPcbErr = '';       // the picture is read again
   }
   renderCenter(true);
+}
+async function pvResume() {       // once per page load: a step started before a reload is still running, or has left its answer to read
+  if (pvResumed) return;
+  pvResumed = true;
+  let r = null;
+  try { r = await api('/api/altium/step-status?take=1', undefined, {soft: true}); } catch (err) { return; }
+  if (pvBusy || !r || !PV_STEPS[r.step]) return;
+  pvBusy = r.step;
+  if (r.running) { pvRun = r; renderCenter(true); pvPollStart(true); }
+  else await pvFinish(r.step, r, false);
 }
 onAct('altium-step', async (el, d, e) => {
   if (el.disabled || !PV_STEPS[d.step]) return;

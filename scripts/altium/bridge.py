@@ -1237,6 +1237,21 @@ def rules_missing(project):
         return []
 
 
+def rules_never_imported(project):
+    """True when the linked PcbDoc lacks advisor rules and no import into THIS PcbDoc is in the project's Altium log: the board
+    still has Altium's defaults. Once an import ran, what is missing or different on the board is the student's own edit. (The
+    rule names cannot tell: the plan merges the JLC values into the board's own rules, under the board's names.)"""
+    try:
+        pcb = _project_pcb(project)
+        if not rules_missing(project):
+            return False
+        here = str(pathlib.Path(pcb)).lower()
+        return not any(r.get("op") == "import-rules" and "error" not in r and str(r.get("pcb", "")).lower() == here
+                       for r in store.read_jsonl(store.pdir(project) / "altium-log.jsonl"))
+    except (BridgeError, AltiumReadError, OSError):
+        return False
+
+
 def drill_problems(project):
     """Messages for vias and holes JLC cannot make, read from the linked PcbDoc file ([] without one). Runs with the outputs."""
     try:

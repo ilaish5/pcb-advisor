@@ -461,6 +461,22 @@ def test_rules_missing_is_empty_without_a_pcbdoc(lte, fake):
     assert bridge.rules_missing(lte) == []
 
 
+def test_rules_never_imported_follows_the_import_log_of_this_pcbdoc(lte, fake):
+    """What a Route click may import by itself: only the first import. The real plan is used (it merges the JLC values into the
+    board's own rule names, so names cannot tell); once an import into this PcbDoc is logged, a missing rule is the student's edit."""
+    assert bridge.rules_never_imported(lte) is False                       # no PcbDoc: nothing to say
+    _, pcb = _linked_with_rules_board(lte, fake)
+    assert bridge.rules_missing(lte)                                       # the fixture board lacks advisor rules
+    assert bridge.rules_never_imported(lte) is True
+    bridge._log(lte, "import-rules", pcb=str(pcb.parent / "Other.PcbDoc"), created=[], updated=[])
+    assert bridge.rules_never_imported(lte) is True                        # an import into another board does not count
+    bridge._log(lte, "import-rules", pcb=str(pcb), error="Altium refused a step")
+    assert bridge.rules_never_imported(lte) is True                        # nor one that failed
+    bridge._log(lte, "import-rules", pcb=str(pcb), created=["Width_JLC"], updated=[])
+    assert bridge.rules_never_imported(lte) is False and bridge.rules_missing(lte)
+
+
+
 def test_run_outjob_warns_when_the_rules_are_gone_from_the_pcbdoc(lte, fake, monkeypatch):
     _linked_with_rules_board(lte, fake)
     res = bridge.run_outjob(lte)

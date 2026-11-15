@@ -19,6 +19,8 @@
 .sch-canvas{background:var(--sch-bg);border:1px solid var(--line)}
 .pcb-canvas{background:var(--pcb-bg)}
 .pv-note{padding:16px 20px}
+.pv-steps .loading{padding:3px 0}
+.pv-steps .loading>span:first-child{width:14px;text-align:center}
 .pv-zoom{position:absolute;left:36px;bottom:36px;display:flex;gap:2px;padding:2px;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--float)}
 .pv-empty .pv-stage{align-items:center;justify-content:center}
 .work:has(>#detail:not([hidden])) .pv-empty .pv-stage{padding-right:calc(min(var(--insp-w,380px), 55%) + 24px)}

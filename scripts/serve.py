@@ -697,7 +697,7 @@ def netlist_symbol_errors(project, data, notes=None):
 STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.skeleton": "Drawing the sheet frames",
                "library.build": "Building the project library in Altium", "altium.draw_schematic": "Drawing the schematic in Altium",
                "altium.place_pcb": "Placing the parts on the board", "altium.import_rules": "Importing the JLC rules",
-               "altium.route_pcb": "Routing the board", "netlist.write": "Writing the netlist"}
+               "altium.route_pcb": "Routing the board", "netlist.write": "Writing the netlist", "altium.add_pcb": "Adding the PcbDoc"}
 
 
 def _warn_tail(res):
@@ -718,6 +718,21 @@ def place_summary(res):
 
 def route_summary(res):
     return f"{res['summary']}" + _warn_tail(res)
+
+
+def library_build_summary(project, res):
+    """What library.build says it did: the same words in the chat and in a button's preparation."""
+    issues = library_issue_count(project)
+    return (f"{res['built']} of {res['lines']} lines built, IntLib installed" + (f" ({issues} with issues)" if issues else "")
+            + "".join(" " + n for n in res.get("notices", [])))
+
+
+def import_rules_summary(res):
+    """What altium.import_rules says it did (chat and button preparation)."""
+    return (f"{len(res['created'])} added, {len(res['updated'])} updated"
+            + (f", {len(res['skipped'])} skipped ({', '.join(x['name'] for x in res['skipped'])})" if res["skipped"] else "")
+            + (f", not confirmed: {', '.join(res['unconfirmed'])}" if res["unconfirmed"] else "")
+            + (f". {res['message']}" if res.get("message") else ""))
 
 
 STEP_SUMMARY = {"draw": draw_summary, "place": place_summary, "route": route_summary}
@@ -748,44 +763,227 @@ def altium_start(project):
         return "" if STEP_LOCK.acquire(blocking=False) else ALTIUM_BUSY
 
 
-def run_step_button(project, sess, step, data):
-    """The Draw / Place / Route buttons: the click is the consent, so no wording check. Returns (status, body)."""
+# What a step button prepares by itself (design principle 4): only these three routine actions, the ones the chat runs without asking
+# (they add new files or back up what they change). Drawing is not a preparation for Place, nor placing for Route: those are the student's steps.
+PREP_WORDS = {"library.build": ("building the library", "The library was built", "Building the library"),
+              "altium.add_pcb": ("adding a PcbDoc", "A PcbDoc was added", "Adding the PcbDoc"),
+              "altium.import_rules": ("importing the JLC rules", "The JLC rules were imported", "Importing the JLC rules")}
+STEP_NOT_DONE = {"draw": "The schematic was not drawn.", "place": "The parts were not placed.", "route": "The board was not routed."}
+STEP_RUNS = {}                # project -> the live list of a button run (see step_plan); kept after the run until the page has the answer
+RUNS_LOCK = threading.Lock()
+
+
+def _and(items):
+    return "".join(items) if len(items) < 2 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def step_plan(project, step):
+    """The preparations a step button runs before its step, from file checks only (no Altium call). Each is planned only when the
+    step cannot run without it and nothing of the student's can be touched by it:
+    - library.build (draw, place) when the project has no library file yet. A library that is merely older than the BOM or the
+      netlist (library_stale: true after almost every edit) is NOT rebuilt here: that takes minutes, replaces symbols under a sheet
+      that is already drawn, and the step says so itself when a part is really missing from the library;
+    - altium.add_pcb (place) when the Altium project lists no PcbDoc at all (one the student added by hand is theirs to link);
+    - altium.import_rules (route) when the board has none of the advisor rules. A board that has some was imported before: what
+      differs there is the student's edit, and the Rules page shows it and applies it on their click.
+    A check that itself fails (no linked project) plans nothing: the step then gives its own error."""
     from altium import bridge
+    plan = []
+    if step in ("draw", "place"):
+        try:
+            lp = bridge.library_paths(project)
+            if not lp["schlib"].is_file() or (step == "place" and not lp["pcblib"].is_file()):
+                plan.append("library.build")
+        except Exception:
+            pass
+    if step == "place":
+        try:
+            if not bridge.read_prjpcb(bridge._linked(project))["pcbs"]:
+                plan.append("altium.add_pcb")
+        except Exception:
+            pass
+    if step == "route":
+        try:
+            if bridge.rules_never_imported(project):
+                plan.append("altium.import_rules")
+        except Exception:
+            pass
+    return plan
+
+
+def _run_begin(project, step, keys):
+    """-> the id of the new run (step_ack takes it: an answer only ever clears its own run's record)."""
+    with RUNS_LOCK:
+        run_id = f"{time.time():.6f}"
+        STEP_RUNS[project] = {"id": run_id, "step": step, "started": time.time(), "running": True,
+                              "steps": [{"key": k, "label": STEP_LABELS[k], "state": "waiting", "note": ""} for k in keys]}
+    return run_id
+
+
+def _run_mark(project, key, state, note=""):
+    with RUNS_LOCK:
+        for st in (STEP_RUNS.get(project) or {}).get("steps", []):
+            if st["key"] == key:
+                st["state"], st["note"] = state, note
+
+
+def _run_end(project, **final):
+    with RUNS_LOCK:
+        run = STEP_RUNS.get(project)
+        if run:
+            for st in run["steps"]:
+                if st["state"] in ("waiting", "running"):
+                    st["state"] = "skipped" if final.get("error") else "done"
+            run.update(final, running=False)
+
+
+def step_status(project, take=False):
+    """The live state of the last button run, or {"running": False}. A finished run is kept until the next run replaces it, or until
+    it is read with take (the page that was reloaded mid-run reads it once) or its own POST answer was delivered (step_ack): a result
+    is never shown twice and never outlives the next run."""
+    with RUNS_LOCK:
+        run = STEP_RUNS.get(project)
+        if not run:
+            return {"running": False}
+        out = json.loads(json.dumps(run))
+        if take and not run["running"]:
+            STEP_RUNS.pop(project, None)
+        return out
+
+
+def step_ack(project, run_id):
+    """The answer of the button's POST reached the page: that run's finished record is not needed any more."""
+    with RUNS_LOCK:
+        run = STEP_RUNS.get(project)
+        if run and run_id and run.get("id") == run_id and not run["running"]:
+            STEP_RUNS.pop(project, None)
+
+
+def _step_note(project, sess, step, done, summary=None, failure=""):
+    """The note the agent reads next turn. `done` = [(kind, sentence)] of the preparations that ran; they changed the project, so they are
+    noted even when the step itself failed. Nothing is written when nothing ran and nothing succeeded."""
+    if not done and summary is None:
+        return
+    try:
+        applied = [f"{k}: {t}" if t else k for k, t in done]
+        names = _and([PREP_WORDS[k][0] for k, _ in done])
+        if summary is not None:
+            applied.append(f"{_CONSENT_ACTION[step]}: {summary}")
+            text = f"{STEP_NAMES[step]} in Altium{' after ' + names if done else ''} because the student pressed the button: {summary}"
+        else:
+            text = f"The student pressed the {step} button. Altium did {names} first; {failure}"
+        note = {"ts": now(), "role": "agent", "by": "button", "applied": applied, "text": text}
+        if warned_map(applied):       # the chip in the chat is amber, as for the same result from a chat turn
+            note["warned"] = warned_map(applied)
+        say(project, sess, note)
+    except Exception as exc:      # Altium did the work: a note that could not be written must not turn that into a failure
+        print(f"(the note about the {step} button step was not written: {exc})")
+
+
+def _step_failed(project, sess, step, done, current, exc, unexpected):
+    """(status, body) for a step or preparation that stopped; the later steps do not run. needs_replace only for the step's own refusal."""
+    final = current == _CONSENT_ACTION[step]
+    prepared = [f"{k}: {t}" if t else k for k, t in done]
+    reason = (f"it stopped on an unexpected error ({type(exc).__name__}: {exc}). Look at the file in Altium before trying again; whatever "
+              "it changed was copied to .advisor-backup first" if unexpected else str(exc)).rstrip(". ")
+    if final:
+        err = (f"The step stopped on an unexpected error ({type(exc).__name__}: {exc}). Look at the file in Altium before "
+               "trying again; whatever it changed was copied to .advisor-backup first.") if unexpected else str(exc)
+    else:
+        before = f"{_and([PREP_WORDS[k][1] for k, _ in done])}. " if done else ""
+        err = f"{before}{PREP_WORDS[current][2]} failed: {reason}. {STEP_NOT_DONE[step]}"
+    body = {"error": err}
+    if prepared:
+        body["prepared"] = prepared
+    if final and done:
+        body["done_first"] = f"{_and([PREP_WORDS[k][1] for k, _ in done])}."       # the page puts it before the step's own error
+    if final and not unexpected and needs_replace(exc):
+        body["needs_replace"] = True       # the caller drops it when replace was on
+    _run_mark(project, current, "failed", reason)
+    _step_note(project, sess, step, done, failure=("the step itself then stopped: " if final else f"then {PREP_WORDS[current][0]} stopped: ") + reason + ".")
+    return (500 if unexpected else 400), body
+
+
+def run_step_button(project, sess, step, data):
+    """The Draw / Place / Route buttons: the click is the consent, so no wording check. Runs by itself what the step needs first
+    (step_plan), all under one hold of STEP_LOCK. Returns (status, body, run id for step_ack)."""
+    from altium import bridge
+    data = data if isinstance(data, dict) else {}       # a body that is not an object asks for nothing special
     busy = altium_start(project)
     if busy:
-        return 409, {"error": busy}
+        return 409, {"error": busy}, ""
     try:
-        replace = _truthy(data.get("replace"))
         try:
-            if step == "draw":
-                res = bridge.draw_schematic(project, data.get("sheet") or None, replace=replace)
-            elif step == "place":
-                res = bridge.place_pcb(project, replace=replace)
-            else:               # keep_partial is never set here: half a route stays only when the student agreed to that in words (chat)
-                res = bridge.route_pcb(project, replace=replace)
-        except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
-            body = {"error": str(exc)}
-            if needs_replace(exc) and not replace:
-                body["needs_replace"] = True
-            return 400, body
-        except Exception as exc:      # a bug in the planning code is an answer too, not a dropped connection; the page reads the files again
-            return 500, {"error": f"The step stopped on an unexpected error ({type(exc).__name__}: {exc}). Look at the file in Altium before "
-                                  "trying again; whatever it changed was copied to .advisor-backup first."}
-        summary = STEP_SUMMARY[step](res)
-        # the agent reads this conversation on its next turn: a note there says the step is done, so it does not offer it again.
-        # "applied" makes it an applied action like the chat's: consent given in words before it is used up (earlier_student_messages)
-        try:
-            applied = [f"{_CONSENT_ACTION[step]}: {summary}"]
-            note = {"ts": now(), "role": "agent", "by": "button", "applied": applied,
-                    "text": f"{STEP_NAMES[step]} in Altium because the student pressed the button: {summary}"}
-            if warned_map(applied):       # the chip in the chat is amber, as for the same result from a chat turn
-                note["warned"] = warned_map(applied)
-            say(project, sess, note)
-        except Exception as exc:      # Altium did the step: a note that could not be written must not turn that into a failure
-            print(f"(the note about the {step} button step was not written: {exc})")
-        return 200, {**res, "summary": summary, "warnings": list(res.get("warnings") or [])}
+            code, body = _run_step(project, sess, step, data, bridge)
+        except Exception as exc:      # after the step itself (its result could not be put into words): still an answer, and the page reads the files again
+            code, body = 500, {"error": f"Altium ran the step but its result could not be read ({type(exc).__name__}: {exc}). Look at the file in Altium before trying again."}
+            _run_end(project, **body)
+        return code, body, _run_id(project)
     finally:
+        with RUNS_LOCK:               # whatever happened above, no record is left saying "running" once the lock is free
+            run = STEP_RUNS.get(project)
+            if run and run.get("running"):
+                run.update(running=False, error="The step stopped without an answer; look at the file in Altium and at the chat before trying again.")
         STEP_LOCK.release()
+
+
+def _run_id(project):
+    with RUNS_LOCK:
+        return (STEP_RUNS.get(project) or {}).get("id", "")
+
+
+def _prep_said(project, kind, res):
+    """The sentence for a preparation that ran. Never raises: the preparation worked, a sentence that cannot be made is no failure."""
+    try:
+        return library_build_summary(project, res) if kind == "library.build" else import_rules_summary(res) if kind == "altium.import_rules" else ""
+    except Exception:
+        return ""
+
+
+def _run_step(project, sess, step, data, bridge):
+    final, done, current = _CONSENT_ACTION[step], [], _CONSENT_ACTION[step]
+    replace = _truthy(data.get("replace"))        # for the step itself: a preparation never replaces anything
+    plan = step_plan(project, step)
+    _run_begin(project, step, [*plan, final])
+    try:
+        for current in plan:
+            _run_mark(project, current, "running")
+            if current == "library.build":
+                res = bridge.build_library(project)
+            elif current == "altium.add_pcb":
+                res = bridge.add_pcb(project)
+            else:
+                res = bridge.import_rules(project)
+            said = _prep_said(project, current, res)
+            done.append((current, said))
+            _run_mark(project, current, "done", said or pathlib.Path(str((res or {}).get("file") or "")).name)
+        current = final
+        _run_mark(project, final, "running")
+        if step == "draw":
+            res = bridge.draw_schematic(project, data.get("sheet") or None, replace=replace)
+        elif step == "place":
+            res = bridge.place_pcb(project, replace=replace)
+        else:               # keep_partial is never set here: half a route stays only when the student agreed to that in words (chat)
+            res = bridge.route_pcb(project, replace=replace)
+    except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
+        code, body = _step_failed(project, sess, step, done, current, exc, False)
+        if body.get("needs_replace") and replace:
+            del body["needs_replace"]
+        _run_end(project, **body)
+        return code, body
+    except Exception as exc:      # a bug in the planning code is an answer too, not a dropped connection; the page reads the files again
+        code, body = _step_failed(project, sess, step, done, current, exc, True)
+        _run_end(project, **body)
+        return code, body
+    summary = STEP_SUMMARY[step](res)
+    # the agent reads this conversation on its next turn: a note there says the step is done, so it does not offer it again.
+    # "applied" makes it an applied action like the chat's: consent given in words before it is used up (earlier_student_messages)
+    _step_note(project, sess, step, done, summary=summary)
+    body = {**res, "summary": summary, "warnings": list(res.get("warnings") or [])}
+    if done:
+        body["prepared"] = [f"{k}: {t}" if t else k for k, t in done]
+    _run_end(project, summary=summary, warnings=body["warnings"], **({"prepared": body["prepared"]} if done else {}))
+    return 200, body
 
 
 def _uses_altium(kind):
@@ -901,9 +1099,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
                     continue
-                issues = library_issue_count(project)
-                applied.append(f"{kind}: {res['built']} of {res['lines']} lines built, IntLib installed"
-                               + (f" ({issues} with issues)" if issues else "") + "".join(" " + n for n in res.get("notices", [])))
+                applied.append(f"{kind}: " + library_build_summary(project, res))
             elif kind == "part.attach_datasheet" and a.get("ref") and a.get("name"):
                 # routine: applies at once; detach (the Unverified panel, /api/parts/detach_datasheet) is the undo
                 res = store.attach_datasheet(project, a["ref"], a["name"], by="agent")
@@ -974,10 +1170,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                         refused.append(f"{kind}: {exc}")
                         continue
-                    applied.append(f"{kind}: {len(res['created'])} added, {len(res['updated'])} updated"
-                                   + (f", {len(res['skipped'])} skipped ({', '.join(x['name'] for x in res['skipped'])})" if res["skipped"] else "")
-                                   + (f", not confirmed: {', '.join(res['unconfirmed'])}" if res["unconfirmed"] else "")
-                                   + (f". {res['message']}" if res.get("message") else ""))
+                    applied.append(f"{kind}: " + import_rules_summary(res))
                     continue
                 elif kind == "altium.run_outjob":
                     blocked = store.manufacturing_block(project)
@@ -1640,6 +1833,8 @@ class Handler(BaseHTTPRequestHandler):
                             "url": f"/api/export/{f.name}",
                         })
             return self._send(200, {"exports": files})
+        if path == "/api/altium/step-status":        # the live list of the button run for this project (see step_status); take=1 reads a finished run once
+            return self._send(200, step_status(self.project(), take=self.query("take") == "1"))
         if path == "/api/altium/outputs":            # what Altium's outputs folder holds now (folders, file counts, newest time)
             import jlc_upload
             return self._send(200, jlc_upload.outputs_summary(self.project()))
@@ -2416,8 +2611,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {**_altium_state(proj), "warning": res.get("skeleton_error", "")})
 
         if path in ("/api/altium/draw-schematic", "/api/altium/place", "/api/altium/route"):
-            code, body = run_step_button(proj, sess, path.rsplit("/", 1)[1].replace("draw-schematic", "draw"), data)
-            return self._send(code, body)
+            code, body, run_id = run_step_button(proj, sess, path.rsplit("/", 1)[1].replace("draw-schematic", "draw"), data)
+            self._send(code, body)
+            step_ack(proj, run_id)        # this run's record only; a page that was reloaded mid-run finds "finished" or nothing, and says so
+            return
 
         if path in ("/api/altium/import-rules", "/api/altium/run-outjob"):
             from altium import bridge
