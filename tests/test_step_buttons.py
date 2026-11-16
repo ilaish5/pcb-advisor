@@ -602,3 +602,34 @@ def test_the_page_that_was_reloaded_never_stays_busy_and_long_refusals_are_cut_r
 def test_a_body_that_is_not_an_object_runs_the_plain_step_and_touches_no_older_record(empty, world):
     code, body, run_id = serve.run_step_button(empty, None, "route", ["replace"])
     assert code == 200 and ran(world) == ["route_pcb"] and world["log"][0][2] is False and run_id
+
+
+def test_a_part_missing_from_the_library_makes_the_step_build_it_and_try_once_more(empty, world):
+    """A line approved after the last build: draw refuses before it touches anything. The button builds and draws; the chat is not needed."""
+    world["fail"]["draw_schematic"] = "Sheet 01 cannot be drawn: J1: no symbol in the project library (run library.build first)"
+    real_build = bridge.build_library
+
+    def build(project, *a, **k):
+        world["fail"].pop("draw_schematic")            # after the build the part is there
+        return real_build(project, *a, **k)
+    bridge.build_library = build
+    try:
+        code, body, _ = serve.run_step_button(empty, None, "draw", {})
+    finally:
+        bridge.build_library = real_build
+    assert code == 200 and ran(world) == ["draw_schematic", "build_library", "draw_schematic"]
+    assert body["prepared"][0].startswith("library.build: ") and all(held for _, held, _ in world["log"])
+
+
+def test_a_library_that_still_lacks_the_part_after_the_build_is_reported_once_not_looped(empty, world):
+    world["fail"]["draw_schematic"] = "Sheet 01 cannot be drawn: J1: no symbol in the project library (run library.build first)"
+    code, body, _ = serve.run_step_button(empty, None, "draw", {})
+    assert code == 400 and ran(world) == ["draw_schematic", "build_library", "draw_schematic"]
+    assert "no symbol in the project library" in body["error"] and body["done_first"] == "The library was built."
+    assert not serve.STEP_LOCK.locked() and serve.step_status(empty)["running"] is False
+
+
+def test_pin_numbers_filled_from_the_symbol_are_a_remark_not_an_amber_warning():
+    filled = "netlist.write:01, pin numbers of U1, R1 matched by pin name to the library symbols"
+    assert serve.warning_of(filled) == ""
+    assert serve.warning_of(filled + " (warnings: net X has one pin)") == "net X has one pin"

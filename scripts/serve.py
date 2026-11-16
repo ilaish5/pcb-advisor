@@ -820,6 +820,20 @@ def _run_begin(project, step, keys):
     return run_id
 
 
+NEEDS_LIBRARY = re.compile(r"run library\.build first")       # draw / place refusing before they change anything: a part is not in the library
+
+
+def _run_insert(project, key, before):
+    """A preparation that turned out to be needed only when the step looked: it joins the live list just before the step, running."""
+    with RUNS_LOCK:
+        steps = (STEP_RUNS.get(project) or {}).get("steps")
+        if steps is not None and not any(st["key"] == key for st in steps):
+            at = next((i for i, st in enumerate(steps) if st["key"] == before), len(steps))
+            steps.insert(at, {"key": key, "label": STEP_LABELS[key], "state": "running", "note": ""})
+            for st in steps[at + 1:]:
+                st["state"] = "waiting"
+
+
 def _run_mark(project, key, state, note=""):
     with RUNS_LOCK:
         for st in (STEP_RUNS.get(project) or {}).get("steps", []):
@@ -957,14 +971,30 @@ def _run_step(project, sess, step, data, bridge):
             said = _prep_said(project, current, res)
             done.append((current, said))
             _run_mark(project, current, "done", said or pathlib.Path(str((res or {}).get("file") or "")).name)
+        def the_step():
+            if step == "draw":
+                return bridge.draw_schematic(project, data.get("sheet") or None, replace=replace)
+            if step == "place":
+                return bridge.place_pcb(project, replace=replace)
+            return bridge.route_pcb(project, replace=replace)      # keep_partial is never set here: half a route stays only when the student agreed to that in words (chat)
         current = final
         _run_mark(project, final, "running")
-        if step == "draw":
-            res = bridge.draw_schematic(project, data.get("sheet") or None, replace=replace)
-        elif step == "place":
-            res = bridge.place_pcb(project, replace=replace)
-        else:               # keep_partial is never set here: half a route stays only when the student agreed to that in words (chat)
-            res = bridge.route_pcb(project, replace=replace)
+        try:
+            res = the_step()
+        except bridge.BridgeError as exc:
+            # the library exists but lacks a part of this sheet (a line approved after the last build): the step says so before it
+            # touches anything. That is the one case where a rebuild is needed, so build and try the step once more
+            if not NEEDS_LIBRARY.search(str(exc)) or any(k == "library.build" for k, _ in done):
+                raise
+            current = "library.build"
+            _run_insert(project, current, final)
+            res = bridge.build_library(project)
+            said = _prep_said(project, current, res)
+            done.append((current, said))
+            _run_mark(project, current, "done", said)
+            current = final
+            _run_mark(project, final, "running")
+            res = the_step()
     except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
         code, body = _step_failed(project, sess, step, done, current, exc, False)
         if body.get("needs_replace") and replace:
@@ -1080,8 +1110,10 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 sym_errors = netlist_symbol_errors(project, a["data"], notes)
                 res = {"ok": False, "errors": sym_errors} if sym_errors else store.write_sheet_logged(project, a["sheet"], a["data"])
                 if res["ok"]:
-                    warns = [*notes, *(res.get("warnings") or [])]
-                    note = f" (warnings: {'; '.join(warns[:8])})" if warns else ""
+                    # pin numbers filled from the library symbol are how it is meant to work, not a warning: one short remark, no amber chip
+                    filled = [n.split(":")[0] for n in notes if "matched by pin name" in n]
+                    warns = [*(n for n in notes if "matched by pin name" not in n), *(res.get("warnings") or [])]
+                    note = (f", pin numbers of {', '.join(filled[:12])}{' ...' if len(filled) > 12 else ''} matched by pin name to the library symbols" if filled else "") + (f" (warnings: {'; '.join(warns[:8])})" if warns else "")
                     applied.append(f"netlist.write:{res['sheet']}{note}")
                 else:
                     refused.append(f"netlist.write:{a['sheet']} refused: " + "; ".join(res["errors"][:8]))
