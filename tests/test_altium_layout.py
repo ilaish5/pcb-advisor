@@ -410,3 +410,8 @@ def test_two_ics_on_one_supply_net_get_one_cap_each_first():
     at = {p["ref"]: p for p in plan["places"]}
     near = {c: min(("U1", "U2"), key=lambda u: dist(at, c, u)) for c in ("C1", "C2")}
     assert {near["C1"], near["C2"]} == {"U1", "U2"}, (near, plan["warnings"])
+
+
+def test_designator_stroke_clears_jlcdfms_silk_width_warning():
+    # JLCDFM rates silk lines under 6 mil a Warning: 0.15 mm (5.9 mil) designators gave 45 of them on Dark sensor LED
+    assert layout.LABEL_LINE / 0.0254 >= 6.0 and layout.LABEL_LINE * 6 <= layout.LABEL_H

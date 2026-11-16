@@ -1,5 +1,6 @@
 """Tests for scripts/partlib.py (stage L1 of the project library): convert, generate, share, manifest, check."""
 import json
+import math
 import pathlib
 import shutil
 import subprocess
@@ -423,3 +424,60 @@ def test_a_pin_beyond_the_box_or_onto_another_pins_base_is_not_slid():
              _pin("3", "eRotate180", -300, 150)]
     conv.snap_symbol(long_, [["rectangle", "1", "1", "0", -300.0, 300.0, 300.0, -300.0]])
     assert long_[2]["y"] == 100
+
+
+def _silk(lines):
+    return [ln.split("|") for ln in lines if ln.endswith("Top Overlay")]
+
+
+def test_vendor_silk_over_a_pad_is_cut_and_a_line_just_short_of_015_stays():
+    # JLC DFM of 16/11 (Dark sensor LED): EasyEDA's USB-C and LED outlines ran over their pads, "Silkscreen to pad" Danger
+    mod = """(module "x:SILK" (layer F.Cu)
+  (pad 1 smd rect (at -1 0 0) (size 1 1) (layers F.Cu F.Paste F.Mask))
+  (pad 2 smd rect (at 1 0 0) (size 1 1) (layers F.Cu F.Paste F.Mask))
+  (fp_line (start -2 0) (end 2 0) (layer F.SilkS) (width 0.15))
+  (fp_line (start -2 0.774) (end 2 0.774) (layer F.SilkS) (width 0.15))
+  (fp_circle (center -1 0) (end -0.97 0) (layer F.SilkS) (width 0.15))
+  (fp_line (start -2 0) (end 2 0) (layer F.Fab) (width 0.1))
+)"""
+    fp = conv.convert_footprint(mod)
+    silk = _silk(fp["lines"])
+    pads_ = [(-1 * MM, 0, 0.5 * MM, 0.5 * MM), (1 * MM, 0, 0.5 * MM, 0.5 * MM)]
+    for f in silk:
+        assert f[0] == "TRACK", f                                   # the pin-1 dot on the pad is gone
+        x1, y1, x2, y2, w = (float(v) for v in f[1:6])
+        for t in (i / 50 for i in range(51)):
+            px, py = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+            for cx, cy, hx, hy in pads_:
+                gap = math.hypot(max(abs(px - cx) - hx, 0), max(abs(py - cy) - hy, 0)) - w / 2
+                assert gap >= 5.0 - 1e-6, (f, gap)
+    mid = sorted((float(f[1]), float(f[3])) for f in silk if float(f[2]) == 0)
+    assert len(mid) == 3                                            # left stub, centre gap piece, right stub
+    assert any(float(f[2]) == pytest.approx(-0.774 * MM, abs=0.01) and float(f[1]) == pytest.approx(-2 * MM, abs=0.01)
+               and float(f[3]) == pytest.approx(2 * MM, abs=0.01) for f in silk)     # 0.149 mm from the pads: kept whole
+    assert [ln for ln in fp["lines"] if ln.endswith("Mechanical Layer 13")]           # other layers untouched
+
+
+def test_vendor_silk_arcs_are_cut_by_angle():
+    mod = """(module "x:ARC" (layer F.Cu)
+  (pad 1 smd rect (at 0 -1 0) (size 0.6 0.6) (layers F.Cu))
+  (fp_circle (center 0 0) (end 1 0) (layer F.SilkS) (width 0.15))
+)"""
+    arcs = [f for f in _silk(conv.convert_footprint(mod)["lines"]) if f[0] == "ARC"]
+    assert arcs and all(float(f[5]) - float(f[4]) < 360 for f in arcs)
+    covered = sum(float(f[5]) - float(f[4]) for f in arcs)
+    assert 250 < covered < 330                                      # the part under the pad (Altium y up: at 90 deg) is cut
+    for f in arcs:
+        assert not float(f[4]) < 90 < float(f[5])
+
+
+def test_clip_silk_takes_a_backwards_arc_and_a_hole_bigger_than_its_pad():
+    arc = "ARC|0|0|40|300|60|6.0|Top Overlay"                                         # counter-clockwise through 0
+    assert _silk(conv.clip_silk(["PAD|1|0|40|0|Top Layer|1|0|0|0|0|20|20|2|", arc])) == [arc.split("|")]   # clear: as it was
+    arcs = _silk(conv.clip_silk(["PAD|1|40|0|0|Top Layer|1|0|0|0|0|20|20|2|", arc]))  # a pad at 0 deg cuts it in two
+    assert len(arcs) == 2 and all(0 <= float(f[4]) < 360 and float(f[5]) > float(f[4]) for f in arcs)
+    assert 60 < sum(float(f[5]) - float(f[4]) for f in arcs) < 115
+    npth = "PAD||0|0|0|Multi-Layer|0|60|0|0|0|20|20|1|"                               # 60 mil hole, 20 mil copper
+    kept = _silk(conv.clip_silk([npth, "TRACK|-50|0|50|0|6.0|Top Overlay"]))
+    assert len(kept) == 2                                                             # one piece each side
+    assert all(min(abs(float(f[1])), abs(float(f[3]))) >= 30 + 5 + 3 - 0.01 for f in kept)   # cut by the hole, not the copper

@@ -269,7 +269,92 @@ def convert_footprint(text):
         elif k == "fp_poly" and lay:
             pts = one(it, "pts")[1:]
             lines.append(f"REGION|{lay}|0|" + "|".join(f"{X(p[1])}|{Y(p[2])}" for p in pts))
-    return {"name": m[1], "lines": lines, "tht": tht, "notes": sorted(set(notes)), "model": kicad_model(text, tht)}
+    return {"name": m[1], "lines": clip_silk(lines), "tht": tht, "notes": sorted(set(notes)), "model": kicad_model(text, tht)}
+
+
+SILK_TO_PAD = 0.15                     # mm, JLC's silkscreen-to-pad clearance (pcb-capabilities: "Pad to silkscreen")
+SILK_DANGER = 5.0                      # mil: JLCDFM rates silk closer than this to a pad Danger (pcb-capabilities, 14/10)
+MIN_PIECE = 5.0                        # mil: a silk piece shorter than this after clipping is dropped
+
+
+def _pad_boxes(lines):
+    """(x, y, rot, half x, half y, round) of every copper pad, in mil; a hole bigger than its copper (an NPTH) counts."""
+    out = []
+    for ln in lines:
+        f = ln.split("|")
+        if f[0] == "PAD":
+            sx, sy, hole, slot = float(f[11]), float(f[12]), float(f[7] or 0), float(f[9] or 0)
+            along = slot if f[8] == "2" else hole                 # a slot's length runs along x, or y when turned 90
+            sx, sy = (max(sx, along), max(sy, hole)) if float(f[10] or 0) % 180 == 0 else (max(sx, hole), max(sy, along))
+            out.append((float(f[2]), float(f[3]), float(f[4]), sx / 2, sy / 2, f[13] == "1" and sx == sy))
+    return out
+
+
+def _gap(px, py, box):
+    """Distance in mil from a point to a pad's copper (a rectangle in the pad's own frame; a round pad as a circle)."""
+    x, y, rot, hx, hy, round_ = box
+    dx, dy = px - x, py - y
+    if round_:
+        return max(math.hypot(dx, dy) - hx, 0.0)
+    a = math.radians(-rot)
+    u, v = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
+    return math.hypot(max(abs(u) - hx, 0.0), max(abs(v) - hy, 0.0))
+
+
+def _runs(points, ok):
+    """Index ranges [i, j] of consecutive points that are all clear."""
+    out, start = [], None
+    for i, good in enumerate(ok):
+        if good and start is None:
+            start = i
+        if not good and start is not None:
+            out.append((start, i - 1))
+            start = None
+    if start is not None:
+        out.append((start, len(points) - 1))
+    return out
+
+
+def clip_silk(lines):
+    """Cut the top silkscreen of a vendor footprint (EasyEDA's USB-C and LED outlines run over their pads: JLC DFM flagged
+    them, 16/11) so no silk line is closer to the copper than JLCDFM's Danger limit (SILK_DANGER). A vendor outline between
+    that and SILK_TO_PAD (C0805's at 0.149 mm) stays: at most a DFM Warning, and JLC clips silk off pads itself; the generated
+    footprints keep SILK_TO_PAD + 0.02 mm. Lines and arcs are cut into the pieces that stay clear; pieces under MIN_PIECE
+    are dropped. Text, regions and other layers are left as they are."""
+    boxes = _pad_boxes(lines)
+    if not boxes:
+        return lines
+    out = []
+    for ln in lines:
+        f = ln.split("|")
+        if f[0] not in ("TRACK", "ARC") or f[-1] != "Top Overlay":
+            out.append(ln)
+            continue
+        w = float(f[5] if f[0] == "TRACK" else f[6])
+        need = SILK_DANGER + w / 2
+        if f[0] == "TRACK":
+            x1, y1, x2, y2 = (float(v) for v in f[1:5])
+            n = max(1, math.ceil(math.hypot(x2 - x1, y2 - y1)))            # a point per mil
+            pts = [(x1 + (x2 - x1) * i / n, y1 + (y2 - y1) * i / n) for i in range(n + 1)]
+        else:
+            cx, cy, r, a0, a1 = (float(v) for v in f[1:6])
+            a1 += 360 if a1 < a0 else 0                             # counter-clockwise from a0 to a1
+            n = max(1, math.ceil(math.radians(a1 - a0) * r))
+            angs = [a0 + (a1 - a0) * i / n for i in range(n + 1)]
+            pts = [(cx + r * math.cos(math.radians(a)), cy + r * math.sin(math.radians(a))) for a in angs]
+        ok = [all(_gap(px, py, b) >= need for b in boxes) for px, py in pts]
+        if all(ok):
+            out.append(ln)
+            continue
+        for i, j in _runs(pts, ok):
+            (ax, ay), (bx, by) = pts[i], pts[j]
+            if f[0] == "TRACK":
+                if math.hypot(bx - ax, by - ay) >= MIN_PIECE:
+                    out.append(f"TRACK|{round(ax, 3)}|{round(ay, 3)}|{round(bx, 3)}|{round(by, 3)}|{f[5]}|{f[6]}")
+            elif math.radians(angs[j] - angs[i]) * r >= MIN_PIECE:
+                lo = angs[i] - 360 * (angs[i] // 360)                # start in 0..360, the end follows it
+                out.append(f"ARC|{f[1]}|{f[2]}|{f[3]}|{round(lo, 2)}|{round(lo + angs[j] - angs[i], 2)}|{f[6]}|{f[7]}")
+    return out
 
 
 def kicad_model(text, tht):
