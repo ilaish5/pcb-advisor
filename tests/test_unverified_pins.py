@@ -105,6 +105,21 @@ def test_led_polarity_matching_the_library_symbol_is_worded_precisely(empty):
     assert "match the library symbol" not in {u["line"]: u for u in store.unverified_parts(empty)}["D1"]["issues"]
 
 
+def test_led_with_plus_minus_pins_and_a_linked_datasheet(empty):
+    # Blinker 555's LED: pins named + and -, datasheet linked. The note must not claim there is no datasheet.
+    _jd_sheet(empty, ("+", "-"))
+    _symbol(empty, ["A", "K"])
+    store.edit_bom(empty, "D1", "datasheet", "LED0603.pdf")
+    d1 = {u["line"]: u for u in store.unverified_parts(empty)}["D1"]
+    assert "match the library symbol LED-SYM" in d1["issues"] and "LED0603.pdf" in d1["issues"] and "no datasheet" not in d1["issues"]
+    _symbol(empty, ["K", "A"])                     # no match: the plain note, still naming the datasheet
+    d1 = {u["line"]: u for u in store.unverified_parts(empty)}["D1"]
+    assert "LED0603.pdf" in d1["issues"] and "checked by eye" in d1["issues"]
+    _symbol(empty, ["A", "K"])
+    store.edit_bom(empty, "D1", "datasheet", "")
+    assert "match the library symbol LED-SYM" in {u["line"]: u for u in store.unverified_parts(empty)}["D1"]["issues"]
+
+
 def test_accepting_clears_connector_and_led(empty):
     _jd_sheet(empty)
     store.accept_pins(empty, "J1")

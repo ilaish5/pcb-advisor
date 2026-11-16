@@ -2531,7 +2531,7 @@ def is_simple_ref(ref):
 
 POLARISED_PREFIXES = ("D", "LED")           # two-pin parts whose pin 1/2 is not interchangeable
 CONNECTOR_PREFIXES = ("J", "P")             # pins are named by the agent unless a datasheet is linked
-_POLARITY = {"A": "A", "ANODE": "A", "K": "K", "C": "K", "CATHODE": "K"}
+_POLARITY = {"A": "A", "ANODE": "A", "+": "A", "K": "K", "C": "K", "CATHODE": "K", "-": "K"}
 
 
 def _prefix_of(ref):
@@ -2540,9 +2540,12 @@ def _prefix_of(ref):
 
 
 def _polarity_note(project, line):
-    """Precise wording for a diode/LED line without a datasheet: whether its A/K pins agree with a library symbol's pin names."""
+    """Precise wording for an unaccepted diode/LED line: whether its A/K pins agree with a library symbol's pin names, and
+    the linked datasheet to compare with (text matching cannot read a polarity mark, so the student accepts)."""
     ref = (line.get("refs") or [""])[0]
     base = f"{ref}: polarity (anode/cathode) was not verified against a datasheet"
+    if line.get("datasheet"):          # linked, but text matching cannot read a polarity mark: the student compares
+        base = f"{ref}: polarity (anode/cathode) is checked by eye: compare the pins with {line['datasheet']} and accept"
     if not project:
         return base
     try:
@@ -2557,6 +2560,8 @@ def _polarity_note(project, line):
     lib = {str(p["num"]): _POLARITY.get(str(p["name"]).strip().upper()) for p in spec["pins"]}
     net = {str(p.get("num", p.get("number", ""))): _POLARITY.get(str(p.get("name") or "").strip().upper()) for p in part.get("pins", [])}
     if set(lib.values()) == {"A", "K"} and net and all(net[n] and net[n] == lib.get(n) for n in net) and set(net.values()) == {"A", "K"}:
+        if line.get("datasheet"):
+            return f"{ref}: pins A/K match the library symbol {sym}; compare the polarity with {line['datasheet']} and accept"
         return f"{ref}: pins A/K match the library symbol {sym}, but no datasheet confirms the polarity"
     return base
 
@@ -2577,6 +2582,8 @@ def pins_status(line, entry, project=None):
         if entry.get("verify") == "mismatch":
             return "mismatch", entry.get("issues", "")
         if conn:
+            if line.get("datasheet"):
+                return "unverified", f"{refs[0]}: {line['datasheet']} is linked, but the pin numbers and names are not verified yet"
             return "unverified", f"{refs[0]}: no datasheet linked, the pin numbers and names were never verified"
         return "unverified", _polarity_note(project, line)
     if entry.get("verify") == "pass":

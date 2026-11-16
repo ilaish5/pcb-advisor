@@ -21,9 +21,31 @@ import sources   # noqa: E402
 import store     # noqa: E402
 
 
+# A schematic names a pin by a short form, a datasheet often by the long one (NE555: RST on the sheet, RESET in TI's
+# pin table). Each group is one pin function; a name matches the datasheet when any spelling in its group is there.
+_ALIASES = [{"RST", "RESET"}, {"CTRL", "CONT", "CV", "CONTROL"}, {"THR", "THRES", "THRESH", "THRESHOLD"},
+            {"DIS", "DISCH", "DISCHARGE"}, {"TRIG", "TRIGGER"}, {"GND", "GROUND"}, {"OUT", "OUTPUT"},
+            {"EN", "ENABLE"}, {"SHDN", "SHUTDOWN"}, {"FB", "FEEDBACK"}, {"ADJ", "ADJUST"}]
+
+
+def _spellings(name):
+    """Other spellings of the name: without an active-low mark (~RST, /RESET, RST#, nRESET, RESET_N) and its aliases.
+    Never the name itself, never shorter than two letters (a bare "~" would match any text with the number in it)."""
+    bare = re.sub(r"^[~/!]|#$|_[Nn]$", "", name)
+    bare = re.sub(r"^n(?=[A-Z]{2})", "", bare)
+    out = {bare} if len(bare) >= 2 else set()
+    for group in _ALIASES:
+        if bare.upper() in group:
+            out |= group
+    return out - {name}
+
+
 def _near(text, num, name, span=40):
-    n, m = re.escape(num), re.escape(name)
-    return bool(re.search(rf"\b{n}\b.{{0,{span}}}{m}|{m}.{{0,{span}}}\b{n}\b", text, re.I | re.S))
+    """The name as written matches anywhere (as it always has); another spelling only as a whole word, so the alias
+    EN is not found in "open" nor DIS in "dissipation"."""
+    n = re.escape(num)
+    pats = [re.escape(name)] + [rf"\b{re.escape(a)}\b" for a in _spellings(name)]
+    return any(re.search(rf"\b{n}\b.{{0,{span}}}{m}|{m}.{{0,{span}}}\b{n}\b", text, re.I | re.S) for m in pats)
 
 
 def verify(project, key):

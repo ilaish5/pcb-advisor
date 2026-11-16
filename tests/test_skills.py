@@ -106,6 +106,26 @@ def test_verify_lists_the_pins_it_cannot_find(lte):
     assert res["verify"] == "mismatch" and "pin 8 OE" in res["issues"]
 
 
+def test_a_short_pin_name_matches_the_datasheet_long_one():
+    # the sheet's 555 calls pin 4 RST, TI's pin table RESET: the same pin, not a mismatch
+    assert verify_part._near("4 RESET Reset input", "4", "RST")
+    assert verify_part._near("4 RESET", "4", "~RST") and verify_part._near("4 RESET", "4", "nRESET")
+    assert verify_part._near("4 RESET", "4", "RESET_n") and verify_part._near("4 RST", "4", "RESET")
+    assert not verify_part._near("4 OUT Output", "4", "RST")   # an alias never stands in for a different function
+
+
+def test_an_alias_matches_only_a_whole_word():
+    # before the aliases each of these failed, and a wrong pin number must still fail
+    for text, num, name in [("5 drain open when", "5", "ENABLE"), ("7 power dissipation", "7", "DISCH"),
+                            ("6 through-hole", "6", "THRESHOLD"), ("3 without", "3", "OUTPUT"),
+                            ("5 contents", "5", "CONTROL"), ("2 does", "2", "nOE"), ("3 power lower", "3", "~WE")]:
+        assert not verify_part._near(text, num, name), name
+
+
+def test_a_mark_alone_is_not_a_name():
+    assert verify_part._spellings("~") == set() and not verify_part._near("pin 9 VCC", "9", "~")
+
+
 def test_the_skills_page_lists_only_scripts_that_exist(lte):
     rows = {r["name"]: r for r in registry.listing()}
     assert rows["Check availability"]["available"]
