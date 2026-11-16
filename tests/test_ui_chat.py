@@ -136,3 +136,10 @@ def test_the_chat_stylesheet_only_styles_the_chat():
 def test_an_applied_result_with_a_warning_is_an_amber_chip_with_the_warning():
     assert "m.warned" in CHAT_JS and "chat-act warn" in CHAT_JS and "applied with warnings" in CHAT_JS
     assert re.search(r"\.chat-act\.warn\{[^}]*var\(--warn-soft\)[^}]*var\(--warn\)", CHAT_CSS)      # same tokens as the tag.warn: AA in both themes
+
+
+def test_a_reply_with_a_failed_step_says_so_before_its_text():
+    # the engine writes its text before the actions run (Flash: "placed", "routing", 23/10): a reader must not take it as done
+    body = CHAT_JS[CHAT_JS.index("const nRef"):]
+    assert "Not all of this happened" in body
+    assert body.index("${head}") < body.index('<div class="txt"')

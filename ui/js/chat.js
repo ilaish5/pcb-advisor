@@ -371,7 +371,10 @@ function msgHTML(m, undoTs) {
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
     // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here
     if ((m.refused || []).length && m.text) m = {...m, text: m.text.replace(/\n*\(Not applied: [\s\S]*\)\s*$/, '')};
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent"><div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
+    // the engine writes its text before the actions run, so "placed" may stand above a red chip: say so before the text
+    const nRef = (m.refused || []).length;
+    const head = nRef && m.text ? `<div class="acts"><span class="chat-act bad" role="note">Not all of this happened: ${nRef} step${nRef > 1 ? 's' : ''} failed (red, below)</span></div>` : '';
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }
