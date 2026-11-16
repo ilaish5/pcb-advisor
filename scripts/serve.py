@@ -695,6 +695,39 @@ def netlist_symbol_errors(project, data, notes=None):
     return out
 
 
+def fit_sheets_to_library(project, sheet=None):
+    """Before a draw: give the stored netlist sheets the pin numbers of the library symbols built since they were written
+    (a part approved and built after netlist.write has pins named but not numbered, or numbered differently). Only the
+    renumbering by pin name that netlist.write itself does; a sheet that changed is saved (undoable, in sheet-log.jsonl).
+    Returns the refs renumbered. A part that still does not fit is left for the draw step to refuse, in its own words."""
+    fitted = []
+    for sid in store.sheet_ids(project):
+        if sheet is not None and str(sid) != str(sheet):
+            continue
+        data, notes = store.load_sheet(project, sid), []
+        if not data:
+            continue
+        try:
+            netlist_symbol_errors(project, data, notes)
+        except (OSError, ValueError, KeyError):
+            continue
+        try:                        # a sheet file that cannot be written now (open elsewhere) is no reason to stop the draw
+            if notes and store.write_sheet_logged(project, sid, data, by="advisor").get("ok"):
+                fitted += [n.split(":")[0] for n in notes]
+        except OSError:
+            pass
+    return fitted
+
+
+def _drawn(bridge, project, sheet, replace):
+    """The draw, after the stored sheets were fitted to the library; what was renumbered is said in the result's summary."""
+    fitted = fit_sheets_to_library(project, sheet)
+    res = bridge.draw_schematic(project, sheet, replace=replace)
+    if fitted and isinstance(res, dict):
+        res["fitted"] = fitted
+    return res
+
+
 # what the progress line says while a slow action runs (the engine's turn is already over by then)
 STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.skeleton": "Drawing the sheet frames",
                "library.build": "Building the project library in Altium", "altium.draw_schematic": "Drawing the schematic in Altium",
@@ -709,7 +742,9 @@ def _warn_tail(res):
 
 
 def draw_summary(res):
+    fitted = res.get("fitted") or []
     return (f"{res['parts']} parts and {len(res['nets'])} nets drawn on {len(res['sheets'])} sheet(s), saved and checked against the netlist"
+            + (f", pin numbers of {', '.join(fitted[:12])}{' ...' if len(fitted) > 12 else ''} matched by pin name to the library symbols" if fitted else "")
             + _warn_tail(res))
 
 
@@ -999,7 +1034,7 @@ def _run_step(project, sess, step, data, bridge):
             _run_mark(project, current, "done", said or pathlib.Path(str((res or {}).get("file") or "")).name)
         def the_step():
             if step == "draw":
-                return bridge.draw_schematic(project, data.get("sheet") or None, replace=replace)
+                return _drawn(bridge, project, data.get("sheet") or None, replace)
             if step == "place":
                 return bridge.place_pcb(project, replace=replace)
             return bridge.route_pcb(project, replace=replace)      # keep_partial is never set here: half a route stays only when the student agreed to that in words (chat)
@@ -1183,7 +1218,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     refused.append(f"{kind}: not run. {why}")
                     continue
                 try:
-                    res = bridge.draw_schematic(project, a.get("sheet") or None, replace=_truthy(a.get("replace")))
+                    res = _drawn(bridge, project, a.get("sheet") or None, _truthy(a.get("replace")))
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
                     continue
@@ -1619,8 +1654,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except ConnectionError:
+            self._client_gone = True        # the browser tab went away before the answer: not a fault of the server
+            raise
 
     def _cross_origin(self):
         """True when the request names an Origin that is not this server (a browser sends it on cross-site POSTs)."""
@@ -1678,6 +1717,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             return self._guarded_run(fn)
         except BaseException as exc:
+            if getattr(self, "_client_gone", False):
+                self._err = self._err or f"client gone ({type(exc).__name__})"
+                raise
             runlog.exception("exception", exc, method=self.command, path=self.path.split("?")[0], project=self._log_project())
             raise
         finally:
@@ -1692,8 +1734,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _log_request(self, t0):
         path = self.path.split("?")[0]
-        if path in QUIET_PATHS and 0 < self._status < 400:       # polled or logging endpoints: only their errors are worth a line
-            return
+        if 0 < self._status < 400 and not self._err and (path in QUIET_PATHS or path == "/" or path.startswith("/ui/")):
+            return                  # polled or logging endpoints and the page's own files: only their errors are worth a line
         rec = {"method": self.command, "path": path, "status": self._status, "ms": round((time.time() - t0) * 1000)}
         project = self._log_project()
         if project:
@@ -3105,6 +3147,9 @@ class Handler(BaseHTTPRequestHandler):
 class _Server(ThreadingHTTPServer):
     # On Windows SO_REUSEADDR lets a second server bind a port already in use
     allow_reuse_address = os.name != "nt"
+    # a page load asks for some 30 files at once; with the default backlog of 5 Windows refused some of them and the page came
+    # up without part of its scripts ("initLayout is not defined", seen in a live run)
+    request_queue_size = 128
 
 
 def _server_mode():

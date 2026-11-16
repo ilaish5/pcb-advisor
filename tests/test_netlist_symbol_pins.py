@@ -68,3 +68,35 @@ def test_stop_skips_actions_that_have_not_started(empty):
     ev.set()
     applied, _, refused = serve.apply_actions(empty, [{"type": "idea.ready"}], cancel=ev)
     assert not applied and "stopped by the student before it ran" in refused[0]
+
+
+def test_a_sheet_written_before_the_symbol_was_built_is_fitted_before_the_draw(empty):
+    """Live run, Blinker 555: J1 was approved and built after netlist.write, so its stored pins had names and no numbers, and
+    Draw refused. The draw now renumbers the stored sheet by pin name first; a part that does not fit stays as it was."""
+    data = _setup(empty, [("1", "GND"), ("2", "VBUS")])
+    lib_spec = __import__("partlib").library_dir(empty) / "build" / "symbols_spec.txt"
+    spec = lib_spec.read_text(encoding="cp1252")
+    lib_spec.unlink()                                       # the sheet is written while the library has no symbol yet
+    assert store.write_sheet_logged(empty, "01", data)["ok"]
+    assert serve.fit_sheets_to_library(empty) == []
+    lib_spec.write_text(spec, encoding="cp1252")            # ... and then the library is built
+    assert serve.fit_sheets_to_library(empty, "02") == []   # another sheet was asked for
+    assert serve.fit_sheets_to_library(empty) == ["J1"]
+    assert [p["num"] for p in store.load_sheet(empty, "01")["parts"][0]["pins"]] == ["A1B12", "A4B9"]
+    assert serve.fit_sheets_to_library(empty) == []         # nothing left to do, nothing written again
+    log = len(store.read_jsonl(store.pdir(empty) / "sheet-log.jsonl"))
+    store.write_sheet_logged(empty, "01", _setup(empty, [("1", "GND"), ("2", "SBU1")]))
+    assert serve.fit_sheets_to_library(empty) == []         # a name the symbol lacks: left for the draw step to refuse
+    assert [p["num"] for p in store.load_sheet(empty, "01")["parts"][0]["pins"]] == ["1", "2"]
+    assert len(store.read_jsonl(store.pdir(empty) / "sheet-log.jsonl")) == log + 1
+
+
+def test_the_draw_summary_names_the_parts_it_renumbered(empty, monkeypatch):
+    from altium import bridge
+    store.write_sheet_logged(empty, "01", {"sections": [{"id": "A", "title": "T"}], "parts": []})
+    monkeypatch.setattr(serve, "fit_sheets_to_library", lambda project, sheet=None: ["J1", "U2"])
+    monkeypatch.setattr(bridge, "draw_schematic", lambda p, sheet=None, replace=False: {"parts": 2, "nets": ["A"], "sheets": ["01"], "warnings": []})
+    said = serve.draw_summary(serve._drawn(bridge, empty, None, False))
+    assert "pin numbers of J1, U2 matched by pin name to the library symbols" in said and not serve.warning_of("altium.draw_schematic: " + said)
+    monkeypatch.setattr(serve, "fit_sheets_to_library", lambda project, sheet=None: [])
+    assert "pin numbers" not in serve.draw_summary(serve._drawn(bridge, empty, None, False))
