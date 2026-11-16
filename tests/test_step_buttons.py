@@ -662,3 +662,46 @@ def test_two_runs_started_in_the_same_clock_tick_never_share_an_id(empty, monkey
     monkeypatch.setattr(serve.time, "time", lambda: 1000.0)
     ids = {serve._run_begin(empty, "route", ["altium.route_pcb"]) for _ in range(50)}
     assert len(ids) == 50
+
+
+@pytest.mark.parametrize("step,msg,want,gone", [
+    ("draw", "There is no netlist sheet to draw (no sheet 01): write the netlist first (netlist.write).",
+     "ask the agent in the chat to write the schematic first", "netlist.write"),
+    ("place", "The board has no outline yet and the project does not say how big the board is (idea: board size). Ask the student "
+              "for the board width and height in mm (do not guess), record it with idea.update, or draw the outline in Altium "
+              "first. Nothing was changed.",
+     "Tell the agent in the chat the board width and height in mm", "Ask the student"),
+    ("route", "Import the JLC rules first (altium.import_rules), then route: the board does not have Width. Nothing was changed.",
+     "Import the JLC rules first (Rules, Apply rules in Altium)", "altium.import_rules"),
+])
+def test_a_refusal_on_a_button_page_is_in_the_students_words(server, empty, monkeypatch, step, msg, want, gone):
+    # 1b of the status table: the button page showed the agent's wording ("(netlist.write)", "Ask the student ...")
+    def refuse(*a, **k):
+        raise bridge.BridgeError(msg)
+    monkeypatch.setattr(bridge, BRIDGE_FN[step], refuse)
+    code, body = call(server, "POST", ENDPOINTS[step], empty, {})
+    assert code == 400 and want in body["error"] and gone not in body["error"]
+
+
+def test_button_words_leave_the_library_hint_readable_and_other_text_alone():
+    assert serve.button_words("No footprint in the project library for R1: run library.build first.") == \
+        "No footprint in the project library for R1: build the library first: Library page, Build library."
+    assert serve.NEEDS_LIBRARY.search("run library.build first")        # the retry still reads the bridge's own text
+    assert serve.button_words("Altium refused a step: nothing was changed") == "Altium refused a step: nothing was changed"
+
+
+def test_after_the_button_rebuilt_the_library_it_does_not_send_the_student_to_build_it_again(server, empty, world, monkeypatch):
+    # review of 1b: the retry after a rebuild failed again on the same part; "build the library" would be a useless click
+    def refuse(*a, **k):
+        raise bridge.BridgeError("Sheet 01 cannot be drawn: R5: no symbol in the project library (run library.build first)")
+    monkeypatch.setattr(bridge, BRIDGE_FN["draw"], refuse)
+    code, body = call(server, "POST", ENDPOINTS["draw"], empty, {})
+    assert code == 400 and "library.build" not in body["error"] and "Build library" not in body["error"]
+    assert "(the library was just built without it: open the part on the Library page)" in body["error"]
+
+
+def test_the_layout_page_offers_place_parts_before_a_pcbdoc_exists():
+    # Place adds the PcbDoc itself (step_plan), so the empty Layout page still shows the button the agent points to
+    js = ui_js()
+    line = next(l for l in js.splitlines() if "if (pvNoPcb(text)) return" in l)
+    assert "pvStepBtn('place')" in line and "pvStepNote('pcb')" in line

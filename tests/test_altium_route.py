@@ -156,10 +156,10 @@ def test_dense_two_soic_and_fifteen_passives_routes_within_budget():
     import time
     doc, box = dense_board(), [0, 0, 40, 30]
     r = rules(clearance=0.254, width=0.254, width_min=0.254, via_dia=1.27, via_hole=0.71)
-    t0 = time.time()
+    t0 = time.process_time()        # this process's CPU time: other work on the machine does not make the router look slow
     res = route.plan_routes(doc, box, r, seconds=60)
     assert not res["failed"], res["failed"]
-    assert time.time() - t0 < 30
+    assert time.process_time() - t0 < 30
     assert route.violations(doc, res["items"], r, box) == []
     assert layout.unrouted(as_board(doc, res["items"])) == []
 

@@ -588,3 +588,19 @@ def test_api_altium_outputs_lists_the_folder_altium_wrote(lte, tmp_path, monkeyp
     res = jlc_upload.outputs_summary(lte)
     assert res["root"] == str(out) and res["files"] == 3 and res["newest"]
     assert {f["folder"]: f["files"] for f in res["folders"]} == {"Gerber": 2, "NC Drill": 1}
+
+
+def test_api_altium_outputs_lists_every_folder_altium_wrote(lte, tmp_path):
+    # 1d of the status table: the Outputs page showed only the first folder; files in the linked one were hidden
+    import jlc_upload
+    prj = tmp_path / "Board"
+    (prj / "Project Outputs for Board" / "Gerber").mkdir(parents=True)
+    (prj / "Project Outputs for Board" / "Gerber" / "a.GTL").write_text("x")
+    (prj / "Fab" / "BOM").mkdir(parents=True)
+    (prj / "Fab" / "BOM" / "bom.csv").write_text("x")
+    (prj / "Outputs").mkdir()                       # empty: not listed
+    project_mod.set_altium_link(lte, project_file=str(prj / "Board.PrjPcb"), pcb_file="", outputs_dir=str(prj / "Fab"))
+    res = jlc_upload.outputs_summary(lte)
+    assert res["files"] == 2 and res["root"] == str(prj / "Fab")
+    assert res["roots"] == [str(prj / "Fab"), str(prj / "Project Outputs for Board")]
+    assert {f["folder"]: f["files"] for f in res["folders"]} == {"Fab/BOM": 1, "Project Outputs for Board/Gerber": 1}

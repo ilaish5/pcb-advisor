@@ -398,5 +398,5 @@ def test_pcb_picture_without_a_pcb_says_so_in_the_words_the_ui_looks_for():
     # views/previews.js turns this text into its "No PCB linked" state
     svg = preview_pcb.render_project_pcb("no-such-project-x")
     assert "No Altium .PcbDoc linked" in svg
-    assert "Settings to view PCB" in svg
+    assert "Place parts adds one" in svg          # the button beside it (previews.js) adds the PcbDoc itself
     assert not HEX.search(svg.replace("var(--pcb-bg,#121820)", "").replace("var(--ink-3,#94a0bd)", ""))

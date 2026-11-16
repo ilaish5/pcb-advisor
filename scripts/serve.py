@@ -942,6 +942,30 @@ def _step_note(project, sess, step, done, summary=None, failure=""):
         print(f"(the note about the {step} button step was not written: {exc})")
 
 
+# Altium's refusals are written for the agent (action names, "ask the student"); the button page shows them to the student
+BUTTON_WORDS = [
+    (r"write the netlist first \(netlist\.write\)", "ask the agent in the chat to write the schematic first"),
+    (r"run library\.build (first|again)", r"build the library \1: Library page, Build library"),
+    (r"draw it first \(altium\.draw_schematic, with the student's agreement\)", "draw it first (Schematic, Draw in Altium)"),
+    (r"place the parts first \(altium\.place_pcb\)", "place the parts first (Layout, Place parts)"),
+    (r"Import the JLC rules first \(altium\.import_rules\)", "Import the JLC rules first (Rules, Apply rules in Altium)"),
+    (r"Ask the student whether it is the real board outline\.", "Tell the agent in the chat whether it is the real board outline."),
+    (r"Ask the student for the board width and height in mm \(do not guess\), record it with idea\.update, or draw the outline "
+     r"in Altium first\.", "Tell the agent in the chat the board width and height in mm, or draw the outline in Altium first."),
+    (r" \(altium\.install_path\)", ""),
+]
+
+
+def button_words(text, built=False):
+    """A refusal as the student reads it on a step button's page; the chat note keeps the agent's wording. built: the button
+    already rebuilt the library in this run, so building again would not help: the part's own library line is the place to look."""
+    if built:
+        text = re.sub(r"run library\.build (first|again)", "the library was just built without it: open the part on the Library page", text)
+    for pat, rep in BUTTON_WORDS:
+        text = re.sub(pat, rep, text)
+    return text
+
+
 def _step_failed(project, sess, step, done, current, exc, unexpected):
     """(status, body) for a step or preparation that stopped; the later steps do not run. needs_replace only for the step's own refusal."""
     final = current == _CONSENT_ACTION[step]
@@ -954,7 +978,7 @@ def _step_failed(project, sess, step, done, current, exc, unexpected):
     else:
         before = f"{_and([PREP_WORDS[k][1] for k, _ in done])}. " if done else ""
         err = f"{before}{PREP_WORDS[current][2]} failed: {reason}. {STEP_NOT_DONE[step]}"
-    body = {"error": err}
+    body = {"error": button_words(err, built=any(k == "library.build" for k, _ in done))}
     if prepared:
         body["prepared"] = prepared
     if final and done:

@@ -108,13 +108,10 @@ def _roots(project: str) -> list[pathlib.Path]:
 def outputs_summary(project: str) -> dict[str, Any]:
     """What the linked Altium project's outputs folder holds now: per sub folder (Gerber, NC Drill, BOM, ...) the file count and the
     newest write time. Read only. {"root": "", "folders": [], "files": 0, "newest": ""} when there is no folder."""
-    out: dict[str, Any] = {"root": "", "folders": [], "files": 0, "newest": ""}
-    roots = _roots(project)
-    if not roots:
-        return out
-    out["root"] = str(roots[0])
-    folders: dict[str, dict[str, Any]] = {}
-    for root in roots[:1]:
+    out: dict[str, Any] = {"root": "", "roots": [], "folders": [], "files": 0, "newest": ""}
+    per_root: list[tuple[pathlib.Path, dict[str, dict[str, Any]]]] = []
+    for root in _roots(project):        # every folder Altium may have written to (a linked one and "Project Outputs for ..."), not just the first
+        found: dict[str, dict[str, Any]] = {}
         for dirpath, dirs, names in os.walk(root):
             rel = os.path.relpath(dirpath, root)
             # an outputs folder is shallow: a link to a whole drive must not be walked
@@ -124,9 +121,20 @@ def outputs_summary(project: str) -> dict[str, Any]:
                     mt = pathlib.Path(dirpath, n).stat().st_mtime
                 except OSError:
                     continue
-                f = folders.setdefault("" if rel == "." else rel.replace("\\", "/"), {"files": 0, "mtime": 0.0})
+                f = found.setdefault("" if rel == "." else rel.replace("\\", "/"), {"files": 0, "mtime": 0.0})
                 f["files"] += 1
                 f["mtime"] = max(f["mtime"], mt)
+        if found:
+            per_root.append((root, found))
+    if not per_root:
+        return out
+    out["root"], out["roots"] = str(per_root[0][0]), [str(r) for r, _ in per_root]
+    folders: dict[str, dict[str, Any]] = {}
+    for root, found in per_root:         # with two folders the rows say which one they are in
+        for k, v in found.items():
+            f = folders.setdefault((f"{root.name}/{k}" if k else root.name) if len(per_root) > 1 else k, {"files": 0, "mtime": 0.0})
+            f["files"] += v["files"]           # two roots with the same name (D:/fab/Outputs and <project>/Outputs) add up, never overwrite
+            f["mtime"] = max(f["mtime"], v["mtime"])
     out["folders"] = [{"folder": k or ".", "files": v["files"], "newest": _iso(v["mtime"])} for k, v in sorted(folders.items())]
     out["files"] = sum(v["files"] for v in folders.values())
     out["newest"] = _iso(max((v["mtime"] for v in folders.values()), default=0)) if folders else ""

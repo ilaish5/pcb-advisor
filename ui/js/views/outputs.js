@@ -175,7 +175,7 @@ function outAltHTML() {
   if (!a || !a.files) return note;
   const rows = a.folders.map(f => `<tr><td class="out-n">${esc(f.folder)}</td><td class="num">${f.files}</td><td class="muted" title="${esc(outFull(f.newest))}"><time datetime="${esc(f.newest)}" data-ago>${esc(outAgo(f.newest))}</time></td></tr>`).join('');
   return note + `<section class="sec"><div class="sec-h"><h2>In Altium's outputs folder</h2><div class="meta"><span><b>${a.files}</b> ${a.files === 1 ? 'file' : 'files'}</span><span title="${esc(outFull(a.newest))}">newest ${esc(outAgo(a.newest))}</span></div></div>
-    <p class="muted out-root">${esc(a.root)}</p>
+    <p class="muted out-root">${(a.roots && a.roots.length ? a.roots : [a.root]).map(esc).join('<br>')}</p>
     <table class="tbl rows out-tbl"><thead><tr><th>Folder</th><th class="num">Files</th><th>Newest</th></tr></thead><tbody>${rows}</tbody></table></section>`;
 }
 function outputsHTML(container) {

@@ -534,7 +534,7 @@ function pcbLayerList(svgText, plan) {
 }
 function pcbHTML(container) {
   const text = pcbSvgCache.text;
-  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout'})}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
+  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout', actions: pvStepBtn('place')})}${pvStepNote('pcb')}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
   const plan = pvPlan(), b = S.board || {}, cnt = k => plan && Array.isArray(plan[k]) ? plan[k].length : 0;
   const size = Array.isArray(b.size_mm) && b.size_mm.length === 2 ? b.size_mm.map(v => Math.round(v * 10) / 10).join(' × ') + ' mm' : '';
   const cu = text && text.match(/data-copper-layers="(\d+)"/), copper = cu ? +cu[1] : b.layers;

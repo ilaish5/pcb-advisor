@@ -650,7 +650,7 @@ def render_project_pcb(project: str, plan_file: str = None, layer: str = "all") 
             '<rect width="100%" height="100%" style="fill:var(--pcb-bg,#121820)"/>'
             '<text x="250" y="100" text-anchor="middle" font-family="sans-serif" font-size="14" '
             'style="fill:var(--ink-3,#94a0bd)">'
-            'No Altium .PcbDoc linked. Link one in Settings to view PCB placement &amp; routing preview.'
+            'No Altium .PcbDoc linked yet: Place parts adds one, or link one in Settings.'
             '</text></svg>'
         )
 
