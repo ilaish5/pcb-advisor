@@ -123,3 +123,32 @@ def test_the_manufacturing_skill_makes_the_cpl_before_naming_it():
     import pathlib
     text = (pathlib.Path(__file__).resolve().parent.parent / "runtime" / "skills" / "manufacturer-and-dfm" / "SKILL.md").read_text(encoding="utf-8")
     assert "export_cpl.py" in text and "Produce the files before naming them" in text and "No CPL file: say so, never name one" in text
+
+
+def test_a_netlist_without_kinds_draws_parts_by_their_designator():
+    """Blinker 555, 16/11: the agent wrote no "kind", and capacitors, the LED and the header were drawn as resistors."""
+    from skills import render_sheet as rs
+    two = [{"name": "1", "num": "1", "net": "A"}, {"name": "2", "num": "2", "net": "GND"}]
+    kinds = {ref: rs.part_kind({"ref": ref, "pins": two}) for ref in ("C1", "D1", "LED2", "J1", "P3", "TP1", "R1", "L1")}
+    assert kinds == {"C1": "cap", "D1": "diode", "LED2": "diode", "J1": "conn", "P3": "conn", "TP1": "tp", "R1": "res", "L1": "res"}
+    assert rs.part_kind({"ref": "X1", "pins": two * 2}) == "ic" and rs.part_kind({"ref": "D1", "kind": "led", "pins": two}) == "diode"
+    assert rs.part_kind({"ref": "C1", "kind": "res", "pins": two}) == "res"           # a kind written wins
+
+
+def test_a_diode_listed_cathode_first_is_drawn_anode_on_top():
+    from skills import render_sheet as rs
+    ka = {"ref": "D1", "pins": [{"name": "K", "num": "1", "net": "GND"}, {"name": "A", "num": "2", "net": "LED_A"}]}
+    ak = {"ref": "D1", "pins": [{"name": "A", "num": "2", "net": "LED_A"}, {"name": "K", "num": "1", "net": "GND"}]}
+    assert rs.render_part(ka, None, None)[0] == rs.render_part(ak, None, None)[0]
+
+
+def test_a_clamp_diode_keeps_its_rail_on_top_and_points_up():
+    from skills import render_sheet as rs
+    clamp = {"ref": "D3", "pins": [{"name": "K", "num": "1", "net": "VBUS"}, {"name": "A", "num": "2", "net": "GND"}]}
+    svg = rs.render_part(clamp, None, None)[0]
+    assert "VBUS" in svg
+    assert '<polygon points="52,50 68,50 60,36"' in svg                   # apex up, at the cathode on top
+    assert rs.part_kind({"ref": "TP1", "pins": []}) == "q"                  # no pins: not a test point drawing
+    wide = {"ref": "D1", "pins": [{"name": str(i), "num": str(i), "net": f"N{i}"} for i in range(6)]}
+    sec = rs.layout_section({"id": "A"}, [wide], [], {})
+    assert sec is not None

@@ -101,6 +101,18 @@ class Probe:
         except Exception:
             return None
 
+    def altium_status(self):
+        """{running, executor ("ok" / "blocked" / "not tested"), error}: a PING script in the open Altium (bridge.status)."""
+        try:
+            import altium.bridge as bridge
+            req, end = bridge.EXCHANGE / "request.txt", bridge.EXCHANGE / "end.flag"
+            if req.is_file() and not end.exists() and time.time() - req.stat().st_mtime < 1800:
+                return {"running": True, "executor": "busy", "error": "the app is running a step in Altium now (or one stopped in "
+                        "the last 30 minutes); try again when it is done"}
+            return bridge.status()
+        except Exception as exc:        # noqa: BLE001 - a check never crashes the doctor
+            return {"running": False, "executor": "not tested", "error": str(exc)}
+
 
 def _check(cid, title, status, detail="", command=None, click=None, blocking=False, blocks_start=False):
     fix = {"command": command, "click": click} if (command or click) else None
@@ -221,10 +233,28 @@ def check_agy(p, engine=None):
                   blocking=True)
 
 
-def check_altium(p):
+ALTIUM_AGAIN = "python pcb.py doctor --altium"
+
+
+def check_altium(p, ping=False):
+    """Altium found; with `ping` (doctor --altium, the end of an install) also that the open Altium runs the advisor's scripts.
+    Never part of a plain run: a script in Altium must not start while the app may be running a step there."""
     if not p.windows:
         return _check("altium", "Altium Designer", "skip", "Altium runs on Windows only; reading files and the rest work here")
     exe = p.altium_exe()
+    if exe and ping:
+        st = p.altium_status()
+        if st.get("executor") == "ok":
+            return _check("altium", "Altium Designer", "ok", f"{exe}; it runs the advisor's scripts")
+        if not st.get("running") and st.get("error"):
+            return _check("altium", "Altium Designer", "warn", f"{exe}: the link could not be set up ({st['error']})",
+                          command=ALTIUM_AGAIN)
+        if not st.get("running"):
+            return _check("altium", "Altium Designer", "warn", f"{exe} is not open, so the link was not tested. Open Altium, sign "
+                          "in if it asks, and check again", command=ALTIUM_AGAIN)
+        return _check("altium", "Altium Designer", "warn", f"{exe} is open but did not run the advisor's script "
+                      f"({st.get('error') or 'no answer'}). Close any message box in Altium, sign in if it asks, and check again",
+                      command=ALTIUM_AGAIN)
     if exe:
         return _check("altium", "Altium Designer", "ok", exe)
     return _check("altium", "Altium Designer", "warn", "not found. Optional: only needed for 'Make in Altium'. "
@@ -276,11 +306,11 @@ def check_path_chars(p):
     return None
 
 
-def run(probe=None, engine=None):
+def run(probe=None, engine=None, altium=False):
     p = probe or Probe()
     checks = [check_python(p), check_python_alias(p), check_venv(p), check_requirements(p), check_git(p)]
     claude = check_claude(p, engine)
-    checks += [claude, check_signin(p, engine, claude), check_agy(p, engine), check_altium(p), check_network(p),
+    checks += [claude, check_signin(p, engine, claude), check_agy(p, engine), check_altium(p, altium), check_network(p),
                check_port(p), check_workspace(p), check_path_chars(p)]
     checks = [c for c in checks if c]
     return {"checks": checks, "ok": not any(c["blocking"] for c in checks),
@@ -319,7 +349,7 @@ def render(res):
 
 def main(args):
     engine = args[args.index("--engine") + 1] if "--engine" in args and args.index("--engine") + 1 < len(args) else None
-    res = run(engine=engine)
+    res = run(engine=engine, altium="--altium" in args)
     if "--json" in args:
         print(json.dumps(res, indent=2))        # ASCII-escaped: safe through any console code page
     else:

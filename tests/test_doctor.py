@@ -30,6 +30,8 @@ class FakeProbe(doctor.Probe):
         self.port = "free"
         self.net = True
         self.altium = None
+        self.altium_st = {"running": True, "executor": "ok", "error": ""}
+        self.pinged = False
         self.uhome = tmp / "u"
         self.__dict__.update(over)
 
@@ -59,6 +61,10 @@ class FakeProbe(doctor.Probe):
 
     def altium_exe(self):
         return self.altium
+
+    def altium_status(self):
+        self.pinged = True
+        return self.altium_st
 
 
 def by_id(res):
@@ -172,6 +178,30 @@ def test_altium_only_asked_on_windows_and_never_blocking(tmp_path):
     assert c["status"] == "warn" and not c["blocking"]
     c = by_id(doctor.run(FakeProbe(tmp_path / "a", windows=True, altium=r"C:\A\X2.EXE")))["altium"]
     assert c["status"] == "ok"
+
+
+def test_the_altium_link_is_tested_only_when_asked(tmp_path):
+    exe = r"C:\A\X2.EXE"
+    p = FakeProbe(tmp_path, windows=True, altium=exe)
+    assert by_id(doctor.run(p))["altium"]["status"] == "ok" and not p.pinged          # a plain run never starts a script in Altium
+    c = by_id(doctor.run(p, altium=True))["altium"]
+    assert p.pinged and c["status"] == "ok" and "runs the advisor's scripts" in c["detail"]
+    for st, word in (({"running": False, "executor": "not tested", "error": ""}, "not open"),
+                     ({"running": True, "executor": "blocked", "error": "a message box"}, "a message box")):
+        c = by_id(doctor.run(FakeProbe(tmp_path / word[:3], windows=True, altium=exe, altium_st=st), altium=True))["altium"]
+        assert c["status"] == "warn" and not c["blocking"] and word in c["detail"] and c["fix"]["command"] == doctor.ALTIUM_AGAIN
+
+
+def test_the_altium_ping_waits_while_the_app_runs_a_step(tmp_path, monkeypatch):
+    import altium.bridge as bridge
+    monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
+    monkeypatch.setattr(bridge, "status", lambda: (_ for _ in ()).throw(AssertionError("pinged during a step")))
+    (tmp_path / "request.txt").write_text("PING")
+    st = doctor.Probe().altium_status()
+    assert st["executor"] == "busy" and "running a step" in st["error"]
+    (tmp_path / "end.flag").write_text("")
+    monkeypatch.setattr(bridge, "status", lambda: {"running": True, "executor": "ok", "error": ""})
+    assert doctor.Probe().altium_status()["executor"] == "ok"
 
 
 def test_hebrew_path_and_no_network_only_warn(tmp_path):

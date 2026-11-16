@@ -9,6 +9,13 @@ datasheets, prepare Altium rules and outputs, and understand the manufacturer's 
 
 It reads your Altium files and can create the Altium project for you (project, empty PCB, sheets with a skeleton, through `scripts/altium/bridge.py`). When you choose it, the agent also draws the schematic, places the parts and routes the board in Altium; you can do any of these yourself instead. It never places the order: that is yours.
 
+## What you need
+
+- **Windows 10 or 11** with **Altium Designer** (tested on AD26), opened and signed in once. Without Altium (or on macOS / Linux)
+  everything except the Altium steps works: idea, parts, the planned schematic, checks, DFM.
+- **An AI engine account:** Claude Pro/Max or an Anthropic Console account (for Claude Code), or Google (for Antigravity). The installer asks which one.
+- Internet for the install, for JLC stock and prices, and for datasheets. No administrator rights.
+
 ## Install (about 5 minutes)
 
 **One command**, in a terminal. It installs what is missing (Python, git, an AI engine: it detects Claude Code or Antigravity and asks which to install), sets everything
@@ -34,6 +41,22 @@ engine once: [docs/ENGINES.md](docs/ENGINES.md).
 
 Something not working? `.venv\Scripts\python pcb.py doctor` (macOS/Linux: `.venv/bin/python`) lists what is missing and
 the one command that fixes each item; the same list is in the app under Settings > Engine > Run checks.
+
+## Try it (about 15 minutes)
+
+1. Open http://localhost:8931, press **New project**, and describe a small board in the chat, for example: *"A 30 x 20 mm
+   board with an NE555 blinking a red LED twice a second, 5 V from a 2-pin header, SMD parts. You decide the rest."*
+2. **Idea:** the agent drafts the requirements; Save, then tell it the idea is ready.
+3. **BOM:** it picks JLC parts with live stock and price; approve the cards.
+4. **Schematic:** ask it to create the Altium project and write the schematic. The planned sheet shows here; **Draw in
+   Altium** draws it (Altium opens by itself; the parts library is built first when needed).
+5. **Layout:** **Place parts**, then **Route board**. The JLC rules are imported first, the result is checked with
+   Altium's DRC, and a GND pour is added.
+6. **Outputs:** **Generate outputs in Altium**, then *Export > Gerber zip for JLC*. **DFM** walks you through the free
+   check at jlcdfm.com and reads its report back.
+
+Every Altium step copies the file to `.advisor-backup` first. Parts whose pins no datasheet confirmed are listed under
+DFM > Unverified parts; the outputs are made anyway, with a warning.
 
 ## Run
 

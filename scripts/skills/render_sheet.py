@@ -15,7 +15,8 @@ netlist/<sheet>.json
      "parts": [{"ref": "U4", "section": "A", "kind": "ic",
                 "pins": [{"name": "VBAT", "num": "55", "net": "+3V8", "side": "left"}]}],
      "notes": [{"section": "A", "text": "Every GND pin gets its own symbol."}]}
-kind: ic (default for 4+ pins) | res | cap | tvs | diode | tp | q (3 pins) | conn
+kind: ic | res | cap | tvs | diode (led) | tp | q | conn. Without one it comes from the designator (C cap, D/LED diode, J/P/CN
+conn, TP tp, Q q, R res), else ic for 4+ pins, res for 2, q for 3.
 Pins of an ic go to "side" left/right, else alternate left/right in order.
 Two-pin parts: pins[0] is the top (or left) end, pins[1] the bottom (or right) end.
 """
@@ -143,7 +144,8 @@ def part_ic(p, sub):
     return s, lw + bw + rw, y0 + h + 24
 
 
-def part_vertical(p, value, kind):
+def part_vertical(p, value, kind, up=False):
+    """pins[0] on top. A diode points down (anode on top), or up with `up` (cathode on top: a clamp to GND below)."""
     a, b = p["pins"][0], p["pins"][1]
     cx, top = 60, 22
     s = ""
@@ -153,8 +155,9 @@ def part_vertical(p, value, kind):
         s += L(cx, top + 36, cx, top + 60)
     elif kind in ("tvs", "diode"):
         s += net_top(cx, top, a["net"])
-        s += L(cx, top, cx, top + 14) + f'<polygon points="{cx - 8},{top + 14} {cx + 8},{top + 14} {cx},{top + 28}" class="w"/>'
-        s += L(cx - 8, top + 28, cx + 8, top + 28)
+        tip, base = (top + 14, top + 28) if up else (top + 28, top + 14)
+        s += L(cx, top, cx, top + 14) + f'<polygon points="{cx - 8},{base} {cx + 8},{base} {cx},{tip}" class="w"/>'
+        s += L(cx - 8, tip, cx + 8, tip)
         if kind == "tvs":
             s += L(cx - 8, top + 28, cx - 11, top + 24) + L(cx + 8, top + 28, cx + 11, top + 32)
         s += L(cx, top + 28, cx, top + 60)
@@ -200,15 +203,44 @@ def part_conn(p, sub):
     return part_ic(dict(p, pins=pins), sub)
 
 
+_BY_PREFIX = {"C": "cap", "D": "diode", "LED": "diode", "J": "conn", "P": "conn", "CN": "conn", "CON": "conn", "TP": "tp",
+              "Q": "q", "R": "res", "U": "ic", "IC": "ic"}
+_CATHODE, _ANODE = {"K", "C", "-", "CATHODE"}, {"A", "+", "ANODE"}
+
+
+def part_kind(p):
+    """The drawing a part gets: its "kind", else the one its designator letters name (a netlist written without kinds drew
+    every two-pin part as a resistor), else ic for 4+ pins, res for 2 and q for 3."""
+    kind = (p.get("kind") or "").lower()
+    if kind == "led":
+        return "diode"
+    if kind:
+        return kind
+    letters = "".join(ch for ch in str(p.get("ref", "")).upper().split("_")[0] if ch.isalpha())
+    n = len(p["pins"])
+    by_ref = _BY_PREFIX.get(letters)
+    if by_ref == "tp" and not n:
+        by_ref = None
+    return by_ref or ("ic" if n > 3 else "res" if n == 2 else "q")
+
+
 def render_part(p, line, bom_line, bom_status=None):
     ref = p["ref"]
-    kind = p.get("kind") or ("ic" if len(p["pins"]) > 3 else "res" if len(p["pins"]) == 2 else "q")
+    kind = part_kind(p)
+    up = False
+    if kind in ("diode", "tvs") and len(p["pins"]) == 2:       # pins[0] goes on top; the triangle points to the cathode
+        names = [str(q.get("name", "")).upper() for q in p["pins"]]
+        k = 0 if names[0] in _CATHODE and names[1] in _ANODE else 1 if names[0] in _ANODE and names[1] in _CATHODE else None
+        if k is not None:
+            cathode, anode = p["pins"][k], p["pins"][1 - k]
+            up = anode.get("net") == "GND"                     # a clamp or catch diode: its rail on top, GND below
+            p = dict(p, pins=[cathode, anode] if up else [anode, cathode])
     value = (bom_line or {}).get("value") or p.get("value") or ""
     sub = (bom_line or {}).get("mpn") or p.get("label") or value
     if kind == "tp":
         body = part_tp(p)
     elif kind in ("cap", "tvs", "diode") and len(p["pins"]) == 2:
-        body = part_vertical(p, value if kind != "tvs" else (sub or value), kind)
+        body = part_vertical(p, value if kind != "tvs" else (sub or value), kind, up)
     elif kind == "res" and len(p["pins"]) == 2:
         body = part_res_h(p, value)
     elif kind == "conn":
@@ -236,7 +268,7 @@ def layout_section(sec, parts, notes, bom_by_ref, status=None):
     """Flow a section's parts: ICs first (one per row), then the small parts in rows."""
     status = status or {}
     rendered = [(p, *render_part(p, None, bom_by_ref.get(p["ref"]), status.get(p["ref"]))) for p in parts]
-    ics = [r for r in rendered if r[0].get("kind") in ("ic", "conn", "q") or (not r[0].get("kind") and len(r[0]["pins"]) > 2)]
+    ics = [r for r in rendered if part_kind(r[0]) in ("ic", "conn", "q") or (part_kind(r[0]) != "tp" and len(r[0]["pins"]) != 2)]
     small = [r for r in rendered if r not in ics]
     inner = max([r[2] for r in ics] + [440])
     pad, y = 14, 34

@@ -1922,9 +1922,18 @@ def build_library(project, fetch=True):
             detail = problems + [f"{n}: {'; '.join(m)}" for n, m in {**per_symbol, **per_fp}.items()]
             raise BridgeError("The library was built but the files read back wrong, so it was not compiled: "
                               + " | ".join(detail[:8]))
-        # 3. compile and install; then the IntLib file and Altium's list of installed libraries are checked
-        log = run_commands([("COMPILE", str(lp["libpkg"]), str(lp["intlib"])), ("CHECKINST", str(lp["intlib"]))],
-                           stall_timeout=180, total_timeout=900)
+        # 3. compile and install; then the IntLib file and Altium's list of installed libraries are checked. The first compile
+        #    of a new project's library once stopped on an Altium error box (Blinker 555, 15/11) and the same build passed when
+        #    run again; compiling only reads the saved libraries, so it is run once more
+        for attempt in (1, 2):
+            try:
+                log = run_commands([("COMPILE", str(lp["libpkg"]), str(lp["intlib"])), ("CHECKINST", str(lp["intlib"]))],
+                                   stall_timeout=180, total_timeout=900)
+                break
+            except BridgeError as exc:
+                if attempt == 2 or "stopped in the middle" not in str(exc):
+                    raise
+                _log(project, "build-library", retry=f"compile: {exc}")
     except (BridgeError, AltiumReadError, OSError) as exc:
         if not marked:
             _mark_failed(project, f"the build did not finish: {exc}")

@@ -172,6 +172,40 @@ def test_a_stop_in_the_middle_is_retried_once_from_the_templates(lib, monkeypatc
     assert stub.names().count("LIBCLOSE") == 2
 
 
+def test_a_compile_that_stops_in_the_middle_is_run_once_more(lib, monkeypatch):
+    """Blinker 555, 15/11: the first compile of a new library stopped on an Altium error box after closing the SchLib."""
+    stub = Stub(monkeypatch)
+    plain = stub.__call__
+    state = {"stopped": False}
+
+    def call(commands, **kw):
+        if not state["stopped"] and any(c[0] == "COMPILE" for c in commands):
+            state["stopped"] = True
+            stub.runs.append(list(commands))
+            raise bridge.BridgeError("Altium stopped in the middle of the script, after: closed x.SchLib.")
+        return plain(commands, **kw)
+    monkeypatch.setattr(bridge, "run_commands", call)
+    assert bridge.build_library(lib)["installed"]
+    assert stub.names().count("COMPILE") == 2 and stub.names().count("LIBCLOSE") == 1
+    log = (store.pdir(lib) / "altium-log.jsonl").read_text(encoding="utf-8")
+    assert '"retry": "compile: Altium stopped' in log
+
+
+def test_a_compile_that_stops_twice_fails_and_restores(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+
+    def call(commands, **kw):
+        stub.runs.append(list(commands))
+        if any(c[0] == "COMPILE" for c in commands):
+            raise bridge.BridgeError("Altium stopped in the middle of the script, after: closed x.SchLib.")
+        return []
+    monkeypatch.setattr(bridge, "run_commands", call)
+    monkeypatch.setattr(bridge, "read_schlib", stub.schlib)
+    with pytest.raises(bridge.BridgeError, match="stopped in the middle"):
+        bridge.build_library(lib)
+    assert stub.names().count("COMPILE") == 2
+
+
 def test_wrong_pads_stop_the_build_before_compiling(lib, monkeypatch):
     stub = Stub(monkeypatch, bad_pads=True)
     with pytest.raises(bridge.BridgeError, match="read back wrong"):

@@ -29,7 +29,10 @@ password or token. The installer is safe to run twice: it repairs and never dele
    already sets `agent.provider`; to switch later: `pcb.py config agent.provider antigravity` (see docs/ENGINES.md).
 5. Start the server (`./start.sh` or `.\start.bat`, in the background), check that http://localhost:8931 answers,
    and tell the person to open it. Tell them how to start it next time (double-click `start.bat` / `./start.sh`).
-6. Optional: offer `pcb.py seed` (a finished example project).
+6. Windows with Altium Designer: ask the person to open Altium (and sign in if it asks), then run
+   `.venv\Scripts\python pcb.py doctor --altium`. The Altium line must say "it runs the advisor's scripts"; a `warn`
+   there names what blocks it (Altium closed, a message box open). A plain `doctor` never starts a script in Altium.
+7. Optional: offer `pcb.py seed` (a finished example project).
 
 The installer saves a log of every run in `<install folder>/logs/install-*.log` (its path is printed when a step fails);
 read it when a step fails. Nothing in it is uploaded.
