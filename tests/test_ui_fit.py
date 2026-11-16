@@ -138,3 +138,14 @@ def test_idea_layout_responsive():
     assert re.search(r"\.diag-rail\{[^}]*flex-wrap:wrap", flat)
     assert "overflow-x" not in re.search(r"\.req-scroll\{([^}]*)\}", flat).group(1), "long words wrap in a requirement; nothing scrolls sideways"
     assert "overflow-wrap:anywhere" in flat
+
+
+def test_the_open_drawer_pushes_the_sheets_aside_instead_of_covering_them():
+    # T17: at 966px the drawer covered the Confirm idea button and the page
+    drawer = media_block(SHELL_CSS, "max-width:1100px").replace(" ", "")
+    assert ".app.chat-open>.panes{margin-right:calc(var(--drawer-w)+16px)}" in drawer
+    assert "width:var(--drawer-w)" in drawer
+    m = re.search(r"--drawer-w:min\(var\(--chat-w\),calc\(100vw-var\(--nav-w\)-(\d+)px\)\)", drawer)
+    assert m, "the drawer narrows itself with the window"
+    nav, kept = 56, int(m.group(1)) - 16           # the rail at <=1280px; 8px gutters each side of the drawer
+    assert 966 - nav - int(m.group(1)) >= 300 and 861 - nav - int(m.group(1)) >= 300 and kept >= 400

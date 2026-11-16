@@ -494,7 +494,11 @@ function syncChat() {
   if (!app) return;
   if (chatMode() !== 'drawer') chatDrawer = false;
   app.classList.toggle('chat-off', chatHidden);
+  const was = app.classList.contains('chat-open');
   app.classList.toggle('chat-open', chatDrawer);
+  // the open drawer pushes the sheets aside (shell.css): their width changed without a window resize, so the views that
+  // measure themselves on resize (the idea's requirement list) measure again
+  if (was !== chatDrawer) requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
   cssChatWidth(Math.min(chatWidth, maxChatWidth()));
   renderNav();
   document.querySelectorAll('#nav [data-act="toggle-chat"]').forEach(b => b.setAttribute('aria-pressed', String(chatShown())));

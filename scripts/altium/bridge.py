@@ -1527,6 +1527,8 @@ def run_outjob(project):
             files += [str(pathlib.Path(dirpath, n)) for n in names if pathlib.Path(dirpath, n).stat().st_mtime >= t0]
     if not files:
         raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
+    bom_files, bom_notes = _bom_into_outputs(project, roots, files)
+    files += bom_files
     missing = rules_missing(project)
     warnings = outline_note + ([f"The JLC rules ({', '.join(missing)}) are no longer in the PcbDoc; DRC and outputs ran against Altium's "
                                 "defaults. Import the rules again."] if missing else [])
@@ -1537,9 +1539,47 @@ def run_outjob(project):
     if design:
         warnings.append(f"The board does not match the design ({len(design)} problem(s)): " + " | ".join(design[:5])
                         + (" ..." if len(design) > 5 else "") + " Fix this before ordering.")
+    warnings += bom_notes                  # the least urgent: last
     _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing)
     return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
             "warnings": warnings, "outline_drawn": outline_drawn}
+
+
+def _is_bom(path):
+    """A BOM file by its own name or folder, whatever OutJob wrote it (ours: BOM/..., a student's: Assembly/Bill of Materials-X.xlsx)."""
+    p = pathlib.Path(path)
+    low = p.name.lower()
+    return p.parent.name.lower() == "bom" or "bom" in re.split(r"[^a-z]+", low) or "bill of materials" in low
+
+
+def _bom_into_outputs(project, roots, written):
+    """Altium's BOM output writes nothing on a machine without Excel (the OutJob's BOM folder stayed empty, T23): when no BOM
+    file came out of this run, the advisor's own JLC BOM (the one Export writes) goes into the empty BOM folder Altium made, else
+    into a BOM folder beside the files this run wrote. Returns (files added, warnings); never raises: a BOM that cannot be made
+    is a warning, not a reason to fail the outputs."""
+    if any(_is_bom(f) for f in written):
+        return [], []
+    try:
+        from skills import export_bom
+        res = export_bom.export(project, "jlc")
+        if not res.get("lines"):
+            return [], ["Altium wrote no BOM and the project's BOM has no lines to export."]
+        src = pathlib.Path(res["file"])
+        src = src if src.is_absolute() else workspace.home() / src
+        empty = [d for root in roots for d in pathlib.Path(root).rglob("*")
+                 if d.is_dir() and d.name.lower() == "bom" and BACKUP_DIR not in (x.lower() for x in d.parts) and not any(d.iterdir())]
+        here = pathlib.Path(os.path.commonpath([str(pathlib.Path(f).parent) for f in written])) if written else pathlib.Path(roots[0])
+        if here.name.lower() in ("gerber", "nc drill", "pick place", "bom"):          # the run's own output-type folder: go up one
+            here = here.parent
+        dest = (empty[0] if empty else here / "BOM") / src.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, dest)
+        note = (f"Altium wrote no BOM, so {dest.parent.name}/{dest.name} is the advisor's JLC BOM (the one Export writes)"
+                + (f"; {len(res['needs_lcsc'])} line(s) have no LCSC number ({', '.join(res['needs_lcsc'][:5])}): run Check stock"
+                   if res.get("needs_lcsc") else "") + ".")
+        return [str(dest)], [note]
+    except Exception as exc:
+        return [], [f"Altium wrote no BOM and the advisor's could not be made ({type(exc).__name__}: {exc}). Export it on the BOM page."]
 
 
 def open_project(project):

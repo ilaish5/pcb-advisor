@@ -604,3 +604,46 @@ def test_api_altium_outputs_lists_every_folder_altium_wrote(lte, tmp_path):
     assert res["files"] == 2 and res["root"] == str(prj / "Fab")
     assert res["roots"] == [str(prj / "Fab"), str(prj / "Project Outputs for Board")]
     assert {f["folder"]: f["files"] for f in res["folders"]} == {"Fab/BOM": 1, "Project Outputs for Board/Gerber": 1}
+
+
+def test_run_outjob_puts_the_jlc_bom_in_the_bom_folder_when_altium_wrote_none(lte, fake):
+    # T23: Altium's BOM output writes nothing without Excel; the folder stayed empty and the BOM came only from Export
+    prj, _ = _linked_with_rules_board(lte, fake)
+    res = bridge.run_outjob(lte)
+    bom = [pathlib.Path(f) for f in res["files"] if pathlib.Path(f).parent.name == "BOM"]
+    assert len(bom) == 1 and bom[0].name == f"{lte}_BOM_jlc.csv" and bom[0].is_file()
+    assert bom[0].read_text(encoding="utf-8").splitlines()[0].startswith("Comment")
+
+
+def test_run_outjob_leaves_a_bom_altium_wrote_alone(lte, tmp_path):
+    out = tmp_path / "out"
+    written = [str(out / "BOM" / "Bill of Materials.csv")]
+    assert bridge._bom_into_outputs(lte, [out], written) == ([], []) and not (out / "BOM").exists()
+    assert bridge._bom_into_outputs(lte, [out], [str(out / "Assembly" / "Bill of Materials-Board.xlsx")]) == ([], [])  # a student's OutJob
+
+
+def test_the_advisor_bom_goes_into_the_empty_bom_folder_altium_made_and_says_so(lte, tmp_path):
+    out = tmp_path / "Outputs"
+    (out / "Production" / "BOM").mkdir(parents=True)
+    (out / "Production" / "Gerber").mkdir()
+    gtl = out / "Production" / "Gerber" / "a.GTL"
+    gtl.write_text("x")
+    added, notes = bridge._bom_into_outputs(lte, [tmp_path / "Other", out], [str(gtl)])
+    assert added == [str(out / "Production" / "BOM" / f"{lte}_BOM_jlc.csv")] and pathlib.Path(added[0]).is_file()
+    assert len(notes) == 1 and "advisor's JLC BOM" in notes[0]
+
+
+def test_without_an_empty_bom_folder_it_goes_beside_the_files_of_this_run(lte, tmp_path):
+    out = tmp_path / "Outputs"
+    (out / "Production" / "Gerber").mkdir(parents=True)
+    gtl = out / "Production" / "Gerber" / "a.GTL"
+    gtl.write_text("x")
+    added, _ = bridge._bom_into_outputs(lte, [tmp_path], [str(gtl)])
+    assert added == [str(out / "Production" / "BOM" / f"{lte}_BOM_jlc.csv")]
+
+
+def test_a_bom_that_cannot_be_made_is_a_warning(lte, tmp_path, monkeypatch):
+    from skills import export_bom
+    monkeypatch.setattr(export_bom, "export", lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+    added, notes = bridge._bom_into_outputs(lte, [tmp_path], [str(tmp_path / "Gerber" / "a.GTL")])
+    assert added == [] and "disk full" in notes[0] and "BOM page" in notes[0]

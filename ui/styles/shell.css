@@ -95,8 +95,12 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
   .app,.app.chat-off{grid-template-columns:var(--nav-w) minmax(0,1fr)}
   .app>.splitter,.app>.chat{display:none}
   .app>.panes{margin-right:8px}
-  .app.chat-open>.chat{display:grid;position:fixed;z-index:40;top:8px;right:8px;bottom:8px;width:min(var(--chat-w),calc(100% - var(--nav-w) - 16px));
+  .app.chat-open>.chat{display:grid;position:fixed;z-index:40;top:8px;right:8px;bottom:8px;width:var(--drawer-w);
     padding:0 10px;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--float);animation:slide .18s var(--ease)}
+  /* the open drawer pushes the sheets aside instead of covering them (T17: at 966px it hid Confirm idea and the page), and
+     narrows itself so 420px of the sheet stay; at 861px that is still a 369px chat */
+  .app{--drawer-w:min(var(--chat-w),calc(100vw - var(--nav-w) - 436px))}
+  .app.chat-open>.panes{margin-right:calc(var(--drawer-w) + 16px)}
 }
 
 /* ---------- one column: <=860px, a top bar and one of Work or Chat ---------- */
