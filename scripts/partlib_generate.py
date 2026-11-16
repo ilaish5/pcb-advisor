@@ -302,11 +302,16 @@ def transistor_symbol(name_hint, pins):
             g.append(["polygon", "1", "1", "1", -6, -54, -19, -24, -36, -41] if pol == "n" else
                      ["polygon", "1", "1", "1", -34, -26, -4, -39, -21, -56])
         return p, g, issues
-    g = [["polyline", "1", "1", -100, 0, -40, 0], ["polyline", "1", "1", -40, -80, -40, 80],
-         ["polyline", "1", "1", 0, -100, 0, 100]]
+    # enhancement MOSFET as drawn in datasheets: gate plate, a channel of three segments, drain and source leads,
+    # the body tied to the source, its arrow pointing into the channel (N) or out of it (P)
+    g = [["polyline", "1", "1", -100, 0, -45, 0], ["polyline", "1", "1", -45, -60, -45, 60],
+         ["polyline", "1", "1", -30, 40, -30, 70], ["polyline", "1", "1", -30, -15, -30, 15],
+         ["polyline", "1", "1", -30, -70, -30, -40],
+         ["polyline", "1", "1", -30, 55, 0, 55, 0, 100], ["polyline", "1", "1", -30, -55, 0, -55, 0, -100],
+         ["polyline", "1", "1", -30, 0, 0, 0, 0, -55]]
     if pol:
-        g.append(["polygon", "1", "1", "1", -5, 0, -35, 20, -35, -20] if pol == "p" else
-                 ["polygon", "1", "1", "1", -35, 0, -5, 20, -5, -20])
+        g.append(["polygon", "1", "1", "1", -8, 0, -24, 10, -24, -10] if pol == "p" else
+                 ["polygon", "1", "1", "1", -28, 0, -12, 10, -12, -10])
     return p, g, issues
 
 

@@ -231,7 +231,24 @@ def test_mosfet_polarity_hints_are_word_bounded(hint, arrow):
 def test_mosfet_polarity_direction_from_hint():
     n = next(g for g in _hint_symbol("X NMOS", ["G", "S", "D"])[1] if g[0] == "polygon")
     p = next(g for g in _hint_symbol("X PMOS", ["G", "S", "D"])[1] if g[0] == "polygon")
-    assert n[4] < n[6] and p[4] > p[6]                                # tip toward the channel for P, away for N
+    assert n[4] < n[6] and p[4] > p[6]                                # tip into the channel for N, out of it for P
+
+
+def test_mosfet_is_drawn_with_a_split_channel_and_the_arrow_on_the_body_line():
+    gfx = _hint_symbol("X NMOS", ["G", "S", "D"])[1]
+    lines = [g[3:] for g in gfx if g[0] == "polyline"]
+    channel = [l for l in lines if len(l) == 4 and l[0] == l[2] == -30]
+    assert len(channel) == 3                                          # enhancement mode: three segments, not one line
+    gate = next(l for l in lines if len(l) == 4 and l[0] == l[2] and l[0] < -30)
+    arrow = next(g for g in gfx if g[0] == "polygon")
+    xs, ys = arrow[4::2], arrow[5::2]
+    assert gate[0] < -30 < min(xs) and set(ys) == {0, 10, -10}        # beside the channel on the body line, not in the gap
+    assert [0, 0, 0, -55] == next(l for l in lines if l[:2] == [-30, 0])[2:]     # the body is tied to the source
+    assert [-30, -55, 0, -55, 0, -100] in lines                       # ... whose lead ends at the source pin
+    src = next(p for p in _hint_symbol("X NMOS", ["G", "S", "D"])[0] if p["name"] == "S")
+    assert (src["x"], src["y"]) == (0, -100)
+    pa = next(g for g in _hint_symbol("X PMOS", ["G", "S", "D"])[1] if g[0] == "polygon")
+    assert -30 < min(pa[4::2]) and max(pa[4::2]) < -5 and set(pa[5::2]) == {0, 10, -10}   # on the body line, clear of the source
 
 
 def test_bjt_hint_is_word_bounded():
