@@ -17,27 +17,12 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import oscompat  # noqa: E402
+import pinnames  # noqa: E402
 import sources   # noqa: E402
 import store     # noqa: E402
 
 
-# A schematic names a pin by a short form, a datasheet often by the long one (NE555: RST on the sheet, RESET in TI's
-# pin table). Each group is one pin function; a name matches the datasheet when any spelling in its group is there.
-_ALIASES = [{"RST", "RESET"}, {"CTRL", "CONT", "CV", "CONTROL"}, {"THR", "THRES", "THRESH", "THRESHOLD"},
-            {"DIS", "DISCH", "DISCHARGE"}, {"TRIG", "TRIGGER"}, {"GND", "GROUND"}, {"OUT", "OUTPUT"},
-            {"EN", "ENABLE"}, {"SHDN", "SHUTDOWN"}, {"FB", "FEEDBACK"}, {"ADJ", "ADJUST"}]
-
-
-def _spellings(name):
-    """Other spellings of the name: without an active-low mark (~RST, /RESET, RST#, nRESET, RESET_N) and its aliases.
-    Never the name itself, never shorter than two letters (a bare "~" would match any text with the number in it)."""
-    bare = re.sub(r"^[~/!]|#$|_[Nn]$", "", name)
-    bare = re.sub(r"^n(?=[A-Z]{2})", "", bare)
-    out = {bare} if len(bare) >= 2 else set()
-    for group in _ALIASES:
-        if bare.upper() in group:
-            out |= group
-    return out - {name}
+_spellings = pinnames.spellings      # short and long forms, active-low marks (scripts/pinnames.py)
 
 
 def _near(text, num, name, span=40):

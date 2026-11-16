@@ -98,6 +98,48 @@ def snap_symbol(pins, gfx, grid=100):
         rem = (cx % grid) if dx else (cy % grid)
         if rem:
             p["len"] += (grid - rem) if (dx + dy) > 0 else rem
+    _slide_pins_onto_grid(pins, gfx, grid)
+
+
+def _slide_pins_onto_grid(pins, gfx, grid):
+    """A pin still off the grid ACROSS its axis (EasyEDA's NE555: DISCH at y=150) cannot be fixed by its length.
+    When its base sits on an edge of the symbol's rectangle, slide it along that edge to the nearest grid line,
+    outward from the box centre first, if that point is still on the edge and no other pin ends there. Anything
+    else (a pin on a drawn shape, no free point) is left alone: the draw step warns about it."""
+    rects = []
+    for g in gfx:
+        if g[0] == "rectangle":
+            x1, y1, x2, y2 = (float(v) for v in g[4:8])
+            rects.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)))
+    ends = {conn(p) for p in pins}
+    bases = {(p["x"], p["y"]) for p in pins}
+    for p in pins:
+        dx, dy = DIRS[p["orient"]]
+        axis = "y" if dx else "x"                   # the coordinate across the pin
+        v = p[axis]
+        if not v % grid:
+            continue
+        for x1, y1, x2, y2 in rects:
+            if dx and min(abs(p["x"] - x1), abs(p["x"] - x2)) <= 1:
+                lo, hi = y1, y2
+            elif dy and min(abs(p["y"] - y1), abs(p["y"] - y2)) <= 1:
+                lo, hi = x1, x2
+            else:
+                continue
+            if not lo - 1 <= v <= hi + 1:           # on the edge's line, but beyond this box (another unit's box)
+                continue
+            down = v - v % grid
+            for nv in ((down + grid, down) if v >= (lo + hi) / 2 else (down, down + grid)):
+                moved = {**p, axis: nv}
+                end, base = conn(moved), (moved["x"], moved["y"])
+                if lo <= nv <= hi and end not in ends and base not in bases:
+                    ends.discard(conn(p))
+                    bases.discard((p["x"], p["y"]))
+                    p[axis] = nv
+                    ends.add(end)
+                    bases.add(base)
+                    break
+            break
 
 
 def _graphic(it):

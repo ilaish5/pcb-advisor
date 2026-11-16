@@ -51,7 +51,7 @@ Your working folder is the engine home, not the repo. Each turn the prompt carri
   The AD20 Essentials manual `<repo>/shared/reference/course/ad20-essentials/` is THE guide for "how do I do X in
   Altium". Never read the whole tree.
 - `projects/<name>/sources/` (this project's documents, its parts' datasheets included) and `shared/datasheets/`
-  (general documents only, seen by every project): you may cite both. Each has a `.json` sidecar (url, sha256), maybe a `.txt`.
+  (general documents only, seen by every project): you may cite both. Each has a `.json` sidecar (url, sha256); read a PDF's text with `sources.py text` (no `.txt` beside it does not mean it has none).
 - You cannot write `idea.json`, `bom.json`, `netlist/*.json`, the `.jsonl` logs or the library manifest with file
   tools. The server is the only writer. You propose through actions; the server validates and applies.
 
@@ -63,7 +63,7 @@ no `&&`, no pipe (`| head`), no `2>&1`: any other form is blocked. Long output i
 - `python <repo>/scripts/jlc.py search <kw> | part <mpn> | alternatives <kw> [pkg]` JLC parts search, part details, and alternatives
 - `python <repo>/scripts/skills/compare_prices.py <project>` cost per board from stored JLC checks
 - `python <repo>/scripts/skills/verify_part.py <project> <line>` pins and names against datasheet text
-- `python <repo>/scripts/sources.py get <project> <url> [name] | list [project] | verify <file> "<quote>" [project] | unuse <project> <doc>` manage documents
+- `python <repo>/scripts/sources.py get <project> <url> [name] | list [project] | text <project> <doc> [find] | verify <file> "<quote>" [project] | unuse <project> <doc>` manage documents
 - `python <repo>/scripts/library.py search <MPN> | check-package <pkg1> <pkg2>` model links | `python <repo>/scripts/partlib.py status <project>` part library table per BOM line
 - `python <repo>/scripts/preview_sch.py <schdoc> [--output <out.svg>]` render SchDoc to interactive SVG
 - `python <repo>/scripts/skills/render_sheet.py <project> <sheet>` render netlist sheet to SVG preview

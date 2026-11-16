@@ -405,3 +405,17 @@ def test_draw_consent_refuses_a_negated_request():
     for msg in ("Don't draw it, I want to try", "אל תשרטט, אני רוצה לנסות", "אני לא רוצה שתשרטט את זה"):
         assert serve._draw_consent({"student_said": msg}, msg) != "", msg
     assert serve._draw_consent({"student_said": "תשרטט אתה בבקשה"}, "תשרטט אתה בבקשה") == ""
+
+
+def test_another_spelling_of_the_pin_name_is_silent_but_an_alias_swap_is_an_error():
+    # the live run of 16/11: CTRL/CONT, RESET/RST on the 555 and A/K vs +/- on the LED filled four warnings
+    ic = {"ref": "U1", "pins": [{"num": "1", "name": "VIN", "net": "+5V"}, {"num": "2", "name": "GROUND", "net": "GND"},
+                                {"num": "3", "name": "ENABLE", "net": "X"}, {"num": "4", "name": "OUTPUT", "net": "Y"}]}
+    p = draw.plan_sheet({"parts": [ic]}, {"U1": SYMS["U1"]}, "l", "d")
+    assert not p["errors"] and not any("is called" in w for w in p["warnings"])
+    led = {"ref": "D1", "pins": [{"num": "1", "name": "K", "net": "GND"}, {"num": "2", "name": "A", "net": "Y"}]}
+    p = draw.plan_sheet({"parts": [led]}, {"D1": symbol("LED", [("1", "-", -100, 0, 2), ("2", "+", 100, 0, 0)])}, "l", "d")
+    assert not p["errors"] and not any("is called" in w for w in p["warnings"])
+    swap = {"ref": "U1", "pins": [{"num": "3", "name": "OUTPUT", "net": "X"}, {"num": "4", "name": "ENABLE", "net": "Y"}]}
+    p = draw.plan_sheet({"parts": [swap]}, {"U1": SYMS["U1"]}, "l", "d")
+    assert p["commands"] == [] and any("pin 3 is OUTPUT in the netlist, but OUTPUT is pin 4" in e for e in p["errors"])

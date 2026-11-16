@@ -636,14 +636,22 @@ def bom_value_warning(project, a):
 
 def _renumber_by_name(part, symbol):
     """Rewrite the netlist pin numbers of a part from the symbol when every pin NAME matches exactly one symbol pin
-    (case-insensitive, exact, unique both ways). True when done; False (part untouched) on any ambiguity or unmatched name."""
+    (case-insensitive and unique both ways): by the exact name, else by another spelling of it (RESET for RST, ~RST,
+    and on a two-pin part K for "-"), see pinnames.py. True when done; False (part untouched) on any ambiguity or
+    unmatched name."""
+    import pinnames
     pins = part["pins"]
-    wanted = [str(p.get("name") or "").strip().upper() for p in pins]
-    if not pins or not all(wanted) or len(set(wanted)) != len(wanted):
+    wanted = [str(p.get("name") or "").strip() for p in pins]
+    if not pins or not all(wanted) or len({w.upper() for w in wanted}) != len(wanted):
         return False
+    two = len(pins) == 2 and len(symbol["pins"]) == 2
     chosen = []
     for w in wanted:
-        hit = [lp for lp in symbol["pins"] if str(lp.get("name") or "").strip().upper() == w]
+        hit = [lp for lp in symbol["pins"] if str(lp.get("name") or "").strip().upper() == w.upper()]
+        if not hit:
+            mine = pinnames.forms_among(w, wanted, two)
+            names = [lp.get("name") for lp in symbol["pins"]]
+            hit = [lp for lp in symbol["pins"] if mine & pinnames.forms_among(lp.get("name"), names, two)]
         if len(hit) != 1:
             return False
         chosen.append(str(hit[0]["number"]))

@@ -100,3 +100,40 @@ def test_the_draw_summary_names_the_parts_it_renumbered(empty, monkeypatch):
     assert "pin numbers of J1, U2 matched by pin name to the library symbols" in said and not serve.warning_of("altium.draw_schematic: " + said)
     monkeypatch.setattr(serve, "fit_sheets_to_library", lambda project, sheet=None: [])
     assert "pin numbers" not in serve.draw_summary(serve._drawn(bridge, empty, None, False))
+
+
+def _sym(pins):
+    return {"name": "S", "pins": [{"number": n, "name": nm} for n, nm in pins]}
+
+
+def test_a_datasheet_spelling_finds_the_symbol_pin():
+    # the live run of 16/11: the agent named the 555's pins from TI's datasheet (RESET, ...), the symbol says RST
+    sym = _sym([("1", "GND"), ("2", "TRIG"), ("3", "OUT"), ("4", "RST"), ("5", "CONT"), ("6", "THRES"), ("7", "DISCH"), ("8", "VCC")])
+    part = {"ref": "U1", "pins": [{"num": "", "name": n} for n in
+                                  ("GND", "TRIGGER", "OUTPUT", "RESET", "CTRL", "THRESHOLD", "DISCHARGE", "VCC")]}
+    assert serve._renumber_by_name(part, sym)
+    assert [p["num"] for p in part["pins"]] == ["1", "2", "3", "4", "5", "6", "7", "8"]
+
+
+def test_led_anode_and_cathode_find_plus_and_minus_only_on_a_two_pin_part():
+    led = {"ref": "D1", "pins": [{"num": "", "name": "A"}, {"num": "", "name": "K"}]}
+    assert serve._renumber_by_name(led, _sym([("2", "+"), ("1", "-")]))
+    assert [p["num"] for p in led["pins"]] == ["2", "1"]
+    ic = {"ref": "U1", "pins": [{"num": "", "name": "A"}, {"num": "", "name": "K"}, {"num": "", "name": "VCC"}]}
+    assert not serve._renumber_by_name(ic, _sym([("1", "+"), ("2", "-"), ("3", "VCC")]))
+
+
+def test_an_exact_name_wins_over_an_alias_and_ambiguity_still_refuses():
+    part = {"ref": "U1", "pins": [{"num": "", "name": "RST"}, {"num": "", "name": "VCC"}, {"num": "", "name": "GND"}]}
+    assert serve._renumber_by_name(part, _sym([("1", "RESET"), ("2", "RST"), ("3", "VCC"), ("4", "GND")]))
+    assert part["pins"][0]["num"] == "2"
+    part = {"ref": "U1", "pins": [{"num": "", "name": "RESET"}, {"num": "", "name": "VCC"}, {"num": "", "name": "GND"}]}
+    assert not serve._renumber_by_name(part, _sym([("1", "~RST"), ("2", "RST"), ("3", "VCC"), ("4", "GND")]))
+
+
+def test_a_differential_n_pin_is_not_an_active_low_alias():
+    part = {"ref": "U1", "pins": [{"num": "", "name": "CLK"}, {"num": "", "name": "GND"}]}
+    assert not serve._renumber_by_name(part, _sym([("1", "CLK_N"), ("2", "CLK_P"), ("3", "GND")]))
+    part = {"ref": "U1", "pins": [{"num": "", "name": "RESET"}, {"num": "", "name": "GND"}]}
+    assert serve._renumber_by_name(part, _sym([("1", "RESET_N"), ("2", "GND")]))
+    assert part["pins"][0]["num"] == "1"

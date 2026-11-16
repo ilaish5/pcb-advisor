@@ -476,6 +476,25 @@ if __name__ == "__main__":
                              indent=2, ensure_ascii=False))
         elif cmd == "get":
             print(json.dumps(get(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None), indent=2))
+        elif cmd == "text":
+            # text <project> <doc> [find]: a document's plain text (a PDF's is extracted once and cached beside it as
+            # <doc>.txt); with `find`, only the lines that contain it (case-insensitive), each with its line number
+            try:
+                body = text_of(sys.argv[3], folder_of(sys.argv[2]))
+            except FileNotFoundError as exc:
+                # only "not in the cache" means the document is missing; a missing pdftotext or a reference PDF
+                # ("its text is in the .md files beside it") keeps its own message
+                if "not in the cache" not in str(exc):
+                    raise SourceError(str(exc)) from exc
+                raise SourceError(f"{sys.argv[3]} is not in project {sys.argv[2]}'s sources nor the shared library "
+                                  f"(sources.py list {sys.argv[2]})") from exc
+            if not body.strip():
+                print(f"{sys.argv[3]}: no text could be extracted (a scanned or image-only PDF)")
+            elif len(sys.argv) > 4:
+                hits = [f"{i}: {ln}" for i, ln in enumerate(body.splitlines(), 1) if sys.argv[4].lower() in ln.lower()]
+                print("\n".join(hits) if hits else f"no line of {sys.argv[3]} contains {sys.argv[4]!r} (the document has text)")
+            else:
+                print(body)
         elif cmd == "use":
             print(use(sys.argv[2], sys.argv[3]))
         elif cmd == "unuse":

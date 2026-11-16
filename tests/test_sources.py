@@ -282,3 +282,46 @@ def test_an_lcsc_datasheet_link_is_followed_to_the_pdf_its_viewer_page_shows(hom
     assert sources._viewer_pdf("https://evil-lcsc.com/x.pdf", page) is None
     two = page + b'<a href="https://datasheet.lcsc.com/datasheet/pdf/other.pdf">'
     assert sources._viewer_pdf(link, two) is None                                      # two different files: not guessed
+
+
+def test_cli_text_prints_a_documents_text_and_finds_lines(home, monkeypatch, capsys):
+    # the live run of 16/11: no .txt beside NE555DR.pdf made the agent tell the student the PDF had no text
+    import sources
+    folder = sources.folder_of("board")
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "ne555.pdf").write_bytes(b"%PDF-1.4 x")
+    (folder / "ne555.pdf.txt").write_text("1 GND\n4 RESET Reset input\n8 VCC", encoding="utf-8")
+    for argv, want in ((["text", "board", "ne555.pdf"], "1 GND\n4 RESET Reset input\n8 VCC"),
+                       (["text", "board", "ne555.pdf", "reset"], "2: 4 RESET Reset input")):
+        monkeypatch.setattr(sys, "argv", ["sources.py", *argv])
+        runpy.run_path(sources.__file__, run_name="__main__")
+        assert capsys.readouterr().out.strip() == want
+    monkeypatch.setattr(sys, "argv", ["sources.py", "text", "board", "nope.pdf"])
+    with pytest.raises(SystemExit) as exit_:
+        runpy.run_path(sources.__file__, run_name="__main__")
+    out, err = capsys.readouterr()
+    assert exit_.value.code == 1 and "nope.pdf is not in project board's sources" in err and "Traceback" not in out + err
+
+
+def test_cli_text_tells_no_match_from_no_text_and_keeps_other_errors(home, monkeypatch, capsys):
+    import sources
+    folder = sources.folder_of("board")
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "ne555.pdf").write_bytes(b"%PDF-1.4 x")
+    (folder / "ne555.pdf.txt").write_text("4 RESET", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["sources.py", "text", "board", "ne555.pdf", "FOOBAR"])
+    runpy.run_path(sources.__file__, run_name="__main__")
+    assert "no line of ne555.pdf contains 'FOOBAR' (the document has text)" in capsys.readouterr().out
+
+    # pypdf cannot read this file and pdftotext is not installed: the document is there, so not "not in sources"
+    import subprocess
+
+    def no_tool(*a, **k):
+        raise FileNotFoundError("[WinError 2] pdftotext")
+    (folder / "ne555.pdf.txt").unlink()
+    monkeypatch.setattr(subprocess, "run", no_tool)
+    monkeypatch.setattr(sys, "argv", ["sources.py", "text", "board", "ne555.pdf"])
+    with pytest.raises(SystemExit):
+        runpy.run_path(sources.__file__, run_name="__main__")
+    err = capsys.readouterr().err
+    assert "pdftotext" in err and "is not in project" not in err

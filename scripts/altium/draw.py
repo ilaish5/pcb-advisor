@@ -11,7 +11,12 @@ the saved file.
   verify_sheet(...)    compares the saved SchDoc (read_schdoc dict) with the plan: parts, pin counts, footprints, nets
 """
 import math
+import pathlib
 import re
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+import pinnames  # noqa: E402
 
 TAG = "[advisor]"                      # the same first word the skeleton frames carry
 GRID = 100                             # mils: everything is placed on the 100 mil grid
@@ -81,8 +86,16 @@ def pin_nets(part, symbol):
             warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is not in the netlist; left unconnected")
             continue
         nname = str(np_.get("name") or "").strip()
-        if nname and str(lp.get("name") or "").strip() and not same_name(nname, lp.get("name")):
-            other = [o for o in symbol["pins"] if str(o["number"]) != num and same_name(o.get("name"), nname)]
+        two = len(symbol["pins"]) == 2 and len(by_num) == 2
+        lib_names = [o.get("name") for o in symbol["pins"]]
+        net_names = [q.get("name") for q in by_num.values()]
+        mine = pinnames.forms_among(nname, net_names, two)
+        if nname and str(lp.get("name") or "").strip() and not same_name(nname, lp.get("name")) \
+                and not mine & pinnames.forms_among(lp.get("name"), lib_names, two):
+            # not the same name nor another spelling of it (RESET/RST, A/+ on a two-pin diode: no warning)
+            other = [o for o in symbol["pins"] if str(o["number"]) != num and same_name(o.get("name"), nname)] or \
+                    [o for o in symbol["pins"] if str(o["number"]) != num
+                     and mine & pinnames.forms_among(o.get("name"), lib_names, two)]
             if other:       # the netlist's name belongs to another pin of the symbol: a real swap
                 errors.append(f"{ref}: pin {num} is {nname} in the netlist, but {nname} is pin {other[0]['number']} of library symbol "
                               f"{symbol['name']} (pin {num} is {lp.get('name')})")

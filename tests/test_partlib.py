@@ -37,6 +37,34 @@ def test_symbol_pins_land_on_the_100_mil_grid_with_body_end_locations():
     assert vin["type"] == "Power"
 
 
+def _pin(num, orient, x, y):
+    return {"num": num, "name": num, "type": "Passive", "orient": orient, "x": x, "y": y, "len": 100}
+
+
+def test_a_pin_off_the_grid_across_its_axis_slides_along_the_box_edge():
+    # EasyEDA's NE555DR (live run 16/11): DISCH and THRES at y=150 / -150 on the left edge of a 600x800 box
+    box = [["rectangle", "1", "1", "0", -300.0, 400.0, 300.0, -400.0]]
+    pins = [_pin("1", "eRotate270", 0, -400), _pin("2", "eRotate180", -300, 0), _pin("7", "eRotate180", -300, 150),
+            _pin("6", "eRotate180", -300, -150), _pin("8", "eRotate90", -100, 400)]
+    conv.snap_symbol(pins, box)
+    assert all(c % 100 == 0 for p in pins for c in conv.conn(p))
+    at = {p["num"]: (p["x"], p["y"]) for p in pins}
+    assert at["7"] == (-300, 200) and at["6"] == (-300, -200) and at["2"] == (-300, 0)   # outward, still on the edge
+
+
+def test_a_pin_is_not_slid_onto_another_or_off_the_edge_or_when_no_box():
+    box = [["rectangle", "1", "1", "0", -300.0, 200.0, 300.0, -200.0]]
+    pins = [_pin("1", "eRotate180", -300, 100), _pin("2", "eRotate180", -300, 150), _pin("3", "eRotate180", -300, 0)]
+    conv.snap_symbol(pins, box)
+    assert (pins[1]["x"], pins[1]["y"]) == (-300, 200)                    # 100 is taken: the other grid line
+    edge = [_pin("1", "eRotate180", -300, 0), _pin("2", "eRotate180", -300, 150)]
+    conv.snap_symbol(edge, [["rectangle", "1", "1", "0", -300.0, 160.0, 300.0, -160.0]])
+    assert edge[1]["y"] == 100                                            # 200 would leave the edge: inward
+    free = [_pin("1", "eRotate180", -300, 0), _pin("2", "eRotate180", -300, 150)]
+    conv.snap_symbol(free, [["polyline", "1", "1", -300, -100, -300, 100]])
+    assert free[1]["y"] == 150                                            # not on a box: left for the draw step to warn
+
+
 def test_footprint_flips_y_keeps_relative_coords_and_widens_silk():
     fp = conv.convert_footprint((FIX / "C100" / "lib.pretty" / "R0603_FAKE.kicad_mod").read_text())
     p = pads(fp["lines"])
@@ -383,3 +411,15 @@ def test_cli_status_and_usage(proj, capsys):
     assert "R1" in out and "easyeda" in out and "missing" in out
     assert partlib.main(["status", "no-such-project"]) == 1
     assert partlib.main([]) == 1
+
+
+def test_a_pin_beyond_the_box_or_onto_another_pins_base_is_not_slid():
+    # review of 16/11: a pin past the box's corner, and a longer pin whose body end is the grid point
+    box = [["rectangle", "1", "1", "0", -300.0, 200.0, 300.0, -200.0]]
+    out = [_pin("1", "eRotate180", -300, 0), _pin("2", "eRotate180", -300, -250)]
+    conv.snap_symbol(out, box)
+    assert out[1]["y"] == -250
+    long_ = [_pin("1", "eRotate180", -300, 0), {**_pin("2", "eRotate180", -300, 200), "len": 200},
+             _pin("3", "eRotate180", -300, 150)]
+    conv.snap_symbol(long_, [["rectangle", "1", "1", "0", -300.0, 300.0, 300.0, -300.0]])
+    assert long_[2]["y"] == 100
