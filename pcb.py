@@ -24,6 +24,8 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py library search|check-package|build-script     parts library tools
     python3 pcb.py outputs [project]    is every exported file still made from the current design
     python3 pcb.py usage [project]      what the agent ran, how long, what it cost
+    python3 pcb.py timeline <project> [--full]  what the person saw, clicked, wrote and was answered (usage-log.jsonl)
+    python3 pcb.py report               save logs + doctor result + chats as a zip in logs/ (nothing is sent)
     python3 pcb.py update [--check]     update from GitHub (checked at every serve), roll back if it breaks
     python3 pcb.py version              which commit this install is on
 
@@ -57,8 +59,34 @@ def cmd_init(args):
 
 
 def cmd_serve(args):
-    import serve
-    serve.main(args)
+    try:
+        import serve
+        return serve.main(args)
+    except (SystemExit, KeyboardInterrupt):
+        raise
+    except BaseException as exc:       # dies at import or start: the traceback goes to the run log, then on as before
+        try:
+            import runlog
+            runlog.exception("crash", exc, where="serve")
+            print(f"\nThe server stopped with an error. Details are saved in {runlog.log_dir()}", file=sys.stderr)
+        except Exception:
+            pass
+        raise
+
+
+def cmd_report(args):
+    import runlog
+    path = runlog.make_report()
+    print(f"Saved {path}")
+    print("Contains logs, your chat with the advisor, and what you clicked. No datasheets or Altium files. Nothing was sent. "
+          "Attach this file when you report a problem.")
+
+
+def cmd_timeline(args):
+    import runlog
+    names = [a for a in args if not a.startswith("--")]
+    lines = runlog.timeline(workspace.safe_name(names[0]) if names else workspace.default_project(), full="--full" in args)
+    print("\n".join(lines) if lines else "nothing logged yet")
 
 
 def cmd_new(args):
@@ -327,7 +355,7 @@ COMMANDS = {
     "skills": cmd_skills, "check": cmd_check, "reset": cmd_reset, "trace": cmd_trace,
     "rules": cmd_rules, "calc": cmd_calc, "library": cmd_library,
     "outputs": cmd_outputs, "usage": cmd_usage, "update": cmd_update, "version": cmd_version,
-    "doctor": cmd_doctor,
+    "doctor": cmd_doctor, "report": cmd_report, "timeline": cmd_timeline,
 }
 
 

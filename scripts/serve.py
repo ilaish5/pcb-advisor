@@ -13,6 +13,7 @@ engine to route to all come from config.json (see scripts/workspace.py).
 import argparse
 import base64
 import datetime as dt
+import itertools
 import json
 import mimetypes
 import os
@@ -32,6 +33,7 @@ import agent             # noqa: E402
 import gateway           # noqa: E402
 import model             # noqa: E402
 import project as project_mod  # noqa: E402
+import runlog            # noqa: E402
 import session as session_mod  # noqa: E402
 import sources           # noqa: E402
 import tool_guard        # noqa: E402
@@ -811,10 +813,13 @@ def step_plan(project, step):
     return plan
 
 
+_RUN_SEQ = itertools.count(1)
+
+
 def _run_begin(project, step, keys):
     """-> the id of the new run (step_ack takes it: an answer only ever clears its own run's record)."""
     with RUNS_LOCK:
-        run_id = f"{time.time():.6f}"
+        run_id = f"{time.time():.6f}-{next(_RUN_SEQ)}"        # the counter: two runs inside one clock tick (15 ms on Windows) never share an id
         STEP_RUNS[project] = {"id": run_id, "step": step, "started": time.time(), "running": True,
                               "steps": [{"key": k, "label": STEP_LABELS[k], "state": "waiting", "note": ""} for k in keys]}
     return run_id
@@ -926,12 +931,17 @@ def run_step_button(project, sess, step, data):
     busy = altium_start(project)
     if busy:
         return 409, {"error": busy}, ""
+    t0 = time.time()
+    runlog.event("op", op=f"step.{step}", phase="begin", project=project)
+    runlog.usage(project, "step", op=step, phase="begin", ok=True)
     try:
         try:
             code, body = _run_step(project, sess, step, data, bridge)
         except Exception as exc:      # after the step itself (its result could not be put into words): still an answer, and the page reads the files again
             code, body = 500, {"error": f"Altium ran the step but its result could not be read ({type(exc).__name__}: {exc}). Look at the file in Altium before trying again."}
             _run_end(project, **body)
+            runlog.exception("exception", exc, where=f"step.{step}", project=project)
+        _log_step_end(project, step, code, body, t0)
         return code, body, _run_id(project)
     finally:
         with RUNS_LOCK:               # whatever happened above, no record is left saying "running" once the lock is free
@@ -939,6 +949,22 @@ def run_step_button(project, sess, step, data):
             if run and run.get("running"):
                 run.update(running=False, error="The step stopped without an answer; look at the file in Altium and at the chat before trying again.")
         STEP_LOCK.release()
+
+
+def _log_step_end(project, step, code, body, t0):
+    """The end record of a step button: the steps that ran (preparations included), seconds, the summary or the full error."""
+    try:
+        with RUNS_LOCK:
+            steps = [{"step": s["key"], "state": s["state"]} for s in (STEP_RUNS.get(project) or {}).get("steps", [])]
+        runlog.event("op", op=f"step.{step}", phase="end", project=project, ok=code == 200, status=code, steps=steps,
+                     seconds=round(time.time() - t0, 1), summary=body.get("summary", ""), error=body.get("error", ""),
+                     warnings=body.get("warnings") or [])
+        with RUNS_LOCK:         # the usage log keeps what the person was shown: each step's note, then the summary or the refusal
+            shown = [{"step": s["key"], "state": s["state"], "note": s.get("note", "")} for s in (STEP_RUNS.get(project) or {}).get("steps", [])]
+        runlog.usage(project, "step", op=step, phase="end", ok=code == 200, seconds=round(time.time() - t0, 1), steps=shown,
+                     shown=body.get("summary") or body.get("error") or "", warnings=body.get("warnings") or [])
+    except Exception:
+        pass
 
 
 def _run_id(project):
@@ -1026,7 +1052,13 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
     wants = any(_uses_altium(a.get("type")) for a in actions or [] if isinstance(a, dict))
     held = wants and STEP_LOCK.acquire(blocking=False)
     try:
-        return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held)
+        if not held:
+            return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held)
+        kinds = [a.get("type") for a in actions if isinstance(a, dict) and _uses_altium(a.get("type"))]
+        with runlog.span("chat.altium-actions", project=project, actions=kinds):
+            res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held)
+            runlog.event("op", op="chat.altium-actions", phase="result", project=project, refused=res[2])
+            return res
     finally:
         if held:
             STEP_LOCK.release()
@@ -1573,6 +1605,14 @@ class Handler(BaseHTTPRequestHandler):
             body = json.dumps(body, ensure_ascii=False)
         if isinstance(body, str):
             body = body.encode("utf-8")
+        self._status = code
+        if code >= 400:             # for the run log: what the answer said, and where a 5xx came from
+            try:
+                self._err = str((json.loads(body) if ctype.startswith("application/json") else {}).get("error", ""))
+            except Exception:
+                self._err = ""
+            if code >= 500 and sys.exc_info()[0]:
+                self._tb = runlog.tb()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
@@ -1581,6 +1621,31 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+    def _cross_origin(self):
+        """True when the request names an Origin that is not this server (a browser sends it on cross-site POSTs)."""
+        origin = self.headers.get("Origin")
+        return bool(origin) and urlparse(origin).netloc != (self.headers.get("Host") or "")
+
+    def _report(self, make):
+        """POST: make the diagnostic zip (local only) and say where it is. GET ?file=<name>: send one made earlier (strict file name)."""
+        name = self.query("file")
+        if not make and not name:
+            return self._send(405, {"error": "use POST to make a report"})
+        if name:
+            if not re.fullmatch(r"pcb-advisor-report-[0-9-]+\.zip", name) or not (runlog.log_dir() / name).is_file():
+                return self._send(404, {"error": "no such report"})
+            zpath = runlog.log_dir() / name
+        else:
+            try:
+                zpath = runlog.make_report()
+            except Exception as exc:
+                runlog.exception("exception", exc, where="report")
+                return self._send(500, {"error": f"The report could not be made ({type(exc).__name__}: {exc})"})
+        if not make:
+            return self._send(200, zpath.read_bytes(), "application/zip",
+                              {"Content-Disposition": f'attachment; filename="{zpath.name}"'})
+        return self._send(200, {"path": str(zpath), "name": zpath.name, "size": zpath.stat().st_size})
 
     def _send_ui_static(self, rel):
         """GET /ui/<rel>: any file under ui_dir with an allowed extension (scripts, styles, images, fonts, json).
@@ -1606,6 +1671,40 @@ class Handler(BaseHTTPRequestHandler):
         self._guarded(self._post)
 
     def _guarded(self, fn):
+        """The run log around every request; the work itself is _guarded_run."""
+        t0 = time.time()
+        self._status, self._err, self._tb = 0, "", ""
+        runlog.ctx.session = (self.headers.get("X-Usage-Session") or "")[:40]       # the page load this request belongs to
+        try:
+            return self._guarded_run(fn)
+        except BaseException as exc:
+            runlog.exception("exception", exc, method=self.command, path=self.path.split("?")[0], project=self._log_project())
+            raise
+        finally:
+            self._log_request(t0)
+            runlog.ctx.session = ""
+
+    def _log_project(self):
+        try:
+            return (parse_qs(urlparse(self.path).query).get("project") or [""])[0]
+        except Exception:
+            return ""
+
+    def _log_request(self, t0):
+        path = self.path.split("?")[0]
+        if path in QUIET_PATHS and 0 < self._status < 400:       # polled or logging endpoints: only their errors are worth a line
+            return
+        rec = {"method": self.command, "path": path, "status": self._status, "ms": round((time.time() - t0) * 1000)}
+        project = self._log_project()
+        if project:
+            rec["project"] = project
+        if self._err:
+            rec["error"] = self._err
+        if self._tb:
+            rec["traceback"] = self._tb
+        runlog.event("request", **rec)
+
+    def _guarded_run(self, fn):
         """A project file another program holds open (Windows: an editor) is an answer, not a dropped connection."""
         try:
             return fn()
@@ -1703,6 +1802,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(422, {"error": str(exc)})
             except Exception as exc:
                 return self._send(422, {"error": str(exc)})
+        if path == "/api/report":              # downloads one report made earlier; making one is POST only
+            return self._report(make=False)
         if path == "/api/doctor":                  # the same list as `pcb.py doctor --json`; ?refresh=1 runs it again
             import doctor
             return self._send(200, doctor.cached(refresh=bool(self.query("refresh"))))
@@ -2015,6 +2116,8 @@ class Handler(BaseHTTPRequestHandler):
         sess = self.session(proj)
 
         n = int(self.headers.get("Content-Length", 0))
+        if n > (runlog.USAGE_MAX_BODY if path == "/api/log/usage" else runlog.MAX_BODY if path == "/api/log/client" else n):
+            return self._send(413, {"error": "too large"})       # a report from the page is small; refuse the rest unread
         try:
             data = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:
@@ -2022,6 +2125,20 @@ class Handler(BaseHTTPRequestHandler):
 
         def state():
             return model.build(project=proj, session=sess)
+
+        if path in ("/api/log/client", "/api/log/usage", "/api/report") and self._cross_origin():
+            return self._send(403, {"error": "forbidden"})        # a page of another site must not write logs or make zips
+        if path == "/api/log/client":          # window.onerror / unhandledrejection from the page
+            if isinstance(data, dict):
+                f = {k: data.get(k) for k in ("message", "source", "line", "column", "stack", "view", "session")}
+                runlog.event("ui-error", project=proj, **f)
+                runlog.usage(proj, "ui-error", ok=False, **f)
+            return self._send(200, {"ok": True})
+        if path == "/api/log/usage":           # view / click / shown events, batched by the page
+            code, why = runlog.usage_batch(data)
+            return self._send(code, {"ok": code == 200} if code == 200 else {"error": why})
+        if path == "/api/report":
+            return self._report(make=True)
 
         # ---- the conversation
         if path == "/api/chat":
@@ -2031,15 +2148,21 @@ class Handler(BaseHTTPRequestHandler):
             source_file = data.get("file") or data.get("source")
             about = None if source_file else chat_about(data.get("about"))
             tkey = (proj, sess)
+            _chat_t0, _chat_info = time.time(), {"project": proj, "engine": "", "model": ""}       # set before anything can fail
+            _answered = []         # the usage log gets exactly one answer (or the refusal) for every message
+            _msg = dict(text=text, chat=sess, queued=_truthy(data.get("queued")), generated=_truthy(data.get("generated")), file=source_file or "")
             with TURNS_LOCK:       # the checks and the registration together: a step button never slips in between them
                 running = tkey in TURNS
                 stepping = STEP_LOCK.locked()
                 if not running and not stepping:
                     turn = TURNS[tkey] = _new_turn()
             if running:            # before saving: the client queue resends it, so it must not be stored twice
+                runlog.usage(proj, "message", ok=False, shown="this conversation is still answering", **_msg)
                 return self._send(409, {"error": "this conversation is still answering"})
             if stepping:           # the agent may look at Altium while it answers, and that stops the script that is running there
+                runlog.usage(proj, "message", ok=False, shown="Altium is busy with another step; send this again when it has finished", **_msg)
                 return self._send(409, {"error": "Altium is busy with another step; send this again when it has finished"})
+            runlog.usage(proj, "message", ok=True, **_msg)
             try:
                 user_msg = {"ts": now(), "role": "user", "text": text}
                 if source_file:
@@ -2073,10 +2196,14 @@ class Handler(BaseHTTPRequestHandler):
                     if ctx:
                         ask = ("[this conversation is about one part; its context]\n"
                                f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
-            except BaseException:
+            except BaseException as exc:
+                runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}")
                 _turn_end(tkey)
                 raise
             try:             # _turn_end runs exactly once, whatever fails between the start and the end of apply_actions
+                _eng = gateway.resolve(BACKEND)       # the run log gets counts and seconds, never the text
+                _chat_info = {"project": proj, "engine": _eng, "model": workspace.get(f"agent.providers.{_eng}.model", "")}
+                runlog.event("chat", phase="begin", **_chat_info)
                 guard = tool_guard.begin()
                 BUSY["chat"] += 1
                 tool_edited, tool_unrestored = [], []
@@ -2097,8 +2224,16 @@ class Handler(BaseHTTPRequestHandler):
                         proj, res.get("actions"), sess, last_user=text, meta=chat_meta, turn_start=turn["started"],
                         on_step=lambda label, k=tkey: _turn_event(k, {"label": label}), cancel=turn["cancel"],
                         chat=m["chat"])
+            except BaseException as exc:
+                runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}", engine=_chat_info["engine"])
+                runlog.event("chat", phase="end", ok=False, seconds=round(time.time() - _chat_t0, 1), error=f"{type(exc).__name__}: {exc}", **_chat_info)
+                raise
             finally:
                 _turn_end(tkey)
+            runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
+                         refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
+                         error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:600]),
+                         **_chat_info)
             if tool_edited or tool_unrestored:
                 refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
             if proposals and not partial:
@@ -2147,8 +2282,16 @@ class Handler(BaseHTTPRequestHandler):
                 if res.get("denied"):
                     rec["denied"] = unique_denials(res["denied"])
                 say(proj, sess, rec)
+                runlog.usage(proj, "answer", text=rec["text"], chat=sess, engine=res.get("provider") or _eng, model=res.get("model") or "",
+                             seconds=rec.get("seconds"), applied=applied, refused=refused, warned=rec.get("warned") or {},
+                             error=(rec["text"] if res.get("error") else ""), error_kind=kind or "", ok=not res.get("error"),
+                             words=len(rec["text"].split()))
+                _answered.append(1)
                 import background
                 background.verify_record_async(proj, sess, rec["ts"], rec["text"])    # citations: checked after the reply, never before
+            if not _answered:      # nothing to say and nothing applied: the usage log still gets its answer
+                runlog.usage(proj, "answer", text="", chat=sess, engine=res.get("provider") or _chat_info["engine"], model=res.get("model") or "",
+                             seconds=res.get("seconds"), applied=applied, refused=refused, ok=not res.get("error"), words=0)
             recheck_missing(proj)
             compact_async(proj, sess)
             out = state()
@@ -2360,7 +2503,8 @@ class Handler(BaseHTTPRequestHandler):
             if busy:
                 return self._send(409, {"error": busy})
             try:
-                res = bridge.build_library(proj)
+                with runlog.span("library.build", project=proj):
+                    res = bridge.build_library(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
             except OSError as exc:
@@ -2635,7 +2779,8 @@ class Handler(BaseHTTPRequestHandler):
             if busy:
                 return self._send(409, {"error": busy})
             try:
-                res = bridge.create(proj)
+                with runlog.span("altium.create", project=proj):
+                    res = bridge.create(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
             finally:
@@ -2657,7 +2802,8 @@ class Handler(BaseHTTPRequestHandler):
             if busy:
                 return self._send(409, {"error": busy})
             try:
-                res = bridge.import_rules(proj) if path.endswith("rules") else bridge.run_outjob(proj)
+                with runlog.span("altium." + path.rsplit("/", 1)[1], project=proj):
+                    res = bridge.import_rules(proj) if path.endswith("rules") else bridge.run_outjob(proj)
             except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                 return self._send(400, {"error": str(exc)})
             finally:
@@ -2711,6 +2857,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/projects/new":
             name = (data.get("name") or "").strip() or "untitled"
             created = project_mod.create(name, title=data.get("title") or name, brief=data.get("brief", ""))
+            runlog.usage(None, "project", action="create", name=name, ok=True)
             return self._send(200, {"created": created, "projects": model.list_projects()})
 
         if path == "/api/projects/delete":
@@ -2967,6 +3114,25 @@ def _server_mode():
     bridge.allow_writes()
 
 
+QUIET_PATHS = ("/api/state", "/api/chat/progress", "/api/log/usage", "/api/log/client", "/api/altium/step-status")
+
+
+def _log_start(port, engine, available, why):
+    """The start record: which version, which machine, what is configured. Looking for Altium only reads the registry; it never starts it."""
+    try:
+        info = runlog.start_info()
+        try:
+            from altium import bridge
+            altium = bridge._exe()
+        except Exception:
+            altium = ""
+        runlog.event("start", **info, port=port, engine=engine, engine_available=available, engine_problem="" if available else why,
+                     model=workspace.get(f"agent.providers.{engine}.model", ""), altium_exe=altium, altium_found=bool(altium),
+                     home=str(workspace.home()))
+    except Exception:
+        pass
+
+
 def main(argv=None):
     global BACKEND, DEFAULT_PROJECT, QUIET, HTTPD
     RESTART["args"] = list(sys.argv[1:] if argv is None else argv)
@@ -3018,12 +3184,15 @@ def main(argv=None):
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     HTTPD = httpd
+    _log_start(port, _engine, ok, why)
     threading.Thread(target=check_updates, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped")
+        runlog.event("stop", reason="ctrl-c")
         return 0
+    runlog.event("stop", reason="restart for update" if RESTART["go"] else "shutdown")
     if RESTART["go"]:
         httpd.server_close()
         print("updated - starting again", flush=True)

@@ -53,6 +53,13 @@ Want to see a finished example first? Run `.venv\Scripts\python pcb.py seed` and
 - `.venv\Scripts\python pcb.py probe` (macOS/Linux: `.venv/bin/python`) checks that your AI engine works with the tool.
 - `.venv\Scripts\python pcb.py list` shows your projects. Projects live in the `projects/` folder, all on your machine.
 
+## Logs and reporting a problem
+
+The app keeps local logs in the `logs/` folder: what ran and what failed, and for each project `usage-log.jsonl` (what you clicked and were answered). Nothing is sent anywhere.
+To report a problem: Settings > **Save diagnostic report** (or `.venv\Scripts\python pcb.py report`). It makes one zip in `logs/`; attach it to your report.
+The zip holds the logs, your chat with the advisor, the setup check and your settings without secrets. No datasheets or Altium files.
+`pcb.py timeline <project>` reads a project's usage log as a timeline.
+
 ## For developers
 
 ```

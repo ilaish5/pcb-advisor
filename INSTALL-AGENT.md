@@ -30,3 +30,6 @@ password or token. The installer is safe to run twice: it repairs and never dele
 5. Start the server (`./start.sh` or `.\start.bat`, in the background), check that http://localhost:8931 answers,
    and tell the person to open it. Tell them how to start it next time (double-click `start.bat` / `./start.sh`).
 6. Optional: offer `pcb.py seed` (a finished example project).
+
+The installer saves a log of every run in `<install folder>/logs/install-*.log` (its path is printed when a step fails);
+read it when a step fails. Nothing in it is uploaded.

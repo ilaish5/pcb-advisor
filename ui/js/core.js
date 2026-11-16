@@ -33,9 +33,10 @@ const q = (extra = {}) => {
 async function api(path, body, opts = {}) {
   const sep = path.includes('?') ? '&' : '?';
   const url = path + sep + q();
+  const sid = {'X-Usage-Session': window.USAGE_SESSION || ''};      // which page load this request came from (the usage log)
   const r = body === undefined
-    ? await fetch(url)
-    : await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    ? await fetch(url, {headers: sid})
+    : await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', ...sid}, body: JSON.stringify(body)});
   let data = null;
   try { data = await r.json(); } catch (e) { data = {error: 'bad response'}; }
   if (!r.ok && !opts.soft) { toast(data.error || ('Error ' + r.status), null, {bad: true}); throw new Error(data.error || r.status); }
@@ -234,6 +235,7 @@ function toast(msg, action, opts) {
   const t = $('#toast');
   if (!t) return;
   const bad = opts && opts.bad != null ? !!opts.bad : /^(error|failed|couldn.t|could not|can.t|cannot)\b/i.test(String(msg));
+  if (window.usageShown) window.usageShown(msg, bad ? 'error' : 'ok', true);
   t.className = 'toast' + (bad ? ' bad' : '');
   t.setAttribute('role', 'status');
   t.textContent = '';

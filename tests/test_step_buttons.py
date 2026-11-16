@@ -3,6 +3,7 @@ says, flag "already there" so the page can offer Replace, refuse a second Altium
 The bridge is faked: nothing here touches Altium."""
 import pathlib
 import threading
+import time
 
 import pytest
 
@@ -233,6 +234,10 @@ def test_the_other_altium_buttons_free_the_lock_when_they_fail(server, empty, mo
         raise bridge.BridgeError("nope")
     monkeypatch.setattr(bridge, "import_rules", boom)
     assert call(server, "POST", "/api/altium/import-rules", empty, {})[0] == 400
+    for _ in range(100):      # the handler frees the lock just after it has sent the answer
+        if not serve.STEP_LOCK.locked():
+            break
+        time.sleep(0.02)
     assert not serve.STEP_LOCK.locked()
 
 
@@ -633,3 +638,27 @@ def test_pin_numbers_filled_from_the_symbol_are_a_remark_not_an_amber_warning():
     filled = "netlist.write:01, pin numbers of U1, R1 matched by pin name to the library symbols"
     assert serve.warning_of(filled) == ""
     assert serve.warning_of(filled + " (warnings: net X has one pin)") == "net X has one pin"
+
+
+def _usage(project):
+    import json
+    import workspace
+    f = workspace.projects_dir() / project / "usage-log.jsonl"
+    return [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines()] if f.exists() else []
+
+
+def test_a_step_writes_begin_and_end_usage_records_with_what_the_person_was_shown(empty, world):
+    serve.run_step_button(empty, None, "route", {})
+    begin, end = [r for r in _usage(empty) if r["kind"] == "step"]
+    assert begin["phase"] == "begin" and begin["ok"] is True
+    assert end["phase"] == "end" and end["ok"] is True and end["shown"] and end["steps"]
+    world["fail"]["route_pcb"] = "Altium refused: no copper layers"
+    serve.run_step_button(empty, None, "route", {})
+    failed = [r for r in _usage(empty) if r["kind"] == "step"][-1]
+    assert failed["ok"] is False and "no copper layers" in failed["shown"]
+
+
+def test_two_runs_started_in_the_same_clock_tick_never_share_an_id(empty, monkeypatch):
+    monkeypatch.setattr(serve.time, "time", lambda: 1000.0)
+    ids = {serve._run_begin(empty, "route", ["altium.route_pcb"]) for _ in range(50)}
+    assert len(ids) == 50

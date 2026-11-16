@@ -62,6 +62,7 @@ import partlib_order  # noqa: E402
 import project as project_mod  # noqa: E402
 import rule_kinds  # noqa: E402
 import rules as rules_mod  # noqa: E402
+import runlog  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
 from altium import AltiumReadError, registry  # noqa: E402
@@ -267,6 +268,20 @@ def _check_writes_allowed(commands):
 
 
 def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300):
+    """_run_commands, with one run-log record per batch: the command names, seconds, ok or the full error (it carries the dialog texts)."""
+    t0 = time.time()
+    names = [str(c[0]) for c in commands]
+    try:
+        log = _run_commands(commands, start_timeout, stall_timeout, total_timeout)
+    except BaseException as exc:
+        runlog.event("altium", commands=names, seconds=round(time.time() - t0, 1), ok=False,
+                     error=f"{type(exc).__name__}: {exc}", dialogs=DIALOG_LOG[-10:])
+        raise
+    runlog.event("altium", commands=names, seconds=round(time.time() - t0, 1), ok=True)
+    return log
+
+
+def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300):
     """Send command lines (tab separated fields) to Altium, wait for DONE. Returns the script's log lines.
     Raises BridgeError with the last step when the script does not start, stops logging or reports an error.
     While the script runs we only look at whether start.flag / end.flag exist and whether log.txt grows."""

@@ -19,9 +19,29 @@ REPO_URL="${PCB_REPO:-https://github.com/ilaish5/pcb-advisor.git}"
 REF="${PCB_REF:-}"
 ZIP_URL="${PCB_ZIP_URL:-https://github.com/ilaish5/pcb-advisor/archive/refs/heads/${REF:-main}.zip}"
 
+# The install log: this run's steps, versions and the output of the commands that can fail. Kept on this machine in
+# <install folder>/logs/install-*.log (a temp file until the folder exists; its path is printed when something fails). Nothing is uploaded.
+STAMP="$(date +%Y%m%d-%H%M%S)"
+LOG="${TMPDIR:-/tmp}/pcb-install-$STAMP.log"
+CURSTEP=""
+note() { printf '%s  %s\n' "$(date +%H:%M:%S)" "$*" >>"$LOG" 2>/dev/null; return 0; }
+logged() { "$@" 2>&1 | tee -a "$LOG"; return "${PIPESTATUS[0]}"; }       # the command's own exit code, its output on screen and in the log
+finish() {
+  local rc="${1:-0}" dest="$LOG"
+  [ -n "$CURSTEP" ] && { if [ "$rc" -eq 0 ]; then note "[ok]   $CURSTEP"; else note "[FAIL] $CURSTEP"; fi; CURSTEP=""; }
+  note "result: exit $rc"
+  if [ -n "${DIR:-}" ] && [ -d "$DIR" ] && mkdir -p "$DIR/logs" 2>/dev/null; then dest="$DIR/logs/install-$STAMP.log"; fi
+  if [ "$dest" != "$LOG" ]; then
+    sed -E 's#(sk-[A-Za-z0-9_-]{16,}|[Bb]earer +[A-Za-z0-9._~+/=-]{12,}|([Tt]oken|TOKEN|[Aa]pi[_-]?[Kk]ey|API_KEY|[Pp]assword|PASSWORD|[Ss]ecret|SECRET) *[=:] *[^ ]+)#[hidden]#g' "$LOG" >"$dest" 2>/dev/null && rm -f "$LOG"
+  fi
+  [ "$rc" -ne 0 ] && printf 'The install log is saved at: %s\n' "$dest" >&2
+  return 0
+}
+trap 'finish $?' EXIT
 say()  { printf '%s\n' "$*"; }
-step() { printf '\n== %s\n' "$*"; }
-die()  { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+step() { [ -n "$CURSTEP" ] && note "[ok]   $CURSTEP"; CURSTEP="$*"; printf '\n== %s\n' "$*"; }
+die()  { note "[FAIL] ${CURSTEP:-start}: $*"; CURSTEP=""; printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+note "install started; $(uname -a)"
 
 # Y/n with Enter = yes. Reads /dev/tty (stdin is the script itself under `curl | bash`); no terminal = the default.
 ask() {
@@ -60,12 +80,14 @@ if [ -z "$PY" ] && [ "$(uname)" = "Darwin" ] && command -v brew >/dev/null 2>&1;
 fi
 [ -n "$PY" ] || die "Python 3.10 or newer is required. Get it from https://www.python.org/downloads/ (Linux: your package manager), then run this again."
 say "using $("$PY" --version) at $PY"
+note "python: $PY = $("$PY" --version 2>&1)"
 
 # ---- 2. the code
 step "pcb-advisor code in $DIR"
 HAVE_GIT=1
 command -v git >/dev/null 2>&1 || HAVE_GIT=0
 [ "${PCB_NO_GIT:-}" = "1" ] && HAVE_GIT=0
+note "install folder: $DIR; git: $([ "$HAVE_GIT" = 1 ] && git --version 2>&1 || echo "not used (ZIP route)")"
 if [ -d "$DIR/.git" ] && [ "$HAVE_GIT" = 1 ]; then
   if [ -z "$(git -C "$DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
     git -C "$DIR" pull --ff-only >/dev/null 2>&1 && say "up to date (git pull)" || say "kept the current version (could not pull; this is fine offline)"
@@ -88,7 +110,7 @@ elif [ -f "$DIR/pcb.py" ]; then
   say "found an existing install, keeping it"
 elif [ "$HAVE_GIT" = 1 ]; then
   [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ] && die "$DIR exists and is not pcb-advisor. Pick another folder: PCB_DIR=/some/folder"
-  git clone "$REPO_URL" "$DIR" || die "git clone failed (network, or a proxy: set HTTPS_PROXY)."
+  logged git clone --progress "$REPO_URL" "$DIR" || die "git clone failed (network, or a proxy: set HTTPS_PROXY)."
   [ -n "$REF" ] && git -C "$DIR" checkout "$REF" >/dev/null 2>&1
 else
   say "WARNING: git is not installed, so this uses the ZIP download. Everything works, but the in-app Update stays off."
@@ -112,10 +134,10 @@ cd "$DIR" || die "cannot enter $DIR"
 # ---- 3. venv + requirements + workspace
 step "Private Python environment"
 if [ -d .venv ] && ! .venv/bin/python -m pip --version >/dev/null 2>&1; then rm -rf .venv; fi
-[ -d .venv ] || "$PY" -m venv .venv || die "could not create .venv (Debian/Ubuntu: sudo apt install python3-venv)"
-.venv/bin/python -m pip install --quiet --upgrade pip || say "pip upgrade skipped"
-.venv/bin/python -m pip install --quiet -r requirements.txt || die "installing requirements failed (network or proxy?)"
-.venv/bin/python pcb.py init || die "pcb.py init failed"
+[ -d .venv ] || logged "$PY" -m venv .venv || die "could not create .venv (Debian/Ubuntu: sudo apt install python3-venv)"
+logged .venv/bin/python -m pip install --quiet --upgrade pip || say "pip upgrade skipped"
+logged .venv/bin/python -m pip install --quiet -r requirements.txt || die "installing requirements failed (network or proxy?)"
+logged .venv/bin/python pcb.py init || die "pcb.py init failed"
 
 # ---- 4. AI engine (Claude Code or Antigravity) + sign-in
 CLAUDE=""
@@ -190,6 +212,7 @@ if [ "${PCB_NO_CLAUDE:-}" != "1" ] && [ "${PCB_NO_ENGINE:-}" != "1" ]; then
   fi
   if [ "$ENGINE" = "claude" ] && [ -n "$CLAUDE" ]; then
     say "found $CLAUDE"
+    note "claude: $CLAUDE = $("$CLAUDE" --version 2>&1 | head -n 1)"
     if ! "$CLAUDE" auth status >/dev/null 2>&1; then
       if { : </dev/tty; } 2>/dev/null || [ "${PCB_YES:-}" = "1" ]; then
         if ask "Sign in to Claude now? (a browser window opens; finish there)"; then
@@ -202,6 +225,7 @@ if [ "${PCB_NO_CLAUDE:-}" != "1" ] && [ "${PCB_NO_ENGINE:-}" != "1" ]; then
     fi
   elif [ "$ENGINE" = "agy" ] && [ -n "$AGY" ]; then
     say "found $AGY"
+    note "agy: $AGY"
     # agy has no status command: the first run opens the Google sign-in in the browser.
     say "To sign in: run \`agy\` once and sign in with your Google account in the browser, then exit it."
     if can_prompt && ask "Run agy now to sign in?"; then "$AGY" </dev/tty || true; fi
@@ -210,7 +234,7 @@ fi
 
 # ---- 5. doctor, then start
 step "Checking everything"
-.venv/bin/python pcb.py doctor --exit-start
+logged .venv/bin/python pcb.py doctor --exit-start
 RC=$?
 if [ "$RC" -ne 0 ]; then
   say ""
@@ -221,4 +245,5 @@ say ""
 say "Installed in $DIR. Next time: cd \"$DIR\" && ./start.sh"
 if [ "${PCB_NO_START:-}" = "1" ]; then exit 0; fi
 step "Starting pcb-advisor (http://localhost:${PCB_ADVISOR_PORT:-8931}). Stop with Ctrl+C."
+trap - EXIT; finish 0          # the server runs from here on: save the log of the install now
 exec ./start.sh </dev/null

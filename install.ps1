@@ -16,7 +16,76 @@
 # This file is plain ASCII on purpose (Windows PowerShell 5.1 reads a BOM-less file as the ANSI code page) and never
 # calls `exit` (under `iex` that would close the student's terminal).
 
+# ---- the install log: this run's steps, versions and console output, kept on this machine in <install folder>\logs\install-*.log
+# (a temp file until the folder exists; its path is printed when something fails). Nothing is uploaded. Every failure here is ignored.
+$script:PcbTmpNotes = $null; $script:PcbTmpTrans = $null; $script:PcbDir = $null; $script:PcbStamp = ''
+$script:PcbStep = ''; $script:PcbStepFailed = $false; $script:PcbFailed = $false
+
+function Pcb-Note($m) {
+    if ($script:PcbTmpNotes) { try { Add-Content -LiteralPath $script:PcbTmpNotes -Value ('{0}  {1}' -f (Get-Date -Format 'HH:mm:ss'), $m) -Encoding UTF8 } catch { } }
+}
+function Pcb-StepEnd {
+    if ($script:PcbStep) { $tag = if ($script:PcbStepFailed) { '[FAIL] ' } else { '[ok]   ' }; Pcb-Note ($tag + $script:PcbStep); $script:PcbStep = '' }
+}
+function Pcb-StepBegin($name) { Pcb-StepEnd; $script:PcbStep = $name; $script:PcbStepFailed = $false }
+function Pcb-Start {
+    try {
+        $script:PcbStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+        $tmp = [IO.Path]::GetTempPath()
+        $script:PcbTmpNotes = Join-Path $tmp ("pcb-install-$($script:PcbStamp)-notes.txt")
+        $trans = Join-Path $tmp ("pcb-install-$($script:PcbStamp)-console.txt")
+        Pcb-Note ("install started; PowerShell $($PSVersionTable.PSVersion); " + [Environment]::OSVersion.VersionString)
+        Start-Transcript -LiteralPath $trans -Force | Out-Null
+        $script:PcbTmpTrans = $trans
+    } catch { }
+}
+function Pcb-Finish {
+    if (-not $script:PcbTmpNotes) { return }
+    try {
+        Pcb-StepEnd
+        Pcb-Note ('result: ' + $(if ($script:PcbFailed) { 'FAILED' } else { 'ok' }))
+        if ($script:PcbTmpTrans) { try { Stop-Transcript | Out-Null } catch { } }
+        $console = ''
+        if ($script:PcbTmpTrans -and (Test-Path -LiteralPath $script:PcbTmpTrans)) { $console = [string](Get-Content -Raw -LiteralPath $script:PcbTmpTrans) }
+        $console = $console -replace '(?i)(sk-[A-Za-z0-9_-]{16,}|bearer\s+[A-Za-z0-9._~+/=-]{12,}|(token|api[_-]?key|password|secret)\s*[=:]\s*\S+)', '[hidden]'
+        $notes = [string](Get-Content -Raw -LiteralPath $script:PcbTmpNotes)
+        $dest = $null
+        if ($script:PcbDir -and (Test-Path -LiteralPath $script:PcbDir)) {
+            try {
+                $folder = Join-Path $script:PcbDir 'logs'
+                New-Item -ItemType Directory -Force -Path $folder | Out-Null
+                $dest = Join-Path $folder ("install-$($script:PcbStamp).log")
+            } catch { $dest = $null }
+        }
+        if (-not $dest) { $dest = Join-Path ([IO.Path]::GetTempPath()) ("pcb-install-$($script:PcbStamp).log") }
+        Set-Content -LiteralPath $dest -Value ($notes + "`r`n---- console output ----`r`n" + $console) -Encoding UTF8
+        Remove-Item -LiteralPath $script:PcbTmpNotes -ErrorAction SilentlyContinue
+        if ($script:PcbTmpTrans) { Remove-Item -LiteralPath $script:PcbTmpTrans -ErrorAction SilentlyContinue }
+        $script:PcbTmpNotes = $null; $script:PcbTmpTrans = $null
+        if ($script:PcbFailed) { Write-Host "The install log is saved at: $dest" }
+    } catch { }
+}
+
+# Runs a native command with its output shown AND written to the log (Windows PowerShell 5.1 transcripts miss native output).
+# $LASTEXITCODE is the command's own when this returns.
+function Pcb-Run {
+    $exe = $args[0]; $rest = @(); if ($args.Count -gt 1) { $rest = $args[1..($args.Count - 1)] }
+    Pcb-Note ('run: ' + (($args | ForEach-Object { "$_" }) -join ' '))
+    & $exe @rest 2>&1 | ForEach-Object { $line = "$_"; Write-Host $line; Pcb-Note ('  ' + $line) }
+}
+
 function Install-PcbAdvisor {
+    param([string[]]$Argv)
+    Pcb-Start
+    $done = $false
+    try { Install-PcbAdvisorCore -Argv $Argv; $done = $true }
+    finally {
+        if (-not $done) { $script:PcbFailed = $true; Pcb-Note 'stopped by an unexpected error' }
+        Pcb-Finish
+    }
+}
+
+function Install-PcbAdvisorCore {
     param([string[]]$Argv)
     $ErrorActionPreference = 'Continue'       # native tools write progress to stderr; we check $LASTEXITCODE ourselves
     try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072 } catch { }
@@ -28,8 +97,8 @@ function Install-PcbAdvisor {
     $zipUrl = if ($env:PCB_ZIP_URL) { $env:PCB_ZIP_URL } else { "https://github.com/ilaish5/pcb-advisor/archive/refs/heads/$zipRef.zip" }
 
     function Say($m) { Write-Host $m }
-    function Step($m) { Write-Host ''; Write-Host "== $m" }
-    function Fail($m) { Write-Host ''; Write-Host "ERROR: $m" -ForegroundColor Red }
+    function Step($m) { Pcb-StepBegin $m; Write-Host ''; Write-Host "== $m" }
+    function Fail($m) { $script:PcbFailed = $true; $script:PcbStepFailed = $true; Pcb-Note "FAIL: $m"; Write-Host ''; Write-Host "ERROR: $m" -ForegroundColor Red }
 
     # Y/n, Enter = yes. No console to ask on (CI, redirected input) = the default.
     function Ask($q) {
@@ -67,7 +136,7 @@ function Install-PcbAdvisor {
     }
 
     function Winget-Install($id) {
-        & winget install -e --id $id --scope user --accept-package-agreements --accept-source-agreements
+        & winget install -e --id $id --scope user --accept-package-agreements --accept-source-agreements 2>&1 | ForEach-Object { Write-Host "$_"; Pcb-Note ("  $_") }
         Refresh-Path
     }
 
@@ -78,6 +147,8 @@ function Install-PcbAdvisor {
         if ($PSScriptRoot -and (Test-Path (Join-Path $PSScriptRoot 'pcb.py'))) { $dir = $PSScriptRoot }
         else { $dir = Join-Path $env:USERPROFILE 'pcb-advisor' }
     }
+    $script:PcbDir = $dir
+    Pcb-Note "install folder: $dir"
 
     # ---- 1. Python
     Step 'Python'
@@ -93,6 +164,7 @@ function Install-PcbAdvisor {
         return
     }
     Say "using $py"
+    try { Pcb-Note ('python: ' + $py + ' = ' + ((& $py --version 2>&1) -join ' ')) } catch { }
 
     # ---- 2. the code
     Step "pcb-advisor code in $dir"
@@ -107,6 +179,7 @@ function Install-PcbAdvisor {
         }
     }
     if ($env:PCB_NO_GIT -eq '1') { $haveGit = $false }
+    try { Pcb-Note ('git: ' + $(if ($haveGit) { (& git --version 2>&1) -join ' ' } else { 'not found (the ZIP route is used)' })) } catch { }
     $dirHasGit = Test-Path (Join-Path $dir '.git')
     $dirHasCode = Test-Path (Join-Path $dir 'pcb.py')
     if ($dirHasGit -and $haveGit) {
@@ -139,7 +212,7 @@ function Install-PcbAdvisor {
             return
         }
         if ($haveGit) {
-            & git clone $repoUrl $dir
+            Pcb-Run git clone $repoUrl $dir
             if ($LASTEXITCODE -ne 0) { Fail 'git clone failed (network, or a proxy: set HTTPS_PROXY).'; return }
             if ($ref) { & git -C $dir checkout $ref 2>&1 | Out-Null }
         }
@@ -173,11 +246,11 @@ function Install-PcbAdvisor {
     }
     elseif (Test-Path (Join-Path $dir '.venv')) { Remove-Item -Recurse -Force (Join-Path $dir '.venv') }
     if (-not (Test-Path $venvPy)) {
-        & $py -m venv (Join-Path $dir '.venv')
+        Pcb-Run $py -m venv (Join-Path $dir '.venv')
         if ($LASTEXITCODE -ne 0) { Fail 'could not create .venv'; return }
     }
-    & $venvPy -m pip install --quiet --upgrade pip
-    & $venvPy -m pip install --quiet -r requirements.txt
+    Pcb-Run $venvPy -m pip install --quiet --upgrade pip
+    Pcb-Run $venvPy -m pip install --quiet -r requirements.txt
     if ($LASTEXITCODE -ne 0) { Fail 'installing requirements failed (network or proxy?)'; return }
     & $venvPy pcb.py init
     if ($LASTEXITCODE -ne 0) { Fail 'pcb.py init failed'; return }
@@ -262,6 +335,7 @@ function Install-PcbAdvisor {
             & $venvPy pcb.py config agent.provider $prov | Out-Null
             Say "engine set to $prov"
         }
+        try { Pcb-Note ('engine: ' + $engine + '; claude: ' + $(if ($claude) { $claude } else { 'not found' }) + '; agy: ' + $(if ($agy) { $agy } else { 'not found' })) } catch { }
         if ($engine -eq 'claude' -and $claude) {
             Say "found $claude"
             & $claude auth status 2>&1 | Out-Null
@@ -284,15 +358,17 @@ function Install-PcbAdvisor {
 
     # ---- 5. doctor, then start
     Step 'Checking everything'
-    & $venvPy pcb.py doctor --exit-start
+    Pcb-Run $venvPy pcb.py doctor --exit-start
     if ($LASTEXITCODE -ne 0) {
         Say ''
         Say 'The server cannot start yet. Fix the FIX lines above, then run this installer again.'
+        $script:PcbFailed = $true; $script:PcbStepFailed = $true
         return
     }
     Say ''
     Say "Installed in $dir. Next time: double-click start.bat in that folder."
     if ($env:PCB_NO_START -eq '1') { return }
+    Pcb-Finish        # the server runs in this window from here on: save the log of the install now
     $port = if ($env:PCB_ADVISOR_PORT) { $env:PCB_ADVISOR_PORT } else { '8931' }
     Step "Starting pcb-advisor (http://localhost:$port). Close this window to stop it."
     & cmd /c .\start.bat         # .\ : cmd may not search the current folder (NoDefaultCurrentDirectoryInExePath, set by agent shells)

@@ -278,6 +278,7 @@ function chatQueueHTML() {
     `<div class="bubble" dir="auto">${esc(q.text)}</div></div>`).join('');
 }
 function chatEnqueue(text) {
+  if (window.usage) window.usage('queued', {text});
   const ctx = chatChip();
   if (ctx) chatSetChip(null);
   chatQueue = [...chatQueue, {id: ++chatQid, text, ctx, session: S.session}];
@@ -295,7 +296,7 @@ async function chatFlush(session) {
   if (!mine.length || !S || S.session !== session) return;
   chatQueue = chatQueue.filter(q => q.session !== session);
   const withCtx = mine.find(q => q.ctx);
-  await send(mine.map(q => q.text).join('\n\n'), {ctx: withCtx ? withCtx.ctx : null});
+  await send(mine.map(q => q.text).join('\n\n'), {ctx: withCtx ? withCtx.ctx : null, queued: true});
 }
 
 /* ---------- messages ---------- */
@@ -637,6 +638,7 @@ async function send(text, opts) {
     if (ctx && ctx.kind === 'file') { payload.file = ctx.id; payload.source = ctx.id; }
     else if (ctx) payload.about = entry.about;
     if (entry.generated) payload.generated = true;
+    if (opts && opts.queued) payload.queued = true;
     const res = await api('/api/chat', payload, {soft: true});      // soft: the error is drawn under the box, not toasted
     if (!res || res.error) throw new Error((res && res.error) || 'no answer');
     setState(res);

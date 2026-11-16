@@ -11,6 +11,9 @@ shared/datasheets/*
 projects/*
 !projects/.gitkeep
 
+# Diagnostic logs and report zips of this machine (nothing in them is ever sent automatically).
+logs/
+
 __pycache__/
 *.pyc
 .DS_Store

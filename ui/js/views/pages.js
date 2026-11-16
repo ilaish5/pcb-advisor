@@ -214,17 +214,29 @@ function setDetails(key, summary, body) {
 }
 
 /* Setup check: the same list as `python pcb.py doctor` (GET /api/doctor). The result is kept so a re-render keeps it. */
-let PG_DOCTOR = null, PG_DOCTOR_BUSY = false;
+let PG_DOCTOR = null, PG_DOCTOR_BUSY = false, PG_REPORT = null, PG_REPORT_BUSY = false;
+/* Save diagnostic report: a zip on this computer (POST /api/report); nothing is sent anywhere */
+function reportNoteHTML() {
+  const r = PG_REPORT;
+  if (!r) return '';
+  return `<div class="set-hint"><b>${esc(r.path)}</b> <a href="/api/report?file=${encodeURIComponent(r.name)}" download>Download</a><br>` +
+    'Contains logs, your chat with the advisor, and what you clicked. No datasheets or Altium files. Nothing was sent. Attach this file when you report a problem.</div>';
+}
 function doctorHTML() {
-  const run = btn(PG_DOCTOR_BUSY ? 'Checking…' : 'Run checks', {size: 'sm', act: 'doctor-run', disabled: PG_DOCTOR_BUSY});
-  if (!PG_DOCTOR) return setRow('Setup', run, {saved: false});
+  const run = btn(PG_DOCTOR_BUSY ? 'Checking…' : 'Run checks', {size: 'sm', act: 'doctor-run', disabled: PG_DOCTOR_BUSY}) + ' ' +
+    btn(PG_REPORT_BUSY ? 'Saving…' : 'Save diagnostic report', {size: 'sm', act: 'report-save', disabled: PG_REPORT_BUSY});
+  if (!PG_DOCTOR) return setRow('Setup', run, {saved: false}) + reportNoteHTML();
   const tone = {ok: 'ok-t', warn: 'warn-t', fix: 'bad-t', skip: ''};
   const mark = {ok: '✓', warn: '!', fix: '✗', skip: '–'};
   const rows = PG_DOCTOR.checks.map(c => `<li><span class="${tone[c.status]}">${mark[c.status]}</span> <b>${esc(c.title)}</b>` +
     (c.detail ? ` <span class="muted">${esc(c.detail)}</span>` : '') +
     (c.fix && c.fix.command && c.status !== 'ok' ? `<div class="m">${esc(c.fix.command)} ${btn('Copy', {kind: 'link', size: 'sm', act: 'doctor-copy', cmd: c.fix.command})}</div>` : '') + '</li>').join('');
-  return setRow('Setup', run, {saved: false}) + `<ul class="doctor-list" aria-live="polite">${rows}</ul>`;
+  return setRow('Setup', run, {saved: false}) + reportNoteHTML() + `<ul class="doctor-list" aria-live="polite">${rows}</ul>`;
 }
+onAct('report-save', async () => {
+  PG_REPORT_BUSY = true; render(true);
+  try { PG_REPORT = await api('/api/report', {}); } finally { PG_REPORT_BUSY = false; render(true); }
+});
 async function pgDoctorRun() {
   PG_DOCTOR_BUSY = true; render(true);
   try { PG_DOCTOR = await api('/api/doctor?refresh=1'); } finally { PG_DOCTOR_BUSY = false; render(true); }

@@ -16,6 +16,11 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 sys.path.insert(0, str(REPO / "scripts" / "skills"))
 
+# Session default for the run log's folder: a request thread that finishes after its test (and its monkeypatch) is over still writes
+# here, never to the real logs/ folder.
+import tempfile  # noqa: E402
+os.environ["PCB_ADVISOR_LOG_DIR"] = tempfile.mkdtemp(prefix="pcb-runlog-")
+
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
@@ -39,6 +44,12 @@ def engine_home(tmp_path_factory, monkeypatch):
     path = tmp_path_factory.mktemp("engine")
     monkeypatch.setenv("PCB_ADVISOR_ENGINE_HOME", str(path))
     return path
+
+
+@pytest.fixture(autouse=True)
+def run_log_dir(tmp_path_factory, monkeypatch):
+    """The run log never goes to the real logs/ folder. A test that checks the log points PCB_ADVISOR_LOG_DIR at its own."""
+    monkeypatch.setenv("PCB_ADVISOR_LOG_DIR", str(tmp_path_factory.mktemp("runlog")))
 
 
 @pytest.fixture

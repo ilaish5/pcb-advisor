@@ -9,4 +9,4 @@ set PCB_ARGS=
 :run
 .venv\Scripts\python pcb.py serve %PCB_ARGS%
 if %ERRORLEVEL% EQU 75 (set PCB_ARGS=--no-browser & goto run)
-if %ERRORLEVEL% NEQ 0 (echo The server stopped with an error. & pause & exit /b 1)
+if %ERRORLEVEL% NEQ 0 (echo The server stopped with an error. Details are saved in the logs folder: %~dp0logs & echo Send the newest file in it, or use Settings - Save diagnostic report. & pause & exit /b 1)
