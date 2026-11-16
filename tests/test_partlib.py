@@ -87,7 +87,7 @@ def test_generated_soic8_pitch_rows_and_pin_order():
     p = pads(fp["lines"])
     assert len(p) == 8
     assert float(p["1"][3]) - float(p["2"][3]) == pytest.approx(1.27 * MM, abs=0.01)
-    assert float(p["1"][2]) == pytest.approx(-2.7 * MM, abs=0.01) and float(p["5"][2]) == pytest.approx(2.7 * MM, abs=0.01)
+    assert float(p["1"][2]) == pytest.approx(-2.475 * MM, abs=0.01) and float(p["5"][2]) == pytest.approx(2.475 * MM, abs=0.01)
     assert float(p["1"][3]) > 0 > float(p["4"][3])                          # pin 1 top left, pin 4 bottom left
     assert float(p["5"][3]) < 0 < float(p["8"][3])                          # pin 5 bottom right, pin 8 top right
 
@@ -207,7 +207,7 @@ def test_prepare_manifest_sharing_and_missing(proj, home):
     assert {k: m["R3"][k] for k in ("symbol", "footprint", "step")} == {k: m["R1"][k] for k in ("symbol", "footprint", "step")}
     assert m["R1"]["step"].endswith("R0603_FAKE.step") and (home / "projects" / proj / "library" / m["R1"]["step"]).exists()
     assert m["R2"]["source"] == "generated" and m["R2"]["footprint"] == "CHIP-0603"
-    assert m["C11"]["footprint"] == m["R2"]["footprint"]                    # same package, one footprint
+    assert m["C11"]["footprint"] == "C-CHIP-0603"                           # KiCad's capacitor pads differ from the resistor's
     assert m["U3"]["status"] == "missing" and m["U3"]["symbol"] == "" and m["U3"]["source"] == "missing"
     assert any("C999" in i for i in m["U3"]["issues"]) and any("QFN-48" in i for i in m["U3"]["issues"])
     assert m["U2"]["source"] == "generated" and m["U2"]["footprint"] == "SOIC-8"

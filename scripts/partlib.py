@@ -6,7 +6,7 @@ For every BOM line the tool gets a symbol, a footprint and (when EasyEDA has one
   2. A vendor zip (SnapEDA, Ultra Librarian, Component Search Engine, Mouser/DigiKey) the student downloaded once:
      found by the MPN in its file name in the project's Sources or in Downloads, unpacked safely into library/vendor/,
      its KiCad symbol, footprint and STEP converted like EasyEDA's. These sites need a log-in, so the tool asks.
-  3. Generated: an IPC-7351 nominal footprint for the standard packages and a standard-shape or box symbol
+  3. Generated: KiCad's land pattern (built in) for the standard packages and a standard-shape or box symbol
      (pins from the project's netlist sheets).
   4. Otherwise status "missing" with the reason. Nothing is invented.
 Output, all under projects/<name>/library/: easyeda/<Cxxxx>/ (downloads), vendor/<MPN>/ (unpacked zips), build/ (the spec files stage L2 feeds

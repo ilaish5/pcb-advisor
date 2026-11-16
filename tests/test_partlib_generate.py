@@ -13,7 +13,7 @@ MM = 1 / 0.0254
 
 def pads(key):
     out = {}
-    for ln in gen.footprint_for(key)["lines"]:
+    for ln in (key if isinstance(key, list) else gen.footprint_for(key)["lines"]):
         if ln.startswith("PAD|"):
             f = ln.split("|")
             out[f[1]] = (float(f[2]) / MM, float(f[3]) / MM, float(f[11]) / MM, float(f[12]) / MM)   # x, y, w, h in mm
@@ -40,9 +40,9 @@ def test_sot23_5_6_rows_and_ccw_numbering(key, left, right):
     assert all(p[str(i + 1)][0] < 0 for i in range(len(left))) and all(p[str(i + 1)][0] > 0 for i in range(len(left), n))
 
 
-@pytest.mark.parametrize("key,pitch,rowx,n", [("SOIC-8", 1.27, 2.70, 8), ("SOIC-14", 1.27, 2.70, 14), ("SOIC-16", 1.27, 2.70, 16),
-                                              ("TSSOP-8", 0.65, 2.85, 8), ("TSSOP-14", 0.65, 2.85, 14),
-                                              ("TSSOP-16", 0.65, 2.85, 16), ("TSSOP-20", 0.65, 2.85, 20)])
+@pytest.mark.parametrize("key,pitch,rowx,n", [("SOIC-8", 1.27, 2.475, 8), ("SOIC-14", 1.27, 2.475, 14), ("SOIC-16", 1.27, 2.475, 16),
+                                              ("TSSOP-8", 0.65, 2.8625, 8), ("TSSOP-14", 0.65, 2.875, 14),
+                                              ("TSSOP-16", 0.65, 2.8625, 16), ("TSSOP-20", 0.65, 2.8625, 20)])
 def test_dual_row_pitch_spacing_and_counter_clockwise_numbering(key, pitch, rowx, n):
     p = pads(key)
     h = n // 2
@@ -56,21 +56,39 @@ def test_dual_row_pitch_spacing_and_counter_clockwise_numbering(key, pitch, rowx
     assert p["1"][1] > 0 and p[str(n)][1] > 0                         # pin 1 top left, last pin top right
 
 
-def test_sot223_pitch_pin1_and_tab():
-    p = pads("SOT-223")
-    assert len(p) == 4 and p["1"][1] == pytest.approx(2.3, abs=0.005) and p["2"][1] == 0 and p["3"][1] == pytest.approx(-2.3, abs=0.005)
-    assert p["1"][0] == p["2"][0] == p["3"][0] == pytest.approx(-3.15, abs=0.005) and p["4"][0] == pytest.approx(3.15, abs=0.005)
-    assert p["4"][3] > 3 * p["1"][3] / 2                                # the tab is the wide pad
+def test_sot223_pitch_pin1_and_the_tab_is_pad_2():
+    # as KiCad's SOT-223-3_TabPin2: three pins and a tab on pin 2's net
+    lines = [ln.split("|") for ln in gen.footprint_for("SOT-223")["lines"] if ln.startswith("PAD|")]
+    got = sorted((f[1], round(float(f[2]) / MM, 3), round(float(f[3]) / MM, 3), round(float(f[12]) / MM, 3)) for f in lines)
+    assert got == [("1", -3.15, 2.3, 1.5), ("2", -3.15, 0.0, 1.5), ("2", 3.15, 0.0, 3.8), ("3", -3.15, -2.3, 1.5)]
 
 
-@pytest.mark.parametrize("key,cx,pw,ph", [("0402", 0.48, 0.56, 0.62), ("0603", 0.825, 0.80, 0.95), ("0805", 0.95, 1.00, 1.45),
-                                          ("1206", 1.50, 1.15, 1.80), ("SOD-123", 1.635, 0.91, 1.22),
-                                          ("SOD-323", 1.05, 0.60, 0.45)])
-def test_two_pad_parts(key, cx, pw, ph):
-    p = pads(key)
+# KiCad's official footprints (kicad-footprints master, read 2026-11-16): file, |pad x|, pad w, pad h of pad 1
+KICAD = [("0402", "R", "R_0402_1005Metric", 0.51, 0.54, 0.64), ("0603", "R", "R_0603_1608Metric", 0.825, 0.80, 0.95),
+         ("0805", "R", "R_0805_2012Metric", 0.9125, 1.025, 1.4), ("1206", "R", "R_1206_3216Metric", 1.4625, 1.125, 1.75),
+         ("0402", "C", "C_0402_1005Metric", 0.48, 0.56, 0.62), ("0603", "C", "C_0603_1608Metric", 0.775, 0.90, 0.95),
+         ("0805", "C", "C_0805_2012Metric", 0.95, 1.00, 1.45), ("1206", "C", "C_1206_3216Metric", 1.475, 1.15, 1.80),
+         ("0805", "L", "L_0805_2012Metric", 1.0625, 0.875, 1.2), ("1206", "FB", "L_1206_3216Metric", 1.575, 1.05, 1.9),
+         ("0603", "LED", "LED_0603_1608Metric", 0.7875, 0.875, 0.95), ("0805", "LED", "LED_0805_2012Metric", 0.9375, 0.975, 1.4),
+         ("1206", "D", "D_1206_3216Metric", 1.4, 1.25, 1.75), ("0805", "F", "Fuse_0805_2012Metric", 0.9375, 0.975, 1.4),
+         ("SOD-123", None, "D_SOD-123", 1.65, 0.90, 1.20), ("SOD-323", None, "D_SOD-323", 1.05, 0.60, 0.45)]
+
+
+@pytest.mark.parametrize("key,prefix,kicad,cx,pw,ph", KICAD)
+def test_two_pad_parts_have_kicads_pads(key, prefix, kicad, cx, pw, ph):
+    p = pads(gen.footprint_for(key, prefix)["lines"])
     assert set(p) == {"1", "2"}
     assert p["1"][0] == pytest.approx(-cx, abs=0.005) and p["2"][0] == pytest.approx(cx, abs=0.005)
     assert p["1"][1] == p["2"][1] == 0 and p["1"][2:] == pytest.approx((pw, ph), abs=0.005)
+
+
+@pytest.mark.parametrize("key,cx,pw,ph", [("SOT-23-3", 0.9375, 1.475, 0.60), ("SOT-23-5", 1.1375, 1.325, 0.60),
+                                          ("SOIC-8", 2.475, 1.95, 0.60), ("TSSOP-14", 2.875, 1.55, 0.40),
+                                          ("TSSOP-20", 2.8625, 1.475, 0.40)])
+def test_ic_pads_are_kicads(key, cx, pw, ph):
+    # SOT-23, SOT-23-5, SOIC-8_3.9x4.9mm_P1.27mm, TSSOP-14_4.4x5mm_P0.65mm, TSSOP-20_4.4x6.5mm_P0.65mm
+    p = pads(key)
+    assert p["1"][0] == pytest.approx(-cx, abs=0.005) and p["1"][2:] == pytest.approx((pw, ph), abs=0.005)
 
 
 def test_pin_header_numbering_row_by_row_from_the_top_left():
