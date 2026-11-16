@@ -1,4 +1,4 @@
 pypdf           # pull text out of datasheets so quotes can be verified
-olefile         # read Altium SchDoc / PcbDoc (OLE compound files), read-only
+olefile>=0.47   # read Altium SchDoc / PcbDoc (OLE compound files); 0.47 writes the small board shape stream
 pillow          # slice JLCDFM report images (scripts/dfm.py)
 easyeda2kicad      # EasyEDA/LCSC symbol + footprint + STEP download (scripts/partlib.py)

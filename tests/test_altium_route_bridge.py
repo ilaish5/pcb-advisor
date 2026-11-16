@@ -341,3 +341,82 @@ def test_unsaved_edits_made_while_planning_stop_the_route_before_the_revert(tmp_
     with pytest.raises(bridge.BridgeError, match="unsaved changes"):
         bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
     assert ["PROJECT", "REVERT"] not in sent and not any("ROUTEBEGIN" in c for c in sent)
+
+
+def _shape_fakes(monkeypatch, tmp_path, stale=True, writes=True):
+    """A routed board whose board shape record is stale (or not); set_board_shape is faked and logged in the order of the Altium steps."""
+    import altium.pcbdoc as pcbdoc
+    from altium import layout
+    _route_fakes(monkeypatch, tmp_path)
+    monkeypatch.setattr(layout, "unrouted", lambda d: [])
+    doc = _gnd_doc()
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 4)
+    held = {"shape": [25.4, 25.4, 177.8, 127.0] if stale else [0.0, 0.0, 19.99, 19.99]}
+    sent = []
+    monkeypatch.setattr(pcbdoc, "board_shape_box", lambda path: held["shape"])
+
+    def set_shape(path, box):
+        sent.append(["SETSHAPE", [round(v, 2) for v in box]])
+        if writes:
+            held["shape"] = list(box)
+        return writes
+
+    monkeypatch.setattr(pcbdoc, "set_board_shape", set_shape)
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append([c[0] for c in cmds]) or
+                        (["docstate open modified=0"] if cmds[-1][0] == "DOCSTATE" else
+                         ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"]))
+    return sent
+
+
+def test_a_stale_board_shape_is_set_to_the_outline_and_the_pour_goes_on(tmp_path, monkeypatch):
+    """Blinker 555: the shape of a new board stayed in the file; route sets it (closed board, after the backup) and pours as usual."""
+    sent = _shape_fakes(monkeypatch, tmp_path)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    at = lambda name: next(i for i, c in enumerate(sent) if name in c)       # each entry is one call's command names
+    assert ["SETSHAPE", [0.0, 0.0, 19.99, 19.99]] in sent
+    assert at("REVERT") < at("SETSHAPE") < at("ROUTEBEGIN")
+    assert res["pour"] == "GND" and not res["pour_warning"] and res["shape_fixed"] == [0.0, 0.0, 19.99, 19.99] and not res["problems"]
+
+
+def test_a_matching_board_shape_is_left_alone(tmp_path, monkeypatch):
+    sent = _shape_fakes(monkeypatch, tmp_path, stale=False)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert not any(c[0] == "SETSHAPE" for c in sent) and res["pour"] == "GND" and "shape_fixed" not in res
+
+
+def test_the_warning_stays_only_when_the_shape_cannot_be_set(tmp_path, monkeypatch):
+    _shape_fakes(monkeypatch, tmp_path, writes=False)        # the record is not a plain rectangle: nothing written
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert res["pour"] is None and "could not be set" in res["pour_warning"] and "Redefine Board Shape" in res["pour_warning"]
+    assert "GND" in res["pour_warning"] and not res["problems"]
+
+
+def test_set_board_shape_rewrites_the_four_corners_in_place_and_refuses_other_records(monkeypatch):
+    import struct
+    import olefile
+    from altium import pcbdoc
+    head = b"\x0b\x86|LAYERSTACKID={ABC}"
+    blob = head + b"\x00" + struct.pack("<I", 4) + struct.pack("<8d", 1e7, 1e7, 7e7, 1e7, 7e7, 5e7, 1e7, 5e7) + b"tail"
+    written = {}
+
+    class Ole:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class Rw:
+        def __init__(self, path, write_mode=False): written["mode"] = write_mode
+        def write_stream(self, name, data): written[name] = data
+        def close(self): pass
+
+    monkeypatch.setattr(pcbdoc, "open_doc", lambda p: Ole())
+    monkeypatch.setattr(olefile, "OleFileIO", Rw)
+    monkeypatch.setattr(pcbdoc, "_optional_stream", lambda ole, name: blob)
+    assert pcbdoc.set_board_shape("x", [0, 0, 30, 20]) is True
+    new = written["BoardRegions/Data"]
+    assert written["mode"] and len(new) == len(blob) and new.endswith(b"tail")
+    monkeypatch.setattr(pcbdoc, "_optional_stream", lambda ole, name: new)
+    assert pcbdoc.board_shape_box("x") == [0.0, 0.0, 30.0, 20.0]
+    written.clear()
+    monkeypatch.setattr(pcbdoc, "_optional_stream", lambda ole, name: head + b"\x00" + struct.pack("<I", 6) + b"\0" * 100)
+    assert pcbdoc.set_board_shape("x", [0, 0, 30, 20]) is False and "BoardRegions/Data" not in written

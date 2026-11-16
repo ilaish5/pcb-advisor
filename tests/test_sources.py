@@ -265,3 +265,20 @@ def test_the_agent_is_told_where_part_datasheets_live(home):
     assert "sources.py get board <url>" in runs and 'verify <name> "<quote>" board' in runs
     shared = next(p for p in d["places"] if p["path"].endswith("shared/datasheets"))
     assert "GENERAL" in shared["what"] and "project's sources/" in shared["what"]
+
+
+def test_an_lcsc_datasheet_link_is_followed_to_the_pdf_its_viewer_page_shows(home, monkeypatch):
+    """Live run: every LCSC datasheet link answered with an HTML viewer page, so no datasheet came down and the pins stayed unverified."""
+    import sources
+    link = "https://www.lcsc.com/datasheet/lcsc_datasheet_1811012330_Texas-Instruments-NE555DR_C7593.pdf"
+    real = "https://datasheet.lcsc.com/datasheet/pdf/351bc9dfa58444c8ac1abb0fb5d36ad8.pdf"
+    page = (b'<!DOCTYPE html><iframe src="https://static.lcsc.com/feassets/pc/html/pdfjs/web/viewer.html?file=https%3A%2F%2Fdatasheet.lcsc.com'
+            b'%2Fdatasheet%2Fpdf%2F351bc9dfa58444c8ac1abb0fb5d36ad8.pdf"></iframe><a href="' + real.encode() + b'">Download</a><a href="' + link.encode() + b'">x</a>')
+    serve_bytes(monkeypatch, sources, {link: page, real: b"%PDF-1.4 ne555"})
+    meta = sources.get("board", link, name="NE555DR.pdf")
+    assert meta["url"] == link and (home / "projects" / "board" / "sources" / "NE555DR.pdf").read_bytes() == b"%PDF-1.4 ne555"
+    assert sources._viewer_pdf(link, b"%PDF-1.4 already") is None                      # a real PDF is taken as it is
+    assert sources._viewer_pdf("https://example.com/x.pdf", page) is None              # only LCSC's own pages are followed
+    assert sources._viewer_pdf("https://evil-lcsc.com/x.pdf", page) is None
+    two = page + b'<a href="https://datasheet.lcsc.com/datasheet/pdf/other.pdf">'
+    assert sources._viewer_pdf(link, two) is None                                      # two different files: not guessed

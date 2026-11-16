@@ -267,6 +267,31 @@ def board_shape_box(path):
     return [round(min(px) * k, 3), round(min(py) * k, 3), round(max(px) * k, 3), round(max(py) * k, 3)]
 
 
+def set_board_shape(path, box):
+    """Write the rectangle [x0, y0, x1, y1] mm as the board shape record of BoardRegions, in place (the same four point record
+    board_shape_box reads; the stream keeps its size). Altium's scripting cannot do it: moving the outline corners changes Board6 only
+    and leaves this record at the shape of a new board, which a pour is clipped to. The board must not be open in Altium. Returns
+    True when the record was rewritten, False when the stream is not that plain four point record (nothing is written then)."""
+    import olefile
+    p = pathlib.Path(path)
+    with open_doc(p) as ole:
+        blob = _optional_stream(ole, "BoardRegions/Data")
+    i = blob.find(b"LAYERSTACKID=")
+    j = blob.find(b"}", i) if i >= 0 else -1
+    if j < 0 or len(blob) < j + 1 + 69 or struct.unpack("<I", blob[j + 2:j + 6])[0] != 4:
+        return False
+    k = 0.0254 / 10000
+    x0, y0, x1, y1 = (round(v / k) for v in box)
+    pts = struct.pack("<8d", x0, y0, x1, y0, x1, y1, x0, y1)
+    new = blob[:j + 6] + pts + blob[j + 6 + 64:]
+    ole = olefile.OleFileIO(str(p), write_mode=True)
+    try:
+        ole.write_stream("BoardRegions/Data", new)
+    finally:
+        ole.close()
+    return True
+
+
 def _optional_stream(ole, name: str) -> bytes:
     """Read an OLE stream, or b'' when it is absent or unreadable."""
     try:

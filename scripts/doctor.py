@@ -35,7 +35,8 @@ import workspace   # noqa: E402
 MIN_PY = (3, 10)
 CLAUDE_INSTALL_WIN = "irm https://claude.ai/install.ps1 | iex"
 CLAUDE_INSTALL_UNIX = "curl -fsSL https://claude.ai/install.sh | bash"
-REQUIRED_MODULES = "import pypdf, olefile, PIL"
+REQUIRED_MODULES = ("import pypdf, olefile, PIL; assert tuple(int(v) for v in olefile.__version__.split('.')[:2]) >= (0, 47), "
+                    "'olefile ' + olefile.__version__ + ' is older than 0.47'")
 JLC_URL = "https://jlcpcb.com"
 
 

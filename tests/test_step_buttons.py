@@ -220,7 +220,7 @@ def test_the_chat_does_not_start_a_turn_while_a_step_runs(server, empty, monkeyp
                                      ("/api/library/build", "build_library"), ("/api/altium/create", "create")])
 def test_the_other_altium_buttons_wait_for_a_running_step(server, empty, monkeypatch, path, fn):
     monkeypatch.setattr(bridge, fn, lambda *a, **k: pytest.fail("a second Altium operation must not start"))
-    monkeypatch.setattr(serve.store, "manufacturing_block", lambda p: "")
+    monkeypatch.setattr(serve.store, "manufacturing_warning", lambda p: "")
     assert serve.STEP_LOCK.acquire(blocking=False)
     try:
         code, body = call(server, "POST", path, empty, {})
@@ -276,7 +276,7 @@ def test_the_note_of_a_step_with_warnings_is_marked_warned_like_the_chat_result(
                                      ("/api/library/build", "build_library"), ("/api/altium/create", "create")])
 def test_the_other_altium_buttons_wait_for_a_chat_turn_of_the_project(server, empty, monkeypatch, path, fn):
     monkeypatch.setattr(bridge, fn, lambda *a, **k: pytest.fail("no Altium operation may start while the chat answers"))
-    monkeypatch.setattr(serve.store, "manufacturing_block", lambda p: "")
+    monkeypatch.setattr(serve.store, "manufacturing_warning", lambda p: "")
     with serve.TURNS_LOCK:
         serve.TURNS[(empty, "s1")] = {}
     try:

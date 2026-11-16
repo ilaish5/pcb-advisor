@@ -172,3 +172,58 @@ def test_repair_outline_draws_only_on_an_empty_layer_of_a_rectangular_board(tmp_
     monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append(cmds) or ["pcbcheck rect=0 objects=3 parts=3 tracks=0 outline_pts=6 box_mil=0,0,1181,984"])
     res = bridge.repair_outline(tmp_path / "P.PrjPcb", pcb)
     assert not res["drawn"] and "not a plain rectangle" in res["warning"] and all(c[0] != "OUTLINEDRAW" for run in sent for c in run)
+
+
+def _place_fakes(monkeypatch, tmp_path, shape, writes=True, modified=False):
+    """place_on on a board that Altium reports with a 30 x 25 mm outline, whose board shape record is `shape` (mm); logs the steps."""
+    import altium.pcbdoc as pcbdoc
+    from altium import layout
+    lib = tmp_path / "L.PcbLib"
+    lib.write_bytes(b"x")
+    pcb = tmp_path / "B.PcbDoc"
+    pcb.write_bytes(b"pcb")
+    fp = {"name": "FP", "pads": [{"x": 0, "y": 0, "xsize": 40, "ysize": 40, "rotation": 0, "name": "1"}], "extent": {}}
+    monkeypatch.setattr(bridge, "read_pcblib", lambda p: {"footprints": [fp]})
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {})
+    monkeypatch.setattr(bridge, "_backup", lambda prj, files: "bk")
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: {"pads": [1], "tracks": _rect_tracks(0, 0, 30, 25)})
+    monkeypatch.setattr(layout, "verify_layout", lambda *a, **k: [])
+    held = {"shape": shape}
+    steps = []
+    monkeypatch.setattr(pcbdoc, "board_shape_box", lambda p: held["shape"])
+
+    def set_shape(p, box):
+        steps.append(("SETSHAPE", [round(v, 1) for v in box]))
+        if writes:
+            held["shape"] = list(box)
+        return writes
+    monkeypatch.setattr(pcbdoc, "set_board_shape", set_shape)
+
+    def altium(cmds, **kw):
+        steps.extend((c[0],) for c in cmds)
+        if cmds[-1][0] == "DOCSTATE":
+            return ["docstate open modified=%d" % modified]
+        if cmds[-1][0] == "PCBCHECK":
+            return ["pcbcheck rect=1 objects=1 parts=1 tracks=0 outline_pts=4 box_mil=0,0,1181,984"]
+        return []
+    monkeypatch.setattr(bridge, "run_commands", altium)
+    res = bridge.place_on(tmp_path / "P.PrjPcb", pcb, lib, [{"ref": "R1", "footprint": "FP", "lib_ref": "R", "pins": []}], size=(30, 25))
+    return res, steps
+
+
+def test_place_sets_the_board_shape_to_the_outline_when_altium_kept_the_new_board_one(tmp_path, monkeypatch):
+    res, steps = _place_fakes(monkeypatch, tmp_path, [25.4, 25.4, 177.8, 127.0])
+    assert not res["problems"] and not res["warnings"]
+    assert ("SETSHAPE", [0.0, 0.0, 30.0, 25.0]) in steps and steps.index(("REVERT",)) < steps.index(("SETSHAPE", [0.0, 0.0, 30.0, 25.0]))
+
+
+def test_place_leaves_a_matching_board_shape_alone(tmp_path, monkeypatch):
+    res, steps = _place_fakes(monkeypatch, tmp_path, [0.0, 0.0, 30.0, 25.0])
+    assert not res["warnings"] and not any(s[0] in ("SETSHAPE", "REVERT") for s in steps)
+
+
+def test_place_warns_only_when_the_board_shape_cannot_be_set(tmp_path, monkeypatch):
+    res, _ = _place_fakes(monkeypatch, tmp_path, [25.4, 25.4, 177.8, 127.0], writes=False)
+    assert not res["problems"] and any("could not be set" in w and "Redefine Board Shape" in w for w in res["warnings"])
+    res, steps = _place_fakes(monkeypatch, tmp_path, [25.4, 25.4, 177.8, 127.0], modified=True)       # unsaved edits: the board is not closed
+    assert any("unsaved changes" in w for w in res["warnings"]) and not any(s[0] in ("SETSHAPE", "REVERT") for s in steps)

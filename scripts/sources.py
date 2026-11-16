@@ -24,6 +24,7 @@ import re
 import shutil
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -138,6 +139,19 @@ def _check_kind(url, name, blob):
                       f"browser and add it from the Sources tab (Upload file).")
 
 
+_LCSC_PDF = re.compile(rb"https://datasheet\.lcsc\.com/[A-Za-z0-9_\-./%]+?\.pdf")
+
+
+def _viewer_pdf(url, blob):
+    """The PDF a viewer page shows, or None. Only for LCSC's datasheet links (www.lcsc.com/datasheet/....pdf answers with an HTML
+    page around the real file on datasheet.lcsc.com), and only when the page names exactly one such file."""
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if b"%PDF-" in blob[:1024] or not (host == "lcsc.com" or host.endswith(".lcsc.com")):
+        return None
+    found = {m.decode("ascii") for m in _LCSC_PDF.findall(blob)}
+    return found.pop() if len(found) == 1 else None
+
+
 def fetch(url, name=None, timeout=45, project=None):
     """Download a document. With a project it goes into that project's sources/;
     without one it goes into the shared library, which is for GENERAL documents
@@ -149,6 +163,9 @@ def fetch(url, name=None, timeout=45, project=None):
     where = f"project {project}'s sources" if project else "the shared library"
     name = _safe(name or url.rstrip("/").split("/")[-1] or "document.pdf")
     blob = _download(url, timeout)
+    inner = _viewer_pdf(url, blob)
+    if inner:                       # LCSC's "datasheet" link is a viewer page: the document is the PDF it shows
+        blob = _download(inner, timeout)
     if "." not in name and b"%PDF-" in blob[:1024]:     # JLC's datasheet links end in a bare file id
         name += ".pdf"
     path = folder / name

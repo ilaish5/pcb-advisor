@@ -834,6 +834,48 @@ def _sch_links(prj):
     return out
 
 
+def _shape_differs(pcb, box):
+    """The board shape Altium holds (BoardRegions) when it is not the rectangle `box` [x0, y0, x1, y1] mm, else None (also when it
+    cannot be read: nothing is known to be wrong then)."""
+    from altium.pcbdoc import board_shape_box
+    try:
+        shape = board_shape_box(pcb)
+    except (AltiumReadError, OSError):
+        return None
+    return shape if shape and any(abs(a - b) > 0.1 for a, b in zip(shape, box)) else None
+
+
+def _write_shape(pcb, box):
+    """Write `box` as the board shape into the closed PcbDoc and read it back. "" when the file holds it now, else why not.
+    Altium's scripting changes the outline corners only; the shape a pour is clipped to is a separate record that stays at the
+    shape of a new board (T24), so it is written in the file (pcbdoc.set_board_shape)."""
+    from altium.pcbdoc import board_shape_box, set_board_shape
+    try:
+        if not set_board_shape(pcb, box):
+            return "the board shape record is not a plain rectangle"
+        got = board_shape_box(pcb)
+    except Exception as exc:        # noqa: BLE001 - an old olefile raises NotImplementedError; any failure falls back to the warning
+        return f"the board shape could not be written ({exc})"
+    if not got or any(abs(a - b) > 0.1 for a, b in zip(got, box)):
+        return "the board shape written is not the one read back"
+    return ""
+
+
+def _fit_shape(prj, pcb, box):
+    """After placing: make the board shape Altium holds the outline `box` (mm), closing the saved board first. "" when it is (or
+    cannot be told to be anything else), else the reason it could not be set."""
+    if _shape_differs(pcb, box) is None:
+        return ""
+    try:
+        state = run_commands([("PROJECT", str(prj)), ("DOCSTATE", str(pcb))])
+        if any(l.startswith("docstate open modified=1") for l in state):
+            return "the board is open in Altium with unsaved changes"
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+    except BridgeError as exc:
+        return str(exc)
+    return _write_shape(pcb, box)
+
+
 def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3):
     """Place `parts` ([{ref, footprint, lib_ref, pins}]) from the PcbLib on the PcbDoc, create the outline from `size` when the board
     only has the placeholder outline of a new PcbDoc (an outline somebody drew is kept), save, and read the file back.
@@ -915,6 +957,11 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
         got = [v * MM_PER_MIL for v in after["box_mil"]]
         if any(abs(a - b) > 0.05 for a, b in zip(got, outline)) or not after["rect"]:
             problems.append(f"the saved board outline is {[round(v, 2) for v in got]} mm with {after['points']} points, planned {outline}")
+    if not problems:                                     # the shape a pour is clipped to must be the outline too (T24)
+        why = _fit_shape(prj, pcb, [v * MM_PER_MIL for v in after["box_mil"]] if after is not None else outline)
+        if why:
+            warnings.append(f"The board shape Altium holds is not the board outline and could not be set ({why}). A ground pour would stay "
+                            "empty: redefine the board shape in Altium (Design > Board Shape > Redefine Board Shape) before routing")
     try:
         from checks import board as board_checks
         drills = [f["message"] for f in board_checks.check_drills(saved)]
@@ -978,7 +1025,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     backed-up file back. Returns {routed, failed, tracks, vias, problems, restored, backup, drc_before, drc_after, summary, ...}."""
     import tempfile
     from altium import layout, route
-    from altium.pcbdoc import read_pcbdoc, poured_copper, board_shape_box
+    from altium.pcbdoc import read_pcbdoc, poured_copper
     prj, pcb = pathlib.Path(prj), pathlib.Path(pcb)
     log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0", "route")])   # unsaved / existing copper
     info = _pcbcheck_info(log)
@@ -1004,16 +1051,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
     pour_net = route.pour_net_for(doc) if pour else None
     pour_skipped = ""
-    if pour_net:       # a pour is clipped to the board shape Altium holds: when that is not the outline we route in, nothing gets poured
-        try:
-            shape = board_shape_box(pcb)
-        except (AltiumReadError, OSError):
-            shape = None
-        if shape and any(abs(a - b) > 0.1 for a, b in zip(shape, box)):
-            pour_skipped = (f"no {pour_net} pour: the board shape Altium holds ({', '.join(f'{v:g}' for v in shape)} mm) is not the board outline "
-                            f"({', '.join(f'{v:g}' for v in box)} mm), so a pour would stay empty. Redefine the board shape in Altium (Design > Board "
-                            "Shape > Redefine Board Shape) and route again if you want a ground plane")
-            pour_net = None
+    shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k != "net_width"}, "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped}
@@ -1035,6 +1073,15 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         if any(l.startswith("docstate open modified=1") for l in state):
             raise BridgeError("The board is open in Altium with unsaved changes; save or close it first. Nothing was changed.")
         run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+        if shape:       # the board is closed and saved: set the shape it holds to the outline (backup taken above), then pour as usual
+            why = _write_shape(pcb, box)
+            if why:
+                name, pour_net, res["pour"] = pour_net, None, None
+                res["pour_warning"] = (f"no {name} pour: the board shape Altium holds ({', '.join(f'{v:g}' for v in shape)} mm) is not the board "
+                                                      f"outline ({', '.join(f'{v:g}' for v in box)} mm) and could not be set ({why}), so a pour would stay empty. Redefine the "
+                                                      "board shape in Altium (Design > Board Shape > Redefine Board Shape) and route again if you want a ground plane")
+            else:
+                res["shape_fixed"] = [round(v, 3) for v in box]
         run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
                                                                      edge=rules["edge"]), total_timeout=1500)
     except BridgeError as exc:

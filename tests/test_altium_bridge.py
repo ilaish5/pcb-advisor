@@ -50,13 +50,13 @@ class FakeAltium:
         return [c for run in self.runs if run[-1][0] != "PCBCHECK" for c in run]
 
 
-_REAL_BLOCK = store.manufacturing_block
+_REAL_WARNING = store.manufacturing_warning
 
 
 @pytest.fixture(autouse=True)
 def _unblocked(monkeypatch):
-    """The fixture project has unverified parts; only the tests of the block itself look at it."""
-    monkeypatch.setattr(store, "manufacturing_block", lambda project: "")
+    """The fixture project has unverified parts; only the tests of the warning itself look at it."""
+    monkeypatch.setattr(store, "manufacturing_warning", lambda project: "")
 
 
 @pytest.fixture
@@ -527,16 +527,16 @@ def test_run_outjob_has_no_design_warning_for_a_matching_board(lte, fake, monkey
     assert bridge.design_problems(lte) == []
 
 
-# ---- manufacturing outputs wait for the unverified parts
+# ---- manufacturing outputs are made with a warning while parts are unverified
 
-def test_manufacturing_outputs_are_blocked_while_parts_are_unverified(lte, fake, monkeypatch):
+def test_manufacturing_outputs_are_made_with_a_warning_while_parts_are_unverified(lte, fake, monkeypatch):
     from http.server import ThreadingHTTPServer
     import serve
-    monkeypatch.setattr(store, "manufacturing_block", _REAL_BLOCK)
+    monkeypatch.setattr(store, "manufacturing_warning", _REAL_WARNING)
     monkeypatch.setattr(serve, "QUIET", True)
     _linked_with_rules_board(lte, fake)
-    msg = store.manufacturing_block(lte)
-    assert msg.startswith("3 parts have unverified pins: ") and "Open DFM > Unverified parts" in msg
+    msg = store.manufacturing_warning(lte)
+    assert msg.startswith("3 parts have unverified pins: ") and msg.endswith("The files were made; check these parts in DFM > Unverified parts before you order.")
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -551,27 +551,28 @@ def test_manufacturing_outputs_are_blocked_while_parts_are_unverified(lte, fake,
             return e.code, json.loads(e.read())
 
     try:
-        for path in ("/api/altium/run-outjob", "/api/jlc/gerber-zip"):
-            code, body = post(path)
-            assert code == 409 and body["error"] == msg
+        code, body = post("/api/altium/run-outjob")                  # made anyway, the warning rides along
+        assert code == 200 and body["files"] and body["warning"] == msg
+        code, body = post("/api/jlc/gerber-zip")
+        assert code == 200 and body["warning"] == msg
     finally:
         httpd.shutdown()
         httpd.server_close()
     fake.runs.clear()
     applied, _, refused = serve.apply_actions(lte, [{"type": "altium.run_outjob"}, {"type": "jlc.gerber_zip"}])
-    assert not applied and len(refused) == 2 and all(msg in r for r in refused)
-    assert not fake.runs                                         # Altium was not asked to run anything
+    assert len(applied) == 2 and not refused and fake.runs
+    assert all(a.endswith(f" (warnings: {msg})") and serve.warning_of(a) for a in applied)      # the amber chip
 
 
-def test_no_block_without_unverified_parts_and_do_not_buy_lines_do_not_count(lte, monkeypatch):
-    monkeypatch.setattr(store, "manufacturing_block", _REAL_BLOCK)
+def test_no_warning_without_unverified_parts_and_do_not_buy_lines_do_not_count(lte, monkeypatch):
+    monkeypatch.setattr(store, "manufacturing_warning", _REAL_WARNING)
     rows = [{"line": "k1", "refs": ["D1"], "mpn": "", "status": "unverified", "issues": ""},
             {"line": "k2", "refs": ["R9"], "mpn": "", "status": "unverified", "issues": ""}]
     monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: rows)
     monkeypatch.setattr(store, "bom", lambda project, write=True: [{"key": "k2", "dnp": True}])
-    assert "1 part has unverified pins: D1." in store.manufacturing_block(lte)
+    assert "1 part has unverified pins: D1." in store.manufacturing_warning(lte)
     monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: [])
-    assert store.manufacturing_block(lte) == ""
+    assert store.manufacturing_warning(lte) == ""
 
 
 def test_api_altium_outputs_lists_the_folder_altium_wrote(lte, tmp_path, monkeypatch):
