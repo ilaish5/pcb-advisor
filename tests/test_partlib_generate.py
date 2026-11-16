@@ -122,6 +122,66 @@ def test_diode_symbol_and_sod_footprint_agree_pad_1_is_the_cathode():
     assert any(f[1] == f[3] and float(f[1]) / MM < p1[0] - p1[2] / 2 for f in (ln.split("|") for ln in marks))   # a bar beyond pad 1
 
 
+ALL_KEYS = (list(gen.CHIPS) + list(gen.DIODES) + list(gen.SOT) + ["SOT-223", "SOIC-8", "SOIC-16", "TSSOP-8", "TSSOP-20",
+            "PinHeader-1x02_P2.54mm", "PinHeader-2x05_P2.54mm"])
+
+
+def _silk_to_pad(lines):
+    """Smallest copper-to-silk edge distance in mm, sampling each silk line (and the pin-1 dot)."""
+    pads, silk = [], []
+    for f in (ln.split("|") for ln in lines):
+        if f[0] == "PAD":
+            x, y, w, h = (float(f[i]) / MM for i in (2, 3, 11, 12))
+            pads.append((x - w / 2, x + w / 2, y - h / 2, y + h / 2))
+        elif f[0] == "TRACK" and f[-1] == "Top Overlay":
+            silk.append((*(float(f[i]) / MM for i in (1, 2, 3, 4)), float(f[5]) / MM / 2))
+        elif f[0] == "ARC" and f[-1] == "Top Overlay":
+            x, y = float(f[1]) / MM, float(f[2]) / MM
+            silk.append((x, y, x, y, float(f[3]) / MM + float(f[6]) / MM / 2))
+    best = 9.0
+    for x1, y1, x2, y2, r in silk:
+        for t in (i / 100 for i in range(101)):
+            px, py = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
+            for a, b, c, d in pads:
+                best = min(best, (max(a - px, 0, px - b) ** 2 + max(c - py, 0, py - d) ** 2) ** 0.5 - r)
+    return best
+
+
+@pytest.mark.parametrize("key,prefix", [(k, None) for k in ALL_KEYS] + [(k, "LED") for k in gen.CHIPS])
+def test_silk_keeps_jlc_clearance_from_the_pads(key, prefix):
+    # JLC flags silkscreen closer than 0.15 mm to a pad (and clips it at fabrication)
+    assert _silk_to_pad(gen.footprint_for(key, prefix)["lines"]) >= gen.SILK_TO_PAD
+
+
+@pytest.mark.parametrize("prefix", ["LED", "D", "TVS", "ZD"])
+def test_a_chip_led_or_diode_marks_pad_1_as_the_cathode_and_does_not_share_the_resistor_footprint(prefix):
+    fp, plain = gen.footprint_for("0805", prefix), gen.footprint_for("0805", "R")
+    assert fp["name"] != plain["name"] == "CHIP-0805" and fp["name"].endswith("-CHIP-0805")
+    p1 = {ln.split("|")[1]: float(ln.split("|")[2]) / MM - float(ln.split("|")[11]) / MM / 2
+          for ln in fp["lines"] if ln.startswith("PAD|")}["1"]
+    bars = [f for f in (ln.split("|") for ln in fp["lines"] if ln.startswith("TRACK|") and ln.endswith("|Top Overlay"))
+            if f[1] == f[3]]
+    assert bars and all(float(f[1]) / MM < p1 for f in bars)                  # the bar is beyond pad 1, not pad 2
+    assert not [ln for ln in plain["lines"] if ln.startswith("TRACK|") and ln.endswith("|Top Overlay")
+                and ln.split("|")[1] == ln.split("|")[3]]
+
+
+def test_silk_and_the_pin_1_dot_lie_inside_the_courtyard():
+    for key in ALL_KEYS[:-2] + ["0805"]:
+        lines = gen.footprint_for(key, "LED")["lines"]
+        court = [(float(f[i]) / MM, float(f[i + 1]) / MM) for f in (ln.split("|") for ln in lines
+                 if ln.endswith("|Mechanical Layer 15")) for i in (1, 3)]
+        lo = [min(c[a] for c in court) - 1e-6 for a in (0, 1)]
+        hi = [max(c[a] for c in court) + 1e-6 for a in (0, 1)]
+        for f in (ln.split("|") for ln in lines if ln.endswith("|Top Overlay")):
+            arc = f[0] == "ARC"
+            r = (float(f[3]) / MM if arc else 0) + float(f[6 if arc else 5]) / MM / 2
+            for pt in ([(f[1], f[2])] if arc else [(f[1], f[2]), (f[3], f[4])]):
+                for a in (0, 1):
+                    v = float(pt[a]) / MM
+                    assert lo[a] <= v - r and v + r <= hi[a], key
+
+
 def test_diode_with_cathode_on_pin_2_is_not_generated():
     # the generated SOD footprint marks pad 1 as the cathode, so 1=A 2=K would put silk and circuit in disagreement
     assert gen.symbol_for("D", "BAT54", [{"num": "1", "name": "A"}, {"num": "2", "name": "K"}], 2) is None

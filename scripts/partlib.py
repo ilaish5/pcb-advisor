@@ -482,7 +482,7 @@ def _generate(build, e, line, prefix, pins, ctx):
         if name:
             build.generated[key, prefix] = (name, "kicad", notes)
         else:
-            build.generated[key, prefix] = (build.add_footprint(footprint_for(key), "generated", None, key),
+            build.generated[key, prefix] = (build.add_footprint(footprint_for(key, prefix), "generated", None, key),
                                             "generated", notes)
     fpname, source, notes = build.generated[key, prefix]
     npads = len({ln.split("|")[1] for ln in build.footprints[fpname]["fp"]["lines"] if ln.startswith("PAD|")})

@@ -68,6 +68,11 @@ def _rect(x1, y1, x2, y2, layer, w):
             _track(x2, y2, x1, y2, layer, w), _track(x1, y2, x1, y1, layer, w)]
 
 
+SILK_TO_PAD = 0.15                      # mm, JLC's silkscreen-to-pad clearance
+CLEAR = SILK_TO_PAD + 0.02 + MIN_SILK / MM / 2      # copper edge to the centre of a silk line, 0.02 mm to spare
+DOT_R = 0.12                            # pin-1 dot radius, mm
+
+
 def _finish(name, desc, pads, body, silk, pin1=None, tht=False):
     """pads: [(num,x,y,w,h[,shape,hole])] in mm; body (w,h) mm; silk: extra TRACK lines."""
     xs = [p[1] + s * p[3] / 2 for p in pads for s in (-1, 1)] + [-body[0] / 2, body[0] / 2]
@@ -76,31 +81,49 @@ def _finish(name, desc, pads, body, silk, pin1=None, tht=False):
     lines = [_pad(p[0], p[1], p[2], p[3], p[4], *p[5:7]) for p in pads]
     lines += silk
     if pin1:
-        lines.append(f"ARC|{_m(pin1[0])}|{_m(pin1[1])}|{_m(0.12)}|0|360|{MIN_SILK}|Top Overlay")
+        lines.append(f"ARC|{_m(pin1[0])}|{_m(pin1[1])}|{_m(DOT_R)}|0|360|{MIN_SILK}|Top Overlay")
     lines += [_track(-body[0] / 2, -body[1] / 2, body[0] / 2, -body[1] / 2, "Mechanical Layer 13", 4),
               _track(body[0] / 2, -body[1] / 2, body[0] / 2, body[1] / 2, "Mechanical Layer 13", 4),
               _track(body[0] / 2, body[1] / 2, -body[0] / 2, body[1] / 2, "Mechanical Layer 13", 4),
               _track(-body[0] / 2, body[1] / 2, -body[0] / 2, -body[1] / 2, "Mechanical Layer 13", 4)]
     x1, x2, y1, y2 = min(xs) - c, max(xs) + c, min(ys) - c, max(ys) + c
+    hw = MIN_SILK / MM / 2
+    marks = [(float(f[i]) / MM, float(f[i + 1]) / MM, hw) for f in (ln.split("|") for ln in silk if ln.startswith("TRACK|"))
+             for i in (1, 3)] + ([(pin1[0], pin1[1], DOT_R + hw)] if pin1 else [])
+    for x, y, r in marks:                               # silk kept clear of the pads may lie beyond them: still inside
+        x1, x2, y1, y2 = min(x1, x - r), max(x2, x + r), min(y1, y - r), max(y2, y + r)
     lines += [_track(x1, y1, x2, y1, "Mechanical Layer 15", 2), _track(x2, y1, x2, y2, "Mechanical Layer 15", 2),
               _track(x2, y2, x1, y2, "Mechanical Layer 15", 2), _track(x1, y2, x1, y1, "Mechanical Layer 15", 2)]
     return {"name": name, "desc": desc, "lines": lines, "tht": tht, "model": None}
 
 
-def footprint_for(key):
-    """The generated footprint dict {name, lines, tht, model} for a canonical package key."""
+POLARISED = ("D", "LED", "TVS", "ZD")
+
+
+def _cathode_bar(cx, pw, y):
+    """A silk bar beyond pad 1 (the cathode, as the symbol draws pin 1 and KiCad's LED/diode footprints mark it),
+    its edge SILK_TO_PAD + 0.02 mm clear of the copper (CLEAR)."""
+    bx = -cx - pw / 2 - CLEAR
+    return _track(bx, -y, bx, y, "Top Overlay")
+
+
+def footprint_for(key, prefix=None):
+    """The generated footprint dict {name, lines, tht, model} for a canonical package key. A chip package for a
+    diode or LED (prefix D, LED, TVS, ZD) gets its own footprint with a cathode bar beyond pad 1."""
     desc = f"{key} IPC-7351 nominal (generated)"
     if key in CHIPS:
         cx, pw, ph, bw, bh = CHIPS[key]
-        y = ph / 2 + 0.2
+        y = ph / 2 + CLEAR
         silk = [_track(-cx, y, cx, y, "Top Overlay"), _track(-cx, -y, cx, -y, "Top Overlay")]
-        return _finish(f"CHIP-{key}", desc, [(1, -cx, 0, pw, ph), (2, cx, 0, pw, ph)], (bw, bh), silk)
+        pads = [(1, -cx, 0, pw, ph), (2, cx, 0, pw, ph)]
+        if prefix in POLARISED:
+            name = f"{'LED' if prefix == 'LED' else 'D'}-CHIP-{key}"
+            return _finish(name, desc + ", pad 1 = cathode", pads, (bw, bh), silk + [_cathode_bar(cx, pw, y)])
+        return _finish(f"CHIP-{key}", desc, pads, (bw, bh), silk)
     if key in DIODES:
         cx, pw, ph, bw, bh = DIODES[key]
-        y = max(ph, bh) / 2 + 0.2
-        silk = [_track(-cx, y, cx, y, "Top Overlay"), _track(-cx, -y, cx, -y, "Top Overlay")]
-        bx = -cx - pw / 2 - 0.16                                # cathode bar beyond pad 1 (inside the courtyard), as the symbol draws pin 1
-        silk.append(_track(bx, -y, bx, y, "Top Overlay"))
+        y = max(max(ph, bh) / 2 + 0.2, ph / 2 + CLEAR)
+        silk = [_track(-cx, y, cx, y, "Top Overlay"), _track(-cx, -y, cx, -y, "Top Overlay"), _cathode_bar(cx, pw, y)]
         return _finish(key, desc, [(1, -cx, 0, pw, ph), (2, cx, 0, pw, ph)], (bw, bh), silk)
     if key in SOT:
         pitch, cx, pw, ph, bw, bl = SOT[key]
@@ -114,13 +137,13 @@ def footprint_for(key):
             ys = [-pitch, 0, pitch] if n == 6 else [-pitch, pitch]
             pads += [(num, cx, y, pw, ph) for num, y in zip(right, ys)]
             pads.sort(key=lambda p: p[0])
-        ye = max(p[2] + p[4] / 2 for p in pads) + 0.2
+        ye = max(p[2] + p[4] / 2 for p in pads) + CLEAR
         silk = [_track(-bw / 2, ye, bw / 2, ye, "Top Overlay"), _track(-bw / 2, -ye, bw / 2, -ye, "Top Overlay")]
-        return _finish(key, desc, pads, (bw, bl), silk, pin1=(-cx - pw / 2 - 0.3, pads[0][2]))
+        return _finish(key, desc, pads, (bw, bl), silk, pin1=(-cx - pw / 2 - CLEAR - DOT_R, pads[0][2]))
     if key == "SOT-223":
         pads = [(1, -3.15, 2.3, 2.0, 1.5), (2, -3.15, 0, 2.0, 1.5), (3, -3.15, -2.3, 2.0, 1.5), (4, 3.15, 0, 2.0, 3.8)]
         silk = [_track(-1.8, 3.35, 1.8, 3.35, "Top Overlay"), _track(-1.8, -3.35, 1.8, -3.35, "Top Overlay")]
-        return _finish(key, desc, pads, (3.5, 6.5), silk, pin1=(-4.5, 2.3))
+        return _finish(key, desc, pads, (3.5, 6.5), silk, pin1=(-3.15 - 1.0 - CLEAR - DOT_R, 2.3))
     m = re.fullmatch(r"(SOIC|TSSOP)-(\d+)", key)
     if m:
         pitch, rx, pl, pw, bw, _ = DUAL[m.group(1)]
@@ -131,9 +154,9 @@ def footprint_for(key):
         pads = [(i + 1, -rx, top - i * pitch, pl, pw) for i in range(half)]
         pads += [(half + i + 1, rx, -top + i * pitch, pl, pw) for i in range(half)]
         ye = bl / 2
-        xe = min(bw / 2, rx - pl / 2 - 0.2)
+        xe = min(bw / 2, rx - pl / 2 - CLEAR)
         silk = [_track(-xe, ye, xe, ye, "Top Overlay"), _track(-xe, -ye, xe, -ye, "Top Overlay")]
-        return _finish(key, desc, pads, (bw, bl), silk, pin1=(-rx - pl / 2 - 0.3, top))
+        return _finish(key, desc, pads, (bw, bl), silk, pin1=(-rx - pl / 2 - CLEAR - DOT_R, top))
     m = re.fullmatch(r"PinHeader-(\d)x(\d+)_P2\.54mm", key)
     if m:
         rows, n = int(m.group(1)), int(m.group(2))
