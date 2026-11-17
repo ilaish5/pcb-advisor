@@ -267,7 +267,7 @@ function chatDeniedHTML(m, live) {
     const id = d.id ?? k;
     const why = d.reason ? `<p class="why" dir="auto">${esc(d.reason)}</p>` : '';
     const body = d.compound
-      ? `<p class="why">It tried a combined command; the advisor is asked to run the parts one by one. Retry if it does not.</p><div class="acts">${btn('Retry', {size: 'sm', act: 'retry'})}</div>`
+      ? `<p class="why">${m.split_retry ? 'It tried a combined command; the advisor is asked to run the parts one by one. Retry if it does not.' : 'It tried a combined command; Retry asks it to run them one by one.'}</p><div class="acts">${btn('Retry', {size: 'sm', act: 'retry'})}</div>`
       : `<div class="acts">${btn('Allow and retry', {kind: 'pri', size: 'sm', act: 'chat-allow', ts: m.ts, idx: id})}</div>`;
     return `<div class="prop chat-deny"><h4>The advisor wanted to run: <span class="m">${esc(chatDeniedLabel(d))}</span></h4>${why}${body}</div>`;
   }).join('');

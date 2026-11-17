@@ -76,7 +76,8 @@ def test_a_denied_command_is_a_card_with_allow_and_retry_or_an_explanation():
     assert "The advisor wanted to run:" in cards and "d.reason" in cards
     assert "Allow and retry" in cards and "ts: m.ts" in cards and "d.compound" in cards
     assert "It tried a combined command; the advisor is asked to run the parts one by one. Retry if it does not." in cards
-    assert "esc(chatDeniedLabel(d))" in cards                           # the command is data, always escaped
+    assert "m.split_retry ?" in cards and "Retry asks it to run them one by one." in cards
+    assert "esc(chatDeniedLabel(d))" in cards                          # the command is data, always escaped
 
 
 def test_every_error_kind_has_its_card_or_is_drawn_as_a_partial_turn():

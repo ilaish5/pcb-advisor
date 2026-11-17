@@ -1,4 +1,5 @@
 """Safety nets around the runtime agent: it never keeps edits of the tool, never changes Altium outside an action, a timeout is an error."""
+import errno
 import os
 import subprocess
 import sys
@@ -183,7 +184,8 @@ def test_serve_main_turns_server_mode_on_and_a_cli_process_stays_read_only(monke
     monkeypatch.delenv("PCB_ADVISOR_DEV", raising=False)
     monkeypatch.setattr(serve.project_mod, "ensure", lambda p: None)
     monkeypatch.setattr(serve, "redraw", lambda p: None)
-    monkeypatch.setattr(serve, "_Server", lambda *a, **k: (_ for _ in ()).throw(OSError("busy")))   # "already running": main returns
+    monkeypatch.setattr(serve, "_Server", lambda *a, **k: (_ for _ in ()).throw(OSError(errno.EADDRINUSE, "busy")))   # "already running": main returns
+    monkeypatch.setattr(serve, "port_holder", lambda *a, **k: "ours")
     assert serve.main(["--no-browser", "--quiet"]) == 0
     assert bridge._server is True                                  # set by the real entry, not by the test
     bridge._check_writes_allowed([("OUTLINE", "a"), ("REVERT", "b")])

@@ -211,7 +211,7 @@ function outputsHTML(container) {
     const linked = outLinked();
     return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
-      'Not yet: production files and the Gerber zip are refused while a part has unverified pins, and the automatic run needs Altium.');
+      'Not yet: the automatic run needs Altium. The Altium outputs and the Gerber zip are refused while a part's pins are unverified.');
   }
   const showTimes = files.some(f => f.modified), showLin = files.some(f => f.lineage);
   return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>

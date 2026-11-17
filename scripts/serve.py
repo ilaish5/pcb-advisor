@@ -1505,34 +1505,51 @@ _FU_SKIP = ("stopped by the student", "Another step is still running")
 FOLLOWUP_SPLIT = ("These commands were denied because each joined several actions: {cmds}. Run every part again as its own plain "
                   "command, one per tool call (no cd, &&, ;, pipe, 2>&1), then answer the student's question from the results, "
                   "briefly. Do not tell the student to allow anything")
+FOLLOWUP_TOOLS = ". You may run scripts with tool calls in this reply, one plain command per call; only the ```json actions block is ignored"
+_QUOTED = re.compile(r'"(?:[^"`]|`.)*"|' + r"'[^']*'")
+_SCRIPT_IN_CMD = re.compile(r"scripts[/\\](?:[\w.-]+[/\\])*([\w.-]+\.py)")
 
 
-def compound_denials(denied):
-    """The commands the engine refused because they joined several actions (flagged by the engine, or shell operators in a Bash/PowerShell command)."""
+def _outside_quotes(cmd):
+    return _QUOTED.sub(" ", cmd)
+
+
+def _recovered(cmd, tools):
+    """True when the same turn later ran every script named in the denied command successfully (the agent already split it)."""
+    names = _SCRIPT_IN_CMD.findall(cmd)
+    ok = [str(t.get("t") or "") for t in tools or [] if isinstance(t, dict) and t.get("st") == "ok"]
+    return bool(names) and all(any(n in lab for lab in ok) for n in names)
+
+
+def compound_denials(denied, tools=None):
+    """The commands the engine refused because they joined several actions (flagged by the engine, or shell operators OUTSIDE quotes in a
+    Bash/PowerShell command), minus those whose scripts the same turn ran successfully afterwards."""
     out = []
     for d in denied or []:
         if not isinstance(d, dict):
             continue
         cmd = str((d.get("input") or {}).get("command") or "").strip()
-        if d.get("compound") or (d.get("tool") in ("Bash", "PowerShell") and any(op in cmd for op in SHELL_OPS)):
+        if (d.get("compound") or (d.get("tool") in ("Bash", "PowerShell")
+                                  and any(op in _outside_quotes(cmd) for op in SHELL_OPS))) and not _recovered(cmd, tools):
             out.append(cmd or str(d.get("tool") or "a command"))
     return out
 
 
-def followup_message(applied, refused, warned, denied=None):
+def followup_message(applied, refused, warned, denied=None, tools=None):
     """The server's message to the agent after a turn whose actions were refused or came back with warnings: what really happened.
     A combined command that was denied adds the retry hint: the agent splits it itself, the student does nothing."""
     j = lambda xs: "; ".join(str(x) for x in xs) or "none"
-    split = compound_denials(denied)
+    split = compound_denials(denied, tools)
     if split and not (applied or refused or warned):
-        return FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) + ". This is a text-only reply: no actions will run"
+        return FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) + FOLLOWUP_TOOLS
     msg = FOLLOWUP_WAIT.format(applied=j(applied), refused=j(refused), warned=j(f"{k}: {v}" for k, v in (warned or {}).items()))
-    return msg + ("\n" + FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) if split else "")
+    msg = msg.replace("This is a text-only reply: no actions will run", "You may run scripts with tool calls; only the ```json actions block is ignored")
+    return msg + ("\n" + FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) + FOLLOWUP_TOOLS if split else "")
 
 
-def followup_worthy(applied, refused, denied=None):
+def followup_worthy(applied, refused, denied=None, tools=None):
     """True when a refusal or warning is of a kind whose action the reply may have claimed as done, or a combined command was denied."""
-    if compound_denials(denied):
+    if compound_denials(denied, tools):
         return True
     for r in refused:
         r = str(r)
@@ -1541,14 +1558,19 @@ def followup_worthy(applied, refused, denied=None):
     return any(_FU_WARNED.match(a) for a in warned_map(applied))
 
 
+def followup_expected(rec, applied, refused, cancelled):
+    """The conditions for a follow-up turn, apart from a busy server."""
+    return not (cancelled or rec.get("error") or rec.get("partial")
+                or not followup_worthy(applied, refused, rec.get("denied"), rec.get("tools"))
+                or not workspace.get("chat.followup_on_refusal", True))
+
+
 def start_followup(proj, sess, tkey, user_text, orig_rec, applied, refused, cancelled):
     """After the reply is stored: ONE more agent turn, TEXT ONLY (its actions are dropped), when a worthwhile action was refused or came
     back with a warning (the reply's text often says "done" before the server's answer is known). True when it started; it runs in
     its own thread and the page shows it from /api/state. Not started: setting off, Stop in between, a failed first turn. It never
     chains, and a new student message or a step button cancels it."""
-    if cancelled or orig_rec.get("error") or orig_rec.get("partial") or not followup_worthy(applied, refused, orig_rec.get("denied")):
-        return False
-    if not workspace.get("chat.followup_on_refusal", True):
+    if not followup_expected(orig_rec, applied, refused, cancelled):
         return False
     with TURNS_LOCK:          # atomic with a new student message: whoever registers first wins
         if tkey in TURNS or STEP_LOCK.locked():
@@ -1580,7 +1602,7 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
         pguard = project_guard.begin(proj)
         BUSY["chat"] += 1
         try:
-            res = agent.respond(m, followup_message(applied, refused, warned, orig_rec.get("denied")), m["chat"], backend=BACKEND, cancel=fturn["cancel"],
+            res = agent.respond(m, followup_message(applied, refused, warned, orig_rec.get("denied"), orig_rec.get("tools")), m["chat"], backend=BACKEND, cancel=fturn["cancel"],
                                 typed=user_text, generated=False, on_event=lambda ev, k=tkey: _turn_event(k, ev))
         finally:
             BUSY["chat"] -= 1
@@ -1620,6 +1642,9 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
                 rec[k] = res[k]
         if res.get("denied"):
             rec["denied"] = unique_denials(res["denied"])
+        if compound_denials(orig_rec.get("denied"), orig_rec.get("tools")) and not any(
+                isinstance(t, dict) and t.get("st") == "ok" for t in rec.get("tools") or []):
+            rec["text"] += "\n\n(Not run: the denied command was not run again; no script ran in this reply)"
         if res.get("seconds") is not None:
             rec["seconds"] = round(float(res["seconds"]), 1)
         if fturn["cancel"].is_set():                # a cancel at any point before the record is stored: nothing is stored
@@ -2643,6 +2668,9 @@ class Handler(BaseHTTPRequestHandler):
                     rec["timed_out"] = kind in ("idle_timeout", "total_timeout")
                 if res.get("denied"):
                     rec["denied"] = unique_denials(res["denied"])
+                    if not partial and compound_denials(rec["denied"], rec.get("tools")) and followup_expected(
+                            rec, applied, refused, turn["cancel"].is_set()):
+                        rec["split_retry"] = True       # the card says so only when the follow-up is really coming
                 say(proj, sess, rec)
                 runlog.usage(proj, "answer", text=rec["text"], chat=sess, engine=res.get("provider") or _eng, model=res.get("model") or "",
                              seconds=rec.get("seconds"), applied=applied, refused=refused, warned=rec.get("warned") or {},

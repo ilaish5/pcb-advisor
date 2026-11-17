@@ -440,7 +440,7 @@ onAct('altium-step-dismiss', async (el, d, e) => {
   renderCenter(true);
 });
 
-const SCH_LIMITS = 'Not yet: a part whose library symbol has several sub-parts is not drawn (draw it by hand), and a design too big for one A4 sheet is refused with a split plan, because nets between sheets are not drawn.';
+const SCH_LIMITS = 'Not yet: a part whose symbol has several sub-parts stops the sheet from drawing (draw that part by hand), and a design too big for one A4 sheet is refused with a split plan, because nets between sheets are not drawn.';
 const PCB_LIMITS = 'Not yet: the router is for small two-layer boards, with no differential pairs and no inner layers.';
 function schHTML(container) {
   const sheets = S.sheets || [];
