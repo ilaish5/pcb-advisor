@@ -9,8 +9,9 @@ pcb-advisor is a local tool for a student's PCB project. A browser UI talks to a
 the only writer of project state). The server uses a read-only Altium file reader (SchDoc, PcbDoc, PrjPcb, `.RUL`), a
 JLC public-API client (stock, price, datasheets, DFM data), and an AI engine CLI (Claude Code or `agy`) reached only
 through the gateway (`scripts/gateway/`). The engine runs in an engine home that holds the runtime pack (AGENTS.md +
-12 skills); skills call the repo's scripts. The tool prepares what goes into Altium and checks what comes out; it never
-drives Altium, routes, orders or logs in (PLAN section 2).
+12 skills); skills call the repo's scripts. Besides reading Altium files, the tool drives Altium
+through `scripts/altium/bridge.py` and `scripts/altium/bridge/AdvisorBridge.pas`: it draws schematics, places parts, routes
+two-layer boards and runs DRC and the OutJob, each step on the student's click or consent (section 5). It never orders or logs in.
 
 ## 2. Components
 
@@ -107,6 +108,15 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | `scripts/altium/rul.py` | Altium .RUL design rules file reader | I3 |
 | `scripts/altium/registry.py` | Windows registry lookup for Altium installs and recent projects | I3 |
 | `scripts/altium/dump.py` | CLI dump and inspect tool for Altium documents | I3 |
+| `scripts/altium/bridge.py` | starts Altium scripts and exchanges files with them; DRC report parsing (`parse_drc`), outputs | later |
+| `scripts/altium/bridge/AdvisorBridge.pas` | the Altium-side script (DelphiScript) that bridge.py calls | later |
+| `scripts/altium/draw.py` | schematic drawing from the netlist | later |
+| `scripts/altium/lib.py` | parts library build for Altium | later |
+| `scripts/altium/layout.py` | placement: decoupling caps, crystal, fan-out bands | later |
+| `scripts/altium/route.py` | router, `capability_check` refusals | later |
+| `scripts/altium/pair.py` | USB differential pair routing | later |
+| `scripts/altium/netcurrent.py` | track width by current (IPC-2221) | later |
+| `scripts/altium/pourcheck.py` | pour islands and unjoined pads | later |
 | `scripts/jlc.py` | JLC client: parts search, stock/price/library type, datasheet download, disk cache | I4 |
 | `scripts/outjob.py` | OutJob generator (Gerber, NC drill, JLC BOM, CPL, schematic PDF) | I5 |
 | `scripts/checks/board.py` | board checks: connector side, decap distance, outline layers, CPL rotation | I5 |

@@ -45,8 +45,7 @@ wrong), and ease of use from install to manufacturing files.
   step first copies the file to `.advisor-backup`.
 - **Local only.** Logs and chats stay on the machine; nothing is sent anywhere.
 
-Fuller description: `docs/ARCHITECTURE.md` (written at the start of the rebuild; where it says the tool never routes, the
-README and this file are the current statement).
+Fuller description: `docs/ARCHITECTURE.md`.
 
 ## 3. Main features by phase
 
