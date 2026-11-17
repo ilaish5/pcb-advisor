@@ -634,6 +634,20 @@ def _sheet_symbols(project, sheet, lib_symbols):
     return out
 
 
+def circular_pin_warnings(project, refs):
+    """One warning per ref whose library symbol was generated from the netlist itself and whose pins no datasheet pin table
+    verified (and no student accepted): the draw step's comparison of netlist and symbol is then the netlist against itself."""
+    manifest = store.library_manifest(project)
+    out = []
+    for line in store.bom(project, write=False):
+        if not set(line.get("refs") or []) & set(refs) or line.get("pins_status") in ("verified", "accepted", ""):
+            continue
+        if partlib.symbol_from_netlist(manifest.get(line["key"])):
+            out.append(f"{', '.join(r for r in line['refs'] if r in refs)}: pins UNVERIFIED: the symbol was generated from the netlist, "
+                       "so matching the netlist against it proves nothing; only the datasheet's pin table (verify_part) or the student's accept does")
+    return out
+
+
 def draw_schematic(project, sheet=None, replace=False):
     """Draw the netlist sheet(s) of the project in Altium: every part from the project SchLib (pin count checked), a wire stub
     on every connected pin ending in a power port or a net label, a No ERC cross on NC pins. Then the saved SchDoc is read back
@@ -695,7 +709,7 @@ def draw_schematic(project, sheet=None, replace=False):
         raise BridgeError(str(exc) + closed) from exc
     problems, warnings, parts, nets = [], [], 0, set()
     for sid, doc, plan, fps in plans:
-        warnings += plan["warnings"]
+        warnings += plan["warnings"] + circular_pin_warnings(project, [p["ref"] for p in plan["parts"] if isinstance(p, dict) and p.get("ref")])
         parts += len(plan["parts"])
         nets |= set(plan["expected"])
         try:

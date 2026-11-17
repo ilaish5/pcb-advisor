@@ -234,7 +234,7 @@ def text_of(name, folder=None):
         try:
             import pypdf
             reader = pypdf.PdfReader(str(path))
-            text = "\n".join((p.extract_text() or "") for p in reader.pages)
+            text = "\f".join((p.extract_text() or "") for p in reader.pages)    # \f = page break (head_of), a space to every other reader
         except Exception:
             import subprocess
             text = subprocess.run(["pdftotext", str(path), "-"],
@@ -244,6 +244,67 @@ def text_of(name, folder=None):
         text = path.read_text(encoding="utf-8", errors="replace")
     txt_path.write_text(text, encoding="utf-8")
     return text
+
+
+HEAD_PAGES = 3
+LAYOUT_PAGES = 150          # a datasheet's pin table is in its first 150 pages; a reference manual is not read to its end
+
+
+def head_of(name, folder=None, pages=HEAD_PAGES):
+    """The first pages of a document's text (what a datasheet says about itself on its front). A cache written before
+    page breaks were kept (no form feed in it) gives its first 4000 characters per page instead."""
+    text = text_of(name, folder)
+    return "\f".join(text.split("\f")[:pages]) if "\f" in text else text[:4000 * pages]
+
+
+def layout_text_of(name, folder=None):
+    """The document's text with its columns kept (pypdf's layout mode, else `pdftotext -layout`), cached next to the PDF as
+    <name>.layout.txt: a table row stays on one line with its cells apart. None when the document is not a PDF or no
+    extractor can read it (the plain text is all there is)."""
+    if reference_path(name) is not None:
+        return None
+    path = cache() / _safe(name)
+    if folder is not None and (pathlib.Path(folder) / _safe(name)).exists():
+        path = pathlib.Path(folder) / _safe(name)
+    if not path.exists() or path.suffix.lower() != ".pdf":
+        return None
+    cached = path.with_suffix(path.suffix + ".layout.txt")
+    if cached.exists():
+        return cached.read_text(encoding="utf-8", errors="replace") or None
+    text = ""
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(str(path))
+        text = "\f".join((p.extract_text(extraction_mode="layout") or "") for p in reader.pages[:LAYOUT_PAGES])
+    except Exception:
+        try:
+            import subprocess
+            text = subprocess.run(["pdftotext", "-layout", "-l", str(LAYOUT_PAGES), str(path), "-"],
+                                  capture_output=True, encoding="utf-8", errors="replace").stdout
+        except OSError:
+            text = ""
+    if text.strip():
+        cached.write_text(text, encoding="utf-8")
+    return text or None
+
+
+def _wild_hit(token, key):
+    """STM32G031x6 for STM32G031F6P6: a token written with x for a letter or digit (six characters or more, a digit, an x
+    after its third character) that the start of the key fits."""
+    if len(token) < 6 or len(token) > len(key) or "x" not in token[3:] or not any(c.isdigit() for c in token):
+        return False
+    return re.fullmatch(token.replace("x", "[a-z0-9]"), key[:len(token)]) is not None
+
+
+def mentions_part(head, mpn):
+    """Does this text (a datasheet's first pages) name the part? The MPN itself, its family (NE555 for NE555DR: an ordering
+    suffix cut off) or a family written with a wildcard letter (STM32G031x6)."""
+    key = _key(mpn)
+    if len(key) < 4:
+        return False
+    if key in _key(head):
+        return True
+    return any(_family_hit(t, key) or _wild_hit(t, key) for t in _tokens(head))
 
 
 def _norm(s):

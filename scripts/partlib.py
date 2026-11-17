@@ -501,6 +501,7 @@ def _generate(build, e, line, prefix, pins, ctx):
                                "a standard one; the pin list is needed, or " + vendor_hint(line.get("mpn")))
         return None
     e["source"] = source
+    e["symbol_from"] = "netlist"             # the symbol is built from the sheet's own pins: no evidence about the part
     e["issues"] += notes + sym[2]
     return sym[0], sym[1], fpname
 
@@ -540,6 +541,22 @@ def _spec_symbols(path):
             cur["pins"].append({"num": f[1], "name": f[2], "type": f[3].replace("eElectric", ""), "orient": f[4],
                                 "x": f[5], "y": f[6], "len": f[8]})
     return out
+
+
+def footprint_pads(project, key):
+    """The pad names of the footprint built for a BOM line (library/build/footprints_spec.txt), or None when no library is built
+    for it yet. The datasheet's pin count is compared with this."""
+    name = (store.library_manifest(project).get(key) or {}).get("footprint")
+    fp = _spec_footprints(library_dir(project) / "build" / "footprints_spec.txt").get(name) if name else None
+    if not fp:
+        return None
+    return list(dict.fromkeys(ln.split("|")[1] for ln in fp["lines"] if ln.startswith("PAD|")))
+
+
+def symbol_from_netlist(entry):
+    """True when the library symbol of a manifest entry was generated from the project's own netlist (no EasyEDA or vendor symbol
+    behind it): the draw step's pin comparison against it is then circular and proves nothing."""
+    return bool(entry) and (entry.get("symbol_from") == "netlist" or entry.get("source") in ("generated", "kicad"))
 
 
 def _previous(lib):

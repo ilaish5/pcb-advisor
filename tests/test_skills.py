@@ -11,6 +11,7 @@ import export_bom
 import registry
 import render_sheet
 import store
+import pintable
 import verify_part
 
 
@@ -92,38 +93,42 @@ def test_verify_without_the_datasheet_says_unchecked_and_unaccepts(lte):
 def test_verify_finds_pins_in_the_datasheet_text(lte):
     d = store.pdir(lte) / "sources"
     (d / "txs0104e.pdf").write_bytes(b"x")
+    pins = next(x for x in store.load_sheet(lte, "03")["parts"] if x["ref"] == "U5")["pins"]
     (d / "txs0104e.pdf.txt").write_text(
-        " ".join(f"{p['num']} {p['name']}" for p in next(x for x in store.load_sheet(lte, "03")["parts"] if x["ref"] == "U5")["pins"]),
-        encoding="utf-8")
-    assert verify_part.verify(lte, "U5")["verify"] == "pass"
+        "TXS0104E 4-bit level shifter\nTable 5-3. Pin Functions\nPIN\nNAME NO. TYPE DESCRIPTION\n"
+        + "".join(f"{p['name']} {p['num']} I/O Description of {p['name']}\n" for p in pins), encoding="utf-8")
+    res = verify_part.verify(lte, "U5")
+    assert res["verify"] == "pass", res
 
 
 def test_verify_lists_the_pins_it_cannot_find(lte):
     d = store.pdir(lte) / "sources"
     (d / "txs0104e.pdf").write_bytes(b"x")
-    (d / "txs0104e.pdf.txt").write_text("1 VCCA 2 A1", encoding="utf-8")
+    pins = next(x for x in store.load_sheet(lte, "03")["parts"] if x["ref"] == "U5")["pins"]
+    (d / "txs0104e.pdf.txt").write_text(
+        "TXS0104E 4-bit level shifter\nPin Functions\nPIN NAME TYPE\n"
+        + "".join(f"{p['num']} {'GND' if p['num'] == '8' else p['name']} I/O Description\n" for p in pins), encoding="utf-8")
     res = verify_part.verify(lte, "U5")
-    assert res["verify"] == "mismatch" and "pin 8 OE" in res["issues"]
+    assert res["verify"] == "mismatch" and "pin 8 OE" in res["issues"] and "GND" in res["issues"]
 
 
 def test_a_short_pin_name_matches_the_datasheet_long_one():
     # the sheet's 555 calls pin 4 RST, TI's pin table RESET: the same pin, not a mismatch
-    assert verify_part._near("4 RESET Reset input", "4", "RST")
-    assert verify_part._near("4 RESET", "4", "~RST") and verify_part._near("4 RESET", "4", "nRESET")
-    assert verify_part._near("4 RESET", "4", "RESET_n") and verify_part._near("4 RST", "4", "RESET")
-    assert not verify_part._near("4 OUT Output", "4", "RST")   # an alias never stands in for a different function
+    assert pintable.name_matches("RST", "RESET")
+    assert pintable.name_matches("~RST", "RESET") and pintable.name_matches("nRESET", "RESET")
+    assert pintable.name_matches("RESET_n", "RESET") and pintable.name_matches("RESET", "RST")
+    assert not pintable.name_matches("RST", "OUT")   # an alias never stands in for a different function
 
 
 def test_an_alias_matches_only_a_whole_word():
     # before the aliases each of these failed, and a wrong pin number must still fail
-    for text, num, name in [("5 drain open when", "5", "ENABLE"), ("7 power dissipation", "7", "DISCH"),
-                            ("6 through-hole", "6", "THRESHOLD"), ("3 without", "3", "OUTPUT"),
-                            ("5 contents", "5", "CONTROL"), ("2 does", "2", "nOE"), ("3 power lower", "3", "~WE")]:
-        assert not verify_part._near(text, num, name), name
+    for cell, name in [("drain", "ENABLE"), ("dissipation", "DISCH"), ("through-hole", "THRESHOLD"), ("without", "OUTPUT"),
+                       ("contents", "CONTROL"), ("does", "nOE"), ("lower", "~WE")]:
+        assert not pintable.name_matches(name, cell), name
 
 
 def test_a_mark_alone_is_not_a_name():
-    assert verify_part._spellings("~") == set() and not verify_part._near("pin 9 VCC", "9", "~")
+    assert pintable.pinnames.spellings("~") == set() and not pintable.name_matches("~", "VCC")
 
 
 def test_the_skills_page_lists_only_scripts_that_exist(lte):
