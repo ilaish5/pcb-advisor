@@ -9,8 +9,8 @@ import pytest
 import stm32_board_fixture as fx
 from altium import layout, route
 
-# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 19-32 s placement (varies with machine load), 51-56 s routing
-PLACE_BUDGET_S = 50.0
+# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 7 s placement, 51-56 s routing
+PLACE_BUDGET_S = 15.0
 ROUTE_BUDGET_S = 60.0
 ROUTE_SECONDS = 50.0                      # the router's own deadline (it then says what ran out of time)
 RULES = dict(clearance=0.127, width=0.127, width_min=0.127, width_max=10, via_dia=0.6, via_hole=0.3, edge=0.3)
@@ -51,9 +51,8 @@ def test_placement_within_budget_no_overlap_and_honest_findings(board):
     assert board["place_s"] < PLACE_BUDGET_S
     assert plan["errors"] == [] and problems == []                  # every part placed, 0 overlaps, inside the outline, nets as the netlist
     assert not [p for p in problems if "overlap" in p]
-    # the planner could not put every decoupling cap within 3 mm on this crowded board: those are ERROR findings, each one is a decap
-    # finding that names the cap (not silent, not another kind of error). The spec wants 0 here: it is reported, not weakened.
-    assert all(f["text"].startswith(f["ref"] + " is ") and "limit 3 mm" in f["text"] for f in errors), errors
+    # every decoupling cap is within 3 mm of its supply pin: no finding on a cap (the crystal has its own test)
+    assert errors == [] and [f for f in plan["findings"] if f["ref"] != "Y1"] == [], plan["findings"]
 
 
 def test_every_decap_near_its_vdd_pin_or_a_truthful_warning(board):
@@ -75,7 +74,7 @@ def test_every_decap_near_its_vdd_pin_or_a_truthful_warning(board):
             assert any(w.startswith(c["ref"] + " is ") for w in warns), f"{c['ref']} is {d:.1f} mm away and nothing says so"
     near = len(caps) - len(far)
     print(f"\nDECAPS {near} of {len(caps)} 100 nF caps within 3 mm of a VDD/VBAT/VDDA/VOUT pin; far (and warned): {far}")
-    assert near >= len(caps) // 2
+    assert far == [] and near == len(caps)
 
 
 def test_crystal_near_the_oscillator_pins_or_a_truthful_finding(board):
@@ -86,9 +85,10 @@ def test_crystal_near_the_oscillator_pins_or_a_truthful_finding(board):
     real = max(math.hypot(_xy(doc, "Y1", p["pad"])[0] - ours[p["pin"]][0], _xy(doc, "Y1", p["pad"])[1] - ours[p["pin"]][1]) for p in xt["pins"])
     assert abs(real - xt["max_mm"]) < 0.1                              # the plan's number is the real distance
     print(f"\nCRYSTAL Y1 {real:.1f} mm from the OSC pins (threshold {layout.XTAL_NEAR_MM:g} mm)")
-    if real > layout.XTAL_NEAR_MM:
+    if real > layout.XTAL_NEAR_MM:                                      # farther than the threshold: a finding names the crystal, never silent
         assert any(f["ref"] == "Y1" and "close as possible" in f["text"] for f in plan["findings"])
-    assert real < 15                                                    # at least on the MCU's side of the board
+    else:
+        assert not any(f["ref"] == "Y1" for f in plan["findings"])
 
 
 def test_routing_within_budget_with_zero_violations_and_every_net_accounted(board):
@@ -109,8 +109,9 @@ def test_routing_within_budget_with_zero_violations_and_every_net_accounted(boar
     assert viol == []                                                   # whatever was drawn is rule-clean
     assert routed | set(failed) == multi and not routed & set(failed)  # every net routed or failed, none lost
     assert all(why.strip() for why in failed.values())                 # each failure has a reason
-    # the honest outcome measured today: about 80% of the nets; a drop below that is a regression of the router
-    assert frac >= 0.7, (frac, failed)
+    # the honest outcome measured today: 40-42 of 45 nets (89-93%, the router stops at its 50 s wall-clock deadline, so a busy machine
+    # lowers it); below 80% is a regression of the placement (fan-out room round the MCU) or of the router
+    assert frac >= 0.8, (frac, failed)
     # what is drawn leaves no open gap on the nets reported as routed
     open_nets = {n for n, *_ in layout.unrouted(dict(doc, tracks=_tracks(res), vias=_vias(res)))}
     assert not (open_nets & routed), open_nets & routed
