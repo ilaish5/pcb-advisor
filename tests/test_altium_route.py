@@ -259,3 +259,56 @@ def test_find_pairs_by_pin_names():
     assert pair.find_pairs({"pads": pads}) == [("N1", "N2", "usb")]
     pads[1]["pin_name"] = "PA11"                                        # one side only: no pair
     assert pair.find_pairs({"pads": pads}) == []
+
+
+def usbc_board(extra=(), mcu_x=(12.8, 12.0), mcu_y=6.0):
+    """A 16-pin USB-C receptacle (land pattern of the GCT USB4105 / HRO TYPE-C-31-M-12: one row, 0.5 mm pitch, 0.3 x 1.15 signal pads;
+    B7 A6 A7 B6 = D- D+ D- D+ interleaved, each net on two pads) at the top, an MCU with two data pins below."""
+    cx, cy = 10.0, 20.0
+    row = [("A1B12", -3.2, "GND", 0.6), ("A4B9", -2.4, "VBUS", 0.6), ("B8", -1.75, "SBU2", 0.3), ("A5", -1.25, "CC1", 0.3),
+           ("B7", -0.75, "USB_DM", 0.3), ("A6", -0.25, "USB_DP", 0.3), ("A7", 0.25, "USB_DM", 0.3), ("B6", 0.75, "USB_DP", 0.3),
+           ("A8", 1.25, "SBU1", 0.3), ("B5", 1.75, "CC2", 0.3), ("B4A9", 2.4, "VBUS", 0.6), ("B1A12", 3.2, "GND", 0.6)]
+    pads = [pad("J1", nm, cx + dx, cy, net, w, 1.15) for nm, dx, net, w in row]
+    pads += [pad("U1", "PA12", mcu_x[0], mcu_y, "USB_DP", 0.4, 0.8), pad("U1", "PA11", mcu_x[1], mcu_y, "USB_DM", 0.4, 0.8)]
+    return {"pads": pads + list(extra)}
+
+
+def test_usb_c_connector_pair_is_tied_and_coupled_or_reported():
+    doc, box = usbc_board(), [0, 0, 24, 26]
+    res = route.plan_routes(doc, box, rules(), seconds=60)
+    assert route.violations(doc, res["items"], rules(), box) == []
+    (pr,) = res["pairs"]
+    assert not dict(res["failed"]).get("USB_DP") and not dict(res["failed"]).get("USB_DM"), res["failed"]
+    if pr["coupled"]:
+        assert pr["tie_vias"] in (0, 2, 4) and "not impedance-controlled" in pr["note"]
+        assert [i for i in res["items"] if i["kind"] == "via" and i.get("role") != "tie"] == []   # no via in the pair itself
+    else:
+        assert pr["note"].startswith("not routed as a coupled pair: "), pr
+
+
+def test_usb_esd_part_in_the_pair_is_a_reported_fallback():
+    esd = [pad("D1", "1", 12, 12, "USB_DP", 0.5, 0.5), pad("D1", "3", 12.8, 12, "USB_DM", 0.5, 0.5)]
+    doc, box = usbc_board(esd), [0, 0, 24, 26]
+    res = route.plan_routes(doc, box, rules(), seconds=60)
+    (pr,) = res["pairs"]
+    assert not pr["coupled"] and "ESD part in the pair" in pr["note"], pr
+    assert route.violations(doc, res["items"], rules(), box) == []
+
+
+def test_offset_that_reverses_on_a_short_inner_segment_is_refused():
+    pts = [(0, 0), (3, 0), (3.2, 0.2), (3.2, 3)]                      # the 0.28 mm diagonal between two left turns, gap 0.4
+    assert not pair._offset_ok(pts, pair._offset(pts, 0.4))             # inner side: the diagonal is eaten, a bow tie
+    assert pair._offset_ok(pts, pair._offset(pts, -0.4))                # outer side is fine
+    assert pair._offset([(0, 0), (1, 0), (0, 0.0001)], 0.2) is None     # a turn of 180 degrees has no mitre
+
+
+def test_find_pairs_otg_names_and_pin_names_inside_plan_routes():
+    assert pair.find_pairs(["USB_OTG_FS_DP", "USB_OTG_FS_DM"]) == [("USB_OTG_FS_DP", "USB_OTG_FS_DM", "usb")]
+    assert pair.find_pairs(["USB_OTG_HS_DP", "USB_OTG_HS_DM"]) == [("USB_OTG_HS_DP", "USB_OTG_HS_DM", "usb")]
+    pads = [pad("J1", "2", 5, 10, "N1", 0.6, 0.5), pad("J1", "3", 5, 10.8, "N2", 0.6, 0.5),
+            pad("U1", "21", 25, 12, "N1", 0.6, 0.5), pad("U1", "22", 25, 12.8, "N2", 0.6, 0.5)]
+    pads[2]["pin_name"], pads[3]["pin_name"] = "PA12 (USB_OTG_FS_DP)", "PA11 (USB_OTG_FS_DM)"
+    doc = {"pads": pads}
+    assert pair.find_pairs(doc) == [("N1", "N2", "usb")]
+    res = route.plan_routes(doc, [0, 0, 30, 24], rules(), seconds=30)       # pin names reach pre_route through plan_routes
+    assert [pr["nets"] for pr in res["pairs"]] == [["N1", "N2"]]
