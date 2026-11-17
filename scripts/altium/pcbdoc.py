@@ -220,6 +220,8 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
             "shape": s5[49] if len(s5) > 49 else 2,          # top shape: 1 round, 2 rectangular, 3 octagonal, 9 rounded rectangle
             "hole_mm": round(struct.unpack("<i", s5[45:49])[0] / 10000 * 0.0254, 4) if len(s5) >= 49 else 0.0,
             "plated": bool(s5[60]) if len(s5) > 60 else True,
+            # the shape the extended size block (6th subrecord) holds for the top layer; None when the pad has no such block
+            "shape_ext": subs[5][232] if len(subs[5]) > 232 else None,
         })
 
     try:
@@ -502,7 +504,11 @@ def parse_polygons(blob: bytes, nets: list[str]) -> list[dict]:
         except ValueError:
             k = -1
         rd = props.get("REMOVEDEAD")
-        out.append({"net": nets[k] if 0 <= k < len(nets) else None, "layer_name": props.get("LAYER", ""),
+        try:      # the name is stored as comma-separated character codes
+            name = "".join(chr(int(c)) for c in props.get("NAME", "").split(",") if c.strip())
+        except ValueError:
+            name = props.get("NAME", "")
+        out.append({"net": nets[k] if 0 <= k < len(nets) else None, "layer_name": props.get("LAYER", ""), "name": name,
                     "remove_dead": None if rd is None else rd.upper() == "TRUE"})
     return out
 
@@ -544,6 +550,8 @@ def parse_regions(blob: bytes, nets: list[str], polygons: list | None = None) ->
                 "layer": rec[0],
                 "net": nets[net_idx] if (net_idx != 0xFFFF and 0 <= net_idx < len(nets)) else None,
                 "polygon_net": polygons[poly_idx]["net"] if polygons and poly_idx < len(polygons) else None,
+                "polygon_index": poly_idx if poly_idx != 0xFFFF else None,
+                "polygon_name": polygons[poly_idx].get("name") if polygons and poly_idx < len(polygons) else None,
                 "polygon_remove_dead": polygons[poly_idx]["remove_dead"] if polygons and poly_idx < len(polygons) else None,
                 "polygon": poly_idx != 0xFFFF,
                 "in_component": struct.unpack("<H", rec[7:9])[0] != 0xFFFF,

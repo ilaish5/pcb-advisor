@@ -52,7 +52,7 @@ def test_arcs_fills_regions_and_component_tracks_join():
 def test_round_pad_corner_gap_is_not_a_touch():
     # a round pad of diameter 2 centred (30.8, 10.8): its square reaches the corner (30, 10) of the piece, the circle does not
     p = pad(30.8, 10.8, name="2")
-    p.update(shape=1, sx_mm=2.0, sy_mm=2.0)
+    p.update(shape=1, shape_ext=1, sx_mm=2.0, sy_mm=2.0)
     d = doc([rect(0, 0, 30, 10)], [pad(5, 5), pad(25, 5), p])
     assert [x["name"] for x in pourcheck.check(d)["unjoined_pads"]] == ["2"]
     p["shape"] = 2
@@ -82,3 +82,31 @@ def test_region_holes_are_read():
     assert len(reg) == 1 and reg[0]["polygon_net"] == "N" and reg[0]["polygon_remove_dead"] is False
     assert len(reg[0]["points_mm"]) == 4
     assert reg[0]["holes"] == [[(2.0, 2.0), (5.0, 2.0), (5.0, 5.0)]]
+    assert reg[0]["polygon_index"] == 0
+
+
+def test_overlapping_pieces_of_two_polygons_join():
+    # a big GND polygon with pads, plus a second, overlapping GND polygon with no pad: one copper, no island
+    d = doc([rect(0, 0, 30, 10, polygon_index=0), rect(28, 2, 45, 8, polygon_index=1)], [pad(5, 5), pad(15, 5), pad(25, 5)])
+    assert pourcheck.check(d)["ok"]
+    # the same two pieces as pieces of one polygon never touch: the second is cut off
+    d = doc([rect(0, 0, 30, 10, polygon_index=0), rect(28, 2, 45, 8, polygon_index=0)], [pad(5, 5), pad(15, 5), pad(25, 5)])
+    assert len(pourcheck.check(d)["islands"]) == 1
+
+
+def test_polygon_names_are_decoded_and_used_in_the_note():
+    text = ("|NET=0|LAYER=TOP|REMOVEDEAD=FALSE|NAME=" + ",".join(str(ord(c)) for c in "gnd_Top")).encode()
+    out = pcbdoc.parse_polygons(struct.pack("<I", len(text)) + text, ["GND"])
+    assert out[0]["name"] == "gnd_Top" and out[0]["net"] == "GND" and out[0]["remove_dead"] is False
+    d = doc([rect(0, 0, 30, 10), rect(40, 0, 50, 10, polygon_remove_dead=False, polygon_name="gnd_Top", polygon_index=1)],
+            [pad(5, 5), pad(15, 5), pad(25, 5)])
+    assert "polygon gnd_Top;" in pourcheck.check(d)["note"]
+    real = pourcheck.check(pcbdoc.read_pcbdoc(REPO / "tests" / "fixtures" / "altium" / "finished-board.PcbDoc"))
+    assert "gnd_Top" in real["note"] and "GND_Bot" in real["note"] and "GND_Top" not in real["note"]
+
+
+def test_pad_without_extended_shape_is_the_full_rectangle():
+    p = pad(30.8, 10.8, name="2")
+    p.update(shape=1, sx_mm=2.0, sy_mm=2.0)          # shape 1 with no extended block: may be a rounded rectangle
+    d = doc([rect(0, 0, 30, 10)], [pad(5, 5), pad(25, 5), p])
+    assert pourcheck.check(d)["ok"]

@@ -168,8 +168,9 @@ def _poly_in_hole(poly, hole):
 
 def _shapes_touch(a, b):
     """Two copper shapes on one layer touch when their outlines overlap, unless one lies wholly in a hole of the other. Pieces of
-    poured polygons never touch each other (Altium keeps them apart: what looks like overlap is one piece sitting in a hole)."""
-    if a["pour"] and b["pour"]:
+    pieces of one poured polygon never touch each other (Altium keeps them apart: what looks like overlap is one piece sitting in a
+    hole); pieces of different polygons join by overlap, holes respected."""
+    if a["pour"] and b["pour"] and a.get("poly_idx") is not None and a.get("poly_idx") == b.get("poly_idx"):
         return False
     if not _poly_overlap(a["poly"], b["poly"]):
         return False
@@ -187,7 +188,9 @@ def _pad_prim(p):
     if round((p.get("rot") or 0) / 90.0) % 2 == 1:
         sx, sy = sy, sx
     x, y = p["x_mm"], p["y_mm"]
-    if p.get("shape") == 1:                       # round or oval: circle or capsule along the long side
+    # round or oval (circle or capsule along the long side) only when the extended block confirms it: the base block's shape 1 is
+    # also written for rounded rectangles, so without that confirmation the pad is taken as its full rectangle (never misses a corner)
+    if p.get("shape") == 1 and p.get("shape_ext") == 1:
         r = min(sx, sy) / 2 + _EPS
         d = (max(sx, sy) - min(sx, sy)) / 2
         a, b = ((x - d, y), (x + d, y)) if sx >= sy else ((x, y - d), (x, y + d))
@@ -249,7 +252,8 @@ def _check(doc, net, layer, out):
         if len(pts) >= 3:
             pieces.append({"poly": pts, "box": _bbox(pts), "layer": r.get("layer"), "pour": True,
                            "holes": [[tuple(p) for p in h] for h in r.get("holes") or []],
-                           "remove_dead": r.get("polygon_remove_dead")})
+                           "remove_dead": r.get("polygon_remove_dead"), "poly_idx": r.get("polygon_index"),
+                           "name": r.get("polygon_name") or f"{net}_{_layer_name(r.get('layer'))}"})
     if not pieces:
         if any(r.get("polygon") and not r.get("polygon_net") for r in regions):
             return out(False, "The polygons of the board could not be read from the file (their nets are unknown), so the pour "
@@ -335,7 +339,7 @@ def _check(doc, net, layer, out):
                 sh = shapes[k]
                 area = _area(sh["poly"]) - sum(_area(h) for h in sh["holes"] if len(h) >= 3)
                 islands.append({"layer": sh["layer"], "bbox_mm": [round(v, 3) for v in sh["box"]], "points": len(sh["poly"]),
-                                "area_mm2": round(max(area, 0.0), 3)})
+                                "area_mm2": round(max(area, 0.0), 3), "polygon": sh["name"], "remove_dead": sh["remove_dead"]})
     unjoined = []
     for i, (kind, d, layers, _pr) in enumerate(nodes):
         if kind != "pad" or not (layers is _ALL or layers & pour_layers):
@@ -349,9 +353,7 @@ def _check(doc, net, layer, out):
     if islands or unjoined:
         note = f"{len(islands)} cut-off copper piece(s) and {len(unjoined)} pad(s) of {net} not reached by the pour or a track."
         if islands:
-            il = {i["layer"] for i in islands}
-            off = sorted({f"{net}_{'Bot' if pc['layer'] == 32 else _layer_name(pc['layer'])}" for pc in pieces
-                          if pc["remove_dead"] is False and pc["layer"] in il})
+            off = sorted({i["polygon"] for i in islands if i["remove_dead"] is False})
             if off:
                 note += f" Remove Dead Copper is off in polygon {', '.join(off)}; turn it on and repour."
     else:
