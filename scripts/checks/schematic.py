@@ -48,7 +48,7 @@ from altium.schdoc import read_schdoc  # noqa: E402
 
 POWER_PIN_RE = re.compile(r"^(?:VCC|VDD|VIN|VBAT|VREF|VDDA|VSS|VSSA|GND|AGND|DGND|3V3|5V|12V)\b", re.I)
 # GND/VSS anywhere in the name; 0V only as the whole name (else "+10V", "10V", "V10" would be ground)
-GND_RE = re.compile(r"GND|VSS|^[+\-]?0V$", re.I)
+GND_RE = re.compile(r"GND|VSS|(?:^|[^0-9.])[+\-]?0V(?![0-9])", re.I)
 VCC_RE = re.compile(r"VCC|VDD|VIN|VBAT|VDDA|3V3|5V|12V|\+3V3|\+5V", re.I)
 
 ELECTRICAL_POWER = 7  # Altium pin electrical type "Power"
@@ -1115,6 +1115,7 @@ def _ref_prefix(ref: str) -> str:
 
 
 _POLAR = {"A": "A", "ANODE": "A", "+": "A", "K": "K", "C": "K", "CATHODE": "K", "-": "K"}
+_NEG_RAIL_RE = re.compile(r"^[-~]|^N(?:EG)?[_-]?\d|^M\d|NEG|MINUS|[-_]$|[_-]N$|(?<=VCC)N$|(?<=VDD)N$", re.I)
 _POS_RAIL_RE = re.compile(r"^\+|VCC|VDD|VIN|VBAT|VBUS|3V3|5V|12V|24V", re.I)
 
 
@@ -1123,7 +1124,40 @@ def _is_gnd(net: str) -> bool:
 
 
 def _is_pos_rail(net: str) -> bool:
-    return not _is_gnd(net) and not re.match(r"^[-~]|^N(?:EG)?[_-]?\d|NEG|MINUS", net, re.I) and bool(_POS_RAIL_RE.search(net))
+    return (not _is_gnd(net) and not _NEG_RAIL_RE.search(net) and bool(_POS_RAIL_RE.search(net)))
+
+
+def _bom_text(bom, ref: str) -> str:
+    line = next((l for l in (bom or []) if ref in (l.get("refs") or [])), {})
+    return f"{line.get('description', '')} {line.get('mpn', '')}"
+
+
+_BIDIR_RE = re.compile(r"bi-?directional|bipolar|\bTVS\b|transient|transil", re.I)
+_BRIDGE_RE = re.compile(r"bridge", re.I)
+
+
+def _orientation_unknowable(pin_details: dict, ref: str, text: str) -> bool:
+    """Parts whose pins do not mean anode/cathode in a plain diode way: bidirectional TVS, bridge rectifiers."""
+    if _BIDIR_RE.search(text) or re.search(r"CA\s*$", text.strip(), re.I) or _BRIDGE_RE.search(text):
+        return True
+    names = [str(p.get("name", "")).strip() for p in pin_details.values() if p.get("ref") == ref]
+    return len(names) >= 4 and "~" in names
+
+
+def _is_diode_clamp(netlist: dict, net: str, other) -> bool:
+    """Two diodes in series across the coil (a diode plus a Zener, fast release): one on each coil end, meeting at
+    a node that only those two diodes share."""
+    for m, ps in netlist.items():
+        if m == net or m in other or len(ps) != 2:
+            continue
+        refs = [_tag_ref(t) for t in ps]
+        if len(set(refs)) != 2 or any(_ref_prefix(r) != "D" for r in refs):
+            continue
+        on_net = [r for r in refs if any(_tag_ref(t) == r for t in netlist.get(net, []))]
+        on_other = [r for r in refs if any(_tag_ref(t) == r for o in other for t in netlist.get(o, []))]
+        if len(on_net) == 1 and len(on_other) == 1 and on_net != on_other:
+            return True
+    return False
 
 
 def _pin_polarity(pin_details: dict, ref: str, tags) -> "str | None":
@@ -1134,11 +1168,13 @@ def _pin_polarity(pin_details: dict, ref: str, tags) -> "str | None":
     return None
 
 
-def _flyback_orientation(netlist, pin_details, net, load, q, across) -> list:
+def _flyback_orientation(netlist, pin_details, net, load, q, across, bom=None) -> list:
     """Diodes joining the switched node `net` and the load's other net: when none is clearly the right way round
     and one is clearly reversed (names A/K, the other net a known rail), report it. Unclear = no finding."""
     reversed_ = []
     for o, d in sorted(across):
+        if _orientation_unknowable(pin_details, d, _bom_text(bom, d)):
+            return []
         a_on_net = _pin_polarity(pin_details, d, netlist.get(net, []))
         k_on_o = _pin_polarity(pin_details, d, netlist.get(o, []))
         if a_on_net is None or k_on_o is None or a_on_net == k_on_o:
@@ -1240,7 +1276,9 @@ def check_inductive_load_no_flyback(netlist: dict, pin_details: dict, bom: "list
             diode_refs = {_tag_ref(t) for t in pins if _ref_prefix(_tag_ref(t)) == "D"}
             across = {(o, _tag_ref(t)) for o in other for t in netlist.get(o, []) if _tag_ref(t) in diode_refs}
             if across:
-                out.extend(_flyback_orientation(netlist, pin_details, net, load, q, across))
+                out.extend(_flyback_orientation(netlist, pin_details, net, load, q, across, bom))
+                continue
+            if _is_diode_clamp(netlist, net, other):
                 continue
             sev = "warning"
             if _ref_prefix(load) == "BZ":
