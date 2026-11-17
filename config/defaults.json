@@ -23,6 +23,9 @@
     "install_path": "",
     "projects_dir": ""
   },
+  "chat": {
+    "followup_on_refusal": true
+  },
   "agent": {
     "provider": "claude_code",
     "engine_home": "",

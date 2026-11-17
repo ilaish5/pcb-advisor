@@ -380,7 +380,8 @@ function msgHTML(m, undoTs) {
     if ((m.refused || []).length && m.text) m = {...m, text: m.text.replace(/\n*\(Not applied: [\s\S]*\)\s*$/, '')};
     // the engine writes its text before the actions run, so "placed" may stand above a red chip: say so before the text
     const nRef = (m.refused || []).length;
-    const head = nRef && m.text ? `<div class="acts"><span class="chat-act bad" role="note">Not all of this happened: ${nRef} step${nRef > 1 ? 's' : ''} failed (red, below)</span></div>` : '';
+    const after = m.followup ? '<div class="chat-followup" role="note">After the results</div>' : '';     // the server's own second turn, written once the actions had answered
+    const head = after + (nRef && m.text ? `<div class="acts"><span class="chat-act bad" role="note">Not all of this happened: ${nRef} step${nRef > 1 ? 's' : ''} failed (red, below)</span></div>` : '');
     return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';

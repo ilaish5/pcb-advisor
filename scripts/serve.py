@@ -1114,17 +1114,17 @@ def _uses_altium(kind):
     return isinstance(kind, str) and (kind.startswith("altium.") or kind == "library.build")
 
 
-def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None):
+def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, allow_auto=True):
     """The server is the only writer: see _apply_actions. A turn whose actions drive Altium holds STEP_LOCK while they run; when
     something else holds it, those actions are refused and the rest still applies."""
     wants = any(_uses_altium(a.get("type")) for a in actions or [] if isinstance(a, dict))
     held = wants and STEP_LOCK.acquire(blocking=False)
     try:
         if not held:
-            return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held)
+            return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
         kinds = [a.get("type") for a in actions if isinstance(a, dict) and _uses_altium(a.get("type"))]
         with runlog.span("chat.altium-actions", project=project, actions=kinds):
-            res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held)
+            res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
             runlog.event("op", op="chat.altium-actions", phase="result", project=project, refused=res[2])
             return res
     finally:
@@ -1132,7 +1132,7 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
             STEP_LOCK.release()
 
 
-def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, altium_free=True):
+def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, altium_free=True, allow_auto=True):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
     approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
@@ -1144,7 +1144,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 if isinstance(r, str)}
 
     def maybe_auto(rec):
-        if not store.may_auto_apply(rec):
+        if not allow_auto or not store.may_auto_apply(rec):       # allow_auto=False (the follow-up turn): a proposal always waits for the student
             return
         try:
             decide_and_note(project, sess, rec["id"], "approved", by="auto", note=False, redraw_now=False)
@@ -1370,6 +1370,95 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                             "text": f"Applied without asking ({store.autonomy()} mode, the student can undo): "
                                     + ", ".join(r["id"] for r in auto_done)})
     return applied, proposals, refused
+
+
+FOLLOWUP_WAIT = ("Results of your actions: {applied}; refused: {refused}; warnings: {warned}. Correct anything in your previous "
+                 "reply that claimed otherwise, in one or two short sentences, and do not repeat actions that need the student's approval")
+
+
+def followup_message(applied, refused, warned):
+    """The server's message to the agent after a turn whose actions were refused or came back with warnings: what really happened."""
+    j = lambda xs: "; ".join(str(x) for x in xs) or "none"
+    return FOLLOWUP_WAIT.format(applied=j(applied), refused=j(refused), warned=j(f"{k}: {v}" for k, v in (warned or {}).items()))
+
+
+def followup_actions(actions, refused):
+    """The follow-up's actions that may run: never a kind the first turn had refused (a refusal for the student's approval or consent
+    stays a refusal), never a step that needs the student's own words (draw / place / route)."""
+    refused_kinds = {m.group(0) for r in refused for m in [re.match(r"[A-Za-z_][\w.]*", str(r))] if m}
+    return [a for a in actions or [] if isinstance(a, dict) and a.get("type") not in refused_kinds
+            and a.get("type") not in _CONSENT_ACTION.values()]
+
+
+def start_followup(proj, sess, tkey, user_text, orig_rec, applied, refused, cancelled):
+    """After the reply is stored: ONE more agent turn when an action was refused or came back with a warning (the agent's text often
+    says "done" before the server's answer is known). True when it started; it runs in its own thread and the chat shows it when the
+    page next reads the state. Not started: setting off, Stop or a new message in between, a failed first turn. It never chains
+    (the thread starts nothing) and its proposals are never auto-approved."""
+    warned = warned_map(applied)
+    if not (refused or warned) or cancelled or orig_rec.get("error") or orig_rec.get("partial"):
+        return False
+    if not workspace.get("chat.followup_on_refusal", True):
+        return False
+    with TURNS_LOCK:          # atomic with a new student message: whoever registers first wins
+        if tkey in TURNS or STEP_LOCK.locked():
+            return False
+        fturn = TURNS[tkey] = _new_turn()
+        fturn["followup"] = True
+    threading.Thread(target=_run_followup, args=(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, warned),
+                     daemon=True, name="chat-followup").start()
+    return True
+
+
+def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, warned):
+    t0 = time.time()
+    try:
+        tail = session_mod.load_chat(proj, sess)
+        if not tail or tail[-1].get("ts") != orig_rec["ts"] or tail[-1].get("role") != "agent" or fturn["cancel"].is_set():
+            return                                  # the student wrote again, or pressed Stop, before it began
+        runlog.event("chat", phase="followup-begin", project=proj, refused=len(refused), warned=len(warned))
+        m = model.build(project=proj, session=sess)
+        guard = tool_guard.begin()
+        BUSY["chat"] += 1
+        try:
+            res = agent.respond(m, followup_message(applied, refused, warned), m["chat"], backend=BACKEND, cancel=fturn["cancel"],
+                                typed=user_text, generated=False, on_event=lambda ev, k=tkey: _turn_event(k, ev))
+        finally:
+            BUSY["chat"] -= 1
+            edited, unrestored = tool_guard.end(guard)
+        if edited or unrestored:
+            print(f"[guard] the follow-up edited system files: restored {edited}, not restorable {unrestored}", file=sys.stderr, flush=True)
+        if res.get("error") or res.get("partial") or fturn["cancel"].is_set() or not (res.get("reply") or "").strip():
+            runlog.event("chat", phase="followup-end", ok=False, project=proj, seconds=round(time.time() - t0, 1),
+                         error=str(res.get("error_kind") or res.get("reply") or "no reply")[:300])
+            return                                  # the first reply and its red refusals stay as they are
+        tail = session_mod.load_chat(proj, sess)    # a message sent while it answered: the follow-up would land under the wrong question
+        if not tail or tail[-1].get("ts") != orig_rec["ts"]:
+            return
+        f_applied, f_props, f_refused = apply_actions(proj, followup_actions(res.get("actions"), refused), sess, last_user="",
+                                                      cancel=fturn["cancel"], chat=m["chat"], allow_auto=False)
+        if edited or unrestored:
+            f_refused.append(tool_guard.refusal(edited, unrestored))
+        rec = {"ts": now(), "role": "agent", "followup": True, "text": (res["reply"] or "").strip(), "applied": f_applied}
+        if warned_map(f_applied):
+            rec["warned"] = warned_map(f_applied)
+        if f_refused:
+            rec["refused"] = f_refused
+            rec["text"] += "\n\n(Not applied: " + "; ".join(f_refused) + ")"
+        if f_props:
+            rec["proposals"] = f_props
+        if res.get("seconds") is not None:
+            rec["seconds"] = round(float(res["seconds"]), 1)
+        say(proj, sess, rec)
+        runlog.event("chat", phase="followup-end", ok=True, project=proj, seconds=round(time.time() - t0, 1),
+                     applied=len(f_applied), refused=len(f_refused))
+    except BaseException as exc:                    # a failed follow-up shows nothing: log it, the first turn stays
+        try:
+            runlog.event("chat", phase="followup-end", ok=False, project=proj, seconds=round(time.time() - t0, 1), error=f"{type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+    finally:
+        _turn_end(tkey)
 
 
 def open_part_session(project, ref_or_key):
@@ -2228,6 +2317,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not running and not stepping:
                     turn = TURNS[tkey] = _new_turn()
             if running:            # before saving: the client queue resends it, so it must not be stored twice
+                with TURNS_LOCK:           # a follow-up that is answering gives way: the student's message comes first
+                    ft = TURNS.get(tkey)
+                    if ft and ft.get("followup"):
+                        ft["cancel"].set()
                 runlog.usage(proj, "message", ok=False, shown="this conversation is still answering", **_msg)
                 return self._send(409, {"error": "this conversation is still answering"})
             if stepping:           # the agent may look at Altium while it answers, and that stops the script that is running there
@@ -2369,6 +2462,11 @@ class Handler(BaseHTTPRequestHandler):
             if not _answered:      # nothing to say and nothing applied: the usage log still gets its answer
                 runlog.usage(proj, "answer", text="", chat=sess, engine=res.get("provider") or _chat_info["engine"], model=res.get("model") or "",
                              seconds=res.get("seconds"), applied=applied, refused=refused, ok=not res.get("error"), words=0)
+            if _answered and not partial:
+                try:
+                    start_followup(proj, sess, tkey, text, rec, applied, refused, turn["cancel"].is_set())
+                except Exception as exc:       # never costs the reply
+                    runlog.event("chat", phase="followup-end", ok=False, project=proj, error=f"{type(exc).__name__}: {exc}")
             recheck_missing(proj)
             compact_async(proj, sess)
             out = state()
