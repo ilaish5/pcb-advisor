@@ -182,7 +182,7 @@ def test_request_is_ascii_and_tabbed(monkeypatch, tmp_path):
         (tmp_path / "end.flag").write_text("end.flag")
     monkeypatch.setattr(bridge.subprocess, "Popen", altium)
     bridge.run_commands([("FRAME", "p", "1", "2", "3", "4", "café\\nline")])
-    assert (tmp_path / "request.txt").read_bytes() == b"FRAME\tp\t1\t2\t3\t4\tcaf?\\nline\r\n"
+    assert (tmp_path / "request.txt").read_bytes() == b"FRAME\tp\t1\t2\t3\t4\tcafe\\nline\r\n"
 
 
 def test_non_windows_says_so(monkeypatch):

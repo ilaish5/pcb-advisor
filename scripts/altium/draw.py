@@ -14,6 +14,7 @@ import math
 import pathlib
 import re
 import sys
+import unicodedata
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import pinnames  # noqa: E402
@@ -212,7 +213,7 @@ def layout(cells, sections, area=AREA):
                 x, shelf_h = x0, 0
             ox, oy = _snap_up(x - bx0), _snap_up(top - by1)       # the symbol origin that puts the box's corner at (x, top)
             if ox + bx1 > x1 or oy + by0 < y0:
-                problems.append(f"{c['ref']} does not fit on the sheet: split the design into more sheets")
+                problems.append(f"{c['ref']} does not fit on the sheet")
             pos[c["ref"]] = (ox, oy)
             x = ox + bx1 + GAP
             shelf_h = max(shelf_h, h)
@@ -224,27 +225,135 @@ def _plain(text):
     return all(32 <= ord(ch) < 127 for ch in str(text))
 
 
+# ---------------------------------------------------------------- non-ASCII net names: drawn under a deterministic ASCII name
+
+_HEBREW = {"א": "A", "ב": "B", "ג": "G", "ד": "D", "ה": "H", "ו": "V", "ז": "Z", "ח": "CH", "ט": "T", "י": "Y", "ך": "K", "כ": "K",
+           "ל": "L", "ם": "M", "מ": "M", "ן": "N", "נ": "N", "ס": "S", "ע": "A", "ף": "F", "פ": "P", "ץ": "TZ", "צ": "TZ", "ק": "Q",
+           "ר": "R", "ש": "SH", "ת": "T"}
+_DASHES = dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d", "-")
+
+
+def _ascii_char(ch):
+    if 32 <= ord(ch) < 127:
+        return ch
+    if ch in _HEBREW:
+        return _HEBREW[ch]
+    if ch in _DASHES:
+        return "-"
+    return None
+
+
+def transliterate(text):
+    """A name as plain ASCII, the same text always giving the same result: a Hebrew letter by the table above, an accented letter
+    without its accent (NFKD), a dash look-alike as '-', every other character as '_'. A plain ASCII name is returned unchanged."""
+    if _plain(text):
+        return str(text)
+    out = []
+    for ch in str(text):
+        got = _ascii_char(ch)
+        if got is not None:
+            out.append(got)
+            continue
+        for d in unicodedata.normalize("NFKD", ch):
+            if unicodedata.combining(d):
+                continue                      # the accent, a Hebrew point (niqqud)
+            got = _ascii_char(d)
+            out.append("_" if got is None else got)
+    return "".join(out) or "_"
+
+
+def net_aliases(names):
+    """{net name: drawn name} for the names that are not plain ASCII, over ALL the nets of the design (so a net on two sheets gets
+    the same name on both). Two different names never share a drawn name (compared without case, as Altium does): a plain name
+    keeps its own, a transliterated one that would collide takes _2, _3 ... The result does not depend on the order of `names`."""
+    names = {str(n) for n in names if str(n or "").strip()}
+    used = {n.upper() for n in names if _plain(n)}
+    out = {}
+    for n in sorted(x for x in names if not _plain(x)):
+        base = transliterate(n)
+        cand, k = base, 1
+        while cand.upper() in used:
+            k += 1
+            cand = f"{base}_{k}"
+        used.add(cand.upper())
+        out[n] = cand
+    return out
+
+
+def split_groups(cells, sections, area=AREA):
+    """How the sections would be spread over several sheets: ([[section id]], [section id that is too big even alone]). Sections stay
+    together and in order; a sheet is filled until the next section no longer fits."""
+    ids = [s["id"] for s in sections] or [""]
+    groups, too_big, cur = [], [], []
+
+    def fits(sids):
+        return not layout([(s, c) for s, c in cells if s in sids], [{"id": i} for i in sids], area)[2]
+    for sid in ids:
+        if not [c for s, c in cells if s == sid]:
+            continue
+        if cur and fits(cur + [sid]):
+            cur = cur + [sid]
+            continue
+        if cur:
+            groups.append(cur)
+        cur = [sid]
+        if not fits(cur):
+            too_big.append(sid)
+    if cur:
+        groups.append(cur)
+    return groups, too_big
+
+
+def _too_big_message(cells, sections):
+    groups, too_big = split_groups(cells, sections)
+    nets = {}
+    for sid, c in cells:
+        nets.setdefault(sid, set()).update(s["net"] for s in c["stubs"] if s["kind"] != "nc")
+    shared = sorted(n for n in {x for v in nets.values() for x in v}
+                    if n and net_kind(n) == "label" and sum(1 for g in groups if any(n in nets.get(sid, ()) for sid in g)) > 1)
+
+    def label(sid):
+        return sid or "the design"
+    msg = (f"the design does not fit on one A4 sheet. It needs about {len(groups)} sheets: "
+           + "; ".join(f"sheet {i}: {', '.join(label(x) for x in g)}" for i, g in enumerate(groups, 1)) + ". ")
+    if too_big:
+        msg += f"Section {', '.join(label(x) for x in too_big)} is too big even for a sheet of its own (split it in the netlist). "
+    msg += ("The tool does not yet draw the nets that run between sheets (that needs ports), so write the netlist as separate sheets "
+            "(one per group above) and draw them one by one"
+            + (f". Nets that would cross: {', '.join(shared[:8])}" if shared else "") + ".")
+    return msg
+
+
 def text_problems(sheet, parts, symbols):
-    """Names that cannot travel to Altium (the script file is plain ASCII, fields are TAB separated): refuse before drawing."""
+    """Names that cannot travel to Altium (the script file is plain ASCII, fields are TAB separated): refuse before drawing.
+    Net names are not here: a non-ASCII net is drawn under its transliteration (net_aliases)."""
     bad = []
-    names = [("part", p["ref"]) for p in parts] + [("net", pin.get("net") or "") for p in parts for pin in p.get("pins", [])]
+    names = [("part", p["ref"]) for p in parts]
     names += [("symbol", sym["name"]) for sym in symbols.values()]
     for what, text in names:
         if not _plain(text):
-            bad.append(f"{what} name {str(text)!r} has a non-ASCII character, a tab or a line break: rename it (letters, digits, + - _ . / only)")
+            bad.append(f"{what} name {str(text)!r} has a non-ASCII character, a tab or a line break: rename the part or symbol (letters, digits, + - _ . / only)")
     return sorted(set(bad))
 
 
-def plan_sheet(sheet, symbols, schlib, doc, replace=False):
+def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
     """Plan one netlist sheet.
     sheet: the netlist sheet dict; symbols: {ref: symbol dict from read_schlib}; schlib / doc: file paths.
     Returns {"commands": [...], "parts": [{ref, symbol, pins, x, y}], "expected": {net: [tags]}, "no_erc": [tags],
              "warnings": [...], "errors": [...]}."""
     parts = [p for p in sheet.get("parts", []) if isinstance(p, dict) and p.get("ref")]
+    if aliases is None:
+        aliases = net_aliases(pin.get("net") for p in parts for pin in p.get("pins", []) if isinstance(pin, dict))
+    used = {str(pin.get("net")) for p in parts for pin in p.get("pins", []) if isinstance(pin, dict)}
+    renamed = {n: a for n, a in aliases.items() if n in used}
+    if renamed:       # the netlist itself is not touched: the planned copy carries the drawn names, so the read-back compares with them
+        parts = [{**p, "pins": [{**pin, "net": aliases.get(str(pin.get("net")), pin.get("net"))} if isinstance(pin, dict) else pin
+                                for pin in p.get("pins", [])]} for p in parts]
     sections = [s for s in sheet.get("sections", []) if isinstance(s, dict) and s.get("id")]
     ids = {s["id"] for s in sections}
     first = sections[0]["id"] if sections else ""
     errors, warnings, cells = [], [], []
+    warnings += [f"net {n!r} drawn as {a!r} (the schematic is plain ASCII; the netlist keeps its name)" for n, a in sorted(renamed.items())]
     for p in parts:
         sym = symbols.get(p["ref"])
         if sym is None:
@@ -256,11 +365,12 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False):
         errors += c["errors"]
         cells.append((p.get("section") if p.get("section") in ids else first, c))
     errors += text_problems(sheet, parts, symbols)
-    out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors}
+    out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors, "renamed": renamed}
     if errors:
         return out
     pos, heads, problems = layout(cells, sections)
-    errors += problems
+    if problems:
+        errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections))
     if errors:
         return out
     d = str(doc)
