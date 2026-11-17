@@ -69,7 +69,7 @@ MULTI = """\
 TPS7A47 regulator
 Pin Description
 Pin Number
-SOIC DIP QFN
+SOIC   DIP   QFN
 1 1 3 VIN Input
 2 2 4 GND Ground
 3 3 5 OUT Output
@@ -413,16 +413,71 @@ def test_a_title_line_naming_packages_does_not_tie_the_columns():
 
 def test_only_the_pad_rows_own_name_cell_may_name_the_net_of_the_exposed_pad():
     t = EP8.format(ep="Thermal Pad — — Connect to GND. Do not connect to VIN or SW.\n")
-    r = pintable.check([t], EP_PINS + [("9", "VIN")])
-    assert r["verify"] == "unchecked"                                    # a mention in the text beside the table does not count
-    assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] == "pass"
-    t = EP8.format(ep="9 EP Thermal pad, do not connect to VIN\n")      # the description of the row neither
+    assert pintable.check([t], EP_PINS + [("9", "VIN")])["verify"] == "unchecked"     # a mention in the text beside the table does not count
+    assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] == "unchecked"     # another net is named there: even a ground is not shown
+    t = EP8.format(ep="9 EP Thermal pad, do not connect to VIN\n")                     # the description of the row neither
     assert pintable.check([t], EP_PINS + [("9", "VIN")])["verify"] != "pass"
+    assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] != "pass"          # no "connect to GND" in the row
+    t = EP8.format(ep="9 EP Thermal pad. Connect to GND.\n")
     assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] == "pass"
-    for cell in ("PAD (VIN)", "EP/VIN"):                                 # the name cell itself names it
+    for cell in ("PAD (VIN)", "EP/VIN"):                                              # the name cell itself names the net
         t = EP8.format(ep=f"9 {cell} P Pad\n")
         assert pintable.check([t], EP_PINS + [("9", "VIN")])["verify"] == "pass", cell
+        assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] != "pass", cell      # the name cell names another net
+    for cell in ("PAD (GND)", "PAD (VSS)", "EP/GND"):
+        t = EP8.format(ep=f"9 {cell} P Pad\n")
         assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] == "pass", cell
+
+
+def test_an_op_amps_pad_v_minus_is_no_ground():
+    t = EP8.format(ep="9 PAD (V-) P Exposed pad\n")
+    assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] != "pass"
+    assert pintable.check([t], EP_PINS + [("9", "GND")], pads=[str(i) for i in range(1, 10)])["verify"] != "pass"
+    assert pintable.check([t], EP_PINS + [("9", "V-")])["verify"] == "pass"
+    t = EP8.format(ep="Thermal pad must be connected to V-\n")                         # a line of text about the pad
+    for pins in (EP_PINS + [("9", "GND")], EP_PINS + [("0", "GND")]):
+        assert pintable.check([t], pins)["verify"] != "pass"
+        assert pintable.check([t], pins, pads=[str(i) for i in range(1, 10)] + ["0"])["verify"] != "pass"
+
+
+def test_a_sot_223_tab_is_never_taken_for_ground():
+    t = "LM1117\nPin Functions\nPIN NAME DESCRIPTION\n1 GND Ground\n2 VOUT Output\n3 VIN Input\n4 TAB Connected to VOUT\n"
+    pins = [("1", "GND"), ("2", "VOUT"), ("3", "VIN")]
+    assert pintable.check([t], pins + [("4", "GND")])["verify"] != "pass"
+    assert pintable.check([t], pins + [("4", "VOUT")])["verify"] != "pass"           # named only in the description
+    assert pintable.check([t], pins + [("4", "TAB")])["verify"] == "pass"
+    named = t.replace("4 TAB Connected to VOUT", "4 TAB (VOUT) Heat sink")
+    assert pintable.check([named], pins + [("4", "VOUT")])["verify"] == "pass"
+    assert pintable.check([named], pins + [("4", "GND")])["verify"] != "pass"
+
+
+def test_a_footprint_pad_alone_takes_a_ground_with_a_note_and_no_other_net():
+    t = EP8.format(ep="")
+    pads = [str(i) for i in range(1, 10)]
+    r = pintable.check([t], EP_PINS + [("9", "GND")], pads=pads)
+    assert r["verify"] == "pass" and "exposed pad" in r["notes"][0]
+    assert pintable.check([t], EP_PINS + [("9", "VIN")], pads=pads)["verify"] == "unchecked"
+    assert pintable.check([t], EP_PINS + [("9", "EP")], pads=pads)["verify"] == "unchecked"
+    text = EP8.format(ep="Thermal pad: the pad is not electrically connected.\n")      # text about the pad that gives no net
+    assert pintable.check([text], EP_PINS + [("9", "GND")], pads=pads)["verify"] != "pass"
+
+
+def test_a_header_row_is_tabular_and_a_sentence_never_ties_the_columns():
+    for between, under in (("The VSSOP and SOIC packages have no exposed pad.\n", ""), ("", "Numbering of VSSOP and SOIC\n")):
+        t = f"Pin Functions\n{between}D    DGK   NAME   I/O\n{under}1    3     VIN    I\n2    4     GND    G\n3    5     OUT    O\n"
+        for pins in ([("1", "VIN"), ("2", "GND"), ("3", "OUT")], [("3", "VIN"), ("4", "GND"), ("5", "OUT")]):
+            for pkg in ("SOIC-8", "VSSOP-8"):
+                assert pintable.check([t], pins, pkg)["verify"] != "pass", (between, under, pkg)
+    # single-space plain text has no cells: the labels tie nothing
+    plain = "Pin Functions\nPIN SOIC VSSOP NAME\n1 3 VIN\n2 4 GND\n3 5 OUT\n"
+    assert pintable.check([plain], [("1", "VIN"), ("2", "GND"), ("3", "OUT")], "SOIC-8")["verify"] == "unchecked"
+    assert pintable._header_labels("PIN   SOIC   VSSOP   NAME") == ["SOIC", "VSSOP"]
+    assert pintable._header_labels("D    DGK   NAME   I/O") == []
+    assert pintable._header_labels("Pin numbers of the SOIC and VSSOP") is None
+    assert pintable._header_labels("name   no.") is None                              # printed in upper case
+    # a column line directly above the rows that names nothing ties nothing; one that names the packages does
+    t = "Pin Functions\nSOIC   VSSOP\n1   3   VIN\n2   4   GND\n3   5   OUT\n"
+    assert pintable.check([t], [("1", "VIN"), ("2", "GND"), ("3", "OUT")], "SOIC-8")["verify"] == "pass"
 
 
 SSD = """\

@@ -227,16 +227,23 @@ def _plausible(rows):
 
 
 _CAPTION = re.compile(r"\b(figure|fig\.|top view|bottom view|package drawing)\b", re.I)
-_HEADER_WORD = re.compile(r"\b(NAME|NO\.?|NUMBER)\b")
-_HEADER_START = re.compile(r"^\s*(PIN|TERMINAL)\b.*\S\s{2,}\S", re.I)          # `PIN    SOIC   VSSOP`: a column break after the word
+_HEADER_CELL = re.compile(r"(?:(?:PINS?|TERMINALS?|NAME|NO\.?|NUM\.?|NUMBER|#)\s*)+")      # `PIN`, `NAME`, `NO.`, `PIN NO.`: as printed, upper case
 
 
-def _header_row(line, just_above_rows):
-    """A column-header row: the line directly above the first data row, or a line that holds a column word (NAME, NO., PIN ...);
-    never a caption or a title (`Table 3. Pin Functions`, `Pin Functions for SOIC and VSSOP`)."""
+def _header_labels(line):
+    """The package names of a column-header row, in the order of its cells; None when the line is not a column-header row.
+    A header row is tabular (two or more cells divided by a column break: two spaces or more) and holds a column word
+    (NAME, NO., PIN, TERMINAL: a whole cell, upper case) or package names as cells of their own. A sentence never is one:
+    `The VSSOP and SOIC packages have no exposed pad`, `Numbering of VSSOP and SOIC`, a caption, a title."""
     if _CAPTION.search(line) or SECTION_END.search(line) or re.match(r"\s*table\s+[\d.-]+", line, re.I):
-        return False
-    return just_above_rows or bool(_HEADER_WORD.search(line.upper())) or bool(_HEADER_START.search(line))
+        return None
+    cells = [c.strip() for c in re.split(r"\s{2,}|\t", line.strip()) if c.strip()]
+    if len(cells) < 2:
+        return None
+    labels = [package_labels(c)[0] for c in cells if len(package_labels(c)) == 1 and len(c.split()) <= 2]
+    if labels or any(_HEADER_CELL.fullmatch(c) for c in cells):
+        return labels
+    return None
 
 
 def find_tables(text):
@@ -266,9 +273,9 @@ def find_tables(text):
                 k += 1
             if len({tuple(map(tuple, r["nums"])) for r in rows}) >= 2 and _plausible(rows):
                 seen.update(range(h, k))
-                # columns are tied to packages only by the column-header row (the line above the first row, or one that holds
-                # NAME / NO. / PIN / TERMINAL); the scope of the table is its heading and header rows, never a figure caption
-                label_lines = [lb for lb in (package_labels(lines[i]) for i in range(h + 1, j) if _header_row(lines[i], i == j - 1)) if lb]
+                # columns are tied to packages only by a column-header row (see _header_labels); the scope of the table is its
+                # heading and header lines, never a figure caption
+                label_lines = [lb for lb in (_header_labels(lines[i]) for i in range(h + 1, j)) if lb]
                 scope = [lb for lb in package_labels(" ".join(x for x in lines[h:j] if not _CAPTION.search(x)))]
                 tables.append({"heading": " ".join(x.strip() for x in lines[h:j] if x.strip())[:200],
                                "labels": scope,
@@ -404,13 +411,47 @@ def _is_ep_row(row):
     return bool(_EP_NAME.match(first)) or bool(_EP.search(row["name"]))
 
 
-def _ep_allows(name, cells):
-    """The exposed pad may carry this net: a ground, the pad itself, or a net the name cell of the table's pad row names
-    (`PAD (VIN)`, `EP/VIN`). A description ("do not connect to VIN") or a line of text beside the table does not count."""
+_NET_TOKEN = re.compile(r"[+-]?V(?:CC|DD|IN|OUT|EE|BAT|BUS|REF|S|SW|CCA|CCB|DDA|DDIO)\w*[+-]?|V[+-]|[+-]V", re.I)
+_NET_WORDS = {"SW", "LX", "OUT", "IN", "EN", "FB", "BOOT", "PG", "PGOOD", "SS"}                  # as printed, upper case
+_CONNECT_GND = re.compile(r"\bconnect(?:ed)?\s+(?:it\s+|them\s+)?to\s+(?:the\s+)?(?:GND|ground|VSS)\b", re.I)
+_NEGATED = re.compile(r"\b(?:not|never|n't)\b[^.;]{0,20}\bconnect", re.I)
+_EP_FAMILY = re.compile(r"^(?:EP|EPAD|PAD|DAP|POWERPAD|PPAD|THERMAL\w*|EXPOSED\w*)$")
+
+
+def _nets_in(text):
+    """(grounds, others): the net names a piece of text names: GND, VSS, ground names / V-, VIN, VOUT, SW, ..."""
+    grounds, others = set(), set()
+    for tok in re.split(r"[\s/(),;:]+", str(text)):
+        tok = tok.rstrip(".")
+        if not tok:
+            continue
+        if _GROUND.match(_squash(tok)):
+            grounds.add(_squash(tok))
+        elif _NET_TOKEN.fullmatch(tok) or tok in _NET_WORDS:
+            others.add(_squash(tok))
+    return grounds, others
+
+
+def _ep_ok(name, rows, lines):
+    """May the exposed pad (rows: its table rows, lines: text lines about it) carry this netlist pin name? True only when
+    - the name cell of the pad row names exactly this net or an alias of it (`PAD (VIN)`, `EP/GND`), or
+    - the pin is named for the pad itself (EP, PAD, Thermal Pad) and the table has a pad row or a line about it, or
+    - it is a ground, and the pad row's text says "connect to GND / ground" and names no other net anywhere (name cell,
+      description, lines), or there is no text about the pad at all (the footprint's extra pad is all there is).
+    Everything else, a net named only in a description, a ground beside another named net, TAB, is not shown: unchecked."""
     up = _squash(name)
-    if _GROUND.match(up) or _EP_NAME.match(up):
+    cells = set().union(*[_cell_forms(r["name"]) for r in rows]) if rows else set()
+    if _name_forms(name) & cells:
         return True
-    return len(up) >= 2 and any(up in _cell_forms(c) for c in cells)
+    text = " ".join([f"{r['name']} {r.get('rest', '')}" for r in rows] + list(lines))
+    if _EP_FAMILY.match(up):
+        return bool(rows or lines)
+    if not _GROUND.match(up):
+        return False
+    if not rows and not lines:
+        return True
+    grounds, others = _nets_in(text)
+    return bool(_CONNECT_GND.search(text)) and not others and not _NEGATED.search(text)
 
 
 def _words_of(text):
@@ -447,7 +488,7 @@ def _evaluate(col, pins, pads):
     complete = _complete(nums)
     top = max(int(n) for n in nums if n.isdigit()) if complete else 0
     ep_rows = [r for r in col["rows"] if _is_ep_row(r)]
-    ep_cells = [r["name"] for r in ep_rows]
+    ep_lines = list(col.get("ep_lines") or [])
     names = table_names_of(col["rows"])
     have = {str(p).strip().upper() for p in pads} if pads is not None else None
     extra_pads = bool(have) and any(not h.isdigit() or h == "0" or (complete and int(h) > top) for h in have if h not in set(nums))
@@ -463,16 +504,16 @@ def _evaluate(col, pins, pads):
             elif ep_like:
                 if not ep_evidence:
                     out["absent"].append(f"pin {num} {name}: no pin of the table, and neither the table nor the footprint shows an exposed pad")
-                elif _ep_allows(name, ep_cells):
+                elif _ep_ok(name, ep_rows, ep_lines):
                     out["notes"].append(f"pin {num} {name}: taken for the exposed pad of the datasheet")
                 else:
-                    out["absent"].append(f"pin {num} {name}: the exposed pad of the datasheet is not for the net {name}")
+                    out["absent"].append(f"pin {num} {name}: the datasheet does not show the exposed pad on the net {name}")
             elif complete:
                 out["conflict"].append(f"pin {num} {name}: the datasheet's pin table has {len(set(nums))} pins, none is {num}")
             else:
                 out["absent"].append(f"pin {num} {name}")
             continue
-        good = [r for r in hits if name_matches(name, r["name"], names) or (_is_ep_row(r) and _ep_allows(name, [r["name"]]))]
+        good = [r for r in hits if name_matches(name, r["name"], names) or (_is_ep_row(r) and _ep_ok(name, [r], ep_lines))]
         if not good:
             unclear = [r for r in hits if polarity_unclear(name, r["name"], names)]
             swallowed = [r for r in hits if not r.get("isolated", True) and _name_forms(name, table_names=names) & _words_of(r.get("rest", ""))]
