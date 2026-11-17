@@ -25,6 +25,7 @@ from typing import Any
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import dfm  # noqa: E402
+import gerber_check  # noqa: E402
 import project as project_mod  # noqa: E402
 import workspace  # noqa: E402
 
@@ -263,8 +264,82 @@ def _problems(entries: list[dict]) -> tuple[list[dict], list[str]]:
     return missing, warnings
 
 
-def _describe(path: pathlib.Path) -> dict[str, Any]:
-    """The zip as it is on disk: its files by layer, when they were written, what is missing."""
+def board_facts(pcb) -> dict[str, Any] | None:
+    """What the output files must show of the PcbDoc: {"plated": [hole mm...], "unplated": [...], "box": (w, h) mm or None,
+    "copper": layer count or None}. None when the file cannot be read (the content check is then skipped)."""
+    try:
+        from altium import pcbdoc
+        import preview_pcb
+        doc = pcbdoc.read_pcbdoc(pcb)
+        plated = [v["hole_mm"] for v in doc.get("vias") or [] if (v.get("hole_mm") or 0) > 0]
+        unplated = []
+        for p in doc.get("drilled_pads") or []:
+            if (p.get("hole_mm") or 0) > 0:
+                (plated if p.get("plated") else unplated).append(p["hole_mm"])
+        poly = preview_pcb.get_board_outline(pcb)
+        box = (max(x for x, _ in poly) - min(x for x, _ in poly), max(y for _, y in poly) - min(y for _, y in poly)) if poly else None
+        return {"plated": plated, "unplated": unplated, "box": box, "copper": pcbdoc.copper_layer_count(pcb)}
+    except Exception:
+        return None
+
+
+def content_problems(z: zipfile.ZipFile, entries: list[dict], facts: dict[str, Any], skipped: list[str] | None = None) -> list[dict]:
+    """The produced files against the PcbDoc (gerber_check): holes, outline size, copper layer count. Entries like _problems' `missing`."""
+    out = []
+
+    def add(layer, ext, msgs):
+        out.extend({"layer": layer, "ext": ext, "level": "problem", "why": m} for m in msgs)
+
+    def read(name):
+        with z.open(name) as fh:
+            data = fh.read(gerber_check.MAX_BYTES + 1)
+        return None if len(data) > gerber_check.MAX_BYTES else data.decode("latin-1")
+
+    drills, drill_ok = [], True
+    for e in entries:
+        if e["group"] == "drill":
+            text = read(e["name"])
+            d = gerber_check.parse_excellon(text) if text is not None else None
+            if d is None:
+                drill_ok = False                                  # one drill file unread: no comparison of a partial count
+                if skipped is not None:
+                    skipped.append(f"drill files not checked: {e['name']} "
+                                   + ("is too large to read" if text is None else "is not an Excellon file"))
+            else:
+                drills.append(d)
+    if drill_ok:
+        add("NC drill", ".TXT (Excellon)", gerber_check.drill_problems(drills, facts))
+    extents = []
+    for e in entries:
+        if e["group"] == "outline" and not e.get("empty") and (text := read(e["name"])) is not None \
+                and (ex := gerber_check.parse_gerber_extent(text)):
+            extents.append(ex)
+    add("Board outline", ".GM1 or .GKO", gerber_check.outline_problems(extents, facts.get("box")))
+    copper = [e["name"] for e in entries if e["group"] in ("copper", "plane")]
+    probs, notes = gerber_check.copper_problems(copper, facts.get("copper"))
+    add("Copper layers", ".GTL .GBL .G1 ...", probs)
+    out.extend({"layer": "Bottom copper", "ext": ".GBL", "level": "note", "why": m} for m in notes)
+    return out
+
+
+_FACTS: dict[tuple, Any] = {}
+
+
+def _facts_cached(pcb) -> dict[str, Any] | None:
+    try:
+        key = (str(pcb), pathlib.Path(pcb).stat().st_mtime_ns)
+    except OSError:
+        return None
+    if key not in _FACTS:
+        if len(_FACTS) > 8:
+            _FACTS.clear()
+        _FACTS[key] = board_facts(pcb)
+    return _FACTS[key]
+
+
+def _describe(path: pathlib.Path, pcb=None) -> dict[str, Any]:
+    """The zip as it is on disk: its files by layer, when they were written, what is missing. With the linked PcbDoc the files'
+    content is compared with it (holes, outline, copper layers); an unreadable PcbDoc skips that, with a note."""
     with zipfile.ZipFile(path) as z:
         entries = []
         for i in z.infolist():
@@ -275,7 +350,19 @@ def _describe(path: pathlib.Path) -> dict[str, Any]:
             if c and c[0] == "outline":
                 with z.open(i) as fh:
                     entries[-1]["empty"] = not _has_draws(fh.read(EMPTY_SCAN_BYTES))
-    missing, warnings = _problems(entries)
+        missing, warnings = _problems(entries)
+        facts = _facts_cached(pcb) if pcb else None
+        check = {"checked": False, "note": "no PcbDoc linked" if not pcb else "the PcbDoc could not be read"}
+        if facts:
+            try:
+                skipped: list[str] = []
+                found = content_problems(z, entries, facts, skipped)
+                if any(m["layer"] == "Bottom copper" for m in found):
+                    missing = [m for m in missing if m["layer"] != "Bottom copper"]     # the content note says it better
+                missing += found
+                check = {"checked": not skipped, "note": "; ".join(skipped)}
+            except (OSError, zipfile.BadZipFile, ValueError):
+                check["note"] = "the output files could not be read for the content check"
     size = path.stat().st_size
     if size > ZIP_LIMIT_MB * 1024 * 1024:
         warnings.append(f"The zip is {size / 1048576:.0f} MB; JLCDFM takes up to {ZIP_LIMIT_MB} MB.")
@@ -287,7 +374,7 @@ def _describe(path: pathlib.Path) -> dict[str, Any]:
         "exists": True, "zip": path.name, "bytes": size, "built": _iso(path.stat().st_mtime),
         "generated": max((e["modified"] for e in entries), default=None), "files": entries,
         "complete": not any(m["level"] == "problem" for m in missing), "missing": missing, "warnings": warnings,
-        "assembly": assembly,
+        "assembly": assembly, "content_check": check,
     }
 
 
@@ -297,7 +384,8 @@ def zip_info(project: str) -> dict[str, Any]:
     if not path.is_file():
         return {"exists": False, "zip": path.name}
     try:
-        return _describe(path)
+        import lineage
+        return _describe(path, lineage.linked_pcb(project))
     except (zipfile.BadZipFile, OSError):
         return {"exists": False, "zip": path.name}
 
@@ -319,7 +407,8 @@ def gerber_zip(project: str) -> dict[str, Any]:
         for p, _ in files:
             z.write(p, arcname=p.name)                                # flat: JLC wants no folder inside the archive
     os.replace(tmp, out)
-    res = _describe(out)
+    import lineage
+    res = _describe(out, lineage.linked_pcb(project))
     newest = max(st.st_mtime for _, st in files)
     stale = [p.name for p, st in files if newest - st.st_mtime > 3600 and classify(p.name)[0] != "drill"]
     if stale:

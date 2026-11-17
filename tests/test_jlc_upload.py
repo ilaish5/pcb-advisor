@@ -536,3 +536,194 @@ def test_the_gerber_zip_warns_when_the_board_does_not_match_the_design(linked, m
     assert "WARNING: The board does not match the design" in applied[0]
     monkeypatch.setattr(bridge, "design_problems", lambda project: [])
     assert not [w for w in jlc_upload.gerber_zip(name)["warnings"] if "design" in w]
+
+
+# ---------------------------------------------------------------- 1b. the files against the PcbDoc (spec A15)
+
+_GM = "%FSLAX24Y24*%\n%MOIN*%\n%ADD10C,0.0039*%\nD10*\nX0Y0D02*\nX{w}Y0D01*\nY{h}D01*\nX0D01*\nY0D01*\nM02*\n"
+
+
+def _exc(plated, holes):
+    """Altium's Excellon: INCH,LZ, 2:4, a tool table T01F00S00C<inch>, hits X..Y.."""
+    tools = sorted({d for d in holes})
+    body = "".join(f"T{i + 1:02d}\n" + "".join(f"X00{j + 1}000Y003000\n" for j, h in enumerate(holes) if h == d)
+                   for i, d in enumerate(tools))
+    head = "".join(f"T{i + 1:02d}F00S00C{d / 25.4:.4f}\n" for i, d in enumerate(tools))
+    return f"M48\n;FILE_FORMAT=2:4\nINCH,LZ\n;TYPE={'PLATED' if plated else 'NON_PLATED'}\n{head}%\n{body}M30\n"
+
+
+def _set(tmp_path, *, holes=(0.3, 0.3, 1.1), npth=(2.2,), outline=(29.99994 / 25.4, 19.99996 / 25.4),
+         copper=("GTL", "GBL"), name="a"):
+    w, h = (int(round(v * 10000)) for v in outline)
+    files = {f"{name}.{c}": "%FSLAX24Y24*%\n%MOIN*%\nX10Y10D03*\nM02*\n" for c in copper}
+    files[f"{name}.GM1"] = _GM.format(w=w, h=h)
+    files[f"{name}-Plated.TXT"] = _exc(True, holes)
+    if npth:
+        files[f"{name}-NonPlated.TXT"] = _exc(False, npth)
+    zp = tmp_path / "z.zip"
+    with zipfile.ZipFile(zp, "w") as z:
+        for k, v in files.items():
+            z.writestr(k, v)
+    return zp
+
+
+def _check(zp, facts):
+    with zipfile.ZipFile(zp) as z:
+        entries = [{"name": i.filename, "group": (jlc_upload.classify(i.filename) or ("other",))[0]} for i in z.infolist()]
+        return [m["why"] for m in jlc_upload.content_problems(z, entries, facts)]
+
+
+FACTS = {"plated": [0.3, 0.3, 1.1], "unplated": [2.2], "box": (30.0, 20.0), "copper": 2}
+
+
+def test_the_content_check_passes_a_set_that_matches_the_board(tmp_path):
+    assert _check(_set(tmp_path), FACTS) == []
+
+
+def test_the_content_check_reads_what_altium_really_wrote():
+    ex = jlc_upload.gerber_check.parse_excellon(_exc(True, [0.3, 0.3, 1.1]))
+    assert ex["plated"] is True and sorted(ex["holes"]) == pytest.approx([0.3, 0.3, 1.1], abs=0.01)
+    assert jlc_upload.gerber_check.parse_excellon("G04 not drill\n") is None
+
+
+def test_a_missing_hole_is_flagged_with_the_numbers(tmp_path):
+    msgs = _check(_set(tmp_path, holes=(0.3, 1.1)), FACTS)
+    assert len(msgs) == 1 and "has 2 plated holes, the board has 3" in msgs[0] and "generate outputs again" in msgs[0]
+
+
+def test_a_wrong_hole_diameter_is_flagged(tmp_path):
+    msgs = _check(_set(tmp_path, holes=(0.3, 0.3, 1.0)), FACTS)
+    assert len(msgs) == 1 and "hole sizes" in msgs[0] and "1 x 1 mm" in msgs[0] and "1 x 1.1 mm" in msgs[0]
+
+
+def test_a_missing_non_plated_file_is_flagged(tmp_path):
+    msgs = _check(_set(tmp_path, npth=()), FACTS)
+    assert len(msgs) == 1 and "0 non-plated holes, the board has 1" in msgs[0]
+
+
+def test_an_outline_of_another_size_is_flagged(tmp_path):
+    msgs = _check(_set(tmp_path, outline=(40 / 25.4, 20 / 25.4)), FACTS)
+    assert len(msgs) == 1 and "40.00 x 20.00 mm, the board is 30.00 x 20.00 mm" in msgs[0]
+
+
+def test_a_missing_or_extra_copper_layer_is_flagged(tmp_path):
+    less = _check(_set(tmp_path, copper=("GTL", "GBL")), {**FACTS, "copper": 4})
+    more = _check(_set(tmp_path, copper=("GTL", "GBL", "G1")), FACTS)
+    assert len(less) == 1 and "2 copper layer file(s)" in less[0] and "4 copper layers" in less[0]
+    assert len(more) == 1 and "3 copper layer file(s)" in more[0]
+    assert _check(_set(tmp_path, copper=("GTL", "GBL", "G1", "GP2")), {**FACTS, "copper": 4}) == []
+
+
+def test_an_unreadable_pcbdoc_skips_the_content_check_without_failing(tmp_path):
+    bad = tmp_path / "x.PcbDoc"
+    bad.write_bytes(b"not an ole file")
+    assert jlc_upload.board_facts(bad) is None
+    res = jlc_upload._describe(_set(tmp_path), bad)
+    assert res["content_check"]["checked"] is False and not any("older than the board" in m["why"] or "copper layers" in m["why"] for m in res["missing"])
+    assert jlc_upload._describe(_set(tmp_path))["content_check"]["note"] == "no PcbDoc linked"
+
+
+def test_the_describe_result_carries_the_content_problems(tmp_path, monkeypatch):
+    monkeypatch.setattr(jlc_upload, "_facts_cached", lambda pcb: FACTS)
+    res = jlc_upload._describe(_set(tmp_path, holes=(0.3, 1.1)), tmp_path / "b.PcbDoc")
+    assert not res["complete"] and res["content_check"]["checked"]
+    assert any("drill file has 2" in m["why"] for m in res["missing"])
+
+
+# ---------------------------------------------------------------- 1c. review fixes of the content check
+
+# Altium's slot file (Blink 555-SlotHoles-Plated.TXT): slots are routes, no G85
+_SLOTS = ("M48\n;Layer_Color=9474304\n;FILE_FORMAT=2:4\nINCH,LZ\n;TYPE=PLATED\nT02F00S00C0.0236\n%\nG90\nG05\nT02\n"
+          "G00X004252Y000992\nM15\nG01Y001268\nM16\nG00X004252Y002492\nM15\nG01Y002768\nM16\nM17\nM30\n")
+
+
+def test_slots_written_as_routes_count_one_hole_each():
+    ex = jlc_upload.gerber_check.parse_excellon(_SLOTS)
+    assert len(ex["holes"]) == 2 and ex["holes"][0] == pytest.approx(0.6, abs=0.01)
+    g85 = "M48\nMETRIC\n;TYPE=PLATED\nT1C0.800\n%\nT1\nX1.0Y1.0G85X2.0Y1.0\nX5.0Y5.0\nM30\n"
+    assert len(jlc_upload.gerber_check.parse_excellon(g85)["holes"]) == 2
+
+
+def test_a_board_with_round_holes_and_slots_in_two_files_passes(tmp_path):
+    zp = tmp_path / "z.zip"
+    with zipfile.ZipFile(zp, "w") as z:
+        z.writestr("a.GTL", "x")
+        z.writestr("a.GBL", "x")
+        z.writestr("a-Round-Plated.TXT", _exc(True, [0.3, 0.3]))
+        z.writestr("a-Slot-Plated.TXT", _SLOTS)
+    facts = {"plated": [0.3, 0.3, 0.6, 0.6], "unplated": [], "box": None, "copper": 2}
+    assert _check(zp, facts) == []
+
+
+def test_an_unknown_type_falls_back_to_the_combined_count():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=MIXED\nT1C0.8\n%\nT1\nX1Y1\nM30\n")
+    assert ex["plated"] is None
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [0.8], "unplated": []}) == []
+    assert jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=NONPLATED\nT1C0.8\n%\nT1\nX1Y1\n")["plated"] is False
+
+
+def test_coarse_inch_diameters_get_the_tolerance_of_their_last_digit():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nINCH,LZ\n;TYPE=PLATED\nT1C0.031\n%\nT1\nX1Y1\nM30\n")
+    assert ex["holes"][0] == pytest.approx(0.7874, abs=1e-3)
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [0.8], "unplated": []}) == []
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [0.9], "unplated": []})
+
+
+def test_tools_defined_in_the_body_and_a_second_header_count():
+    text = "M48\nMETRIC\n;TYPE=PLATED\nT1C0.800\n%\nT1\nX1Y1\nT2C1.000\nT2\nX2Y2\nM48\nMETRIC\nT3C0.500\n%\nT3\nX3Y3\nM30\n"
+    assert sorted(jlc_upload.gerber_check.parse_excellon(text)["holes"]) == [0.5, 0.8, 1.0]
+
+
+def test_a_drill_file_over_the_cap_skips_the_whole_drill_comparison(tmp_path, monkeypatch):
+    zp = _set(tmp_path, holes=(0.3, 1.1))                          # a wrong count that would be flagged
+    assert _check(zp, FACTS)
+    monkeypatch.setattr(jlc_upload.gerber_check, "MAX_BYTES", 40)
+    assert not [m for m in _check(zp, FACTS) if "drill file" in m or "hole sizes" in m]
+
+
+def test_a_two_layer_board_without_the_bottom_gerber_is_a_note_not_a_problem(tmp_path):
+    zp = _set(tmp_path, copper=("GTL",))
+    with zipfile.ZipFile(zp) as z:
+        entries = [{"name": i.filename, "group": (jlc_upload.classify(i.filename) or ("other",))[0]} for i in z.infolist()]
+        got = jlc_upload.content_problems(z, entries, FACTS)
+    assert [m["level"] for m in got] == ["note"] and "plot Bottom Layer" in got[0]["why"]
+    res = jlc_upload._describe(zp, tmp_path / "b.PcbDoc")
+    assert res["missing"] is not None
+
+
+def test_the_messages_say_to_save_the_pcbdoc_and_check_the_outline_layer(tmp_path):
+    assert "save the PcbDoc in Altium first" in _check(_set(tmp_path, holes=(0.3, 1.1)), FACTS)[0]
+    assert "save the PcbDoc in Altium first" in _check(_set(tmp_path, holes=(0.3, 0.3, 1.0)), FACTS)[0]
+    out = _check(_set(tmp_path, outline=(40 / 25.4, 20 / 25.4)), FACTS)[0]
+    assert "save the PcbDoc in Altium first" in out and "check the outline layer in the Gerber setup" in out
+    assert "save the PcbDoc in Altium first" in _check(_set(tmp_path, copper=("GTL", "GBL", "G1")), FACTS)[0]
+
+
+def test_x_y_lines_inside_a_route_are_not_holes():
+    text = "M48\nINCH,LZ\n;TYPE=PLATED\nT02F00S00C0.0236\n%\nT02\nG00X004252Y000992\nM15\nG01Y001268\nX004300Y001300\nM16\nM30\n"
+    assert len(jlc_upload.gerber_check.parse_excellon(text)["holes"]) == 1
+
+
+def test_a_closed_board_edge_route_adds_no_holes():
+    rout = "M48\nINCH,LZ\n;TYPE=NON_PLATED\nT01F00S00C0.0394\n%\nT01\nG00X0Y0\nM15\nG01Y7874\nX11811\nY0\nX0\nM16\nM30\n"
+    assert jlc_upload.gerber_check.parse_excellon(rout)["holes"] == []
+    only_tool = "M48\nMETRIC\nT1C2.0\nT2C0.8\n%\nT1\nG00X1Y1\nM15\nG01X9\nY9\nX1\nY1\nM16\nT2\nX3Y3\nM30\n"
+    assert jlc_upload.gerber_check.parse_excellon(only_tool)["holes"] == [0.8]
+
+
+def test_a_tool_defined_in_the_body_selects_itself():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=PLATED\n%\nT1C0.800\nX1.0Y1.0\nM30\n")
+    assert ex["holes"] == [0.8]
+
+
+def test_the_tolerance_from_few_decimals_is_capped():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=PLATED\nT1C1.0\n%\nT1\nX1Y1\nM30\n")
+    assert ex["tol"] == pytest.approx(0.0127)
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [1.04], "unplated": []})
+
+
+def test_a_skipped_drill_file_makes_content_check_say_not_checked(tmp_path, monkeypatch):
+    monkeypatch.setattr(jlc_upload, "_facts_cached", lambda pcb: FACTS)
+    monkeypatch.setattr(jlc_upload.gerber_check, "MAX_BYTES", 40)
+    res = jlc_upload._describe(_set(tmp_path), tmp_path / "b.PcbDoc")
+    assert res["content_check"]["checked"] is False and "drill files not checked" in res["content_check"]["note"]
