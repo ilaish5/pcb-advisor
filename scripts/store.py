@@ -129,14 +129,14 @@ def append(project, filename, record):
 def offset_dropped(line, changes):
     """The CPL rotation offset a change to `line` clears (the part really changes: mpn, lcsc or package differ and
     the change does not set the offset itself), else None."""
-    if "cpl_rotation" in changes or not Number_ok(line.get("cpl_rotation")):
+    if "cpl_rotation" in changes or not _has_offset(line.get("cpl_rotation")):
         return None
     if any(k in changes and not _same_field(k, changes[k], line.get(k)) for k in ("mpn", "lcsc", "package")):
         return line["cpl_rotation"]
     return None
 
 
-def Number_ok(v):
+def _has_offset(v):
     try:
         return bool(float(v))
     except (TypeError, ValueError):
@@ -475,7 +475,8 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
     changes, lock_note = _vet_lock(project, line, changes, line in existing)
-    if list(changes) == ["cpl_rotation"] and changes["cpl_rotation"] is None and line in existing             and not Number_ok(existing[line].get("cpl_rotation")):
+    if (list(changes) == ["cpl_rotation"] and changes["cpl_rotation"] is None and line in existing
+            and not _has_offset(existing[line].get("cpl_rotation"))):
         raise ValueError(f"{line} has no CPL rotation offset to clear")
     before = {k: existing.get(line, {}).get(k) for k in changes}
     if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):

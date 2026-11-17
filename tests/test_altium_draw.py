@@ -419,3 +419,19 @@ def test_another_spelling_of_the_pin_name_is_silent_but_an_alias_swap_is_an_erro
     swap = {"ref": "U1", "pins": [{"num": "3", "name": "OUTPUT", "net": "X"}, {"num": "4", "name": "ENABLE", "net": "Y"}]}
     p = draw.plan_sheet({"parts": [swap]}, {"U1": SYMS["U1"]}, "l", "d")
     assert p["commands"] == [] and any("pin 3 is OUTPUT in the netlist, but OUTPUT is pin 4" in e for e in p["errors"])
+
+
+def test_a_part_with_unverified_pins_is_named_in_its_section_heading_on_the_drawn_sheet():
+    # spec principle 3: "unverified" stays visible on the student's own Altium sheet, not only in the advisor
+    import copy
+    sheet = copy.deepcopy(SHEET)
+    sheet["parts"][0]["pins_source"] = "agent"
+    p = draw.plan_sheet(sheet, SYMS, "lib.SchLib", "sheet.SchDoc")
+    assert not p["errors"] and p["unverified"] == ["U1"]
+    heads = [c[6] for c in p["commands"] if c[0] == "FRAME"]
+    assert heads == ["[advisor] PWR - Input | pins not checked against a datasheet: U1"]
+
+
+def test_a_sheet_with_every_pin_verified_has_a_plain_heading():
+    p = plan()
+    assert p["unverified"] == [] and [c[6] for c in p["commands"] if c[0] == "FRAME"] == ["[advisor] PWR - Input"]

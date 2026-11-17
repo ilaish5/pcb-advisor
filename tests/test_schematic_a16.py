@@ -112,9 +112,12 @@ def flyback(parts, bom):
 def test_bidirectional_tvs_across_a_coil_is_skipped():
     parts = driver([pin("1", "A", "+5V"), pin("2", "K", "BZ_LOW")])  # would be reversed
     assert [f["id"] for f in flyback(parts, [])] == ["flyback_diode_reversed"]
-    for text in ("Bidirectional TVS", "bi-directional", "TVS diode 15V"):
+    for text in ("Bidirectional TVS", "bi-directional"):
         assert flyback(parts, [{"refs": ["D1"], "description": text}]) == []
     assert flyback(parts, [{"refs": ["D1"], "mpn": "SMBJ15CA"}]) == []
+    # a unidirectional TVS reversed across the coil shorts the supply like any diode
+    for bom in ([{"refs": ["D1"], "description": "TVS diode 15V"}], [{"refs": ["D1"], "mpn": "SMAJ5.0A"}]):
+        assert [f["id"] for f in flyback(parts, bom)] == ["flyback_diode_reversed"]
 
 
 def test_bridge_rectifier_pins_are_not_read_as_polarity():

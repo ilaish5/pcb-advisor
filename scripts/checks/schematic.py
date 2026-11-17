@@ -1132,7 +1132,7 @@ def _bom_text(bom, ref: str) -> str:
     return f"{line.get('description', '')} {line.get('mpn', '')}"
 
 
-_BIDIR_RE = re.compile(r"bi-?directional|bipolar|\bTVS\b|transient|transil", re.I)
+_BIDIR_RE = re.compile(r"bi-?directional|bipolar", re.I)  # a unidirectional TVS reversed across a coil still shorts it
 _BRIDGE_RE = re.compile(r"bridge", re.I)
 
 

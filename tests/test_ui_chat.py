@@ -143,3 +143,11 @@ def test_a_reply_with_a_failed_step_says_so_before_its_text():
     body = CHAT_JS[CHAT_JS.index("const nRef"):]
     assert "Not all of this happened" in body
     assert body.index("${head}") < body.index('<div class="txt"')
+
+
+def test_the_library_page_marks_a_line_whose_pins_are_unverified():
+    # spec phase 1: "unverified" on the sheet, in the BOM and on the Library page
+    from ui_source import ui_js
+    js = ui_js()
+    assert "function libPins(r)" in js and "libPins(r) + '</div>'" in js
+    assert "Pins unverified" in js and "Pins conflict" in js

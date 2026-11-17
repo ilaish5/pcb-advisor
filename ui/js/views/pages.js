@@ -54,7 +54,15 @@ function libModels(r) {
     one(r.symbol ? 'ok' : 'no', r.symbol ? 'check' : 'x', 'Symbol', r.symbol ? 'Symbol is in the library' : 'No symbol yet') +
     one(r.footprint ? 'ok' : 'no', r.footprint ? 'check' : 'x', 'Footprint', r.footprint ? 'Footprint is in the library' : 'No footprint yet') +
     (r.step ? one('ok', 'check', '3D', '3D model from a STEP file') : one('dim', 'check', '3D simple', 'A simple 3D body, not a STEP model')) +
-    (r.build_status ? (r.built ? one('ok', 'check', 'Built', 'In the compiled IntLib') : one('dim', 'x', 'Not built', 'Not in the IntLib yet: build the library')) : '') + '</div>';
+    (r.build_status ? (r.built ? one('ok', 'check', 'Built', 'In the compiled IntLib') : one('dim', 'x', 'Not built', 'Not in the IntLib yet: build the library')) : '') +
+    libPins(r) + '</div>';
+}
+/* the pins' state, as the BOM and the sheet show it: a line on a sheet whose pins came from the agent says so here too */
+function libPins(r) {
+  const l = (S.bom || []).find(b => b.key === r.line), st = l && l.pins_status;
+  if (st === 'unverified') return `<span class="mdl no" title="Pins from the agent, not checked against a datasheet: Verify, or accept them">${icon('x', 's')}Pins unverified</span>`;
+  if (st === 'mismatch') return `<span class="mdl no" title="${esc('Pins differ from the datasheet: ' + (l.pins_issues || ''))}">${icon('x', 's')}Pins conflict</span>`;
+  return '';
 }
 /* a line the build pipeline knows: what the build made of it, in words */
 function libBuildTag(r) {

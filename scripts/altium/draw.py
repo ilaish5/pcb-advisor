@@ -251,6 +251,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False):
             errors.append(f"{p['ref']}: no symbol in the project library (run library.build first)")
             continue
         c = part_cell(p, sym)
+        c["unverified"] = p.get("pins_source") == "agent"
         warnings += c["warnings"]
         errors += c["errors"]
         cells.append((p.get("section") if p.get("section") in ids else first, c))
@@ -271,10 +272,19 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False):
             warnings.append(f"section {n}: the heading has non-ASCII characters and is drawn as 'Section {n}'")
             titles[s_["id"]] = ""
             head_names[s_["id"]] = f"Section {n}"
+    # parts whose pins came from the agent, not a datasheet (store._mark_pins_source): the drawn sheet says so in the heading of
+    # their section, so the mark stays on the student's own drawing and not only in the advisor (principle 3 of the spec)
+    unverified = {}
+    for sid, c in cells:
+        if c.get("unverified"):
+            unverified.setdefault(sid, []).append(c["ref"])
+    out["unverified"] = sorted(r for refs in unverified.values() for r in refs)
     for (hx, hy), sid in heads:
         if sid:
             label = head_names.get(sid, sid)
-            cmds.append(("FRAME", d, str(hx), str(hy - 100), "4500", str(HEADER - 100), f"{TAG} {label} - {titles.get(sid, '')}".strip(" -")))
+            refs = unverified.get(sid) or []         # the frame is one line high: a long list is cut, the advisor has all of it
+            note = f" | pins not checked against a datasheet: {', '.join(refs[:6])}" + (f" +{len(refs) - 6}" if len(refs) > 6 else "") if refs else ""
+            cmds.append(("FRAME", d, str(hx), str(hy - 100), "4500", str(HEADER - 100), f"{TAG} {label} - {titles.get(sid, '')}".strip(" -") + note))
     for _, c in cells:
         ox, oy = pos[c["ref"]]
         cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"])))
