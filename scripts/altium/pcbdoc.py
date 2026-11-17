@@ -144,6 +144,7 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
         text_blob = _optional_stream(ole, "Texts6/Data")
         region_blob = _optional_stream(ole, "Regions6/Data")
         fill_blob = _optional_stream(ole, "Fills6/Data")
+        polygon_blob = _optional_stream(ole, "Polygons6/Data")
 
     components = []
     for ci, c in enumerate(raw_comps):
@@ -233,7 +234,7 @@ def read_pcbdoc(path, geometry: bool = False) -> dict:
         "tracks": parse_tracks(track_blob, nets),
         "arcs": parse_arcs(arc_blob, nets),
         "texts": parse_texts(text_blob, raw_comps),
-        "regions": parse_regions(region_blob, nets),
+        "regions": parse_regions(region_blob, nets, parse_polygon_nets(polygon_blob, nets)),
         "fills": parse_fills(fill_blob, nets),
     }
 
@@ -481,7 +482,24 @@ def parse_fills(blob: bytes, nets: list[str]) -> list[dict]:
     return out
 
 
-def parse_regions(blob: bytes, nets: list[str]) -> list[dict]:
+def parse_polygon_nets(blob: bytes, nets: list[str]) -> list[str | None]:
+    """Net name of each polygon (pour) of Polygons6, by polygon index (the number a Regions6 record carries); None when unknown."""
+    out = []
+    i = 0
+    while i + 4 <= len(blob):
+        n = struct.unpack("<I", blob[i:i + 4])[0] & 0xFFFFFF
+        body = blob[i + 4:i + 4 + n]
+        i += 4 + n
+        props = dict(kv.split("=", 1) for kv in body.rstrip(b"\0").decode("latin-1", "replace").split("|") if "=" in kv)
+        try:
+            k = int(props.get("NET", ""))
+        except ValueError:
+            k = -1
+        out.append(nets[k] if 0 <= k < len(nets) else None)
+    return out
+
+
+def parse_regions(blob: bytes, nets: list[str], polygon_nets: list | None = None) -> list[dict]:
     """Read-only list of regions (Regions6): layer, net, kind (0 copper, others cutouts), the outline points (mm), whether it belongs to
     a component or to a poured polygon (poured copper is not fixed copper: it is redone around the tracks)."""
     out = []
@@ -500,10 +518,12 @@ def parse_regions(blob: bytes, nets: list[str]) -> list[dict]:
                     x, y = struct.unpack("<dd", data[16 * k:16 * k + 16])
                     pts.append((round(x * _MIL4_TO_MM, 4), round(y * _MIL4_TO_MM, 4)))
             net_idx = struct.unpack("<H", rec[3:5])[0]
+            poly_idx = struct.unpack("<H", rec[5:7])[0]
             out.append({
                 "layer": rec[0],
                 "net": nets[net_idx] if (net_idx != 0xFFFF and 0 <= net_idx < len(nets)) else None,
-                "polygon": struct.unpack("<H", rec[5:7])[0] != 0xFFFF,
+                "polygon_net": (polygon_nets or [None] * 0)[poly_idx] if polygon_nets and poly_idx < len(polygon_nets) else None,
+                "polygon": poly_idx != 0xFFFF,
                 "in_component": struct.unpack("<H", rec[7:9])[0] != 0xFFFF,
                 "kind": int(props.get("KIND", "0") or 0),
                 "points_mm": pts,
