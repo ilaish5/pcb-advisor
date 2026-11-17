@@ -21,7 +21,11 @@ STEP_MM = 0.5           # search grid
 FINE_STEP_MM = 0.25     # the search grid beside a supply pin: two caps side by side only fit (0.6 mm between courtyards) on a quarter-mm grid
 CAP_SHARE_MM = 10.0     # a decoupling cap's score grows by this for every cap its IC already has (one cap per IC first)
 HALO_MM = 2.5          # the room kept round an IC with supply pins for its decoupling caps while the other ICs are placed
-CSP_TRIES = 300         # choices the search for the places beside an IC makes before it gives up
+FANOUT_PITCH_MM = 0.8    # an IC whose pads are this close (centre to centre) or closer is fine pitch: its pins need a fan-out band
+FANOUT_PITCHES = 2.0     # the fan-out band of a fine-pitch IC, for its decoupling caps and crystal: this many pitches beyond its pads (courtyards included),
+                        # room for a via and a track at 0.127 mm rules; their own tracks cross it
+FANOUT_FREE_PITCHES = 6.0   # the same band for every other part: wide enough for the tracks of a pin row to run along it to the gaps between parts
+CSP_TRIES = 5000        # choices the search for the places beside an IC makes before it gives up
 CSP_DOMAIN = 400        # candidate places kept for one part
 DECAP_NEAR_MM = 3.0      # this tool's threshold (datasheets only say "as close as possible"): pad to pad, a decoupling cap's rail pad to its supply pin pad
 DECAP_TOL_MM = 0.05      # a cap this much over DECAP_NEAR_MM still passes (so '3.0 mm, limit 3 mm' is never reported)
@@ -759,6 +763,28 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             skipped.add(max(hard, key=lambda k: (wipes[k], -k)))
         return best_all
 
+    def fan_bands(pitches=FANOUT_PITCHES):
+        """The fan-out band of every placed fine-pitch IC: the box of its pads, grown by `pitches` pitches. A pin of such an IC needs room
+        to leave its pad (a via, a track beside it, and a channel along the row to the gaps between parts): a part in the band walls the
+        neighbouring pins off. The decoupling caps and the crystal keep out of the narrow one, every other part out of the wide one
+        (unless the board is too full)."""
+        out = []
+        for o in placed:
+            if o not in ics or o in band_cache and band_cache[o] is None:
+                continue
+            if o not in band_cache:
+                pts = sorted(set((round(x, 3), round(y, 3)) for x, y, _ in info[o]["pads"].values()))
+                pitch = min((math.hypot(a[0] - b[0], a[1] - b[1]) for i, a in enumerate(pts) for b in pts[i + 1:]), default=None)
+                band_cache[o] = pitch if pitch is not None and pitch <= FANOUT_PITCH_MM else None
+            if band_cache[o] is None:
+                continue
+            pb = _moved(rot_box(info[o]["padbox"], placed[o]["rot"]), placed[o]["x"], placed[o]["y"])
+            d = pitches * band_cache[o]
+            out.append([pb[0] - d, pb[1] - d, pb[2] + d, pb[3] + d])
+        return out
+
+    band_cache = {}
+
     def neighbourhood(ic):
         """Right after an IC is placed: the crystal (and the decoupling caps of its supply pins) beside it, all at once, before anything
         else can take the room there. Every named supply pin gets a cap, the smallest values first, and then each rail's caps in proportion
@@ -766,6 +792,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         within XTAL_NEAR_MM of every oscillator pin, a cap within DECAP_NEAR_MM of its pin (pad to pad), every free place and turn on
         the grid; solve() finds places that do not touch. What it cannot place is left to the later steps."""
         parts_, doms = [], []
+        bands = fan_bands()
         for yref, links in xtals.items():
             if yref in done_x or any(o not in placed for _, o, _, _ in links):
                 continue
@@ -774,9 +801,11 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             for x, y, rot, side, cost in near_places(yref, targets, len(targets) * XTAL_NEAR_MM, all_sides=True):
                 if all(math.hypot(pad_abs(yref, pad, x, y, rot)[0] - t[0], pad_abs(yref, pad, x, y, rot)[1] - t[1]) <= XTAL_NEAR_MM
                        for pad, t in targets):
-                    dom.append(entry(yref, x, y, rot, side, cost))
-                    if len(dom) >= CSP_DOMAIN:
-                        break
+                    e = entry(yref, x, y, rot, side, cost)
+                    if not any(_hit(e[5], r, 0) for r in bands):
+                        dom.append(e)
+                        if len(dom) >= CSP_DOMAIN:
+                            break
             if dom:
                 parts_.append(("x", yref, links))
                 doms.append(dom)
@@ -789,15 +818,18 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             todo = [c for c in rail_caps if c not in placed]
             if not mine or not todo:
                 continue
+            allpins = max(allpins, len(mine))                                       # an IC that is not a U/IC/M/MOD (a Q...) counts too
             quota = max(len(mine), -(-len(rail_caps) * len(mine) // allpins))        # ceil(caps * my pins / all pins), one per pin at least
             for k, c in enumerate(todo[:quota]):
                 pad = mine[k % len(mine)]
                 rp = next(p for p, (_, _, n) in info[c]["pads"].items() if n == net)
                 dom = []
                 for x, y, rot, side, cost in near_places(c, [(rp, pad_xy(ic, pad))], DECAP_NEAR_MM + DECAP_TOL_MM, step=FINE_STEP_MM, all_sides=True):
-                    dom.append(entry(c, x, y, rot, side, cost))
-                    if len(dom) >= CSP_DOMAIN:
-                        break
+                    e = entry(c, x, y, rot, side, cost)
+                    if not any(_hit(e[5], r, 0) for r in bands):
+                        dom.append(e)
+                        if len(dom) >= CSP_DOMAIN:
+                            break
                 if dom:
                     parts_.append(("c", c, (ic, pad)))
                     doms.append(dom)
@@ -915,11 +947,21 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
     if bound is not None and (len(errors), sum(1 for f in findings if f["level"] == "error"),
                               sum(1 for c in crystals if c["max_mm"] > XTAL_NEAR_MM), len(findings)) >= bound:
         return None
-    # 4. every other part, by how tied it is to the placed parts
+    # 4. every other part, by how tied it is to the placed parts, outside the fan-out bands of the fine-pitch ICs (inside them only when
+    # there is no other place: a part there walls off the pins beside it)
+    bands = [[r[0] + gap, r[1] + gap, r[2] - gap, r[3] - gap] for r in fan_bands(FANOUT_FREE_PITCHES)]    # an obstacle is kept `gap` away: so the band is
+    for r in bands:                                                                                  # FANOUT_FREE_PITCHES from the pads
+        add_obstacle(r)
     for ref in others:
         if ref in placed:
             continue
-        hit = find(ref, *toward_middle(_target(ref, info, placed, centre, (cx, cy))))
+        tgt = toward_middle(_target(ref, info, placed, centre, (cx, cy)))
+        hit = find(ref, *tgt)
+        if hit is None and bands:
+            for r in bands:
+                drop_obstacle(r)
+            bands = []
+            hit = find(ref, *tgt)
         if hit is None:
             errors.append(f"{ref}: no free place inside the board; make the board bigger")
             continue
