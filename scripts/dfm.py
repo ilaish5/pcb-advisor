@@ -444,6 +444,10 @@ def main(argv=None):
         print(json.dumps(res, ensure_ascii=False, indent=2))
     elif args.cmd == "gerber-zip":
         import jlc_upload
+        import store
+        blocked = store.manufacturing_warning(args.project)
+        if blocked:
+            raise SystemExit(blocked)
         print(json.dumps(jlc_upload.gerber_zip(args.project), ensure_ascii=False, indent=2))
     elif args.cmd == "pickup":
         import jlc_upload

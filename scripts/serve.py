@@ -1331,7 +1331,10 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(f"{kind}: " + import_rules_summary(res))
                     continue
                 elif kind == "altium.run_outjob":
-                    unv = store.manufacturing_warning(project)     # the files are made anyway; the chat shows the amber chip
+                    unv = store.manufacturing_warning(project)     # unverified pins block the files
+                    if unv:
+                        refused.append(f"{kind}: {unv}")
+                        continue
                     done = _bridge_done(project, "run-outjob", turn_start)
                     if done:
                         applied.append(f"{kind}: already done earlier in this turn ({done.get('files', 0)} files)")
@@ -1342,16 +1345,18 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                         refused.append(f"{kind}: {exc}")
                         continue
                     applied.append(f"{kind}: {len(res['files'])} files" + (" (OutJob added to the project)" if res["added"] else "")
-                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", []))
-                                   + (f" (warnings: {unv})" if unv else ""))
+                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", [])))
                     continue
                 else:
                     bridge.open_project(project)
                 applied.append(kind + (f":{a['name']}" if kind == "altium.add_sheet" else ""))
             elif kind == "jlc.gerber_zip":
                 import jlc_upload
-                unv = store.manufacturing_warning(project)         # the zip is made anyway; the chat shows the amber chip
+                unv = store.manufacturing_warning(project)         # unverified pins block the zip
                 try:
+                    if unv:
+                        refused.append(f"jlc.gerber_zip: {unv}")
+                        continue
                     res = jlc_upload.gerber_zip(project)
                 except jlc_upload.UploadError as exc:
                     refused.append(f"jlc.gerber_zip: {exc}")
@@ -1360,8 +1365,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(f"jlc.gerber_zip:{res['zip']} ({len(res['files'])} files" + (f", missing {', '.join(gaps)}" if gaps else "") + ")"
                                    + "".join(f" {m['layer']}: {m['why']}" for m in res["missing"]
                                              if m["level"] == "problem" and m["why"].startswith("The outline layer"))
-                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", [])[:4])
-                                   + (f" (warnings: {unv})" if unv else ""))
+                                   + "".join(f". WARNING: {w}" for w in res.get("warnings", [])[:4]))
             elif kind == "order.check":
                 import order_check
                 try:
@@ -3039,7 +3043,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path in ("/api/altium/import-rules", "/api/altium/run-outjob"):
             from altium import bridge
-            unv = store.manufacturing_warning(proj) if path.endswith("outjob") else ""      # the outputs are made anyway
+            unv = store.manufacturing_warning(proj) if path.endswith("outjob") else ""      # unverified pins block the outputs
+            if unv:
+                return self._send(400, {"error": button_words(unv)})
             busy = altium_start(proj)
             if busy:
                 return self._send(409, {"error": busy})
@@ -3050,7 +3056,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(exc)})
             finally:
                 STEP_LOCK.release()
-            return self._send(200, {**res, "warning": unv} if unv else res)
+            return self._send(200, res)
 
         if path == "/api/update":
             code, res = apply_update()
@@ -3226,10 +3232,12 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/jlc/gerber-zip":            # build exports/<p>_gerbers.zip from the linked Altium outputs (read only)
             import jlc_upload
-            unv = store.manufacturing_warning(proj)          # the zip is made anyway
+            unv = store.manufacturing_warning(proj)          # unverified pins block the zip
+            if unv:
+                return self._send(400, {"error": button_words(unv)})
             try:
                 res = jlc_upload.gerber_zip(proj)
-                return self._send(200, {**res, "warning": unv} if unv else res)
+                return self._send(200, res)
             except jlc_upload.UploadError as exc:
                 return self._send(400, {"error": str(exc)})
             except OSError as exc:

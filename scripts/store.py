@@ -2750,16 +2750,17 @@ def unverified_parts(project, verify_new=True):
 
 
 def manufacturing_warning(project):
-    """"" when every part on the board has verified pins; else the warning that goes with the manufacturing outputs (Altium OutJob,
-    Gerber zip), which are made anyway: the parts whose pins nobody verified (the DFM page's Unverified parts list, without DNP /
-    do-not-buy lines)."""
+    """"" when every part on the board has verified or accepted pins; else the refusal that stops the manufacturing outputs (Altium
+    OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list, without DNP / do-not-buy lines).
+    The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins)."""
     skip = {l["key"] for l in bom(project, write=False) if l.get("dnp") or l.get("nobuy")}
     rows = [r for r in unverified_parts(project) if r["line"] not in skip]
     if not rows:
         return ""
     refs = [ref for r in rows for ref in (r.get("refs") or [r["line"]])]
-    return (f"{len(refs)} {'part has' if len(refs) == 1 else 'parts have'} unverified pins: {', '.join(refs[:12])}{' ...' if len(refs) > 12 else ''}. "
-            "The files were made; check these parts in DFM > Unverified parts before you order.")
+    return (f"Not made yet: {len(refs)} {'part has' if len(refs) == 1 else 'parts have'} pins nobody checked against a datasheet: "
+            f"{', '.join(refs[:12])}{' ...' if len(refs) > 12 else ''}. Open DFM > Unverified parts: verify each with its datasheet, "
+            "or accept it if you checked it yourself.")
 
 
 def accept_pins(project, key):

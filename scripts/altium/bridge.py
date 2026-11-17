@@ -2060,6 +2060,11 @@ def main(argv=None):
         elif a.op == "import-rules":
             res = import_rules(a.project)
         elif a.op == "run-outjob":
+            import store
+            blocked = store.manufacturing_warning(a.project)
+            if blocked:
+                print(f"Error: {blocked}", file=sys.stderr)
+                return 1
             res = run_outjob(a.project)
         elif a.op == "build-library":
             res = build_library(a.project)
