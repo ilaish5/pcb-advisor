@@ -229,6 +229,7 @@ button.src.broken{color:var(--bad)}
 .empty h2{font-size:var(--t-lg)}
 .empty p{color:var(--ink-3)}
 .empty .acts{margin-top:8px}
+.empty .limits{font-size:var(--t-sm);max-width:52ch;margin-inline:auto}
 .spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--line-2);border-top-color:var(--ink-2);animation:spin .7s linear infinite;flex:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 .loading{display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:13px;padding:16px 0}

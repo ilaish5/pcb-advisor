@@ -84,7 +84,8 @@
             "Bash({python} {repo}/scripts/keeping.py *)",
             "Bash({python} {repo}/scripts/project.py *)",
             "Bash({python} {repo}/scripts/introspect.py *)",
-            "Bash({python} {repo}/scripts/lineage.py *)"
+            "Bash({python} {repo}/scripts/lineage.py *)",
+            "Bash({python} {repo}/scripts/order_check.py *)"
           ],
           "disallowed": [
             "NotebookEdit"
