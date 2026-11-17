@@ -277,3 +277,35 @@ def test_no_crystal_no_change():
     odd = layout.plan_placement(parts + [part("Y1", "XTAL", ["A", "B"], value="8MHz")], FPS, OUT)
     assert odd["crystals"] == [] and not [f for f in odd["findings"] if f["ref"] == "Y1"]
     assert {p["ref"] for p in odd["places"]} == {p["ref"] for p in parts} | {"Y1"}
+
+
+def test_transistor_on_a_supply_rail_does_not_break_the_placement():
+    """A Q part counts as an IC for the placement order but is no supply-pin IC: its share of a rail's supply pins must not divide by 0."""
+    fps = dict(FPS, SOT23=fp("SOT23", [("1", -0.95, 1.0, 0.6, 0.7), ("2", 0.95, 1.0, 0.6, 0.7), ("3", 0.0, -1.0, 0.6, 0.7)]))
+    q = part("Q1", "SOT23", ["IO1", "+3V3", "GND"], names=["B", "VDD", "E"])
+    parts = [q] + [part(f"C{i}", "C0402", ["+3V3", "GND"], value="100nF") for i in range(1, 3)]
+    plan = layout.plan_placement(parts, fps, OUT)
+    assert not plan["errors"] and {p["ref"] for p in plan["places"]} == {"Q1", "C1", "C2"}, plan
+
+
+def test_other_parts_keep_out_of_the_fan_out_band_of_a_fine_pitch_ic():
+    """The pins of a 0.5 mm pitch IC need a channel along the row: the decoupling caps may sit beside it, a resistor wired to a pin
+    waits outside FANOUT_FREE_PITCHES pitches of its pads."""
+    pads = [(str(1 + i), -2.75 + 0.5 * i, 3.0, 0.28, 1.2) for i in range(12)] + [(str(13 + i), -2.75 + 0.5 * i, -3.0, 0.28, 1.2) for i in range(12)]
+    fps = dict(FPS, FINE=fp("FINE", pads), R0402=fp("R0402", [("1", -0.5, 0, 0.6, 0.6), ("2", 0.5, 0, 0.6, 0.6)]))
+    nets = [f"IO{i}" for i in range(24)]
+    names = [f"PA{i}" for i in range(24)]
+    nets[0], names[0] = "+3V3", "VDD"
+    nets[12], names[12] = "GND", "VSS"
+    parts = [part("U1", "FINE", nets, names), part("C1", "C0402", ["+3V3", "GND"], value="100nF")]
+    parts += [part(f"R{i}", "R0402", [f"IO{i}", f"S{i}"]) for i in range(1, 6)]
+    plan = layout.plan_placement(parts, fps, OUT)
+    assert not plan["errors"], plan
+    at = at_of(plan)
+    u = at["U1"]
+    pb = layout.pads_box(fps["FINE"])
+    band = layout.FANOUT_FREE_PITCHES * 0.5
+    for r in ("R1", "R2", "R3", "R4", "R5"):
+        fb = layout.rot_box(layout.footprint_box(fps["R0402"]), at[r]["rot"])
+        box = [fb[0] + at[r]["x"], fb[1] + at[r]["y"], fb[2] + at[r]["x"], fb[3] + at[r]["y"]]
+        assert not layout._hit(box, [pb[0] + u["x"] - band, pb[1] + u["y"] - band, pb[2] + u["x"] + band, pb[3] + u["y"] + band], -1e-6), r
