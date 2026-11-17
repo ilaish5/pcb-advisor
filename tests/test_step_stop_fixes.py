@@ -91,3 +91,11 @@ def test_the_remake_of_the_altium_files_uses_the_step_button_and_holds_the_other
     fn = outputs[outputs.index("async function outRunAltium"):outputs.index("let outRemaking")]
     assert "pvRunStep('outputs')" in fn and "/api/altium/run-outjob" not in fn
     assert "|| !!pvBusy" in outputs[outputs.index("function outRemakeBtn"):outputs.index("// An in-page confirm")]
+
+
+def test_a_stopped_outputs_run_does_not_count_as_made_for_the_remake():
+    root = pathlib.Path(__file__).resolve().parent.parent
+    out = (root / "ui/js/views/outputs.js").read_text(encoding="utf-8")
+    pv = (root / "ui/js/views/previews.js").read_text(encoding="utf-8")
+    assert "kind: 'warn', stopped: true" in pv
+    assert "n.kind !== 'bad' && !n.stopped" in out

@@ -401,7 +401,7 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
   } else {
     if (lost) pvNote[c.page] = {kind: 'bad', text: 'Lost contact with the server while Altium was working. The step may still be running or may have finished: look at the board in Altium, and at the chat for its result, before starting it again.'};
     else if (r && r.gone) pvNote[c.page] = {kind: 'warn', text: 'The step ended while this page was loading, and its answer went to the page that started it. Look at the board in Altium, and at the chat, before starting it again.'};       // ended, not "succeeded": this page never saw the answer
-    else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
+    else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', stopped: true, text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
     else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server')};
     else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again

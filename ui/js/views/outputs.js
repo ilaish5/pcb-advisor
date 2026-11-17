@@ -118,7 +118,7 @@ async function outRunAltium() {            // Altium writes the Gerbers; true wh
   if (pvBusy) return false;
   await pvRunStep('outputs');
   const n = pvNote.outputs;
-  return !!n && n.kind !== 'bad';
+  return !!n && n.kind !== 'bad' && !n.stopped;      // stopped: Altium made nothing, so nothing is packed again
 }
 let outRemaking = false;
 async function outRemake(files) {          // files: the lineage rows to make again, in order; one confirm for the edited ones
