@@ -13,12 +13,18 @@ OUTLINE_TOL_MM = 0.05
 MAX_BYTES = 262144                       # a file is read up to this many bytes; a longer one is not checked
 
 
+SAVE_FIRST = "save the PcbDoc in Altium first, then generate outputs again"
+
+
 def parse_excellon(text: str) -> dict | None:
-    """{"plated": True/False/None, "holes": [diameter_mm, ...]} of one Excellon file, or None when it is not one.
-    One entry per hit (a hit line X..Y.., or a lone X.. / Y.. after the previous one; a G85 slot counts once)."""
+    """{"plated": True/False/None, "holes": [diameter_mm, ...], "tol": mm} of one Excellon file, or None when it is not one.
+    One entry per hit (a hit line X..Y.., or a lone X.. / Y.. after the previous one), per G85 slot and per M15..M16 route
+    (Altium writes slots as routes: G00X..Y.., M15, G01.., M16). Tools may be defined in any header or in the body, and a
+    second M48 header adds to the first. `tol` is half the last digit of the diameters as written (inch 2:3 writes 0.8 mm
+    as 0.031)."""
     if "M48" not in text[:2048]:
         return None
-    metric, tools, cur, holes, plated, in_head = False, {}, None, [], None, True
+    metric, tools, cur, holes, plated, tol = False, {}, None, [], None, 0.0
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -26,27 +32,28 @@ def parse_excellon(text: str) -> dict | None:
         if line.startswith(";"):
             m = re.match(r";\s*TYPE\s*=\s*(\w+)", line, re.I)
             if m:
-                plated = m.group(1).upper() == "PLATED"
+                t = m.group(1).upper().replace("_", "")
+                plated = True if t == "PLATED" else False if t == "NONPLATED" else None     # MIXED etc.: unknown
             continue
         if line.startswith(("METRIC", "M71")):
             metric = True
         elif line.startswith(("INCH", "M72")):
             metric = False
-        if line == "%" or line.startswith("M95"):
-            in_head = False
-            continue
-        m = re.match(r"T(\d+)(?:[A-Z]\d*(?:\.\d+)?)*?C(\d*\.?\d+)", line)
-        if m and in_head:
-            tools[int(m.group(1))] = float(m.group(2)) * (1.0 if metric else 25.4)
+        m = re.match(r"T(\d+)(?:[A-BD-Z]\d*(?:\.\d+)?)*C(\d*)\.?(\d*)", line)
+        if m and (m.group(2) or m.group(3)):
+            k = 1.0 if metric else 25.4
+            tools[int(m.group(1))] = float(f"{m.group(2) or 0}.{m.group(3) or 0}") * k
+            tol = max(tol, 0.5 * 10 ** -len(m.group(3)) * k)
             continue
         m = re.fullmatch(r"T(\d+)", line)
         if m:
             cur = int(m.group(1))
-            in_head = False
             continue
-        if line[0] in "XY" and cur in tools:
+        if cur not in tools:
+            continue
+        if line.startswith("M15") or line[0] in "XY":
             holes.append(round(tools[cur], 4))
-    return {"plated": plated, "holes": holes}
+    return {"plated": plated, "holes": holes, "tol": tol}
 
 
 def parse_gerber_extent(text: str) -> dict | None:
@@ -132,6 +139,7 @@ def drill_problems(files: list[dict], board: dict) -> list[str]:
     out = []
     if not files:
         return out
+    tol = max([HOLE_TOL_MM] + [f.get("tol", 0.0) for f in files])
     known = all(f["plated"] is not None for f in files)
     if known:
         sets = [("plated", [d for f in files if f["plated"] for d in f["holes"]], board["plated"]),
@@ -142,10 +150,10 @@ def drill_problems(files: list[dict], board: dict) -> list[str]:
         tag = f"{label} " if label else ""
         if len(got) != len(want):
             out.append(f"drill file has {len(got)} {tag}holes, the board has {len(want)}: the files are older than the board or from "
-                       "another PcbDoc; generate outputs again")
-        elif any(abs(a - b) > HOLE_TOL_MM for a, b in zip(sorted(got), sorted(want))):
+                       f"another PcbDoc; {SAVE_FIRST}")
+        elif any(abs(a - b) > tol for a, b in zip(sorted(got), sorted(want))):
             out.append(f"{tag}hole sizes in the drill file ({_fmt_holes(got)}) differ from the board's ({_fmt_holes(want)}): "
-                       "the files are from another version of the board; generate outputs again")
+                       f"the files are from another version of the board; {SAVE_FIRST}")
     return out
 
 
@@ -160,12 +168,17 @@ def outline_problems(extents: list[dict], box: tuple[float, float] | None) -> li
                 return []
     e = extents[0]
     return [f"outline layer is {e['w']:.2f} x {e['h']:.2f} mm, the board is {bw:.2f} x {bh:.2f} mm: the files are older than the "
-            "board or from another PcbDoc; generate outputs again"]
+            f"board or from another PcbDoc; check the outline layer in the Gerber setup, or {SAVE_FIRST}"]
 
 
-def copper_problems(names: list[str], expected: int | None) -> list[str]:
-    """Messages when the copper layer files (GTL, GBL, inner signal and plane) are not as many as the board's copper layers."""
+def copper_problems(names: list[str], expected: int | None) -> tuple[list[str], list[str]]:
+    """(problems, notes) when the copper layer files (GTL, GBL, inner signal and plane) are not as many as the board's copper
+    layers. A two-layer board with only the top file is a note: its bottom layer may just not be plotted."""
     if not expected or len(names) == expected:
-        return []
-    return [f"{len(names)} copper layer file(s) ({', '.join(sorted(names)) or 'none'}), the board has {expected} copper layers: "
-            "generate outputs again"]
+        return [], []
+    low = {n.lower().rsplit(".", 1)[-1] for n in names}
+    if expected == 2 and len(names) == 1 and low == {"gtl"}:
+        return [], ["the board has a bottom layer but no bottom copper Gerber: plot Bottom Layer in the Gerber setup, "
+                    "or order a 1-layer board"]
+    return [f"{len(names)} copper layer file(s) ({', '.join(sorted(names)) or 'none'}), the board has {expected} copper "
+            f"layers: {SAVE_FIRST}"], []

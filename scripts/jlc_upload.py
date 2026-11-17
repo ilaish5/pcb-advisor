@@ -295,18 +295,27 @@ def content_problems(z: zipfile.ZipFile, entries: list[dict], facts: dict[str, A
             data = fh.read(gerber_check.MAX_BYTES + 1)
         return None if len(data) > gerber_check.MAX_BYTES else data.decode("latin-1")
 
-    drills = []
+    drills, drill_ok = [], True
     for e in entries:
-        if e["group"] == "drill" and (text := read(e["name"])) is not None and (d := gerber_check.parse_excellon(text)):
-            drills.append(d)
-    add("NC drill", ".TXT (Excellon)", gerber_check.drill_problems(drills, facts))
+        if e["group"] == "drill":
+            text = read(e["name"])
+            d = gerber_check.parse_excellon(text) if text is not None else None
+            if d is None:
+                drill_ok = False                                  # one drill file unread: no comparison of a partial count
+            else:
+                drills.append(d)
+    if drill_ok:
+        add("NC drill", ".TXT (Excellon)", gerber_check.drill_problems(drills, facts))
     extents = []
     for e in entries:
-        if e["group"] == "outline" and not e.get("empty") and (text := read(e["name"])) is not None                 and (ex := gerber_check.parse_gerber_extent(text)):
+        if e["group"] == "outline" and not e.get("empty") and (text := read(e["name"])) is not None \
+                and (ex := gerber_check.parse_gerber_extent(text)):
             extents.append(ex)
     add("Board outline", ".GM1 or .GKO", gerber_check.outline_problems(extents, facts.get("box")))
     copper = [e["name"] for e in entries if e["group"] in ("copper", "plane")]
-    add("Copper layers", ".GTL .GBL .G1 ...", gerber_check.copper_problems(copper, facts.get("copper")))
+    probs, notes = gerber_check.copper_problems(copper, facts.get("copper"))
+    add("Copper layers", ".GTL .GBL .G1 ...", probs)
+    out.extend({"layer": "Bottom copper", "ext": ".GBL", "level": "note", "why": m} for m in notes)
     return out
 
 
@@ -343,7 +352,10 @@ def _describe(path: pathlib.Path, pcb=None) -> dict[str, Any]:
         check = {"checked": False, "note": "no PcbDoc linked" if not pcb else "the PcbDoc could not be read"}
         if facts:
             try:
-                missing += content_problems(z, entries, facts)
+                found = content_problems(z, entries, facts)
+                if any(m["layer"] == "Bottom copper" for m in found):
+                    missing = [m for m in missing if m["layer"] != "Bottom copper"]     # the content note says it better
+                missing += found
                 check = {"checked": True, "note": ""}
             except (OSError, zipfile.BadZipFile, ValueError):
                 check["note"] = "the output files could not be read for the content check"

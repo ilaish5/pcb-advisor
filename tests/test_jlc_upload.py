@@ -607,9 +607,9 @@ def test_an_outline_of_another_size_is_flagged(tmp_path):
 
 
 def test_a_missing_or_extra_copper_layer_is_flagged(tmp_path):
-    less = _check(_set(tmp_path, copper=("GTL",)), FACTS)
+    less = _check(_set(tmp_path, copper=("GTL", "GBL")), {**FACTS, "copper": 4})
     more = _check(_set(tmp_path, copper=("GTL", "GBL", "G1")), FACTS)
-    assert len(less) == 1 and "1 copper layer file(s)" in less[0] and "2 copper layers" in less[0]
+    assert len(less) == 1 and "2 copper layer file(s)" in less[0] and "4 copper layers" in less[0]
     assert len(more) == 1 and "3 copper layer file(s)" in more[0]
     assert _check(_set(tmp_path, copper=("GTL", "GBL", "G1", "GP2")), {**FACTS, "copper": 4}) == []
 
@@ -628,3 +628,72 @@ def test_the_describe_result_carries_the_content_problems(tmp_path, monkeypatch)
     res = jlc_upload._describe(_set(tmp_path, holes=(0.3, 1.1)), tmp_path / "b.PcbDoc")
     assert not res["complete"] and res["content_check"]["checked"]
     assert any("drill file has 2" in m["why"] for m in res["missing"])
+
+
+# ---------------------------------------------------------------- 1c. review fixes of the content check
+
+# Altium's slot file (Blink 555-SlotHoles-Plated.TXT): slots are routes, no G85
+_SLOTS = ("M48\n;Layer_Color=9474304\n;FILE_FORMAT=2:4\nINCH,LZ\n;TYPE=PLATED\nT02F00S00C0.0236\n%\nG90\nG05\nT02\n"
+          "G00X004252Y000992\nM15\nG01Y001268\nM16\nG00X004252Y002492\nM15\nG01Y002768\nM16\nM17\nM30\n")
+
+
+def test_slots_written_as_routes_count_one_hole_each():
+    ex = jlc_upload.gerber_check.parse_excellon(_SLOTS)
+    assert len(ex["holes"]) == 2 and ex["holes"][0] == pytest.approx(0.6, abs=0.01)
+    g85 = "M48\nMETRIC\n;TYPE=PLATED\nT1C0.800\n%\nT1\nX1.0Y1.0G85X2.0Y1.0\nX5.0Y5.0\nM30\n"
+    assert len(jlc_upload.gerber_check.parse_excellon(g85)["holes"]) == 2
+
+
+def test_a_board_with_round_holes_and_slots_in_two_files_passes(tmp_path):
+    zp = tmp_path / "z.zip"
+    with zipfile.ZipFile(zp, "w") as z:
+        z.writestr("a.GTL", "x")
+        z.writestr("a.GBL", "x")
+        z.writestr("a-Round-Plated.TXT", _exc(True, [0.3, 0.3]))
+        z.writestr("a-Slot-Plated.TXT", _SLOTS)
+    facts = {"plated": [0.3, 0.3, 0.6, 0.6], "unplated": [], "box": None, "copper": 2}
+    assert _check(zp, facts) == []
+
+
+def test_an_unknown_type_falls_back_to_the_combined_count():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=MIXED\nT1C0.8\n%\nT1\nX1Y1\nM30\n")
+    assert ex["plated"] is None
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [0.8], "unplated": []}) == []
+    assert jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=NONPLATED\nT1C0.8\n%\nT1\nX1Y1\n")["plated"] is False
+
+
+def test_coarse_inch_diameters_get_the_tolerance_of_their_last_digit():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nINCH,LZ\n;TYPE=PLATED\nT1C0.031\n%\nT1\nX1Y1\nM30\n")
+    assert ex["holes"][0] == pytest.approx(0.7874, abs=1e-3)
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [0.8], "unplated": []}) == []
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [0.9], "unplated": []})
+
+
+def test_tools_defined_in_the_body_and_a_second_header_count():
+    text = "M48\nMETRIC\n;TYPE=PLATED\nT1C0.800\n%\nT1\nX1Y1\nT2C1.000\nT2\nX2Y2\nM48\nMETRIC\nT3C0.500\n%\nT3\nX3Y3\nM30\n"
+    assert sorted(jlc_upload.gerber_check.parse_excellon(text)["holes"]) == [0.5, 0.8, 1.0]
+
+
+def test_a_drill_file_over_the_cap_skips_the_whole_drill_comparison(tmp_path, monkeypatch):
+    zp = _set(tmp_path, holes=(0.3, 1.1))                          # a wrong count that would be flagged
+    assert _check(zp, FACTS)
+    monkeypatch.setattr(jlc_upload.gerber_check, "MAX_BYTES", 40)
+    assert not [m for m in _check(zp, FACTS) if "drill file" in m or "hole sizes" in m]
+
+
+def test_a_two_layer_board_without_the_bottom_gerber_is_a_note_not_a_problem(tmp_path):
+    zp = _set(tmp_path, copper=("GTL",))
+    with zipfile.ZipFile(zp) as z:
+        entries = [{"name": i.filename, "group": (jlc_upload.classify(i.filename) or ("other",))[0]} for i in z.infolist()]
+        got = jlc_upload.content_problems(z, entries, FACTS)
+    assert [m["level"] for m in got] == ["note"] and "plot Bottom Layer" in got[0]["why"]
+    res = jlc_upload._describe(zp, tmp_path / "b.PcbDoc")
+    assert res["missing"] is not None
+
+
+def test_the_messages_say_to_save_the_pcbdoc_and_check_the_outline_layer(tmp_path):
+    assert "save the PcbDoc in Altium first" in _check(_set(tmp_path, holes=(0.3, 1.1)), FACTS)[0]
+    assert "save the PcbDoc in Altium first" in _check(_set(tmp_path, holes=(0.3, 0.3, 1.0)), FACTS)[0]
+    out = _check(_set(tmp_path, outline=(40 / 25.4, 20 / 25.4)), FACTS)[0]
+    assert "save the PcbDoc in Altium first" in out and "check the outline layer in the Gerber setup" in out
+    assert "save the PcbDoc in Altium first" in _check(_set(tmp_path, copper=("GTL", "GBL", "G1")), FACTS)[0]
