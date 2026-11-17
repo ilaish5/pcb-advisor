@@ -2304,6 +2304,7 @@ class Handler(BaseHTTPRequestHandler):
                          refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
                          error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:600]),
                          **_chat_info)
+            refused.extend(res.get("parse_refused") or [])
             if tool_edited or tool_unrestored:
                 refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
             if proposals and not partial:

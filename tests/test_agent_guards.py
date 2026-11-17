@@ -194,3 +194,39 @@ def test_serve_main_turns_server_mode_on_and_a_cli_process_stays_read_only(monke
             "except bridge.BridgeError as e: print('REFUSED', e)\n")
     out = subprocess.run([sys.executable, "-c", code], cwd=str(tool_guard.REPO), env=env, capture_output=True, text=True)
     assert "REFUSED Altium changes go through actions" in out.stdout, out.stderr
+
+
+def test_a_broken_or_cut_off_actions_block_is_reported_not_swallowed():
+    reply, actions, _t, problems = agent._parse('Done.\n```json\n{"actions": [\n  {"type": "x",}\n]}\n```')
+    assert actions == [] and len(problems) == 1 and "line" in problems[0] and "nothing in it was applied" in problems[0]
+    assert "```" not in reply and "actions" not in reply
+    reply, actions, _t, problems = agent._parse('I added R1.\n```json\n{"actions": [{"type": "bom.propose"')
+    assert actions == [] and len(problems) == 1 and "cut off" in problems[0]
+    assert reply == "I added R1."
+
+
+def test_a_good_actions_block_still_parses():
+    reply, actions, _t, problems = agent._parse('Ok.\n```json\n{"actions": [{"type": "idea.ready"}]}\n```')
+    assert reply == "Ok." and actions == [{"type": "idea.ready"}] and problems == []
+    assert agent._parse("just words")[3] == []
+
+
+def test_tool_chips_come_from_real_steps_not_from_the_model():
+    meta = {"steps": ["Reading a.md", "Running check_stock.py --all", "Running other.py"],
+            "denied": [{"tool": "Bash", "input": {"command": "python scripts/other.py"}}]}
+    assert agent.real_tools(meta) == [{"t": "Running check_stock.py --all", "st": "ok"}, {"t": "Running other.py", "st": "warn"}]
+    assert agent.real_tools({}) == [] and agent.real_tools(None) == []      # an engine with no event stream: no chips
+
+
+def test_respond_ignores_tools_the_model_claims(monkeypatch):
+    import gateway
+    from gateway.base import Result
+    text = 'Ran it.\n```json\n{"tools": [{"t": "Check availability", "st": "ok"}], "actions": []}\n```'
+    monkeypatch.setattr(gateway, "route", lambda req, name=None: Result(text=text, provider="antigravity", model="m"))
+    monkeypatch.setattr(gateway, "resolve", lambda b=None: "antigravity")
+    monkeypatch.setattr(agent.runtime_pack, "sync", lambda: ".")
+    monkeypatch.setattr(agent, "_workspace_section", lambda *a: "")
+    monkeypatch.setattr(agent, "_add_dirs", lambda *a: [])
+    monkeypatch.setattr(agent, "_summary", lambda m: "")
+    out = agent.respond({"project": "p"}, "hi", [])
+    assert out["tools"] == [] and out["parse_refused"] == []

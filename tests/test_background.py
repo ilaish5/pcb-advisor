@@ -94,7 +94,7 @@ def test_citations_are_checked_and_stored_by_record_ts(empty):
     assert items['ds.md|"pin configuration with three pins"']["status"] == "ok"
     assert items['ds.md|"a made up sentence"']["status"] == "not_found"
     assert items["gone.pdf|p. 2"]["status"] == "missing_file"
-    assert items["ds.md|p. 1, Pins"]["status"] == "ok"           # no quote: the file exists
+    assert items["ds.md|p. 1, Pins"]["status"] == "file_only"    # a page only: the claim was never compared to the file
     assert all(v["reason"] for v in items.values())
 
 
@@ -106,8 +106,19 @@ def test_a_quote_without_quotation_marks_is_still_matched_and_a_miss_is_not_an_e
     assert background.check_one(empty, "notes.txt", "Place a 100 uF tantalum and a 100 nF ceramic capacitor")[
         "reason"] == "quote found in file"
     miss = background.check_one(empty, "notes.txt", "Section four about the power supply design rules")
-    assert miss == {"status": "ok", "reason": "file found"}                 # maybe a heading: not marked wrong
-    assert background.check_one(empty, "notes.txt", "p. 2, Pin configuration")["reason"] == "file found"
+    assert miss["status"] == "file_only"                 # maybe a heading: not marked wrong, not green either
+    assert background.check_one(empty, "notes.txt", "p. 2, Pin configuration")["status"] == "file_only"
+
+
+def test_green_needs_a_long_verbatim_quote_hyphenation_and_case_tolerated(empty):
+    d = sources.folder_of(empty)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "n.txt").write_text("Place the decou-\npling capacitor   close to the VBAT pin.\nOutput is 3 V.", encoding="utf-8")
+    ok = background.check_one(empty, "n.txt", '"PLACE the decoupling capacitor close to the VBAT pin"')
+    assert ok["status"] == "ok"
+    short = background.check_one(empty, "n.txt", '"Output is 3 V"')            # in the file, but too short to prove a claim
+    assert short["status"] == "file_only"
+    assert background.check_one(empty, "n.txt", '"Place the capacitor far from the pin please"')["status"] == "not_found"
 
 
 def test_nothing_to_check_queues_nothing(empty):
@@ -129,7 +140,7 @@ def test_the_state_carries_cites_checking_then_done(empty):
     assert background.wait_idle(5)
     m = model.build(project=empty, session="main")
     c = m["chat"][-1]["cites"]
-    assert c["state"] == "done" and c["items"]['ds.md|"alpha beta"']["status"] == "ok"
+    assert c["state"] == "done" and c["items"]['ds.md|"alpha beta"']["status"] == "file_only"
     # the log itself is untouched: the result lives beside it
     assert "cites" not in session_mod.load_chat(empty, "main")[-1]
 

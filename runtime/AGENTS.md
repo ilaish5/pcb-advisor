@@ -99,8 +99,8 @@ Prose for the student, then one fenced json block (omit it if there is nothing t
 {"tools": [{"t": "Check availability", "d": "18 lines - LCSC", "st": "ok"}],
  "actions": [ ... ]}
 ```
-`tools` lists the script runs you actually did this turn (`st`: ok | warn). List only what you ran. If you ran
-any script, the json block with `tools` is required: a number from a script without it counts as unsourced.
+`tools` lists the script runs you did this turn (`st`: ok | warn); the chips the student sees come from the engine's own
+record, not from this list. Close the json block with its fence: a cut-off block is refused and nothing in it applies.
 - `{"type": "idea.propose", "topic": "Power", "text": "1S Li-ion, +3V8 for the modem (assumed)"}` a requirement; it goes into the live idea draft.
 - `{"type": "idea.describe", "text": "..."}` the board in plain words (what it is, what it is for, the diagram told as text); also into the draft.
 - `{"type": "idea.ready"}` you think the idea is agreed: the reply shows a Confirm idea button. `idea.confirm` with `"student_said": "<quote of their yes>"` also works; a quote that does not match becomes `idea.ready`.

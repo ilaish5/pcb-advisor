@@ -262,21 +262,41 @@ def _strip_fence(text):
 
 
 def _parse(text):
-    """Pull the actions block out; tolerate a model that forgets it."""
+    """Pull the actions block out; tolerate a model that forgets it. Returns (reply, actions, claimed_tools, problems).
+    A block that cannot be read, or that was cut off before its closing fence, is a problem the student is told about:
+    never a silent skip, and never shown as reply text."""
+    text = text or ""
     blocks = re.findall(r"```json\s*(.*?)```", text, re.S)
-    actions, tools = [], []
+    actions, tools, problems = [], [], []
     for b in blocks:
         try:
             obj = json.loads(b)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            problems.append(f"the reply's actions block could not be read (JSON error at line {exc.lineno}); nothing in it was applied")
             continue
         if isinstance(obj, dict):
             actions.extend(obj.get("actions", []))
             tools.extend(t for t in obj.get("tools", []) if isinstance(t, dict) and t.get("t"))
         elif isinstance(obj, list):
             actions.extend(obj)
-    reply = re.sub(r"```json\s*.*?```", "", text, flags=re.S).strip()
-    return reply, actions, tools
+    reply = re.sub(r"```json\s*.*?```", "", text, flags=re.S)
+    cut = re.search(r"```json.*\Z", reply, re.S)        # an opening fence that never closes: the reply was cut off
+    if cut:
+        problems.append("the reply's actions block was cut off before its end; nothing in it was applied")
+        reply = reply[:cut.start()]
+    return reply.strip(), actions, tools, problems
+
+
+def real_tools(meta):
+    """Tool chips come from what the engine really ran (its stream events), never from the model's own list.
+    Only script runs are chips; an engine with no event stream (no steps) shows none."""
+    from gateway import events
+    denied = {events.label(d.get("tool"), d.get("input")) for d in (meta or {}).get("denied") or [] if isinstance(d, dict)}
+    out = []
+    for lab in (meta or {}).get("steps") or []:
+        if str(lab).startswith("Running "):
+            out.append({"t": lab, "st": "warn" if lab in denied else "ok"})
+    return out
 
 
 def _add_dirs(project):
@@ -379,6 +399,6 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
                 "backend": res.provider or name, "provider": res.provider or name,
                 "error": True, **turn, **took}
 
-    reply, actions, tools = _parse(res.text)
-    return {"reply": reply or "(no reply)", "actions": actions, "tools": tools,
+    reply, actions, _claimed, problems = _parse(res.text)
+    return {"reply": reply or "(no reply)", "actions": actions, "tools": real_tools(meta), "parse_refused": problems,
             "backend": res.provider, "provider": res.provider, "model": res.model, **turn, **took}

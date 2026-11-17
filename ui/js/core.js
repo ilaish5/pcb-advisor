@@ -121,6 +121,7 @@ function citeState(name, where) {
   const c = fmtCites, it = c && c.items && c.items[`${name}|${where || ''}`];
   if (!it) return c && c.state === 'checking' ? {cls: 'cite-checking', mark: '…', tip: 'Checking the quote in the file'} : null;
   if (it.status === 'ok') return {cls: 'cite-ok', mark: '✓', tip: it.reason || 'Found in the file'};
+  if (it.status === 'file_only') return {cls: 'cite-file', mark: '◦', tip: 'File only, claim not verified: ' + (it.reason || '')};
   return {cls: 'cite-bad', mark: '⚠', tip: it.status === 'missing_file' ? (it.reason || 'File not in Sources') : 'Quote not found in file: ' + (it.reason || '')};
 }
 function chip(name, where) {
