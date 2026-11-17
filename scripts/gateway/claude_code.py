@@ -49,7 +49,7 @@ def _result_failed(part):
     c = part.get("content")
     if isinstance(c, list):
         c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
-    m = re.search(r"Exit code:?\s*(-?\d+)", str(c or ""))
+    m = re.match(r"\s*Exit code:?\s*(-?\d+)", str(c or ""))        # only at the start: a datasheet line may say "Exit code 2"
     return bool(m and int(m.group(1)) != 0)
 
 

@@ -254,7 +254,8 @@ def test_an_example_that_is_not_strict_json_is_not_a_refusal():
     assert problems == [] and actions == [] and "8080" not in reply and "Done." in reply
     assert agent._parse('x\n```json\n{"port": 8080, "x": [1,}\n')[3] == []        # cut-off example: dropped quietly too
     assert len(agent._parse('x\n```json\n{"actions": [{"type": "a",}]}\n```')[3]) == 1
-    assert len(agent._parse('x\n```json\n[{"type": "a",}]\n```')[3]) == 1
+    assert agent._parse('x\n```json\n[{"type": "a",}]\n```')[3] == []              # "type" alone does not make it an actions block
+    assert agent._parse('Each is an object with a type. The list of actions follows.\n```json\n{"type": "x",}\n```')[3] == []
 
 
 def test_only_an_exact_json_fence_at_a_line_start_counts():
@@ -263,3 +264,32 @@ def test_only_an_exact_json_fence_at_a_line_start_counts():
     reply, actions, _t, problems = agent._parse('Put it in a ```json fence.\n```json\n{"actions": [{"type": "idea.ready"}]}\n```')
     assert actions == [{"type": "idea.ready"}] and problems == [] and reply == "Put it in a ```json fence."
     assert agent._parse('a\n```json  \n{"actions": [{"type": "idea.ready"}]}\n```')[1] == [{"type": "idea.ready"}]
+
+
+def test_real_actions_blocks_are_not_dropped_by_line_endings_indent_or_a_same_line_fence():
+    good = '{"actions": [{"type": "idea.ready"}]}'
+    want = [{"type": "idea.ready"}]
+    assert agent._parse('Ok\r\n```json\r\n' + good + '\r\n```\r\n')[1] == want                  # CRLF
+    assert agent._parse('1. Do this:\n   ```json\n   ' + good + '\n   ```\n')[1] == want        # under a list item
+    reply, actions, _t, problems = agent._parse('Ok ```json ' + good + '```')                 # same line
+    assert actions == want and problems == [] and reply == "Ok"
+    assert len(agent._parse('Ok ```json {"actions": [{"type": "a",}]}```')[3]) == 1          # broken, same line: refused
+    assert len(agent._parse('Ok ```json {"actions": [{"type": "a"')[3]) == 1                  # cut off, same line: refused
+    assert agent._parse('Use a ```json fence for it.')[3] == []                              # prose only
+
+
+def test_a_denied_call_is_warn_not_bad_and_the_detail_goes_to_the_right_run_once():
+    meta = {"stream": True, "runs": [{"label": "Running check.py", "failed": False},
+                                     {"label": "Running check_stock.py", "failed": False},
+                                     {"label": "Running check_stock.py", "failed": False},
+                                     {"label": "Running boom.py", "failed": True},
+                                     {"label": "Running denied.py", "failed": True}],
+            "denied": [{"tool": "Bash", "input": {"command": "python scripts/denied.py"}}]}
+    claimed = [{"t": "Stock (check_stock.py)", "d": "18 lines"}, {"t": "Boom (boom)", "d": "never"},
+               {"t": "Again", "d": "check_stock second"}]
+    chips = agent.real_tools(meta, claimed)
+    assert chips[0] == {"t": "Running check.py", "st": "ok"}                  # check.py does not take check_stock's detail
+    assert chips[1] == {"t": "Running check_stock.py", "st": "ok", "d": "18 lines"}
+    assert chips[2] == {"t": "Running check_stock.py", "st": "ok", "d": "check_stock second"}      # a claim is used once, in order
+    assert chips[3] == {"t": "Running boom.py", "st": "bad"}                 # a failed run never takes the model's detail
+    assert chips[4] == {"t": "Running denied.py", "st": "warn"}              # denied wins over the error it comes with
