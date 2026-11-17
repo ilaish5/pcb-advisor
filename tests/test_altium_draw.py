@@ -10,7 +10,7 @@ import store
 import workspace
 from altium import bridge, draw
 from altium.lib import read_schlib  # noqa: F401  (the real reader is replaced below; kept to show what the fake stands in for)
-from test_altium_bridge import FakeAltium
+from test_altium_bridge import FakeAltium, fake  # noqa: F401  (fake: the fixture)
 
 
 def symbol(name, pins):
@@ -333,10 +333,14 @@ def test_a_multi_part_symbol_is_refused_before_anything_is_drawn():
 
 
 def test_names_that_cannot_travel_to_altium_are_refused_up_front():
-    for bad in ("NET\tA", "NET\nB", "שם"):
-        sheet = {"parts": [part("R1", [{"num": "1", "net": bad}, {"num": "2", "net": "GND"}])]}
-        p = draw.plan_sheet(sheet, {"R1": SYMS["R1"]}, "l", "d")
+    for bad in ("R\t1", "R\n2", "שם"):           # a part ref cannot be renamed here (it is the link to the BOM); a net name can (see below)
+        sheet = {"parts": [part(bad, [{"num": "1", "net": "A"}, {"num": "2", "net": "GND"}])]}
+        p = draw.plan_sheet(sheet, {bad: SYMS["R1"]}, "l", "d")
         assert p["commands"] == [] and any("non-ASCII" in e for e in p["errors"]), bad
+    for net in ("NET\tA", "NET\nB", "שם"):
+        sheet = {"parts": [part("R1", [{"num": "1", "net": net}, {"num": "2", "net": "GND"}])]}
+        p = draw.plan_sheet(sheet, {"R1": SYMS["R1"]}, "l", "d")
+        assert p["errors"] == [] and net in p["renamed"], net
 
 
 def test_a_non_ascii_section_title_is_only_a_warning_and_the_heading_falls_back():
@@ -435,3 +439,306 @@ def test_a_part_with_unverified_pins_is_named_in_its_section_heading_on_the_draw
 def test_a_sheet_with_every_pin_verified_has_a_plain_heading():
     p = plan()
     assert p["unverified"] == [] and [c[6] for c in p["commands"] if c[0] == "FRAME"] == ["[advisor] PWR - Input"]
+
+
+# ---------------------------------------------------------------- U7: the draw step solves these itself
+
+def test_a_hebrew_net_name_is_transliterated_deterministically():
+    assert draw.transliterate("אדמה") == "ADMH"
+    assert draw.transliterate("שלום") == "SHLVM"
+    assert draw.transliterate("Vcc_café") == "Vcc_cafe"          # NFKD drops the accent
+    assert draw.transliterate("+5V") == "+5V" and draw.transliterate("GND") == "GND"
+    assert draw.transliterate("\u22125V") == "-5V"                 # the Unicode minus keeps its meaning
+    assert draw.transliterate("A\u2605B") == "A_B"
+    assert draw.transliterate("GND_אנלוגי") == "GND_ANLVGY" and draw.net_kind("GND_ANLVGY") == "gnd"
+
+
+def test_two_names_never_share_a_drawn_name():
+    names = ["אדמה", "ADMH", "admh", "ADMH_2", "Café", "Cafe", "GND"]
+    a = draw.net_aliases(names)
+    assert a == draw.net_aliases(list(reversed(names)))                                          # no dependence on the order
+    assert "ADMH" not in a and "GND" not in a                                                    # plain names keep their own
+    drawn = [x.upper() for x in a.values()] + ["ADMH", "ADMH_2", "CAFE", "GND", "ADMH"]
+    assert len(set(drawn)) == len(drawn) - 1                                                      # (ADMH twice above: admh and ADMH)
+    assert a["Café"] == "Cafe_2"
+    assert a["אדמה"].startswith("ADMH_") and a["אדמה"].upper() not in ("ADMH", "ADMH_2")
+
+
+def test_a_non_ascii_net_is_drawn_under_its_ascii_name_and_reported():
+    sheet = {"parts": [part("R1", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}]),
+                       part("R2", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}])]}
+    p = draw.plan_sheet(sheet, {"R1": SYMS["R1"], "R2": SYMS["R2"]}, "l", "d")
+    assert not p["errors"] and p["renamed"] == {"אדמה": "ADMH"}
+    assert any("'אדמה' drawn as 'ADMH'" in w for w in p["warnings"])
+    assert set(p["expected"]) == {"ADMH", "GND"}
+    assert all(all(ord(ch) < 127 for ch in a) for c in p["commands"] for a in c)
+    assert sheet["parts"][0]["pins"][0]["net"] == "אדמה"                     # the netlist is not rewritten
+
+
+def test_the_read_back_compares_with_the_transliterated_names():
+    sheet = {"parts": [part("R1", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}]),
+                       part("R2", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}])]}
+    p = draw.plan_sheet(sheet, {"R1": SYMS["R1"], "R2": SYMS["R2"]}, "l", "d")
+    saved = simulate(p["commands"])
+    assert draw.verify_sheet(p, saved) == []
+    assert "ADMH" in str(saved) and "אדמה" not in str(saved)
+
+
+def test_a_net_on_two_sheets_gets_the_same_drawn_name_on_both():
+    a = draw.net_aliases(["אדמה"])
+    one = draw.plan_sheet({"parts": [part("R1", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}])]}, {"R1": SYMS["R1"]}, "l", "d", aliases=a)
+    two = draw.plan_sheet({"parts": [part("R2", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}])]}, {"R2": SYMS["R2"]}, "l", "d", aliases=a)
+    assert set(one["expected"]) == set(two["expected"]) == {"ADMH", "GND"}
+
+
+def _big():
+    parts = [{"ref": f"R{i}", "section": "A" if i < 40 else "B",
+              "pins": [{"num": "1", "net": f"NET_NUMBER_{i}_LONG"}, {"num": "2", "net": "SHARED_SIGNAL_NAME" if i in (1, 70) else "GND"}]}
+             for i in range(1, 80)]
+    return {"sections": [{"id": "A"}, {"id": "B"}], "parts": parts}
+
+
+def test_a_too_big_design_names_the_sheets_it_needs_and_the_nets_between_them():
+    sheet = _big()
+    p = draw.plan_sheet(sheet, {x["ref"]: SYMS["R1"] for x in sheet["parts"]}, "l", "d")
+    assert p["commands"] == [] and p["errors"]
+    msg = p["errors"][0]
+    assert "does not fit" in msg and "needs about" in msg and "SHARED_SIGNAL_NAME" in msg and "ports" in msg
+
+
+def test_the_split_groups_sections_in_order_and_flags_a_section_too_big_alone():
+    sheet = _big()
+    cells = [(p["section"], draw.part_cell(p, SYMS["R1"])) for p in sheet["parts"]]
+    groups, too_big = draw.split_groups(cells, sheet["sections"])
+    assert [sid for g in groups for sid in g] == ["A", "B"] and groups[0][0] == "A"
+    assert too_big          # 40 parts do not fit one sheet even alone
+    small = [c for c in cells if c[0] == "A"][:5] + [("B", c) for _, c in cells[40:45]]
+    assert draw.split_groups(small, sheet["sections"]) == ([["A", "B"]], [])
+
+
+def _dirty_sheet(project, monkeypatch, saves=True):
+    """Altium holds the project's sheet open with unsaved changes; a SAVE writes the file (or, with saves=False, does nothing)."""
+    real = bridge.run_commands
+    doc = next(pathlib.Path(bridge._linked(project)).parent.glob("*.SchDoc"))
+    doc.write_bytes(b"the student's edits")
+    state = {"dirty": True, "sent": []}
+
+    def run(commands, **kw):
+        state["sent"].append([c[0] for c in commands])
+        if any(c[0] == "DOCSTATE" for c in commands):
+            return ["docstate open modified=%d" % state["dirty"]] * sum(c[0] == "DOCSTATE" for c in commands)
+        if any(c[0] == "SAVE" for c in commands) and saves:
+            doc.write_bytes(b"the student's edits, saved")
+            state["dirty"] = False
+        return real(commands, **kw)
+    monkeypatch.setattr(bridge, "run_commands", run)
+    return doc, state
+
+
+def test_an_unsaved_open_sheet_is_saved_first_and_the_draw_says_so(drawn, monkeypatch):
+    project, fake, saved = drawn
+    doc, state = _dirty_sheet(project, monkeypatch)
+    res = bridge.draw_schematic(project, replace=True)
+    sent = state["sent"]
+    assert res["saved_first"] == [doc.name]
+    assert res["warnings"][0] == f"saved {doc.name} before drawing (it had unsaved changes in Altium)"
+    assert sent.index(["PROJECT", "SAVE"]) < next(i for i, s in enumerate(sent) if "DRAWCHECK" in s)
+    assert (pathlib.Path(res["backup"]) / doc.name).read_bytes() == b"the student's edits, saved"
+
+
+def test_a_save_that_does_not_happen_refuses_before_any_backup_or_drawing(drawn, monkeypatch):
+    project, fake, saved = drawn
+    doc, state = _dirty_sheet(project, monkeypatch, saves=False)
+    with pytest.raises(bridge.BridgeError, match=r"save did not happen.*Ctrl\+S"):
+        bridge.draw_schematic(project, replace=True)
+    flat = [n for s in state["sent"] for n in s]
+    assert "DRAWCHECK" not in flat and "PLACE" not in flat and "DRAWBEGIN" not in flat
+    assert not (doc.parent / ".advisor-backup").exists()
+
+
+def test_a_refusal_after_the_save_says_the_sheet_was_saved(drawn, monkeypatch):
+    project, fake, saved = drawn
+    doc, state = _dirty_sheet(project, monkeypatch)
+    saved["modified"] = True                    # the stand-in Altium still refuses at DRAWCHECK
+    with pytest.raises(bridge.BridgeError, match=rf"I saved {doc.name}.*Ctrl\+S"):
+        bridge.draw_schematic(project, replace=True)
+
+
+def test_when_altium_still_holds_unsaved_changes_the_refusal_says_what_to_click(drawn):
+    project, fake, saved = drawn
+    bridge.draw_schematic(project)
+    saved["modified"] = True
+    with pytest.raises(bridge.BridgeError, match=r"Ctrl\+S"):
+        bridge.draw_schematic(project, replace=True)
+
+
+def test_draw_schematic_reports_renamed_nets(drawn):
+    project, fake, saved = drawn
+    sh = store.load_sheet(project, "01")
+    for p in sh["parts"]:
+        for pin in p["pins"]:
+            if pin["net"] == "ENABLE_SIGNAL":
+                pin["net"] = "הפעלה"
+    store.write_sheet(project, "01", sh)
+    res = bridge.draw_schematic(project)
+    drawn_name = draw.transliterate("הפעלה")
+    assert res["renamed_nets"] == {"הפעלה": drawn_name} and drawn_name in res["nets"] and res["problems"] == []
+    assert any(f"'הפעלה' drawn as {drawn_name!r}" in w for w in res["warnings"])
+
+
+def test_a_path_with_a_non_ascii_character_is_an_error_not_a_question_mark():
+    with pytest.raises(bridge.BridgeError, match="path"):
+        bridge._ascii("C:\\Users\\שם\\x.SchDoc")
+    assert bridge._ascii("café") == "cafe" and bridge._ascii("אדמה") == "ADMH"
+
+
+# ---------------------------------------------------------------- one persisted alias map: draw, place and rules agree
+
+def _rename_nets(project, mapping, sid="01"):
+    sh = store.load_sheet(project, sid)
+    for p in sh["parts"]:
+        for pin in p["pins"]:
+            pin["net"] = mapping.get(pin["net"], pin["net"])
+    store.write_sheet(project, sid, sh)
+
+
+def test_the_alias_map_is_persisted_and_stable(empty):
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "עב"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {"עב": "AB"}
+    assert (store.pdir(empty) / "net-names.json").is_file()
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "עב"}, {"num": "2", "net": "אב"}]),
+                                             part("R2", [{"num": "1", "net": "AB_2"}, {"num": "2", "net": "GND"}])]})
+    got = draw.alias_map(empty)
+    assert got["עב"] == "AB" and got["אב"] == "AB_3"          # AB is taken, AB_2 is a plain net of the design
+    assert draw.drawn_net_name(empty, "GND") == "GND" and draw.drawn_net_name(empty, "אב") == "AB_3"
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "אב"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {"אב": "AB_3"}                # stays, although עב is gone and AB is free again
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "עב"}, {"num": "2", "net": "אב"}]), part("R2", [{"num": "1", "net": "AB"}, {"num": "2", "net": "GND"}])]})
+    with pytest.raises(draw.AliasConflict):                      # a plain AB now would short עב's drawn name
+        draw.alias_map(empty)
+
+
+def test_sheet_two_never_shorts_two_nets_when_sheet_one_is_drawn_first(drawn):
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "עב"})
+    res = bridge.draw_schematic(project)
+    assert res["renamed_nets"] == {"עב": "AB"}
+    sh2 = {"title": "Second", "parts": [part("R9", [{"num": "1", "net": "אב"}, {"num": "2", "net": "עב"}])]}
+    store.write_sheet(project, "02", sh2)
+    names = draw.alias_map(project)
+    assert names == {"עב": "AB", "אב": "AB_2"}
+
+
+def test_a_transliteration_that_looks_like_a_supply_or_ground_stays_an_ordinary_net():
+    for name, bare in (("ודד", "VDD"), ("גנד", "GND"), ("וסס", "VSS"), ("3ו3", "3V3")):
+        assert draw.transliterate(name) == bare
+        got = draw.assign_aliases({}, [name])[0][name]
+        assert got == "N_" + bare, name
+        assert draw.net_kind(got) == "label" and draw._power_kind(got) == "label"
+        from altium import route
+        assert not route._RAIL.match(got) and not route._is_gnd(got)
+    # a name that already is a power / ground name keeps its meaning
+    assert draw.assign_aliases({}, ["GND_אנלוגי"])[0]["GND_אנלוגי"] == "GND_ANLVGY"
+    assert draw._power_kind("GND_ANLVGY") == "gnd"
+
+
+def test_draw_then_place_use_the_same_names_end_to_end(drawn, monkeypatch):
+    from altium import layout
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "אדמה", "+3V3": "ADMH"})
+    res = bridge.draw_schematic(project)
+    assert res["problems"] == [] and res["renamed_nets"] == {"אדמה": "ADMH_2"}
+    got = {}
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {r: ("u", "01") for r in ("U1", "R1", "R2")})
+    monkeypatch.setattr(bridge, "_project_pcb", lambda project: pathlib.Path("B.PcbDoc"))
+    monkeypatch.setattr(bridge, "_board_size", lambda project: (30, 25))
+    monkeypatch.setattr(bridge, "_clearance_mm", lambda project: 0.2)
+    monkeypatch.setattr(bridge, "design_problems", lambda project: [])
+
+    def place_on(prj, pcb, pcblib, parts, **kw):
+        got["parts"] = parts
+        return {"placed": parts, "outline": [0, 0, 30, 25], "backup": "", "problems": [], "warnings": [], "drill_findings": [],
+                "restored": False}
+    monkeypatch.setattr(bridge, "place_on", place_on)
+    bridge.place_pcb(project)
+    parts = got["parts"]
+    assert layout.text_problems(parts) == []                      # no refusal for the Hebrew net
+    cmds = layout.plan_commands("B.PcbDoc", None, False, [{"ref": p["ref"], "footprint": "FP", "x": 0, "y": 0, "rot": 0} for p in parts],
+                                {}, parts, "L.PcbLib")
+    padnet = {(c[2], c[3]): c[4] for c in cmds if c[0] == "PADNET"}
+    assert padnet[("R1", "2")] == "ADMH_2" and padnet[("U1", "4")] == "ADMH"        # the Hebrew net and the plain one: two nets
+    assert all(all(ord(ch) < 127 for ch in a) for c in cmds for a in c)
+    board = {"components": [{"ref": p["ref"], "pattern": "FP"} for p in parts],
+             "pads": [{"ref": r, "name": n, "net": net} for (r, n), net in padnet.items()]}
+    nets = [x for x in layout.verify_layout(board, parts) if " is on net " in x]
+    assert nets == []                                             # the board pads agree with the drawn names: no false mismatch
+
+
+def test_a_width_rule_on_a_hebrew_net_lands_on_the_right_net_and_is_found_again(lte, fake):
+    import json
+    import rule_kinds
+    prj, pcb = _rules_board(lte, fake)
+    store.write_sheet(lte, "99", {"parts": [part("R90", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "ADMH"}])]})
+    rec = rule_kinds.build_attributes({"name": "W_heb", "kind": "Width", "scope1": "InNet('אדמה')", "scope2": "All",
+                                       "values": {"min": "10mil", "pref": "20mil", "max": "50mil"}})
+    (store.pdir(lte) / "rules.json").write_text(json.dumps([{"name": "W_heb", "kind": "Width", "scope1": "InNet('אדמה')",
+                                                             "attributes": rec}], ensure_ascii=False), encoding="utf-8")
+    todo, _ = bridge.rule_plan(lte, pcb)
+    mine = [r for r, _ in todo if r["NAME"] == "W_heb"]
+    assert mine and mine[0]["SCOPE1EXPRESSION"] == "InNet('ADMH_2')"           # not ADMH: that is the other net
+    cmds = bridge.rule_commands(pcb, todo)
+    assert all(f.isascii() for c in cmds for f in c)
+    again = [r for r, _ in bridge.rule_plan(lte, pcb)[0] if r["NAME"] == "W_heb"]
+    assert again and again[0]["SCOPE1EXPRESSION"] == "InNet('ADMH_2')"         # the next import sees the same name
+    from altium import route
+    assert route.rules_from_doc({"rules": [dict(mine[0], ENABLED="TRUE")]})["net_width"] == {"ADMH_2": route.rules_from_doc(
+        {"rules": [dict(mine[0], ENABLED="TRUE")]})["net_width"]["ADMH_2"]}
+
+
+def _rules_board(lte, fake):
+    import project as project_mod
+    res = bridge.new_project(lte)
+    pcb = pathlib.Path(project_mod.altium_link(lte)["pcb_file"])
+    pcb.write_bytes((pathlib.Path(__file__).parent / "fixtures" / "altium" / "rules-board.PcbDoc").read_bytes())
+    fake.runs.clear()
+    return pathlib.Path(res["project_file"]), pcb
+
+
+# ---------------------------------------------------------------- a stale alias never blocks the student
+
+def test_a_stale_alias_gives_way_when_the_net_is_renamed_to_that_plain_name(drawn, monkeypatch):
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "אדמה"})
+    assert bridge.draw_schematic(project)["renamed_nets"] == {"אדמה": "ADMH"}
+    _rename_nets(project, {"אדמה": "ADMH"})                          # the student renames the net to the plain name
+    assert draw.alias_map(project) == {}
+    assert "אדמה" not in (store.pdir(project) / "net-names.json").read_text(encoding="utf-8")
+    saved.clear()
+    res = bridge.draw_schematic(project, replace=True)
+    assert res["problems"] == [] and "ADMH" in res["nets"]
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {r: ("u", "01") for r in ("U1", "R1", "R2")})
+    assert {p["ref"] for p in bridge._netlist_parts(project)} == {"U1", "R1", "R2"}
+
+
+def test_a_new_plain_net_equal_to_the_drawn_name_of_a_removed_net_is_allowed(empty):
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {"אדמה": "ADMH"}
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "X"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {}                                # stale, nobody uses ADMH: it stays in the file
+    assert "אדמה" in (store.pdir(empty) / "net-names.json").read_text(encoding="utf-8")
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "ADMH"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {}
+
+
+def test_a_net_name_clash_never_fails_open(drawn, monkeypatch):
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "עב"})
+    draw.alias_map(project)
+    store.write_sheet(project, "02", {"parts": [part("R9", [{"num": "1", "net": "AB"}, {"num": "2", "net": "עב"}])]})
+    monkeypatch.setattr(bridge, "_project_pcb", lambda p: pathlib.Path("B.PcbDoc"))
+    monkeypatch.setattr(bridge.rules_mod, "read_pcbdoc", lambda p: {"rules": []})
+    with pytest.raises(bridge.AliasError):
+        bridge.rules_missing(project)                                 # route_pcb's gate: refuses, never "nothing missing"
+    assert bridge.rules_never_imported(project) is True
+    msgs = bridge.design_problems(project)
+    assert len(msgs) == 1 and "could not be compared" in msgs[0]
