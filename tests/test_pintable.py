@@ -379,3 +379,92 @@ def test_the_library_page_offers_verify_for_a_legacy_pass(empty):
     store.add_library(empty, "U1", {"accepted": True}, by="student")
     row = {r["line"]: r for r in store.library_view(empty)}["U1"]
     assert row["verify"] == "pass" and row["accepted"]                  # the student's accept stays
+
+
+# ---------------------------------------------------------------- second review: doubt is "unchecked", never pass
+
+CODES = """\
+{above}Pin Functions
+{between}D    DGK   NAME   DESCRIPTION
+1    3     VIN    Input
+2    4     GND    Ground
+3    5     OUT    Output
+4    6     EN     Enable
+"""
+CAPTION = "Figure 3. DGK (VSSOP) and D (SOIC) Packages, Top View\n"
+
+
+def test_a_caption_never_ties_the_columns_and_codes_in_the_header_tie_nothing():
+    for t in (CODES.format(above=CAPTION, between=""), CODES.format(above="", between=CAPTION)):
+        for pins in (VSSOP_PINS, SOIC_PINS):
+            for pkg in ("SOIC-8", "VSSOP-8", ""):
+                assert pintable.check([t], pins, pkg)["verify"] == "unchecked", (pins, pkg)      # D / DGK cannot be mapped for certain
+    same = CODES.format(above=CAPTION, between="").replace("1    3 ", "1    1 ").replace("2    4 ", "2    2 ") \
+        .replace("3    5 ", "3    3 ").replace("4    6 ", "4    4 ")
+    assert pintable.check([same], SOIC_PINS, "SOIC-8")["verify"] == "pass"                    # the columns agree: no choice to make
+
+
+def test_a_title_line_naming_packages_does_not_tie_the_columns():
+    t = ("Pin Functions\nPin Functions for VSSOP and SOIC\nD    DGK   NAME   DESCRIPTION\n1    3     VIN    Input\n"
+         "2    4     GND    Ground\n3    5     OUT    Output\n")
+    assert pintable.check([t], [("1", "VIN"), ("2", "GND"), ("3", "OUT")], "VSSOP-8")["verify"] == "unchecked"
+    assert pintable.check([t], [("3", "VIN"), ("4", "GND"), ("5", "OUT")], "VSSOP-8")["verify"] == "unchecked"
+
+
+def test_only_the_pad_rows_own_name_cell_may_name_the_net_of_the_exposed_pad():
+    t = EP8.format(ep="Thermal Pad — — Connect to GND. Do not connect to VIN or SW.\n")
+    r = pintable.check([t], EP_PINS + [("9", "VIN")])
+    assert r["verify"] == "unchecked"                                    # a mention in the text beside the table does not count
+    assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] == "pass"
+    t = EP8.format(ep="9 EP Thermal pad, do not connect to VIN\n")      # the description of the row neither
+    assert pintable.check([t], EP_PINS + [("9", "VIN")])["verify"] != "pass"
+    assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] == "pass"
+    for cell in ("PAD (VIN)", "EP/VIN"):                                 # the name cell itself names it
+        t = EP8.format(ep=f"9 {cell} P Pad\n")
+        assert pintable.check([t], EP_PINS + [("9", "VIN")])["verify"] == "pass", cell
+        assert pintable.check([t], EP_PINS + [("9", "GND")])["verify"] == "pass", cell
+
+
+SSD = """\
+SSD1306 OLED driver
+Pin Functions
+PIN NAME TYPE DESCRIPTION
+1 GND G Ground
+2 VDD P Logic supply
+3 VCC P Panel supply
+4 SDA I/O Data
+"""
+
+
+def test_vcc_and_vdd_are_one_name_only_when_the_table_does_not_use_both():
+    ok = [("1", "GND"), ("2", "VDD"), ("3", "VCC"), ("4", "SDA")]
+    assert pintable.check([SSD], ok)["verify"] == "pass"
+    r = pintable.check([SSD], [("1", "GND"), ("2", "VCC"), ("3", "VDD"), ("4", "SDA")])        # swapped: two different pins
+    assert r["verify"] == "mismatch" and len(r["issues"]) == 2
+    only_vdd = SSD.replace("3 VCC P Panel supply", "3 OUT O Output")
+    assert pintable.check([only_vdd], [("1", "GND"), ("2", "VCC"), ("3", "OUT")])["verify"] == "pass"       # VDD on the table, VCC on the net
+    only_vss = "X\nPin Functions\nPIN NAME\n1 VSS Ground\n2 VDD Supply\n3 OUT Output\n"
+    assert pintable.check([only_vss], [("1", "GND"), ("2", "VCC"), ("3", "OUT")])["verify"] == "pass"
+    both = only_vss.replace("3 OUT Output", "3 GND Ground")
+    assert pintable.check([both], [("1", "GND"), ("2", "VCC"), ("3", "VSS")])["verify"] == "mismatch"
+
+
+def test_a_leading_or_trailing_sign_is_one_form_but_plus_and_minus_stay_apart():
+    assert pintable.name_matches("IN+", "+IN") and pintable.name_matches("+IN", "IN+")
+    assert pintable.name_matches("IN-", "-IN") and pintable.name_matches("-IN", "IN-")
+    assert not pintable.name_matches("IN+", "IN-") and not pintable.name_matches("IN+", "-IN") and not pintable.name_matches("IN-", "+IN")
+    assert not pintable.name_matches("IN+", "IN") and not pintable.name_matches("IN-", "IN")
+    t = "X\nPin Functions\nPIN NAME TYPE\n1 +IN I Non-inverting\n2 -IN I Inverting\n3 OUT O Output\n"
+    assert pintable.check([t], [("1", "IN+"), ("2", "IN-"), ("3", "OUT")])["verify"] == "pass"
+    assert pintable.check([t], [("1", "IN-"), ("2", "IN+"), ("3", "OUT")])["verify"] == "mismatch"
+
+
+def test_a_footprint_pad_0_is_the_exposed_pad_in_the_pad_count():
+    t = EP8.format(ep="Thermal pad: connect to GND\n")
+    pads = [str(i) for i in range(1, 9)] + ["0"]
+    assert pintable.check([t], EP_PINS, pads=pads)["verify"] == "pass"
+    assert pintable.check([t], EP_PINS + [("0", "GND")], pads=pads)["verify"] == "pass"
+    bare = EP8.format(ep="")                                              # no EP text: the footprint's pad 0 is the evidence
+    assert pintable.check([bare], EP_PINS + [("0", "GND")], pads=pads)["verify"] == "pass"
+    assert pintable.check([bare], EP_PINS + [("0", "GND")])["verify"] == "unchecked"
+    assert pintable.check([bare], EP_PINS, pads=pads + ["10", "11"])["verify"] == "mismatch"

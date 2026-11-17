@@ -27,7 +27,7 @@ _NUMBER = r"(?:[A-Za-z]{1,2}[1-9]\d{0,2}|[1-9]\d{0,2}|0)"
 _CELL = re.compile(rf"^{_NUMBER}(?:,{_NUMBER})*$")
 _RANGE = re.compile(r"^([1-9]\d{0,2})[-–]([1-9]\d{0,2})$")
 _ANNOT = re.compile(r"^\(\w{1,4}\)$")
-_NAMEFIRST = re.compile(r"^[A-Za-z~/#_+][A-Za-z0-9_/#~+\-]*$")
+_NAMEFIRST = re.compile(r"^[A-Za-z~/#_+-][A-Za-z0-9_/#~+\-]*$")
 
 POWER_TYPES = {"P", "PWR", "POWER", "S", "SUPPLY", "PI", "PO"}
 GROUND_TYPES = {"G", "GND", "GROUND"}
@@ -98,7 +98,7 @@ def _name_cell(toks):
 
 def _row(nums, rest):
     name = _name_cell(rest)
-    if not name or not re.match(r"[~/#_]*[A-Za-z]", name[0]) or (name[0].islower() and len(name[0]) > 2 and name[0].isalpha()):
+    if not name or not re.match(r"[~/#_+-]*[A-Za-z]", name[0]) or (name[0].islower() and len(name[0]) > 2 and name[0].isalpha()):
         return None
     after = [t for t, _ in rest[len(name):len(name) + 1]]
     typ = after[0].upper() if after and after[0].upper() in TYPES else ""
@@ -226,6 +226,19 @@ def _plausible(rows):
     return sum(r["name"].upper() in _TYPE_ONLY for r in rows) * 2 < len(rows)
 
 
+_CAPTION = re.compile(r"\b(figure|fig\.|top view|bottom view|package drawing)\b", re.I)
+_HEADER_WORD = re.compile(r"\b(NAME|NO\.?|NUMBER)\b")
+_HEADER_START = re.compile(r"^\s*(PIN|TERMINAL)\b.*\S\s{2,}\S", re.I)          # `PIN    SOIC   VSSOP`: a column break after the word
+
+
+def _header_row(line, just_above_rows):
+    """A column-header row: the line directly above the first data row, or a line that holds a column word (NAME, NO., PIN ...);
+    never a caption or a title (`Table 3. Pin Functions`, `Pin Functions for SOIC and VSSOP`)."""
+    if _CAPTION.search(line) or SECTION_END.search(line) or re.match(r"\s*table\s+[\d.-]+", line, re.I):
+        return False
+    return just_above_rows or bool(_HEADER_WORD.search(line.upper())) or bool(_HEADER_START.search(line))
+
+
 def find_tables(text):
     """Every pin table of the text: [{"heading", "labels", "rows"}], in the order of the document."""
     lines = (text or "").replace("\f", "\n").splitlines()
@@ -253,11 +266,12 @@ def find_tables(text):
                 k += 1
             if len({tuple(map(tuple, r["nums"])) for r in rows}) >= 2 and _plausible(rows):
                 seen.update(range(h, k))
-                # the package names come from the table's own heading and header rows (lines h..j-1), never from a figure
-                # caption above the heading; one line per list, so a column header can be told from prose
-                label_lines = [lb for lb in (package_labels(x) for x in lines[h:j]) if lb]
+                # columns are tied to packages only by the column-header row (the line above the first row, or one that holds
+                # NAME / NO. / PIN / TERMINAL); the scope of the table is its heading and header rows, never a figure caption
+                label_lines = [lb for lb in (package_labels(lines[i]) for i in range(h + 1, j) if _header_row(lines[i], i == j - 1)) if lb]
+                scope = [lb for lb in package_labels(" ".join(x for x in lines[h:j] if not _CAPTION.search(x)))]
                 tables.append({"heading": " ".join(x.strip() for x in lines[h:j] if x.strip())[:200],
-                               "labels": list(dict.fromkeys(lb for ll in label_lines for lb in ll)),
+                               "labels": scope,
                                "label_lines": label_lines, "rows": rows,
                                "ep_lines": [x for x in lines[j:k] if _EP.search(x)]})
             break
@@ -303,7 +317,12 @@ _SUPPLY_PAIRS = [{"VCC", "VDD"}, {"GND", "VSS"}]       # the only names taken fo
 
 
 def _squash(text):
-    return re.sub(r"[^A-Z0-9+]", "", str(text).upper())
+    """The name in capitals without punctuation. A leading or trailing sign is one form: IN+ = +IN, IN- = -IN (never + with -)."""
+    t = str(text).strip().replace("\u2212", "-").replace("\u2013", "-")
+    m = re.fullmatch(r"([+-])?(.*?)([+-])?", t, re.S)
+    lead, core, trail = m.groups()
+    core = re.sub(r"[^A-Z0-9+]", "", core.upper())
+    return core + (trail or lead or "") if core else re.sub(r"[^A-Z0-9+]", "", t.upper())
 
 
 def _low_marked(cell):
@@ -311,7 +330,9 @@ def _low_marked(cell):
     return bool(re.search(r"(?:^|[\s(,])[~!/]\w|\w#|_[Nn]\b|(?:^|[\s(,])n[A-Z]{2}", cell))
 
 
-def _name_forms(name, with_bare=True):
+def _name_forms(name, with_bare=True, table_names=None):
+    """table_names: every name the table uses (squashed). VCC~VDD / GND~VSS holds unless the table uses both spellings: a table
+    with a VDD row and a VCC row has two different pins, and neither name stands for the other."""
     forms = {name}
     if with_bare:
         forms |= pinnames.spellings(name)
@@ -319,7 +340,8 @@ def _name_forms(name, with_bare=True):
     out = {f for f in map(_squash, forms) if f}
     for group in _SUPPLY_PAIRS:
         if out & group:
-            out |= group
+            if table_names is None or not group <= table_names:
+                out |= group
     return out
 
 
@@ -356,15 +378,20 @@ def _plain_n(name, cell):
     return bool(m) and m.group(1).upper() not in _ACTIVE_LOW and not _low_marked(cell)
 
 
-def name_matches(name, cell):
+def table_names_of(rows):
+    return {f for r in rows for f in _cell_forms(r["name"])}
+
+
+def name_matches(name, cell, table_names=None):
     """The netlist's pin name is the table's name for the pin, in the spelling of the table or another (RESET/RST, /CS = CS#,
     VCC = VDD, GND = VSS). `A` is one of the alternatives of `A/B` (one pin, two functions); CLK_N is not a plain CLK."""
-    return bool(_name_forms(name, with_bare=not _plain_n(name, cell)) & _cell_forms(cell))
+    return bool(_name_forms(name, with_bare=not _plain_n(name, cell), table_names=table_names) & _cell_forms(cell))
 
 
-def polarity_unclear(name, cell):
+def polarity_unclear(name, cell, table_names=None):
     """CLK_N against a plain CLK: they would match but for the mark, which the text may have lost (an overbar)."""
-    return _plain_n(name, cell) and not name_matches(name, cell) and bool(_name_forms(name) & _cell_forms(cell))
+    return (_plain_n(name, cell) and not name_matches(name, cell, table_names)
+            and bool(_name_forms(name, table_names=table_names) & _cell_forms(cell)))
 
 
 _GROUND = re.compile(r"^(?:[ADPS]?GND\w*|VSS\w*|GROUND\w*)$")
@@ -377,12 +404,13 @@ def _is_ep_row(row):
     return bool(_EP_NAME.match(first)) or bool(_EP.search(row["name"]))
 
 
-def _ep_allows(name, text):
-    """The exposed pad may carry this net: a ground, the pad itself, or a net the table's pad row names."""
+def _ep_allows(name, cells):
+    """The exposed pad may carry this net: a ground, the pad itself, or a net the name cell of the table's pad row names
+    (`PAD (VIN)`, `EP/VIN`). A description ("do not connect to VIN") or a line of text beside the table does not count."""
     up = _squash(name)
     if _GROUND.match(up) or _EP_NAME.match(up):
         return True
-    return len(up) >= 2 and bool(re.search(rf"\b{re.escape(str(name).strip())}\b", text, re.I))
+    return len(up) >= 2 and any(up in _cell_forms(c) for c in cells)
 
 
 def _words_of(text):
@@ -419,9 +447,10 @@ def _evaluate(col, pins, pads):
     complete = _complete(nums)
     top = max(int(n) for n in nums if n.isdigit()) if complete else 0
     ep_rows = [r for r in col["rows"] if _is_ep_row(r)]
-    ep_text = " ".join([f"{r['name']} {r.get('rest', '')}" for r in ep_rows] + list(col.get("ep_lines") or []))
+    ep_cells = [r["name"] for r in ep_rows]
+    names = table_names_of(col["rows"])
     have = {str(p).strip().upper() for p in pads} if pads is not None else None
-    extra_pads = bool(have) and any(not h.isdigit() or (complete and int(h) > top) for h in have if h not in set(nums))
+    extra_pads = bool(have) and any(not h.isdigit() or h == "0" or (complete and int(h) > top) for h in have if h not in set(nums))
     ep_evidence = bool(ep_rows or col.get("ep_lines") or extra_pads)
     beyond = sorted(int(n) for n, _ in pins if complete and n.isdigit() and int(n) > top)
     ep_split = beyond == list(range(top + 1, top + 1 + len(beyond)))      # EP pin top+1, or split into top+1 .. top+k
@@ -434,7 +463,7 @@ def _evaluate(col, pins, pads):
             elif ep_like:
                 if not ep_evidence:
                     out["absent"].append(f"pin {num} {name}: no pin of the table, and neither the table nor the footprint shows an exposed pad")
-                elif _ep_allows(name, ep_text):
+                elif _ep_allows(name, ep_cells):
                     out["notes"].append(f"pin {num} {name}: taken for the exposed pad of the datasheet")
                 else:
                     out["absent"].append(f"pin {num} {name}: the exposed pad of the datasheet is not for the net {name}")
@@ -443,11 +472,13 @@ def _evaluate(col, pins, pads):
             else:
                 out["absent"].append(f"pin {num} {name}")
             continue
-        good = [r for r in hits if name_matches(name, r["name"]) or (_is_ep_row(r) and _ep_allows(name, f"{r['name']} {r.get('rest', '')}"))]
+        good = [r for r in hits if name_matches(name, r["name"], names) or (_is_ep_row(r) and _ep_allows(name, [r["name"]]))]
         if not good:
-            unclear = [r for r in hits if polarity_unclear(name, r["name"])]
-            swallowed = [r for r in hits if not r.get("isolated", True) and _name_forms(name) & _words_of(r.get("rest", ""))]
-            if unclear:
+            unclear = [r for r in hits if polarity_unclear(name, r["name"], names)]
+            swallowed = [r for r in hits if not r.get("isolated", True) and _name_forms(name, table_names=names) & _words_of(r.get("rest", ""))]
+            if any(_is_ep_row(r) for r in hits):
+                out["absent"].append(f"pin {num} {name}: the datasheet's exposed pad row ({hits[0]['name']}) does not name the net {name}")
+            elif unclear:
                 out["absent"].append(f"pin {num} {name}: the datasheet's name {unclear[0]['name']} has no active-low mark; "
                                      f"the text may have lost it")
             elif swallowed:
@@ -455,7 +486,7 @@ def _evaluate(col, pins, pads):
                                      f"from its description")
             else:
                 others = [str(r["nums"][col["index"]][0]) for r in col["rows"]
-                          if name_matches(name, r["name"]) and r["nums"][col["index"]]]
+                          if name_matches(name, r["name"], names) and r["nums"][col["index"]]]
                 out["conflict"].append(f"pin {num} {name}: the datasheet calls pin {num} {' / '.join(dict.fromkeys(r['name'] for r in hits))}"
                                        + (f" and puts {name} on pin {', '.join(dict.fromkeys(others))}" if others else ""))
             continue
@@ -468,7 +499,7 @@ def _evaluate(col, pins, pads):
             want = {n.upper() for n in nums}
             ep_nums = {n.upper() for r in ep_rows for n in r["nums"][col["index"]]}
             missing = sorted(want - have - ep_nums, key=lambda s: (len(s), s))
-            extra = sorted(have - want, key=lambda s: (len(s), s))
+            extra = sorted(have - want - {"0"}, key=lambda s: (len(s), s))          # a pad 0 is the exposed pad
             beyond_pads = sorted(int(e) for e in extra if e.isdigit())
             split_ok = bool(ep_rows or col.get("ep_lines")) and beyond_pads == list(range(top + 1, top + 1 + len(beyond_pads)))
             extra = [e for e in extra if not (not e.isdigit() or (e == str(top + 1) and len(extra) == 1) or split_ok)]    # an exposed / mechanical pad
