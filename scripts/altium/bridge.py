@@ -847,7 +847,8 @@ def parse_drc(path):
 def _netlist_parts(project):
     """[{ref, footprint, symbol, pins}] of every netlist sheet: the footprint and symbol come from the library manifest."""
     manifest = store.library_manifest(project)
-    key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
+    lines = {l["key"]: l for l in store.bom_lines(project)}
+    key = {r: l["key"] for l in lines.values() for r in (l.get("refs") or [l["key"]])}
     parts, seen = [], set()
     for _sid, _title, sh in _sheets(project):
         for p in sh.get("parts", []):
@@ -855,8 +856,12 @@ def _netlist_parts(project):
                 continue
             seen.add(p["ref"])
             m = manifest.get(key.get(p["ref"])) or {}
+            line = lines.get(key.get(p["ref"])) or {}
             parts.append({"ref": p["ref"], "footprint": m.get("footprint") or "", "symbol": m.get("symbol") or "",
-                          "lib_ref": m.get("symbol") or "", "pins": p.get("pins", [])})
+                          "lib_ref": m.get("symbol") or "", "pins": p.get("pins", []),
+                          # the BOM line, for the placement rules (cap value, regulator, crystal); not "value": PLACEFP sets that into Altium
+                          "bom_value": line.get("value") or "", "bom_description": line.get("description") or "",
+                          "bom_role": line.get("role") or ""})
     from altium import draw
     return draw.alias_parts(parts, drawn_names(project))          # the pads carry the names the schematic was drawn with
 
@@ -1030,6 +1035,7 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
                           + (" The board file was put back as it was before (backup kept)." if back else f" The backup is in {backup}.")) from exc
     problems += layout.verify_layout(saved, parts, outline, clearance_mm, places=plan["places"], footprints=fps,
                                      edge_copper_mm=edge_copper_mm)
+    warnings += layout.decap_distance_warnings(saved, parts)      # a far decoupling cap is a warning, never a reason to undo the placement
     drawing = layout.outline_drawing_problems(saved, outline)      # a closed drawing of the board shape on the outline layer
     if had_drawing:                                      # the student's own drawing stays; a mismatch is theirs to look at
         warnings += drawing

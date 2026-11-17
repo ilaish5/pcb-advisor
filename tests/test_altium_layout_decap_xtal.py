@@ -4,6 +4,7 @@ import math
 
 from pytest import approx
 
+import store
 from altium import layout
 
 MIL = 0.0254
@@ -132,13 +133,104 @@ def test_bulk_cap_is_not_held_to_the_3_mm_rule():
     assert not [f for f in plan["findings"] if f["level"] == "error"], plan["findings"]
 
 
-def test_verify_reads_the_distance_back_from_the_saved_board():
+def test_readback_distance_is_a_warning_and_never_a_verify_problem():
     parts = [mcu(), part("C1", "C0402", ["+3V3", "GND"], value="100nF"), part("C2", "C0402", ["+3V3", "GND"], value="100nF")]
     pads = [{"ref": "U1", "name": "1", "x_mm": 10.0, "y_mm": 10.0}, {"ref": "U1", "name": "6", "x_mm": 20.0, "y_mm": 10.0},
             {"ref": "C1", "name": "1", "x_mm": 11.5, "y_mm": 10.0}, {"ref": "C1", "name": "2", "x_mm": 12.5, "y_mm": 10.0},
             {"ref": "C2", "name": "1", "x_mm": 24.2, "y_mm": 10.0}, {"ref": "C2", "name": "2", "x_mm": 25.2, "y_mm": 10.0}]
-    probs = layout.decap_distance_problems({"pads": pads}, parts)
-    assert len(probs) == 1 and probs[0].startswith("C2 is 4.2 mm from U1 pin 6 VDD; limit 3 mm"), probs
+    doc = {"pads": pads}
+    warns = layout.decap_distance_warnings(doc, parts)
+    assert len(warns) == 1 and warns[0].startswith("C2 is 4.2 mm from U1 pin 6 VDD; limit 3 mm"), warns
+    assert not [p for p in layout.verify_layout(doc, parts) if "limit 3 mm" in p]       # place_on restores the backup on any problem
+
+
+def test_reset_pin_tied_to_the_rail_is_not_a_supply_pin():
+    nets = ["+3V3"] + ["IO%d" % i for i in range(2, 9)]
+    names = ["VDD", "NRST", "PA2", "PA3", "PA4", "PA5", "PA6", "PA7"]
+    nets[1] = "+3V3"                                           # NRST tied to the rail
+    u = part("U1", "MCU", nets + ["GND"] * 8, names + ["VSS"] * 8)
+    plan = layout.plan_placement([u, part("C1", "C0402", ["+3V3", "GND"], value="100nF")], FPS, OUT)
+    assert not plan["findings"], plan["findings"]              # one VDD pin, one cap; NRST needs no cap
+    assert d(plan, [u, part("C1", "C0402", [], value="")], "C1", "1", "U1", "1") <= 3.05
+
+
+def test_regulator_is_a_soft_warning_and_a_bulk_cap_is_no_missing_cap():
+    reg = part("U1", "MCU", ["+5V"] + ["+3V3"] + ["X%d" % i for i in range(14)] + ["GND"], ["VIN", "VOUT"] + ["P"] * 14 + ["GND"])
+    reg["bom_description"] = "LDO voltage regulator"
+    parts, keep = [reg, part("R9", "WALL", ["W1", "W2"])], {"U1": (30, 20, 0), "R9": (30, 20, 0)}
+    parts += [part("C1", "C0402", ["+3V3", "GND"], value="22uF")]
+    plan = layout.plan_placement(parts, FPS, OUT, keep=keep)
+    assert not [f for f in plan["findings"] if f["level"] == "error"] and not [f for f in plan["findings"] if "no decoupling cap" in f["text"]]
+    parts[2]["bom_value"] = "100nF"; parts[2].pop("value")
+    plan = layout.plan_placement(parts, FPS, OUT, keep=keep)
+    soft = [f for f in plan["findings"] if f["ref"] == "C1"]
+    assert len(soft) == 1 and soft[0]["level"] == "warning" and "as close as possible (see the regulator datasheet's layout section)" in soft[0]["text"]
+    assert "limit" not in soft[0]["text"]
+
+
+def test_bom_value_from_the_real_bridge_path_drives_bulk_and_order(empty):
+    from altium import bridge
+    pins = [{"num": p["num"], "name": p["name"], "net": p["net"]} for p in mcu()["pins"]]
+    store.write_sheet(empty, "01", {"id": "01", "title": "T", "sections": [], "parts": [
+        {"ref": "U1", "pins": pins}, {"ref": "R9", "pins": [{"num": "1", "net": "W1"}, {"num": "2", "net": "W2"}]},
+        {"ref": "C1", "pins": [{"num": "1", "net": "+3V3"}, {"num": "2", "net": "GND"}]},
+        {"ref": "C2", "pins": [{"num": "1", "net": "+3V3"}, {"num": "2", "net": "GND"}]}]})
+    for ref, value in (("C1", "22uF"), ("C2", "100nF")):
+        store.append(empty, "bom-log.jsonl", {"ts": store.now(), "by": "student", "line": ref,
+                                              "changes": {"refs": [ref], "value": value, "description": "MLCC capacitor"}})
+    parts = {p["ref"]: p for p in bridge._netlist_parts(empty)}
+    assert parts["C1"]["bom_value"] == "22uF" and parts["C2"]["bom_description"] == "MLCC capacitor"
+    assert "value" not in parts["C1"]                       # PLACEFP's own value argument is untouched
+    fp = {"U1": "MCU", "R9": "WALL", "C1": "C0402", "C2": "C0402"}
+    plan = layout.plan_placement([dict(p, footprint=fp[r]) for r, p in parts.items()], FPS, OUT,
+                                 keep={"U1": (30, 20, 0), "R9": (30, 20, 0)})
+    errs = [f["ref"] for f in plan["findings"] if f["level"] == "error"]
+    assert errs == ["C2"], plan["findings"]                 # 100 nF is held to 3 mm, the 22 uF is bulk
+
+
+def test_resonator_x_ref_with_three_pads_and_xi_xo_pins():
+    mc = mcu(osc=("XI_N", "XO_N"))
+    for p in mc["pins"]:
+        p["name"] = {"PH0-OSC_IN": "XI", "PH1-OSC_OUT": "XO"}.get(p["name"], p["name"])
+    fps = dict(FPS, RES3=fp("RES3", [("1", -1.2, 0, 0.8, 1.2), ("2", 0, 0, 0.8, 1.2), ("3", 1.2, 0, 0.8, 1.2)]))
+    x = part("X1", "RES3", ["XI_N", "GND", "XO_N"])
+    plan = layout.plan_placement([mc, x], fps, OUT)
+    assert [c["ref"] for c in plan["crystals"]] == ["X1"], plan
+
+
+def test_series_resistor_on_osc_out_still_finds_the_crystal_and_its_load_cap():
+    parts = [mcu(osc=("OSC_IN", "OSC_OUT_R")), part("Y1", "XTAL", ["OSC_IN", "XT_B"], value="8MHz"),
+             part("R1", "C0402", ["XT_B", "OSC_OUT_R"]), part("C5", "C0402", ["OSC_IN", "GND"], value="12pF"),
+             part("C6", "C0402", ["XT_B", "GND"], value="12pF")]
+    for p in parts[0]["pins"]:
+        if p["name"] == "PH1-OSC_OUT":
+            p["net"] = "OSC_OUT_R"
+    plan = layout.plan_placement(parts, FPS, OUT)
+    assert not plan["errors"] and [c["ref"] for c in plan["crystals"]] == ["Y1"], plan
+    assert {p["pin"] for p in plan["crystals"][0]["pins"]} == {"14", "15"}
+    y_pad = {p["pad"] for p in plan["crystals"][0]["pins"] if p["pin"] == "15"}.pop()
+    assert d(plan, parts, "C6", "1", "Y1", y_pad) <= 3.0
+
+
+def test_forty_nine_part_board_places_within_a_cpu_budget():
+    """Perf: 2 ICs (32 pins, many supply pins) and 47 passives; the first version spent 27 s on ring searches per pin per cap."""
+    import time
+    pads = ([(str(1 + i), -4.5 + 1.0 * i, -5.5, 0.4, 1.0) for i in range(10)] + [(str(11 + i), 5.5, -4.5 + 1.0 * i, 1.0, 0.4) for i in range(10)] +
+            [(str(21 + i), 4.5 - 1.0 * i, 5.5, 0.4, 1.0) for i in range(10)] + [(str(31 + i), -5.5, 4.5 - 1.0 * i, 1.0, 0.4) for i in range(2)])
+    fps = dict(FPS, BIG=fp("BIG", pads), R0402=FPS["C0402"])
+
+    def ic(ref):
+        names = ["VDD" if i % 4 == 0 else ("VSS" if i % 4 == 1 else "PA%d" % i) for i in range(32)]
+        nets = [("+3V3" if n == "VDD" else "GND" if n == "VSS" else f"{ref}_{i}") for i, n in enumerate(names)]
+        return part(ref, "BIG", nets, names)
+
+    parts = [ic("U1"), ic("U2")]
+    parts += [part(f"C{i}", "C0402", ["+3V3", "GND"], value="100nF" if i % 3 else "1uF") for i in range(1, 17)]
+    parts += [part(f"R{i}", "R0402", [f"U1_{(i * 2) % 32 + 2}", f"U2_{(i * 3) % 32 + 2}"]) for i in range(1, 32)]
+    t0 = time.process_time()
+    plan = layout.plan_placement(parts, fps, [0, 0, 100, 80])
+    assert time.process_time() - t0 < 27.5, time.process_time() - t0
+    assert not plan["errors"] and len(plan["places"]) == 49
 
 
 def test_crystal_next_to_the_oscillator_pins_with_load_caps_beside_it():
