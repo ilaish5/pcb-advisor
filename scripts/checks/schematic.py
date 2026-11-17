@@ -47,7 +47,8 @@ from altium.prjpcb import read_prjpcb  # noqa: E402
 from altium.schdoc import read_schdoc  # noqa: E402
 
 POWER_PIN_RE = re.compile(r"^(?:VCC|VDD|VIN|VBAT|VREF|VDDA|VSS|VSSA|GND|AGND|DGND|3V3|5V|12V)\b", re.I)
-GND_RE = re.compile(r"GND|VSS|0V|AGND|DGND", re.I)
+# GND/VSS anywhere in the name; 0V only as the whole name (else "+10V", "10V", "V10" would be ground)
+GND_RE = re.compile(r"GND|VSS|^[+\-]?0V$", re.I)
 VCC_RE = re.compile(r"VCC|VDD|VIN|VBAT|VDDA|3V3|5V|12V|\+3V3|\+5V", re.I)
 
 ELECTRICAL_POWER = 7  # Altium pin electrical type "Power"
@@ -849,6 +850,8 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
         except Exception:
             bom = []
     findings.extend(check_inductive_load_no_flyback(netlist, pin_details, bom))
+    findings.extend(check_led_no_series_resistor(netlist, pin_details, bom))
+    findings.extend(check_polarized_cap_reversed(netlist, pin_details, bom))
 
     # Check 3: net labels that connect nothing and ports without a partner on another sheet.
     # Using a label inside a sheet to name a net is normal and is not reported.
@@ -1111,6 +1114,113 @@ def _ref_prefix(ref: str) -> str:
     return re.match(r"[A-Za-z]*", ref).group(0).upper()
 
 
+_POLAR = {"A": "A", "ANODE": "A", "+": "A", "K": "K", "C": "K", "CATHODE": "K", "-": "K"}
+_POS_RAIL_RE = re.compile(r"^\+|VCC|VDD|VIN|VBAT|VBUS|3V3|5V|12V|24V", re.I)
+
+
+def _is_gnd(net: str) -> bool:
+    return bool(GND_RE.search(net))
+
+
+def _is_pos_rail(net: str) -> bool:
+    return not _is_gnd(net) and not re.match(r"^[-~]|^N(?:EG)?[_-]?\d|NEG|MINUS", net, re.I) and bool(_POS_RAIL_RE.search(net))
+
+
+def _pin_polarity(pin_details: dict, ref: str, tags) -> "str | None":
+    """'A' or 'K' for the pin of ref among tags, from its pin name; None when the name does not say."""
+    for t in tags:
+        if _tag_ref(t) == ref:
+            return _POLAR.get(str(pin_details.get(t, {}).get("name", "")).strip().upper())
+    return None
+
+
+def _flyback_orientation(netlist, pin_details, net, load, q, across) -> list:
+    """Diodes joining the switched node `net` and the load's other net: when none is clearly the right way round
+    and one is clearly reversed (names A/K, the other net a known rail), report it. Unclear = no finding."""
+    reversed_ = []
+    for o, d in sorted(across):
+        a_on_net = _pin_polarity(pin_details, d, netlist.get(net, []))
+        k_on_o = _pin_polarity(pin_details, d, netlist.get(o, []))
+        if a_on_net is None or k_on_o is None or a_on_net == k_on_o:
+            return []  # polarity not readable: never claim an error
+        if _is_gnd(o):
+            ok = a_on_net == "K"  # load to ground (high-side switch): cathode on the switched node
+        elif _is_pos_rail(o):
+            ok = a_on_net == "A"  # load to the supply (low-side switch): anode on the switched node
+        else:
+            return []
+        if ok:
+            return []
+        reversed_.append((d, o))
+    if not reversed_:
+        return []
+    d, o = reversed_[0]
+    return [{"id": "flyback_diode_reversed", "severity": "error", "refs": [d, load, q],
+             "message": (f"Diode {d} across {load} is the wrong way round: it conducts when {q} switches on, shorting "
+                         f"'{o}' to '{net}' through it, and gives no path for the coil current at switch-off. "
+                         f"Cathode to the positive side, anode to the negative side of {load}."),
+             "evidence": f"{d} joins '{net}' and '{o}' with its anode/cathode swapped relative to {load}"}]
+
+
+_LED_TEXT_RE = re.compile(r"\bLED\b|light.emitting", re.I)
+_LED_SKIP_RE = re.compile(r"resistor|constant.current|driver|built.in|integrated|internal", re.I)
+
+
+def check_led_no_series_resistor(netlist: dict, pin_details: dict, bom: "list | None" = None) -> list:
+    """An LED whose anode is directly on a positive rail and whose cathode is directly on ground: nothing limits
+    the current. LEDs whose other end is on a signal net, or any chain with parts, are not judged."""
+    out = []
+    refs = {_tag_ref(t) for ps in netlist.values() for t in ps}
+    for ref in sorted(refs):
+        line = next((l for l in (bom or []) if ref in (l.get("refs") or [])), {})
+        text = f"{line.get('description', '')} {line.get('mpn', '')}"
+        if not (_ref_prefix(ref) == "LED" or (_ref_prefix(ref) == "D" and _LED_TEXT_RE.search(text))):
+            continue
+        if _LED_SKIP_RE.search(text):
+            continue
+        nets = {}
+        for net, ps in netlist.items():
+            for t in ps:
+                if _tag_ref(t) == ref:
+                    nets.setdefault(_POLAR.get(str(pin_details.get(t, {}).get("name", "")).strip().upper()), set()).add(net)
+        if set(nets) != {"A", "K"} or len(nets["A"]) != 1 or len(nets["K"]) != 1:
+            continue
+        a, k = next(iter(nets["A"])), next(iter(nets["K"]))
+        if _is_pos_rail(a) and _is_gnd(k):
+            out.append({"id": "led_no_series_resistor", "severity": "warning", "refs": [ref],
+                        "message": (f"LED {ref} is connected directly between '{a}' and '{k}' with no series resistor: "
+                                    f"nothing limits its current. Add a resistor in series (unless this LED has one built in)."),
+                        "evidence": f"{ref} anode on '{a}', cathode on '{k}'"})
+    return out
+
+
+_CAP_TEXT_SKIP_RE = re.compile(r"non.?polar|bipolar", re.I)
+
+
+def check_polarized_cap_reversed(netlist: dict, pin_details: dict, bom: "list | None" = None) -> list:
+    """A capacitor with pins named + and -: the + pin on ground while the - pin is on a positive rail is reversed."""
+    out = []
+    refs = {_tag_ref(t) for ps in netlist.values() for t in ps}
+    for ref in sorted(r for r in refs if _ref_prefix(r) == "C"):
+        line = next((l for l in (bom or []) if ref in (l.get("refs") or [])), {})
+        if _CAP_TEXT_SKIP_RE.search(f"{line.get('description', '')} {line.get('mpn', '')}"):
+            continue
+        pos, neg = set(), set()
+        for net, ps in netlist.items():
+            for t in ps:
+                if _tag_ref(t) == ref:
+                    n = str(pin_details.get(t, {}).get("name", "")).strip()
+                    (pos if n == "+" else neg if n == "-" else set()).add(net)
+        if len(pos) == 1 and len(neg) == 1:
+            p, n = next(iter(pos)), next(iter(neg))
+            if _is_gnd(p) and _is_pos_rail(n):
+                out.append({"id": "polarized_cap_reversed", "severity": "error", "refs": [ref],
+                            "message": (f"Polarized capacitor {ref} is reversed: its + pin is on '{p}' and its - pin on "
+                                        f"'{n}'. The + pin must go to the more positive net."),
+                            "evidence": f"{ref} pin '+' on '{p}', pin '-' on '{n}'"})
+    return out
+
+
 def check_inductive_load_no_flyback(netlist: dict, pin_details: dict, bom: "list | None" = None) -> list:
     """A Q* collector/drain on the same net as a relay (K), motor (M) or buzzer (BZ) pin, and no diode (D*) across
     the load. A buzzer is judged by its BOM description/mpn: magnetic warns, piezo is skipped, unknown is info."""
@@ -1128,7 +1238,9 @@ def check_inductive_load_no_flyback(netlist: dict, pin_details: dict, bom: "list
         for load in sorted({_tag_ref(t) for t in pins if _ref_prefix(_tag_ref(t)) in _LOAD_KIND}):
             other = ref_nets.get(load, set()) - {net}
             diode_refs = {_tag_ref(t) for t in pins if _ref_prefix(_tag_ref(t)) == "D"}
-            if any(_tag_ref(t) in diode_refs for o in other for t in netlist.get(o, [])):
+            across = {(o, _tag_ref(t)) for o in other for t in netlist.get(o, []) if _tag_ref(t) in diode_refs}
+            if across:
+                out.extend(_flyback_orientation(netlist, pin_details, net, load, q, across))
                 continue
             sev = "warning"
             if _ref_prefix(load) == "BZ":
