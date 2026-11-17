@@ -833,6 +833,11 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     def key(n):
         return (2 if _is_gnd(n) else 0 if _RAIL.match(n) else 1, _hpwl(rt.pads[n]), n)
     order = sorted(nets, key=key)
+    # --- coupled USB pair hook (logic in pair.py): D+/D- are routed together first and leave the normal order
+    from . import pair as _pair
+    pair_state = _pair.pre_route(rt, rules, nets, deadline)
+    order = [n for n in order if n not in pair_state["done"]]
+    # --- end hook
 
     def width_for(n):
         if n in rules["net_width"]:
@@ -932,7 +937,8 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             why[n] = "not routed (ran out of time)" if time.time() > deadline else "not routed"
     failed = list(dict.fromkeys(n for n in failed if n not in rt.routed))
     items = all_items()
-    return {"items": items, "routed": sorted(rt.routed), "failed": [(n, why.get(n) or last_msg.get(n) or "no path") for n in failed],
+    return {"pairs": _pair.report(rt, rules, pair_state, items),     # pair.py hook
+            "items": items, "routed": sorted(rt.routed), "failed": [(n, why.get(n) or last_msg.get(n) or "no path") for n in failed],
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch}}
 

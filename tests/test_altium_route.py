@@ -67,8 +67,8 @@ def test_dense_board_with_an_ic_routes_and_checks():
 
 def test_failure_is_reported_with_a_reason():
     """A net walled in by a foreign net across the whole board has no path on either layer: reported, never claimed."""
-    wall = [pad("W", str(i), 10, y, f"W{i}", 0.8, 1.0) for i, y in enumerate([x * 0.9 for x in range(0, 17)])]
-    wall += [pad("W", str(i + 20), 10, y, f"V{i}", 0.8, 1.0, layer=32) for i, y in enumerate([x * 0.9 for x in range(0, 17)])]
+    wall = [pad("W", str(i), 10, y, f"W{i}", 0.8, 1.5) for i, y in enumerate([x * 0.9 for x in range(0, 17)])]
+    wall += [pad("W", str(i + 20), 10, y, f"V{i}", 0.8, 1.5, layer=32) for i, y in enumerate([x * 0.9 for x in range(0, 17)])]
     doc = {"pads": wall + [pad("A", "1", 4, 7, "ISO"), pad("B", "1", 16, 7, "ISO")]}
     res = route.plan_routes(doc, [0, 0, 20, 14], rules(), seconds=3, rounds=1)
     assert dict(res["failed"]).get("ISO")
@@ -201,3 +201,61 @@ def test_fine_pitch_pad_with_no_legal_track_is_refused():
     assert "CC1" in failed and "CC2" in failed
     assert not [i for i in res["items"] if i["net"] in ("CC1", "CC2")]
     assert route.violations(doc, res["items"], r, box) == []
+
+
+# ---- USB data pair (scripts/altium/pair.py)
+from altium import pair
+
+
+def usb_board(extra=()):
+    """A USB connector (D+ at y 10, D- at y 11.2) to an MCU (two pads 1.2 mm apart, 2 mm higher)."""
+    return {"pads": [pad("J1", "A6", 5, 10, "USB_DP", 0.6, 0.3), pad("J1", "A7", 5, 10.8, "USB_DM", 0.6, 0.3),
+                     pad("U1", "21", 25, 12, "USB_DP", 0.6, 0.3), pad("U1", "22", 25, 12.8, "USB_DM", 0.6, 0.3)] + list(extra)}
+
+
+def test_usb_pair_is_routed_coupled_and_clean():
+    doc, box = usb_board(), [0, 0, 30, 24]
+    res = route.plan_routes(doc, box, rules(), seconds=30)
+    assert not res["failed"] and route.violations(doc, res["items"], rules(), box) == []
+    assert layout.unrouted(as_board(doc, res["items"])) == []
+    (pr,) = res["pairs"]
+    assert pr["coupled"] and pr["nets"] == ["USB_DP", "USB_DM"], pr
+    assert pr["mismatch_mm"] <= 0.25, pr                                # the fan-out at the pads costs some length; above 0.15 it is flagged
+    assert pr["mismatch_ok"] == (pr["mismatch_mm"] <= pair.TOLERANCE_MM) and (pr["mismatch_ok"] or "guideline" in pr["note"]), pr
+    assert pr["gap_mm"] >= 0.127 and pr["width_mm"] >= 0.2 and "not impedance-controlled" in pr["note"]
+    assert not [i for i in res["items"] if i["kind"] == "via"]
+    assert abs(pr["length_p"] - pair._length(res["items"], "USB_DP")) < 1e-3 and pr["length_p"] > 20
+
+
+def test_usb_pair_with_an_obstacle_falls_back_and_says_so():
+    """A foreign pad wall with two gaps, each too narrow for two tracks: both nets are still routed, one by one, and it is reported."""
+    ys = [x * 1.0 for x in range(0, 24)]
+    wall = [pad("W", str(i), 15, y, f"W{i}", 0.8, 1.5) for i, y in enumerate(ys) if y not in (12.0, 14.0)]
+    wall += [pad("W", str(i + 40), 15, y, f"V{i}", 0.8, 1.5, layer=32) for i, y in enumerate(ys)]
+    doc, box = usb_board(wall), [0, 0, 30, 24]
+    res = route.plan_routes(doc, box, rules(), seconds=30)
+    (pr,) = res["pairs"]
+    assert not pr["coupled"] and pr["note"].startswith("not routed as a coupled pair: "), pr
+    assert route.violations(doc, res["items"], rules(), box) == []
+
+
+def test_no_usb_nets_leaves_plan_routes_unchanged():
+    doc = {"pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 8, "A")]}
+    res = route.plan_routes(doc, [0, 0, 20, 14], rules(), seconds=30)
+    assert res["pairs"] == [] and res["routed"] == ["A"] and not res["failed"]
+
+
+def test_find_pairs_names_and_non_pairs():
+    for p, n in [("D+", "D-"), ("DP", "DM"), ("USB_DP", "USB_DN"), ("USB_D+", "USB_D-"), ("USBDP", "USBDM"), ("usb_dp", "usb_dm")]:
+        assert pair.find_pairs([p, n, "GND"]) == [(p, n, "usb")], (p, n)
+    assert pair.find_pairs(["D+", "GND"]) == [] and pair.find_pairs(["DP", "GND", "DATA"]) == []
+    assert pair.find_pairs(["USB_DP", "DM"]) == []                      # different prefixes are not one pair
+    assert pair.find_pairs(["ADP", "ADM"]) == []
+
+
+def test_find_pairs_by_pin_names():
+    pads = [pad("U1", "21", 0, 0, "N1", 1, 1), pad("U1", "22", 0, 2, "N2", 1, 1), pad("J1", "2", 9, 0, "N1"), pad("J1", "3", 9, 2, "N2")]
+    pads[0]["pin_name"], pads[1]["pin_name"] = "PA12 (USB_DP)", "PA11 (USB_DM)"
+    assert pair.find_pairs({"pads": pads}) == [("N1", "N2", "usb")]
+    pads[1]["pin_name"] = "PA11"                                        # one side only: no pair
+    assert pair.find_pairs({"pads": pads}) == []
