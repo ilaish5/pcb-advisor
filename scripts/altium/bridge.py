@@ -660,14 +660,44 @@ def circular_pin_warnings(project, refs):
     return out
 
 
+def drawn_names(project, extra=()):
+    """{net: drawn name} of the project (draw.alias_map), a BridgeError instead of the conflict."""
+    from altium import draw
+    try:
+        return draw.alias_map(project, extra)
+    except draw.AliasConflict as exc:
+        raise BridgeError(f"Net names clash after the schematic's plain-ASCII renaming: {exc}. Nothing was changed.") from exc
+
+
+def _file_sig(path):
+    try:
+        st = pathlib.Path(path).stat()
+        return st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
+SAVE_BY_HAND = ("In Altium click that sheet's tab, press Ctrl+S (or close the sheet and answer Yes to Save), then ask me to draw again. "
+                "Nothing was changed.")
+
+
 def save_open_sheets(prj, docs):
     """Saves the sheets Altium holds open with unsaved changes (the student's own edits: nothing is lost, the backup that follows
-    then covers them). Returns the file names saved. A sheet that is closed or clean is left alone."""
+    then covers them). Returns the file names saved. A sheet that is closed or clean is left alone. A save that did not happen (the
+    file is unchanged, or Altium still reports unsaved changes) is an error, before anything else is done."""
     state = run_commands([("PROJECT", str(prj))] + [("DOCSTATE", str(d)) for d in docs])
     states = [l for l in state if l.startswith("docstate ")]
     dirty = [d for d, l in zip(docs, states) if "modified=1" in l] if len(states) == len(docs) else []
-    if dirty:
-        run_commands([("PROJECT", str(prj))] + [("SAVE", str(d)) for d in dirty])
+    if not dirty:
+        return []
+    before = {d: _file_sig(d) for d in dirty}
+    run_commands([("PROJECT", str(prj))] + [("SAVE", str(d)) for d in dirty])
+    again = run_commands([("PROJECT", str(prj))] + [("DOCSTATE", str(d)) for d in dirty])
+    still = [d for d, l in zip(dirty, [l for l in again if l.startswith("docstate ")]) if "modified=1" in l]
+    unchanged = [d for d in dirty if _file_sig(d) == before[d]]
+    if still or unchanged:
+        names = ", ".join(d.name for d in (still or unchanged))
+        raise BridgeError(f"I tried to save {names} in Altium but the save did not happen. " + SAVE_BY_HAND)
     return [d.name for d in dirty]
 
 
@@ -694,8 +724,7 @@ def draw_schematic(project, sheet=None, replace=False):
     key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
     plans, existing, new_docs = [], [], []
     # one drawn name per net for the whole design (a net on two sheets keeps one name; two names never share one)
-    aliases = draw.net_aliases(pin.get("net") for _, _, sh in _sheets(project) for p in sh.get("parts", []) if isinstance(p, dict)
-                               for pin in p.get("pins", []) if isinstance(pin, dict))
+    aliases = drawn_names(project)
     for sid, title, sh in planned:
         errors, _ = store.check_sheet(sh, bom_refs)
         if errors:
@@ -721,9 +750,9 @@ def draw_schematic(project, sheet=None, replace=False):
             run_commands([("PROJECT", str(prj))] + [("DRAWCHECK", str(d), "1" if replace else "0") for d in existing])
         except BridgeError as exc:
             if "unsaved changes" in str(exc):
-                raise BridgeError("A sheet is open in Altium with unsaved changes that could not be saved from here. In Altium click that sheet's "
-                                  "tab, press Ctrl+S (or close the sheet and answer Yes to Save), then ask me to draw again. "
-                                  "Nothing was changed.") from exc
+                raise BridgeError((f"I saved {', '.join(saved_first)}, but Altium reports new unsaved changes in a sheet. "
+                                   if saved_first else "A sheet is open in Altium with unsaved changes that could not be saved from here. ")
+                                  + SAVE_BY_HAND) from exc
             raise
     cmds = [("PROJECT", str(prj))] + [("SCH", str(d)) for d in new_docs]
     for _, _, plan, _fp in plans:
@@ -824,7 +853,8 @@ def _netlist_parts(project):
             m = manifest.get(key.get(p["ref"])) or {}
             parts.append({"ref": p["ref"], "footprint": m.get("footprint") or "", "symbol": m.get("symbol") or "",
                           "lib_ref": m.get("symbol") or "", "pins": p.get("pins", [])})
-    return parts
+    from altium import draw
+    return draw.alias_parts(parts, drawn_names(project))          # the pads carry the names the schematic was drawn with
 
 
 def _board_size(project):
@@ -1338,7 +1368,37 @@ def _json_list(project, name):
 def _plan_records(project, pcb):
     off = {n for n in _json_list(project, "rules-off.json") if isinstance(n, str)}
     preset = [r for r in rules_mod.get_preset_rule_records(project_mod.board(project)) if r.get("NAME") not in off]
-    return rule_kinds.append_extra_records(rules_mod.board_rul_records(pcb, preset), _json_list(project, "rules.json"))
+    records = rule_kinds.append_extra_records(rules_mod.board_rul_records(pcb, preset), _json_list(project, "rules.json"))
+    return _drawn_rule_records(project, records)
+
+
+def _drawn_rule_records(project, records):
+    """The rule records under the names the board carries: InNet('...') in a scope is the net's drawn name (the one source: the
+    project's alias map), and a rule name that is not plain ASCII is its transliteration (kept in the same file, so the next
+    import finds the rule again by the same exact name)."""
+    from altium import draw
+    nets = [n for r in records for k in ("SCOPE1EXPRESSION", "SCOPE2EXPRESSION") for n in draw.scope_nets(r.get(k))]
+    al = drawn_names(project, nets)
+    out = []
+    for r in records:
+        r = dict(r)
+        for k in ("SCOPE1EXPRESSION", "SCOPE2EXPRESSION"):
+            if k in r:
+                r[k] = draw.alias_scope(r[k], al)
+        out.append(r)
+    names = [r.get("NAME", "") for r in out]
+    if not all(draw._plain(n) for n in names):
+        path = store.pdir(project) / "rule-names.json"
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = {}
+        got, changed = draw.assign_aliases(saved if isinstance(saved, dict) else {}, names, guard_power=False)
+        if changed:
+            path.write_text(json.dumps(got, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+        for r in out:
+            r["NAME"] = got.get(r.get("NAME", ""), r.get("NAME", ""))
+    return out
 
 
 def rules_missing(project):
@@ -1382,7 +1442,10 @@ def design_problems(project):
     try:
         from checks import schematic
         pcb = rules_mod.read_pcbdoc(_project_pcb(project))
-        out = [f["message"] for f in schematic.check_intent_vs_board([store.load_sheet(project, s) for s in store.sheet_ids(project)], pcb)
+        from altium import draw
+        al = drawn_names(project)
+        out = [f["message"] for f in schematic.check_intent_vs_board(
+                   [dict(sh, parts=draw.alias_parts(sh.get("parts", []), al)) for sh in (store.load_sheet(project, s) for s in store.sheet_ids(project))], pcb)
                if f["severity"] == "error"]
     except (BridgeError, AltiumReadError, OSError, ImportError):
         return []

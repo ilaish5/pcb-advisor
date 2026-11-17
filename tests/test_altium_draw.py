@@ -10,7 +10,7 @@ import store
 import workspace
 from altium import bridge, draw
 from altium.lib import read_schlib  # noqa: F401  (the real reader is replaced below; kept to show what the fake stands in for)
-from test_altium_bridge import FakeAltium
+from test_altium_bridge import FakeAltium, fake  # noqa: F401  (fake: the fixture)
 
 
 def symbol(name, pins):
@@ -516,24 +516,52 @@ def test_the_split_groups_sections_in_order_and_flags_a_section_too_big_alone():
     assert draw.split_groups(small, sheet["sections"]) == ([["A", "B"]], [])
 
 
-def test_an_unsaved_open_sheet_is_saved_first_and_the_draw_says_so(drawn, monkeypatch):
-    project, fake, saved = drawn
+def _dirty_sheet(project, monkeypatch, saves=True):
+    """Altium holds the project's sheet open with unsaved changes; a SAVE writes the file (or, with saves=False, does nothing)."""
     real = bridge.run_commands
     doc = next(pathlib.Path(bridge._linked(project)).parent.glob("*.SchDoc"))
     doc.write_bytes(b"the student's edits")
-    sent = []
+    state = {"dirty": True, "sent": []}
 
     def run(commands, **kw):
-        sent.append([c[0] for c in commands])
+        state["sent"].append([c[0] for c in commands])
         if any(c[0] == "DOCSTATE" for c in commands):
-            return ["docstate open modified=1"]
+            return ["docstate open modified=%d" % state["dirty"]] * sum(c[0] == "DOCSTATE" for c in commands)
+        if any(c[0] == "SAVE" for c in commands) and saves:
+            doc.write_bytes(b"the student's edits, saved")
+            state["dirty"] = False
         return real(commands, **kw)
     monkeypatch.setattr(bridge, "run_commands", run)
+    return doc, state
+
+
+def test_an_unsaved_open_sheet_is_saved_first_and_the_draw_says_so(drawn, monkeypatch):
+    project, fake, saved = drawn
+    doc, state = _dirty_sheet(project, monkeypatch)
     res = bridge.draw_schematic(project, replace=True)
+    sent = state["sent"]
     assert res["saved_first"] == [doc.name]
     assert res["warnings"][0] == f"saved {doc.name} before drawing (it had unsaved changes in Altium)"
     assert sent.index(["PROJECT", "SAVE"]) < next(i for i, s in enumerate(sent) if "DRAWCHECK" in s)
-    assert (pathlib.Path(res["backup"]) / doc.name).is_file()
+    assert (pathlib.Path(res["backup"]) / doc.name).read_bytes() == b"the student's edits, saved"
+
+
+def test_a_save_that_does_not_happen_refuses_before_any_backup_or_drawing(drawn, monkeypatch):
+    project, fake, saved = drawn
+    doc, state = _dirty_sheet(project, monkeypatch, saves=False)
+    with pytest.raises(bridge.BridgeError, match=r"save did not happen.*Ctrl\+S"):
+        bridge.draw_schematic(project, replace=True)
+    flat = [n for s in state["sent"] for n in s]
+    assert "DRAWCHECK" not in flat and "PLACE" not in flat and "DRAWBEGIN" not in flat
+    assert not (doc.parent / ".advisor-backup").exists()
+
+
+def test_a_refusal_after_the_save_says_the_sheet_was_saved(drawn, monkeypatch):
+    project, fake, saved = drawn
+    doc, state = _dirty_sheet(project, monkeypatch)
+    saved["modified"] = True                    # the stand-in Altium still refuses at DRAWCHECK
+    with pytest.raises(bridge.BridgeError, match=rf"I saved {doc.name}.*Ctrl\+S"):
+        bridge.draw_schematic(project, replace=True)
 
 
 def test_when_altium_still_holds_unsaved_changes_the_refusal_says_what_to_click(drawn):
@@ -562,3 +590,115 @@ def test_a_path_with_a_non_ascii_character_is_an_error_not_a_question_mark():
     with pytest.raises(bridge.BridgeError, match="path"):
         bridge._ascii("C:\\Users\\שם\\x.SchDoc")
     assert bridge._ascii("café") == "cafe" and bridge._ascii("אדמה") == "ADMH"
+
+
+# ---------------------------------------------------------------- one persisted alias map: draw, place and rules agree
+
+def _rename_nets(project, mapping, sid="01"):
+    sh = store.load_sheet(project, sid)
+    for p in sh["parts"]:
+        for pin in p["pins"]:
+            pin["net"] = mapping.get(pin["net"], pin["net"])
+    store.write_sheet(project, sid, sh)
+
+
+def test_the_alias_map_is_persisted_and_stable(empty):
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "עב"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {"עב": "AB"}
+    assert (store.pdir(empty) / "net-names.json").is_file()
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "עב"}, {"num": "2", "net": "אב"}]),
+                                             part("R2", [{"num": "1", "net": "AB_2"}, {"num": "2", "net": "GND"}])]})
+    got = draw.alias_map(empty)
+    assert got["עב"] == "AB" and got["אב"] == "AB_3"          # AB is taken, AB_2 is a plain net of the design
+    assert draw.drawn_net_name(empty, "GND") == "GND" and draw.drawn_net_name(empty, "אב") == "AB_3"
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "אב"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {"אב": "AB_3"}                # stays, although עב is gone and AB is free again
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "בא"}, {"num": "2", "net": "AB"}])]})
+    with pytest.raises(draw.AliasConflict):                      # a plain AB now would short עב's drawn name
+        draw.alias_map(empty)
+
+
+def test_sheet_two_never_shorts_two_nets_when_sheet_one_is_drawn_first(drawn):
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "עב"})
+    res = bridge.draw_schematic(project)
+    assert res["renamed_nets"] == {"עב": "AB"}
+    sh2 = {"title": "Second", "parts": [part("R9", [{"num": "1", "net": "אב"}, {"num": "2", "net": "עב"}])]}
+    store.write_sheet(project, "02", sh2)
+    names = draw.alias_map(project)
+    assert names == {"עב": "AB", "אב": "AB_2"}
+
+
+def test_a_transliteration_that_looks_like_a_supply_or_ground_stays_an_ordinary_net():
+    for name, bare in (("ודד", "VDD"), ("גנד", "GND"), ("וסס", "VSS"), ("3ו3", "3V3")):
+        assert draw.transliterate(name) == bare
+        got = draw.assign_aliases({}, [name])[0][name]
+        assert got == "N_" + bare, name
+        assert draw.net_kind(got) == "label" and draw._power_kind(got) == "label"
+        from altium import route
+        assert not route._RAIL.match(got) and not route._is_gnd(got)
+    # a name that already is a power / ground name keeps its meaning
+    assert draw.assign_aliases({}, ["GND_אנלוגי"])[0]["GND_אנלוגי"] == "GND_ANLVGY"
+    assert draw._power_kind("GND_ANLVGY") == "gnd"
+
+
+def test_draw_then_place_use_the_same_names_end_to_end(drawn, monkeypatch):
+    from altium import layout
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "אדמה", "+3V3": "ADMH"})
+    res = bridge.draw_schematic(project)
+    assert res["problems"] == [] and res["renamed_nets"] == {"אדמה": "ADMH_2"}
+    got = {}
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {r: ("u", "01") for r in ("U1", "R1", "R2")})
+    monkeypatch.setattr(bridge, "_project_pcb", lambda project: pathlib.Path("B.PcbDoc"))
+    monkeypatch.setattr(bridge, "_board_size", lambda project: (30, 25))
+    monkeypatch.setattr(bridge, "_clearance_mm", lambda project: 0.2)
+    monkeypatch.setattr(bridge, "design_problems", lambda project: [])
+
+    def place_on(prj, pcb, pcblib, parts, **kw):
+        got["parts"] = parts
+        return {"placed": parts, "outline": [0, 0, 30, 25], "backup": "", "problems": [], "warnings": [], "drill_findings": [],
+                "restored": False}
+    monkeypatch.setattr(bridge, "place_on", place_on)
+    bridge.place_pcb(project)
+    parts = got["parts"]
+    assert layout.text_problems(parts) == []                      # no refusal for the Hebrew net
+    cmds = layout.plan_commands("B.PcbDoc", None, False, [{"ref": p["ref"], "footprint": "FP", "x": 0, "y": 0, "rot": 0} for p in parts],
+                                {}, parts, "L.PcbLib")
+    padnet = {(c[2], c[3]): c[4] for c in cmds if c[0] == "PADNET"}
+    assert padnet[("R1", "2")] == "ADMH_2" and padnet[("U1", "4")] == "ADMH"        # the Hebrew net and the plain one: two nets
+    assert all(all(ord(ch) < 127 for ch in a) for c in cmds for a in c)
+    board = {"components": [{"ref": p["ref"], "pattern": "FP"} for p in parts],
+             "pads": [{"ref": r, "name": n, "net": net} for (r, n), net in padnet.items()]}
+    nets = [x for x in layout.verify_layout(board, parts) if " is on net " in x]
+    assert nets == []                                             # the board pads agree with the drawn names: no false mismatch
+
+
+def test_a_width_rule_on_a_hebrew_net_lands_on_the_right_net_and_is_found_again(lte, fake):
+    import json
+    import rule_kinds
+    prj, pcb = _rules_board(lte, fake)
+    store.write_sheet(lte, "99", {"parts": [part("R90", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "ADMH"}])]})
+    rec = rule_kinds.build_attributes({"name": "W_heb", "kind": "Width", "scope1": "InNet('אדמה')", "scope2": "All",
+                                       "values": {"min": "10mil", "pref": "20mil", "max": "50mil"}})
+    (store.pdir(lte) / "rules.json").write_text(json.dumps([{"name": "W_heb", "kind": "Width", "scope1": "InNet('אדמה')",
+                                                             "attributes": rec}], ensure_ascii=False), encoding="utf-8")
+    todo, _ = bridge.rule_plan(lte, pcb)
+    mine = [r for r, _ in todo if r["NAME"] == "W_heb"]
+    assert mine and mine[0]["SCOPE1EXPRESSION"] == "InNet('ADMH_2')"           # not ADMH: that is the other net
+    cmds = bridge.rule_commands(pcb, todo)
+    assert all(f.isascii() for c in cmds for f in c)
+    again = [r for r, _ in bridge.rule_plan(lte, pcb)[0] if r["NAME"] == "W_heb"]
+    assert again and again[0]["SCOPE1EXPRESSION"] == "InNet('ADMH_2')"         # the next import sees the same name
+    from altium import route
+    assert route.rules_from_doc({"rules": [dict(mine[0], ENABLED="TRUE")]})["net_width"] == {"ADMH_2": route.rules_from_doc(
+        {"rules": [dict(mine[0], ENABLED="TRUE")]})["net_width"]["ADMH_2"]}
+
+
+def _rules_board(lte, fake):
+    import project as project_mod
+    res = bridge.new_project(lte)
+    pcb = pathlib.Path(project_mod.altium_link(lte)["pcb_file"])
+    pcb.write_bytes((pathlib.Path(__file__).parent / "fixtures" / "altium" / "rules-board.PcbDoc").read_bytes())
+    fake.runs.clear()
+    return pathlib.Path(res["project_file"]), pcb

@@ -236,6 +236,11 @@ _DASHES = dict.fromkeys("\u2010\u2011\u2012\u2013\u2014\u2015\u2212\ufe63\uff0d"
 def _ascii_char(ch):
     if 32 <= ord(ch) < 127:
         return ch
+    if ch.isdigit():
+        try:
+            return str(unicodedata.decimal(ch))        # an Arabic-Indic or other digit keeps its value
+        except (ValueError, TypeError):
+            pass
     if ch in _HEBREW:
         return _HEBREW[ch]
     if ch in _DASHES:
@@ -262,22 +267,120 @@ def transliterate(text):
     return "".join(out) or "_"
 
 
-def net_aliases(names):
-    """{net name: drawn name} for the names that are not plain ASCII, over ALL the nets of the design (so a net on two sheets gets
-    the same name on both). Two different names never share a drawn name (compared without case, as Altium does): a plain name
-    keeps its own, a transliterated one that would collide takes _2, _3 ... The result does not depend on the order of `names`."""
+class AliasConflict(ValueError):
+    """A plain net name that is already the drawn name of another (non-ASCII) net."""
+
+
+def _power_kind(name):
+    """'gnd' | 'rail' | 'label' by every classification the system uses (this module's and the router's)."""
+    from altium import route
+    n = str(name).strip()
+    if net_kind(n) == "gnd" or route._is_gnd(n):
+        return "gnd"
+    if net_kind(n) == "rail" or route._RAIL.match(n):
+        return "rail"
+    return "label"
+
+
+def assign_aliases(existing, names, guard_power=True):
+    """(map, changed): `existing` {name: drawn name} extended with the non-ASCII `names` that have none yet. A drawn name that is
+    taken (by a plain name in `names` or by any earlier assignment, compared without case) is never given again: _2, _3 ... is
+    added. A name that was assigned keeps its drawn name for good. A transliteration that the system would classify as ground or
+    a supply rail while the original name is not (ודד -> VDD) gets 'N_' in front, so it stays an ordinary net. Raises
+    AliasConflict when a plain name is already the drawn name of another one (it cannot be renamed under a drawn sheet)."""
+    out = dict(existing)
     names = {str(n) for n in names if str(n or "").strip()}
-    used = {n.upper() for n in names if _plain(n)}
-    out = {}
-    for n in sorted(x for x in names if not _plain(x)):
+    taken = {}
+    for k, v in out.items():
+        taken.setdefault(v.upper(), k)
+    for n in sorted(x for x in names if _plain(x)):
+        if n.upper() in taken:
+            raise AliasConflict(f"the name {n!r} is already the drawn name of {taken[n.upper()]!r}: rename one of the two nets "
+                                "(the schematic draws one name for one net only)")
+    used = set(taken) | {n.upper() for n in names if _plain(n)}
+    changed = False
+    for n in sorted(x for x in names if not _plain(x) and x not in out):
         base = transliterate(n)
+        if guard_power and _power_kind(base) != "label" and _power_kind(base) != _power_kind(n):
+            base = "N_" + base
         cand, k = base, 1
         while cand.upper() in used:
             k += 1
             cand = f"{base}_{k}"
         used.add(cand.upper())
         out[n] = cand
+        changed = True
+    return out, changed
+
+
+def net_aliases(names):
+    """{net name: drawn name} for the non-ASCII names, from nothing assigned yet (see assign_aliases; alias_map is the
+    project's persisted version, the one the draw, place and rules steps all use)."""
+    names = list(names)
+    got, _ = assign_aliases({}, names)
+    return {n: a for n, a in got.items() if n in {str(x) for x in names}}
+
+
+ALIAS_FILE = "net-names.json"
+
+
+def _alias_path(project):
+    import store
+    return store.pdir(project) / ALIAS_FILE
+
+
+def _project_nets(project):
+    import store
+    out = set()
+    for sid in store.sheet_ids(project):
+        for p in store.load_sheet(project, sid).get("parts", []):
+            for pin in (p.get("pins", []) if isinstance(p, dict) else []):
+                if isinstance(pin, dict) and str(pin.get("net") or "").strip():
+                    out.add(str(pin["net"]))
     return out
+
+
+def alias_map(project, extra=()):
+    """THE source of the drawn net names: {net: drawn name} for every non-ASCII net of the project's netlist and `extra` names, read
+    from and saved to the project's net-names.json. Stable: a name once assigned is never reassigned, and a new name never takes
+    one already assigned or a plain net name. Raises AliasConflict when a plain net now has an assigned drawn name."""
+    import json
+    path = _alias_path(project)
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8")).get("nets", {})
+    except (OSError, ValueError, AttributeError):
+        saved = {}
+    saved = {str(k): str(v) for k, v in saved.items()} if isinstance(saved, dict) else {}
+    nets = _project_nets(project) | {str(x) for x in extra}
+    got, changed = assign_aliases(saved, nets)
+    if changed:
+        path.write_text(json.dumps({"nets": got}, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    return {n: a for n, a in got.items() if n in nets}
+
+
+def drawn_net_name(project, net):
+    """The name a net is drawn, placed and ruled under (the net itself when it is plain ASCII)."""
+    return net if _plain(net) else alias_map(project, [net])[str(net)]
+
+
+def alias_parts(parts, aliases):
+    """Copies of the netlist parts whose pins carry the drawn net names (the netlist itself is never rewritten)."""
+    if not aliases:
+        return parts
+    return [{**p, "pins": [{**pin, "net": aliases.get(str(pin.get("net")), pin.get("net"))} if isinstance(pin, dict) else pin
+                           for pin in p.get("pins", [])]} for p in parts]
+
+
+_INNET = re.compile(r"(InNet\s*\(\s*')([^']+)(')", re.I)
+
+
+def scope_nets(text):
+    return [m.group(2) for m in _INNET.finditer(str(text or ""))]
+
+
+def alias_scope(text, aliases):
+    """A rule scope expression with its InNet('...') names replaced by the drawn names."""
+    return _INNET.sub(lambda m: m.group(1) + aliases.get(m.group(2), m.group(2)) + m.group(3), str(text or ""))
 
 
 def split_groups(cells, sections, area=AREA):
@@ -346,9 +449,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
         aliases = net_aliases(pin.get("net") for p in parts for pin in p.get("pins", []) if isinstance(pin, dict))
     used = {str(pin.get("net")) for p in parts for pin in p.get("pins", []) if isinstance(pin, dict)}
     renamed = {n: a for n, a in aliases.items() if n in used}
-    if renamed:       # the netlist itself is not touched: the planned copy carries the drawn names, so the read-back compares with them
-        parts = [{**p, "pins": [{**pin, "net": aliases.get(str(pin.get("net")), pin.get("net"))} if isinstance(pin, dict) else pin
-                                for pin in p.get("pins", [])]} for p in parts]
+    parts = alias_parts(parts, renamed)     # the netlist itself is not touched: the planned copy carries the drawn names, so the read-back compares with them
     sections = [s for s in sheet.get("sections", []) if isinstance(s, dict) and s.get("id")]
     ids = {s["id"] for s in sections}
     first = sections[0]["id"] if sections else ""
