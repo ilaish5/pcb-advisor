@@ -241,19 +241,58 @@ def test_a_current_net_drawn_narrower_than_it_needs_is_a_problem_not_a_note():
     assert res["width_problems"] == []                                         # room enough: nothing to report
 
 
-def test_route_on_refuses_to_draw_when_a_current_net_does_not_fit(monkeypatch):
+def _lqfp_board(extra=()):
+    """A 0.5 mm pitch QFP-style row (pads 0.3 x 1.4) whose pin 4 is the +3V3 rail, a decoupling cap and signal parts on the way."""
+    pads = []
+    for i in range(8):
+        pads.append(pad("U1", str(i + 1), 14 + i * 0.5, 14, "+3V3" if i == 3 else f"S{i}", 0.3, 1.4))
+    pads += [pad("C1", "1", 14.2, 6, "+3V3"), pad("C1", "2", 14.2, 8.5, "GND"), pad("U1", "9", 14, 16, "GND", 0.3, 1.4), pad("R9", "1", 30, 6, "GND")]
+    pads += [pad(f"R{i}", "1", 6 + i * 3.0, 4, f"S{i}") for i in range(8) if i != 3]
+    return {"pads": pads + list(extra)}
+
+
+def test_a_rail_into_a_fine_pitch_pad_is_necked_down_not_refused():
+    doc, box = _lqfp_board(), [0, 0, 40, 24]
+    res = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}), seconds=60, only={"+3V3"})
+    w = res["widths"]["+3V3"]
+    assert not res["failed"] and not res["width_problems"]
+    assert w["width_mm"] == w["wanted_mm"] > 1.3                              # the rest of the net is as wide as 3 A needs
+    (neck,) = w["necks"]
+    assert neck["pad"] == "U1-4" and 0 < neck["len_mm"] <= route.NECK_MAX and neck["width_mm"] < 0.45
+    assert f"necked to {neck['width_mm']:g} mm for {neck['len_mm']:g} mm at U1-4" in w["note"]
+    widths = {i["width"] for i in res["items"] if i["kind"] == "track"}
+    assert widths == {w["width_mm"], neck["width_mm"]}                         # only the stub is narrow
+    assert route.violations(doc, res["items"], rules(), box) == []             # the exact check covers both widths
+    assert "necked" in netcurrent.width_line(res["widths"])
+
+
+def _walled_board():
+    """A +3V3 rail that must cross a 1 mm gap through a 1.2 mm gap in a wall, and a signal net that does not."""
+    walls = [pad("W1", "1", 9.6, 10, "WALL1", 18.8, 1, layer=74), pad("W2", "1", 30, 10, "WALL2", 19.6, 1, layer=74)]      # a 1.2 mm gap at x 19-20.2
+    doc = {"pads": [pad("J1", "1", 5, 5, "+3V3"), pad("J2", "1", 5, 16, "+3V3"), pad("R1", "1", 10, 4, "SIG"), pad("R2", "1", 25, 4, "SIG")] + walls}
+    return doc, [0, 0, 40, 20]
+
+
+def test_no_room_for_a_current_net_leaves_it_open_routes_the_rest_and_says_how_to_go_on():
+    doc, box = _walled_board()
+    res = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}), seconds=60)
+    assert res["routed"] == ["SIG"] and [n for n, _ in res["failed"]] == ["+3V3"]
+    why = dict(res["failed"])["+3V3"]
+    assert "3 A needs" in why and "move parts" in why and "pour" in why and "lower its current" in why
+    assert res["widths"]["+3V3"]["width_mm"] is None and res["width_problems"] == []
+    # a partial route the student agreed to may draw it narrow, and then says so as a problem
+    part = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}, allow_narrow=True), seconds=60)
+    assert not part["failed"] and part["widths"]["+3V3"]["width_mm"] < part["widths"]["+3V3"]["wanted_mm"]
+    assert len(part["width_problems"]) == 1 and part["width_problems"][0].startswith("too narrow: +3V3 carries 3 A")
     from altium import bridge
-    plan = {"items": [], "routed": ["+5V"], "failed": [], "stats": {"tracks": 0, "vias": 0},
-            "widths": {"+5V": {"width_mm": 0.127, "wanted_mm": 0.3, "current_a": 1.0, "source": "set", "note": ""}}}
-    monkeypatch.setattr(bridge, "run_commands", lambda *a, **k: ["pcbcheck ok"])
-    monkeypatch.setattr(bridge, "_pcbcheck_info", lambda log: {"parts": 2, "rect": True, "box_mil": [0, 0, 800, 500]})
-    monkeypatch.setattr(bridge, "run_drc", lambda *a, **k: "x")
-    monkeypatch.setattr(bridge, "_drc_counts", lambda r: {})
-    from altium import pcbdoc, route as rt
-    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, **k: {"nets": ["+5V"], "pads": [], "rules": []})
-    monkeypatch.setattr(rt, "plan_routes", lambda *a, **k: plan)
-    res = bridge.route_on(pathlib.Path(__file__), pathlib.Path(__file__), currents={"+5V": 1.0})
-    assert not res["written"] and "nothing drawn" in res["summary"] and "+5V" in res["summary"] and "1 A" in res["summary"]
+    assert bridge._partial_ok(part["width_problems"][0])
+
+
+def test_a_narrower_winning_rule_warns_and_names_the_rule():
+    w = _widths(["+5V"], currents={"+5V": 2.0}, net_width={"+5V": 0.2})
+    warn = netcurrent.width_warnings(w)
+    assert len(warn) == 1 and "PcbDoc width rule on +5V (0.2 mm) is narrower than needed" in warn[0]
+    assert netcurrent.width_warnings(_widths(["+5V"], currents={"+5V": 2.0}, net_width={"+5V": 0.9})) == []
 
 
 def test_the_rules_tab_has_the_net_currents_table_and_the_agent_knows_the_action():

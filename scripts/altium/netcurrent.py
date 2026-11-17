@@ -107,13 +107,13 @@ def net_widths(nets, rules, currents=None, estimates=None, oz=1.0, rise=10.0, is
             entry.update(width_mm=rule_w, source="rule", note=txt + f"; PcbDoc width rule {_fmt(rule_w)} is wider and wins")
         elif rule_w is not None:
             entry.update(width_mm=rule_w, source="rule",
-                         note=txt + f"; PcbDoc width rule {_fmt(rule_w)} is narrower than needed, the rule is kept: check it")
+                         note=txt + f"; the PcbDoc width rule on {n} ({_fmt(rule_w)}) is narrower than needed, the rule is kept: check it")
         else:
             entry["width_mm"], entry["note"] = w, txt
     return res
 
 
-_PROBLEM = ("outside IPC-2221", "no room", "allows at most", "narrower", "wins")
+_PROBLEM = ("outside IPC-2221", "no room", "allows at most", "narrower", "wins", "necked")
 
 
 def width_line(widths):
@@ -142,7 +142,7 @@ def width_problems(widths, names=None):
         if w.get("current_a") is None or w.get("width_mm") is None or w.get("wanted_mm") is None:
             continue
         if w["width_mm"] < w["wanted_mm"] - 1e-9:
-            out.append(f"{names.get(n, n)} carries {w['current_a']:g} A and needs {_fmt(w['wanted_mm'])}, but only {_fmt(w['width_mm'])} fitted "
+            out.append(f"too narrow: {names.get(n, n)} carries {w['current_a']:g} A and needs {_fmt(w['wanted_mm'])}, but only {_fmt(w['width_mm'])} fitted "
                        f"(a fine pitch pad or a tight spot): lower its current, give it room, or widen it by hand in Altium")
     return out
 
@@ -152,4 +152,5 @@ def width_warnings(widths, names=None):
     width rule's maximum."""
     names = names or {}
     return [f"{names.get(n, n)}: {w['note']}" for n, w in sorted((widths or {}).items())
-            if w.get("current_a") is not None and ("outside IPC-2221" in w["note"] or "allows at most" in w["note"])]
+            if w.get("current_a") is not None and ("outside IPC-2221" in w["note"] or "allows at most" in w["note"]
+                                                  or "narrower than needed" in w["note"])]

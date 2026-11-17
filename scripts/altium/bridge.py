@@ -1100,7 +1100,7 @@ def _drc_counts(res):
 
 def _partial_ok(problem):
     """A problem that a partly routed board (agreed with the student) has by definition: nets left open."""
-    return problem.startswith("not routed") or "open nets" in problem or "un-routed connection" in problem
+    return problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem
 
 
 def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None):
@@ -1132,7 +1132,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if not doc.get("nets"):
         raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
     rules = route.rules_from_doc(doc)
-    rules.update(net_current=currents or {}, net_estimate=estimates or {}, **(copper or {}))      # widths by current (netcurrent.py)
+    rules.update(net_current=currents or {}, net_estimate=estimates or {}, allow_narrow=bool(keep_partial), **(copper or {}))      # widths by current (netcurrent.py)
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
     drc_before = _drc_counts(run_drc(prj, pcb, tmp / "before.txt"))
     plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
@@ -1148,11 +1148,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
     from altium import netcurrent as netcurrent_mod
-    narrow = netcurrent_mod.width_problems(plan["widths"], names)      # a net drawn narrower than its current needs is a problem, not a note
-    if narrow:
-        res["problems"] = ["nothing drawn: " + "; ".join(narrow)]
-        res["summary"] = res["problems"][0]
-        return res
+    narrow = netcurrent_mod.width_problems(plan["widths"], names)      # only with keep_partial a net is drawn narrower than its current needs
     bad = route.violations(doc, plan["items"], rules, box)          # our own exact check of what we are about to draw
     if bad:
         res["problems"] = ["the route would break the rules (nothing drawn): " + "; ".join(bad[:5])]
@@ -1266,6 +1262,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         res["drills"] = [f["message"] for f in board_checks.check_drills(saved)]
     except Exception:
         pass
+    probs += narrow                       # drawn narrow as agreed: the step is not finished
     if plan["failed"]:
         probs.append("not routed: " + "; ".join(f"{n} ({why})" for n, why in plan["failed"]))
     res["problems"] = probs
