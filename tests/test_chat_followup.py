@@ -69,7 +69,7 @@ def test_a_refused_action_triggers_exactly_one_text_only_followup(server, empty,
     assert len(seen) == 1                                           # A: the follow-up's actions were dropped, never applied
     f = followups(empty)[0]
     assert f["text"].startswith("Sorry, the sheet was not written.") and f["applied"] == [] and not f.get("proposals")
-    assert f["text"].endswith("(Not run: follow-up replies do not run actions: netlist.write, bom.propose)") and "only the ```json actions block is ignored" in msg
+    assert f["text"].endswith("(Not run: follow-up replies do not run actions: netlist.write, bom.propose)") and "text-only reply" in msg
 
 
 def test_which_refusals_and_warnings_are_worth_a_followup():

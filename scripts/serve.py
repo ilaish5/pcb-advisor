@@ -1514,11 +1514,31 @@ def _outside_quotes(cmd):
     return _QUOTED.sub(" ", cmd)
 
 
+def _norm_run(text):
+    return " ".join(str(text).replace('"', " ").replace("'", " ").split())
+
+
+def _command_parts(cmd):
+    """The `script.py args` of each scripted part of a (compound) command, split on shell operators outside quotes."""
+    masked = _QUOTED.sub(lambda m: "x" * len(m.group(0)), cmd)
+    cuts, last, out = [], 0, []
+    for m in re.finditer(r"&&|\|\||[;|&\n]", masked):
+        cuts.append((last, m.start()))
+        last = m.end()
+    cuts.append((last, len(cmd)))
+    for lo, hi in cuts:
+        m = _SCRIPT_IN_CMD.search(cmd[lo:hi])
+        if m:
+            out.append(_norm_run(m.group(1).split("/")[-1].split("\\")[-1] + " " + cmd[lo:hi][m.end():]))
+    return out
+
+
 def _recovered(cmd, tools):
-    """True when the same turn later ran every script named in the denied command successfully (the agent already split it)."""
-    names = _SCRIPT_IN_CMD.findall(cmd)
-    ok = [str(t.get("t") or "") for t in tools or [] if isinstance(t, dict) and t.get("st") == "ok"]
-    return bool(names) and all(any(n in lab for lab in ok) for n in names)
+    """True when the same turn later ran every scripted part of the denied command (script and arguments) successfully."""
+    parts = _command_parts(cmd)
+    ok = [_norm_run(str(t.get("t") or "")[len("Running "):] if str(t.get("t") or "").startswith("Running ") else str(t.get("t") or ""))
+          for t in tools or [] if isinstance(t, dict) and t.get("st") == "ok"]
+    return bool(parts) and all(any(c == p or (c.endswith("…") and p.startswith(c[:-1])) for c in ok) for p in parts)
 
 
 def compound_denials(denied, tools=None):
@@ -1543,7 +1563,8 @@ def followup_message(applied, refused, warned, denied=None, tools=None):
     if split and not (applied or refused or warned):
         return FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) + FOLLOWUP_TOOLS
     msg = FOLLOWUP_WAIT.format(applied=j(applied), refused=j(refused), warned=j(f"{k}: {v}" for k, v in (warned or {}).items()))
-    msg = msg.replace("This is a text-only reply: no actions will run", "You may run scripts with tool calls; only the ```json actions block is ignored")
+    if split:
+        msg = msg.replace("This is a text-only reply: no actions will run", "Only the ```json actions block is ignored in this reply")
     return msg + ("\n" + FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) + FOLLOWUP_TOOLS if split else "")
 
 
@@ -1643,7 +1664,7 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
         if res.get("denied"):
             rec["denied"] = unique_denials(res["denied"])
         if compound_denials(orig_rec.get("denied"), orig_rec.get("tools")) and not any(
-                isinstance(t, dict) and t.get("st") == "ok" for t in rec.get("tools") or []):
+                isinstance(t, dict) and t.get("st") in ("ok", "bad") for t in rec.get("tools") or []):
             rec["text"] += "\n\n(Not run: the denied command was not run again; no script ran in this reply)"
         if res.get("seconds") is not None:
             rec["seconds"] = round(float(res["seconds"]), 1)
