@@ -216,6 +216,23 @@ def test_capability_check_refuses_what_the_router_cannot_do_with_what_to_do_inst
     assert _caps(pads=qfp) == []                                                  # a dual row is not an area array
     fine = [_sp("U3", i, 10 + i * 0.3, 10, f"N{i}") for i in range(4)]
     assert any("U3" in m and "closer than" in m for m in _caps(pads=fine))
+    def ring(ref, n, side=0.5):         # a quad flat package: n pads per side, 0.3 mm pads, plus the exposed pad
+        pts = []
+        for i in range(n):
+            o = (i - (n - 1) / 2) * side
+            pts += [(o, -2.0), (o, 2.0), (-2.0, o), (2.0, o)]
+        return [pad(ref, str(k), 30 + x, 20 + y, f"N{k}", w=0.3, h=0.3) for k, (x, y) in enumerate(pts)]
+    ep = pad("U4", "EP", 30, 20, "GND", w=2.6, h=2.6)
+    assert _caps(pads=ring("U4", 5) + [ep]) == []                                  # QFN-20 with exposed pad
+    assert _caps(pads=ring("U4", 7) + [ep]) == []                                  # QFN-28
+    split = [pad("U4", f"E{i}{j}", 29 + i, 19 + j, "GND", w=0.8, h=0.8) for i in range(3) for j in range(3)]
+    assert _caps(pads=ring("U4", 5) + split) == []                                 # exposed pad split into a 3x3 copper grid
+    big = [_sp("U1", f"{r}{c}", 10 + c * 0.8, 10 + r * 0.8, f"N{r}{c}") for r in range(5) for c in range(5)]
+    assert any("BGA" in m for m in _caps(pads=big))
+    cls = []
+    assert route.capability_check({"rules": [{"RULEKIND": "MatchedLengths", "NAME": "M", "ENABLED": "TRUE",
+                                              "SCOPE1EXPRESSION": "InNetClass('USB')"}], "pads": []}, None, None, 0.1, warnings=cls) == []
+    assert len(cls) == 1 and "verify the rule by hand" in cls[0]
     imp = _caps(rules=[{"RULEKIND": "MaxMinImpedance", "NAME": "Imp", "ENABLED": "TRUE", "SCOPE1EXPRESSION": "InNet('CLK')"}])
     assert len(imp) == 1 and "impedance" in imp[0]
     assert _caps(rules=[{"RULEKIND": "MatchedLengths", "NAME": "M", "ENABLED": "FALSE"}]) == []        # disabled: nothing to do
@@ -229,7 +246,7 @@ def test_capability_check_refuses_what_the_router_cannot_do_with_what_to_do_inst
 def test_route_on_refuses_without_drawing_when_the_router_cannot_do_it(tmp_path, monkeypatch):
     import altium.pcbdoc as pcbdoc
     calls = _route_fakes(monkeypatch, tmp_path)
-    doc = {"nets": ["A"], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A")], "rules": [{"RULEKIND": "MaxMinImpedance", "ENABLED": "TRUE"}]}
+    doc = {"nets": ["A"], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A")], "rules": [{"RULEKIND": "MaxMinImpedance", "ENABLED": "TRUE", "SCOPE1EXPRESSION": "All"}]}
     monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
     monkeypatch.setattr(bridge, "run_drc", lambda *a: pytest.fail("ran the DRC although the board is refused"))
     res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)

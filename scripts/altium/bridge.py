@@ -828,20 +828,27 @@ def _pcbcheck_info(log):
 
 def parse_drc(path):
     """The batch design rule check text report: {"rules": {rule text: count}, "violations": [message], "unrouted": n, "total": n,
-    "complete": bool, "clean": bool}. complete is True only when the report was read in full: at least one rule line, every
-    "Rule Violations" line has a whole-number count, no rule is listed twice with different counts, and the detail lines agree with
-    the counts (a report with details but a zero total is not believed). clean = complete and total == 0: anything else is unchecked."""
+    "complete": bool, "clean": bool}. The "Rule Violations|Total|N" line is not a rule: it is the report's own total. total is the sum
+    of the rules; complete is True only when that Total line exists AND equals the sum (a truncated report fails this), at least one
+    rule line was read, every "Rule Violations" line has a whole-number count, no rule is listed twice with different counts, and
+    details do not appear under a zero total. clean = complete and total == 0: anything else is unchecked."""
     try:
         text = pathlib.Path(path).read_text(encoding="cp1252", errors="replace")
     except OSError:
         return None
     rules, violations = {}, []
     complete = True
+    stated = None
     for line in text.splitlines():
         parts = line.split("|")
         if parts[0].startswith("Rule Violations"):
             if len(parts) == 3 and parts[1].strip() and parts[2].strip().isdigit():
                 name, n = parts[1].strip(), int(parts[2])
+                if name.lower() == "total":
+                    if stated is not None and stated != n:
+                        complete = False
+                    stated = n
+                    continue
                 if rules.get(name, n) != n:
                     complete = False
                 rules[name] = n
@@ -850,7 +857,7 @@ def parse_drc(path):
         elif len(parts) >= 4 and parts[1] == "" and parts[2] == "":
             violations.append(f"{parts[0].strip()}: {parts[3].strip()}")
     total = sum(rules.values())
-    if not rules or (violations and total == 0):
+    if not rules or stated is None or stated != total or (violations and total == 0):
         complete = False
     unrouted = sum(v for k, v in rules.items() if k.startswith("Un-Routed Net"))
     return {"rules": rules, "violations": violations, "unrouted": unrouted, "total": total,
@@ -1173,7 +1180,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
     rules = route.rules_from_doc(doc)
     rules.update(net_current=currents or {}, net_estimate=estimates or {}, allow_narrow=bool(keep_partial), **(copper or {}))      # widths by current (netcurrent.py)
-    refused = route.capability_check(doc, rules, box, pitch)      # what this router cannot do is said before anything is run or drawn
+    cap_warn = []
+    refused = route.capability_check(doc, rules, box, pitch, warnings=cap_warn)      # what this router cannot do is said before anything is run or drawn
     if refused:
         return {"routed": [], "failed": [], "tracks": 0, "vias": 0, "stats": {}, "rules": {}, "widths": {}, "backup": "",
                 "problems": ["not routed, nothing was drawn: " + "; ".join(refused)], "refusals": refused, "restored": False,
@@ -1192,7 +1200,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": shown, "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped,
-           "pour_warnings": [], "drc_line": "unchecked (not run)", "drc_clean": False}
+           "pour_warnings": [], "capability_warnings": cap_warn, "drc_line": "unchecked (not run)", "drc_clean": False}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
@@ -1437,7 +1445,7 @@ def route_pcb(project, replace=False, keep_partial=False):
                           + (" The board file was put back as it was before (backup kept)." if res["restored"]
                              else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
                              else f" Backup in {res['backup']}."))
-    res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
     return res
 

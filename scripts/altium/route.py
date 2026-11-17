@@ -1095,32 +1095,38 @@ HAND = "route these by hand or with Altium's interactive router (Route > Interac
 
 
 def _is_bga(pads):
-    """True when the SMD pads of one part form an area array: a pad with a neighbour at the same pitch on all four sides (a part
-    with pads only along its edges, a dual or quad row, never has one)."""
-    pts = [(p["x_mm"], p["y_mm"]) for p in pads if p.get("x_mm") is not None and p.get("y_mm") is not None]
+    """True when the SMD pads of one part form an area array. Only pads of the part's most common pad size count (a QFN's exposed pad,
+    also one split into a grid of copper pads, is another size): a pad of that size with a same-size neighbour at the pitch on all
+    four sides is an interior ball, and at least 2 such pads are needed. A dual or quad row, or a QFN, has none."""
+    sized = [(round(p.get("sx_mm") or 0, 2), round(p.get("sy_mm") or 0, 2), p["x_mm"], p["y_mm"]) for p in pads
+             if p.get("x_mm") is not None and p.get("y_mm") is not None]
+    if len(sized) < 9:
+        return False
+    sizes = {}
+    for sx, sy, _, _ in sized:
+        sizes[(sx, sy)] = sizes.get((sx, sy), 0) + 1
+    common = max(sizes, key=lambda k: (sizes[k], k))
+    pts = [(x, y) for sx, sy, x, y in sized if (sx, sy) == common]
     if len(pts) < 9:
         return False
-    for (x, y) in pts:
-        near = [(abs(a - x), abs(b - y)) for a, b in pts if (a, b) != (x, y) and math.hypot(a - x, b - y) < 2.5]
-        if not near:
-            continue
-        d = min(math.hypot(dx, dy) for dx, dy in near)
-        if d < 0.2:
-            continue
-        tol = 0.15 * d
-        ex = [a for a, b in pts if abs(b - y) < tol and a != x]
-        ey = [b for a, b in pts if abs(a - x) < tol and b != y]
-        if (any(abs(abs(a - x) - d) < tol and a < x for a in ex) and any(abs(abs(a - x) - d) < tol and a > x for a in ex)
-                and any(abs(abs(b - y) - d) < tol and b < y for b in ey) and any(abs(abs(b - y) - d) < tol and b > y for b in ey)):
-            return True
-    return False
+    d = min((math.hypot(a - x, b - y) for i, (x, y) in enumerate(pts) for a, b in pts[i + 1:]), default=0)
+    if d < 0.2:
+        return False
+    tol = 0.15 * d
+
+    def has(x, y, dx, dy):
+        return any(abs(a - (x + dx)) < tol and abs(b - (y + dy)) < tol for a, b in pts)
+    interior = sum(1 for x, y in pts if has(x, y, d, 0) and has(x, y, -d, 0) and has(x, y, 0, d) and has(x, y, 0, -d))
+    return interior >= 2
 
 
-def capability_check(doc, rules=None, box=None, pitch=0.1):
+def capability_check(doc, rules=None, box=None, pitch=0.1, warnings=None):
     """What the router cannot do on this board, said BEFORE routing: a list of plain texts (empty = nothing found that it cannot do;
     it never means the board is routable). Each text says what to do instead. Only what is certain from the file is refused:
     copper on an inner layer (more than 2 layers), an area array (BGA), pads closer than FINE_PITCH_MM between nets, an enabled
-    impedance / length-matching / length rule on nets other than the USB pair, and a board of more than MAX_CELLS grid cells."""
+    impedance / length-matching / length rule on nets other than the USB pair, and a board of more than MAX_CELLS grid cells.
+    A rule whose scope cannot be resolved to nets (a net class, a differential pair, any other expression) is no refusal: a text
+    "not checked, verify the rule by hand" is appended to `warnings` (a list, when given)."""
     out = []
     doc = doc or {}
     inner = sorted({o.get("layer") for k in ("pads", "tracks", "arcs", "vias", "fills", "regions") for o in doc.get(k, [])
@@ -1141,7 +1147,7 @@ def capability_check(doc, rules=None, box=None, pitch=0.1):
             continue
         nets = [p for p in ps if p.get("net") and p.get("x_mm") is not None]
         for i, a in enumerate(nets):
-            if any(a["net"] != b["net"] and math.hypot(a["x_mm"] - b["x_mm"], a["y_mm"] - b["y_mm"]) < FINE_PITCH_MM - 1e-6
+            if any(a["net"] != b["net"] and math.hypot(a["x_mm"] - b["x_mm"], a["y_mm"] - b["y_mm"]) < FINE_PITCH_MM - 1e-4
                    for b in nets[i + 1:]):
                 fine.append(r)
                 break
@@ -1158,8 +1164,14 @@ def capability_check(doc, rules=None, box=None, pitch=0.1):
         what = _NOT_SUPPORTED_RULES.get(r.get("RULEKIND"))
         if not what or str(r.get("ENABLED", "TRUE")).upper() != "TRUE":
             continue
-        nets = set(_INNET.findall(r.get("SCOPE1EXPRESSION", "")))
+        scope = str(r.get("SCOPE1EXPRESSION", "")).strip()
+        nets = set(_INNET.findall(scope))
         if nets and nets <= usb:
+            continue
+        if not nets and scope.lower() != "all":      # a net class, a differential pair, ...: which nets it covers is not known here
+            if warnings is not None:
+                warnings.append(f"rule '{r.get('NAME') or r.get('RULEKIND')}' ({what}) has a scope this tool cannot resolve to nets "
+                                f"({scope or 'empty'}): not checked, verify the rule by hand (the router does not control {what} except on the USB pair)")
             continue
         out.append(f"the board has an enabled rule '{r.get('NAME') or r.get('RULEKIND')}' for {what}: the router only couples and length-matches the "
                    f"USB D+/D- pair and does not control impedance or length elsewhere; {HAND}, or disable the rule if it is not needed")

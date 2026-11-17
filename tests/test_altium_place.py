@@ -43,7 +43,7 @@ def test_parse_drc(tmp_path):
 
 def test_parse_drc_lists_every_rule_and_is_clean_only_when_read_in_full(tmp_path):
     good = ("Rule Violations|Clearance Constraint (Gap=0.127mm) (All),(All)|0\nRule Violations|Short-Circuit Constraint (Allowed=No)|0\n"
-            "Rule Violations|Width Constraint (Min=0.127mm)|0\nRule Violations|Un-Routed Net Constraint ( (All) )|3\n")
+            "Rule Violations|Width Constraint (Min=0.127mm)|0\nRule Violations|Un-Routed Net Constraint ( (All) )|3\nRule Violations|Total|3\n")
     f = tmp_path / "a.txt"
     f.write_text(good, encoding="cp1252")
     r = bridge.parse_drc(f)
@@ -66,6 +66,27 @@ def test_a_malformed_or_partial_drc_report_is_unchecked_never_clean(tmp_path, te
     assert bridge.drc_line(r).startswith("unchecked")
     assert not bridge.drc_clean(None) and bridge.drc_line(None).startswith("unchecked")
     assert not bridge.drc_clean({"rules": {"Clearance": 0}, "total": 0})        # no "complete" flag: not clean
+
+
+def test_total_line_is_not_a_rule_and_must_match_the_sum(tmp_path):
+    body = "Rule Violations|Clearance|0\nRule Violations|Un-Routed Net Constraint|2\n"
+    f = tmp_path / "t.txt"
+    f.write_text(body + "Rule Violations|Total|2\n", encoding="cp1252")
+    r = bridge.parse_drc(f)
+    assert r["total"] == 2 and r["complete"] and "Total" not in r["rules"]
+    for bad in (body, body + "Rule Violations|Total|5\n"):          # no Total line (truncated) / a Total that does not add up
+        f.write_text(bad, encoding="cp1252")
+        r = bridge.parse_drc(f)
+        assert not r["complete"] and not r["clean"] and bridge.drc_line(r).startswith("unchecked")
+
+
+def test_real_altium_batch_report_parses_complete_with_the_right_total():
+    import pathlib
+    fx = pathlib.Path(__file__).parent / "fixtures" / "drc" / "unrouted-20.txt"
+    r = bridge.parse_drc(fx)
+    assert r["complete"] and r["total"] == 20 and r["unrouted"] == 12 and not r["clean"] and "Total" not in r["rules"]
+    assert len(r["rules"]) == 18 and len(r["violations"]) == 20
+    assert bridge.drc_line(r).endswith("total 20") and "Un-Routed Net 12" in bridge.drc_line(r)
 
 
 def test_pcbcheck_info():
