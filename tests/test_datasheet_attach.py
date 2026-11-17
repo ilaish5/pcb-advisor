@@ -76,11 +76,11 @@ def test_attach_by_designator_verifies_the_pins(home, empty):
     _bom(empty, ("U1", "XYZ9000"))
     store.write_sheet(empty, "01", {"id": "01", "title": "T", "parts": [{"ref": "U1", "pins": [
         {"num": "1", "name": "GND", "net": "GND"}, {"num": "2", "name": "VCC", "net": "3V3"}]}]})
-    _doc(empty, "whatever.pdf", "Pin 1 GND ground. Pin 2 VCC supply")
+    _doc(empty, "whatever.pdf", "XYZ9000 datasheet\nPin Functions\nPIN NAME\n1 GND Ground\n2 VCC Supply\n")
     r = store.attach_datasheet(empty, "U1", "whatever.pdf")
     assert r["status"] == "verified" and r["line"] == "U1"
     assert store.bom(empty, write=False)[0]["datasheet"] == "whatever.pdf"
-    _doc(empty, "other.pdf", "Pin 1 GND only")
+    _doc(empty, "other.pdf", "XYZ9000 datasheet\nPin Functions\nPIN NAME\n1 GND Ground\n2 VIN Supply\n")
     assert store.attach_datasheet(empty, "U1", "other.pdf")["status"] == "mismatch"
     store.detach_datasheet(empty, "U1")
     assert not {l["key"]: l for l in store.bom_lines(empty)}["U1"]["datasheet"]

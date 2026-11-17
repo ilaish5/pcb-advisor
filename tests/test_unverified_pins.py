@@ -18,11 +18,13 @@ def _sheet(empty):
     return store.write_sheet(empty, "01", sheet)
 
 
-def _datasheet(empty, text):
+def _datasheet(empty, rows):
+    """A datasheet text of ABCD1234 with a pin table whose rows are `rows` (one per line)."""
     folder = sources.folder_of(empty)
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "ABCD1234.pdf").write_bytes(b"%PDF-1.4 x")
-    (folder / "ABCD1234.pdf.txt").write_text(text, encoding="utf-8")
+    (folder / "ABCD1234.pdf.txt").write_text("ABCD1234 datasheet\nPin Functions\nPIN NAME DESCRIPTION\n" + "\n".join(rows) + "\n",
+                                             encoding="utf-8")
 
 
 def test_ic_without_datasheet_is_written_and_marked_passives_are_not(empty):
@@ -36,7 +38,7 @@ def test_ic_without_datasheet_is_written_and_marked_passives_are_not(empty):
 
 def test_datasheet_then_verify_clears_the_mark(empty):
     _sheet(empty)
-    _datasheet(empty, "1 VCC 2 GND")
+    _datasheet(empty, ["1 VCC Supply", "2 GND Ground"])
     assert [u["line"] for u in store.unverified_parts(empty)] == []     # found the datasheet and verified
     assert store.load_sheet(empty, "01")["parts"][0]["pins_source"] == "datasheet"
     assert {l["key"]: l for l in store.bom(empty)}["U1"]["pins_status"] == "verified"
@@ -44,7 +46,7 @@ def test_datasheet_then_verify_clears_the_mark(empty):
 
 def test_conflicting_datasheet_raises_a_finding_and_accept_resolves_it(empty):
     _sheet(empty)
-    _datasheet(empty, "1 VDD 2 GND")
+    _datasheet(empty, ["1 VIN Supply", "2 GND Ground"])
     item = store.unverified_parts(empty)[0]
     assert item["status"] == "mismatch" and "VCC" in item["issues"]
     store.accept_pins(empty, "U1")
@@ -140,5 +142,7 @@ def test_diode_never_runs_the_datasheet_text_check(empty):
 def test_connector_with_datasheet_stays_unverified_until_verified():
     line = {"refs": ["J1"], "key": "J1", "datasheet": "usb.pdf"}
     assert store.pins_status(line, {"verify": "unchecked"})[0] == "unverified"
-    assert store.pins_status(line, {"verify": "pass"})[0] == ""
+    assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == ""
+    assert store.pins_status(line, {"verify": "pass"})[0] == "unverified"        # an older pass is not a verification
+    assert store.pins_status(line, {"verify": "pass", "accepted": True})[0] == ""   # an accept is never revoked
     assert store.pins_status(line, {"pins_accepted": True})[0] == ""

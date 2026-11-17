@@ -217,6 +217,27 @@ def library_parts(project):
     return parts
 
 
+def passed_by_table(entry):
+    """A pass that the datasheet's pin-table check wrote (method "pin-table"). An older pass, from the text matching that
+    could pass a swapped pair, is not a verification."""
+    entry = entry or {}
+    return entry.get("verify") == "pass" and entry.get("method") == "pin-table"
+
+
+def _legacy_pass(entry):
+    """verify == "pass" without the pin-table method and not accepted by the student: it must be verified again."""
+    entry = entry or {}
+    return (entry.get("verify") == "pass" and entry.get("method") != "pin-table"
+            and not (entry.get("accepted") or entry.get("pins_accepted")))
+
+
+def ui_entry(entry):
+    """The library entry as the page shows it: a legacy pass reads as unchecked (Verify, not Accept). An accept is never revoked."""
+    if not _legacy_pass(entry):
+        return entry
+    return {**entry, "verify": "unchecked", "legacy_pass": True}
+
+
 def library_status(line, entry):
     if line.get("library") == "std":
         return "std"
@@ -315,7 +336,7 @@ def bom(project, write=True):
         l["supply"] = supply.get(l["key"])
         entry = lib.get(l["key"])
         l["library"] = manifest_status(library_status(l, entry), man.get(l["key"]))
-        l["library_entry"] = entry
+        l["library_entry"] = ui_entry(entry)
         l["pins_status"], l["pins_issues"] = pins_status(l, entry, project)
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
         l["role"] = l.get("role") or ""
@@ -2644,7 +2665,8 @@ def pins_status(line, entry, project=None):
     if all(is_simple_ref(r) for r in refs):
         kinds = {_prefix_of(r) for r in refs}
         conn, pol = kinds & set(CONNECTOR_PREFIXES), kinds & set(POLARISED_PREFIXES)
-        if not (conn or pol) or entry.get("pins_accepted") or entry.get("verify") == "pass":
+        if not (conn or pol) or entry.get("pins_accepted") or passed_by_table(entry) \
+                or (entry.get("accepted") and entry.get("verify") == "pass"):
             return "", ""
         if entry.get("verify") == "mismatch":
             return "mismatch", entry.get("issues", "")
@@ -2653,8 +2675,12 @@ def pins_status(line, entry, project=None):
                 return "unverified", f"{refs[0]}: {line['datasheet']} is linked, but the pin numbers and names are not verified yet"
             return "unverified", f"{refs[0]}: no datasheet linked, the pin numbers and names were never verified"
         return "unverified", _polarity_note(project, line)
-    if entry.get("verify") == "pass":
+    if passed_by_table(entry):
         return "verified", ""
+    if entry.get("verify") == "pass":            # a pass without the pin-table method (older text matching): not a verification
+        if entry.get("pins_accepted") or entry.get("accepted"):
+            return "accepted", ""
+        return "unverified", "an earlier check passed this part by text matching; verify it again against the datasheet's pin table"
     if entry.get("verify") == "mismatch":
         return ("accepted" if entry.get("pins_accepted") else "mismatch"), entry.get("issues", "")
     if entry.get("pins_accepted"):
