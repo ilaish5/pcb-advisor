@@ -38,7 +38,7 @@ def _tokens(meta, key):
 def record(project, session, kind, res, seconds, reply="", applied=0, proposed=0, refused=0) -> dict:
     """One line per engine turn. `res` is what agent.respond / agent.compact got back from the gateway."""
     meta = res.get("usage") or {}
-    tools = [t.get("t") for t in res.get("tools") or [] if isinstance(t, dict) and t.get("t")]
+    tools = [t.get("t") for t in res.get("tools") or [] if isinstance(t, dict) and t.get("t") and t.get("st") != "bad"]
     rec = {"ts": store.now(), "session": session or "", "kind": kind, "engine": res.get("provider") or "",
            "model": res.get("model") or ", ".join(meta.get("models") or []), "seconds": round(seconds, 1),
            "ok": not res.get("error"),

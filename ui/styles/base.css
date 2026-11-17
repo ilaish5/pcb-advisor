@@ -93,7 +93,7 @@ p{margin:0}
 .m,code,kbd{font-family:var(--f-mono)}
 .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
 .muted{color:var(--ink-3)}
-.ok-t{color:var(--ok)} .warn-t{color:var(--warn)} .bad-t{color:var(--bad)}
+.ok-t{color:var(--ok)} .warn-t{color:var(--warn)} .bad-t{color:var(--bad)} .dim-t{color:var(--ink-4)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 [hidden]{display:none !important}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important}}

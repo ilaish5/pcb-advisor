@@ -204,3 +204,14 @@ def test_the_chat_draws_the_check_on_each_chip():
     assert "fmt(m.text, m.cites)" in chat, "the agent record's check reaches its chips"
     assert "m.cites.state" in chat, "a result arriving redraws the thread"
     assert "citeChips" not in (REPO / "ui/js/markdown.js").read_text(encoding="utf-8")
+
+
+def test_cjk_quotes_can_go_green_and_one_short_quote_among_long_ones_does_not_downgrade(empty):
+    d = sources.folder_of(empty)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "c.txt").write_text("电容应当尽量靠近电源引脚放置以减小回路面积。 Output is 3 V. Place the decoupling capacitor close to the pin.", encoding="utf-8")
+    assert background.check_one(empty, "c.txt", '"电容应当尽量靠近电源引脚放置以减小回路面积"')["status"] == "ok"
+    assert background.check_one(empty, "c.txt", '"电容应当"')["status"] == "file_only"
+    both = background.check_one(empty, "c.txt", '"Output is 3 V" and "Place the decoupling capacitor close to the pin"')
+    assert both["status"] == "ok"
+    assert background.check_one(empty, "c.txt", '"Place the decoupling capacitor close to the pin" "not in the file at all, really"')["status"] == "not_found"

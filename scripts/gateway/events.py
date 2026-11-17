@@ -18,6 +18,16 @@ def _base(path):
     return os.path.basename(str(path).replace("\\", "/").rstrip("/")) or str(path)
 
 
+SCRIPT_RUN = re.compile(r"""(?:^|[\s"'])(?:[^\s"']*[/\\])?scripts[/\\](?:[\w.-]+[/\\])*[\w.-]+\.py""")
+
+
+def is_script_run(tool_name, tool_input=None):
+    """True for a Bash/PowerShell command that runs one of the tool's own scripts (python .../scripts/x.py);
+    `ls`, `cat notes.txt` and the like are not."""
+    inp = tool_input if isinstance(tool_input, dict) else {}
+    return str(tool_name or "") in ("Bash", "PowerShell") and bool(SCRIPT_RUN.search(str(inp.get("command") or "")))
+
+
 def label(tool_name, tool_input=None):
     """Short English label (<= 80 chars) for one tool call."""
     inp = tool_input if isinstance(tool_input, dict) else {}

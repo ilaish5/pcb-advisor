@@ -261,41 +261,65 @@ def _strip_fence(text):
     return (fenced.group(1) if fenced else body).strip()
 
 
+FENCE_OPEN = r"(?m)^```json[ \t]*\n"        # exactly json (not jsonc / json5), at the start of a line
+
+
+def _meant_as_actions(block):
+    return "actions" in block or re.search(r'"type"\s*:', block) is not None
+
+
 def _parse(text):
     """Pull the actions block out; tolerate a model that forgets it. Returns (reply, actions, claimed_tools, problems).
-    A block that cannot be read, or that was cut off before its closing fence, is a problem the student is told about:
-    never a silent skip, and never shown as reply text."""
+    A block meant as actions that cannot be read, or that was cut off before its closing fence, is a problem the student
+    is told about; any other unreadable json block (an example in the explanation) is just left out of the reply."""
     text = text or ""
-    blocks = re.findall(r"```json\s*(.*?)```", text, re.S)
+    pat = re.compile(FENCE_OPEN + r"(.*?)```", re.S)
     actions, tools, problems = [], [], []
-    for b in blocks:
+    for b in pat.findall(text):
         try:
             obj = json.loads(b)
         except json.JSONDecodeError as exc:
-            problems.append(f"the reply's actions block could not be read (JSON error at line {exc.lineno}); nothing in it was applied")
+            if _meant_as_actions(b):
+                problems.append(f"the reply's actions block could not be read (JSON error at line {exc.lineno}); nothing in it was applied")
             continue
         if isinstance(obj, dict):
             actions.extend(obj.get("actions", []))
             tools.extend(t for t in obj.get("tools", []) if isinstance(t, dict) and t.get("t"))
         elif isinstance(obj, list):
             actions.extend(obj)
-    reply = re.sub(r"```json\s*.*?```", "", text, flags=re.S)
-    cut = re.search(r"```json.*\Z", reply, re.S)        # an opening fence that never closes: the reply was cut off
+    reply = pat.sub("", text)
+    cut = re.search(FENCE_OPEN + r".*\Z", reply, re.S)        # an opening fence that never closes: the reply was cut off
     if cut:
-        problems.append("the reply's actions block was cut off before its end; nothing in it was applied")
+        if _meant_as_actions(cut.group(0)):
+            problems.append("the reply's actions block was cut off before its end; nothing in it was applied")
         reply = reply[:cut.start()]
     return reply.strip(), actions, tools, problems
 
 
-def real_tools(meta):
-    """Tool chips come from what the engine really ran (its stream events), never from the model's own list.
-    Only script runs are chips; an engine with no event stream (no steps) shows none."""
+def _stem(s):
+    return re.sub(r"[^a-z0-9]", "", str(s).lower())
+
+
+def real_tools(meta, claimed=()):
+    """Tool chips. An engine that reports its steps (meta["stream"]): the chips are its real runs of the tool's own
+    scripts, failed ones marked bad, each keeping the detail `d` of the model's claimed chip for the same script; a
+    claim with no real run is dropped. An engine with no step stream: the model's claims, marked "claimed" (unconfirmed)."""
     from gateway import events
-    denied = {events.label(d.get("tool"), d.get("input")) for d in (meta or {}).get("denied") or [] if isinstance(d, dict)}
+    meta = meta or {}
+    claimed = [c for c in claimed or [] if isinstance(c, dict) and c.get("t")]
+    if not meta.get("stream"):
+        return [{**c, "s": "claimed"} for c in claimed]
+    denied = {events.label(d.get("tool"), d.get("input")) for d in meta.get("denied") or [] if isinstance(d, dict)}
     out = []
-    for lab in (meta or {}).get("steps") or []:
-        if str(lab).startswith("Running "):
-            out.append({"t": lab, "st": "warn" if lab in denied else "ok"})
+    for r in meta.get("runs") or []:
+        lab = r["label"]
+        script = re.search(r"([\w.-]+)\.py", lab)
+        chip = {"t": lab, "st": "bad" if r.get("failed") else "warn" if lab in denied else "ok"}
+        if script:
+            mine = next((c for c in claimed if _stem(script.group(1)) in _stem(f"{c.get('t')} {c.get('d', '')}")), None)
+            if mine and mine.get("d"):
+                chip["d"] = mine["d"]
+        out.append(chip)
     return out
 
 
@@ -399,6 +423,6 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
                 "backend": res.provider or name, "provider": res.provider or name,
                 "error": True, **turn, **took}
 
-    reply, actions, _claimed, problems = _parse(res.text)
-    return {"reply": reply or "(no reply)", "actions": actions, "tools": real_tools(meta), "parse_refused": problems,
+    reply, actions, claimed, problems = _parse(res.text)
+    return {"reply": reply or "(no reply)", "actions": actions, "tools": real_tools(meta, claimed), "parse_refused": problems,
             "backend": res.provider, "provider": res.provider, "model": res.model, **turn, **took}

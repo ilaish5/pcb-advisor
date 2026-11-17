@@ -263,3 +263,19 @@ def test_options_reach_the_runner(home, monkeypatch):
     gateway.route(gateway.Request(prompt="p", timeout=33, options={"cancel": ev, "idle_timeout": 11}),
                   name="claude_code")
     assert seen["cancel"] is ev and seen["idle_timeout"] == 11 and seen["total_timeout"] == 33
+
+
+def test_a_crashed_script_run_is_marked_failed_and_a_plain_command_is_no_run():
+    def use(i, cmd):
+        return _line(type="assistant", message={"content": [{"type": "tool_use", "id": i, "name": "Bash", "input": {"command": cmd}}]})
+
+    def res(i, **kw):
+        return _line(type="user", message={"content": [{"type": "tool_result", "tool_use_id": i, **kw}]})
+    lines = [use("a", "python scripts/check_stock.py --all"), res("a", content="ok"),
+             use("b", "python scripts/crash.py"), res("b", content="Exit code 1\nTraceback"),
+             use("c", "python scripts/err.py"), res("c", is_error=True, content="boom"),
+             use("d", "ls -la"), res("d", content="x"),
+             _line(type="result", result="done", usage={})]
+    text, meta, err = ClaudeCodeProvider._parse("\n".join(lines))
+    assert meta["stream"] is True and len(meta["steps"]) == 4          # every step is a step, but only script runs are runs
+    assert [(r["label"].split()[1], r["failed"]) for r in meta["runs"]] == [("check_stock.py", False), ("crash.py", True), ("err.py", True)]

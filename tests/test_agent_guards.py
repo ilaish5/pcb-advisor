@@ -211,14 +211,28 @@ def test_a_good_actions_block_still_parses():
     assert agent._parse("just words")[3] == []
 
 
-def test_tool_chips_come_from_real_steps_not_from_the_model():
-    meta = {"steps": ["Reading a.md", "Running check_stock.py --all", "Running other.py"],
+
+
+def test_chips_of_a_streaming_engine_are_its_real_script_runs_with_the_claimed_detail():
+    meta = {"stream": True, "runs": [{"label": "Running check_stock.py --all", "failed": False},
+                                     {"label": "Running other.py", "failed": False},
+                                     {"label": "Running crash.py", "failed": True}],
             "denied": [{"tool": "Bash", "input": {"command": "python scripts/other.py"}}]}
-    assert agent.real_tools(meta) == [{"t": "Running check_stock.py --all", "st": "ok"}, {"t": "Running other.py", "st": "warn"}]
-    assert agent.real_tools({}) == [] and agent.real_tools(None) == []      # an engine with no event stream: no chips
+    claimed = [{"t": "Check availability (check_stock)", "d": "18 lines - LCSC", "st": "ok"},
+               {"t": "Never ran this", "d": "x", "st": "ok"}]
+    chips = agent.real_tools(meta, claimed)
+    assert chips == [{"t": "Running check_stock.py --all", "st": "ok", "d": "18 lines - LCSC"},
+                     {"t": "Running other.py", "st": "warn"}, {"t": "Running crash.py", "st": "bad"}]
+    assert agent.real_tools({"stream": True}, claimed) == []          # a stream with no script run: the claim is dropped
 
 
-def test_respond_ignores_tools_the_model_claims(monkeypatch):
+def test_an_engine_without_a_step_stream_keeps_the_claims_marked_unconfirmed():
+    claimed = [{"t": "Check availability", "d": "18 lines", "st": "ok"}]
+    assert agent.real_tools({}, claimed) == [{"t": "Check availability", "d": "18 lines", "st": "ok", "s": "claimed"}]
+    assert agent.real_tools(None, []) == []
+
+
+def test_respond_chips_unconfirmed_without_events_and_real_with_them(monkeypatch):
     import gateway
     from gateway.base import Result
     text = 'Ran it.\n```json\n{"tools": [{"t": "Check availability", "st": "ok"}], "actions": []}\n```'
@@ -229,4 +243,23 @@ def test_respond_ignores_tools_the_model_claims(monkeypatch):
     monkeypatch.setattr(agent, "_add_dirs", lambda *a: [])
     monkeypatch.setattr(agent, "_summary", lambda m: "")
     out = agent.respond({"project": "p"}, "hi", [])
-    assert out["tools"] == [] and out["parse_refused"] == []
+    assert out["tools"] == [{"t": "Check availability", "st": "ok", "s": "claimed"}] and out["parse_refused"] == []
+    monkeypatch.setattr(gateway, "route", lambda req, name=None: Result(text=text, provider="claude_code", model="m", meta={"stream": True}))
+    assert agent.respond({"project": "p"}, "hi", [])["tools"] == []      # the engine streamed and ran nothing
+
+
+def test_an_example_that_is_not_strict_json_is_not_a_refusal():
+    ex = 'Set it like this:\n```json\n{"port": 8080, // comment\n "debug": true,}\n```\nDone.'
+    reply, actions, _t, problems = agent._parse(ex)
+    assert problems == [] and actions == [] and "8080" not in reply and "Done." in reply
+    assert agent._parse('x\n```json\n{"port": 8080, "x": [1,}\n')[3] == []        # cut-off example: dropped quietly too
+    assert len(agent._parse('x\n```json\n{"actions": [{"type": "a",}]}\n```')[3]) == 1
+    assert len(agent._parse('x\n```json\n[{"type": "a",}]\n```')[3]) == 1
+
+
+def test_only_an_exact_json_fence_at_a_line_start_counts():
+    assert agent._parse('a\n```jsonc\n{"actions": [{"type": "x",}]}\n```')[3] == []          # jsonc / json5 are not the actions block
+    assert agent._parse('a\n```json5\n{"actions": [{"type": "x"}]}\n```')[1] == []
+    reply, actions, _t, problems = agent._parse('Put it in a ```json fence.\n```json\n{"actions": [{"type": "idea.ready"}]}\n```')
+    assert actions == [{"type": "idea.ready"}] and problems == [] and reply == "Put it in a ```json fence."
+    assert agent._parse('a\n```json  \n{"actions": [{"type": "idea.ready"}]}\n```')[1] == [{"type": "idea.ready"}]
