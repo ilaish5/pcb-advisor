@@ -69,7 +69,7 @@ def _route_fakes(monkeypatch, tmp_path, drc_raises=False, read_raises=False):
     def fake_drc(prj, pcb, report):
         if state["read"] > 1 and drc_raises:
             raise bridge.BridgeError("Altium did not write the design rule check report.")
-        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True}
 
     monkeypatch.setattr(bridge, "run_commands", fake_run)
     monkeypatch.setattr(bridge, "run_drc", fake_drc)
@@ -117,6 +117,130 @@ def test_a_pour_with_no_copper_in_the_saved_file_is_not_reported_as_poured(tmp_p
     res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
     assert res["pour"] is None and "poured" not in res["summary"]
     assert "did not fill it (no copper)" in res["pour_warning"] and "Repour All" in res["pour_warning"]
+
+
+_POUR_DOC = {"nets": ["A", "GND"], "rules": [], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A"), pad("C1", "1", 5, 9, "GND"),
+                                                          pad("C2", "1", 10, 9, "GND"), pad("C3", "1", 15, 9, "GND")]}
+
+
+def _pour_route(monkeypatch, tmp_path, check):
+    import altium.pcbdoc as pcbdoc
+    import altium.pourcheck as pourcheck
+    calls = _route_fakes(monkeypatch, tmp_path)
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(_POUR_DOC, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 4)
+    monkeypatch.setattr(pourcheck, "check", check)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    return calls, res
+
+
+def test_pourcheck_unjoined_pad_is_a_problem_and_island_a_warning(tmp_path, monkeypatch):
+    unj = {"islands": [], "unjoined_pads": [{"ref": "C3", "name": "1", "x_mm": 1, "y_mm": 2}], "checked": True, "note": "n", "ok": False}
+    calls, res = _pour_route(monkeypatch, tmp_path, lambda doc, net=None, layer=None: unj)
+    assert any("pad C3-1" in p and "not joined" in p for p in res["problems"]) and res["restored"] and calls["restore"] == 1
+    isl = {"islands": [{"layer": 32, "bbox_mm": [1, 1, 2, 2], "area_mm2": 3.0, "polygon": "GND_Bottom", "remove_dead": False}],
+           "unjoined_pads": [], "checked": True, "ok": False,
+           "note": "1 cut-off copper piece(s) and 0 pad(s) of GND not reached. Remove Dead Copper is off in polygon GND_Bottom; turn it on and repour."}
+    calls, res = _pour_route(monkeypatch, tmp_path, lambda doc, net=None, layer=None: isl)
+    assert not [p for p in res["problems"] if "open nets" not in p]
+    assert len(res["pour_warnings"]) == 1 and "Remove Dead Copper is off" in res["pour_warnings"][0]
+
+
+def test_pourcheck_not_checked_or_raising_is_never_ok(tmp_path, monkeypatch):
+    nc = {"islands": [], "unjoined_pads": [], "checked": False, "note": "No poured copper could be read.", "ok": False}
+    _, res = _pour_route(monkeypatch, tmp_path, lambda doc, net=None, layer=None: nc)
+    assert not [p for p in res["problems"] if "open nets" not in p] and "pour not checked" in res["pour_warnings"][0]
+
+    def boom(doc, net=None, layer=None):
+        raise RuntimeError("surprise")
+    _, res = _pour_route(monkeypatch, tmp_path, boom)
+    assert not [p for p in res["problems"] if "open nets" not in p] and "pour not checked" in res["pour_warnings"][0] and "surprise" in res["pour_warnings"][0]
+    ok = {"islands": [], "unjoined_pads": [], "checked": True, "note": "fine", "ok": True}
+    _, res = _pour_route(monkeypatch, tmp_path, lambda doc, net=None, layer=None: ok)
+    assert res["pour_warnings"] == [] and not [p for p in res["problems"] if "open nets" not in p]
+
+
+def test_an_unreadable_drc_report_after_routing_is_unchecked_and_restores(tmp_path, monkeypatch):
+    calls = _route_fakes(monkeypatch, tmp_path)
+    state = {"n": 0}
+
+    def drc(prj, pcb, report):
+        state["n"] += 1
+        if state["n"] == 1:
+            return {"rules": {"Clearance": 0}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0, "complete": False, "clean": False}
+    monkeypatch.setattr(bridge, "run_drc", drc)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert any("unchecked" in p for p in res["problems"]) and res["restored"] and res["drc_clean"] is False
+    assert "unchecked" in res["summary"]
+
+
+def test_the_summary_lists_every_drc_rule_with_its_count(tmp_path, monkeypatch):
+    _route_fakes(monkeypatch, tmp_path)
+    full = {"rules": {"Clearance Constraint (Gap=0.127mm)": 0, "Width Constraint (Min=0.1mm)": 0, "Un-Routed Net Constraint": 0},
+            "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True}
+    monkeypatch.setattr(bridge, "run_drc", lambda prj, pcb, report: full)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert "Clearance 0, Width 0, Un-Routed Net 0, total 0 (clean)" in res["summary"] and res["drc_clean"] and res["drc_total"] == 0
+    assert res["drc_rules"] == full["rules"]
+
+
+def _caps(**kw):
+    doc = dict({"nets": [], "pads": [], "rules": []}, **kw)
+    return route.capability_check(doc, route.rules_from_doc(doc), [0, 0, 50, 40])
+
+
+def _sp(ref, n, x, y, net, layer=1):
+    return pad(ref, str(n), x, y, net, w=0.3, h=0.3, layer=layer)
+
+
+def test_capability_check_does_not_refuse_the_finished_board_fixtures():
+    import pathlib
+    from altium import pcbdoc
+    fx = pathlib.Path(__file__).parent / "fixtures" / "altium"
+    for name in ("finished-board.PcbDoc", "rules-board.PcbDoc"):
+        d = pcbdoc.read_pcbdoc(fx / name, geometry=True)
+        xs, ys = [p["x_mm"] for p in d["pads"]], [p["y_mm"] for p in d["pads"]]
+        box = [min(xs) - 5, min(ys) - 5, max(xs) + 5, max(ys) + 5]
+        assert route.capability_check(d, route.rules_from_doc(d), box) == [], name
+    assert _caps(pads=[pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A")]) == []
+
+
+def test_capability_check_refuses_what_the_router_cannot_do_with_what_to_do_instead():
+    inner = _caps(pads=[pad("R1", "1", 5, 5, "A")], tracks=[{"layer": 2, "net": "A", "x1_mm": 0, "y1_mm": 0, "x2_mm": 1, "y2_mm": 1, "width_mm": 0.2}])
+    assert len(inner) == 1 and "inner layers" in inner[0] and "Interactive" in inner[0]
+    bga = [_sp("U1", f"{r}{c}", 10 + c * 0.8, 10 + r * 0.8, f"N{r}{c}") for r in range(4) for c in range(4)]
+    out = _caps(pads=bga)
+    assert any("BGA" in m and "by hand" in m for m in out)
+    qfp = [_sp("U2", i, 10 + i * 0.5, 10, f"N{i}") for i in range(12)] + [_sp("U2", 20 + i, 10 + i * 0.5, 14, f"M{i}") for i in range(12)]
+    assert _caps(pads=qfp) == []                                                  # a dual row is not an area array
+    fine = [_sp("U3", i, 10 + i * 0.3, 10, f"N{i}") for i in range(4)]
+    assert any("U3" in m and "closer than" in m for m in _caps(pads=fine))
+    imp = _caps(rules=[{"RULEKIND": "MaxMinImpedance", "NAME": "Imp", "ENABLED": "TRUE", "SCOPE1EXPRESSION": "InNet('CLK')"}])
+    assert len(imp) == 1 and "impedance" in imp[0]
+    assert _caps(rules=[{"RULEKIND": "MatchedLengths", "NAME": "M", "ENABLED": "FALSE"}]) == []        # disabled: nothing to do
+    usb = [pad("J1", "1", 5, 5, "USB_DP"), pad("U1", "1", 15, 5, "USB_DP"), pad("J1", "2", 5, 8, "USB_DM"), pad("U1", "2", 15, 8, "USB_DM")]
+    assert _caps(pads=usb, rules=[{"RULEKIND": "MatchedLengths", "NAME": "M", "ENABLED": "TRUE",
+                                   "SCOPE1EXPRESSION": "InNet('USB_DP') or InNet('USB_DM')"}]) == []
+    big = route.capability_check({"pads": [], "rules": []}, None, [0, 0, 400, 300])
+    assert len(big) == 1 and "too large" in big[0]
+
+
+def test_route_on_refuses_without_drawing_when_the_router_cannot_do_it(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    calls = _route_fakes(monkeypatch, tmp_path)
+    doc = {"nets": ["A"], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A")], "rules": [{"RULEKIND": "MaxMinImpedance", "ENABLED": "TRUE"}]}
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(bridge, "run_drc", lambda *a: pytest.fail("ran the DRC although the board is refused"))
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert not res["written"] and res["refusals"] and "nothing was drawn" in res["summary"] and res["problems"]
+    assert calls["restore"] == 0 and calls["run"] == [["PROJECT", "PCBCHECK"]]
+
+
+def test_place_warnings_with_a_placement_error_are_not_cut_off_in_the_step_note():
+    ws = [f"w{i}" for i in range(6)] + ["placement error: C1 is 5 mm from U1 pin 3"]
+    tail = serve.place_summary({"placed": ["U1"], "outline_created": False, "warnings": ws})
+    assert "placement error: C1" in tail and "7 warnings" in tail
 
 
 def test_poured_copper_counts_polygon_regions_on_the_layer_from_the_file():
@@ -213,7 +337,7 @@ def test_a_pour_that_breaks_the_rules_is_taken_off_and_the_tracks_stay(tmp_path,
             return {"rules": {"Clearance Constraint (Gap=6mil)": 2, "Short-Circuit Constraint": 1},
                     "violations": ["Clearance Constraint (Gap=6mil): (Collision < 6mil) Between Pad J1-1 And Polygon Region (14 hole(s)) Bottom Layer"] * 2
                     + ["Short-Circuit Constraint: Between Pad J1-1 And Polygon Region Bottom Layer"], "unrouted": 0, "total": 3}
-        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True}
 
     monkeypatch.setattr(bridge, "run_drc", fake_drc)
     res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
@@ -238,7 +362,7 @@ def test_a_rule_break_that_is_not_the_pour_still_restores_the_board(tmp_path, mo
         if len(n) == 2:
             return {"rules": {"Clearance Constraint (Gap=6mil)": 1}, "violations": ["Clearance Constraint (Gap=6mil): Between Track A And Track B"],
                     "unrouted": 0, "total": 1}
-        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True}
 
     monkeypatch.setattr(bridge, "run_drc", fake_drc)
     res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
@@ -308,7 +432,7 @@ def _pour_broken_fakes(monkeypatch, tmp_path, copper_after, read_after_raises=Fa
         if len(n) == 2:
             return {"rules": {"Short-Circuit Constraint": 1}, "violations": ["Short-Circuit Constraint: Between Pad J1-1 And Polygon Region"],
                     "unrouted": 0, "total": 1}
-        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0}
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True}
 
     monkeypatch.setattr(bridge, "run_drc", fake_drc)
     return calls, sent

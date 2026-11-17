@@ -41,6 +41,33 @@ def test_parse_drc(tmp_path):
     assert bridge.parse_drc(tmp_path / "none.txt") is None
 
 
+def test_parse_drc_lists_every_rule_and_is_clean_only_when_read_in_full(tmp_path):
+    good = ("Rule Violations|Clearance Constraint (Gap=0.127mm) (All),(All)|0\nRule Violations|Short-Circuit Constraint (Allowed=No)|0\n"
+            "Rule Violations|Width Constraint (Min=0.127mm)|0\nRule Violations|Un-Routed Net Constraint ( (All) )|3\n")
+    f = tmp_path / "a.txt"
+    f.write_text(good, encoding="cp1252")
+    r = bridge.parse_drc(f)
+    assert r["total"] == 3 and r["complete"] and not r["clean"] and not bridge.drc_clean(r)
+    assert bridge.drc_line(r) == "Clearance 0, Short-Circuit 0, Width 0, Un-Routed Net 3, total 3"
+    f.write_text(good.replace("|3\n", "|0\n"), encoding="cp1252")
+    r = bridge.parse_drc(f)
+    assert r["clean"] and bridge.drc_clean(r) and bridge.drc_line(r).endswith("total 0 (clean)")
+
+
+@pytest.mark.parametrize("text", ["", "nothing useful here\n", "Rule Violations|Clearance|x\nRule Violations|Width|0\n",
+                                  "Rule Violations|Clearance|0\nRule Violations|Clearance|2\n",
+                                  "Rule Violations|Clearance|0\nClearance|||Track too close\n",           # details but a zero total
+                                  "Rule Violations|Clearance|0\nRule Violations|Width\n"])
+def test_a_malformed_or_partial_drc_report_is_unchecked_never_clean(tmp_path, text):
+    f = tmp_path / "m.txt"
+    f.write_text(text, encoding="cp1252")
+    r = bridge.parse_drc(f)
+    assert not r["clean"] and not r["complete"] and not bridge.drc_clean(r)
+    assert bridge.drc_line(r).startswith("unchecked")
+    assert not bridge.drc_clean(None) and bridge.drc_line(None).startswith("unchecked")
+    assert not bridge.drc_clean({"rules": {"Clearance": 0}, "total": 0})        # no "complete" flag: not clean
+
+
 def test_pcbcheck_info():
     log = ["pcbcheck objects=0 parts=0 tracks=0 outline_pts=4 box_mil=1000,1000,7000,5000"]
     i = bridge._pcbcheck_info(log)

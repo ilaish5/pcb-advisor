@@ -775,6 +775,7 @@ STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.s
 def _warn_tail(res):
     """" (N warnings: first four)" when the bridge result has warnings, else "": the same words in the chat and on the step buttons."""
     w = res.get("warnings") or []
+    w = [x for x in w if str(x).startswith("placement error")] + [x for x in w if not str(x).startswith("placement error")]   # a cap too far is never cut off by the first four
     return f" ({len(w)} warnings: {'; '.join(w[:4])})" if w else ""
 
 
