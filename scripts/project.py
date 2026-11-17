@@ -13,6 +13,7 @@ import shutil
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import project_guard  # noqa: E402
 import session  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
@@ -101,7 +102,9 @@ def ensure(name):
     (d / "sources").mkdir(exist_ok=True)
     (d / "chats").mkdir(exist_ok=True)
     for f in LOGS:
-        (d / f).touch()
+        if not (d / f).exists():
+            (d / f).touch()
+            project_guard.note(d / f, b"")
     (d / "netlist").mkdir(exist_ok=True)
     if not session.list_all(name):
         session.create(name, title="First conversation")
@@ -195,7 +198,9 @@ def set_altium_link(name, project_file="", pcb_file=None, outputs_dir=None) -> d
 def save_meta(name, meta):
     path = meta_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    text = json.dumps(meta, ensure_ascii=False, indent=2) + "\n"
+    path.write_text(text, encoding="utf-8")
+    project_guard.note(path)         # the bytes as the OS wrote them (newlines), read back
     return path
 
 

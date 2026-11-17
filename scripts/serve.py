@@ -37,6 +37,7 @@ import runlog            # noqa: E402
 import session as session_mod  # noqa: E402
 import sources           # noqa: E402
 import tool_guard        # noqa: E402
+import project_guard     # noqa: E402
 import store             # noqa: E402
 import workspace         # noqa: E402
 
@@ -2275,14 +2276,16 @@ class Handler(BaseHTTPRequestHandler):
                 _chat_info = {"project": proj, "engine": _eng, "model": workspace.get(f"agent.providers.{_eng}.model", "")}
                 runlog.event("chat", phase="begin", **_chat_info)
                 guard = tool_guard.begin()
+                pguard = project_guard.begin(proj)
                 BUSY["chat"] += 1
-                tool_edited, tool_unrestored = [], []
+                tool_edited, tool_unrestored, data_edited, data_unrestored = [], [], [], []
                 try:
                     res = agent.respond(m, ask, m["chat"][:-1], backend=BACKEND, cancel=turn["cancel"], typed=text, generated=generated,
                                         on_event=lambda ev, k=tkey: _turn_event(k, ev))
                 finally:
                     BUSY["chat"] -= 1
                     tool_edited, tool_unrestored = tool_guard.end(guard)     # the agent never keeps an edit of the tool's own files
+                    data_edited, data_unrestored = project_guard.end(pguard)  # nor a direct edit of the project's server-written data
                 if tool_edited or tool_unrestored:
                     print(f"[guard] the agent edited system files: restored {tool_edited}, not restorable {tool_unrestored}", file=sys.stderr, flush=True)
                 chat_meta = {}
@@ -2307,6 +2310,9 @@ class Handler(BaseHTTPRequestHandler):
                          **_chat_info)
             if tool_edited or tool_unrestored:
                 refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
+            if data_edited or data_unrestored:
+                print(f"[guard] the agent edited project files: restored {data_edited}, not restorable {data_unrestored}", file=sys.stderr, flush=True)
+                refused.append(project_guard.refusal(data_edited, data_unrestored))
             if proposals and not partial:
                 try:
                     gone = refs_missing_from_bom(proj, res.get("reply"))
