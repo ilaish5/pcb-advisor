@@ -19,7 +19,13 @@ GAP_MM = 0.6            # clearance between two courtyards (never below the JLC 
 COURT_MM = 0.25         # courtyard margin around pads
 STEP_MM = 0.5           # search grid
 CAP_SHARE_MM = 10.0     # a decoupling cap's score grows by this for every cap its IC already has (one cap per IC first)
-DECAP_NEAR_MM = 5.0      # a decoupling cap farther than this from its supply pin gets a warning (and the plan another try)
+DECAP_NEAR_MM = 3.0      # spec phase 3: pad-to-pad, a decoupling cap's rail pad within this of its supply pin pad; farther = an error finding
+DECAP_TOL_MM = 0.05      # a cap this much over DECAP_NEAR_MM still passes (so '3.0 mm, limit 3 mm' is never reported)
+DECAP_WINDOW_MM = 3.0   # the search for a place around a supply pin reaches this much beyond DECAP_NEAR_MM
+PIN_SHARE_MM = 100.0     # score added for every cap a supply pin already has: each pin gets its own cap while caps are left
+BULK_F = 10e-6           # a cap above this is bulk, not decoupling: placed near a pin but not held to DECAP_NEAR_MM
+XTAL_NEAR_MM = 5.0       # a crystal farther than this from the MCU oscillator pins gets a finding (placement guideline, ST AN2867)
+BIG_PAD_MM = 2.5         # a supply pad this big (a regulator tab) shares the cap of the pin beside it: not a pin that needs its own cap
 MAX_FILL = 0.55         # courtyard area / board area above which we refuse: nothing is left for routing
 MIL = 0.0254
 LABEL_H = 1.0          # designator text height, mm
@@ -54,6 +60,35 @@ def is_rail(net):
 def is_connector(ref):
     return bool(re.match(r"^(?:J|P|CON|TERM|USB)\d", ref, re.I))
 
+
+
+_UNIT_F = {"": 1.0, "p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "μ": 1e-6, "m": 1e-3}
+
+
+def cap_farads(value):
+    """Capacitance in farads from a BOM value like '100nF', '0.1uF', '4.7 uF 16V', '10u', or None when it cannot be read."""
+    m = re.match(r"^\s*(\d+(?:[.,]\d+)?)\s*(?:([pnuµμm])\s*F?|F)(?![A-Za-z])", str(value or ""), re.I)
+    return float(m.group(1).replace(",", ".")) * _UNIT_F[(m.group(2) or "").lower()] if m else None
+
+
+# Oscillator pin names of an MCU: OSC_IN/OSC_OUT, OSC32_IN/OUT, XTAL1/2, XTAL_IN/OUT, XIN/XOUT, PH0-OSC_IN, PC14-OSC32_IN
+_OSC_PIN = re.compile(r"(?<![A-Z0-9])(?:OSC\d*_?(?:IN|OUT)|XTAL\d?(?:_?(?:IN|OUT))?|X(?:IN|OUT)\d*)(?![A-Z])", re.I)
+_XTAL_TEXT = re.compile(r"crystal|xtal|resonator|\d\s*[kM]Hz", re.I)
+
+
+def is_osc_pin(name):
+    return bool(_OSC_PIN.search(str(name or "")))
+
+
+def is_crystal(part, npads):
+    """A crystal or resonator: a Y reference, or crystal/xtal/resonator/MHz in the BOM text, with 2 or 4 pads (a Y part may have 3)."""
+    ref = str(part.get("ref") or "")
+    if re.match(r"^Y\d", ref, re.I):
+        return 2 <= npads <= 4
+    if re.match(r"^[CRLDQUJP]\d", ref, re.I) or npads not in (2, 4):
+        return False
+    text = " ".join(str(part.get(k) or "") for k in ("value", "description", "lib_ref", "symbol", "comment"))
+    return bool(_XTAL_TEXT.search(text))
 
 
 def _sizes_in(text, topic=""):
@@ -215,12 +250,14 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
     best, best_key = None, None
     for shift in range(4):
         plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift)
-        far = sum(1 for w in plan["warnings"] if "decoupling cap is" in w)
+        far = sum(1 for f in plan.get("findings", []) if f["level"] == "error")
         key = (len(plan["errors"]), far)
         if best is None or key < best_key:
             best, best_key = plan, key
         if key == (0, 0) or not any(is_connector(p["ref"]) for p in parts):
             break
+    best.setdefault("findings", [])
+    best.setdefault("crystals", [])
     return best
 
 
@@ -234,7 +271,14 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
     Order: connectors flush with an edge (centred along it, turned so the opening faces out, their pads edge_copper_mm inside the
     outline), ICs largest first, then decoupling caps beside the supply pin they serve, then every other part beside the parts it
     shares signal nets with, pulled towards the middle of the board while the board is roomy. Readable, not optimal.
-    Returns {"places": [{ref, footprint, x, y, rot, label: [x, y], label_h}], "warnings": [...], "errors": [...]}"""
+    Crystals (a Y part, or crystal/xtal/resonator/MHz in its BOM text, whose nets reach MCU oscillator pins by pin name) are placed
+    right after the ICs as close as possible to those pins, their load caps (crystal net to GND) next to them; the crystal-to-pin
+    distance is reported in "crystals" and a finding says so above XTAL_NEAR_MM (ST AN2867 oscillator layout guideline).
+    Every supply pin of an IC gets its own nearest decoupling cap while caps are left (smallest value first, so 100 nF is nearest);
+    the target is DECAP_NEAR_MM pad to pad. "findings" [{level, ref, text}]: level "error" = a cap that is farther than that (also
+    copied into "warnings" as 'placement error: ...', since "errors" stops the placement), "warning" = a supply pin without a cap.
+    Returns {"places": [{ref, footprint, x, y, rot, label: [x, y], label_h}], "warnings": [...], "errors": [...], "findings": [...],
+    "crystals": [{ref, pins: [{pad, ic, pin, name, mm}], max_mm}]}"""
     errors, warnings, places = [], [], []
     gap = max(GAP_MM, clearance_mm)
     keep = keep or {}
@@ -249,7 +293,9 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         if box is None:
             errors.append(f"{p['ref']}: footprint {fpname} has no pads")
             continue
-        info[p["ref"]] = {"part": p, "fp": fpname, "box": box, "padbox": pads_box(fp), "pads": _pads_of(p, fp), "open": opening_dir(fp)}
+        info[p["ref"]] = {"part": p, "fp": fpname, "box": box, "padbox": pads_box(fp), "pads": _pads_of(p, fp), "open": opening_dir(fp),
+                          "names": {str(q.get("num", q.get("number", ""))): str(q.get("name") or "") for q in p.get("pins", [])},
+                          "psize": {q["name"]: max(q.get("xsize", 0), q.get("ysize", 0)) * MIL for q in fp.get("pads", []) if "x" in q}}
     if errors:
         return {"places": [], "warnings": warnings, "errors": errors}
     area = sum((i["box"][2] - i["box"][0]) * (i["box"][3] - i["box"][1]) for i in info.values())
@@ -267,7 +313,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
 
     def commit(ref, x, y, rot, side="top"):
         b, lab = full_box(ref, rot, x, y, side)
-        obstacles.append(_union([b, lab]))
+        obstacles.extend([b, lab])      # two boxes, not their union: a designator strip over an IC's width must not wall off its pins
         placed[ref] = {"x": x, "y": y, "rot": rot, "box": b, "label": lab}
 
     for ref, (x, y, rot) in keep.items():
@@ -279,7 +325,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         for side in ("top", "bottom"):
             b, lab = full_box(ref, rot, x, y, side)
             whole = _union([b, lab])
-            if _inside(whole, outline, edge) and not any(_hit(whole, o, gap) for o in obstacles):
+            if _inside(whole, outline, edge) and not any(_hit(b, o, gap) or _hit(lab, o, gap) for o in obstacles):
                 return side
         return None
 
@@ -357,7 +403,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                 side = free(ref, rot, x, y, -1e-6)
                 if side:
                     commit(ref, x, y, rot, side)
-                    whole = obstacles[-1]
+                    whole = _union([placed[ref]["box"], placed[ref]["label"]])
                     cursor[s] = ((whole[1] if horizontal else whole[0]) - (outline[1] if horizontal else outline[0])
                                  + (whole[3] - whole[1] if horizontal else whole[2] - whole[0]) + gap)
                     done = True
@@ -368,27 +414,107 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             errors.append(f"{ref}: no room for the connector on an edge of the board")
 
     caps = [r for r in rest if _decap_rail(info[r])]
-    others = [r for r in rest if r not in caps]
+    caps.sort(key=lambda r: _farads_or_inf(info[r]))     # smallest value first: the 100 nF gets the pin's nearest place (stable: BOM order on a tie)
+    findings = []
+    crystals = []
+
+    # crystals: a crystal part whose nets reach MCU oscillator pins (by pin name); its load caps are the caps between those nets and GND
+    xtals, loads = {}, {}
+    all_ics = [r for r in info if re.match(r"^(?:U|IC|Q|M|MOD)\d", r, re.I)]       # kept ones too
+    for r in rest:
+        if r in caps or not is_crystal(info[r]["part"], len(info[r]["pads"])):
+            continue
+        links = []
+        for pad, (_, _, net) in info[r]["pads"].items():
+            if not net or is_gnd(net):
+                continue
+            for o in all_ics:
+                for opad, (_, _, onet) in info[o]["pads"].items():
+                    if onet == net and is_osc_pin(info[o]["names"].get(opad)):
+                        links.append((pad, o, opad, net))
+        if links:
+            xtals[r] = links
+    for c in rest:
+        if c in caps or c in xtals or not re.match(r"^C\d", c, re.I) or len(info[c]["pads"]) != 2:
+            continue
+        pads = info[c]["pads"]
+        for yref, links in xtals.items():
+            for lnet in {l[3] for l in links}:
+                sig = [p for p, (_, _, n) in pads.items() if n == lnet]
+                gnd = [p for p, (_, _, n) in pads.items() if is_gnd(n)]
+                if len(sig) == 1 and len(gnd) == 1 and c not in loads:
+                    loads[c] = (yref, sig[0], lnet)
+    others = [r for r in rest if r not in caps and r not in xtals and r not in loads]
 
     assigned = {}       # (IC, supply net) -> decoupling caps already given to it: caps spread one per IC before a second one goes to the same IC
+    pin_caps = {}       # (IC, pad) -> decoupling caps already given to that supply pin
+    cap_pin = {}        # decoupling cap -> (IC, pad) it was placed for
 
-    def place_cap(ref, rmax=None):
-        """(target pin, free place) of a decoupling cap: every supply pin of its net is a candidate (a regulator's output is a pin and a
-        big tab), the pin with the lowest score wins: distance to its nearest free place plus CAP_SHARE_MM for each cap its IC already
-        has. Falls back to the middle of what it shares nets with."""
+    def pad_abs(ref, pad, x, y, rot):
+        px, py, _ = info[ref]["pads"][pad]
+        rx, ry = rot_point(px, py, rot)
+        return x + rx, y + ry
+
+    def find_near(ref, targets, cost_cap):
+        """Nearest free place by pad distance: targets [(pad of ref, (x, y) it should be next to)]; every grid point and turn around
+        them is costed (sum of pad-to-target distances) and the cheapest that is free and costs at most cost_cap wins.
+        Returns (x, y, rot, side, cost) or None."""
+        tx = sum(t[1][0] for t in targets) / len(targets)
+        ty = sum(t[1][1] for t in targets) / len(targets)
+        gx, gy = round(tx / STEP_MM) * STEP_MM, round(ty / STEP_MM) * STEP_MM
+        reach = (cost_cap + 3.0) / len(targets)
+        n = int(reach / STEP_MM) + 1
+        cands = []
+        for i in range(-n, n + 1):
+            for j in range(-n, n + 1):
+                x, y = gx + i * STEP_MM, gy + j * STEP_MM
+                for rot in (0, 90, 180, 270):
+                    cost = sum(math.hypot(pad_abs(ref, pad, x, y, rot)[0] - t[0], pad_abs(ref, pad, x, y, rot)[1] - t[1])
+                               for pad, t in targets)
+                    if cost <= cost_cap:
+                        cands.append((cost, x, y, rot))
+        cands.sort()
+        for cost, x, y, rot in cands:
+            side = free(ref, rot, x, y, EDGE_MM)
+            if side:
+                return x, y, rot, side, cost
+        return None
+
+    def place_cap(ref):
+        """(target (IC, pad) or None, free place) of a decoupling cap. Every supply pin of its net is a candidate (a regulator's output
+        is a pin and a big tab); the cap's rail pad is put as near the pin pad as it goes (find_near: the places next to the pin come
+        first, within DECAP_NEAR_MM + DECAP_WINDOW_MM). The pin with the lowest score wins: pad distance + CAP_SHARE_MM for each cap its
+        IC already has + PIN_SHARE_MM for each cap the pin already has (every pin gets its own cap while caps are left). Falls back to
+        the middle of what it shares nets with when the rail has no IC pin."""
         rail = _decap_rail(info[ref])
-        cands = _decap_targets(ref, info, placed, pad_xy) or [(*toward_middle(_target(ref, info, placed, centre, (cx, cy))), None)]
-        tgt, hit, best, owner = None, None, None, None
-        for cx_, cy_, ic in cands:
-            h = find(ref, cx_, cy_, rmax=rmax)
-            if h is None:
-                continue
-            score = math.hypot(h[0] - cx_, h[1] - cy_) + CAP_SHARE_MM * assigned.get((ic, rail), 0)
-            if best is None or score < best - 1e-9:
-                tgt, hit, best, owner = (cx_, cy_), h, score, ic
-        if hit is not None:
-            assigned[owner, rail] = assigned.get((owner, rail), 0) + 1
-        return tgt, hit
+        rp = next(p for p, (_, _, n) in info[ref]["pads"].items() if n == rail)
+        pins = [(x, y, ic, pad) for x, y, ic, pad in _decap_pins(ref, info, placed, pad_xy)]
+        if not pins:
+            return None, find(ref, *toward_middle(_target(ref, info, placed, centre, (cx, cy))))
+        best = None
+        for fallback in (False, True):
+            for x, y, ic, pad in pins:
+                if fallback:             # no place within the window of any pin: the nearest free place by the old ring search
+                    h = find(ref, x, y)
+                    if h is None:
+                        continue
+                    ax, ay = pad_abs(ref, rp, h[0], h[1], h[2])
+                    h = (*h, math.hypot(ax - x, ay - y))
+                else:
+                    h = find_near(ref, [(rp, (x, y))], DECAP_NEAR_MM + DECAP_WINDOW_MM)
+                    if h is None:
+                        continue
+                score = h[4] + CAP_SHARE_MM * assigned.get((ic, rail), 0) + PIN_SHARE_MM * pin_caps.get((ic, pad), 0)
+                if best is None or score < best[0] - 1e-9:
+                    best = (score, h, ic, pad)
+            if best:
+                break
+        if best is None:
+            return None, None
+        _, h, ic, pad = best
+        assigned[ic, rail] = assigned.get((ic, rail), 0) + 1
+        pin_caps[ic, pad] = pin_caps.get((ic, pad), 0) + 1
+        return (ic, pad), h[:4]
 
     # 2. ICs: nearest the middle, then around what they share nets with
     for ref in ics:
@@ -399,23 +525,93 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             continue
         commit(ref, *hit[:3], side=hit[3])
 
+    # 2b. crystals as close as possible to the MCU oscillator pins they connect to, their load caps beside them
+    for yref, links in xtals.items():
+        targets = [(pad, pad_xy(o, opad)) for pad, o, opad, _ in links if o in placed]
+        if not targets:
+            continue
+        hit = find_near(yref, targets, 20.0 * len(targets))
+        if hit is None:
+            tgt = (sum(t[1][0] for t in targets) / len(targets), sum(t[1][1] for t in targets) / len(targets))
+            hit = find(yref, *tgt)
+        if hit is None:
+            errors.append(f"{yref}: no free place inside the board; make the board bigger")
+            continue
+        commit(yref, *hit[:3], side=hit[3])
+        pins = []
+        for pad, o, opad, _ in links:
+            if o in placed:
+                (ax, ay), (bx, by) = pad_xy(yref, pad), pad_xy(o, opad)
+                pins.append({"pad": pad, "ic": o, "pin": opad, "name": info[o]["names"].get(opad, ""), "mm": round(math.hypot(ax - bx, ay - by), 2)})
+        far = max(pins, key=lambda q: q["mm"])
+        crystals.append({"ref": yref, "pins": pins, "max_mm": far["mm"]})
+        if far["mm"] > XTAL_NEAR_MM:
+            text = (f"{yref} is {far['mm']:.1f} mm from {far['ic']} pin {far['pin']} {far['name']}; keep the crystal within about "
+                    f"{XTAL_NEAR_MM:g} mm of the MCU oscillator pins (placement guideline: ST AN2867)")
+            findings.append({"level": "warning", "ref": yref, "text": text})
+            warnings.append(text)
+        for c, (cy_ref, sig, lnet) in loads.items():
+            if cy_ref != yref:
+                continue
+            ypad = next((p for p, _, _, n in links if n == lnet), None)
+            if ypad is None:
+                continue
+            h = find_near(c, [(sig, pad_xy(yref, ypad))], 6.0)
+            if h is None:
+                h = find(c, *pad_xy(yref, ypad))
+            if h is None:
+                errors.append(f"{c}: no free place inside the board; make the board bigger")
+                continue
+            commit(c, *h[:3], side=h[3])
+
     # 3. decoupling caps first (beside the supply pin), then the others by how tied they are to placed parts
     others.sort(key=lambda r: -len(_shared(r, info, placed)))
     for ref in caps + others:
         if ref in caps:
-            tgt, hit = place_cap(ref)
+            owner, hit = place_cap(ref)
         else:
-            tgt = toward_middle(_target(ref, info, placed, centre, (cx, cy)))
-            hit = find(ref, *tgt)
+            hit = find(ref, *toward_middle(_target(ref, info, placed, centre, (cx, cy))))
         if hit is None:
             errors.append(f"{ref}: no free place inside the board; make the board bigger")
             continue
         commit(ref, *hit[:3], side=hit[3])
-        if ref in caps:
-            hx, hy = tgt
-            d = math.hypot(hit[0] - hx, hit[1] - hy)
-            if d > DECAP_NEAR_MM:
-                warnings.append(f"{ref}: decoupling cap is {d:.1f} mm from its supply pin (no closer room)")
+        if ref in caps and owner:
+            cap_pin[ref] = owner
+
+    # decoupling findings from the final positions: a cap too far from its supply pin (error), a supply pin without a cap (warning)
+    for ref in caps:
+        if ref not in cap_pin or ref not in placed:
+            continue
+        ic, pad = cap_pin[ref]
+        rail = _decap_rail(info[ref])
+        rp = next(p for p, (_, _, n) in info[ref]["pads"].items() if n == rail)
+        (ax, ay), (bx, by) = pad_xy(ref, rp), pad_xy(ic, pad)
+        d = math.hypot(ax - bx, ay - by)
+        f = cap_farads(info[ref]["part"].get("value"))
+        if d > DECAP_NEAR_MM + DECAP_TOL_MM and (f is None or f <= BULK_F):
+            text = (f"{ref} is {d:.1f} mm from {ic} pin {pad} {info[ic]['names'].get(pad, '')}".rstrip() +
+                    f"; limit {DECAP_NEAR_MM:g} mm (placement rule, spec phase 3: decoupling cap within {DECAP_NEAR_MM:g} mm of its supply pin)")
+            findings.append({"level": "error", "ref": ref, "text": text})
+            warnings.append("placement error: " + text)
+    for ic in all_ics:
+        if ic not in placed:
+            continue
+        for rail in sorted({n for _, _, n in info[ic]["pads"].values() if is_rail(n)}):
+            pins = [p for p, (_, _, n) in info[ic]["pads"].items() if n == rail and info[ic]["psize"].get(p, 0) < BIG_PAD_MM]
+            mine = [c for c in caps if c in placed and _decap_rail(info[c]) == rail and
+                    (cap_farads(info[c]["part"].get("value")) or 0) <= BULK_F]
+            bare = []
+            for p in pins:
+                px, py = pad_xy(ic, p)
+                if not any(math.hypot(pad_xy(c, q)[0] - px, pad_xy(c, q)[1] - py) <= DECAP_NEAR_MM + DECAP_TOL_MM
+                           for c in mine for q, (_, _, n) in info[c]["pads"].items() if n == rail):
+                    bare.append(p)
+            if bare:
+                names = ", ".join(f"{p} {info[ic]['names'].get(p, '')}".strip() for p in bare)
+                text = (f"{ic}: {len(bare)} of {len(pins)} supply pin(s) on {rail} have no decoupling cap within {DECAP_NEAR_MM:g} mm "
+                        f"(pin {names}); {len(mine)} decoupling cap(s) on {rail}: one per supply pin is the rule (spec phase 3)")
+                findings.append({"level": "warning", "ref": ic, "text": text})
+                warnings.append(text)
     for ref in placed:
         if ref in keep:
             continue
@@ -432,7 +628,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             else:
                 warnings.append(f"{ref}: connector turned to open out of the board edge (opening read from the footprint outline, "
                                 f"{info[ref]['open']} deg): check the mating face in 3D")
-    return {"places": places, "warnings": warnings, "errors": errors}
+    return {"places": places, "warnings": warnings, "errors": errors, "findings": findings, "crystals": crystals}
 
 
 def _area(i):
@@ -488,8 +684,8 @@ def _decap_rail(i):
     return None
 
 
-def _decap_targets(ref, info, placed, pad_xy):
-    """The supply pins a decoupling cap can sit beside, as (x, y, IC ref): every pin on its rail net of every placed IC."""
+def _decap_pins(ref, info, placed, pad_xy):
+    """The supply pins a decoupling cap can sit beside, as (x, y, IC ref, pad): every pin on its rail net of every placed IC."""
     rail = _decap_rail(info[ref])
     found = []
     for o, i in info.items():
@@ -498,8 +694,13 @@ def _decap_targets(ref, info, placed, pad_xy):
         for name, (_, _, net) in i["pads"].items():
             if net == rail:
                 x, y = pad_xy(o, name)
-                found.append((x, y, o))
+                found.append((x, y, o, name))
     return found
+
+
+def _farads_or_inf(i):
+    f = cap_farads(i["part"].get("value"))
+    return float("inf") if f is None else f
 
 
 OUTLINE_LAYER = 57          # Mechanical 1: the layer the shipped OutJob plots as the board outline (.GM1; layer id 16908289)
@@ -693,6 +894,38 @@ def _designators(doc):
     return out
 
 
+def decap_distance_problems(doc, plan_parts, limit=DECAP_NEAR_MM):
+    """Read-back check of the decoupling rule: every decoupling cap (a 2-pad C between a supply rail and ground, not bulk above BULK_F)
+    has its rail pad within `limit` mm (pad centre to pad centre, + DECAP_TOL_MM) of the nearest supply pin pad of a U/IC/Q/M/MOD part
+    on the same rail. Skipped for a cap whose rail has no such IC pin or when the pads have no coordinates."""
+    at = {(p.get("ref"), str(p.get("name"))): (p["x_mm"], p["y_mm"]) for p in doc.get("pads", []) if "x_mm" in p and p.get("ref")}
+    pins = {}                                        # rail -> [(ic, num, name, (x, y))]
+    for part in plan_parts:
+        if re.match(r"^(?:U|IC|Q|M|MOD)\d", part["ref"], re.I):
+            for pin in part.get("pins", []):
+                num, net = str(pin.get("num", pin.get("number", ""))), str(pin.get("net") or "").strip()
+                if is_rail(net) and (part["ref"], num) in at:
+                    pins.setdefault(net, []).append((part["ref"], num, str(pin.get("name") or ""), at[part["ref"], num]))
+    out = []
+    for part in plan_parts:
+        nets = [str(p.get("net") or "").strip() for p in part.get("pins", [])]
+        if not re.match(r"^C\d", part["ref"], re.I) or len(nets) != 2 or not any(is_gnd(n) for n in nets):
+            continue
+        rail = next((n for n in nets if is_rail(n)), None)
+        f = cap_farads(part.get("value"))
+        if rail is None or rail not in pins or (f is not None and f > BULK_F):
+            continue
+        pin = next(p for p in part["pins"] if str(p.get("net") or "").strip() == rail)
+        xy = at.get((part["ref"], str(pin.get("num", pin.get("number", "")))))
+        if xy is None:
+            continue
+        d, ic, num, name, _ = min(((math.hypot(xy[0] - q[3][0], xy[1] - q[3][1]), *q) for q in pins[rail]), key=lambda t: t[0])
+        if d > limit + DECAP_TOL_MM:
+            out.append(f"{part['ref']} is {d:.1f} mm from {ic} pin {num} {name}".rstrip() +
+                       f"; limit {limit:g} mm (decoupling cap within {limit:g} mm of its supply pin, spec phase 3)")
+    return out
+
+
 def verify_layout(doc, plan_parts, outline=None, clearance_mm=0.0, places=None, footprints=None, edge_copper_mm=EDGE_COPPER_MM):
     """Saved PcbDoc (read_pcbdoc dict, ideally geometry=True) against the netlist parts [{ref, footprint, pins}]. Problem strings,
     empty = it matches. Checks: every part there on the right footprint; every pad (every pad of a shared number too) on the net
@@ -769,6 +1002,7 @@ def verify_layout(doc, plan_parts, outline=None, clearance_mm=0.0, places=None, 
     for t in doc.get("texts", []):
         if t.get("kind") == "designator" and (t.get("height_mm") or 0) > LABEL_H * 1.6:
             problems.append(f"designator {t['text']} is {t['height_mm']:g} mm high (more than {LABEL_H * 1.6:g} mm)")
+    problems += decap_distance_problems(doc, plan_parts)
     for pl in places or []:
         c = comps.get(pl["ref"])
         if c is None:
