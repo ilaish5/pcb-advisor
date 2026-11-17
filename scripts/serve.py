@@ -1025,6 +1025,8 @@ def _step_note(project, sess, step, done, summary=None, failure=""):
             text = f"{STEP_NAMES[step]} in Altium{' after ' + names if done else ''} because the student pressed the button: {summary}"
         else:
             text = f"The student pressed the {step} button. Altium did {names} first; {failure}"
+        if step == "rules" and any(k == "altium.add_pcb" for k, _ in done):
+            text += " The PcbDoc did not exist: an empty one was added for the rules, so the parts are not placed yet."
         note = {"ts": now(), "role": "agent", "by": "button", "applied": applied, "text": text}
         if warned_map(applied):       # the chip in the chat is amber, as for the same result from a chat turn
             note["warned"] = warned_map(applied)
@@ -1114,12 +1116,12 @@ def _log_step_end(project, step, code, body, t0):
     try:
         with RUNS_LOCK:
             steps = [{"step": s["key"], "state": s["state"]} for s in (STEP_RUNS.get(project) or {}).get("steps", [])]
-        runlog.event("op", op=f"step.{step}", phase="end", project=project, ok=code == 200, status=code, steps=steps,
+        runlog.event("op", op=f"step.{step}", phase="end", project=project, ok=code == 200 and not body.get("stopped"), stopped=bool(body.get("stopped")), status=code, steps=steps,
                      seconds=round(time.time() - t0, 1), summary=body.get("summary", ""), error=body.get("error", ""),
                      warnings=body.get("warnings") or [])
         with RUNS_LOCK:         # the usage log keeps what the person was shown: each step's note, then the summary or the refusal
             shown = [{"step": s["key"], "state": s["state"], "note": s.get("note", "")} for s in (STEP_RUNS.get(project) or {}).get("steps", [])]
-        runlog.usage(project, "step", op=step, phase="end", ok=code == 200, seconds=round(time.time() - t0, 1), steps=shown,
+        runlog.usage(project, "step", op=step, phase="end", ok=code == 200 and not body.get("stopped"), stopped=bool(body.get("stopped")), seconds=round(time.time() - t0, 1), steps=shown,
                      shown=body.get("summary") or body.get("error") or "", warnings=body.get("warnings") or [])
     except Exception:
         pass

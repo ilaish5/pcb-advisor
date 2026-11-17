@@ -1497,10 +1497,9 @@ def _new_outjob(project, prj, summary):
     if summary["outjobs"]:
         raise BridgeError("The project's OutJob has no Folder Structure output to run.")
     target = prj.parent / f"{prj.stem}.OutJob"
-    if target.exists():
-        raise BridgeError(f"{target.name} is in the project folder but not in the project; add it to the project first.")
     backup = _backup(prj, [prj])
-    outjob.generate_outjob(project, filename=target.name, out_dir=prj.parent)
+    if not target.exists():          # a file already there (an earlier add that failed halfway, or the student's own) is added as it is, never overwritten
+        outjob.generate_outjob(project, filename=target.name, out_dir=prj.parent)
     return target, backup, [("ADDDOC", str(prj), str(target)), ("SAVEPRJ", str(prj))]
 
 

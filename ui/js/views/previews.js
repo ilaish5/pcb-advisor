@@ -360,9 +360,11 @@ function pvStepLine(st, i, all) {       // one line of the live list: done, runn
   if (st.state === 'running') return `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${text}</div>`;
   return `<div class="loading"><span aria-hidden="true">${st.state === 'done' ? '✓' : '&middot;'}</span>${text}${st.state === 'waiting' ? ' (waiting)' : st.state === 'stopped' ? ' (stopped)' : ''}</div>`;
 }
-function pvStopBtn() {       // the run stops before its next step; a step already in Altium runs to its end
-  return btn(pvStopping ? 'Stopping…' : 'Stop', {size: 'sm', kind: 'line', act: 'altium-step-stop', disabled: pvStopping ? true : undefined,
-    title: 'Ends the run before its next step. The step Altium is working on finishes first.'});
+function pvStopBtn() {       // the run stops before its next step; the last step is one Altium operation that cannot be cut
+  const st = (pvRun && pvRun.steps) || [];
+  const last = st.length && st[st.length - 1].state === 'running';
+  return btn(pvStopping ? 'Stopping…' : 'Stop', {size: 'sm', kind: 'line', act: 'altium-step-stop', disabled: pvStopping || last ? true : undefined,
+    title: last ? 'This step finishes as one Altium operation' : 'Ends the run before its next step. The step Altium is working on finishes first.'});
 }
 function pvStepNote(page) {       // under the header: Altium is working, or what the last step answered
   pvResume();
@@ -401,7 +403,7 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
     else if (r && r.gone) pvNote[c.page] = {kind: 'warn', text: 'The step ended while this page was loading, and its answer went to the page that started it. Look at the board in Altium, and at the chat, before starting it again.'};       // ended, not "succeeded": this page never saw the answer
     else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
     else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server')};
-    else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'rules' || c.page === 'outputs' ? 0 : undefined};       // these two put no warnings in their summary: all of them are listed
+    else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
     try { await refresh(true); } catch (err) { /* the note still says what happened */ }
     if (typeof loadAltium === 'function') loadAltium(true);      // a draw can add a sheet to the project

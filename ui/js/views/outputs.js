@@ -79,7 +79,7 @@ function outRemakeBtn(f) {
   if (p.kind === 'none') return p.why ? `<span class="out-remake-why muted" title="${esc(p.why)}">No Make again</span>` : '';
   const altium = p.kind === 'altium', block = altium || p.kind === 'api' && /gerber_zip/.test((f.lineage && f.lineage.tool) || '') ? outBlockWhy() : '';
   const title = altium && !outAltiumLinked() ? 'Link an Altium project in Settings first: Altium has to write the Gerbers.' : block || p.why;
-  return btn(p.label, {kind: 'line', size: 'sm', act: 'remake', name: f.name, title, disabled: (altium && !outAltiumLinked()) || !!block, cls: 'out-remake'});
+  return btn(p.label, {kind: 'line', size: 'sm', act: 'remake', name: f.name, title, disabled: (altium && !outAltiumLinked()) || !!block || !!pvBusy, cls: 'out-remake'});
 }
 // An in-page confirm dialog, not the browser one: resolves true on the confirm button, false on Cancel or Esc.
 function outConfirm({title, body, confirm}) {
@@ -114,9 +114,11 @@ async function outRunExporter(f) {         // one api exporter; returns true whe
   } else return false;
   return true;
 }
-async function outRunAltium() {            // Altium writes the Gerbers; true when it did
-  toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
-  try { const r = await api('/api/altium/run-outjob', {}); (r.warnings || []).forEach(w => toast(w, null, {bad: true})); outAltNote = {text: 'Altium wrote the outputs.', bad: false}; return true; } catch (err) { return false; }   // the error toast already said why
+async function outRunAltium() {            // Altium writes the Gerbers; true when it did. The same step button as the header's: live list, Stop, one answer
+  if (pvBusy) return false;
+  await pvRunStep('outputs');
+  const n = pvNote.outputs;
+  return !!n && n.kind !== 'bad';
 }
 let outRemaking = false;
 async function outRemake(files) {          // files: the lineage rows to make again, in order; one confirm for the edited ones

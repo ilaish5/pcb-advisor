@@ -150,7 +150,7 @@ function dfmHeader(reports) {
 }
 // Parts placed with pins from the agent: the one place the missing datasheet blocks. Resolved by a verified datasheet or an explicit accept.
 function dfmUnverified() {
-  return (S.bom || []).filter(l => (l.refs || []).length && !l.dnp && !l.nobuy && (l.pins_status === 'unverified' || l.pins_status === 'mismatch'));
+  return (S.bom || []).filter(l => (l.refs || []).length && (l.on_sheet || []).length && !l.dnp && !l.nobuy && (l.pins_status === 'unverified' || l.pins_status === 'mismatch'));
 }
 function dfmUnverifiedHTML() {
   const rows = dfmUnverified();
