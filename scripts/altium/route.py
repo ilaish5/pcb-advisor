@@ -948,7 +948,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     failed = list(dict.fromkeys(n for n in failed if n not in rt.routed))
     items = all_items()
     return {"items": items, "routed": sorted(rt.routed), "failed": [(n, why.get(n) or last_msg.get(n) or "no path") for n in failed],
-            "widths": _width_report(nets, plan_w, rt.routed),
+            "widths": (rep := _width_report(nets, plan_w, rt.routed)), "width_problems": netcurrent.width_problems(rep),
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch}}
 

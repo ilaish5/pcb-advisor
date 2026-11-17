@@ -56,7 +56,7 @@ def regulator_currents(bom_lines, sheets):
 
 
 def _fmt(w):
-    return f"{w:.2f}".rstrip("0").rstrip(".") + " mm"
+    return f"{w:.3f}".rstrip("0").rstrip(".") + " mm"
 
 
 def net_widths(nets, rules, currents=None, estimates=None, oz=1.0, rise=10.0, is_rail=lambda n: False):
@@ -131,3 +131,25 @@ def width_line(widths):
             flag = " [" + w["note"].split("; ")[-1].strip() + "]"
         bits.append(f"{n} {got} ({why}){flag}")
     return "track widths: " + ", ".join(bits) if bits else ""
+
+
+def width_problems(widths, names=None):
+    """Problems (strings) in a route's per-net widths: a net with a current that was drawn narrower than its current needs (the board
+    had no room for the wanted width, e.g. at a fine pitch pad). Names the net, the wanted and drawn widths and the current."""
+    names = names or {}
+    out = []
+    for n, w in sorted((widths or {}).items()):
+        if w.get("current_a") is None or w.get("width_mm") is None or w.get("wanted_mm") is None:
+            continue
+        if w["width_mm"] < w["wanted_mm"] - 1e-9:
+            out.append(f"{names.get(n, n)} carries {w['current_a']:g} A and needs {_fmt(w['wanted_mm'])}, but only {_fmt(w['width_mm'])} fitted "
+                       f"(a fine pitch pad or a tight spot): lower its current, give it room, or widen it by hand in Altium")
+    return out
+
+
+def width_warnings(widths, names=None):
+    """Notes that are not problems but must be read: a current outside the IPC-2221 range (no width calculated) or one clamped to the
+    width rule's maximum."""
+    names = names or {}
+    return [f"{names.get(n, n)}: {w['note']}" for n, w in sorted((widths or {}).items())
+            if w.get("current_a") is not None and ("outside IPC-2221" in w["note"] or "allows at most" in w["note"])]

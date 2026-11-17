@@ -1308,8 +1308,11 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 applied.append(f"bom.propose:{a['line']}" + bom_value_warning(project, a))
                 maybe_auto(rec)
             elif kind == "net.set_current" and a.get("net"):      # a proposal like a BOM change: the student's click in ask / important mode
+                if "amps" not in a:             # a missing amount is a mistake; clearing needs an explicit "amps": null
+                    refused.append("net.set_current: amps is missing (use \"amps\": null to clear the current)")
+                    continue
                 try:
-                    rec = store.propose_net_current(project, a["net"], a.get("amps"), a.get("reason", ""), a.get("sources", []), sess)
+                    rec = store.propose_net_current(project, a["net"], a["amps"], a.get("reason", ""), a.get("sources", []), sess)
                 except ValueError as exc:
                     refused.append(f"net.set_current: {exc}")
                     continue
@@ -2378,7 +2381,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, jlc_upload.zip_info(self.project()))
         if path == "/api/net-currents":             # supply nets with their current, where it came from and the track width it gives
             from altium import bridge
-            return self._send(200, {"nets": bridge.net_current_rows(self.project())})
+            return self._send(200, bridge.net_current_rows(self.project()))
         if path == "/api/rules":
             proj = self.project()
             import rules as rules_mod
@@ -2882,13 +2885,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(500, {"error": str(exc)})
 
         if path == "/api/net-currents":             # the student's own edit applies at once; an empty amps clears the current
+            from altium import bridge
+            if "amps" not in data:
+                return self._send(400, {"error": "amps is missing (send an empty value to clear the current)"})
+            if str(data.get("net") or "").strip() not in bridge.net_current_rows(proj)["all_nets"]:
+                return self._send(400, {"error": "that is not a net of this project's netlist"})
             try:
-                amps = data.get("amps")
-                store.set_net_current(proj, data.get("net"), None if amps in (None, "") else amps)
+                amps = data["amps"]
+                store.set_net_current(proj, str(data["net"]).strip(), None if amps is None or amps == "" else amps)
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
-            from altium import bridge
-            return self._send(200, {"ok": True, "nets": bridge.net_current_rows(proj)})
+            return self._send(200, {"ok": True, **bridge.net_current_rows(proj)})
         if path == "/api/bom/propose":
             line_key = data.get("line")
             changes = data.get("changes") or {}

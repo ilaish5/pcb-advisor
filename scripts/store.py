@@ -437,6 +437,13 @@ def proposals(project):
             rows[pid].update(status="undone", undone_at=ev.get("ts"), undone_by=ev.get("by"))
         elif pid not in rows:
             rows[pid] = dict(ev)
+    for r in rows.values():             # a pending net current shows the value as it is NOW, so the card reads "was 2 A, this sets 0.5 A"
+        if r.get("kind") == "net_current" and r.get("status") == "pending":
+            now_a = net_currents(project).get(r.get("line"))
+            if now_a != (r.get("before") or {}).get("current_a"):
+                r["note"] = f"now {now_a:g} A; this sets {r['changes']['current_a']:g} A" if now_a is not None and r["changes"].get("current_a") is not None \
+                    else f"changed since it was proposed: now {'no current' if now_a is None else format(now_a, 'g') + ' A'}"
+            r["before"] = {"current_a": now_a}
     return list(rows.values())
 
 
@@ -1079,6 +1086,8 @@ def propose_net_current(project, net, current_a, reason="", sources=(), session=
     if not net:
         raise ValueError("a net name is needed")
     if current_a is not None:
+        if isinstance(current_a, bool):
+            raise ValueError("current_a must be a number of amps, not true / false")
         try:
             current_a = float(current_a)
         except (TypeError, ValueError):
@@ -1144,7 +1153,7 @@ def decide(project, pid, decision, by="student"):
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
             append(project, "net-currents.jsonl", {"ts": now(), "by": by, "net": prop["line"],
                                                    "current_a": (prop.get("changes") or {}).get("current_a"),
-                                                   "before": (prop.get("before") or {}).get("current_a"), "proposal": pid})
+                                                   "before": net_currents(project).get(prop["line"]), "proposal": pid})   # the value at approval time
         else:
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
             changes, note, fresh = dict(prop["changes"]), "", False
@@ -1307,11 +1316,11 @@ def undo_proposal(project, pid, by="student"):
                 idea[k] = before[k]
         save_idea_draft(project, idea)
     elif prop.get("kind") == "net_current":
-        net, now_a = prop["line"], net_currents(project).get(prop["line"])
-        if now_a != (prop.get("changes") or {}).get("current_a"):
+        net = prop["line"]
+        log = [e for e in read_jsonl(pdir(project) / "net-currents.jsonl") if e.get("net") == net]
+        if not log or log[-1].get("proposal") != pid:       # by the entry, not by the value: the same number may have been set again
             raise UndoRefused(f"the current of {net} was changed after this; undo that later change first")
-        append(project, "net-currents.jsonl", {"ts": now(), "by": "undo", "net": net,
-                                               "current_a": (prop.get("before") or {}).get("current_a"), "undoes": pid})
+        append(project, "net-currents.jsonl", {"ts": now(), "by": "undo", "net": net, "current_a": log[-1].get("before"), "undoes": pid})
     else:
         entry = next((e for e in read_jsonl(pdir(project) / "bom-log.jsonl") if e.get("proposal") == pid), None)
         if not entry:
