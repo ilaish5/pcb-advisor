@@ -2304,15 +2304,15 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 _turn_end(tkey)
             refused.extend(res.get("parse_refused") or [])
-            runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
-                         refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
-                         error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:600]),
-                         **_chat_info)
             if tool_edited or tool_unrestored:
                 refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
             if data_edited or data_unrestored:
                 print(f"[guard] the agent edited project files: restored {data_edited}, not restorable {data_unrestored}", file=sys.stderr, flush=True)
                 refused.append(project_guard.refusal(data_edited, data_unrestored))
+            runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
+                         refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
+                         error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:600]),
+                         **_chat_info)
             if proposals and not partial:
                 try:
                     gone = refs_missing_from_bom(proj, res.get("reply"))
