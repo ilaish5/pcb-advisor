@@ -118,7 +118,9 @@ def test_editing_a_field_that_is_not_editable_is_refused(server, lte):
 def test_a_student_cannot_accept_a_part_that_failed_verification(server, lte):
     assert post(server, "/api/library/accept", {"line": "D31"}, lte)[0] == 400       # mismatch
     assert post(server, "/api/library/accept", {"line": "NOPE"}, lte)[0] == 404
-    store.add_library(lte, "D31", {"verify": "pass"}, by="verify_part")
+    store.add_library(lte, "D31", {"verify": "pass"}, by="verify_part")              # an older pass, no pin-table method
+    assert post(server, "/api/library/accept", {"line": "D31"}, lte)[0] == 400
+    store.add_library(lte, "D31", {"verify": "pass", "method": "pin-table"}, by="verify_part")
     code, st = post(server, "/api/library/accept", {"line": "D31"}, lte)
     assert code == 200 and line(st, "D31")["library"] == "ok"
 

@@ -2552,7 +2552,7 @@ class Handler(BaseHTTPRequestHandler):
             entry = store.library_parts(proj).get(data.get("line"))
             if not entry:
                 return self._send(404, {"error": "no such library part"})
-            if entry.get("verify") != "pass":
+            if not (store.passed_by_table(entry) or (entry.get("verify") == "pass" and entry.get("accepted"))):
                 return self._send(400, {"error": "this part has not passed verification; a student cannot accept past a failed check"})
             store.add_library(proj, data["line"], {"accepted": True}, by="student")
             return self._send(200, state())

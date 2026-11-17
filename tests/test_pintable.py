@@ -212,3 +212,170 @@ def test_the_symbol_of_a_generated_part_is_marked_as_made_from_the_netlist():
     import partlib
     assert partlib.symbol_from_netlist({"source": "kicad"}) and partlib.symbol_from_netlist({"symbol_from": "netlist"})
     assert not partlib.symbol_from_netlist({"source": "easyeda"}) and not partlib.symbol_from_netlist(None)
+
+
+# ---------------------------------------------------------------- review fixes: wrong passes and false mismatches
+
+TWO = """\
+{caption}
+Pin Configuration and Functions
+Table 1. Pin Functions
+SOIC  VSSOP  NAME  DESCRIPTION
+1     3      VIN   Input
+2     4      GND   Ground
+3     5      OUT   Output
+4     6      EN    Enable
+"""
+SOIC_PINS = [("1", "VIN"), ("2", "GND"), ("3", "OUT"), ("4", "EN")]
+VSSOP_PINS = [("3", "VIN"), ("4", "GND"), ("5", "OUT"), ("6", "EN")]
+
+
+def test_a_figure_caption_above_the_heading_does_not_order_the_package_columns():
+    # the caption names VSSOP first, the header row SOIC first: the old reading tied SOIC to VSSOP's column
+    t = TWO.format(caption="DGK Package 8-lead VSSOP Top View")
+    assert pintable.check([t], SOIC_PINS, "SOIC-8")["verify"] == "pass"
+    assert pintable.check([t], VSSOP_PINS, "VSSOP-8")["verify"] == "pass"
+    r = pintable.check([t], VSSOP_PINS, "SOIC-8")               # the VSSOP pinout on a SOIC part
+    assert r["verify"] == "mismatch"
+
+
+def test_package_names_in_a_caption_with_the_pin_word_leave_the_columns_untied():
+    # "DGK Package 8-Pin VSSOP Top View" is itself taken for a heading: two lines name packages, nothing is tied to a column
+    t = TWO.format(caption="DGK Package 8-Pin VSSOP Top View")
+    for pins, pkg in ((VSSOP_PINS, "SOIC-8"), (SOIC_PINS, "SOIC-8"), (VSSOP_PINS, "VSSOP-8")):
+        r = pintable.check([t], pins, pkg)
+        assert r["verify"] != "pass" or pins is not VSSOP_PINS or pkg == "VSSOP-8", (pins, pkg)
+    assert pintable.check([t], VSSOP_PINS, "SOIC-8")["verify"] != "pass"          # the exact wrong pass of the review
+    t2 = TWO.replace("Table 1. Pin Functions", "DGK Package 8-Pin VSSOP Top View").format(caption="")
+    assert pintable.check([t2], VSSOP_PINS, "SOIC-8")["verify"] != "pass"
+
+
+def test_a_k1_tables_scope_is_not_taken_from_a_caption_above_the_heading():
+    t = "D Package 8-lead SOIC Top View\nPin Functions\nPIN NAME TYPE\n1 VIN P Input\n2 GND G Ground\n3 OUT O Output\n"
+    assert pintable.find_tables(t)[0]["labels"] == []
+    assert pintable.check([t], [("1", "VIN"), ("2", "GND")], "VSSOP-8")["verify"] == "pass"   # not dropped for a caption
+
+
+def test_the_description_never_names_a_pin():
+    # "IN  Input from the VCC rail": VCC is in the description, not the name
+    t = "X\nPin Functions\nPIN NAME DESCRIPTION\n1 IN Input from the VCC rail\n2 GND Ground\n3 OUT Output\n"
+    assert not pintable.name_matches("VCC", "IN Input from the VCC rail")
+    r = pintable.check([t], [("1", "VCC"), ("2", "GND"), ("3", "OUT")])
+    assert r["verify"] == "unchecked" and "name cell" in r["issues"][0]
+    assert pintable.check([t], [("1", "IN"), ("2", "GND"), ("3", "OUT")])["verify"] == "pass"
+    cols = "X\nPin Functions\nPIN   NAME   DESCRIPTION\n1     IN     Input from the VCC rail\n2     GND    Ground\n3     OUT    Output\n"
+    assert pintable.check([cols], [("1", "VCC"), ("2", "GND"), ("3", "OUT")])["verify"] == "mismatch"    # a column break isolates it
+
+
+def test_joined_alternatives_and_a_parenthesised_name_still_match():
+    assert pintable.name_matches("IO3", "/HOLD or /RESET (IO3)") and pintable.name_matches("HOLD", "/HOLD or /RESET (IO3)")
+    assert pintable.name_matches("SWDIO", "PA13 (SWDIO)") and pintable.name_matches("SDA", "SDA / SDI")
+    t = "W\nPin Functions\nPIN NAME I/O\n1 /CS I Chip select\n2 DO (IO1) I/O Data out\n7 /HOLD or /RESET (IO3) I/O Hold\n"
+    assert pintable.check([t], [("1", "CS"), ("2", "IO1"), ("7", "IO3")])["verify"] == "pass"
+
+
+EP8 = """\
+X
+Pin Functions
+PIN NAME TYPE DESCRIPTION
+1 VIN P Input
+2 EN I Enable
+3 FB I Feedback
+4 GND G Ground
+5 SW O Switch
+6 PG O Power good
+7 BOOT I Boot
+8 OUT O Output
+{ep}"""
+EP_PINS = [("1", "VIN"), ("2", "EN"), ("3", "FB"), ("4", "GND"), ("5", "SW"), ("6", "PG"), ("7", "BOOT"), ("8", "OUT")]
+
+
+def test_an_exposed_pad_in_the_netlist_is_the_thermal_pad_not_a_missing_pin():
+    ep = EP8.format(ep="Thermal pad: connect to GND\n")
+    for pad in ("9", "0", "EP"):
+        assert pintable.check([ep], EP_PINS + [(pad, "GND")])["verify"] == "pass", pad
+    assert pintable.check([ep], EP_PINS + [("9", "GND"), ("10", "GND")])["verify"] == "pass"       # EP split into 9 and 10
+    assert pintable.check([ep], EP_PINS + [("9", "VSS")])["verify"] == "pass"
+    r = pintable.check([ep], EP_PINS + [("9", "VIN")])          # a supply on the pad: not what the table allows, not a "none is 9"
+    assert r["verify"] == "unchecked" and "none is" not in " ".join(r["issues"])
+
+
+def test_an_exposed_pad_with_no_evidence_is_unchecked_never_a_mismatch():
+    r = pintable.check([EP8.format(ep="")], EP_PINS + [("9", "GND")])
+    assert r["verify"] == "unchecked" and "none is" not in " ".join(r["issues"]) and "exposed pad" in r["issues"][0]
+    # the footprint's extra pad is the evidence
+    r = pintable.check([EP8.format(ep="")], EP_PINS + [("9", "GND")], pads=[str(i) for i in range(1, 10)])
+    assert r["verify"] == "pass"
+    r = pintable.check([EP8.format(ep="")], EP_PINS + [("12", "GND")])                       # pin 12 of 8 is no exposed pad
+    assert r["verify"] == "mismatch" and "none is 12" in r["issues"][0]
+
+
+def test_a_numbered_exposed_pad_row_takes_ground_and_needs_no_footprint_pad():
+    t = EP8.format(ep="9 EP Thermal pad, connect to GND\n")
+    assert pintable.check([t], EP_PINS + [("9", "GND")], pads=[str(i) for i in range(1, 9)])["verify"] == "pass"
+    assert pintable.check([t], EP_PINS + [("9", "VSS")])["verify"] == "pass"
+
+
+def test_only_vcc_vdd_and_gnd_vss_are_taken_for_one_another():
+    assert pintable.name_matches("VCC", "VDD") and pintable.name_matches("VDD", "VCC")
+    assert pintable.name_matches("GND", "VSS") and pintable.name_matches("VSS", "GND") and pintable.name_matches("GND", "Ground")
+    assert not pintable.name_matches("VIN", "VCC") and not pintable.name_matches("VIN", "VDD") and not pintable.name_matches("VCC", "VIN")
+    assert not pintable.name_matches("AGND", "VSS") and not pintable.name_matches("VOUT", "VDD")
+
+
+def test_clk_n_is_not_a_plain_clk_but_reset_n_is_a_reset():
+    assert not pintable.name_matches("CLK_N", "CLK") and pintable.name_matches("CLK_N", "CLK_N") and pintable.name_matches("CLK_N", "CLK#")
+    assert pintable.name_matches("RESET_N", "RESET") and pintable.name_matches("CS_N", "CS")
+    t = "X\nPin Functions\nPIN NAME TYPE\n1 CLK I Clock\n2 GND G Ground\n3 OUT O Output\n"
+    r = pintable.check([t], [("1", "CLK_N"), ("2", "GND"), ("3", "OUT")])
+    assert r["verify"] == "unchecked" and "active-low mark" in r["issues"][0]
+
+
+def test_a_matches_a_slash_pair_only_as_a_whole_alternative():
+    # "A/B" is one pin with two functions: A is one of them; AB, A1 and B/C are not
+    assert pintable.name_matches("A", "A/B") and pintable.name_matches("B", "A/B")
+    assert not pintable.name_matches("A", "AB") and not pintable.name_matches("A", "A1") and not pintable.name_matches("A", "B/C")
+
+
+def test_the_part_number_with_a_voltage_is_found_in_the_datasheet_of_its_base():
+    import sources
+    head = "AMS1117 1A LOW DROPOUT VOLTAGE REGULATOR  Fixed 1.5V 1.8V 2.5V 3.3V 5.0V"
+    assert sources.mentions_part(head, "AMS1117-3.3") and sources.mentions_part(head, "AMS1117-5.0")
+    assert not sources.mentions_part("AMS11175 regulator", "AMS1117-3.3")        # the cut would fall inside a digit run
+    assert not sources.mentions_part("AMS1118 regulator", "AMS1117-3.3")
+    assert not sources.mentions_part("74HC04 hex inverter", "74HC-595")          # a short family is not a base
+    assert sources.mentions_part("NE555 timer", "NE555DR")
+
+
+def test_a_pass_without_the_pin_table_method_is_not_verified_but_never_revokes_an_accept():
+    line = {"refs": ["U1"], "key": "U1"}
+    assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == "verified"
+    assert store.pins_status(line, {"verify": "pass"})[0] == "unverified"
+    assert store.pins_status(line, {"verify": "pass", "accepted": True})[0] == "accepted"
+    assert store.pins_status(line, {"verify": "pass", "pins_accepted": True})[0] == "accepted"
+    assert store.ui_entry({"verify": "pass"})["verify"] == "unchecked"                  # the page offers Verify, not Accept
+    assert store.ui_entry({"verify": "pass", "accepted": True})["verify"] == "pass"
+    assert store.ui_entry({"verify": "pass", "method": "pin-table"})["verify"] == "pass"
+
+
+def test_a_later_failed_verify_clears_the_old_method_and_evidence(empty):
+    _ic(empty)
+    _doc(empty, "LM1117IMPX.pdf", NE)
+    assert verify_part.verify(empty, "U1")["verify"] == "pass"
+    e = store.library_parts(empty)["U1"]
+    assert e["method"] == "pin-table" and e["evidence"]
+    _doc(empty, "LM1117IMPX.pdf", NE.replace("GND G Ground", "VIN I Input"))
+    assert verify_part.verify(empty, "U1")["verify"] == "mismatch"
+    e = store.library_parts(empty)["U1"]
+    assert e["verify"] == "mismatch" and not e.get("method") and not e.get("evidence")
+    assert {l["key"]: l for l in store.bom(empty)}["U1"]["pins_status"] == "mismatch"
+
+
+def test_the_library_page_offers_verify_for_a_legacy_pass(empty):
+    _ic(empty)
+    store.add_library(empty, "U1", {"symbol": True, "footprint": True, "verify": "pass"}, by="verify_part")      # an older pass
+    row = {r["line"]: r for r in store.library_view(empty)}["U1"]
+    assert row["verify"] == "unchecked" and not row["accepted"]
+    store.add_library(empty, "U1", {"accepted": True}, by="student")
+    row = {r["line"]: r for r in store.library_view(empty)}["U1"]
+    assert row["verify"] == "pass" and row["accepted"]                  # the student's accept stays

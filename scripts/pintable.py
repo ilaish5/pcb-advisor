@@ -38,6 +38,7 @@ _TYPE_ONLY = {"I", "O", "I/O", "IO", "AI", "AO", "B", "P", "G", "S", "PWR", "—
 _PKG = re.compile(r"\b(PDIP|CDIP|DIP|SOIC|TSSOP|VSSOP|SSOP|MSOP|SOP|SOT|SOD|SC|SO|TSOT|DSBGA|WLCSP|FBGA|NFBGA|BGA|UFQFPN|UQFN|VQFN|WQFN|"
                   r"QFN|WSON|USON|DFN|SON|LQFP|TQFP|LFCSP|QFP|TO|DPAK|SMA|SMB|SMC|PQFN|LGA)(?:[\s-]*(\d{1,3}(?:-\d{1,2})?)(?![\d.]|\s?[x×]|\s?mm)(?:[\s-]*mil)?)?"
                   r"(?![A-Za-z])", re.I)
+_EP = re.compile(r"\b(thermal|exposed|power)[\s-]?pad\b|\bepad\b|\bpowerpad\b|^\W*(?:[\d,]+\W+)?(?:ep|pad)\b", re.I)    # an exposed-pad row
 _SIZED = {"tsot", "so", "tssop", "ssop", "vssop", "msop", "dip", "qfn", "dfn", "lqfp", "tqfp", "qfp", "ufqfpn", "bga", "sot"}
 
 
@@ -65,25 +66,33 @@ def _is_alnum_cell(cell):
     return any(not n.isdigit() for n in cell)
 
 
+_PAD_WORDS = {"thermal", "exposed", "power", "heat", "die"}
+
+
 def _name_cell(toks):
-    """The tokens of the name cell: up to the next column break in layout text; in plain text the first word and what a
-    name continues with (`/HOLD or /RESET (IO3)`, `PA13 (SWDIO)`)."""
+    """The tokens of the name cell: the first word and the words joined to it (`/HOLD or /RESET`, `SDA / SDI`, `PA13 (SWDIO)`,
+    `Thermal Pad`). What follows is the description: its words are never part of the name (`IN Input from the VCC rail`)."""
     if not toks:
         return []
-    if any(gap for _, gap in toks[1:]):
-        out = [toks[0][0]]
-        for t, gap in toks[1:]:
-            if gap:
-                break
-            out.append(t)
-        return out
     out = [toks[0][0]]
-    for t, _ in toks[1:]:
-        prev = out[-1].lower()
-        if t.lower() in ("or", "and", "&") or t.startswith(("/", "(")) or prev in ("or", "and", "&") or prev.endswith(("/", ",")):
+    i = 1
+    while i < len(toks):
+        t, prev = toks[i][0], out[-1].lower()
+        if t.lower() in ("or", "and", "&") or t.startswith("/") or prev in ("or", "and", "&") or prev.endswith(("/", ",")):
+            out.append(t)
+        elif t.startswith("(") and not toks[i][1]:            # `DO (IO1)`, `GND (Thermal pad)`: a group ends at its ")"
+            j = i
+            while j < len(toks) and j < i + 4 and not toks[j][0].endswith(")"):
+                j += 1
+            if j >= len(toks) or not toks[j][0].endswith(")"):
+                break
+            out += [x for x, _ in toks[i:j + 1]]
+            i = j
+        elif len(out) == 1 and out[0].lower() in _PAD_WORDS and t.lower().rstrip("s") in ("pad", "paddle"):
             out.append(t)
         else:
             break
+        i += 1
     return out
 
 
@@ -93,7 +102,9 @@ def _row(nums, rest):
         return None
     after = [t for t, _ in rest[len(name):len(name) + 1]]
     typ = after[0].upper() if after and after[0].upper() in TYPES else ""
-    return {"nums": nums, "name": " ".join(name), "type": typ}
+    tail = rest[len(name):]
+    return {"nums": nums, "name": " ".join(name), "type": typ, "rest": " ".join(t for t, _ in tail),
+            "isolated": not tail or tail[0][1]}       # a column break (layout text) after the name cell: the cell is told from the description
 
 
 def parse_number_first(line):
@@ -135,7 +146,7 @@ def parse_name_first(line):
     if not cells or all(not c for c in cells):
         return None
     typ = toks[i][0].upper() if i < len(toks) and toks[i][0].upper() in TYPES else ""
-    return {"nums": cells, "name": toks[0][0], "type": typ}
+    return {"nums": cells, "name": toks[0][0], "type": typ, "rest": " ".join(t for t, _ in toks[i:])}
 
 
 # ------------------------------------------------------------------ packages
@@ -242,8 +253,13 @@ def find_tables(text):
                 k += 1
             if len({tuple(map(tuple, r["nums"])) for r in rows}) >= 2 and _plausible(rows):
                 seen.update(range(h, k))
-                tables.append({"heading": " ".join(x.strip() for x in lines[max(0, h - 2):j] if x.strip())[:200],
-                               "labels": package_labels(" ".join(lines[max(0, h - 2):j])), "rows": rows})
+                # the package names come from the table's own heading and header rows (lines h..j-1), never from a figure
+                # caption above the heading; one line per list, so a column header can be told from prose
+                label_lines = [lb for lb in (package_labels(x) for x in lines[h:j]) if lb]
+                tables.append({"heading": " ".join(x.strip() for x in lines[h:j] if x.strip())[:200],
+                               "labels": list(dict.fromkeys(lb for ll in label_lines for lb in ll)),
+                               "label_lines": label_lines, "rows": rows,
+                               "ep_lines": [x for x in lines[j:k] if _EP.search(x)]})
             break
     big = [t for t in tables if len(t["rows"]) >= 3]
     return big or tables           # a 2-row 'table' beside real ones is a figure's text
@@ -264,12 +280,15 @@ def _columns(table):
             r = {**r, "nums": r["nums"][:-1], "type": r["type"] or "—"}
         if len(r["nums"]) == k:
             rows.append(r)
-    labels = table["labels"]
+    labels, per_line = table["labels"], table.get("label_lines", [])
+    # Several columns are tied to package names only when ONE header line names exactly K packages (its text order is the
+    # column order); names spread over lines, or a different count, tie nothing: every column stays a candidate
+    tied = k > 1 and len(per_line) == 1 and len(per_line[0]) == k
     cols = []
     for i in range(k):
-        label = labels[i] if k > 1 and len(labels) == k else None
+        label = per_line[0][i] if tied else None
         cols.append({"index": i, "label": label, "scope": labels if label is None else [label], "k": k, "rows": rows,
-                     "mapped": k == 1 or len(labels) == k, "heading": table["heading"]})
+                     "mapped": k == 1 or tied, "heading": table["heading"], "ep_lines": table.get("ep_lines", [])})
     return cols
 
 
@@ -280,28 +299,94 @@ def _numbers(col):
     return out
 
 
-def _name_forms(name):
-    forms = {name} | pinnames.spellings(name)
-    forms |= {pinnames.bare(f) for f in forms}
-    return {s for s in (re.sub(r"[^A-Z0-9+]", "", f.upper()) for f in forms) if s}
+_SUPPLY_PAIRS = [{"VCC", "VDD"}, {"GND", "VSS"}]       # the only names taken for one another beside pinnames.ALIASES (VIN stays apart)
 
 
-def _cell_forms(cell):
-    out = set()
-    for word in re.split(r"[\s(),]+", cell):
-        for part in [word] + word.split("/"):
-            s = re.sub(r"[^A-Z0-9+]", "", pinnames.bare(part).upper())
-            if s:
-                out.add(s)
-    squashed = re.sub(r"[^A-Z0-9+]", "", pinnames.bare(cell.replace(" ", "")).upper())
-    if squashed:
-        out.add(squashed)
+def _squash(text):
+    return re.sub(r"[^A-Z0-9+]", "", str(text).upper())
+
+
+def _low_marked(cell):
+    """The table's name carries an active-low mark (~RESET, /CS, CS#, RESET_N, nRESET)."""
+    return bool(re.search(r"(?:^|[\s(,])[~!/]\w|\w#|_[Nn]\b|(?:^|[\s(,])n[A-Z]{2}", cell))
+
+
+def _name_forms(name, with_bare=True):
+    forms = {name}
+    if with_bare:
+        forms |= pinnames.spellings(name)
+        forms |= {pinnames.bare(f) for f in forms}
+    out = {f for f in map(_squash, forms) if f}
+    for group in _SUPPLY_PAIRS:
+        if out & group:
+            out |= group
     return out
 
 
+def _cell_forms(cell):
+    """What a table's name cell can be called: the whole cell, each `/` or `or` alternative, each parenthesised group.
+    The words of a longer text are never forms of their own (`Input from the VCC rail` does not name VCC)."""
+    out = set()
+
+    def add(text):
+        for f in (text, pinnames.bare(text.strip())):
+            f = _squash(f)
+            if f:
+                out.add(f)
+
+    groups = re.findall(r"\(([^)]*)\)", cell)
+    for chunk in groups + [re.sub(r"\([^)]*\)", " ", cell)]:
+        for alt in re.split(r"\s+(?:or|and)\s+|\s*[&,;]\s*", chunk, flags=re.I):
+            if alt.strip():
+                add(alt)
+                for part in alt.split("/"):
+                    if part.strip():
+                        add(part)
+    return out
+
+
+_ACTIVE_LOW = {"RST", "RESET", "CS", "SS", "INT", "IRQ", "WP", "HOLD", "OE", "WE", "RD", "WR", "CE", "SHDN", "STBY", "FAULT", "ALERT",
+               "PG", "PGOOD", "NMI", "SLEEP", "WAKE"}
+
+
+def _plain_n(name, cell):
+    """CLK_N against a cell with no active-low mark: the negative side of a pair or an active-low clock, not the plain CLK.
+    A function that is active-low by nature (RESET_N, CS_N) keeps matching the plain RESET, CS: the text loses the overbar."""
+    m = re.fullmatch(r"(.+)_N", str(name).strip(), re.I)
+    return bool(m) and m.group(1).upper() not in _ACTIVE_LOW and not _low_marked(cell)
+
+
 def name_matches(name, cell):
-    """The netlist's pin name is the table's name for the pin, in the spelling of the table or another (RESET/RST, /CS = CS#)."""
-    return bool(_name_forms(name) & _cell_forms(cell))
+    """The netlist's pin name is the table's name for the pin, in the spelling of the table or another (RESET/RST, /CS = CS#,
+    VCC = VDD, GND = VSS). `A` is one of the alternatives of `A/B` (one pin, two functions); CLK_N is not a plain CLK."""
+    return bool(_name_forms(name, with_bare=not _plain_n(name, cell)) & _cell_forms(cell))
+
+
+def polarity_unclear(name, cell):
+    """CLK_N against a plain CLK: they would match but for the mark, which the text may have lost (an overbar)."""
+    return _plain_n(name, cell) and not name_matches(name, cell) and bool(_name_forms(name) & _cell_forms(cell))
+
+
+_GROUND = re.compile(r"^(?:[ADPS]?GND\w*|VSS\w*|GROUND\w*)$")
+_EP_NAME = re.compile(r"^(?:EP|EPAD|PAD|DAP|TAB|THERMAL\w*|EXPOSED\w*|POWERPAD|PPAD|HEATSINK)$")
+
+
+def _is_ep_row(row):
+    """A row of the exposed (thermal) pad: Thermal Pad, EP, PAD, Exposed Pad, PowerPAD."""
+    first = _squash(row["name"].split()[0]) if row["name"].split() else ""
+    return bool(_EP_NAME.match(first)) or bool(_EP.search(row["name"]))
+
+
+def _ep_allows(name, text):
+    """The exposed pad may carry this net: a ground, the pad itself, or a net the table's pad row names."""
+    up = _squash(name)
+    if _GROUND.match(up) or _EP_NAME.match(up):
+        return True
+    return len(up) >= 2 and bool(re.search(rf"\b{re.escape(str(name).strip())}\b", text, re.I))
+
+
+def _words_of(text):
+    return {w for w in map(_squash, re.split(r"[\s/(),;]+", text)) if w}
 
 
 def _complete(nums):
@@ -332,22 +417,47 @@ def _evaluate(col, pins, pads):
     label = col["label"] or (col["scope"][0] if len(col["scope"]) == 1 else "")
     out = {"conflict": [], "absent": [], "notes": [], "count": None, "label": label, "nums": nums}
     complete = _complete(nums)
+    top = max(int(n) for n in nums if n.isdigit()) if complete else 0
+    ep_rows = [r for r in col["rows"] if _is_ep_row(r)]
+    ep_text = " ".join([f"{r['name']} {r.get('rest', '')}" for r in ep_rows] + list(col.get("ep_lines") or []))
+    have = {str(p).strip().upper() for p in pads} if pads is not None else None
+    extra_pads = bool(have) and any(not h.isdigit() or (complete and int(h) > top) for h in have if h not in set(nums))
+    ep_evidence = bool(ep_rows or col.get("ep_lines") or extra_pads)
+    beyond = sorted(int(n) for n, _ in pins if complete and n.isdigit() and int(n) > top)
+    ep_split = beyond == list(range(top + 1, top + 1 + len(beyond)))      # EP pin top+1, or split into top+1 .. top+k
     for num, name in pins:
         hits = [r for r in col["rows"] if num.upper() in {n.upper() for n in r["nums"][col["index"]]}]
         if not hits:
+            ep_like = num == "0" or num.upper() in ("EP", "EPAD", "PAD", "TAB", "DAP") or (ep_split and num.isdigit() and int(num) in beyond)
             if re.fullmatch(r"N\.?/?C\.?|DNC|NC\d*|NO_?CONNECT|NO_?CONN", name.strip().upper()) and num.upper() not in nums:
                 out["notes"].append(f"pin {num} {name}: the pin table lists no row for it (no-connect pins often are not listed)")
+            elif ep_like:
+                if not ep_evidence:
+                    out["absent"].append(f"pin {num} {name}: no pin of the table, and neither the table nor the footprint shows an exposed pad")
+                elif _ep_allows(name, ep_text):
+                    out["notes"].append(f"pin {num} {name}: taken for the exposed pad of the datasheet")
+                else:
+                    out["absent"].append(f"pin {num} {name}: the exposed pad of the datasheet is not for the net {name}")
             elif complete:
                 out["conflict"].append(f"pin {num} {name}: the datasheet's pin table has {len(set(nums))} pins, none is {num}")
             else:
                 out["absent"].append(f"pin {num} {name}")
             continue
-        good = [r for r in hits if name_matches(name, r["name"])]
+        good = [r for r in hits if name_matches(name, r["name"]) or (_is_ep_row(r) and _ep_allows(name, f"{r['name']} {r.get('rest', '')}"))]
         if not good:
-            others = [str(r["nums"][col["index"]][0]) for r in col["rows"]
-                      if name_matches(name, r["name"]) and r["nums"][col["index"]]]
-            out["conflict"].append(f"pin {num} {name}: the datasheet calls pin {num} {' / '.join(dict.fromkeys(r['name'] for r in hits))}"
-                                   + (f" and puts {name} on pin {', '.join(dict.fromkeys(others))}" if others else ""))
+            unclear = [r for r in hits if polarity_unclear(name, r["name"])]
+            swallowed = [r for r in hits if not r.get("isolated", True) and _name_forms(name) & _words_of(r.get("rest", ""))]
+            if unclear:
+                out["absent"].append(f"pin {num} {name}: the datasheet's name {unclear[0]['name']} has no active-low mark; "
+                                     f"the text may have lost it")
+            elif swallowed:
+                out["absent"].append(f"pin {num} {name}: the name cell of the datasheet row ({swallowed[0]['name']}) cannot be told "
+                                     f"from its description")
+            else:
+                others = [str(r["nums"][col["index"]][0]) for r in col["rows"]
+                          if name_matches(name, r["name"]) and r["nums"][col["index"]]]
+                out["conflict"].append(f"pin {num} {name}: the datasheet calls pin {num} {' / '.join(dict.fromkeys(r['name'] for r in hits))}"
+                                       + (f" and puts {name} on pin {', '.join(dict.fromkeys(others))}" if others else ""))
             continue
         note = _type_note(name, good[0]["type"])
         if note:
@@ -355,12 +465,13 @@ def _evaluate(col, pins, pads):
     if complete:
         out["count"] = len(set(nums))
         if pads is not None:
-            have = {str(p).strip().upper() for p in pads}
             want = {n.upper() for n in nums}
-            missing = sorted(want - have, key=lambda s: (len(s), s))
+            ep_nums = {n.upper() for r in ep_rows for n in r["nums"][col["index"]]}
+            missing = sorted(want - have - ep_nums, key=lambda s: (len(s), s))
             extra = sorted(have - want, key=lambda s: (len(s), s))
-            top = max(map(int, nums))
-            extra = [e for e in extra if not (not e.isdigit() or e == str(top + 1) and len(extra) == 1)]     # an exposed / mechanical pad
+            beyond_pads = sorted(int(e) for e in extra if e.isdigit())
+            split_ok = bool(ep_rows or col.get("ep_lines")) and beyond_pads == list(range(top + 1, top + 1 + len(beyond_pads)))
+            extra = [e for e in extra if not (not e.isdigit() or (e == str(top + 1) and len(extra) == 1) or split_ok)]    # an exposed / mechanical pad
             if missing or extra:
                 out["conflict"].append(f"the datasheet {label or 'pin table'} lists {len(want)} pins, the footprint has "
                                        f"{len(have)} pads" + (f" (no pad {', '.join(missing)})" if missing else "")

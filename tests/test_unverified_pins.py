@@ -46,7 +46,7 @@ def test_datasheet_then_verify_clears_the_mark(empty):
 
 def test_conflicting_datasheet_raises_a_finding_and_accept_resolves_it(empty):
     _sheet(empty)
-    _datasheet(empty, ["1 VDD Supply", "2 GND Ground"])
+    _datasheet(empty, ["1 VIN Supply", "2 GND Ground"])
     item = store.unverified_parts(empty)[0]
     assert item["status"] == "mismatch" and "VCC" in item["issues"]
     store.accept_pins(empty, "U1")
@@ -142,5 +142,7 @@ def test_diode_never_runs_the_datasheet_text_check(empty):
 def test_connector_with_datasheet_stays_unverified_until_verified():
     line = {"refs": ["J1"], "key": "J1", "datasheet": "usb.pdf"}
     assert store.pins_status(line, {"verify": "unchecked"})[0] == "unverified"
-    assert store.pins_status(line, {"verify": "pass"})[0] == ""
+    assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == ""
+    assert store.pins_status(line, {"verify": "pass"})[0] == "unverified"        # an older pass is not a verification
+    assert store.pins_status(line, {"verify": "pass", "accepted": True})[0] == ""   # an accept is never revoked
     assert store.pins_status(line, {"pins_accepted": True})[0] == ""

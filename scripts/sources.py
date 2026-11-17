@@ -298,13 +298,19 @@ def _wild_hit(token, key):
 
 def mentions_part(head, mpn):
     """Does this text (a datasheet's first pages) name the part? The MPN itself, its family (NE555 for NE555DR: an ordering
-    suffix cut off) or a family written with a wildcard letter (STM32G031x6)."""
+    suffix cut off), its base before a "-" (AMS1117-3.3 in a datasheet of the AMS1117) or a family written with a
+    wildcard letter (STM32G031x6)."""
     key = _key(mpn)
     if len(key) < 4:
         return False
     if key in _key(head):
         return True
-    return any(_family_hit(t, key) or _wild_hit(t, key) for t in _tokens(head))
+    toks = _tokens(head)
+    if any(_family_hit(t, key) or _wild_hit(t, key) for t in toks):
+        return True
+    base = _key(re.split(r"[-_/\s]", str(mpn).strip())[0])          # AMS1117-3.3 -> AMS1117: the voltage / option after a "-"
+    return (base != key and len(base) >= 5 and sum(c.isdigit() for c in base) >= 3
+            and any(_family_hit(t, base) for t in toks))
 
 
 def _norm(s):
