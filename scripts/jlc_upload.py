@@ -283,7 +283,7 @@ def board_facts(pcb) -> dict[str, Any] | None:
         return None
 
 
-def content_problems(z: zipfile.ZipFile, entries: list[dict], facts: dict[str, Any]) -> list[dict]:
+def content_problems(z: zipfile.ZipFile, entries: list[dict], facts: dict[str, Any], skipped: list[str] | None = None) -> list[dict]:
     """The produced files against the PcbDoc (gerber_check): holes, outline size, copper layer count. Entries like _problems' `missing`."""
     out = []
 
@@ -302,6 +302,9 @@ def content_problems(z: zipfile.ZipFile, entries: list[dict], facts: dict[str, A
             d = gerber_check.parse_excellon(text) if text is not None else None
             if d is None:
                 drill_ok = False                                  # one drill file unread: no comparison of a partial count
+                if skipped is not None:
+                    skipped.append(f"drill files not checked: {e['name']} "
+                                   + ("is too large to read" if text is None else "is not an Excellon file"))
             else:
                 drills.append(d)
     if drill_ok:
@@ -352,11 +355,12 @@ def _describe(path: pathlib.Path, pcb=None) -> dict[str, Any]:
         check = {"checked": False, "note": "no PcbDoc linked" if not pcb else "the PcbDoc could not be read"}
         if facts:
             try:
-                found = content_problems(z, entries, facts)
+                skipped: list[str] = []
+                found = content_problems(z, entries, facts, skipped)
                 if any(m["layer"] == "Bottom copper" for m in found):
                     missing = [m for m in missing if m["layer"] != "Bottom copper"]     # the content note says it better
                 missing += found
-                check = {"checked": True, "note": ""}
+                check = {"checked": not skipped, "note": "; ".join(skipped)}
             except (OSError, zipfile.BadZipFile, ValueError):
                 check["note"] = "the output files could not be read for the content check"
     size = path.stat().st_size

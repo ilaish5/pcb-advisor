@@ -25,6 +25,7 @@ def parse_excellon(text: str) -> dict | None:
     if "M48" not in text[:2048]:
         return None
     metric, tools, cur, holes, plated, tol = False, {}, None, [], None, 0.0
+    routing, x, y, start = False, None, None, (None, None)
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
@@ -43,16 +44,28 @@ def parse_excellon(text: str) -> dict | None:
         if m and (m.group(2) or m.group(3)):
             k = 1.0 if metric else 25.4
             tools[int(m.group(1))] = float(f"{m.group(2) or 0}.{m.group(3) or 0}") * k
-            tol = max(tol, 0.5 * 10 ** -len(m.group(3)) * k)
+            tol = max(tol, min(0.5 * 10 ** -len(m.group(3)) * k, 0.0127))      # half the last digit, at most half of 0.001 in
+            cur = int(m.group(1))                                              # a tool defined in the body also selects it
             continue
         m = re.fullmatch(r"T(\d+)", line)
         if m:
             cur = int(m.group(1))
             continue
-        if cur not in tools:
+        mx, my = re.search(r"X([-+]?[\d.]+)", line), re.search(r"Y([-+]?[\d.]+)", line)
+        if routing and line.startswith(("M16", "M17")):
+            if (x, y) != start and cur in tools:                  # an open route is a slot; a closed one (board outline) is no hole
+                holes.append(round(tools[cur], 4))
+            routing = False
+        elif line.startswith("M15"):
+            routing, start = True, (x, y)
+        if mx:
+            x = mx.group(1)
+        if my:
+            y = my.group(1)
+        if routing or cur not in tools:
             continue
-        if line.startswith("M15") or line[0] in "XY":
-            holes.append(round(tools[cur], 4))
+        if line[0] in "XY":
+            holes.append(round(tools[cur], 4))                    # a hit; a G85 slot is one hit line as well
     return {"plated": plated, "holes": holes, "tol": tol}
 
 

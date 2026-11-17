@@ -697,3 +697,33 @@ def test_the_messages_say_to_save_the_pcbdoc_and_check_the_outline_layer(tmp_pat
     out = _check(_set(tmp_path, outline=(40 / 25.4, 20 / 25.4)), FACTS)[0]
     assert "save the PcbDoc in Altium first" in out and "check the outline layer in the Gerber setup" in out
     assert "save the PcbDoc in Altium first" in _check(_set(tmp_path, copper=("GTL", "GBL", "G1")), FACTS)[0]
+
+
+def test_x_y_lines_inside_a_route_are_not_holes():
+    text = "M48\nINCH,LZ\n;TYPE=PLATED\nT02F00S00C0.0236\n%\nT02\nG00X004252Y000992\nM15\nG01Y001268\nX004300Y001300\nM16\nM30\n"
+    assert len(jlc_upload.gerber_check.parse_excellon(text)["holes"]) == 1
+
+
+def test_a_closed_board_edge_route_adds_no_holes():
+    rout = "M48\nINCH,LZ\n;TYPE=NON_PLATED\nT01F00S00C0.0394\n%\nT01\nG00X0Y0\nM15\nG01Y7874\nX11811\nY0\nX0\nM16\nM30\n"
+    assert jlc_upload.gerber_check.parse_excellon(rout)["holes"] == []
+    only_tool = "M48\nMETRIC\nT1C2.0\nT2C0.8\n%\nT1\nG00X1Y1\nM15\nG01X9\nY9\nX1\nY1\nM16\nT2\nX3Y3\nM30\n"
+    assert jlc_upload.gerber_check.parse_excellon(only_tool)["holes"] == [0.8]
+
+
+def test_a_tool_defined_in_the_body_selects_itself():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=PLATED\n%\nT1C0.800\nX1.0Y1.0\nM30\n")
+    assert ex["holes"] == [0.8]
+
+
+def test_the_tolerance_from_few_decimals_is_capped():
+    ex = jlc_upload.gerber_check.parse_excellon("M48\nMETRIC\n;TYPE=PLATED\nT1C1.0\n%\nT1\nX1Y1\nM30\n")
+    assert ex["tol"] == pytest.approx(0.0127)
+    assert jlc_upload.gerber_check.drill_problems([ex], {"plated": [1.04], "unplated": []})
+
+
+def test_a_skipped_drill_file_makes_content_check_say_not_checked(tmp_path, monkeypatch):
+    monkeypatch.setattr(jlc_upload, "_facts_cached", lambda pcb: FACTS)
+    monkeypatch.setattr(jlc_upload.gerber_check, "MAX_BYTES", 40)
+    res = jlc_upload._describe(_set(tmp_path), tmp_path / "b.PcbDoc")
+    assert res["content_check"]["checked"] is False and "drill files not checked" in res["content_check"]["note"]
