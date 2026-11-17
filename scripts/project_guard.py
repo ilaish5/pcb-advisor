@@ -6,22 +6,35 @@ directly. Around the engine run (agent.respond, never apply_actions) this guard 
 end, puts back whatever changed without the server's knowledge.
 
 A change is legitimate when someone who may write it said so: every write helper of the server (store.append,
-store._atomic_write_json, the bom.json and netlist writers, project.save_meta) calls note(path, bytes). That works across
-processes: a skill script the agent runs writes through the same helpers, and the registry is a small file under the
-workspace's local/ folder, one per project, that exists only while a window is open (so outside a window note() costs one
-stat). At the end a file is left alone when its bytes equal what it had at the start, or equal any bytes registered for it
-during the window; anything else is restored (a new file removed) and reported. A direct edit AFTER a legitimate write has
-other bytes than every registered one, so it is caught. The one blind spot: an append registers the hash of the whole file
-as it is right after the append, so a direct edit made in the same instant before it is not told apart.
+store._atomic_write_json, the bom.json and netlist writers, project.save_meta, reset) runs inside `with writing(path):`.
+That holds a per-project lock for the write and then registers the file's bytes (sequence number, sha256, and a copy of
+the bytes). It works across processes: a skill script the agent runs writes through the same helpers and keeps its own
+registry file (<pid>.jsonl) in the project's registry folder under the workspace's local/ folder, which exists only while
+a window is open (outside one, writing() costs a stat).
 
-Never raises, never loses work: a file whose bytes match a registered write is never touched; a restore that fails is
-reported as not restored. Off with the tool guard (PCB_ADVISOR_DEV=1, agent.protect_tool_files false).
+At the end a file is put back to the last LEGITIMATE state, never to the start of the turn when the server wrote since:
+  - a log (*.jsonl): untouched when it is the last registered version; when it only grew beyond it, the agent's extra
+    lines are cut (the longest legitimate version that is a byte prefix of it stays, so every legitimate append stays);
+    when it shrank or was rewritten, the last registered version comes back;
+  - any other file: the last registered version (a registered deletion = absent), else the start-of-turn bytes;
+  - a new file nobody registered is removed.
+The restore is a temp file + os.replace. end() holds the project lock for its whole read-compare-restore, so an in-process
+server write cannot land between the check and the restore (subprocess writes finish before the agent run returns).
+
+Never raises, never loses work: a project that is gone (deleted, reset) is left alone and never recreated; a restore that
+fails is reported as not restored. Blind spot: an append registers the file as it is right after the append, so a direct
+edit made in that same instant before it is not told apart. Off with the tool guard (PCB_ADVISOR_DEV=1,
+agent.protect_tool_files false).
 """
+import contextlib
 import hashlib
 import json
+import os
 import pathlib
+import shutil
 import sys
 import threading
+import time
 
 import tool_guard
 import workspace
@@ -31,7 +44,13 @@ GUARDED = ("idea.json", "bom.json", "project.json", "bom-log.jsonl", "library-lo
 NETLIST = "netlist"
 
 _lock = threading.Lock()
+_locks = {}           # project -> RLock: held by writers around write+note and by end() around its whole check
 _open = {}            # project -> [turns running, snapshot]
+
+
+def _plock(project):
+    with _lock:
+        return _locks.setdefault(project, threading.RLock())
 
 
 def _digest(data):
@@ -46,8 +65,8 @@ def _read(path):
         return None
 
 
-def _registry(project):
-    return workspace.home() / "local" / "project-guard" / (workspace.safe_name(project) + ".jsonl")
+def _regdir(project):
+    return workspace.home() / "local" / "project-guard" / workspace.safe_name(project)
 
 
 def _rel_of(path):
@@ -64,24 +83,40 @@ def _rel_of(path):
     return None
 
 
-def note(path, data=Ellipsis):
-    """A legitimate write of `path` just happened. data: the bytes written, None for a deletion, omitted to read the file.
-    Free when no window is open. Never raises."""
+def note(path):
+    """Register the file as it is now (absent = a deletion). Call it under writing(). Never raises."""
     try:
         hit = _rel_of(path)
         if not hit:
             return
-        reg = _registry(hit[0])
-        if not reg.exists():
+        reg = _regdir(hit[0])
+        if not reg.is_dir():
             return
-        if data is Ellipsis:
-            data = _read(path)
-        elif isinstance(data, str):
-            data = data.encode("utf-8")
-        with open(reg, "a", encoding="utf-8", newline="\n") as fh:
-            fh.write(json.dumps({"p": hit[1], "h": _digest(data)}) + "\n")
+        data = _read(path)
+        h = _digest(data)
+        if data is not None and not (reg / f"{h}.bin").exists():
+            (reg / f"{h}.bin").write_bytes(data)
+        with open(reg / f"{os.getpid()}.jsonl", "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps({"seq": time.time_ns(), "p": hit[1], "h": h}) + "\n")
     except Exception as exc:
         print(f"[project-guard] could not register a write: {exc}", file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def writing(path):
+    """Around a server write of `path`: the project lock is held until the write is registered."""
+    try:
+        hit = _rel_of(path)
+    except Exception:
+        hit = None
+    if not hit:
+        yield
+        return
+    with _plock(hit[0]):
+        try:
+            yield
+        finally:
+            note(path)
 
 
 def _files(pdir):
@@ -95,9 +130,8 @@ def _files(pdir):
 
 
 def _snapshot(project):
-    pdir = workspace.project_dir(project)
     snap = {}
-    for rel, f in _files(pdir).items():
+    for rel, f in _files(workspace.project_dir(project)).items():
         try:
             snap[rel] = _read(f)
         except OSError:
@@ -111,12 +145,12 @@ def begin(project):
         if not tool_guard.enabled():
             return None
         project = workspace.safe_name(project)
-        with _lock:
+        with _plock(project):
             slot = _open.get(project)
             if slot is None:
-                reg = _registry(project)
-                reg.parent.mkdir(parents=True, exist_ok=True)
-                reg.write_text("", encoding="utf-8")
+                reg = _regdir(project)
+                shutil.rmtree(reg, ignore_errors=True)
+                reg.mkdir(parents=True, exist_ok=True)
                 slot = _open[project] = [0, _snapshot(project)]
             slot[0] += 1
         return project
@@ -125,12 +159,31 @@ def begin(project):
         return None
 
 
+def _registered(reg):
+    """{rel: [(seq, hash|None), ...] by seq} from the registry file of every process."""
+    out = {}
+    for f in reg.glob("*.jsonl"):
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                rec = json.loads(line)
+                out.setdefault(rec["p"], []).append((int(rec["seq"]), rec["h"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+    for v in out.values():
+        v.sort(key=lambda e: e[0])
+    return out
+
+
 def end(token):
     """Call when the agent run ended. The last turn of a project restores; returns (restored, unrestored) file names."""
     if not token:
         return [], []
     try:
-        with _lock:
+        with _plock(token):
             slot = _open.get(token)
             if slot is None:
                 return [], []
@@ -138,48 +191,72 @@ def end(token):
             if slot[0] > 0:
                 return [], []
             del _open[token]
-            before = slot[1]
-            reg = _registry(token)
-            allowed = {}
+            reg = _regdir(token)
             try:
-                for line in reg.read_text(encoding="utf-8").splitlines():
-                    try:
-                        rec = json.loads(line)
-                        allowed.setdefault(rec["p"], set()).add(rec["h"])
-                    except (ValueError, KeyError, TypeError):
-                        continue
-            except OSError:
-                pass
-            try:
-                reg.unlink(missing_ok=True)
-            except OSError:
-                pass
-            return _restore(token, before, allowed)
+                return _restore(token, slot[1], reg)
+            finally:
+                shutil.rmtree(reg, ignore_errors=True)
     except Exception as exc:
         print(f"[project-guard] end failed: {exc}", file=sys.stderr, flush=True)
         return [], []
 
 
-def _restore(project, before, allowed):
+def _versions(rel, before, entries, reg):
+    """The legitimate states of a file, oldest first: the start of the turn, then every registered write (bytes|None)."""
+    out = [before.get(rel)]
+    for _seq, h in entries:
+        if h is None:
+            out.append(None)
+        else:
+            try:
+                out.append((reg / f"{h}.bin").read_bytes())
+            except OSError:
+                continue              # no copy of it: it cannot be a target
+    return out
+
+
+def _decide(rel, before, cur, entries, reg):
+    """None when the file is fine, else (bytes|None,): what it should hold (None = absent)."""
+    vers = _versions(rel, before, entries, reg)
+    last = vers[-1]
+    if cur == last:
+        return None
+    if rel.endswith(".jsonl") and last is not None:
+        if cur is not None:
+            if cur.startswith(last) and cur in vers:
+                return None           # appends from two processes that registered out of order: cur is a legit version
+            if last.startswith(cur):
+                return (last,)        # truncated: every legitimate append comes back
+            pre = [v for v in vers if v is not None and cur.startswith(v)]
+            if pre:
+                return (max(pre, key=len),)      # grown by the agent: its extra lines are cut
+        return (last,)
+    return (last,)
+
+
+def _restore(project, before, reg):
     pdir = workspace.project_dir(project)
-    after_files = _files(pdir)
+    if not pdir.is_dir() or (before.get("project.json") is not None and not (pdir / "project.json").exists()
+                             and not any(h is None for _s, h in _registered(reg).get("project.json", []))):
+        return [], []                 # the project was deleted: nothing to put back, never recreate it
+    registered = _registered(reg)
     restored, unrestored = [], []
-    for rel in sorted(set(before) | set(after_files)):
+    for rel in sorted(set(before) | set(_files(pdir)) | set(registered)):
         path = pdir / rel
         try:
             cur = _read(path)
-        except OSError:
-            continue
-        was = before.get(rel)
-        h = _digest(cur)
-        if h == _digest(was) or h in allowed.get(rel, ()):
-            continue                  # untouched, or a write the server (or its scripts) made
-        try:
-            if was is None:
+            fix = _decide(rel, before, cur, registered.get(rel, []), reg)
+            if fix is None:
+                continue
+            if fix[0] is None:
                 path.unlink(missing_ok=True)
             else:
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(was)
+                tmp = path.with_name(f"{path.name}.guard.{os.getpid()}.tmp")
+                try:
+                    tmp.write_bytes(fix[0])
+                    os.replace(tmp, path)
+                finally:
+                    tmp.unlink(missing_ok=True)
             restored.append(rel)
         except OSError:
             unrestored.append(rel)

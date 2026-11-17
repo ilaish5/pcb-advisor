@@ -110,7 +110,7 @@ def test_restore_failure_reported_not_raised(proj, monkeypatch):
     real = pathlib.Path.write_bytes
 
     def boom(self, data):
-        if self.name == "bom.json":
+        if self.name.startswith("bom.json"):
             raise PermissionError("locked")
         return real(self, data)
     monkeypatch.setattr(pathlib.Path, "write_bytes", boom)
@@ -122,6 +122,70 @@ def test_restore_failure_reported_not_raised(proj, monkeypatch):
 def test_no_registry_left_and_note_free_outside_window(proj):
     tok = project_guard.begin(proj)
     project_guard.end(tok)
-    assert not project_guard._registry(proj).exists()
-    project_guard.note(_p(proj, "bom.json"))          # outside a window: no file appears
-    assert not project_guard._registry(proj).exists()
+    assert not project_guard._regdir(proj).exists()
+    project_guard.note(_p(proj, "bom.json"))          # outside a window: nothing appears
+    assert not project_guard._regdir(proj).exists()
+
+
+def test_ui_write_then_agent_edit_keeps_ui_write(proj):
+    log, bomf = _p(proj, "bom-log.jsonl"), _p(proj, "bom.json")
+    tok = project_guard.begin(proj)
+    store.append(proj, "bom-log.jsonl", {"line": "R2", "changes": {"value": "1k"}})     # the student, in the UI
+    store.bom(proj)
+    legit_bom = bomf.read_bytes()
+    log.write_bytes(log.read_bytes() + b'{"line": "EVIL"}\n')                           # the agent, directly
+    bomf.write_text("[]", encoding="utf-8")
+    restored, left = project_guard.end(tok)
+    assert sorted(restored) == ["bom-log.jsonl", "bom.json"] and left == []
+    text = log.read_text(encoding="utf-8")
+    assert "R2" in text and "EVIL" not in text
+    assert bomf.read_bytes() == legit_bom
+
+
+def test_agent_truncating_log_gets_ui_appends_back(proj):
+    log = _p(proj, "bom-log.jsonl")
+    tok = project_guard.begin(proj)
+    store.append(proj, "bom-log.jsonl", {"line": "R2", "changes": {"value": "1k"}})
+    want = log.read_bytes()
+    log.write_bytes(b"")
+    assert project_guard.end(tok)[0] == ["bom-log.jsonl"]
+    assert log.read_bytes() == want
+
+
+def test_project_deleted_mid_turn_no_ghost(proj):
+    import shutil
+    tok = project_guard.begin(proj)
+    shutil.rmtree(workspace.project_dir(proj))
+    assert project_guard.end(tok) == ([], [])
+    assert not workspace.project_dir(proj).exists()
+
+
+def test_reset_mid_turn_is_legitimate(proj):
+    import project
+    tok = project_guard.begin(proj)
+    project.reset(proj)
+    assert project_guard.end(tok) == ([], [])
+    assert _p(proj, "bom-log.jsonl").read_bytes() == b""
+
+
+def test_restore_goes_through_replace(proj, monkeypatch):
+    import os
+    calls, real = [], os.replace
+    monkeypatch.setattr(os, "replace", lambda a, b: (calls.append(str(b)), real(a, b))[1])
+    f = _p(proj, "bom.json")
+    tok = project_guard.begin(proj)
+    f.write_text("[]", encoding="utf-8")
+    assert project_guard.end(tok)[0] == ["bom.json"]
+    assert any(c.endswith("bom.json") for c in calls)
+
+
+def test_registry_files_of_two_processes_merged(proj):
+    import os
+    tok = project_guard.begin(proj)
+    store.append(proj, "bom-log.jsonl", {"line": "R2", "changes": {"value": "1k"}})
+    reg = project_guard._regdir(proj)
+    mine = reg / f"{os.getpid()}.jsonl"
+    (reg / "99999.jsonl").write_text(mine.read_text(encoding="utf-8"), encoding="utf-8")   # another process' file
+    mine.unlink()
+    assert project_guard.end(tok) == ([], [])
+    assert "R2" in _p(proj, "bom-log.jsonl").read_text(encoding="utf-8")

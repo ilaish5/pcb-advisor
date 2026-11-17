@@ -119,16 +119,16 @@ def read_jsonl(path):
 
 def _write_text(path, text):
     """write_text for a file the server writes (bom.json, netlist sheets): the project guard is told what was written."""
-    pathlib.Path(path).write_text(text, encoding="utf-8")
-    project_guard.note(path)         # the bytes as the OS wrote them (newlines), read back
+    with project_guard.writing(path):
+        pathlib.Path(path).write_text(text, encoding="utf-8")
 
 
 def append(project, filename, record):
     path = pdir(project) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-    project_guard.note(path)
+    with project_guard.writing(path):
+        with open(path, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     return record
 
 
@@ -1310,8 +1310,8 @@ def undo_sheet_write(project, cid, by="student"):
     if _sheet_hash(load_sheet(project, ch["sheet"])) != ch["after_hash"]:
         raise UndoRefused(f"sheet {ch['sheet']} was written again after this; undo that later change first")
     if ch.get("before") is None:
-        path.unlink(missing_ok=True)
-        project_guard.note(path, None)
+        with project_guard.writing(path):
+            path.unlink(missing_ok=True)
     else:
         _write_text(path, json.dumps(ch["before"], ensure_ascii=False, indent=2))
     append(project, "sheet-log.jsonl", {"id": cid, "ts": now(), "status": "undone", "by": by})
@@ -1407,15 +1407,15 @@ def _atomic_write_json(path, obj):
     text = json.dumps(obj, ensure_ascii=False, indent=2)
     tmp.write_text(text, encoding="utf-8")
     try:
-        for attempt in range(10):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                if attempt == 9:
-                    raise
-                time.sleep(0.05)
-        project_guard.note(path)         # the bytes as the OS wrote them (newlines), read back
+        with project_guard.writing(path):
+            for attempt in range(10):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.05)
     finally:
         tmp.unlink(missing_ok=True)
 

@@ -103,8 +103,8 @@ def ensure(name):
     (d / "chats").mkdir(exist_ok=True)
     for f in LOGS:
         if not (d / f).exists():
-            (d / f).touch()
-            project_guard.note(d / f, b"")
+            with project_guard.writing(d / f):
+                (d / f).touch()
     (d / "netlist").mkdir(exist_ok=True)
     if not session.list_all(name):
         session.create(name, title="First conversation")
@@ -199,8 +199,8 @@ def save_meta(name, meta):
     path = meta_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
     text = json.dumps(meta, ensure_ascii=False, indent=2) + "\n"
-    path.write_text(text, encoding="utf-8")
-    project_guard.note(path)         # the bytes as the OS wrote them (newlines), read back
+    with project_guard.writing(path):
+        path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -262,7 +262,11 @@ def reset(name):
     if not d.exists():
         raise SystemExit(f"no such project: {name}")
     for f in LOGS + ("design-model.json", "bom.json", "idea.json"):
-        (d / f).unlink(missing_ok=True)
+        with project_guard.writing(d / f):
+            (d / f).unlink(missing_ok=True)
+    for f in sorted((d / "netlist").glob("*")) if (d / "netlist").is_dir() else []:
+        with project_guard.writing(f):
+            f.unlink(missing_ok=True)
     for sub in ("artifacts", "chats", "netlist", "exports", "library"):
         shutil.rmtree(d / sub, ignore_errors=True)
     ensure(name)
