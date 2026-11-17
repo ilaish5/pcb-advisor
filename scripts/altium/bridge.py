@@ -1288,6 +1288,18 @@ def net_current_inputs(project):
             "estimates": netcurrent.regulator_currents(store.bom_lines(project), [sh for _, _, sh in _sheets(project)])}
 
 
+def net_current_rows(project):
+    """[{net, current_a, source, width_mm, note}] for the supply (rail) nets of the netlist and every net with a current set: what the
+    Rules tab shows. Widths use the JLC default rules (the board's own net rules are read when it is routed)."""
+    from altium import netcurrent, route
+    inp = net_current_inputs(project)
+    nets = {(p.get("net") or "").strip() for _, _, sh in _sheets(project) for part in sh.get("parts", []) for p in part.get("pins", [])}
+    nets = sorted(n for n in nets if n and (route._RAIL.match(n) or n in inp["currents"] or n in inp["estimates"]))
+    w = netcurrent.net_widths(nets, route.rules_from_doc({}), inp["currents"], inp["estimates"], inp["copper"].get("copper_oz", 1.0),
+                              inp["copper"].get("temp_rise_c", 10.0), is_rail=lambda n: bool(route._RAIL.match(n)))
+    return [{"net": n, **w[n]} for n in nets]
+
+
 def route_pcb(project, replace=False, keep_partial=False):
     """altium.route_pcb: the placed board routed by the agent's router (see route_on). Raises BridgeError with the reason when it did
     not end up with a fully routed, rule-clean board; the file is then as it was (backup kept)."""

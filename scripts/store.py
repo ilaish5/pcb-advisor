@@ -1092,6 +1092,13 @@ def propose_net_current(project, net, current_a, reason="", sources=(), session=
     return append(project, "proposals.jsonl", rec)
 
 
+def set_net_current(project, net, current_a, by="student", reason="set by the student"):
+    """The student's own edit: applied at once (by=student), still recorded as a proposal so it shows in the history and can be undone."""
+    rec = propose_net_current(project, net, current_a, reason=reason)
+    decide(project, rec["id"], "approved", by=by)
+    return rec
+
+
 def _lock_keeps_library(project, line, lock):
     import partlib_order
     return partlib_order.swap_keeps_library(project, line, lock)

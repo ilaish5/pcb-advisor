@@ -1,7 +1,12 @@
 """Width by current (scripts/altium/netcurrent.py, route.plan_routes widths, store.propose_net_current)."""
+import pathlib
+
 import pytest
 
 import store
+import workspace
+from test_autonomy import _agent_says
+from test_server import get, post, server  # noqa: F401  (server is a fixture)
 from altium import netcurrent, route
 from test_altium_route import pad, rules
 
@@ -101,3 +106,51 @@ def test_a_net_current_change_needs_approval_and_is_undoable(lte):
         store.propose_net_current(lte, "+5V", -1)
     with pytest.raises(ValueError):
         store.propose_net_current(lte, "+5V", "lots")
+
+
+# ---- the agent action, the student's own edit, the Rules tab, the docs
+
+REPO = pathlib.Path(__file__).resolve().parent.parent
+
+
+def test_the_agent_action_is_a_proposal_that_waits_in_ask_and_important_mode(server, lte, monkeypatch):
+    for mode in ("ask", "important"):
+        workspace.set_value("agent.autonomy", mode)
+        _agent_says(monkeypatch, [{"type": "net.set_current", "net": "+5V", "amps": 0.5, "reason": "USB VBUS", "sources": ["usb.pdf"]}])
+        _, st = post(server, "/api/chat", {"text": "go"}, lte)
+        assert st["proposals"][-1]["status"] == "pending" and st["proposals"][-1]["kind"] == "net_current"
+        assert store.net_currents(lte) == {}
+    workspace.set_value("agent.autonomy", "ask")
+    _agent_says(monkeypatch, [{"type": "net.set_current", "net": "+5V", "amps": -3}])
+    post(server, "/api/chat", {"text": "go"}, lte)
+    assert store.net_currents(lte) == {}                            # a bad amount is refused, not stored
+
+
+def test_a_student_set_applies_at_once_and_a_blank_clears(server, lte):
+    code, body = post(server, "/api/net-currents", {"net": "+5V", "amps": "1.5"}, lte)
+    assert code == 200 and store.net_currents(lte) == {"+5V": 1.5}
+    assert store.read_jsonl(store.pdir(lte) / "net-currents.jsonl")[-1]["by"] == "student"
+    code, body = get(server, "/api/net-currents", lte)
+    assert code == 200 and isinstance(body["nets"], list)
+    code, body = post(server, "/api/net-currents", {"net": "+5V", "amps": ""}, lte)
+    assert code == 200 and store.net_currents(lte) == {}
+    assert post(server, "/api/net-currents", {"net": "+5V", "amps": "x"}, lte)[0] == 400
+
+
+def test_route_board_reads_the_currents_again_each_time(lte):
+    from altium import bridge
+    assert bridge.net_current_inputs(lte)["currents"] == {}
+    store.set_net_current(lte, "+3V3", 2.0)
+    assert bridge.net_current_inputs(lte)["currents"] == {"+3V3": 2.0}       # route_pcb calls this on every run
+    row = next((r for r in bridge.net_current_rows(lte) if r["net"] == "+3V3"), None)
+    assert row is None or (row["source"] == "set" and row["width_mm"] > 0.5)
+
+
+def test_the_rules_tab_has_the_net_currents_table_and_the_agent_knows_the_action():
+    js = (REPO / "ui" / "js" / "views" / "rules.js").read_text(encoding="utf-8")
+    assert "/api/net-currents" in js and "data-net-amps" in js and "'Net currents'" in js
+    agents = (REPO / "runtime" / "AGENTS.md").read_text(encoding="utf-8")
+    assert '"net.set_current"' in agents and len(agents.splitlines()) <= 150
+    skill = (REPO / "runtime" / "skills" / "placement-and-routing-plan" / "SKILL.md").read_text(encoding="utf-8")
+    assert "net.set_current" in skill
+    assert all(len(l) <= 160 for l in skill.splitlines()[3:])

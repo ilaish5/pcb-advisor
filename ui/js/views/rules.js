@@ -210,12 +210,37 @@ function rulesStandardBody(rd) {
       ${btn('Preview', {kind: 'line', act: 'preview-standard'})}
     </div>${prev}`;
 }
+/* ---------- net currents: the current of each supply net sizes its track (IPC-2221) when the board is routed ---------- */
+let rulesNets = null, rulesNetsP = null;      // [{net, current_a, source, width_mm, note}] from /api/net-currents; null = not read yet
+function loadNetCurrents() {
+  if (rulesNetsP) return rulesNetsP;
+  rulesNetsP = api('/api/net-currents', undefined, {soft: true}).then(r => { rulesNets = (r && r.nets) || []; })
+    .catch(() => { rulesNets = []; }).finally(() => { rulesNetsP = null; renderCenter(true); });
+  return rulesNetsP;
+}
+function rulesNetCurrentsBody() {
+  if (rulesNets === null) { loadNetCurrents(); return loadingLine('Reading the supply nets'); }
+  if (!rulesNets.length) return '<p class="muted">No supply nets in the netlist yet.</p>';
+  const src = {set: 'set', regulator: "regulator's rating", 'rail default': 'unknown: default', rule: 'board rule'};
+  return `<p class="muted">The router draws each net as wide as its current needs (IPC-2221, external layer, 10 &deg;C rise). Leave a current empty when you do not know it.</p>
+    <table class="tbl dense rules-tbl"><thead><tr><th>Net</th><th>Current (A)</th><th>Source</th><th>Track width</th></tr></thead><tbody>
+    ${rulesNets.map(n => `<tr><td><span class="rn">${esc(n.net)}</span></td>
+      <td><input class="in" type="number" inputmode="decimal" min="0" step="any" data-net-amps="${esc(n.net)}" value="${n.current_a == null ? '' : esc(n.current_a)}" aria-label="Current of ${esc(n.net)} in amps" placeholder="unknown"></td>
+      <td>${esc(src[n.source] || n.source)}</td>
+      <td class="val" title="${esc(n.note || '')}">${n.width_mm == null ? '<span class="warn-t">outside IPC-2221 range</span>' : esc(+(+n.width_mm).toFixed(3)) + ' mm'}</td></tr>`).join('')}</tbody></table>`;
+}
+onChange(t => t.dataset && t.dataset.netAmps !== undefined, async e => {
+  const res = await api('/api/net-currents', {net: e.target.dataset.netAmps, amps: e.target.value.trim()});     // your own edit applies at once
+  if (res && Array.isArray(res.nets)) rulesNets = res.nets;
+  renderCenter(true);
+});
 function rulesDiscs(rd) {
   const linked = !!rd.linked_pcb, n = ((rd.preset && rd.preset.rules) || []).length, ex = (rd.extra || []).length;
   return `<div class="rules-discs">
     ${rulesDisc('howto', 'How to import in Altium', rulesHowTo(linked), !!rulesOpen.howto)}
     ${rulesDisc('preset', `JLC preset (${n - (rd.preset_off || []).length} of ${n} rules on)`, rulesPresetTable(rd), rulesOpen.preset ?? !linked)}
     ${rulesDisc('standard', 'By a standard (IPC)', rulesStandardBody(rd), !!rulesOpen.standard)}
+    ${rulesDisc('netcur', 'Net currents', rulesNetCurrentsBody(), !!rulesOpen.netcur)}
     ${rulesDisc('extra', ex ? `Extra rules (${ex})` : 'Extra rules', rulesExtraBody(rd), !!rulesOpen.extra)}
   </div>`;
 }
