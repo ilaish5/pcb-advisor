@@ -140,6 +140,8 @@ def bom_lines(project):
         ch = ev.get("changes") or {}
         if "footprint_lock" not in ch and any(k in ch for k in LOCK_BREAKS):
             line.pop("footprint_lock", None)
+        if "cpl_rotation" not in ch and any(k in ch for k in ("mpn", "lcsc", "package")):
+            line.pop("cpl_rotation", None)       # a turn proved for the old part says nothing about the new one
         line.update(ch)
     for line in lines.values():
         # a line approved without references is still known by its key when that is a designator
@@ -424,7 +426,10 @@ def _vet_lock(project, line, changes, known):
 
 
 def cpl_rotation_value(value):
-    """A CPL rotation offset as an int in 0..270 (a multiple of 90, any sign); ValueError for anything else."""
+    """A CPL rotation offset as an int in 0..270 (a multiple of 90, any sign); None for "" / None (clears the offset);
+    ValueError for anything else."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
     if isinstance(value, bool):
         raise ValueError("cpl_rotation must be a number of degrees, a multiple of 90")
     try:
@@ -1130,6 +1135,8 @@ def classify_proposal(prop):
             return "critical"
         if prop.get("new"):                  # a new line adds a part to the BOM
             return "important"
+        if "cpl_rotation" in ch and not _same_field("cpl_rotation", ch["cpl_rotation"], before.get("cpl_rotation")):
+            return "critical"                # changes what the factory places: always the student's click, in every mode
         for key, val in ch.items():          # a real change to anything that is built or connected
             if key not in BOM_DESCRIPTIVE and not _same_field(key, val, before.get(key)):
                 return "important"

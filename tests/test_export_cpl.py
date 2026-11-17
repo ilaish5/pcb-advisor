@@ -90,17 +90,22 @@ def test_offset_is_added_to_every_ref_of_the_line_mod_360(home, empty, monkeypat
     assert [o["ref"] for o in res["rotation_offsets"]] == ["C1", "C2"] and res["warnings"] == []
 
 
-def test_bottom_part_gets_the_offset_and_a_warning(home, empty, monkeypatch):
-    res = _export_with(monkeypatch, empty, [_comp("U2", 0.0, "Bottom Layer")], [("U2", ["U2"], {"cpl_rotation": 90})])
-    assert rows_of(home, res)["U2"]["Rotation"] == "90.0"
-    assert len(res["warnings"]) == 1 and "U2" in res["warnings"][0] and "preview" in res["warnings"][0]
+def test_bottom_part_keeps_its_rotation_and_is_named_in_a_warning(home, empty, monkeypatch):
+    res = _export_with(monkeypatch, empty, [_comp("U2", 30.0, "Bottom Layer"), _comp("U3", 0.0)],
+                       [("U2", ["U2", "U3"], {"cpl_rotation": 90})])
+    rows = rows_of(home, res)
+    assert rows["U2"]["Rotation"] == "30.0" and rows["U3"]["Rotation"] == "90.0"
+    assert [o["ref"] for o in res["rotation_offsets"]] == ["U3"]
+    assert res["warnings"] == ["U2: CPL rotation offset not applied on the bottom side (JLC does not document its "
+                               "direction); check these parts in JLC's placement preview and rotate them there"]
 
 
 def test_offset_must_be_a_multiple_of_90():
     import pytest
     import store
     assert store.cpl_rotation_value(-90) == 270 and store.cpl_rotation_value("180") == 180
-    for bad in (45, "x", None, True, 90.5, float("nan")):
+    assert store.cpl_rotation_value("") is None and store.cpl_rotation_value(None) is None
+    for bad in (45, "x", True, 90.5, float("nan")):
         with pytest.raises(ValueError):
             store.cpl_rotation_value(bad)
 
@@ -110,8 +115,49 @@ def test_offset_needs_the_students_approval(empty):
     import store
     store.append(empty, "bom-log.jsonl", {"ts": "t", "by": "student", "line": "U1", "changes": {"refs": ["U1"]}})
     rec = store.propose_bom(empty, "U1", {"cpl_rotation": "90"}, "preview shows U1 turned")
-    assert rec["changes"] == {"cpl_rotation": 90} and store.classify_proposal(rec) == "important"
+    assert rec["changes"] == {"cpl_rotation": 90} and store.classify_proposal(rec) == "critical"
     assert not store.may_auto_apply(rec, "important")
     assert "cpl_rotation" not in next(l for l in store.bom_lines(empty) if l["key"] == "U1")
     with pytest.raises(ValueError):
         store.propose_bom(empty, "U1", {"cpl_rotation": 45})
+
+
+def _line(store, empty, **ch):
+    store.append(empty, "bom-log.jsonl", {"ts": "t", "by": "student", "line": "U1", "changes": {"refs": ["U1"], **ch}})
+    return next(l for l in store.bom_lines(empty) if l["key"] == "U1")
+
+
+def test_offset_is_cleared_when_the_part_changes(empty):
+    import store
+    assert _line(store, empty, mpn="A", cpl_rotation=90)["cpl_rotation"] == 90
+    assert "cpl_rotation" not in _line(store, empty, mpn="B")
+    assert _line(store, empty, cpl_rotation=180, package="X")["cpl_rotation"] == 180      # set explicitly in the same change
+    assert "cpl_rotation" not in _line(store, empty, lcsc="C1")
+    assert _line(store, empty, cpl_rotation=90, note="n")["cpl_rotation"] == 90          # a note does not clear it
+
+
+def test_offset_can_be_cleared(empty):
+    import store
+    _line(store, empty, cpl_rotation=90)
+    rec = store.propose_bom(empty, "U1", {"cpl_rotation": ""})
+    assert rec["changes"] == {"cpl_rotation": None}
+    assert store.edit_bom(empty, "U1", "cpl_rotation", "")["changes"] == {"cpl_rotation": None}
+    assert not export_cpl.rotation_offsets(empty)
+
+
+def test_offset_always_asks_even_in_auto_mode(empty):
+    import store
+    _line(store, empty)
+    rec = store.propose_bom(empty, "U1", {"cpl_rotation": 90})
+    assert store.classify_proposal(rec) == "critical"
+    for mode in ("ask", "important", "auto"):
+        assert not store.may_auto_apply(rec, mode)
+
+
+def test_approval_card_labels_the_offset():
+    ui = REPO / "ui" / "js"
+    assert "cpl_rotation: 'CPL rotation (added in pick and place)'" in (ui / "chat.js").read_text(encoding="utf-8")
+    assert "cpl_rotation: 'CPL rotation (added in pick and place)'" in (ui / "core.js").read_text(encoding="utf-8")
+    chat = (ui / "chat.js").read_text(encoding="utf-8")
+    assert "'none'" in chat and "'+'" in chat and "°" in chat
+    assert "(r.warnings || []).forEach" in (ui / "views" / "outputs.js").read_text(encoding="utf-8").split("onAct('gen-cpl'")[1][:300]

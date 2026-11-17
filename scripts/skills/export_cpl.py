@@ -9,8 +9,8 @@ Writes projects/<project>/exports/<project>_cpl.csv with columns:
 Positions are relative to the board origin (Board6 ORIGINX/ORIGINY), as Altium writes them; Mid is the centre
 of the part's pads, which matched Altium's "Center" column on 148 of 149 parts of a real board (a U.FL was
 0.29 mm off). Rotation is the PcbDoc rotation plus the BOM line's CPL rotation offset (`cpl_rotation`, set by the student's
-approval after JLC's preview shows the part turned; never set from the package name). Bottom parts with an
-offset are listed in the result's warnings: JLC does not document bottom-side rotation.
+approval after JLC's preview shows the part turned; never set from the package name). Top parts only: a Bottom
+part keeps its PcbDoc rotation and is named in the result's warnings (JLC does not document the bottom side).
 """
 import collections
 import csv
@@ -53,8 +53,8 @@ def pad_centres(doc: dict) -> dict[str, tuple[float, float]]:
     return {ref: ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for ref, b in boxes.items()}
 
 
-BOTTOM_WARNING = ("Bottom-side parts with a CPL rotation offset ({refs}): JLC does not document how bottom-side "
-                  "rotation is counted; the offset was added as for Top parts. Check these parts in JLC's placement preview.")
+BOTTOM_WARNING = ("{refs}: CPL rotation offset not applied on the bottom side (JLC does not document its direction); "
+                  "check these parts in JLC's placement preview and rotate them there")
 
 
 def rotation_offsets(project: str) -> dict[str, int]:
@@ -72,9 +72,11 @@ def _apply_offsets(rows: list[dict], offsets: dict[str, int], applied: list | No
     for row in rows:
         off = offsets.get(row["Designator"])
         if off:
-            row["Rotation"] = f"{(float(row['Rotation']) + off) % 360:.1f}"
+            top = row["Layer"] == "Top"      # bottom: the direction is not documented by JLC, the rotation stays as in the PcbDoc
+            if top:
+                row["Rotation"] = f"{(float(row['Rotation']) + off) % 360:.1f}"
             if applied is not None:
-                applied.append({"ref": row["Designator"], "offset": off, "layer": row["Layer"]})
+                applied.append({"ref": row["Designator"], "offset": off, "layer": row["Layer"], "applied": top})
 
 
 def cpl_rows(project: str, pcb_path: str | pathlib.Path | None = None, applied: list | None = None) -> list[dict]:
@@ -148,10 +150,10 @@ def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict
         "file": shown,
         "name": out_file.name,
         "count": len(rows),
-        "rotation_offsets": applied,
+        "rotation_offsets": [{k: v for k, v in a.items() if k != "applied"} for a in applied if a["applied"]],
         "warnings": [],
     }
-    bottom = [a["ref"] for a in applied if a["layer"] != "Top"]
+    bottom = [a["ref"] for a in applied if not a["applied"]]
     if bottom:
         res["warnings"].append(BOTTOM_WARNING.format(refs=", ".join(bottom)))
     return res

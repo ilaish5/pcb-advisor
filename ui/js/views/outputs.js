@@ -207,6 +207,7 @@ onAct('gen-outjob', async (el, d, e) => {
 });
 onAct('gen-cpl', async (el, d, e) => {
   const r = await api('/api/cpl/export', {});
+  (r.warnings || []).forEach(w => toast(w, null, {bad: true}));
   await outWrote('Pick and place (CPL) exported', r.name);
   return;
 });

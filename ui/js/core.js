@@ -96,7 +96,8 @@ function refsLabel(refs) {
 }
 const LIBTXT = {std: 'Altium default', ok: 'In library · verified', review: 'In library · to review', missing: 'Missing'};
 const FIELD = {mpn: 'MPN', manufacturer: 'Manufacturer', package: 'Package', value: 'Value', description: 'Description',
-  note: 'Note', datasheet: 'Datasheet', dnp: 'Not fitted', nobuy: 'Not bought', refs: 'Designators', role: 'Role'};
+  note: 'Note', datasheet: 'Datasheet', dnp: 'Not fitted', nobuy: 'Not bought', refs: 'Designators', role: 'Role',
+  cpl_rotation: 'CPL rotation (added in pick and place)'};
 const sheetsOfLine = l => {
   const out = [];
   for (const r of l.refs || []) for (const sh of S.sheets) {
