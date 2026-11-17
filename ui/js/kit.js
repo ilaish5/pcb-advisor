@@ -122,8 +122,8 @@ function section(title, body, o) {
   o = o || {};
   return `<section class="sec"${o.id ? ` id="${kesc(o.id)}"` : ''}><div class="sec-h"><h2>${kesc(title)}</h2>${o.meta ? `<div class="meta">${o.meta}</div>` : ''}${o.actions ? `<div class="acts">${o.actions}</div>` : ''}</div>${body}</section>`;
 }
-function emptyState(title, text, actions) {
-  return `<div class="empty"><h2>${kesc(title)}</h2>${text ? `<p>${kesc(text)}</p>` : ''}${actions ? `<div class="acts">${actions}</div>` : ''}</div>`;
+function emptyState(title, text, actions, limits) {      // limits: one honest line on what the system cannot do yet
+  return `<div class="empty"><h2>${kesc(title)}</h2>${text ? `<p>${kesc(text)}</p>` : ''}${limits ? `<p class="limits">${kesc(limits)}</p>` : ''}${actions ? `<div class="acts">${actions}</div>` : ''}</div>`;
 }
 function loadingLine(text) {
   return `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${kesc(text || 'Loading')}</div>`;
