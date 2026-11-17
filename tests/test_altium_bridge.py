@@ -536,7 +536,7 @@ def test_manufacturing_outputs_are_refused_while_parts_are_unverified(lte, fake,
     monkeypatch.setattr(serve, "QUIET", True)
     _linked_with_rules_board(lte, fake)
     msg = store.manufacturing_warning(lte)
-    assert msg.startswith("Not made yet: 3 parts have pins nobody checked against a datasheet: ") and msg.endswith("or accept it if you checked it yourself.")
+    assert msg.startswith("Not made yet: 2 parts have pins nobody checked against a datasheet: ") and "1 part has pins that differ from the datasheet: " in msg and msg.endswith("or accept it if you checked it yourself.")
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{httpd.server_address[1]}"

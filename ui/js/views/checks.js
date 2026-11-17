@@ -262,7 +262,6 @@ function dfmZipBody() {
   out += dfmNames((z.files || []).map(f => f.name));
   out += problems.map(m => `<div class="note warn"><span><b>${esc(m.layer)}</b> (<span class="m">${esc(m.ext)}</span>) is missing. ${esc(m.why)}</span></div>`).join('');
   out += (z.warnings || []).map(w => `<div class="note warn"><span>${esc(w)}</span></div>`).join('');
-  if (z.warning) out += `<div class="note warn" role="status"><span>${esc(z.warning)}</span></div>`;      // unverified pins; the zip was made
   if (notes.length) out += `<p class="muted">${notes.map(m => `${esc(m.layer)} (<span class="m">${esc(m.ext)}</span>) is not in the set. ${esc(m.why)}`).join(' ')}</p>`;
   const a = z.assembly || {};
   out += a.bom && a.cpl

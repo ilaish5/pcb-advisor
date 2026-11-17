@@ -2060,7 +2060,6 @@ def main(argv=None):
         elif a.op == "import-rules":
             res = import_rules(a.project)
         elif a.op == "run-outjob":
-            import store
             blocked = store.manufacturing_warning(a.project)
             if blocked:
                 print(f"Error: {blocked}", file=sys.stderr)

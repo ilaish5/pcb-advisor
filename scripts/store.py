@@ -2754,13 +2754,18 @@ def manufacturing_warning(project):
     OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list, without DNP / do-not-buy lines).
     The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins)."""
     skip = {l["key"] for l in bom(project, write=False) if l.get("dnp") or l.get("nobuy")}
-    rows = [r for r in unverified_parts(project) if r["line"] not in skip]
+    rows = [r for r in unverified_parts(project, verify_new=False) if r["line"] not in skip]
     if not rows:
         return ""
-    refs = [ref for r in rows for ref in (r.get("refs") or [r["line"]])]
-    return (f"Not made yet: {len(refs)} {'part has' if len(refs) == 1 else 'parts have'} pins nobody checked against a datasheet: "
-            f"{', '.join(refs[:12])}{' ...' if len(refs) > 12 else ''}. Open DFM > Unverified parts: verify each with its datasheet, "
-            "or accept it if you checked it yourself.")
+    bad = [r for r in rows if r["status"] == "mismatch"]
+    refs = lambda rs: [ref for r in rs for ref in (r.get("refs") or [r["line"]])]
+    def part(rs, what):
+        names = refs(rs)
+        return f"{len(names)} {'part has' if len(names) == 1 else 'parts have'} {what}: {', '.join(names[:12])}{' ...' if len(names) > 12 else ''}"
+    said = [part([r for r in rows if r["status"] != "mismatch"], "pins nobody checked against a datasheet")] if len(bad) < len(rows) else []
+    if bad:
+        said.append(part(bad, "pins that differ from the datasheet"))
+    return ("Not made yet: " + "; ".join(said) + ". Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
 
 
 def accept_pins(project, key):

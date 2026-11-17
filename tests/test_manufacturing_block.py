@@ -64,6 +64,8 @@ def test_the_accept_endpoint_of_the_unverified_list_resolves_a_part(server, empt
 def test_allowed_after_a_table_pass(server, empty, made):
     _sheet(empty)
     _datasheet(empty, ["1 VCC Supply", "2 GND Ground"])
+    assert store.manufacturing_warning(empty)       # reading the state does not verify: the DFM page's Re-check does
+    assert store.unverified_parts(empty) == []
     assert [c for c, _ in _both(server, empty)] == [200, 200] and made == ["outjob", "zip"]
     applied, _, refused = serve.apply_actions(empty, [{"type": "altium.run_outjob"}, {"type": "jlc.gerber_zip"}])
     assert len(applied) == 2 and not refused
@@ -88,3 +90,23 @@ def test_the_unverified_list_has_an_accept_button_per_part():
     js = (REPO / "ui" / "js" / "views" / "checks.js").read_text(encoding="utf-8")
     assert "act: 'accept-pins', line: l.key" in js and "'/api/pins/accept', {line: d.line}" in js
     assert "rows.map(item)" in js     # every row, a mismatch included, comes from the one template that holds the button
+
+
+def test_a_block_never_runs_the_verification(empty, monkeypatch):
+    import verify_part
+    _sheet(empty)
+    _datasheet(empty, ["1 VCC Supply", "2 GND Ground"])
+    monkeypatch.setattr(verify_part, "verify", lambda *a, **k: pytest.fail("a click on an output must not verify"))
+    monkeypatch.setattr(store, "auto_attach", lambda *a, **k: pytest.fail("a click on an output must not attach"))
+    assert "U1" in store.manufacturing_warning(empty)
+
+
+def test_the_wording_splits_unverified_from_conflicting(empty, monkeypatch):
+    rows = [{"line": "U1", "refs": ["U1"], "mpn": "", "status": "unverified", "issues": ""},
+            {"line": "U2", "refs": ["U2"], "mpn": "", "status": "mismatch", "issues": "x"}]
+    monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: rows)
+    msg = store.manufacturing_warning(empty)
+    assert "1 part has pins nobody checked against a datasheet: U1; 1 part has pins that differ from the datasheet: U2." in msg
+    assert msg.endswith("Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
+    monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: rows[1:])
+    assert store.manufacturing_warning(empty).startswith("Not made yet: 1 part has pins that differ from the datasheet: U2.")

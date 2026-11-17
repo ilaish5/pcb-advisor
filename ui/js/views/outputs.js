@@ -97,13 +97,13 @@ async function outRunExporter(f) {         // one api exporter; returns true whe
   else if (tool === 'gerber_zip') {
     const r = await api('/api/jlc/gerber-zip', {}, {soft: true});
     if (!r || r.error) { toast((r && r.error) || "Couldn't make the Gerber zip.", null, {bad: true}); return false; }
-    outAltNote = {text: `Gerber zip written, ${r.files.length} files.`, bad: false, warn: r.warning || ''};
+    outAltNote = {text: `Gerber zip written, ${r.files.length} files.`, bad: false};
   } else return false;
   return true;
 }
 async function outRunAltium() {            // Altium writes the Gerbers; true when it did
   toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
-  try { const r = await api('/api/altium/run-outjob', {}); (r.warnings || []).forEach(w => toast(w, null, {bad: true})); outAltNote = {text: 'Altium wrote the outputs.', bad: false, warn: r.warning || ''}; return true; } catch (err) { return false; }   // the error toast already said why
+  try { const r = await api('/api/altium/run-outjob', {}); (r.warnings || []).forEach(w => toast(w, null, {bad: true})); outAltNote = {text: 'Altium wrote the outputs.', bad: false}; return true; } catch (err) { return false; }   // the error toast already said why
 }
 let outRemaking = false;
 async function outRemake(files) {          // files: the lineage rows to make again, in order; one confirm for the edited ones
@@ -160,7 +160,7 @@ function outRow(f, showTimes, showLin) {
     <td><div class="row-acts">${showLin ? outRemakeBtn(f) : ''}<a class="btn icon sm out-dl" href="${esc(outUrl(f.name))}" download="${esc(f.name)}" title="Download ${esc(f.name)}" aria-label="Download ${esc(f.name)}">${icon('download')}</a></div></td></tr>`;
 }
 /* ---------- what Altium wrote into its own outputs folder ("Project Outputs for ..."), read from the server ---------- */
-let OUT_ALT = null, outAltFor = null, outAltNote = null;      // OUT_ALT: {root, folders:[{folder, files, newest}], files, newest}; outAltNote: {text, bad, warn} of the last run (warn: unverified pins; the files were made)
+let OUT_ALT = null, outAltFor = null, outAltNote = null;      // OUT_ALT: {root, folders:[{folder, files, newest}], files, newest}; outAltNote: {text, bad} of the last run
 async function outLoadAlt() {
   const p = PROJECT;
   outAltFor = p;
@@ -173,7 +173,7 @@ async function outLoadAlt() {
 function outAltHTML() {
   if (outAltFor !== PROJECT) { OUT_ALT = null; outAltNote = null; }
   if (OUT_ALT === null && outAltFor !== PROJECT) outLoadAlt();
-  const note = outAltNote ? `<div class="note ${outAltNote.bad ? 'bad' : 'ok'}" role="${outAltNote.bad ? 'alert' : 'status'}"><span>${esc(outAltNote.text)}</span></div>` + (outAltNote.warn ? `<div class="note warn" role="status"><span>${esc(outAltNote.warn)}</span></div>` : '') : '';
+  const note = outAltNote ? `<div class="note ${outAltNote.bad ? 'bad' : 'ok'}" role="${outAltNote.bad ? 'alert' : 'status'}"><span>${esc(outAltNote.text)}</span></div>` : '';
   const a = OUT_ALT;
   if (!a || !a.files) return note;
   const rows = a.folders.map(f => `<tr><td class="out-n">${esc(f.folder)}</td><td class="num">${f.files}</td><td class="muted" title="${esc(outFull(f.newest))}"><time datetime="${esc(f.newest)}" data-ago>${esc(outAgo(f.newest))}</time></td></tr>`).join('');
@@ -218,7 +218,7 @@ onAct('gen-gerber-zip', async (el, d, e) => {     // the newest Gerber and NC dr
     return;
   }
   const gaps = (r.missing || []).filter(m => m.level === 'problem').map(m => m.layer.toLowerCase());
-  outAltNote = {text: `Gerber zip written, ${r.files.length} files.`, bad: false, warn: r.warning || ''};     // stays on the page until the next run
+  outAltNote = {text: `Gerber zip written, ${r.files.length} files.`, bad: false};     // stays on the page until the next run
   await outWrote(`Gerber zip written, ${r.files.length} files${gaps.length ? `. Missing: ${gaps.join(', ')}` : ''}`, r.zip);
   return;
 });
@@ -228,7 +228,7 @@ onAct('gen-altium-outputs', async (el, d, e) => {      // Altium writes the file
   toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
   try {
     const r = await api('/api/altium/run-outjob', {});
-    outAltNote = {text: `Altium wrote ${r.files.length} files${r.added ? ' (OutJob added to the project)' : ''}.`, bad: false, warn: r.warning || ''};
+    outAltNote = {text: `Altium wrote ${r.files.length} files${r.added ? ' (OutJob added to the project)' : ''}.`, bad: false};
     await outWrote(outAltNote.text);
     (r.warnings || []).forEach(w => toast(w, null, {bad: true}));
   } catch (err) { outAltNote = {text: `Couldn't generate the outputs: ${err.message}`, bad: true}; }      // the error toast said it too
