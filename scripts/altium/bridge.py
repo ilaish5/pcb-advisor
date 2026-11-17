@@ -1100,10 +1100,10 @@ def _drc_counts(res):
 
 def _partial_ok(problem):
     """A problem that a partly routed board (agreed with the student) has by definition: nets left open."""
-    return problem.startswith("not routed") or "open nets" in problem or "un-routed connection" in problem
+    return problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem
 
 
-def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True):
+def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None):
     """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
     script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
     Altium's batch design rule check (no new clearance / short / width / un-routed violations over the check made before routing).
@@ -1132,18 +1132,23 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if not doc.get("nets"):
         raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
     rules = route.rules_from_doc(doc)
+    rules.update(net_current=currents or {}, net_estimate=estimates or {}, allow_narrow=bool(keep_partial), **(copper or {}))      # widths by current (netcurrent.py)
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
     drc_before = _drc_counts(run_drc(prj, pcb, tmp / "before.txt"))
     plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
+    names = names or {}                  # {drawn name: netlist name}: the PcbDoc carries the drawn names, the student knows the netlist's
+    shown = {names.get(n, n): w for n, w in plan["widths"].items()}
     pour_net = route.pour_net_for(doc) if pour else None
     pour_skipped = ""
     shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
-           "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k != "net_width"}, "backup": "", "problems": [],
+           "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": shown, "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
+    from altium import netcurrent as netcurrent_mod
+    narrow = netcurrent_mod.width_problems(plan["widths"], names)      # only with keep_partial a net is drawn narrower than its current needs
     bad = route.violations(doc, plan["items"], rules, box)          # our own exact check of what we are about to draw
     if bad:
         res["problems"] = ["the route would break the rules (nothing drawn): " + "; ".join(bad[:5])]
@@ -1257,6 +1262,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         res["drills"] = [f["message"] for f in board_checks.check_drills(saved)]
     except Exception:
         pass
+    probs += narrow                       # drawn narrow as agreed: the step is not finished
     if plan["failed"]:
         probs.append("not routed: " + "; ".join(f"{n} ({why})" for n, why in plan["failed"]))
     res["problems"] = probs
@@ -1266,8 +1272,71 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                       + (f", {pour_net} poured on the bottom layer" if res["pour"] else "") + f", saved; own check: "
                       f"{'no open nets' if not open_nets else str(len(open_nets)) + ' open nets'}; Altium DRC: "
                       f"{after.get('Un-Routed Net', 0)} un-routed, {after.get('Clearance Constraint', 0)} clearance, "
-                      f"{after.get('Short-Circuit', 0)} short ({drc_before.get('Clearance Constraint', 0)} clearance before routing)")
+                      f"{after.get('Short-Circuit', 0)} short ({drc_before.get('Clearance Constraint', 0)} clearance before routing)"
+                      + ("; " + wl if (wl := _width_line(shown)) else ""))
     return res
+
+
+def _width_line(widths):
+    from altium import netcurrent
+    return netcurrent.width_line(widths)
+
+
+def net_current_inputs(project, strict=True):
+    """What route_on sizes the tracks by: {currents (set by the student, approved), estimates (a regulator's rated output current from
+    the BOM), copper {copper_oz, temp_rise_c} from project.json board.* if present, names {drawn name: netlist name}}. The nets are
+    keyed by the name the PcbDoc carries (draw.alias_map: a Hebrew net is drawn under an ASCII alias). strict=False (the Rules tab)
+    keeps the netlist names when the aliases clash instead of raising."""
+    from altium import netcurrent
+    import project as projects
+    board = projects.load_meta(project).get("board") or {}
+    copper = {k: float(board[k]) for k in ("copper_oz", "temp_rise_c") if isinstance(board.get(k), (int, float)) and board[k] > 0}
+    cur = store.net_currents(project)
+    est = netcurrent.regulator_currents(store.bom_lines(project), [sh for _, _, sh in _sheets(project)])
+    try:
+        al = drawn_names(project, list(cur) + list(est))
+    except AliasError:
+        if strict:
+            raise
+        al = {}
+    names = {a: n for n, a in al.items() if a != n}
+    return {"currents": {al.get(n, n): v for n, v in cur.items()}, "copper": copper,
+            "estimates": {al.get(n, n): v for n, v in est.items()}, "names": names}
+
+
+def _last_drawn_widths(project):
+    """{netlist net: width drawn} of the last route that was saved without problems (altium-log.jsonl), else {}."""
+    for e in reversed(store.read_jsonl(store.pdir(project) / "altium-log.jsonl")):
+        if e.get("op") == "route-pcb":
+            return {} if e.get("problems") or e.get("restored") or e.get("failed") else (e.get("drawn_widths") or {})
+    return {}
+
+
+def net_current_rows(project):
+    """What the Rules tab shows: {nets: [{net, current_a, source, width_mm, note, drawn_mm}], copper_oz, temp_rise_c}. Rows are the
+    supply (rail) nets of the netlist, every net with a current and every regulator output. Widths come from the same rules the router
+    uses (the linked PcbDoc's width rules, InNet rules included, when there is one; else the JLC defaults); drawn_mm is the width of
+    the last saved route."""
+    from altium import netcurrent, route
+    inp = net_current_inputs(project, strict=False)
+    al = {n: a for a, n in inp["names"].items()}                     # netlist name -> drawn name
+    listed = {(p.get("net") or "").strip() for _, _, sh in _sheets(project) for part in sh.get("parts", []) for p in part.get("pins", [])}
+    listed.discard("")
+    drawn = {n: al.get(n, n) for n in listed}
+    nets = sorted(n for n in listed if route._RAIL.match(drawn[n]) or drawn[n] in inp["currents"] or drawn[n] in inp["estimates"])
+    rules = None
+    try:
+        from altium import pcbdoc
+        rules = route.rules_from_doc(pcbdoc.read_pcbdoc(_project_pcb(project)))
+    except (BridgeError, AltiumReadError, OSError):
+        pass
+    rules = rules or route.rules_from_doc({})
+    oz, rise = inp["copper"].get("copper_oz", 1.0), inp["copper"].get("temp_rise_c", 10.0)
+    w = netcurrent.net_widths([drawn[n] for n in nets], rules, inp["currents"], inp["estimates"], oz, rise,
+                              is_rail=lambda n: bool(route._RAIL.match(n)))
+    last = _last_drawn_widths(project)
+    return {"nets": [{"net": n, **w[drawn[n]], "drawn_mm": last.get(n)} for n in nets], "copper_oz": oz, "temp_rise_c": rise,
+            "all_nets": sorted(listed)}
 
 
 def route_pcb(project, replace=False, keep_partial=False):
@@ -1279,10 +1348,12 @@ def route_pcb(project, replace=False, keep_partial=False):
     if missing:
         raise BridgeError("Import the JLC rules first (altium.import_rules), then route: the board does not have "
                           + ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "") + ". Nothing was changed.")
-    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial)
+    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, **net_current_inputs(project))
+    from altium import netcurrent
     _log(project, "route-pcb", pcb=str(pcb), routed=res["routed"], failed=[n for n, _ in res["failed"]], tracks=res["tracks"],
          vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],
-         restored=res["restored"], drc_before=res["drc_before"], drc_after=res["drc_after"])
+         restored=res["restored"], drc_before=res["drc_before"], drc_after=res["drc_after"],
+         drawn_widths={n: w["width_mm"] for n, w in res["widths"].items() if w["width_mm"] is not None})
     if res["problems"] or res["failed"] or not res["written"]:
         raise BridgeError(res["summary"] if not res["written"] else
                           "The route does not check out: " + "; ".join(res["problems"][:5])
@@ -1290,6 +1361,7 @@ def route_pcb(project, replace=False, keep_partial=False):
                              else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
                              else f" Backup in {res['backup']}."))
     res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
     return res
 
 

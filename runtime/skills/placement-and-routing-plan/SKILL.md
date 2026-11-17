@@ -28,6 +28,10 @@ it counts as done only with 0 open nets and no new clearance/short/width errors.
 you tell the student which nets and why (tighter rules, more room, a third layer); `"partial": true` + `"partial_said"` only when they agree to
 keep a partial result. Existing tracks: refused unless `"replace": true` + `"replace_said"`. Never say the board is routed when it reports a
 failure. Then use board-review.
+Track width follows the current of each net (IPC-2221, 1 oz, 10 C rise). Before routing, propose the current of every supply net the idea
+or a datasheet states (regulator output, USB VBUS 0.5 A, a motor) with `{"type": "net.set_current", "net": "+5V", "amps": 0.5, "sources": [...]}`
+and cite the source; no source, no guess: the net keeps 0.3 mm and the result says "rail default". The route result lists "track widths"
+per supply net: tell the student which nets were drawn narrower than wanted or are outside the IPC-2221 range (Rules tab > Net currents).
 
 ## When to use
 - Update PCB / ECO is done (parts sit beside the board) and the student asks how to arrange them.

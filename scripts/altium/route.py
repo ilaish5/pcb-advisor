@@ -36,6 +36,7 @@ DIRS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
 DEFAULTS = {"clearance": 0.127, "width": 0.127, "width_min": 0.127, "width_max": 10.0, "via_dia": 0.6, "via_hole": 0.3, "edge": 0.3,
             "hole_clear": 0.25}
 POWER_WIDTH = 0.3          # rail nets are routed at least this wide when the board has room and no rule says otherwise
+NECK_MAX = 1.0             # a neck-down (a narrower track into a pad that cannot take the wanted width) is at most this long outside the pad, mm
 VIA_COST = 30.0
 CROSS_COST = 25.0          # relaxed search: entering a cell that holds another net's track (the nets to rip up are those crossed)
 THRU_COST = 2.0            # a change of layer inside a through hole pad: no via, only the cost of leaving the layer
@@ -608,11 +609,13 @@ class Router:
                         return False
         return True
 
-    def _escape(self, net, nid, pad, width, margin, relaxed):
+    def _escape(self, net, nid, pad, width, margin, relaxed, stub_w=None, max_len=None):
         """A fine pitch SMD pad has no grid cell the grid search may use (the neighbours' keep-off is wider than the pitch leaves), yet a
         straight track along the pad's long axis, centred on the pad, can be legal. Try one: from the pad centre along the axis (either
         way) to the first grid row/column where the cell is usable, then sideways to that cell; kept only when the exact geometry keeps
-        the clearance. {"escape": points, "layer", "cell"} for the shortest legal one, else None (the pad stays unroutable)."""
+        the clearance. {"escape": points, "layer", "cell"} for the shortest legal one, else None (the pad stays unroutable).
+        stub_w (a neck-down): the stub itself is drawn and checked at this narrower width, at most max_len long; the cell it ends in must
+        still take `width`, the width of the rest of the net."""
         if len(pad["layers"]) != 1:
             return None
         r, l = pad["rect"], pad["layers"][0]
@@ -645,7 +648,9 @@ class Router:
                         q = (round(q[0], 4), round(q[1], 4))
                         if math.hypot(q[0] - pts[-1][0], q[1] - pts[-1][1]) > 1e-9:
                             pts.append(q)
-                    if self._clean(net, l, pts, width, margin, relaxed):
+                    if max_len is not None and sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:])) > max_len + 1e-9:
+                        continue
+                    if self._clean(net, l, pts, stub_w or width, margin, relaxed):
                         if best is None or dist < best[0] - 1e-9:
                             best = (dist, {"escape": pts, "layer": l, "cell": i})
                         done = True
@@ -655,8 +660,9 @@ class Router:
         return best[1] if best else None
 
     # ---- one net
-    def route_net(self, net, width, relaxed=False, deadline=None, margin=0.0):
-        """Join every pad of `net`. Returns (path list of segments-as-cell-paths, pad stubs, None) or (None, None, reason)."""
+    def route_net(self, net, width, relaxed=False, deadline=None, margin=0.0, stub_width=None):
+        """Join every pad of `net`. Returns (path list of segments-as-cell-paths, pad stubs, None) or (None, None, reason).
+        stub_width: a neck-down, the narrower width allowed for the escape stub of a pad that cannot take `width`."""
         pads = self.pads[net]
         nid = self.netid[net]
         use = lambda pad: {(l, c) for l, cs in pad["cells"].items() for c in cs if self.usable(nid, l, c, width, margin, relaxed)}
@@ -667,7 +673,14 @@ class Router:
             if cells:
                 return cells
             esc = self._escape(net, nid, pad, width, margin, relaxed)
+            if not esc and stub_width:
+                r_ = pad["rect"]
+                half = max(r_[2] - r_[0], r_[3] - r_[1]) / 2          # the stub starts at the pad centre: the length inside the pad is no neck
+                esc = self._escape(net, nid, pad, width, margin, relaxed, stub_w=stub_width, max_len=half + NECK_MAX)
+                if esc:
+                    esc["neck"], esc["inside"] = stub_width, half
             if esc:
+                esc["tag"] = pad["tag"]
                 stubs.append(esc)
                 escaped.add(id(pad))
                 return {(esc["layer"], esc["cell"])}
@@ -712,12 +725,16 @@ class Router:
                     run.append(b)
             self._emit(net, run, width, items)
             cells += path
+        necks = []
         for pad in stubs:
             if "escape" in pad:                                    # a fine pitch pad: out along its axis, checked exactly
                 pts = pad["escape"]
+                if pad.get("neck"):                                # a neck-down: this stub is narrower than the rest of the net
+                    necks.append({"pad": pad.get("tag"), "width_mm": pad["neck"],
+                                  "len_mm": round(sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:])) - pad.get("inside", 0), 2)})
                 for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
-                    items.append({"kind": "track", "layer": LAYER_CODE[pad["layer"]], "x1": x1, "y1": y1, "x2": x2, "y2": y2, "width": width,
-                                  "net": net})
+                    items.append({"kind": "track", "layer": LAYER_CODE[pad["layer"]], "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                                  "width": pad.get("neck") or width, "net": net})
                     steps = max(1, int(math.hypot(x2 - x1, y2 - y1) / (self.g / 2)))
                     for k in range(steps + 1):                     # its cells, so that later nets keep clear of it
                         cells.append((pad["layer"], self.idx(*self.cell_of(x1 + (x2 - x1) * k / steps, y1 + (y2 - y1) * k / steps))))
@@ -733,7 +750,7 @@ class Router:
         for i in vias:
             x, y = self.xy(i)
             items.append({"kind": "via", "x": x, "y": y, "dia": self.rules["via_dia"], "hole": self.rules["via_hole"], "net": net})
-        self.routed[net] = {"cells": cells, "vias": vias, "items": items, "width": width}
+        self.routed[net] = {"cells": cells, "vias": vias, "items": items, "width": width, "necks": necks}
         self._stamp_net(net)
 
     def _stamp_net(self, net):
@@ -817,6 +834,24 @@ def _is_gnd(net):
     return bool(re.match(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", str(net), re.I))
 
 
+def _width_report(nets, plan_w, routed):
+    """{net: {"width_mm" (drawn; None if not routed), "wanted_mm", "current_a", "source", "note"}}; a net drawn narrower than wanted
+    (the board had no room for more) says so in its note."""
+    out = {}
+    for n in nets:
+        p = plan_w[n]
+        got = routed[n]["width"] if n in routed else None
+        necks = routed[n].get("necks") or [] if n in routed else []
+        note = p["note"]
+        for k in necks:
+            note += ("; " if note else "") + f"necked to {k['width_mm']:g} mm for {k['len_mm']:g} mm at {k['pad']}"
+        if got is not None and p["width_mm"] is not None and got < p["width_mm"] - 1e-9:
+            note += ("; " if note else "") + f"drawn {got:g} mm: no room for the wanted {p['width_mm']:g} mm"
+        out[n] = {"width_mm": got, "wanted_mm": p["width_mm"], "current_a": p["current_a"], "source": p["source"], "note": note,
+                  "necks": necks}
+    return out
+
+
 def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=8):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1].
     Returns {"items", "routed", "failed": [(net, reason)], "stats"}. Nets with one pad are not routed. Order: rails (wide) first, then
@@ -834,30 +869,51 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         return (2 if _is_gnd(n) else 0 if _RAIL.match(n) else 1, _hpwl(rt.pads[n]), n)
     order = sorted(nets, key=key)
 
+    from altium import netcurrent
+    plan_w = netcurrent.net_widths(nets, rules, rules.get("net_current"), rules.get("net_estimate"), rules.get("copper_oz") or 1.0,
+                                   rules.get("temp_rise_c") or 10.0, is_rail=lambda n: bool(_RAIL.match(n)))
+    mn = rules.get("width_min") or rules["width"]
+
     def width_for(n):
-        if n in rules["net_width"]:
-            ws = [rules["net_width"][n]]
-        elif _RAIL.match(n):
-            w = min(max(rules["width"], POWER_WIDTH), rules["width_max"])
-            ws = [w, rules["width"]] if w > rules["width"] else [rules["width"]]
-        else:
-            ws = [rules["width"]]
-        mn = rules.get("width_min") or rules["width"]
+        w = plan_w[n]["width_mm"]
+        if w is None:           # a current outside the IPC-2221 range: no invented width, the rail default or the board's width
+            w = min(max(rules["width"], POWER_WIDTH), rules["width_max"]) if _RAIL.match(n) else rules["width"]
+        if plan_w[n]["current_a"] is not None and not rules.get("allow_narrow"):
+            return [w]           # a net with a current is drawn at its width or not at all (allow_narrow: a partial route the student agreed to)
+        ws = [w, rules["width"]] if w > rules["width"] + 1e-9 else [w]
         if mn < ws[-1] - 1e-9:
             ws.append(mn)                                    # the narrowest the width rule allows, as a last resort
         return ws
 
+    def necks(w):
+        """The narrower stub widths to try for a pad that cannot take width w, widest first."""
+        cand = [rules["width"], mn] + [round(w * f, 3) for f in (0.75, 0.5, 0.35, 0.25)]
+        return sorted({x for x in cand if mn - 1e-9 <= x < w - 1e-9}, reverse=True)
+
     def try_route(n, margin=0.0):
         last = None
         for w in width_for(n):
-            paths, stubs, why_ = rt.route_net(n, w, deadline=deadline, margin=margin)
-            if paths is not None:
-                rt.commit(n, paths, stubs, w)
-                return None
-            last = why_ or "no way"
+            # the wanted width first; then, when a pad cannot take it (a fine pitch pad), only the short stub at that pad narrower
+            for sw in [None] + (necks(w) if w > mn + 1e-9 else []):
+                paths, stubs, why_ = rt.route_net(n, w, deadline=deadline, margin=margin, stub_width=sw)
+                if paths is not None:
+                    rt.commit(n, paths, stubs, w)
+                    return None
+                last = why_ or "no way"
+                if rt.status == "time" or (sw is None and not last.startswith("pad ")):
+                    break              # a neck-down only helps when a pad is the problem
             if rt.status == "time":
                 break
         return last or "no way"
+
+    def explain(n, reason):
+        """A net with a current is never drawn narrower than it needs (unless a partial route was agreed): when it does not fit, say so
+        and name the ways forward."""
+        p = plan_w[n]
+        if p["current_a"] is None or rules.get("allow_narrow") or p["width_mm"] is None:
+            return reason
+        return (f"{p['current_a']:g} A needs {p['width_mm']:g} mm and there is no room for it, even narrowed at the pads ({reason}); "
+                "move parts to give it room, add a wider copper pour or polygon for this rail, or lower its current if that was an estimate")
 
     def all_items():
         return [it for r in rt.routed.values() for it in r["items"]]
@@ -932,7 +988,8 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             why[n] = "not routed (ran out of time)" if time.time() > deadline else "not routed"
     failed = list(dict.fromkeys(n for n in failed if n not in rt.routed))
     items = all_items()
-    return {"items": items, "routed": sorted(rt.routed), "failed": [(n, why.get(n) or last_msg.get(n) or "no path") for n in failed],
+    return {"items": items, "routed": sorted(rt.routed), "failed": [(n, explain(n, why.get(n) or last_msg.get(n) or "no path")) for n in failed],
+            "widths": (rep := _width_report(nets, plan_w, rt.routed)), "width_problems": netcurrent.width_problems(rep),
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch}}
 

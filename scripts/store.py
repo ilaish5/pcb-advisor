@@ -437,6 +437,13 @@ def proposals(project):
             rows[pid].update(status="undone", undone_at=ev.get("ts"), undone_by=ev.get("by"))
         elif pid not in rows:
             rows[pid] = dict(ev)
+    for r in rows.values():             # a pending net current shows the value as it is NOW, so the card reads "was 2 A, this sets 0.5 A"
+        if r.get("kind") == "net_current" and r.get("status") == "pending":
+            now_a = net_currents(project).get(r.get("line"))
+            if now_a != (r.get("before") or {}).get("current_a"):
+                r["note"] = f"now {now_a:g} A; this sets {r['changes']['current_a']:g} A" if now_a is not None and r["changes"].get("current_a") is not None \
+                    else f"changed since it was proposed: now {'no current' if now_a is None else format(now_a, 'g') + ' A'}"
+            r["before"] = {"current_a": now_a}
     return list(rows.values())
 
 
@@ -1056,6 +1063,51 @@ def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
     return append(project, "proposals.jsonl", rec)
 
 
+# ---- per-net current: the one source of truth for the width the router gives a net (scripts/altium/netcurrent.py)
+
+def net_currents(project):
+    """{net: amps} as approved: the last entry of net-currents.jsonl per net; an entry with no current clears the net."""
+    out = {}
+    for e in read_jsonl(pdir(project) / "net-currents.jsonl"):
+        net = e.get("net")
+        if not net:
+            continue
+        if e.get("current_a") is None:
+            out.pop(net, None)
+        else:
+            out[net] = e["current_a"]
+    return out
+
+
+def propose_net_current(project, net, current_a, reason="", sources=(), session=None):
+    """Record a proposal to set (or, with current_a None, clear) the current a net carries. It sizes the tracks of the net, so it is a
+    design change: it waits for the student like any change to what is built (classify_proposal: important)."""
+    net = str(net or "").strip()
+    if not net:
+        raise ValueError("a net name is needed")
+    if current_a is not None:
+        if isinstance(current_a, bool):
+            raise ValueError("current_a must be a number of amps, not true / false")
+        try:
+            current_a = float(current_a)
+        except (TypeError, ValueError):
+            raise ValueError("current_a must be a number of amps") from None
+        if not math.isfinite(current_a) or current_a <= 0:
+            raise ValueError("current_a must be a positive number of amps (or empty to clear it)")
+    pid = _new_proposal_id(project)
+    rec = {"id": pid, "ts": now(), "kind": "net_current", "line": net, "changes": {"current_a": current_a},
+           "before": {"current_a": net_currents(project).get(net)}, "reason": reason, "sources": list(sources),
+           "session": session, "status": "pending"}
+    return append(project, "proposals.jsonl", rec)
+
+
+def set_net_current(project, net, current_a, by="student", reason="set by the student"):
+    """The student's own edit: applied at once (by=student), still recorded as a proposal so it shows in the history and can be undone."""
+    rec = propose_net_current(project, net, current_a, reason=reason)
+    decide(project, rec["id"], "approved", by=by)
+    return rec
+
+
 def _lock_keeps_library(project, line, lock):
     import partlib_order
     return partlib_order.swap_keeps_library(project, line, lock)
@@ -1097,6 +1149,11 @@ def decide(project, pid, decision, by="student"):
             save_idea_draft(project, idea)
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by,
                                                 "after_hash": _idea_hash(load_idea_working(project))})
+        elif prop.get("kind") == "net_current":
+            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
+            append(project, "net-currents.jsonl", {"ts": now(), "by": by, "net": prop["line"],
+                                                   "current_a": (prop.get("changes") or {}).get("current_a"),
+                                                   "before": net_currents(project).get(prop["line"]), "proposal": pid})   # the value at approval time
         else:
             append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
             changes, note, fresh = dict(prop["changes"]), "", False
@@ -1203,6 +1260,8 @@ def classify_proposal(prop):
         return "routine"
     if kind in ("idea_diagram", "description", "note", "rules", "rules_extra", "sheet", "diagram"):
         return "routine"
+    if kind == "net_current":       # sizes the copper of a net: a design change, never applied unasked in ask / important mode
+        return "important"
     return "important"          # idea_confirm, altium*, anything unknown
 
 
@@ -1256,6 +1315,12 @@ def undo_proposal(project, pid, by="student"):
             if k in before:
                 idea[k] = before[k]
         save_idea_draft(project, idea)
+    elif prop.get("kind") == "net_current":
+        net = prop["line"]
+        log = [e for e in read_jsonl(pdir(project) / "net-currents.jsonl") if e.get("net") == net]
+        if not log or log[-1].get("proposal") != pid:       # by the entry, not by the value: the same number may have been set again
+            raise UndoRefused(f"the current of {net} was changed after this; undo that later change first")
+        append(project, "net-currents.jsonl", {"ts": now(), "by": "undo", "net": net, "current_a": log[-1].get("before"), "undoes": pid})
     else:
         entry = next((e for e in read_jsonl(pdir(project) / "bom-log.jsonl") if e.get("proposal") == pid), None)
         if not entry:

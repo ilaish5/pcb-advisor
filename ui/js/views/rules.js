@@ -210,12 +210,56 @@ function rulesStandardBody(rd) {
       ${btn('Preview', {kind: 'line', act: 'preview-standard'})}
     </div>${prev}`;
 }
+/* ---------- net currents: the current of each supply net sizes its track (IPC-2221) when the board is routed ---------- */
+let rulesNets = null, rulesNetsP = null, rulesNetsKey = '', rulesNetsAt = 0;   // /api/net-currents: {nets, all_nets, copper_oz, temp_rise_c}; null = not read yet
+function netsKey() { return PROJECT + '|' + ((typeof S !== 'undefined' && S && S.proposals) || []).map(p => p.id + p.status).join(','); }
+function loadNetCurrents() {
+  if (rulesNetsP) return rulesNetsP;
+  const key = netsKey();
+  rulesNetsP = api('/api/net-currents', undefined, {soft: true}).then(r => { rulesNets = r && r.nets ? r : {nets: [], all_nets: []}; rulesNetsKey = key; })
+    .catch(() => { rulesNets = {nets: [], all_nets: []}; rulesNetsKey = key; })
+    .finally(() => { rulesNetsP = null; rulesNetsAt = Date.now(); renderCenter(true); });
+  return rulesNetsP;
+}
+function rulesNetCurrentsBody() {
+  if (rulesNets !== null && rulesNetsKey !== netsKey()) rulesNets = null;      // another project, or a proposal was decided: read again
+  if (rulesNets === null) { loadNetCurrents(); return loadingLine('Reading the supply nets'); }
+  if (!rulesNetsP && Date.now() - rulesNetsAt > RULES_FRESH_MS) loadNetCurrents();      // a route may have drawn new widths: keep the rows, refresh quietly
+  const rows = rulesNets.nets || [];
+  const src = {set: 'set', regulator: "regulator's rating", 'rail default': 'unknown: default', rule: 'board rule'};
+  const add = `<div class="rules-add" role="group" aria-label="Add a net">
+      <label class="field"><span>Add a net</span><input class="in" id="nc-net" list="nc-nets" placeholder="VMOT" autocomplete="off"></label>
+      <datalist id="nc-nets">${(rulesNets.all_nets || []).map(n => `<option value="${esc(n)}">`).join('')}</datalist>
+      <label class="field"><span>Current (A)</span><input class="in" id="nc-amps" type="number" inputmode="decimal" min="0" step="any" placeholder="1.5"></label>
+      ${btn('Set', {kind: 'line', act: 'add-net-current'})}</div>`;
+  const table = rows.length
+    ? `<table class="tbl dense rules-tbl"><thead><tr><th>Net</th><th>Current (A)</th><th>Source</th><th>Width wanted</th><th>Drawn</th></tr></thead><tbody>
+    ${rows.map(n => `<tr><td><span class="rn">${esc(n.net)}</span></td>
+      <td><input class="in" type="number" inputmode="decimal" min="0" step="any" data-net-amps="${esc(n.net)}" value="${n.current_a == null ? '' : esc(n.current_a)}" aria-label="Current of ${esc(n.net)} in amps" placeholder="unknown"></td>
+      <td>${esc(src[n.source] || n.source)}</td>
+      <td class="val" title="${esc(n.note || '')}">${n.width_mm == null ? '<span class="warn-t">outside IPC-2221 range</span>' : esc(+(+n.width_mm).toFixed(3)) + ' mm'}</td>
+      <td class="val">${n.drawn_mm == null ? '<span class="muted">&mdash;</span>' : esc(+(+n.drawn_mm).toFixed(3)) + ' mm'}</td></tr>`).join('')}</tbody></table>`
+    : '<p class="muted">No supply nets in the netlist yet. Add a net below.</p>';
+  return `<p class="muted">The router draws each net as wide as its current needs (IPC-2221, external layer, ${esc(rulesNets.temp_rise_c ?? 10)} &deg;C rise, ${esc(rulesNets.copper_oz ?? 1)} oz copper). Leave a current empty when you do not know it.</p>${table}${add}`;
+}
+async function setNetCurrent(net, amps) {
+  const res = await api('/api/net-currents', {net, amps});     // your own edit applies at once; the server says what is wrong
+  if (res && Array.isArray(res.nets)) { rulesNets = res; rulesNetsKey = netsKey(); rulesNetsAt = Date.now(); }
+  renderCenter(true);
+}
+onChange(t => t.dataset && t.dataset.netAmps !== undefined, async e => { await setNetCurrent(e.target.dataset.netAmps, e.target.value.trim()); });
+onAct('add-net-current', async (el, d, e) => {
+  const net = ($('#nc-net')?.value || '').trim(), amps = ($('#nc-amps')?.value || '').trim();
+  if (!net || !amps) { toast('Enter a net and its current.', null, {bad: true}); return; }
+  await setNetCurrent(net, amps);
+});
 function rulesDiscs(rd) {
   const linked = !!rd.linked_pcb, n = ((rd.preset && rd.preset.rules) || []).length, ex = (rd.extra || []).length;
   return `<div class="rules-discs">
     ${rulesDisc('howto', 'How to import in Altium', rulesHowTo(linked), !!rulesOpen.howto)}
     ${rulesDisc('preset', `JLC preset (${n - (rd.preset_off || []).length} of ${n} rules on)`, rulesPresetTable(rd), rulesOpen.preset ?? !linked)}
     ${rulesDisc('standard', 'By a standard (IPC)', rulesStandardBody(rd), !!rulesOpen.standard)}
+    ${rulesDisc('netcur', 'Net currents', rulesNetCurrentsBody(), !!rulesOpen.netcur)}
     ${rulesDisc('extra', ex ? `Extra rules (${ex})` : 'Extra rules', rulesExtraBody(rd), !!rulesOpen.extra)}
   </div>`;
 }
