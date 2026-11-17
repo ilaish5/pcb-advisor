@@ -11,7 +11,7 @@ FIXTURE = REPO / "tests" / "fixtures" / "altium" / "finished-board.PcbDoc"
 
 
 def rect(x0, y0, x1, y1, layer=32, net=None, **kw):
-    r = {"layer": layer, "net": net, "polygon": True, "in_component": False, "kind": 0,
+    r = {"layer": layer, "net": net, "polygon": True, "polygon_net": "GND", "holes": [], "in_component": False, "kind": 0,
          "points_mm": [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]}
     r.update(kw)
     return r
