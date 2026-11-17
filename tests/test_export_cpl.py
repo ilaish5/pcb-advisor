@@ -58,3 +58,60 @@ def test_cli_writes_the_csv_into_exports(home, empty, capsys):
     out = capsys.readouterr().out
     assert f"{empty}_cpl.csv" in out
     assert (home / "projects" / empty / "exports" / f"{empty}_cpl.csv").is_file()
+
+
+# ---- CPL rotation offset (BOM line field `cpl_rotation`)
+
+def _export_with(monkeypatch, empty, comps, bom):
+    import store
+    doc = {"components": comps, "pads": []}
+    monkeypatch.setattr(export_cpl, "read_pcbdoc", lambda _p: doc)
+    monkeypatch.setattr(export_cpl, "board_origin_mm", lambda _p: (0.0, 0.0))
+    for line, refs, extra in bom:
+        store.append(empty, "bom-log.jsonl", {"ts": "t", "by": "student", "line": line, "changes": {"refs": refs, **extra}})
+    return export_cpl.export_cpl(empty, pcb_path=FIX / "finished-board.PcbDoc")
+
+
+def _comp(ref, rot, layer="Top Layer"):
+    return {"ref": ref, "x_mm": 1.0, "y_mm": 2.0, "rotation": rot, "layer": layer}
+
+
+def test_no_offset_leaves_rotation_unchanged(home, empty, monkeypatch):
+    res = _export_with(monkeypatch, empty, [_comp("U1", 90.0)], [("U1", ["U1"], {})])
+    assert rows_of(home, res)["U1"]["Rotation"] == "90.0"
+    assert res["rotation_offsets"] == [] and res["warnings"] == []
+
+
+def test_offset_is_added_to_every_ref_of_the_line_mod_360(home, empty, monkeypatch):
+    res = _export_with(monkeypatch, empty, [_comp("C1", 270.0), _comp("C2", 0.0), _comp("C3", 10.0)],
+                       [("C1", ["C1", "C2"], {"cpl_rotation": 180})])
+    rows = rows_of(home, res)
+    assert rows["C1"]["Rotation"] == "90.0" and rows["C2"]["Rotation"] == "180.0" and rows["C3"]["Rotation"] == "10.0"
+    assert [o["ref"] for o in res["rotation_offsets"]] == ["C1", "C2"] and res["warnings"] == []
+
+
+def test_bottom_part_gets_the_offset_and_a_warning(home, empty, monkeypatch):
+    res = _export_with(monkeypatch, empty, [_comp("U2", 0.0, "Bottom Layer")], [("U2", ["U2"], {"cpl_rotation": 90})])
+    assert rows_of(home, res)["U2"]["Rotation"] == "90.0"
+    assert len(res["warnings"]) == 1 and "U2" in res["warnings"][0] and "preview" in res["warnings"][0]
+
+
+def test_offset_must_be_a_multiple_of_90():
+    import pytest
+    import store
+    assert store.cpl_rotation_value(-90) == 270 and store.cpl_rotation_value("180") == 180
+    for bad in (45, "x", None, True, 90.5, float("nan")):
+        with pytest.raises(ValueError):
+            store.cpl_rotation_value(bad)
+
+
+def test_offset_needs_the_students_approval(empty):
+    import pytest
+    import store
+    store.append(empty, "bom-log.jsonl", {"ts": "t", "by": "student", "line": "U1", "changes": {"refs": ["U1"]}})
+    rec = store.propose_bom(empty, "U1", {"cpl_rotation": "90"}, "preview shows U1 turned")
+    assert rec["changes"] == {"cpl_rotation": 90} and store.classify_proposal(rec) == "important"
+    assert not store.may_auto_apply(rec, "important")
+    assert "cpl_rotation" not in next(l for l in store.bom_lines(empty) if l["key"] == "U1")
+    with pytest.raises(ValueError):
+        store.propose_bom(empty, "U1", {"cpl_rotation": 45})

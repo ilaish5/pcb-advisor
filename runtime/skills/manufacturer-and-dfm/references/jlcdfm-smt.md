@@ -19,7 +19,7 @@ models and PCB land patterns:
 - **Component collision (Danger)**: Real courtyard overlap between adjacent parts or tall electrolytic caps. Check 3D
   view in Altium. If parts physically touch, adjust placement and spacing.
 - **Rotation mismatch (90° or 180°)**: JLC component orientation in Pick and Place files often differs from standard IPC
-  zero-orientation. Fix in the CPL export rotation offset table, never by rotating the schematic symbol or footprint.
+  zero-orientation. Fix with the BOM line's `cpl_rotation` (bom.propose, multiple of 90, after the preview shows it; check again), never by rotating the schematic symbol or footprint.
 - **Pin 1 or diode polarity reversed**: Verify cathode mark or pin 1 dot against both silkscreen overlay and component
   datasheet. Correct orientation in CPL.
 - **Component too close to board edge (Warning)**: Parts hanging over v-score cut lines or break-off tabs may be sheared

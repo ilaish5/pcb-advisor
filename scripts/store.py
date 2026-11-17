@@ -79,7 +79,9 @@ DOMAIN_COLORS = {
 }
 
 BOM_FIELDS = ("refs", "value", "description", "mpn", "manufacturer", "package",
-              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role", "lcsc", "footprint_lock")
+              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role", "lcsc", "footprint_lock", "cpl_rotation")
+# `cpl_rotation`: degrees (multiple of 90) added to the PcbDoc rotation of every ref of the line in the CPL export,
+# because JLC's 0 follows the tape/reel orientation. Not in BOM_DESCRIPTIVE: it changes what the factory places.
 # `lcsc` is a code the student or an import declared for the line; what LCSC answered is in supply-log
 # a change to one of these makes the old stock/price answer stale
 SUPPLY_KEYS = ("mpn", "lcsc")
@@ -421,9 +423,24 @@ def _vet_lock(project, line, changes, known):
     return bare, f"no footprint lock: {m['match']} ({m['why']}): a design change"
 
 
+def cpl_rotation_value(value):
+    """A CPL rotation offset as an int in 0..270 (a multiple of 90, any sign); ValueError for anything else."""
+    if isinstance(value, bool):
+        raise ValueError("cpl_rotation must be a number of degrees, a multiple of 90")
+    try:
+        deg = float(str(value).strip().removesuffix("deg").strip()) if isinstance(value, str) else float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"cpl_rotation must be a number of degrees, a multiple of 90, not {value!r}") from None
+    if deg != deg or deg in (float("inf"), float("-inf")) or deg % 90:
+        raise ValueError(f"cpl_rotation must be a multiple of 90 degrees, not {value!r}")
+    return int(deg) % 360
+
+
 def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False, reserved=()):
     """Record a proposal. Nothing about the BOM changes until the student approves.
     `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty)."""
+    if "cpl_rotation" in changes:
+        changes = {**changes, "cpl_rotation": cpl_rotation_value(changes["cpl_rotation"])}
     existing = {l["key"]: l for l in bom_lines(project)}
     if line not in existing:
         # a line still waiting for approval: this card replaces it, carrying what it already said
@@ -1296,6 +1313,8 @@ def edit_bom(project, line, field, value):
         raise ValueError(f"not an editable BOM field: {field}")
     if field == "footprint_lock":
         raise ValueError("footprint_lock is set only by a proposal that proves the footprint is the same")
+    if field == "cpl_rotation":
+        value = cpl_rotation_value(value)
     existing = {l["key"]: l for l in bom_lines(project)}
     if line not in existing:
         raise KeyError(f"no BOM line {line!r}")

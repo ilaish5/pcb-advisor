@@ -54,7 +54,7 @@ description: Prepares the manufacturing package for JLC and walks the student th
    footprint, a rotated part. Probably false: JLC DFM reads Gerbers with no nets, so same-net spacing, NPTH annular ring,
    connector slots, tiny mask dams and silk over tented vias are often by design. Prove "false" with a measurement or a
    datasheet, not with a guess.
-8. Fix at the source: copper or silk in the board; rotation in the CPL offset table (not in the board); LCSC number
+8. Fix at the source: copper or silk in the board; rotation via the BOM line's `cpl_rotation` (bom.propose, multiple of 90); LCSC number
    in the BOM. Regenerate and re-upload. A re-uploaded CPL may be ignored by the preview: upload the Gerber zip again too.
 
 9. The order step, after the Gerber zip and a clean DFM: action `order.check` (`"recheck": true` asks JLC again first).
@@ -97,7 +97,7 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - JLC DFM has no netlist: most red items are same-net or deliberate. Triage one by one; do not "fix" a pad that is
   correct. Real faults seen: outline everywhere, silk too thin, pads and vias touching.
 - CPL rotation: JLC 3D models are often 90 or 180 degrees off footprints built from other sources. Check pin 1 in the
-  preview, correct with a per-part rotation offset in the CPL, then verify by rotating the part in the preview.
+  preview, only after the preview shows it turned, propose `cpl_rotation` on its BOM line; re-export the CPL, check the preview again.
 - Do not "fix" through-hole offsets blind: a JLC model mismatch can show a hole error at the true centre.
 - BOM lines can stay unselected even with an LCSC number: same number on two lines, a part with several types, or a
   difficult-part fee. The next button should not say unselected parts remain.
