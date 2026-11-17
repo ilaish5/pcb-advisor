@@ -267,6 +267,23 @@ def board_shape_box(path):
     return [round(min(px) * k, 3), round(min(py) * k, 3), round(max(px) * k, 3), round(max(py) * k, 3)]
 
 
+def copper_layer_count(path) -> int | None:
+    """Copper layers of the board's stack (signal and plane layers, top to bottom), read from the LAYERnNEXT chain of Board6,
+    or None when the stream does not hold one."""
+    with open_doc(pathlib.Path(path)) as ole:
+        recs = text_records(_optional_stream(ole, "Board6/Data"), prefix=0)
+    if not recs:
+        return None
+    r, cur, n = recs[0], 1, 0
+    while cur and n < 40 and f"LAYER{cur}NAME" in r:
+        n += 1
+        try:
+            cur = int(r.get(f"LAYER{cur}NEXT", "0"))
+        except ValueError:
+            return None
+    return n if 1 < n < 40 else None
+
+
 def set_board_shape(path, box):
     """Write the rectangle [x0, y0, x1, y1] mm as the board shape record of BoardRegions, in place (the same four point record
     board_shape_box reads; the stream keeps its size). Altium's scripting cannot do it: moving the outline corners changes Board6 only
