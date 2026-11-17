@@ -868,6 +868,11 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     def key(n):
         return (2 if _is_gnd(n) else 0 if _RAIL.match(n) else 1, _hpwl(rt.pads[n]), n)
     order = sorted(nets, key=key)
+    # --- coupled USB pair hook (logic in pair.py): D+/D- are routed together first and leave the normal order
+    from . import pair as _pair
+    pair_state = _pair.pre_route(rt, rules, nets, deadline, doc)
+    order = [n for n in order if n not in pair_state["done"]]
+    # --- end hook
 
     from altium import netcurrent
     plan_w = netcurrent.net_widths(nets, rules, rules.get("net_current"), rules.get("net_estimate"), rules.get("copper_oz") or 1.0,
@@ -938,7 +943,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         for p in paths:
             blockers |= rt.blockers(n, p)
         blockers |= rt.escape_blockers(n, esc_stubs, rules["width"])      # a fine pitch pad's escape can be what a track blocks
-        blockers = {b for b in blockers if ripped.get(b, 0) < 3}
+        blockers = {b for b in blockers if ripped.get(b, 0) < 3 and b not in pair_state["done"]}      # a coupled pair is not ripped up
         if not blockers:
             why[n] = (why.get(n) or "no way") + " (no track of another net to move)"
             failed.append(n)
@@ -964,6 +969,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         for msg, ns in vs:
             for n in ns:
                 last_msg.setdefault(n, msg)
+        hit = sorted(set(hit) | set(_pair.release(pair_state, hit, last_msg, key)), key=key)      # pair.py hook: a released pair is reported
         for n in hit:
             rt.routed.pop(n)
         rt.rebuild()
@@ -988,7 +994,8 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             why[n] = "not routed (ran out of time)" if time.time() > deadline else "not routed"
     failed = list(dict.fromkeys(n for n in failed if n not in rt.routed))
     items = all_items()
-    return {"items": items, "routed": sorted(rt.routed), "failed": [(n, explain(n, why.get(n) or last_msg.get(n) or "no path")) for n in failed],
+    return {"pairs": _pair.report(rt, rules, pair_state, items),     # pair.py hook
+            "items": items, "routed": sorted(rt.routed), "failed": [(n, explain(n, why.get(n) or last_msg.get(n) or "no path")) for n in failed],
             "widths": (rep := _width_report(nets, plan_w, rt.routed)), "width_problems": netcurrent.width_problems(rep),
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch}}
