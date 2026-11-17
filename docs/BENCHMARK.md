@@ -1,7 +1,7 @@
 # Benchmark: real-incident replay
 
-- date: 2026-10-18 10:24
-- commit: b51642b
+- date: 2026-11-18 00:52
+- commit: ed317a8
 - mode: engine:antigravity
 
 ## Scores
@@ -25,8 +25,8 @@
 
 ## Evals
 
-- qa: score 0.92 over 25
-- behaviour: score 1.00 over 13
+- qa: score 0.94 over 25
+- behaviour: score 0.92 over 13
 
 ## History
 
@@ -43,3 +43,4 @@
 - 2026-10-13 23:02 c39bc9c engine:claude_code: deterministic caught 12/12, engine caught 12/12, earlier than reality 7; qa 0.90, behaviour 9/13 (11/13 after the grader fix in 0212505)
 - 2026-10-14 00:20 2190551 engine:antigravity: deterministic caught 12/12, engine caught 7/12, earlier than reality 7; qa 0.93, behaviour 13/13 (same with the current grader). Started 23:04 on c39bc9c plus work in progress (the commit field is the hash at the end). Incidents 2, 9, 12 timed out at 300 s; 5, 7 answered without the expected point. Both engines could read the whole repo (add-dir), including projects/real-project; no answer cites a file from it
 - 2026-10-18 10:24 b51642b engine:antigravity: deterministic caught 12/12, engine caught 10/12, earlier than reality 7
+- 2026-11-18 00:52 ed317a8 engine:antigravity: deterministic caught 12/12, engine caught 10/12, earlier than reality 7
