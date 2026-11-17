@@ -559,12 +559,14 @@ function renderComposer() {
   const st = $('#chat-status');
   if (st) {
     const steps = chatProg && Array.isArray(chatProg.steps) ? chatProg.steps.map(chatStepName).filter(Boolean) : [];
-    const k = pending ? 'work:' + steps.join('|') : err ? 'err:' + err.what + err.message + (err.kind || '') + (err.retry_at || '') : '';
+    const fu = !pending && S && S.followup_running;       // the server's second turn checks the results of the actions (text only)
+    const k = pending ? 'work:' + steps.join('|') : fu ? 'followup' : err ? 'err:' + err.what + err.message + (err.kind || '') + (err.retry_at || '') : '';
     if (st.dataset.k !== k) {
       st.dataset.k = k;
       st.innerHTML = pending
         ? `<div class="chat-work"><div class="chat-line"><span class="spin" aria-hidden="true"></span><span id="chat-clock">Working…</span></div>` +
           (steps.length ? `<details class="chat-steps"${chatStepsOpen ? ' open' : ''}><summary>Steps (${steps.length})</summary><ul>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : '') + '</div>'
+        : fu ? `<div class="chat-work chat-followup-run"><div class="chat-line"><span class="spin" aria-hidden="true"></span><span>Checking the results…</span>${btn('Stop', {size: 'sm', act: 'chat-followup-stop'})}</div></div>`
         : err ? (chatErrorCard(err) || errorLine(err.what, err.message, err.text ? btn('Retry', {size: 'sm', act: 'retry'}) : '')) : '';
     }
   }
@@ -745,6 +747,7 @@ onAct('retry', async (el, d, e) => {
   chatError = null;
   await send(err.text, {ctx: err.ctx || null});
 });
+onAct('chat-followup-stop', async () => { try { await api('/api/chat/stop', {}, {soft: true}); } catch (e) { /* it ends on its own */ } });
 onAct('chat-continue', async (el, d, e) => { await send(d.text, {ctx: null}); });
 // Allow the one command the engine refused (the server builds the rule from its own record), then ask again
 onAct('chat-allow', async (el, d, e) => {
