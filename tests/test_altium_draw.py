@@ -613,7 +613,7 @@ def test_the_alias_map_is_persisted_and_stable(empty):
     assert draw.drawn_net_name(empty, "GND") == "GND" and draw.drawn_net_name(empty, "אב") == "AB_3"
     store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "אב"}, {"num": "2", "net": "GND"}])]})
     assert draw.alias_map(empty) == {"אב": "AB_3"}                # stays, although עב is gone and AB is free again
-    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "בא"}, {"num": "2", "net": "AB"}])]})
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "עב"}, {"num": "2", "net": "אב"}]), part("R2", [{"num": "1", "net": "AB"}, {"num": "2", "net": "GND"}])]})
     with pytest.raises(draw.AliasConflict):                      # a plain AB now would short עב's drawn name
         draw.alias_map(empty)
 
@@ -702,3 +702,43 @@ def _rules_board(lte, fake):
     pcb.write_bytes((pathlib.Path(__file__).parent / "fixtures" / "altium" / "rules-board.PcbDoc").read_bytes())
     fake.runs.clear()
     return pathlib.Path(res["project_file"]), pcb
+
+
+# ---------------------------------------------------------------- a stale alias never blocks the student
+
+def test_a_stale_alias_gives_way_when_the_net_is_renamed_to_that_plain_name(drawn, monkeypatch):
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "אדמה"})
+    assert bridge.draw_schematic(project)["renamed_nets"] == {"אדמה": "ADMH"}
+    _rename_nets(project, {"אדמה": "ADMH"})                          # the student renames the net to the plain name
+    assert draw.alias_map(project) == {}
+    assert "אדמה" not in (store.pdir(project) / "net-names.json").read_text(encoding="utf-8")
+    saved.clear()
+    res = bridge.draw_schematic(project, replace=True)
+    assert res["problems"] == [] and "ADMH" in res["nets"]
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {r: ("u", "01") for r in ("U1", "R1", "R2")})
+    assert {p["ref"] for p in bridge._netlist_parts(project)} == {"U1", "R1", "R2"}
+
+
+def test_a_new_plain_net_equal_to_the_drawn_name_of_a_removed_net_is_allowed(empty):
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "אדמה"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {"אדמה": "ADMH"}
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "X"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {}                                # stale, nobody uses ADMH: it stays in the file
+    assert "אדמה" in (store.pdir(empty) / "net-names.json").read_text(encoding="utf-8")
+    store.write_sheet(empty, "01", {"parts": [part("R1", [{"num": "1", "net": "ADMH"}, {"num": "2", "net": "GND"}])]})
+    assert draw.alias_map(empty) == {}
+
+
+def test_a_net_name_clash_never_fails_open(drawn, monkeypatch):
+    project, fake, saved = drawn
+    _rename_nets(project, {"ENABLE_SIGNAL": "עב"})
+    draw.alias_map(project)
+    store.write_sheet(project, "02", {"parts": [part("R9", [{"num": "1", "net": "AB"}, {"num": "2", "net": "עב"}])]})
+    monkeypatch.setattr(bridge, "_project_pcb", lambda p: pathlib.Path("B.PcbDoc"))
+    monkeypatch.setattr(bridge.rules_mod, "read_pcbdoc", lambda p: {"rules": []})
+    with pytest.raises(bridge.AliasError):
+        bridge.rules_missing(project)                                 # route_pcb's gate: refuses, never "nothing missing"
+    assert bridge.rules_never_imported(project) is True
+    msgs = bridge.design_problems(project)
+    assert len(msgs) == 1 and "could not be compared" in msgs[0]

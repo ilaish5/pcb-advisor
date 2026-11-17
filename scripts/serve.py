@@ -2235,7 +2235,10 @@ class Handler(BaseHTTPRequestHandler):
             missing_in_pcb = []
             if linked_pcb:
                 from altium import bridge
-                missing_in_pcb = bridge.rules_missing(proj)      # what Import would write that the PcbDoc file lacks
+                try:
+                    missing_in_pcb = bridge.rules_missing(proj)      # what Import would write that the PcbDoc file lacks
+                except bridge.AliasError:
+                    missing_in_pcb = []                              # design_check below carries the same clash message
             diff = rules_mod.diff_rules(board_rules, [r for r in preset.get("rules", []) if r.get("name") not in off], board_geom=doc)
             design_check = []
             if linked_pcb:

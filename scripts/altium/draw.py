@@ -287,9 +287,14 @@ def assign_aliases(existing, names, guard_power=True):
     taken (by a plain name in `names` or by any earlier assignment, compared without case) is never given again: _2, _3 ... is
     added. A name that was assigned keeps its drawn name for good. A transliteration that the system would classify as ground or
     a supply rail while the original name is not (ודד -> VDD) gets 'N_' in front, so it stays an ordinary net. Raises
-    AliasConflict when a plain name is already the drawn name of another one (it cannot be renamed under a drawn sheet)."""
+    AliasConflict when a plain name is already the drawn name of another net that is still in the netlist. An entry whose net is
+    gone does not block a plain name: it is dropped (any other stale entry stays, so it is stable if the net comes back)."""
     out = dict(existing)
     names = {str(n) for n in names if str(n or "").strip()}
+    plain_up = {n.upper() for n in names if _plain(n)}
+    stale = [k for k, v in out.items() if k not in names and v.upper() in plain_up]
+    for k in stale:       # the net of that drawn name is gone and a plain net now has the name: the old entry gives way
+        del out[k]
     taken = {}
     for k, v in out.items():
         taken.setdefault(v.upper(), k)
@@ -298,7 +303,7 @@ def assign_aliases(existing, names, guard_power=True):
             raise AliasConflict(f"the name {n!r} is already the drawn name of {taken[n.upper()]!r}: rename one of the two nets "
                                 "(the schematic draws one name for one net only)")
     used = set(taken) | {n.upper() for n in names if _plain(n)}
-    changed = False
+    changed = bool(stale)
     for n in sorted(x for x in names if not _plain(x) and x not in out):
         base = transliterate(n)
         if guard_power and _power_kind(base) != "label" and _power_kind(base) != _power_kind(n):

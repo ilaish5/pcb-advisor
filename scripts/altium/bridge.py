@@ -660,13 +660,17 @@ def circular_pin_warnings(project, refs):
     return out
 
 
+class AliasError(BridgeError):
+    """The drawn net names clash: nothing that depends on the nets can be trusted until the student renames one net."""
+
+
 def drawn_names(project, extra=()):
     """{net: drawn name} of the project (draw.alias_map), a BridgeError instead of the conflict."""
     from altium import draw
     try:
         return draw.alias_map(project, extra)
     except draw.AliasConflict as exc:
-        raise BridgeError(f"Net names clash after the schematic's plain-ASCII renaming: {exc}. Nothing was changed.") from exc
+        raise AliasError(f"Net names clash after the schematic's plain-ASCII renaming: {exc}. Nothing was changed.") from exc
 
 
 def _file_sig(path):
@@ -1393,7 +1397,10 @@ def _drawn_rule_records(project, records):
             saved = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             saved = {}
-        got, changed = draw.assign_aliases(saved if isinstance(saved, dict) else {}, names, guard_power=False)
+        try:
+            got, changed = draw.assign_aliases(saved if isinstance(saved, dict) else {}, names, guard_power=False)
+        except draw.AliasConflict as exc:
+            raise AliasError(f"Two rules would get the same plain-ASCII name: {exc}. Rename one of the rules. Nothing was changed.") from exc
         if changed:
             path.write_text(json.dumps(got, ensure_ascii=False, indent=1, sort_keys=True) + "\n", encoding="utf-8")
         for r in out:
@@ -1408,6 +1415,8 @@ def rules_missing(project):
         have = {r.get("NAME") for r in rules_mod.read_pcbdoc(pcb).get("rules", [])}
         return [r["NAME"] for r in _plan_records(project, pcb)
                 if r.get("RULEKIND") in RULE_PROPS and r.get("NAME") and r["NAME"] not in have and _rule_values(r) is not None]
+    except AliasError:
+        raise                  # never "nothing missing": the rules could not be planned, the caller must say so
     except (BridgeError, AltiumReadError, OSError):
         return []
 
@@ -1423,6 +1432,8 @@ def rules_never_imported(project):
         here = str(pathlib.Path(pcb)).lower()
         return not any(r.get("op") == "import-rules" and "error" not in r and str(r.get("pcb", "")).lower() == here
                        for r in store.read_jsonl(store.pdir(project) / "altium-log.jsonl"))
+    except AliasError:
+        return True            # the import step will refuse with the reason
     except (BridgeError, AltiumReadError, OSError):
         return False
 
@@ -1447,6 +1458,8 @@ def design_problems(project):
         out = [f["message"] for f in schematic.check_intent_vs_board(
                    [dict(sh, parts=draw.alias_parts(sh.get("parts", []), al)) for sh in (store.load_sheet(project, s) for s in store.sheet_ids(project))], pcb)
                if f["severity"] == "error"]
+    except AliasError as exc:
+        return [f"the design could not be compared with the board: {exc}"]
     except (BridgeError, AltiumReadError, OSError, ImportError):
         return []
     try:
@@ -1645,7 +1658,11 @@ def run_outjob(project):
         raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
     bom_files, bom_notes = _bom_into_outputs(project, roots, files)
     files += bom_files
-    missing = rules_missing(project)
+    try:
+        missing = rules_missing(project)
+    except AliasError as exc:
+        missing = []
+        outline_note = list(outline_note) + [f"The JLC rules could not be checked: {exc}"]
     warnings = outline_note + ([f"The JLC rules ({', '.join(missing)}) are no longer in the PcbDoc; DRC and outputs ran against Altium's "
                                 "defaults. Import the rules again."] if missing else [])
     drills = drill_problems(project)
