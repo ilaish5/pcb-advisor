@@ -596,7 +596,10 @@ async function chatStop() {
   chatStopping = true;
   chatUpdateSend();
   chatTick();
-  try { await api('/api/chat/stop', {}, {soft: true}); } catch (e) { /* the turn ends on its own */ }
+  try {
+    const r = await api('/api/chat/stop', {}, {soft: true});
+    if (r && r.error && pending) { chatStopping = false; chatUpdateSend(); chatTick(); }      // 409: the turn was over already (its answer is on the way): never stay on "Stopping…"
+  } catch (e) { /* the turn ends on its own */ }
 }
 
 function renderChat(force) {

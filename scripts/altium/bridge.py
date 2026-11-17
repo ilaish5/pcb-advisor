@@ -1492,6 +1492,31 @@ def repair_outline(prj, pcb):
     return {"drawn": True, "backup": backup, "warning": "", "box": box}
 
 
+def _new_outjob(project, prj, summary):
+    """Write our OutJob next to the project file. -> (file, the backup of the project file, the Altium commands that add it to the project)."""
+    if summary["outjobs"]:
+        raise BridgeError("The project's OutJob has no Folder Structure output to run.")
+    target = prj.parent / f"{prj.stem}.OutJob"
+    if target.exists():
+        raise BridgeError(f"{target.name} is in the project folder but not in the project; add it to the project first.")
+    backup = _backup(prj, [prj])
+    outjob.generate_outjob(project, filename=target.name, out_dir=prj.parent)
+    return target, backup, [("ADDDOC", str(prj), str(target)), ("SAVEPRJ", str(prj))]
+
+
+def add_outjob(project):
+    """Make our OutJob and add it to the Altium project (the visible first step of the Generate outputs button). Nothing is run.
+    Returns {file, backup}; a project that already lists an OutJob is left as it is."""
+    prj = _linked(project)
+    summary = read_prjpcb(prj)
+    if summary["outjobs"]:
+        return {"file": "", "backup": ""}
+    target, backup, cmds = _new_outjob(project, prj, summary)
+    run_commands([("PROJECT", str(prj)), *cmds])
+    _log(project, "add-outjob", outjob=str(target), backup=backup)
+    return {"file": str(target), "backup": backup}
+
+
 def run_outjob(project):
     """Run the project's OutJob (ours is added first when it has none). Before the outputs, a board whose outline layer is empty gets
     its rectangular board shape drawn on Mechanical 1 (repair_outline). Returns {outjob, added, containers, files, backup, warnings,
@@ -1520,14 +1545,8 @@ def run_outjob(project):
             break
     cmds = [("PROJECT", str(prj))]
     if target is None:
-        if summary["outjobs"]:
-            raise BridgeError("The project's OutJob has no Folder Structure output to run.")
-        target = prj.parent / f"{prj.stem}.OutJob"
-        if target.exists():
-            raise BridgeError(f"{target.name} is in the project folder but not in the project; add it to the project first.")
-        backup = _backup(prj, [prj])
-        outjob.generate_outjob(project, filename=target.name, out_dir=prj.parent)
-        cmds += [("ADDDOC", str(prj), str(target)), ("SAVEPRJ", str(prj))]
+        target, backup, add_cmds = _new_outjob(project, prj, summary)
+        cmds += add_cmds
         added = True
     boxes = outjob_containers(target)
     cmds += [("OUTJOB", str(target), medium, base) for medium, base in boxes]
