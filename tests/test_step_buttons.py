@@ -172,7 +172,7 @@ def test_the_pages_have_the_buttons_and_hit_the_endpoints():
     note = js[js.index("function pvStepNote"):js.index("async function pvRunStep")]
     assert "replace: '1'" in note and "'Keep it'" in note and "pvStepNote('sch')" in js and "pvStepNote('pcb')" in js
     assert "loadingLine(PV_STEPS[pvBusy].busy)" in note            # the working line stays while Altium runs
-    assert "disabled: pvBusy ? true : undefined" in header         # no second step while one runs
+    assert "disabled: pvBusy || o.disabled ? true : undefined" in header         # no second step while one runs
 
 
 def test_a_chat_action_does_not_start_in_altium_while_a_button_step_runs(empty, spy):

@@ -150,7 +150,7 @@ function dfmHeader(reports) {
 }
 // Parts placed with pins from the agent: the one place the missing datasheet blocks. Resolved by a verified datasheet or an explicit accept.
 function dfmUnverified() {
-  return (S.bom || []).filter(l => (l.refs || []).length && !l.dnp && !l.nobuy && (l.pins_status === 'unverified' || l.pins_status === 'mismatch'));
+  return (S.bom || []).filter(l => (l.refs || []).length && (l.on_sheet || []).length && !l.dnp && !l.nobuy && (l.pins_status === 'unverified' || l.pins_status === 'mismatch'));
 }
 function dfmUnverifiedHTML() {
   const rows = dfmUnverified();
@@ -274,7 +274,8 @@ const dfmStep = (title, actions, body) => `<li class="dfm-step"><div class="dfm-
 function dfmGuideHTML(empty) {
   dfmZipSync();
   const folder = dfmFolder ? `<span class="m">${esc(dfmFolder)}</span>` : 'your Downloads folder';
-  const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy});
+  const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // unverified pins: the server refuses the zip, so the button says why before the click
+  const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy || !!held, title: held || undefined});
   const steps = [
     dfmStep('Get the Gerber zip', zipBtn, dfmZipBody()),
     dfmStep('Open jlcdfm.com and sign in', `<a class="btn line sm" href="${DFM_JLC}" target="_blank" rel="noopener"><span>Open jlcdfm.com</span>${icon('ext', 's')}</a>`,

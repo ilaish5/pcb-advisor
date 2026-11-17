@@ -45,8 +45,9 @@ def test_every_tool_the_plan_knows_is_recorded_by_an_exporter():
 
 
 def test_the_endpoints_the_buttons_call_exist_and_no_new_one_was_needed():
-    for ep in ("/api/skill", "/api/cpl/export", "/api/outjob/generate", "/api/library/export", "/api/jlc/gerber-zip", "/api/altium/run-outjob"):
+    for ep in ("/api/skill", "/api/cpl/export", "/api/outjob/generate", "/api/library/export", "/api/jlc/gerber-zip"):
         assert ep in OUTPUTS and ep in SERVE, ep
+    assert "/api/altium/run-outjob" in SERVE and "pvRunStep('outputs')" in OUTPUTS       # the Altium files go through the step button (previews.js)
     assert "/api/outputs/remake" not in SERVE
 
 

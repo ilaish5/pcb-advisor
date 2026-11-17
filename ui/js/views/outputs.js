@@ -8,6 +8,19 @@ const OUT_OUTJOB = 'The OutJob makes Gerber RS-274X, NC drill, BOM, pick and pla
 
 const outFlashed = new Set();                 // 'name|written' of the files that have flashed already
 
+/* The manufacturing files (Altium's outputs, the Gerber zip) are refused by the server while a part's pins are unverified. The page says so
+   before the click: the same parts the DFM page lists (S.bom already carries each line's pins_status, so this asks the server nothing). */
+function outBlockWhy() {
+  const rows = typeof dfmUnverified === 'function' ? dfmUnverified() : [];
+  if (!rows.length) return '';
+  const refs = rows.flatMap(l => l.refs || []);
+  return `${refs.length} ${refs.length === 1 ? 'part has' : 'parts have'} unverified pins${refs.length ? ': ' + refs.slice(0, 8).join(', ') + (refs.length > 8 ? ' ...' : '') : ''}. Verify or accept each in DFM > Unverified parts before making the manufacturing files.`;
+}
+function outBlockNote() {
+  const why = outBlockWhy();
+  return why ? `<div class="note warn" role="status"><span>${esc(why)}</span><span class="acts">${btn('Open DFM', {kind: 'link', page: 'checks'})}</span></div>` : '';
+}
+
 function outSize(n) {                         // 7467 -> "7.3 KB"
   n = Number(n) || 0;
   if (n < 1024) return `${n} B`;
@@ -64,9 +77,9 @@ function outRemakePlan(f) {
 function outRemakeBtn(f) {
   const p = outRemakePlan(f);
   if (p.kind === 'none') return p.why ? `<span class="out-remake-why muted" title="${esc(p.why)}">No Make again</span>` : '';
-  const altium = p.kind === 'altium';
-  const title = altium && !outAltiumLinked() ? 'Link an Altium project in Settings first: Altium has to write the Gerbers.' : p.why;
-  return btn(p.label, {kind: 'line', size: 'sm', act: 'remake', name: f.name, title, disabled: altium && !outAltiumLinked(), cls: 'out-remake'});
+  const altium = p.kind === 'altium', block = altium || p.kind === 'api' && /gerber_zip/.test((f.lineage && f.lineage.tool) || '') ? outBlockWhy() : '';
+  const title = altium && !outAltiumLinked() ? 'Link an Altium project in Settings first: Altium has to write the Gerbers.' : block || p.why;
+  return btn(p.label, {kind: 'line', size: 'sm', act: 'remake', name: f.name, title, disabled: (altium && !outAltiumLinked()) || !!block || !!pvBusy, cls: 'out-remake'});
 }
 // An in-page confirm dialog, not the browser one: resolves true on the confirm button, false on Cancel or Esc.
 function outConfirm({title, body, confirm}) {
@@ -101,9 +114,11 @@ async function outRunExporter(f) {         // one api exporter; returns true whe
   } else return false;
   return true;
 }
-async function outRunAltium() {            // Altium writes the Gerbers; true when it did
-  toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
-  try { const r = await api('/api/altium/run-outjob', {}); (r.warnings || []).forEach(w => toast(w, null, {bad: true})); outAltNote = {text: 'Altium wrote the outputs.', bad: false}; return true; } catch (err) { return false; }   // the error toast already said why
+async function outRunAltium() {            // Altium writes the Gerbers; true when it did. The same step button as the header's: live list, Stop, one answer
+  if (pvBusy) return false;
+  await pvRunStep('outputs');
+  const n = pvNote.outputs;
+  return !!n && n.kind !== 'bad' && !n.stopped;      // stopped: Altium made nothing, so nothing is packed again
 }
 let outRemaking = false;
 async function outRemake(files) {          // files: the lineage rows to make again, in order; one confirm for the edited ones
@@ -128,15 +143,23 @@ async function outRemake(files) {          // files: the lineage rows to make ag
   if (done) toast(done === 1 ? 'Made again' : `Made ${done} files again`);
 }
 
-function outAltiumBtn() {       // only when an Altium project is linked; the link is read once, then the view redraws
+function outLinked() {       // only when an Altium project is linked; the link is read once, then the view redraws
   if (!ALTIUM_DATA && !ALTIUM_ERR && typeof loadAltium === 'function') loadAltium().then(() => { if (ALTIUM_DATA && ALTIUM_DATA.linked) renderCenter(true); });
-  return ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file
-    ? btn('Generate outputs in Altium', {kind: 'line', act: 'gen-altium-outputs', title: 'Altium runs the project OutJob: Gerber, NC drill, BOM and pick and place go into its outputs folder. Ours is added first when the project has none.'}) : '';
+  return !!(ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file);
 }
+/* The automatic route is the primary one: Altium writes the files (a step button with the live list and Stop). Without a linked Altium
+   project the manual route (the OutJob to copy) stays primary. While a part's pins are unverified the generate button is held back, with the reason. */
+function outAltiumBtn(primary) {
+  if (!outLinked()) return '';
+  const why = outBlockWhy();
+  return pvStepBtn('outputs', {kind: primary ? 'pri' : 'line', disabled: !!why, title: why || undefined});
+}
+const outOutjobBtn = primary => btn('Generate OutJob', {kind: primary ? 'pri' : 'line', act: 'gen-outjob', title: OUT_OUTJOB + ' Copy it into your Altium project folder.'});
 function outHeader(files) {
   if (!files.length) return viewHeader({title: 'Outputs'});
-  const actions = outAltiumBtn() + menu({label: 'Export', iconAfter: 'chev'}, outExportItems());
-  const primary = btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB});
+  const linked = outLinked();
+  const actions = (linked ? outOutjobBtn(false) : '') + menu({label: 'Export', iconAfter: 'chev'}, outExportItems());
+  const primary = linked ? outAltiumBtn(true) : outOutjobBtn(true);
   const old = outOld(files).length;
   const meta = metaLine([{n: files.length, label: files.length === 1 ? 'file' : 'files'}, {label: 'in exports/', always: true},
     {n: old, label: 'out of date', tone: 'warn', title: 'Made from a design that has changed since, or edited by hand: export again before ordering'}]);
@@ -146,7 +169,7 @@ const outExportItems = () => [
   {label: BOM_EXPORTS.jlc, act: 'export', attrs: {fmt: 'jlc'}},
   {label: BOM_EXPORTS.generic, act: 'export', attrs: {fmt: 'generic'}},
   {label: 'Pick and place (CPL)', act: 'gen-cpl'},
-  {label: 'Gerber zip for JLC', hint: 'from Altium', act: 'gen-gerber-zip'},
+  {label: 'Gerber zip for JLC', hint: outBlockWhy() ? 'unverified parts' : 'from Altium', act: 'gen-gerber-zip', disabled: !!outBlockWhy()},
 ];
 function outRow(f, showTimes, showLin) {
   const at = f.modified, key = f.name + '|' + at;          // the state lists each file with its size and when it was written (ISO)
@@ -185,11 +208,12 @@ function outputsHTML(container) {
   const files = S.exports || [];
   const alt = outAltHTML();
   if (!files.length) {
-    return viewHeader({title: 'Outputs'}) + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
-      btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob', title: OUT_OUTJOB}) + outAltiumBtn() + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()));
+    const linked = outLinked();
+    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+      (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()));
   }
   const showTimes = files.some(f => f.modified), showLin = files.some(f => f.lineage);
-  return `${outHeader(files)}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
+  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
     <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}</tbody></table>${alt}</div>`;
 }
 
@@ -212,6 +236,8 @@ onAct('gen-cpl', async (el, d, e) => {
   return;
 });
 onAct('gen-gerber-zip', async (el, d, e) => {     // the newest Gerber and NC drill set of the linked Altium project, in one zip for JLC
+  const held = outBlockWhy();
+  if (held) { toast(held, null, {bad: true}); return; }       // the server refuses it too; the menu item is disabled, this is for the palette
   const r = await dfmMakeZip();                  // the DFM view's step 1 is the same call; it shows the error when there is one
   if (!r) {
     toast(dfmZipErr || "Couldn't make the Gerber zip.", null, {bad: true});
@@ -222,18 +248,9 @@ onAct('gen-gerber-zip', async (el, d, e) => {     // the newest Gerber and NC dr
   await outWrote(`Gerber zip written, ${r.files.length} files${gaps.length ? `. Missing: ${gaps.join(', ')}` : ''}`, r.zip);
   return;
 });
-onAct('gen-altium-outputs', async (el, d, e) => {      // Altium writes the files; it may take a minute and flash while it works
-  if (el.disabled) return;
-  el.disabled = true;
-  toast('Generating the outputs in Altium. It may take a minute and flash while it works.');
-  try {
-    const r = await api('/api/altium/run-outjob', {});
-    outAltNote = {text: `Altium wrote ${r.files.length} files${r.added ? ' (OutJob added to the project)' : ''}.`, bad: false};
-    await outWrote(outAltNote.text);
-    (r.warnings || []).forEach(w => toast(w, null, {bad: true}));
-  } catch (err) { outAltNote = {text: `Couldn't generate the outputs: ${err.message}`, bad: true}; }      // the error toast said it too
-  el.disabled = false;
-  await outLoadAlt();
+onAct('gen-altium-outputs', async (el, d, e) => {      // the palette's way in: the same step button as the header's
+  if (outBlockWhy()) { toast(outBlockWhy(), null, {bad: true}); return; }
+  await pvRunStep('outputs');
 });
 onAct('remake', async (el, d, e) => {
   const f = (S.exports || []).find(x => x.name === d.name);

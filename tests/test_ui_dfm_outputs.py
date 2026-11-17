@@ -127,8 +127,8 @@ def test_outputs_exports_through_the_bom_acts_and_says_what_it_wrote():
 
 
 def test_outputs_has_one_primary_a_files_table_and_no_banner():
-    assert "btn('Generate OutJob', {kind: 'pri', act: 'gen-outjob'" in OUTPUTS
-    assert OUTPUTS.count("kind: 'pri'") == 2                       # the header's and the empty state's, never both at once
+    assert "btn('Generate OutJob', {kind: primary ? 'pri' : 'line', act: 'gen-outjob'" in OUTPUTS     # the manual route: primary only without a linked Altium project
+    assert OUTPUTS.count("'pri'") == 2                             # the OutJob's and the Altium button's: one at a time, the header's or the empty state's
     assert "emptyState('Nothing exported yet'" in OUTPUTS
     for gone in ("outjobBanner", "close-outjob-banner", "guidanceBarHTML", "style="):
         assert gone not in OUTPUTS, gone
