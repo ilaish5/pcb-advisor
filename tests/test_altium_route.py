@@ -351,6 +351,46 @@ def test_search_budget_is_a_count_of_cells_not_the_clock():
     assert a["stats"]["expansions"] <= 3000 + 1
 
 
+def test_one_pad_that_cannot_reach_the_pour_is_named_and_the_rest_are_dropped():
+    """A ground pad walled in by foreign pads: the other ground pads are still dropped to the pour, the net is reported as not
+    complete and names the pad, instead of the whole net failing."""
+    pads = [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 8, "A"), pad("R1", "2", 5, 8, "GND"), pad("R2", "2", 15, 5, "GND"),
+            pad("R3", "2", 10, 12, "GND"), pad("R4", "2", 10, 3, "GND")]
+    pads += [pad("W", str(k), 10 + dx, 3 + dy, f"W{k}", 0.8, 0.8) for k, (dx, dy) in enumerate(((0.9, 0), (-0.9, 0), (0, 0.9), (0, -0.9)))]
+    doc, box = {"pads": pads}, [0, 0, 20, 14]
+    res = route.plan_routes(doc, box, rules(), seconds=30, pour_net="GND")
+    assert "GND" not in res["routed"] and "A" in res["routed"]
+    (why,) = [w for n, w in res["failed"] if n == "GND"]
+    assert "R4-2" in why and "dropped to the pour" in why, why
+    assert res["pour"]["mode"] == "drops" and "R4-2" in res["pour"]["note"]
+    assert len([i for i in res["items"] if i["net"] == "GND" and i["kind"] == "via"]) == 3     # the three pads that could be dropped
+    assert route.violations(doc, res["items"], rules(), box) == []
+
+
+def test_tracks_that_replace_a_cut_off_pour_are_checked_by_the_exact_check(monkeypatch):
+    """When tracks cut the pour off, the poured net is routed by tracks instead; those tracks go through the exact check like all
+    others (a violation found there takes the net off and is reported)."""
+    state = {"cut": 0, "after": 0}
+    monkeypatch.setattr(route, "_pour_cut_off", lambda *a, **k: (state.__setitem__("cut", state["cut"] + 1) or ["R1-2"]))
+    real = route._violations
+
+    def spy(shapes, items, r, box, nets=None):
+        out = real(shapes, items, r, box, nets)
+        if state["cut"]:
+            state["after"] += 1
+            return out + [("fake clearance problem", ("GND",))]
+        return out
+    monkeypatch.setattr(route, "_violations", spy)
+    doc = {"pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 8, "A"), pad("R1", "2", 5, 8, "GND"), pad("R2", "2", 15, 5, "GND"),
+                    pad("R3", "2", 10, 12, "GND")]}
+    res = route.plan_routes(doc, [0, 0, 20, 14], rules(), seconds=30, pour_net="GND")
+    assert state["cut"] >= 1 and state["after"] >= 1                     # the check ran again after the fallback
+    assert "GND" not in res["routed"]
+    (why,) = [w for n, w in res["failed"] if n == "GND"]
+    assert "would break the rules" in why and "fake clearance problem" in why, why
+    assert not [i for i in res["items"] if i["net"] == "GND"]
+
+
 def test_a_poured_net_is_dropped_to_the_pour_by_vias_not_routed_by_tracks_to_each_other():
     doc, box = dense_board(), [0, 0, 40, 30]
     r = rules(clearance=0.254, width=0.254, width_min=0.254, via_dia=1.27, via_hole=0.71)
