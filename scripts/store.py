@@ -27,6 +27,7 @@ import time
 from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import project_guard  # noqa: E402
 import workspace  # noqa: E402
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -116,11 +117,18 @@ def read_jsonl(path):
     return out
 
 
+def _write_text(path, text):
+    """write_text for a file the server writes (bom.json, netlist sheets): the project guard is told what was written."""
+    with project_guard.writing(path):
+        pathlib.Path(path).write_text(text, encoding="utf-8")
+
+
 def append(project, filename, record):
     path = pdir(project) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    with project_guard.writing(path):
+        with open(path, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     return record
 
 
@@ -328,7 +336,7 @@ def bom(project, write=True):
     if write:
         p = pdir(project) / "bom.json"
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(lines, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_text(p, json.dumps(lines, ensure_ascii=False, indent=2))
     return lines
 
 
@@ -1302,9 +1310,10 @@ def undo_sheet_write(project, cid, by="student"):
     if _sheet_hash(load_sheet(project, ch["sheet"])) != ch["after_hash"]:
         raise UndoRefused(f"sheet {ch['sheet']} was written again after this; undo that later change first")
     if ch.get("before") is None:
-        path.unlink(missing_ok=True)
+        with project_guard.writing(path):
+            path.unlink(missing_ok=True)
     else:
-        path.write_text(json.dumps(ch["before"], ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_text(path, json.dumps(ch["before"], ensure_ascii=False, indent=2))
     append(project, "sheet-log.jsonl", {"id": cid, "ts": now(), "status": "undone", "by": by})
     return ch
 
@@ -1395,16 +1404,18 @@ def _atomic_write_json(path, obj):
     path = pathlib.Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-    tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
+    text = json.dumps(obj, ensure_ascii=False, indent=2)
+    tmp.write_text(text, encoding="utf-8")
     try:
-        for attempt in range(10):
-            try:
-                os.replace(tmp, path)
-                break
-            except PermissionError:
-                if attempt == 9:
-                    raise
-                time.sleep(0.05)
+        with project_guard.writing(path):
+            for attempt in range(10):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except PermissionError:
+                    if attempt == 9:
+                        raise
+                    time.sleep(0.05)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -2567,7 +2578,7 @@ def write_sheet(project, sheet_id, sheet):
     sheet["parts"] = mark_bom_status(project, _mark_pins_source(project, parts))
     d = netlist_dir(project)
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{sheet['id']}.json").write_text(json.dumps(sheet, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_text(d / f"{sheet['id']}.json", json.dumps(sheet, ensure_ascii=False, indent=2))
     return {"ok": True, "sheet": sheet["id"], "warnings": warnings}
 
 
@@ -2680,8 +2691,8 @@ def refresh_pins_source(project):
         sheet = load_sheet(project, sh)
         marked = _mark_pins_source(project, sheet.get("parts", []))
         if marked != sheet.get("parts"):
-            (netlist_dir(project) / f"{sh}.json").write_text(
-                json.dumps({**sheet, "parts": marked}, ensure_ascii=False, indent=2), encoding="utf-8")
+            _write_text(netlist_dir(project) / f"{sh}.json",
+                        json.dumps({**sheet, "parts": marked}, ensure_ascii=False, indent=2))
 
 
 def _polarised_only(line):

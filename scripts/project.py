@@ -13,6 +13,7 @@ import shutil
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import project_guard  # noqa: E402
 import session  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
@@ -101,7 +102,9 @@ def ensure(name):
     (d / "sources").mkdir(exist_ok=True)
     (d / "chats").mkdir(exist_ok=True)
     for f in LOGS:
-        (d / f).touch()
+        if not (d / f).exists():
+            with project_guard.writing(d / f):
+                (d / f).touch()
     (d / "netlist").mkdir(exist_ok=True)
     if not session.list_all(name):
         session.create(name, title="First conversation")
@@ -195,7 +198,9 @@ def set_altium_link(name, project_file="", pcb_file=None, outputs_dir=None) -> d
 def save_meta(name, meta):
     path = meta_path(name)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(meta, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    text = json.dumps(meta, ensure_ascii=False, indent=2) + "\n"
+    with project_guard.writing(path):
+        path.write_text(text, encoding="utf-8")
     return path
 
 
@@ -257,7 +262,11 @@ def reset(name):
     if not d.exists():
         raise SystemExit(f"no such project: {name}")
     for f in LOGS + ("design-model.json", "bom.json", "idea.json"):
-        (d / f).unlink(missing_ok=True)
+        with project_guard.writing(d / f):
+            (d / f).unlink(missing_ok=True)
+    for f in sorted((d / "netlist").glob("*")) if (d / "netlist").is_dir() else []:
+        with project_guard.writing(f):
+            f.unlink(missing_ok=True)
     for sub in ("artifacts", "chats", "netlist", "exports", "library"):
         shutil.rmtree(d / sub, ignore_errors=True)
     ensure(name)
