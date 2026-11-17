@@ -194,3 +194,102 @@ def test_serve_main_turns_server_mode_on_and_a_cli_process_stays_read_only(monke
             "except bridge.BridgeError as e: print('REFUSED', e)\n")
     out = subprocess.run([sys.executable, "-c", code], cwd=str(tool_guard.REPO), env=env, capture_output=True, text=True)
     assert "REFUSED Altium changes go through actions" in out.stdout, out.stderr
+
+
+def test_a_broken_or_cut_off_actions_block_is_reported_not_swallowed():
+    reply, actions, _t, problems = agent._parse('Done.\n```json\n{"actions": [\n  {"type": "x",}\n]}\n```')
+    assert actions == [] and len(problems) == 1 and "line" in problems[0] and "nothing in it was applied" in problems[0]
+    assert "```" not in reply and "actions" not in reply
+    reply, actions, _t, problems = agent._parse('I added R1.\n```json\n{"actions": [{"type": "bom.propose"')
+    assert actions == [] and len(problems) == 1 and "cut off" in problems[0]
+    assert reply == "I added R1."
+
+
+def test_a_good_actions_block_still_parses():
+    reply, actions, _t, problems = agent._parse('Ok.\n```json\n{"actions": [{"type": "idea.ready"}]}\n```')
+    assert reply == "Ok." and actions == [{"type": "idea.ready"}] and problems == []
+    assert agent._parse("just words")[3] == []
+
+
+
+
+def test_chips_of_a_streaming_engine_are_its_real_script_runs_with_the_claimed_detail():
+    meta = {"stream": True, "runs": [{"label": "Running check_stock.py --all", "failed": False},
+                                     {"label": "Running other.py", "failed": False},
+                                     {"label": "Running crash.py", "failed": True}],
+            "denied": [{"tool": "Bash", "input": {"command": "python scripts/other.py"}}]}
+    claimed = [{"t": "Check availability (check_stock)", "d": "18 lines - LCSC", "st": "ok"},
+               {"t": "Never ran this", "d": "x", "st": "ok"}]
+    chips = agent.real_tools(meta, claimed)
+    assert chips == [{"t": "Running check_stock.py --all", "st": "ok", "d": "18 lines - LCSC"},
+                     {"t": "Running other.py", "st": "warn"}, {"t": "Running crash.py", "st": "bad"}]
+    assert agent.real_tools({"stream": True}, claimed) == []          # a stream with no script run: the claim is dropped
+
+
+def test_an_engine_without_a_step_stream_keeps_the_claims_marked_unconfirmed():
+    claimed = [{"t": "Check availability", "d": "18 lines", "st": "ok"}]
+    assert agent.real_tools({}, claimed) == [{"t": "Check availability", "d": "18 lines", "st": "ok", "s": "claimed"}]
+    assert agent.real_tools(None, []) == []
+
+
+def test_respond_chips_unconfirmed_without_events_and_real_with_them(monkeypatch):
+    import gateway
+    from gateway.base import Result
+    text = 'Ran it.\n```json\n{"tools": [{"t": "Check availability", "st": "ok"}], "actions": []}\n```'
+    monkeypatch.setattr(gateway, "route", lambda req, name=None: Result(text=text, provider="antigravity", model="m"))
+    monkeypatch.setattr(gateway, "resolve", lambda b=None: "antigravity")
+    monkeypatch.setattr(agent.runtime_pack, "sync", lambda: ".")
+    monkeypatch.setattr(agent, "_workspace_section", lambda *a: "")
+    monkeypatch.setattr(agent, "_add_dirs", lambda *a: [])
+    monkeypatch.setattr(agent, "_summary", lambda m: "")
+    out = agent.respond({"project": "p"}, "hi", [])
+    assert out["tools"] == [{"t": "Check availability", "st": "ok", "s": "claimed"}] and out["parse_refused"] == []
+    monkeypatch.setattr(gateway, "route", lambda req, name=None: Result(text=text, provider="claude_code", model="m", meta={"stream": True}))
+    assert agent.respond({"project": "p"}, "hi", [])["tools"] == []      # the engine streamed and ran nothing
+
+
+def test_an_example_that_is_not_strict_json_is_not_a_refusal():
+    ex = 'Set it like this:\n```json\n{"port": 8080, // comment\n "debug": true,}\n```\nDone.'
+    reply, actions, _t, problems = agent._parse(ex)
+    assert problems == [] and actions == [] and "8080" not in reply and "Done." in reply
+    assert agent._parse('x\n```json\n{"port": 8080, "x": [1,}\n')[3] == []        # cut-off example: dropped quietly too
+    assert len(agent._parse('x\n```json\n{"actions": [{"type": "a",}]}\n```')[3]) == 1
+    assert agent._parse('x\n```json\n[{"type": "a",}]\n```')[3] == []              # "type" alone does not make it an actions block
+    assert agent._parse('Each is an object with a type. The list of actions follows.\n```json\n{"type": "x",}\n```')[3] == []
+
+
+def test_only_an_exact_json_fence_at_a_line_start_counts():
+    assert agent._parse('a\n```jsonc\n{"actions": [{"type": "x",}]}\n```')[3] == []          # jsonc / json5 are not the actions block
+    assert agent._parse('a\n```json5\n{"actions": [{"type": "x"}]}\n```')[1] == []
+    reply, actions, _t, problems = agent._parse('Put it in a ```json fence.\n```json\n{"actions": [{"type": "idea.ready"}]}\n```')
+    assert actions == [{"type": "idea.ready"}] and problems == [] and reply == "Put it in a ```json fence."
+    assert agent._parse('a\n```json  \n{"actions": [{"type": "idea.ready"}]}\n```')[1] == [{"type": "idea.ready"}]
+
+
+def test_real_actions_blocks_are_not_dropped_by_line_endings_indent_or_a_same_line_fence():
+    good = '{"actions": [{"type": "idea.ready"}]}'
+    want = [{"type": "idea.ready"}]
+    assert agent._parse('Ok\r\n```json\r\n' + good + '\r\n```\r\n')[1] == want                  # CRLF
+    assert agent._parse('1. Do this:\n   ```json\n   ' + good + '\n   ```\n')[1] == want        # under a list item
+    reply, actions, _t, problems = agent._parse('Ok ```json ' + good + '```')                 # same line
+    assert actions == want and problems == [] and reply == "Ok"
+    assert len(agent._parse('Ok ```json {"actions": [{"type": "a",}]}```')[3]) == 1          # broken, same line: refused
+    assert len(agent._parse('Ok ```json {"actions": [{"type": "a"')[3]) == 1                  # cut off, same line: refused
+    assert agent._parse('Use a ```json fence for it.')[3] == []                              # prose only
+
+
+def test_a_denied_call_is_warn_not_bad_and_the_detail_goes_to_the_right_run_once():
+    meta = {"stream": True, "runs": [{"label": "Running check.py", "failed": False},
+                                     {"label": "Running check_stock.py", "failed": False},
+                                     {"label": "Running check_stock.py", "failed": False},
+                                     {"label": "Running boom.py", "failed": True},
+                                     {"label": "Running denied.py", "failed": True}],
+            "denied": [{"tool": "Bash", "input": {"command": "python scripts/denied.py"}}]}
+    claimed = [{"t": "Stock (check_stock.py)", "d": "18 lines"}, {"t": "Boom (boom)", "d": "never"},
+               {"t": "Again", "d": "check_stock second"}]
+    chips = agent.real_tools(meta, claimed)
+    assert chips[0] == {"t": "Running check.py", "st": "ok"}                  # check.py does not take check_stock's detail
+    assert chips[1] == {"t": "Running check_stock.py", "st": "ok", "d": "18 lines"}
+    assert chips[2] == {"t": "Running check_stock.py", "st": "ok", "d": "check_stock second"}      # a claim is used once, in order
+    assert chips[3] == {"t": "Running boom.py", "st": "bad"}                 # a failed run never takes the model's detail
+    assert chips[4] == {"t": "Running denied.py", "st": "warn"}              # denied wins over the error it comes with

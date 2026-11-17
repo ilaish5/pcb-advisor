@@ -8,7 +8,7 @@ worker goes on. Results are written into the project's files atomically (store._
 Two kinds of job:
 - citations: after an agent reply is stored, every `{{src:file|locator}}` in it is checked against the file. The
   result sits beside the chat, in `chats/<session>.cites.json`, keyed by the record's `ts`:
-      {"<ts>": {"state": "done", "at": ISO, "items": {"<file>|<locator>": {"status": "ok" | "not_found" |
+      {"<ts>": {"state": "done", "at": ISO, "items": {"<file>|<locator>": {"status": "ok" | "file_only" | "not_found" |
                                                                         "missing_file", "reason": "..."}}}}
   model.build() attaches it to the chat record as `cites`; while the job is queued or running `cites` is
   {"state": "checking"}. The chat UI redraws its chips from that (a normal state poll carries it).
@@ -149,13 +149,29 @@ def check_one(project, name, locator):
     except Exception as exc:                        # an unreadable file is not a fabricated quote, but it is not confirmed
         return {"status": "not_found", "reason": f"could not read {name}: {exc}"}
     quotes = [next(g for g in m if g) for m in QUOTED.findall(locator or "")]
+    long_found = False
     for q in quotes:
         res = sources.verify(name, q, project)
         if not res.get("ok"):
             return {"status": "not_found", "reason": res.get("reason") or "quote not found in file"}
-    if not quotes and _reads_as_sentence(locator) and sources.verify(name, locator.strip(), project).get("ok"):
+        long_found = long_found or _long_enough(q)
+    if quotes:
+        if not long_found:      # a few words found somewhere in a datasheet say nothing about the claim
+            return {"status": "file_only", "reason": f"the quote is too short to confirm the claim (needs {MIN_QUOTE_CHARS}+ characters, {MIN_QUOTE_WORDS}+ words); the file exists"}
+        return {"status": "ok", "reason": "quote found in file"}
+    if _reads_as_sentence(locator) and _long_enough(locator) and sources.verify(name, locator.strip(), project).get("ok"):
         return {"status": "ok", "reason": "quote found in file"}       # a quote written without quotation marks
-    return {"status": "ok", "reason": "quote found in file" if quotes else "file found"}
+    return {"status": "file_only", "reason": "file found; no quote given, so the claim was not compared to the file"}
+
+
+MIN_QUOTE_CHARS, MIN_QUOTE_WORDS, MIN_QUOTE_CJK = 20, 4, 12
+
+
+def _long_enough(quote):
+    """A verbatim match only counts as a check when the quote is long enough to carry the claim."""
+    q = " ".join((quote or "").split())
+    cjk = len(re.findall(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", q))     # no spaces between words in Chinese/Japanese/Korean
+    return len(q) >= MIN_QUOTE_CHARS and (len(q.split()) >= MIN_QUOTE_WORDS or cjk >= MIN_QUOTE_CJK)
 
 
 def _reads_as_sentence(locator):

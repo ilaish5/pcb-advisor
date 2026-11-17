@@ -2300,6 +2300,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise
             finally:
                 _turn_end(tkey)
+            refused.extend(res.get("parse_refused") or [])
             runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
                          refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
                          error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:600]),

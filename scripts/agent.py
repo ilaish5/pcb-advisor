@@ -261,22 +261,94 @@ def _strip_fence(text):
     return (fenced.group(1) if fenced else body).strip()
 
 
+FENCE_OPEN = r"(?m)^[ \t]*```json[ \t]*\r?\n"        # exactly json (not jsonc / json5), at a line start (a list item may indent it)
+FENCE_ANY = re.compile(r"```json(?!\w)(.*?)(```|\Z)", re.S)     # a fence anywhere: same line as prose, or the end of the reply
+
+
+def _meant_as_actions(block):
+    return re.search(r'"actions"\s*:', block) is not None
+
+
+def _take(body, actions, tools):
+    """Read one block's body into actions/tools. Returns None when read, else the JSON error."""
+    try:
+        obj = json.loads(body)
+    except json.JSONDecodeError as exc:
+        return exc
+    if isinstance(obj, dict):
+        actions.extend(obj.get("actions", []))
+        tools.extend(t for t in obj.get("tools", []) if isinstance(t, dict) and t.get("t"))
+    elif isinstance(obj, list):
+        actions.extend(obj)
+    return None
+
+
 def _parse(text):
-    """Pull the actions block out; tolerate a model that forgets it."""
-    blocks = re.findall(r"```json\s*(.*?)```", text, re.S)
-    actions, tools = [], []
-    for b in blocks:
-        try:
-            obj = json.loads(b)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            actions.extend(obj.get("actions", []))
-            tools.extend(t for t in obj.get("tools", []) if isinstance(t, dict) and t.get("t"))
-        elif isinstance(obj, list):
-            actions.extend(obj)
-    reply = re.sub(r"```json\s*.*?```", "", text, flags=re.S).strip()
-    return reply, actions, tools
+    """Pull the actions block out; tolerate a model that forgets it. Returns (reply, actions, claimed_tools, problems).
+    A block with an "actions" key that cannot be read, or that was cut off before its closing fence, is a problem the
+    student is told about; any other unreadable json block (an example in the explanation) is just left out."""
+    text = text or ""
+    pat = re.compile(FENCE_OPEN + r"(.*?)```", re.S)
+    actions, tools, problems = [], [], []
+    for b in pat.findall(text):
+        exc = _take(b, actions, tools)
+        if exc and _meant_as_actions(b):
+            problems.append(f"the reply's actions block could not be read (JSON error at line {exc.lineno}); nothing in it was applied")
+    reply = pat.sub("", text)
+    cut = re.search(FENCE_OPEN + r".*\Z", reply, re.S)        # an opening fence that never closes: the reply was cut off
+    if cut:
+        if _meant_as_actions(cut.group(0)):
+            problems.append("the reply's actions block was cut off before its end; nothing in it was applied")
+        reply = reply[:cut.start()]
+    # a fence still in the text (same line as prose): a block that reads is applied, an actions block that does not is refused,
+    # anything else ("put it in a ```json fence") stays as prose
+    def leftover(m):
+        body = m.group(1).strip()
+        exc = _take(body, actions, tools)
+        if exc is None:
+            return ""
+        if _meant_as_actions(body):
+            problems.append("the reply's actions block was cut off before its end; nothing in it was applied" if not m.group(2) else
+                            f"the reply's actions block could not be read (JSON error at line {exc.lineno}); nothing in it was applied")
+            return ""
+        return m.group(0)
+    reply = FENCE_ANY.sub(leftover, reply)
+    return reply.strip(), actions, tools, problems
+
+
+def _script_stem(s):
+    s = str(s).lower()
+    return re.sub(r"\.py$", "", s)
+
+
+def real_tools(meta, claimed=()):
+    """Tool chips. An engine that reports its steps (meta["stream"]): the chips are its real runs of the tool's own
+    scripts (denied: warn, failed: bad), each keeping the detail `d` of the model's claimed chip for the same script;
+    a claim with no real run is dropped. An engine with no step stream: the model's claims, marked "claimed" (unconfirmed)."""
+    from gateway import events
+    meta = meta or {}
+    claimed = [c for c in claimed or [] if isinstance(c, dict) and c.get("t")]
+    if not meta.get("stream"):
+        return [{**c, "s": "claimed"} for c in claimed]
+    denied = {events.label(d.get("tool"), d.get("input")) for d in meta.get("denied") or [] if isinstance(d, dict)}
+    free = list(claimed)
+    out = []
+    for r in meta.get("runs") or []:
+        lab = r["label"]
+        script = re.search(r"([\w.-]+\.py)", lab)
+        st = "warn" if lab in denied else "bad" if r.get("failed") else "ok"       # a denied call also reports an error: denied first
+        chip = {"t": lab, "st": st}
+        if script and st == "ok":
+            want = _script_stem(script.group(1))
+            for c in free:      # each claim once, in order, on the whole script name (check.py is not check_stock.py)
+                names = {_script_stem(w) for w in re.findall(r"[\w.-]+", f"{c.get('t')} {c.get('d', '')}")}
+                if want in names:
+                    free.remove(c)
+                    if c.get("d"):
+                        chip["d"] = c["d"]
+                    break
+        out.append(chip)
+    return out
 
 
 def _add_dirs(project):
@@ -379,6 +451,6 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
                 "backend": res.provider or name, "provider": res.provider or name,
                 "error": True, **turn, **took}
 
-    reply, actions, tools = _parse(res.text)
-    return {"reply": reply or "(no reply)", "actions": actions, "tools": tools,
+    reply, actions, claimed, problems = _parse(res.text)
+    return {"reply": reply or "(no reply)", "actions": actions, "tools": real_tools(meta, claimed), "parse_refused": problems,
             "backend": res.provider, "provider": res.provider, "model": res.model, **turn, **took}

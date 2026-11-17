@@ -310,13 +310,19 @@ function ctxHTML(part) {
     `${part.mpn ? `<span class="m">${esc(part.mpn)}</span>` : ''}${where ? `<span>${esc(where)}</span>` : ''}</div>`;
 }
 /* what the agent ran: one muted line, expanding to the steps when there are several */
+const CLAIMED_TIP = 'reported by the agent, not confirmed by the engine';
+function toolMark(t) {
+  if (t.s === 'claimed') return `<span class="dim-t" title="${CLAIMED_TIP}">${icon('check', 's')}</span>`;
+  if (t.st === 'bad') return `<span class="bad-t">${icon('x', 's')}</span>`;
+  return t.st === 'warn' ? `<span class="warn-t">${icon('alert', 's')}</span>` : `<span class="ok-t">${icon('check', 's')}</span>`;
+}
 function toolsHTML(items) {
   if (!items || !items.length) return '';
-  const warn = items.some(t => t.st === 'warn');
-  const mark = warn ? `<span class="warn-t">${icon('alert', 's')}</span>` : `<span class="ok-t">${icon('check', 's')}</span>`;
-  if (items.length === 1) return `<div class="runs">${mark}<span>${esc([items[0].t, items[0].d].filter(Boolean).join(' · '))}</span></div>`;
-  const step = t => `<li><span class="${t.st === 'warn' ? 'warn-t' : 'ok-t'}">${icon(t.st === 'warn' ? 'alert' : 'check', 's')}</span><span>${esc(t.t)}${t.d ? ` <span class="d">${esc(t.d)}</span>` : ''}</span></li>`;
-  return `<details class="runs"><summary>${mark}<span>${esc(items[0].t)} · ${items.length} steps</span></summary><ul>${items.map(step).join('')}</ul></details>`;
+  const mark = toolMark(items.find(t => t.st === 'bad') || items.find(t => t.st === 'warn') || items[0]);
+  const tip = items.every(t => t.s === 'claimed') ? ` title="${CLAIMED_TIP}"` : '';
+  if (items.length === 1) return `<div class="runs"${tip}>${mark}<span>${esc([items[0].t, items[0].d].filter(Boolean).join(' · '))}</span></div>`;
+  const step = t => `<li${t.s === 'claimed' ? ` title="${CLAIMED_TIP}"` : ''}>${toolMark(t)}<span>${esc(t.t)}${t.d ? ` <span class="d">${esc(t.d)}</span>` : ''}</span></li>`;
+  return `<details class="runs"${tip}><summary>${mark}<span>${esc(items[0].t)} · ${items.length} steps</span></summary><ul>${items.map(step).join('')}</ul></details>`;
 }
 /* The chip under an agent reply, in words: "bom.propose:R1" is "BOM proposal: R1". The server's text after the kind
    (counts, file names) is kept as the detail; an unknown kind is its name, humanised. */

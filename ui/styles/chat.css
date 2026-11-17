@@ -138,5 +138,6 @@
 .msgs button.src.cite-checking{color:var(--ink-3)}
 .msgs button.src.cite-checking .cite-m{opacity:.7}
 .msgs button.src.cite-ok .cite-m{color:var(--ok)}
+.msgs button.src.cite-file .cite-m{color:var(--ink-3)}
 .msgs button.src.cite-bad{color:var(--warn)}
 .msgs button.src.cite-bad .cite-m{color:var(--warn)}

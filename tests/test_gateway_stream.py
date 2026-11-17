@@ -263,3 +263,41 @@ def test_options_reach_the_runner(home, monkeypatch):
     gateway.route(gateway.Request(prompt="p", timeout=33, options={"cancel": ev, "idle_timeout": 11}),
                   name="claude_code")
     assert seen["cancel"] is ev and seen["idle_timeout"] == 11 and seen["total_timeout"] == 33
+
+
+def test_a_crashed_script_run_is_marked_failed_and_a_plain_command_is_no_run():
+    def use(i, cmd):
+        return _line(type="assistant", message={"content": [{"type": "tool_use", "id": i, "name": "Bash", "input": {"command": cmd}}]})
+
+    def res(i, **kw):
+        return _line(type="user", message={"content": [{"type": "tool_result", "tool_use_id": i, **kw}]})
+    lines = [use("a", "python scripts/check_stock.py --all"), res("a", content="ok"),
+             use("b", "python scripts/crash.py"), res("b", content="Exit code 1\nTraceback"),
+             use("c", "python scripts/err.py"), res("c", is_error=True, content="boom"),
+             use("d", "ls -la"), res("d", content="x"),
+             _line(type="result", result="done", usage={})]
+    text, meta, err = ClaudeCodeProvider._parse("\n".join(lines))
+    assert meta["stream"] is True and len(meta["steps"]) == 4          # every step is a step, but only script runs are runs
+    assert [(r["label"].split()[1], r["failed"]) for r in meta["runs"]] == [("check_stock.py", False), ("crash.py", True), ("err.py", True)]
+
+
+def test_only_an_interpreter_running_a_script_is_a_run_and_the_args_survive_quotes():
+    run = lambda c, t="Bash": events.is_script_run(t, {"command": c})
+    assert run("python scripts/a.py") and run("python3 -u scripts/a.py x") and run("py scripts/a.py")
+    assert run("C:/repo/.venv/Scripts/python.exe C:/repo/scripts/a.py --all")
+    assert run('"C:\\repo\\.venv\\Scripts\\python.exe" "C:\\repo\\scripts\\a.py" --all')
+    assert run('& "C:\\Python312\\python.exe" "C:\\repo\\scripts\\a.py" --all', "PowerShell")
+    assert run("cd /r && python scripts/a.py")
+    for c in ("cat scripts/a.py", "grep foo scripts/a.py", "head -5 scripts/a.py", "type scripts\\a.py",
+              "Get-Content scripts/a.py", "ls scripts/", "python -c 'print(1)'", "git diff scripts/a.py"):
+        assert not run(c, "PowerShell" if c.startswith(("Get", "type")) else "Bash"), c
+    assert events.label("Bash", {"command": 'python "C:/r/scripts/a.py" --mpn X1 --all'}) == "Running a.py --mpn X1 --all"
+    assert events.label("Bash", {"command": "cat scripts/a.py"}).startswith("Running cat")
+
+
+def test_exit_code_counts_only_at_the_start_of_the_output():
+    from gateway.claude_code import _result_failed
+    assert _result_failed({"content": "Exit code 1\nTraceback"}) and _result_failed({"content": [{"type": "text", "text": "  Exit code 2"}]})
+    assert _result_failed({"is_error": True, "content": "x"})
+    assert not _result_failed({"content": "Reset reasons:\nExit code 2: watchdog reset\nok"})
+    assert not _result_failed({"content": "Exit code 0\nfine"})

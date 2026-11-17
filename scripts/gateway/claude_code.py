@@ -42,6 +42,17 @@ def _quoted_twins(rules):
     return twins
 
 
+def _result_failed(part):
+    """A tool_result that reports an error or a non-zero exit code."""
+    if part.get("is_error"):
+        return True
+    c = part.get("content")
+    if isinstance(c, list):
+        c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+    m = re.match(r"\s*Exit code:?\s*(-?\d+)", str(c or ""))        # only at the start: a datasheet line may say "Exit code 2"
+    return bool(m and int(m.group(1)) != 0)
+
+
 class _Turn:
     """What one streamed turn has shown so far. Fed line by line from the reader thread."""
 
@@ -51,6 +62,7 @@ class _Turn:
         self.texts = []
         self.steps = []
         self.uses = {}                  # tool_use_id -> (name, input)
+        self.runs = []                  # script runs: {"id", "label", "failed"}
         self.denied = {}                # tool_use_id (or an index key) -> entry
         self.result = None
         self.events = 0                 # JSON event lines seen: tells a stream from plain text
@@ -96,12 +108,21 @@ class _Turn:
                     self.uses[part.get("id")] = (name, inp)
                     lab = events.label(name, inp)
                     self.steps.append(lab)
+                    if events.is_script_run(name, inp):
+                        self.runs.append({"id": part.get("id"), "label": lab, "failed": False})
                     self._emit("tool", lab, name)
                 elif part.get("type") == "text" and str(part.get("text") or "").strip():
                     self.texts.append(part["text"])
                     self._soft("text", "Writing the answer")
                 elif part.get("type") == "thinking":
                     self._soft("thinking", "Thinking")
+        elif kind == "user":
+            content = (ev.get("message") or {}).get("content")
+            for part in content if isinstance(content, list) else []:
+                if isinstance(part, dict) and part.get("type") == "tool_result" and _result_failed(part):
+                    for run in self.runs:
+                        if run["id"] == part.get("tool_use_id"):
+                            run["failed"] = True
         elif kind == "system" and ev.get("subtype") == "permission_denied":
             tid = ev.get("tool_use_id") or f"#{len(self.denied)}"
             name = str(ev.get("tool_name") or "")
@@ -137,6 +158,10 @@ class _Turn:
         meta = {}
         if self.steps:
             meta["steps"] = list(self.steps)
+        if self.events:
+            meta["stream"] = True      # the engine reports its steps: chips can be taken from them
+        if self.runs:
+            meta["runs"] = [{"label": r["label"], "failed": r["failed"]} for r in self.runs]
         den = self.denials()
         if den:
             meta["denied"] = den

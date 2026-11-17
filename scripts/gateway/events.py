@@ -18,14 +18,26 @@ def _base(path):
     return os.path.basename(str(path).replace("\\", "/").rstrip("/")) or str(path)
 
 
+# an interpreter (python, python3, py, .../python.exe, quoted or not, `&` in PowerShell) running scripts/....py
+SCRIPT_RUN = re.compile(
+    r"""(?:^|[\s;&|("'])&?\s*["']?(?:[^\s"']*[/\\])?(?:python[\d.]*|py)(?:\.exe)?["']?(?:\s+-[\w-]+)*\s+"""
+    r"""["']?((?:[^\s"']*[/\\])?scripts[/\\](?:[\w.-]+[/\\])*([\w.-]+\.py))["']?(?:\s+(.*))?""", re.S)
+
+
+def is_script_run(tool_name, tool_input=None):
+    """True for a Bash/PowerShell command that RUNS one of the tool's own scripts (python .../scripts/x.py).
+    `ls`, `cat notes.txt`, and reading a script (`cat scripts/x.py`) are not runs."""
+    inp = tool_input if isinstance(tool_input, dict) else {}
+    return str(tool_name or "") in ("Bash", "PowerShell") and bool(SCRIPT_RUN.search(str(inp.get("command") or "")))
+
+
 def label(tool_name, tool_input=None):
     """Short English label (<= 80 chars) for one tool call."""
     inp = tool_input if isinstance(tool_input, dict) else {}
     name = str(tool_name or "")
     if name in ("Bash", "PowerShell"):
         cmd = str(inp.get("command") or "")
-        m = re.search(r"""(?:^|[\s"'])((?:[^\s"']*[/\\])?scripts[/\\](?:[\w.-]+[/\\])*([\w.-]+\.py))(?:\s+(.*))?""",
-                      cmd, re.S)
+        m = SCRIPT_RUN.search(cmd)
         if m:
             script = m.group(2)
             rest = (m.group(3) or "").strip().strip("\"'")
