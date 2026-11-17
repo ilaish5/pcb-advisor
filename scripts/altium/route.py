@@ -817,6 +817,20 @@ def _is_gnd(net):
     return bool(re.match(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", str(net), re.I))
 
 
+def _width_report(nets, plan_w, routed):
+    """{net: {"width_mm" (drawn; None if not routed), "wanted_mm", "current_a", "source", "note"}}; a net drawn narrower than wanted
+    (the board had no room for more) says so in its note."""
+    out = {}
+    for n in nets:
+        p = plan_w[n]
+        got = routed[n]["width"] if n in routed else None
+        note = p["note"]
+        if got is not None and p["width_mm"] is not None and got < p["width_mm"] - 1e-9:
+            note += ("; " if note else "") + f"drawn {got:g} mm: no room for the wanted {p['width_mm']:g} mm"
+        out[n] = {"width_mm": got, "wanted_mm": p["width_mm"], "current_a": p["current_a"], "source": p["source"], "note": note}
+    return out
+
+
 def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=8):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1].
     Returns {"items", "routed", "failed": [(net, reason)], "stats"}. Nets with one pad are not routed. Order: rails (wide) first, then
@@ -834,15 +848,16 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         return (2 if _is_gnd(n) else 0 if _RAIL.match(n) else 1, _hpwl(rt.pads[n]), n)
     order = sorted(nets, key=key)
 
+    from altium import netcurrent
+    plan_w = netcurrent.net_widths(nets, rules, rules.get("net_current"), rules.get("net_estimate"), rules.get("copper_oz") or 1.0,
+                                   rules.get("temp_rise_c") or 10.0, is_rail=lambda n: bool(_RAIL.match(n)))
+    mn = rules.get("width_min") or rules["width"]
+
     def width_for(n):
-        if n in rules["net_width"]:
-            ws = [rules["net_width"][n]]
-        elif _RAIL.match(n):
-            w = min(max(rules["width"], POWER_WIDTH), rules["width_max"])
-            ws = [w, rules["width"]] if w > rules["width"] else [rules["width"]]
-        else:
-            ws = [rules["width"]]
-        mn = rules.get("width_min") or rules["width"]
+        w = plan_w[n]["width_mm"]
+        if w is None:           # a current outside the IPC-2221 range: no invented width, the rail default or the board's width
+            w = min(max(rules["width"], POWER_WIDTH), rules["width_max"]) if _RAIL.match(n) else rules["width"]
+        ws = [w, rules["width"]] if w > rules["width"] + 1e-9 else [w]
         if mn < ws[-1] - 1e-9:
             ws.append(mn)                                    # the narrowest the width rule allows, as a last resort
         return ws
@@ -933,6 +948,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     failed = list(dict.fromkeys(n for n in failed if n not in rt.routed))
     items = all_items()
     return {"items": items, "routed": sorted(rt.routed), "failed": [(n, why.get(n) or last_msg.get(n) or "no path") for n in failed],
+            "widths": _width_report(nets, plan_w, rt.routed),
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch}}
 

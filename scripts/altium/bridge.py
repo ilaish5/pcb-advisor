@@ -1103,7 +1103,7 @@ def _partial_ok(problem):
     return problem.startswith("not routed") or "open nets" in problem or "un-routed connection" in problem
 
 
-def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True):
+def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None):
     """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
     script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
     Altium's batch design rule check (no new clearance / short / width / un-routed violations over the check made before routing).
@@ -1132,6 +1132,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if not doc.get("nets"):
         raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
     rules = route.rules_from_doc(doc)
+    rules.update(net_current=currents or {}, net_estimate=estimates or {}, **(copper or {}))      # widths by current (netcurrent.py)
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
     drc_before = _drc_counts(run_drc(prj, pcb, tmp / "before.txt"))
     plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
@@ -1139,7 +1140,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     pour_skipped = ""
     shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
-           "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k != "net_width"}, "backup": "", "problems": [],
+           "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": plan["widths"], "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
@@ -1266,8 +1267,25 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                       + (f", {pour_net} poured on the bottom layer" if res["pour"] else "") + f", saved; own check: "
                       f"{'no open nets' if not open_nets else str(len(open_nets)) + ' open nets'}; Altium DRC: "
                       f"{after.get('Un-Routed Net', 0)} un-routed, {after.get('Clearance Constraint', 0)} clearance, "
-                      f"{after.get('Short-Circuit', 0)} short ({drc_before.get('Clearance Constraint', 0)} clearance before routing)")
+                      f"{after.get('Short-Circuit', 0)} short ({drc_before.get('Clearance Constraint', 0)} clearance before routing)"
+                      + ("; " + wl if (wl := _width_line(plan["widths"])) else ""))
     return res
+
+
+def _width_line(widths):
+    from altium import netcurrent
+    return netcurrent.width_line(widths)
+
+
+def net_current_inputs(project):
+    """What route_on sizes the tracks by: {currents (set by the student, approved), estimates (a regulator's rated output current from
+    the BOM), copper {copper_oz, temp_rise_c} from project.json board.* if present}."""
+    from altium import netcurrent
+    import project as projects
+    board = projects.load_meta(project).get("board") or {}
+    copper = {k: float(board[k]) for k in ("copper_oz", "temp_rise_c") if isinstance(board.get(k), (int, float)) and board[k] > 0}
+    return {"currents": store.net_currents(project), "copper": copper,
+            "estimates": netcurrent.regulator_currents(store.bom_lines(project), [sh for _, _, sh in _sheets(project)])}
 
 
 def route_pcb(project, replace=False, keep_partial=False):
@@ -1279,7 +1297,7 @@ def route_pcb(project, replace=False, keep_partial=False):
     if missing:
         raise BridgeError("Import the JLC rules first (altium.import_rules), then route: the board does not have "
                           + ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "") + ". Nothing was changed.")
-    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial)
+    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, **net_current_inputs(project))
     _log(project, "route-pcb", pcb=str(pcb), routed=res["routed"], failed=[n for n, _ in res["failed"]], tracks=res["tracks"],
          vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],
          restored=res["restored"], drc_before=res["drc_before"], drc_after=res["drc_after"])
