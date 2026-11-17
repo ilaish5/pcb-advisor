@@ -215,3 +215,11 @@ def test_cjk_quotes_can_go_green_and_one_short_quote_among_long_ones_does_not_do
     both = background.check_one(empty, "c.txt", '"Output is 3 V" and "Place the decoupling capacitor close to the pin"')
     assert both["status"] == "ok"
     assert background.check_one(empty, "c.txt", '"Place the decoupling capacitor close to the pin" "not in the file at all, really"')["status"] == "not_found"
+
+
+def test_a_quote_across_a_page_break_is_still_green(empty):
+    # pages are joined with \f (pin tables find their page by it); a quote over the break must still verify
+    d = sources.folder_of(empty)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "p.txt").write_text("Place the decoupling capacitor\fclose to the VBAT pin.\fNext page.", encoding="utf-8")
+    assert background.check_one(empty, "p.txt", '"Place the decoupling capacitor close to the VBAT pin"')["status"] == "ok"
