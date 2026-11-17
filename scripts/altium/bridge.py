@@ -827,21 +827,62 @@ def _pcbcheck_info(log):
 
 
 def parse_drc(path):
-    """The batch design rule check text report: {"rules": {rule text: count}, "violations": [message], "unrouted": n, "total": n}."""
+    """The batch design rule check text report: {"rules": {rule text: count}, "violations": [message], "unrouted": n, "total": n,
+    "complete": bool, "clean": bool}. The "Rule Violations|Total|N" line is not a rule: it is the report's own total. total is the sum
+    of the rules; complete is True only when that Total line exists AND equals the sum (a truncated report fails this), at least one
+    rule line was read, every "Rule Violations" line has a whole-number count, no rule is listed twice with different counts, and
+    details do not appear under a zero total. clean = complete and total == 0: anything else is unchecked."""
     try:
         text = pathlib.Path(path).read_text(encoding="cp1252", errors="replace")
     except OSError:
         return None
     rules, violations = {}, []
+    complete = True
+    stated = None
     for line in text.splitlines():
         parts = line.split("|")
-        if len(parts) == 3 and parts[0].startswith("Rule Violations") and parts[2].strip().isdigit():
-            rules[parts[1].strip()] = int(parts[2])
+        if parts[0].startswith("Rule Violations"):
+            if len(parts) == 3 and parts[1].strip() and parts[2].strip().isdigit():
+                name, n = parts[1].strip(), int(parts[2])
+                if name.lower() == "total":
+                    if stated is not None and stated != n:
+                        complete = False
+                    stated = n
+                    continue
+                if rules.get(name, n) != n:
+                    complete = False
+                rules[name] = n
+            else:
+                complete = False                    # a rule line that cannot be read: its count is unknown
         elif len(parts) >= 4 and parts[1] == "" and parts[2] == "":
             violations.append(f"{parts[0].strip()}: {parts[3].strip()}")
     total = sum(rules.values())
+    if not rules or stated is None or stated != total or (violations and total == 0):
+        complete = False
     unrouted = sum(v for k, v in rules.items() if k.startswith("Un-Routed Net"))
-    return {"rules": rules, "violations": violations, "unrouted": unrouted, "total": total}
+    return {"rules": rules, "violations": violations, "unrouted": unrouted, "total": total,
+            "complete": complete, "clean": bool(complete and total == 0)}
+
+
+def drc_clean(res):
+    """True only for a fully parsed report with no violation at all; a missing, partial or unknown-format report is never clean."""
+    return bool(isinstance(res, dict) and res.get("complete") is True and res.get("total") == 0 and res.get("rules"))
+
+
+def _drc_short(name):
+    """"Clearance Constraint (Gap=0.127mm) (All),(All)" -> "Clearance": the rule's name without the values Altium appends."""
+    return re.split(r" \(|:", name, maxsplit=1)[0].replace(" Constraint", "").strip()
+
+
+def drc_line(res):
+    """Every rule of the report with its violation count, absolute numbers ("Clearance 0, Width 0, Un-Routed Net 3, ... total 3"), or
+    "unchecked" when the report is missing or was not read in full."""
+    if not isinstance(res, dict) or not res.get("rules"):
+        return "unchecked (no readable design rule check report)"
+    body = ", ".join(f"{_drc_short(k)} {v}" for k, v in res["rules"].items())
+    if not res.get("complete"):
+        return f"unchecked (the report was not read in full; read so far: {body}, total {res.get('total', 0)})"
+    return f"{body}, total {res['total']}" + (" (clean)" if drc_clean(res) else "")
 
 
 def _netlist_parts(project):
@@ -1139,8 +1180,17 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
     rules = route.rules_from_doc(doc)
     rules.update(net_current=currents or {}, net_estimate=estimates or {}, allow_narrow=bool(keep_partial), **(copper or {}))      # widths by current (netcurrent.py)
+    cap_warn = []
+    refused = route.capability_check(doc, rules, box, pitch, warnings=cap_warn)      # what this router cannot do is said before anything is run or drawn
+    if refused:
+        return {"routed": [], "failed": [], "tracks": 0, "vias": 0, "stats": {}, "rules": {}, "widths": {}, "backup": "",
+                "problems": ["not routed, nothing was drawn: " + "; ".join(refused)], "refusals": refused, "restored": False,
+                "drc_before": {}, "drc_after": {}, "drc_line": "unchecked (not run)", "drc_clean": False, "drills": [], "written": False,
+                "pour": None, "pour_warning": "", "pour_warnings": [],
+                "summary": "not routed, nothing was drawn: " + "; ".join(refused)}
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
-    drc_before = _drc_counts(run_drc(prj, pcb, tmp / "before.txt"))
+    drc_before_full = run_drc(prj, pcb, tmp / "before.txt")
+    drc_before = _drc_counts(drc_before_full)
     plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
     names = names or {}                  # {drawn name: netlist name}: the PcbDoc carries the drawn names, the student knows the netlist's
     shown = {names.get(n, n): w for n, w in plan["widths"].items()}
@@ -1149,7 +1199,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": shown, "backup": "", "problems": [],
-           "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped}
+           "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped,
+           "pour_warnings": [], "capability_warnings": cap_warn, "drc_line": "unchecked (not run)", "drc_clean": False}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
@@ -1249,6 +1300,12 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                     res["pour_warning"] = ("the ground pour was taken off again: Altium's design rule check found it too close to other copper. "
                                            "All GND pads are connected by tracks; add a pour in Altium (Place > Polygon Pour) if you want a ground plane")
     res["drc_after"] = after
+    res.update(drc_rules=dict(drc.get("rules") or {}), drc_total=drc.get("total"), drc_clean=drc_clean(drc), drc_line=drc_line(drc))
+    if not drc.get("complete"):
+        probs.append("Altium's design rule check report could not be read in full, so the board is unchecked (not clean): "
+                     "run the design rule check in Altium (Tools > Design Rule Check) and look at the list")
+    elif not drc_before_full.get("complete"):
+        probs.append("the design rule check made before routing could not be read in full, so new violations cannot be told from old ones: unchecked")
     probs += new_probs
     if pour_net:       # Altium can accept the polygon and still leave it empty: look for copper in the saved file
         try:
@@ -1263,12 +1320,15 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
             res["pour"] = None
             res["pour_warning"] = (f"the {pour_net} pour was drawn but Altium did not fill it (no copper): repour it in Altium with "
                                    "Tools > Polygon Pours > Repour All, or route without it")
+    if res["pour"]:         # the pour exists in the file: islands (cut-off copper) and pads it does not reach
+        pc_probs, res["pour_warnings"] = _pour_findings(saved, pour_net)
+        probs += pc_probs
     try:
         from checks import board as board_checks
         res["drills"] = [f["message"] for f in board_checks.check_drills(saved)]
     except Exception:
         pass
-    probs += narrow                       # drawn narrow as agreed: the step is not finished
+    probs += narrow                      # drawn narrow as agreed: the step is not finished
     if plan["failed"]:
         probs.append("not routed: " + "; ".join(f"{n} ({why})" for n, why in plan["failed"]))
     res["problems"] = probs
@@ -1277,10 +1337,29 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     res["summary"] = (f"{len(plan['routed'])} nets routed with {res['tracks']} tracks and {res['vias']} vias"
                       + (f", {pour_net} poured on the bottom layer" if res["pour"] else "") + f", saved; own check: "
                       f"{'no open nets' if not open_nets else str(len(open_nets)) + ' open nets'}; Altium DRC: "
-                      f"{after.get('Un-Routed Net', 0)} un-routed, {after.get('Clearance Constraint', 0)} clearance, "
-                      f"{after.get('Short-Circuit', 0)} short ({drc_before.get('Clearance Constraint', 0)} clearance before routing)"
+                      f"{res['drc_line']} ({drc_before.get('Clearance Constraint', 0)} clearance before routing)"
                       + ("; " + wl if (wl := _width_line(shown)) else ""))
     return res
+
+
+def _pour_findings(saved, net):
+    """(problems, warnings) of pourcheck.check on the board read back after the pour was drawn. A pad the pour and the tracks do not
+    join is a problem; a cut-off piece of copper is a warning (with the Remove Dead Copper note when that is off); a check that did not
+    run, or raised, is the warning "pour not checked": never ok."""
+    from altium import pourcheck
+    try:
+        pc = pourcheck.check(saved, net=net)
+    except Exception as exc:        # noqa: BLE001 - whatever goes wrong, the pour is not known to be fine
+        return [], [f"{net} pour not checked ({type(exc).__name__}: {exc}): look at the pour in Altium for cut-off copper and unconnected pads"]
+    if not isinstance(pc, dict) or pc.get("checked") is not True:
+        why = (pc.get("note") if isinstance(pc, dict) else "") or "no answer"
+        return [], [f"{net} pour not checked: {why} Look at the pour in Altium for cut-off copper and unconnected pads"]
+    probs = [f"pad {u.get('ref')}-{u.get('name')} ({net}) is not joined by the pour or a track" for u in pc.get("unjoined_pads", [])]
+    warns = []
+    if pc.get("islands"):
+        warns.append(f"{len(pc['islands'])} cut-off piece(s) of {net} copper in the pour (" + ", ".join(
+            f"{i.get('area_mm2')} mm2 at {i.get('bbox_mm')}" for i in pc["islands"][:4]) + "); " + (pc.get("note") or ""))
+    return probs, warns
 
 
 def _width_line(widths):
@@ -1366,7 +1445,7 @@ def route_pcb(project, replace=False, keep_partial=False):
                           + (" The board file was put back as it was before (backup kept)." if res["restored"]
                              else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
                              else f" Backup in {res['backup']}."))
-    res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
     return res
 

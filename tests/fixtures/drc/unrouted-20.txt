@@ -1,0 +1,45 @@
+
+Warnings|Total|0
+Violations|Total|20
+
+Warnings|Total|0
+Rule Violations|Clearance Constraint (Gap=6mil) (All),(All)|0
+Rule Violations|Short-Circuit Constraint (Allowed=No) (All),(All)|0
+Rule Violations|Un-Routed Net Constraint ( (All) )|12
+Rule Violations|Modified Polygon (Allow modified: No), (Allow shelved: No)|0
+Rule Violations|Width Constraint (Min=5mil) (Max=40mil) (Preferred=8mil) (All)|0
+Rule Violations|Routing Topology Rule(Topology=Shortest) (All)|0
+Rule Violations|Minimum Annular Ring (Minimum=6mil) (IsVia)|0
+Rule Violations|Minimum Annular Ring (Minimum=10mil) (IsPad)|0
+Rule Violations|Hole Size Constraint (Min=12mil) (Max=248.031mil) (All)|0
+Rule Violations|Hole To Hole Clearance (Gap=8mil) (All),(All)|0
+Rule Violations|Hole To Hole Clearance (Gap=18mil) (IsPad),(IsPad)|0
+Rule Violations|Minimum Solder Mask Sliver (Gap=6mil) (All),(All)|0
+Rule Violations|Silk To Solder Mask (Clearance=10mil) (IsPad),(All)|0
+Rule Violations|Silk To Solder Mask (Clearance=6mil) (All),(All)|0
+Rule Violations|Silk to Silk (Clearance=10mil) (All),(All)|0
+Rule Violations|Net Antennae (Tolerance=0mil) (All)|0
+Rule Violations|Board Clearance Constraint (Gap=0mil) (All)|8
+Rule Violations|Height Constraint (Min=0mil) (Max=1000mil) (Prefered=500mil) (All)|0
+
+Rule Violations|Total|20
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net +5V Between Pad C1-1(866.142mil,629.921mil) on Top Layer And Pad U1-3(874.016mil,451.575mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net GND Between Pad D1-2(177.165mil,576.771mil) on Top Layer And Pad C1-2(944.882mil,629.921mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net GND Between Pad C1-2(944.882mil,629.921mil) on Top Layer And Pad U1-1(1055.118mil,451.575mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net +3V3 Between Pad C2-1(295.276mil,177.165mil) on Top Layer And Pad R1-1(295.276mil,423.228mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net GND Between Pad C2-2(295.276mil,255.905mil) on Top Layer And Pad J1-2(562.205mil,114.961mil) on Multi-Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net GND Between Pad J2-2(60.236mil,394.488mil) on Multi-Layer And Pad C2-2(295.276mil,255.905mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net LED_A Between Pad D1-1(177.165mil,643.701mil) on Top Layer And Pad R1-2(295.276mil,482.284mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net GND Between Pad J2-2(60.236mil,394.488mil) on Multi-Layer And Pad D1-2(177.165mil,576.771mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net +5V Between Pad J1-1(562.205mil,314.961mil) on Multi-Layer And Pad U1-3(874.016mil,451.575mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net +3V3 Between Pad J2-1(160.236mil,394.488mil) on Multi-Layer And Pad R1-1(295.276mil,423.228mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net +3V3 Between Pad R1-1(295.276mil,423.228mil) on Top Layer And Pad U1-2(964.567mil,451.575mil) on Top Layer 
+Un-Routed Net Constraint ( (All) )|||Un-Routed Net Constraint: Net +3V3 Between Pad U1-4(964.567mil,217.717mil) on Top Layer And Pad U1-2(964.567mil,451.575mil) on Top Layer 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (2.421mil < 12mil) Between Board Edge And Text "D1" (153.543mil,699.606mil) on Top Overlay 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (5mil < 12mil) Between Board Edge And Text "J2" (87.008mil,465.354mil) on Top Overlay 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (5.315mil < 12mil) Between Board Edge And Track (10.236mil,344.488mil)(10.236mil,444.488mil) on Top Overlay 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (5.315mil < 12mil) Between Board Edge And Track (10.236mil,344.488mil)(210.236mil,344.488mil) on Top Overlay 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (5.315mil < 12mil) Between Board Edge And Track (10.236mil,444.488mil)(210.236mil,444.488mil) on Top Overlay 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (10.039mil < 12mil) Between Board Edge And Track (384.252mil,14.961mil)(384.252mil,413.78mil) on Top Overlay 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (10.039mil < 12mil) Between Board Edge And Track (384.252mil,14.961mil)(784.252mil,14.961mil) on Top Overlay 
+Board Clearance Constraint (Gap=0mil) (All)|||Board Outline Clearance(Outline Edge): (10.039mil < 12mil) Between Board Edge And Track (784.252mil,14.961mil)(784.252mil,413.78mil) on Top Overlay 

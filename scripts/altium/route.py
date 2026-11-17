@@ -1082,3 +1082,102 @@ def violations(doc, items, rules, box):
     footprint copper, fills, regions, tracks, unplated holes, keep-out) and each other, by exact geometry. Strings; empty = the copper
     keeps the rules. Same net copper may touch."""
     return [m for m, _ in _violations(fixed_shapes(doc, rules), items, rules, box)]
+
+
+# ---------------------------------------------------------------- what this router does not do: said before anything is drawn
+
+FINE_PITCH_MM = 0.4          # nearest pad of another net, centre to centre, below which the escape is not supported (grid 0.1 mm)
+MAX_CELLS = 4_000_000        # grid cells per layer the search can hold in the time it gets (about 200 x 200 mm at 0.1 mm)
+_INNER_COPPER = set(range(2, 32)) | set(range(39, 55))      # Altium layer codes: mid layers and internal planes
+_NOT_SUPPORTED_RULES = {"MaxMinImpedance": "impedance control", "MatchedLengths": "length matching", "Length": "a length limit",
+                        "MaxMinLength": "a length limit"}
+HAND = "route these by hand or with Altium's interactive router (Route > Interactive Routing), then check with the design rule check"
+
+
+def _is_bga(pads):
+    """True when the SMD pads of one part form an area array. Only pads of the part's most common pad size count (a QFN's exposed pad,
+    also one split into a grid of copper pads, is another size): a pad of that size with a same-size neighbour at the pitch on all
+    four sides is an interior ball, and at least 2 such pads are needed. A dual or quad row, or a QFN, has none."""
+    sized = [(round(p.get("sx_mm") or 0, 2), round(p.get("sy_mm") or 0, 2), p["x_mm"], p["y_mm"]) for p in pads
+             if p.get("x_mm") is not None and p.get("y_mm") is not None]
+    if len(sized) < 9:
+        return False
+    sizes = {}
+    for sx, sy, _, _ in sized:
+        sizes[(sx, sy)] = sizes.get((sx, sy), 0) + 1
+    common = max(sizes, key=lambda k: (sizes[k], k))
+    pts = [(x, y) for sx, sy, x, y in sized if (sx, sy) == common]
+    if len(pts) < 9:
+        return False
+    d = min((math.hypot(a - x, b - y) for i, (x, y) in enumerate(pts) for a, b in pts[i + 1:]), default=0)
+    if d < 0.2:
+        return False
+    tol = 0.15 * d
+
+    def has(x, y, dx, dy):
+        return any(abs(a - (x + dx)) < tol and abs(b - (y + dy)) < tol for a, b in pts)
+    interior = sum(1 for x, y in pts if has(x, y, d, 0) and has(x, y, -d, 0) and has(x, y, 0, d) and has(x, y, 0, -d))
+    return interior >= 2
+
+
+def capability_check(doc, rules=None, box=None, pitch=0.1, warnings=None):
+    """What the router cannot do on this board, said BEFORE routing: a list of plain texts (empty = nothing found that it cannot do;
+    it never means the board is routable). Each text says what to do instead. Only what is certain from the file is refused:
+    copper on an inner layer (more than 2 layers), an area array (BGA), pads closer than FINE_PITCH_MM between nets, an enabled
+    impedance / length-matching / length rule on nets other than the USB pair, and a board of more than MAX_CELLS grid cells.
+    A rule whose scope cannot be resolved to nets (a net class, a differential pair, any other expression) is no refusal: a text
+    "not checked, verify the rule by hand" is appended to `warnings` (a list, when given)."""
+    out = []
+    doc = doc or {}
+    inner = sorted({o.get("layer") for k in ("pads", "tracks", "arcs", "vias", "fills", "regions") for o in doc.get(k, [])
+                    if isinstance(o, dict) and o.get("layer") in _INNER_COPPER and not o.get("in_component")})
+    if inner:
+        out.append(f"the board has copper on inner layers (layer codes {', '.join(map(str, inner))}): this router draws two copper layers only; {HAND}")
+    by_ref = {}
+    for p in doc.get("pads", []):
+        if p.get("layer") in (1, 32) and not (p.get("hole_mm") or 0) and p.get("ref"):
+            by_ref.setdefault(p["ref"], []).append(p)
+    bga = sorted(r for r, ps in by_ref.items() if _is_bga(ps))
+    if bga:
+        out.append(f"{', '.join(bga[:6])} is a BGA (a ball grid): the inner balls cannot be reached on two layers without microvias or "
+                   f"a fan-out this router does not do; {HAND}")
+    fine = []
+    for r, ps in by_ref.items():
+        if r in bga:
+            continue
+        nets = [p for p in ps if p.get("net") and p.get("x_mm") is not None]
+        for i, a in enumerate(nets):
+            if any(a["net"] != b["net"] and math.hypot(a["x_mm"] - b["x_mm"], a["y_mm"] - b["y_mm"]) < FINE_PITCH_MM - 1e-4
+                   for b in nets[i + 1:]):
+                fine.append(r)
+                break
+    if fine:
+        out.append(f"{', '.join(sorted(fine)[:6])} has pads closer than {FINE_PITCH_MM:g} mm between different nets: that is finer than the "
+                   f"{pitch:g} mm grid of this router can escape; {HAND}")
+    usb = set()
+    try:
+        from . import pair as _pair
+        usb = {n for p, m, _ in _pair.find_pairs(doc) for n in (p, m)}
+    except Exception:                                    # no pair knowledge: every rule net counts as not the pair (stricter)
+        pass
+    for r in doc.get("rules", []):
+        what = _NOT_SUPPORTED_RULES.get(r.get("RULEKIND"))
+        if not what or str(r.get("ENABLED", "TRUE")).upper() != "TRUE":
+            continue
+        scope = str(r.get("SCOPE1EXPRESSION", "")).strip()
+        nets = set(_INNET.findall(scope))
+        if nets and nets <= usb:
+            continue
+        if not nets and scope.lower() != "all":      # a net class, a differential pair, ...: which nets it covers is not known here
+            if warnings is not None:
+                warnings.append(f"rule '{r.get('NAME') or r.get('RULEKIND')}' ({what}) has a scope this tool cannot resolve to nets "
+                                f"({scope or 'empty'}): not checked, verify the rule by hand (the router does not control {what} except on the USB pair)")
+            continue
+        out.append(f"the board has an enabled rule '{r.get('NAME') or r.get('RULEKIND')}' for {what}: the router only couples and length-matches the "
+                   f"USB D+/D- pair and does not control impedance or length elsewhere; {HAND}, or disable the rule if it is not needed")
+    if box is not None and pitch > 0:
+        cells = (int((box[2] - box[0]) / pitch) + 1) * (int((box[3] - box[1]) / pitch) + 1)
+        if cells > MAX_CELLS:
+            out.append(f"the board is {box[2] - box[0]:.0f} x {box[3] - box[1]:.0f} mm: too large for the time this router gets "
+                       f"({cells / 1e6:.1f} million grid cells per layer, the limit is {MAX_CELLS / 1e6:.0f} million); {HAND}")
+    return out
