@@ -13,13 +13,15 @@ registry file (<pid>.jsonl) in the project's registry folder under the workspace
 a window is open (outside one, writing() costs a stat).
 
 At the end a file is put back to the last LEGITIMATE state, never to the start of the turn when the server wrote since:
-  - a log (*.jsonl): untouched when it is the last registered version; when it only grew beyond it, the agent's extra
-    lines are cut (the longest legitimate version that is a byte prefix of it stays, so every legitimate append stays);
-    when it shrank or was rewritten, the last registered version comes back;
+  - a log (*.jsonl): untouched when it is the last registered version; in every other case (extra lines, a truncation,
+    a changed middle line) the last registered version comes back, so every legitimate append stays;
   - any other file: the last registered version (a registered deletion = absent), else the start-of-turn bytes;
   - a new file nobody registered is removed.
 The restore is a temp file + os.replace. end() holds the project lock for its whole read-compare-restore, so an in-process
 server write cannot land between the check and the restore (subprocess writes finish before the agent run returns).
+
+Limit: a legitimate write later in the same turn registers the file as it is then, so an agent edit made EARLIER in that
+turn to the same file becomes legitimate (the server's write built on it). Only edits after the last write are undone.
 
 Never raises, never loses work: a project that is gone (deleted, reset) is left alone and never recreated; a restore that
 fails is reported as not restored. Blind spot: an append registers the file as it is right after the append, so a direct
@@ -151,7 +153,7 @@ def begin(project):
                 reg = _regdir(project)
                 shutil.rmtree(reg, ignore_errors=True)
                 reg.mkdir(parents=True, exist_ok=True)
-                slot = _open[project] = [0, _snapshot(project)]
+                slot = _open[project] = [0, _snapshot(project), time.time_ns()]
             slot[0] += 1
         return project
     except Exception as exc:
@@ -159,8 +161,9 @@ def begin(project):
         return None
 
 
-def _registered(reg):
-    """{rel: [(seq, hash|None), ...] by seq} from the registry file of every process."""
+def _registered(reg, since=0):
+    """{rel: [(seq, hash|None), ...] by seq} from the registry file of every process; entries older than the window
+    (a stale file rmtree could not remove) are ignored."""
     out = {}
     for f in reg.glob("*.jsonl"):
         try:
@@ -170,7 +173,8 @@ def _registered(reg):
         for line in lines:
             try:
                 rec = json.loads(line)
-                out.setdefault(rec["p"], []).append((int(rec["seq"]), rec["h"]))
+                if int(rec["seq"]) >= since:
+                    out.setdefault(rec["p"], []).append((int(rec["seq"]), rec["h"]))
             except (ValueError, KeyError, TypeError):
                 continue
     for v in out.values():
@@ -193,7 +197,7 @@ def end(token):
             del _open[token]
             reg = _regdir(token)
             try:
-                return _restore(token, slot[1], reg)
+                return _restore(token, slot[1], reg, slot[2])
             finally:
                 shutil.rmtree(reg, ignore_errors=True)
     except Exception as exc:
@@ -221,25 +225,16 @@ def _decide(rel, before, cur, entries, reg):
     last = vers[-1]
     if cur == last:
         return None
-    if rel.endswith(".jsonl") and last is not None:
-        if cur is not None:
-            if cur.startswith(last) and cur in vers:
-                return None           # appends from two processes that registered out of order: cur is a legit version
-            if last.startswith(cur):
-                return (last,)        # truncated: every legitimate append comes back
-            pre = [v for v in vers if v is not None and cur.startswith(v)]
-            if pre:
-                return (max(pre, key=len),)      # grown by the agent: its extra lines are cut
-        return (last,)
-    return (last,)
+    if rel.endswith(".jsonl") and last is not None and cur is not None and cur.startswith(last) and cur in vers:
+        return None                   # appends from two processes that registered out of order: cur is a legit version
+    return (last,)                    # extra lines cut, a truncation or a changed middle line: the last legitimate version
 
 
-def _restore(project, before, reg):
+def _restore(project, before, reg, since=0):
     pdir = workspace.project_dir(project)
-    if not pdir.is_dir() or (before.get("project.json") is not None and not (pdir / "project.json").exists()
-                             and not any(h is None for _s, h in _registered(reg).get("project.json", []))):
+    if not pdir.is_dir():
         return [], []                 # the project was deleted: nothing to put back, never recreate it
-    registered = _registered(reg)
+    registered = _registered(reg, since)
     restored, unrestored = [], []
     for rel in sorted(set(before) | set(_files(pdir)) | set(registered)):
         path = pdir / rel
@@ -254,7 +249,14 @@ def _restore(project, before, reg):
                 tmp = path.with_name(f"{path.name}.guard.{os.getpid()}.tmp")
                 try:
                     tmp.write_bytes(fix[0])
-                    os.replace(tmp, path)
+                    for attempt in range(10):      # on Windows os.replace briefly fails while a reader holds the file
+                        try:
+                            os.replace(tmp, path)
+                            break
+                        except PermissionError:
+                            if attempt == 9:
+                                raise
+                            time.sleep(0.05)
                 finally:
                     tmp.unlink(missing_ok=True)
             restored.append(rel)

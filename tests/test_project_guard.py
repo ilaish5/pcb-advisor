@@ -179,6 +179,60 @@ def test_restore_goes_through_replace(proj, monkeypatch):
     assert any(c.endswith("bom.json") for c in calls)
 
 
+def test_middle_line_rewrite_keeps_ui_append(proj):
+    log = _p(proj, "bom-log.jsonl")
+    tok = project_guard.begin(proj)
+    store.append(proj, "bom-log.jsonl", {"line": "R2", "changes": {"value": "1k"}})
+    want = log.read_bytes()
+    log.write_bytes(want.replace(b'"10k"', b'"99k"'))                   # the agent changes an older line
+    assert project_guard.end(tok)[0] == ["bom-log.jsonl"]
+    assert log.read_bytes() == want
+
+
+def test_deleted_project_json_is_restored(proj):
+    f = _p(proj, "project.json")
+    before = f.read_bytes()
+    tok = project_guard.begin(proj)
+    f.unlink()
+    assert project_guard.end(tok) == (["project.json"], [])
+    assert f.read_bytes() == before
+
+
+def test_restore_retries_permission_error(proj, monkeypatch):
+    import os
+    real, n = os.replace, {"n": 0}
+
+    def flaky(a, b):
+        n["n"] += 1
+        if n["n"] < 3:
+            raise PermissionError("held by a reader")
+        return real(a, b)
+    monkeypatch.setattr(os, "replace", flaky)
+    f = _p(proj, "bom.json")
+    before = f.read_bytes()
+    tok = project_guard.begin(proj)
+    f.write_text("[]", encoding="utf-8")
+    assert project_guard.end(tok) == (["bom.json"], [])
+    assert f.read_bytes() == before and n["n"] == 3
+
+
+def test_stale_registry_entry_ignored(proj, monkeypatch):
+    import hashlib
+    evil = b"[]"
+    h = hashlib.sha256(evil).hexdigest()
+    reg = project_guard._regdir(proj)
+    reg.mkdir(parents=True, exist_ok=True)
+    (reg / f"{h}.bin").write_bytes(evil)
+    (reg / "4242.jsonl").write_text(json.dumps({"seq": 1, "p": "bom.json", "h": h}) + "\n", encoding="utf-8")
+    monkeypatch.setattr(project_guard.shutil, "rmtree", lambda *a, **k: None)     # the old window's folder cannot be removed
+    f = _p(proj, "bom.json")
+    before = f.read_bytes()
+    tok = project_guard.begin(proj)
+    f.write_bytes(evil)
+    assert project_guard.end(tok)[0] == ["bom.json"]
+    assert f.read_bytes() == before
+
+
 def test_registry_files_of_two_processes_merged(proj):
     import os
     tok = project_guard.begin(proj)
