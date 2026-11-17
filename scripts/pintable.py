@@ -233,17 +233,17 @@ _HEADER_CELL = re.compile(r"(?:(?:PINS?|TERMINALS?|NAME|NO\.?|NUM\.?|NUMBER|#)\s
 def _header_labels(line):
     """The package names of a column-header row, in the order of its cells; None when the line is not a column-header row.
     A header row is tabular (two or more cells divided by a column break: two spaces or more) and holds a column word
-    (NAME, NO., PIN, TERMINAL: a whole cell, upper case) or package names as cells of their own. A sentence never is one:
+    (NAME, NO., PIN, TERMINAL: a whole cell, upper case); the package names are its other cells. A line of package names
+    alone never is one, and neither is a sentence:
     `The VSSOP and SOIC packages have no exposed pad`, `Numbering of VSSOP and SOIC`, a caption, a title."""
     if _CAPTION.search(line) or SECTION_END.search(line) or re.match(r"\s*table\s+[\d.-]+", line, re.I):
         return None
     cells = [c.strip() for c in re.split(r"\s{2,}|\t", line.strip()) if c.strip()]
     if len(cells) < 2:
         return None
-    labels = [package_labels(c)[0] for c in cells if len(package_labels(c)) == 1 and len(c.split()) <= 2]
-    if labels or any(_HEADER_CELL.fullmatch(c) for c in cells):
-        return labels
-    return None
+    if not any(_HEADER_CELL.fullmatch(c) for c in cells):
+        return None                  # a line of package names alone (side-by-side pin diagram labels) widens the scope, ties nothing
+    return [package_labels(c)[0] for c in cells if len(package_labels(c)) == 1 and len(c.split()) <= 2]
 
 
 def find_tables(text):
@@ -437,8 +437,9 @@ def _ep_ok(name, rows, lines):
     - the name cell of the pad row names exactly this net or an alias of it (`PAD (VIN)`, `EP/GND`), or
     - the pin is named for the pad itself (EP, PAD, Thermal Pad) and the table has a pad row or a line about it, or
     - it is a ground, and the pad row's text says "connect to GND / ground" and names no other net anywhere (name cell,
-      description, lines), or there is no text about the pad at all (the footprint's extra pad is all there is).
-    Everything else, a net named only in a description, a ground beside another named net, TAB, is not shown: unchecked."""
+      description, lines).
+    Everything else is not shown: unchecked. That is a net named only in a description, a ground beside another named net,
+    TAB, and a pad the table says nothing about (a footprint's extra pad proves a pad, not its net: an op-amp's is V-)."""
     up = _squash(name)
     cells = set().union(*[_cell_forms(r["name"]) for r in rows]) if rows else set()
     if _name_forms(name) & cells:
@@ -449,7 +450,7 @@ def _ep_ok(name, rows, lines):
     if not _GROUND.match(up):
         return False
     if not rows and not lines:
-        return True
+        return False
     grounds, others = _nets_in(text)
     return bool(_CONNECT_GND.search(text)) and not others and not _NEGATED.search(text)
 
@@ -506,6 +507,8 @@ def _evaluate(col, pins, pads):
                     out["absent"].append(f"pin {num} {name}: no pin of the table, and neither the table nor the footprint shows an exposed pad")
                 elif _ep_ok(name, ep_rows, ep_lines):
                     out["notes"].append(f"pin {num} {name}: taken for the exposed pad of the datasheet")
+                elif not ep_rows and not ep_lines:
+                    out["absent"].append(f"pin {num} {name}: exposed pad: the datasheet's table does not say its net")
                 else:
                     out["absent"].append(f"pin {num} {name}: the datasheet does not show the exposed pad on the net {name}")
             elif complete:
