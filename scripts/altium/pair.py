@@ -36,6 +36,8 @@ MAX_TRIES = 80
 COUPLED_SHARE = 0.7          # share of N's length that must run at the gap beside P to call the pair coupled
 GROUP_MM = 3.0               # same-net pads of one part this close are one end of the pair (USB-C A6/B6)
 MAX_TIE_COMBOS = 6
+CHOICE_RATIO = 1.5        # a pad pair at an end is a choice for the pair when it is at most this much farther apart than the nearest pair
+MAX_CHOICES = 4
 _PRE = r"(?P<pre>|[A-Z0-9_.\-]*?USB[A-Z0-9_.\-]*?)"
 _SUFFIX = [("D+", "D-"), ("DP", "DM"), ("DP", "DN"), ("DPLUS", "DMINUS")]
 _PINROLE = re.compile(r"USB[A-Z0-9_.\-]*?D(?P<r>[PMN+\-])(?![A-Z0-9])")
@@ -271,14 +273,27 @@ def _ends(rt, p, n):
     return [{"P": a, "N": b} for a, b in pairs], None
 
 
+def _choices(end):
+    """The (P pad, N pad, ties [(net key, tie pad, kept pad)]) the pair can run from at an end, nearest first: with the two pads of
+    each net interleaved at a connector either pad of a net can be the one the pair leaves from, and which of them lets the pair
+    leave without crossing depends on the other end. [] if more than one extra pad per net."""
+    if len(end["P"]) > 2 or len(end["N"]) > 2:
+        return []
+    d = lambda ab: math.hypot(ab[0]["x"] - ab[1]["x"], ab[0]["y"] - ab[1]["y"])
+    combos = sorted(((a, b) for a in end["P"] for b in end["N"]), key=lambda ab: (round(d(ab), 3), ab[0]["tag"], ab[1]["tag"]))
+    out = []
+    for cP, cN in combos:
+        if d((cP, cN)) > CHOICE_RATIO * d(combos[0]) + 1e-6 or len(out) >= MAX_CHOICES:
+            break
+        out.append((cP, cN, [(k, next(q for q in end[k] if q is not c), c) for k, c in (("P", cP), ("N", cN)) if len(end[k]) == 2]))
+    return out
+
+
 def _choose(end):
     """The nearest P and N pad of an end (the pair runs from these) and the ties [(net key, tie pad, kept pad)]; None if more than
     one extra pad per net."""
-    cP, cN = min(((a, b) for a in end["P"] for b in end["N"]), key=lambda ab: math.hypot(ab[0]["x"] - ab[1]["x"], ab[0]["y"] - ab[1]["y"]))
-    if len(end["P"]) > 2 or len(end["N"]) > 2:
-        return None
-    ties = [(k, next(q for q in end[k] if q is not c), c) for k, c in (("P", cP), ("N", cN)) if len(end[k]) == 2]
-    return cP, cN, ties
+    c = _choices(end)
+    return c[0] if c else None
 
 
 # ---- connector ties
@@ -334,10 +349,10 @@ def _tie_options(rules, w, net, t, c, row, side_order, kinds, avoid=None):
                                _tie_item("t", net, w, 32, (a, b))]
 
 
-def _tie_combos(rt, R, rules, p, n, w, end, other_c):
+def _tie_combos(rt, R, rules, p, n, w, end, other_c, choice=None, via_first=False):
     """[{net: tie items}] for one end of the pair that has an extra pad: the first clean ties for the nets, best kinds first. [] when
-    nothing fits."""
-    cP, cN, ties = _choose(end)
+    nothing fits. choice: the (P pad, N pad, ties) the pair leaves from (the nearest pair by default)."""
+    cP, cN, ties = choice or _choose(end)
     row = end["P"] + end["N"]
     ax = _centroid(row)
     away = (ax[0] - other_c[0], ax[1] - other_c[1])
@@ -345,7 +360,7 @@ def _tie_combos(rt, R, rules, p, n, w, end, other_c):
 
     def clean(extra):
         mine = [i for r in rt.routed.values() for i in r["items"]] + extra
-        return not [1 for m, nn in R._violations(rt.shapes, mine, rules, rt.box) if p in nn or n in nn]
+        return not [1 for m, nn in R._violations(rt.shapes, mine, rules, rt.box, nets={p, n}) if p in nn or n in nn]
 
     def sides(t, c):
         ex, ey = c["x"] - t["x"], c["y"] - t["y"]
@@ -370,7 +385,7 @@ def _tie_combos(rt, R, rules, p, n, w, end, other_c):
         return out
     (k1, t1, c1), (k2, t2, c2) = ties
     for (ka, ta, ca), (kb, tb, cb) in (((k1, t1, c1), (k2, t2, c2)), ((k2, t2, c2), (k1, t1, c1))):
-        for kinds_a, kinds_b in ((("top",), ("via",)), (("via",), ("via",))):
+        for kinds_a, kinds_b in (((("via",), ("via",)), (("top",), ("via",))) if via_first else ((("top",), ("via",)), (("via",), ("via",)))):
             oa = first(ka, ta, ca, kinds_a, [])
             if not oa:
                 continue
@@ -498,7 +513,7 @@ def _attempt(rt, R, rules, p, n, w, gap, margin, deadline, ties):
         tc, tv = tie_cells.get(n, ([], []))
         rt.routed[n] = {"cells": cells + list(tc), "vias": list(tv), "items": nitems + tn, "width": w}
         mine = [i for r in rt.routed.values() for i in r["items"]]
-        bad = [m for m, nn in R._violations(rt.shapes, mine, rules, rt.box) if p in nn or n in nn]
+        bad = [m for m, nn in R._violations(rt.shapes, mine, rules, rt.box, nets={p, n}) if p in nn or n in nn]
         if not bad:
             rt._stamp_net(p)
             rt._stamp_net(n)
@@ -544,36 +559,39 @@ def pre_route(rt, rules, nets, deadline=None, doc=None):
         if ends is None:
             ent["reason"] = why
             continue
-        ch = [_choose(e) for e in ends]
-        if any(c is None for c in ch):
+        opts = [_choices(e) for e in ends]
+        if any(not o for o in opts):
             ent["reason"] = "more than 2 pads of one net at one end of the pair"
             continue
-        use = {p: [ch[0][0], ch[1][0]], n: [ch[0][1], ch[1][1]]}
-        need = [i for i in (0, 1) if ch[i][2]]
         reasons = []
-        for w_ in dict.fromkeys((w, min(w, max(rules["width"], rules.get("width_min") or 0)))):    # the preferred width, then the rule's own
-            g_ = max(rules["clearance"], w_)
-            per_end = []
-            for i in need:
-                o = ends[1 - i]
-                combos = _tie_combos(rt, R, rules, p, n, w_, ends[i], _centroid(o["P"] + o["N"]))
-                if not combos:
-                    per_end = None
-                    reasons.append("connector tie does not fit (the pads of one net at the connector cannot be joined under it)")
-                    break
-                per_end.append(combos[:3])
-            if per_end is None:
-                continue
-            tries = [dict()] if not need else [{k: v for d in combo for k, v in d.items()} for combo in itertools.product(*per_end)]
-            for ties in tries[:MAX_TIE_COMBOS]:
-                for m in (MARGINS if not ties else TIE_MARGINS):
-                    r = _try_pair(rt, R, rules, p, n, w_, g_, m, deadline, ties or None, use)
-                    if r is None:
-                        ent.update(ok=True, w=w_, gap=g_, tie_vias=sum(1 for t in ties.values() for i in t if i["kind"] == "via"))
-                        state["done"] |= {p, n}
+        for ch in itertools.product(*opts):
+            use = {p: [ch[0][0], ch[1][0]], n: [ch[0][1], ch[1][1]]}
+            need = [i for i in (0, 1) if ch[i][2]]
+            for w_ in dict.fromkeys((w, min(w, max(rules["width"], rules.get("width_min") or 0)))):    # the preferred width, then the rule's own
+                g_ = max(rules["clearance"], w_)
+                per_end = []
+                for i in need:
+                    o = ends[1 - i]
+                    combos = _tie_combos(rt, R, rules, p, n, w_, ends[i], _centroid(o["P"] + o["N"]), ch[i])
+                    if not combos:
+                        per_end = None
+                        reasons.append("connector tie does not fit (the pads of one net at the connector cannot be joined under it)")
                         break
-                    if r not in reasons:
-                        reasons.append(r)
+                    per_end.append(combos[:3])
+                if per_end is None:
+                    continue
+                tries = [dict()] if not need else [{k: v for d in combo for k, v in d.items()} for combo in itertools.product(*per_end)]
+                for ties in tries[:MAX_TIE_COMBOS]:
+                    for m in (MARGINS if not ties else TIE_MARGINS):
+                        r = _try_pair(rt, R, rules, p, n, w_, g_, m, deadline, ties or None, use)
+                        if r is None:
+                            ent.update(ok=True, w=w_, gap=g_, tie_vias=sum(1 for t in ties.values() for i in t if i["kind"] == "via"))
+                            state["done"] |= {p, n}
+                            break
+                        if r not in reasons:
+                            reasons.append(r)
+                    if ent["ok"]:
+                        break
                 if ent["ok"]:
                     break
             if ent["ok"]:
@@ -581,6 +599,36 @@ def pre_route(rt, rules, nets, deadline=None, doc=None):
         if not ent["ok"]:
             ent["reason"] = reasons[-1] if reasons else "no way"
     return state
+
+
+def fallback_ties(rt, rules, state):
+    """The pairs that are not routed coupled (never were, or were released) are routed as ordinary nets: the pads of one net at the
+    connector (a pad of the other net sits between them) are joined first by a tie under the connector, as the coupled route would
+    have, so that the net is never left unrouted between its own two connector pads. Nets that have a tie already are left alone.
+    Nothing is added where no tie fits: the router then reports that net."""
+    from . import route as R
+    for e in state["pairs"]:
+        if e["ok"]:
+            continue
+        p, n = e["p"], e["n"]
+        ends, _why = _ends(rt, p, n)
+        if ends is None:
+            continue
+        for i, end in enumerate(ends):
+            ch = _choices(end)
+            if not ch or not ch[0][2]:
+                continue
+            for c in ch:
+                if any((p if k == "P" else n) in rt.tie for k, _t, _c in c[2]):
+                    break
+                o = ends[1 - i]
+                combos = _tie_combos(rt, R, rules, p, n, e["w"], end, _centroid(o["P"] + o["N"]), c, via_first=True)
+                if not combos:
+                    continue
+                tags = {(p if k == "P" else n): (t["tag"], kept["tag"]) for k, t, kept in c[2]}
+                for net, items in combos[0].items():
+                    rt.add_tie(net, items, tags[net])
+                break
 
 
 def release(state, hit, msgs, key=None):

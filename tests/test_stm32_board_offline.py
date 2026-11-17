@@ -9,11 +9,12 @@ import pytest
 import stm32_board_fixture as fx
 from altium import layout, route
 
-# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 19-32 s placement (varies with machine load), 51-56 s routing
+# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 19-32 s placement (varies with machine load), 27 s routing
 PLACE_BUDGET_S = 50.0
-ROUTE_BUDGET_S = 60.0
+ROUTE_BUDGET_S = 40.0
 ROUTE_SECONDS = 50.0                      # the router's own deadline (it then says what ran out of time)
 RULES = dict(clearance=0.127, width=0.127, width_min=0.127, width_max=10, via_dia=0.6, via_hole=0.3, edge=0.3)
+POUR_NET = "GND"                         # the ground net is poured on the bottom layer: its pads are dropped to the pour by vias
 RAIL_AMPS = 1.5                           # a current set by the student on +3V3: IPC-2221 wants about 0.5 mm, more than the 0.127 default
 
 
@@ -26,7 +27,7 @@ def board():
     doc = fx.doc_from_plan(parts, plan)
     rules = dict(route.rules_from_doc({}), **RULES, net_current={"+3V3": RAIL_AMPS})
     t0 = time.process_time()
-    res = route.plan_routes(doc, fx.OUTLINE, rules, seconds=ROUTE_SECONDS)
+    res = route.plan_routes(doc, fx.OUTLINE, rules, seconds=ROUTE_SECONDS, pour_net=POUR_NET)
     route_s = time.process_time() - t0
     return dict(parts=parts, plan=plan, doc=doc, rules=rules, res=res, place_s=place_s, route_s=route_s)
 
@@ -109,11 +110,47 @@ def test_routing_within_budget_with_zero_violations_and_every_net_accounted(boar
     assert viol == []                                                   # whatever was drawn is rule-clean
     assert routed | set(failed) == multi and not routed & set(failed)  # every net routed or failed, none lost
     assert all(why.strip() for why in failed.values())                 # each failure has a reason
-    # the honest outcome measured today: about 80% of the nets; a drop below that is a regression of the router
-    assert frac >= 0.7, (frac, failed)
-    # what is drawn leaves no open gap on the nets reported as routed
-    open_nets = {n for n, *_ in layout.unrouted(dict(doc, tracks=_tracks(res), vias=_vias(res)))}
+    # the honest outcome measured today: 41 of 45 nets (91%), the same every run; a drop below 90% is a regression of the router
+    assert frac >= 0.9, (frac, failed)
+    # what is drawn leaves no open gap on the nets reported as routed (the ground pour is modelled: see _with_pour)
+    open_nets = {n for n, *_ in layout.unrouted(_with_pour(doc, res))}
     assert not (open_nets & routed), open_nets & routed
+    # a failure says what stops it, never a bare "no path"
+    for n, why in failed.items():
+        assert "no way" in why or "needs" in why or "budget" in why or "time" in why, (n, why)
+
+
+def _with_pour(doc, res):
+    """The board as drawn, with the ground pour modelled as what it is: bottom layer copper that joins every ground via (a chain of
+    bottom layer tracks from via to via; layout.unrouted does not read pours). Whether a track of another net cuts the pour is
+    checked by the router itself (route._pour_cut_off) and, in real use, by pourcheck on the board read back."""
+    tracks = _tracks(res)
+    vias = [i for i in res["items"] if i["kind"] == "via" and i["net"] == POUR_NET]
+    for a, b in zip(vias, vias[1:]):
+        tracks.append({"layer": 32, "net": POUR_NET, "x1_mm": a["x"], "y1_mm": a["y"], "x2_mm": b["x"], "y2_mm": b["y"], "width_mm": 0.127})
+    return dict(doc, tracks=tracks, vias=_vias(res))
+
+
+def test_ground_is_dropped_to_the_pour_or_routed_by_tracks_with_a_stated_reason(board):
+    res, doc = board["res"], board["doc"]
+    pour = res["pour"]
+    print(f"\nPOUR {pour}")
+    assert pour["net"] == POUR_NET
+    if POUR_NET in res["routed"]:
+        assert pour["mode"] in ("drops", "tracks")
+        gnd = [p for p in doc["pads"] if p["net"] == POUR_NET]
+        vias = [i for i in res["items"] if i["kind"] == "via" and i["net"] == POUR_NET]
+        if pour["mode"] == "drops":
+            assert vias and len(vias) <= len(gnd)                      # a short via stub per pad, not a web of ground tracks
+            assert not [i for i in res["items"] if i["kind"] == "track" and i["net"] == POUR_NET and i["layer"] == 32]   # nothing of its own on the bottom: that is the pour
+    else:
+        assert dict(res["failed"])[POUR_NET]
+
+
+def test_a_net_is_never_left_unrouted_between_its_own_two_connector_pads(board):
+    failed = dict(board["res"]["failed"])
+    for n in ("USB_DP", "USB_DM"):
+        assert n not in failed or ("J1-B7 to J1-A7" not in failed[n] and "J1-A6 to J1-B6" not in failed[n]), failed[n]
 
 
 def _tracks(res):

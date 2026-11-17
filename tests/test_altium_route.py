@@ -312,3 +312,54 @@ def test_find_pairs_otg_names_and_pin_names_inside_plan_routes():
     assert pair.find_pairs(doc) == [("N1", "N2", "usb")]
     res = route.plan_routes(doc, [0, 0, 30, 24], rules(), seconds=30)       # pin names reach pre_route through plan_routes
     assert [pr["nets"] for pr in res["pairs"]] == [["N1", "N2"]]
+
+
+def test_connector_ties_are_made_when_the_pair_is_not_coupled(monkeypatch):
+    """The pair cannot be coupled (forced here): the two pads of one net at the USB-C connector, with a pad of the other net between
+    them, are still joined under the connector, so neither net is left unrouted between its own two connector pads."""
+    monkeypatch.setattr(pair, "_try_pair", lambda *a, **k: "forced for the test")
+    doc, box = usbc_board(), [0, 0, 24, 26]
+    res = route.plan_routes(doc, box, rules(), seconds=60)
+    (pr,) = res["pairs"]
+    assert not pr["coupled"] and "forced for the test" in pr["note"], pr
+    assert not res["failed"], res["failed"]
+    assert route.violations(doc, res["items"], rules(), box) == []
+    assert layout.unrouted(as_board(doc, res["items"])) == []
+    ties = [i for i in res["items"] if i.get("role") == "tie"]
+    assert {i["net"] for i in ties} == {"USB_DP", "USB_DM"}
+
+
+def test_pair_pad_choices_cover_either_pad_of_each_net_at_the_connector():
+    rt = route.Router(usbc_board(), [0, 0, 24, 26], rules(), 0.1)
+    ends, why = pair._ends(rt, "USB_DP", "USB_DM")
+    assert why is None
+    conn = next(e for e in ends if {q["tag"].split("-")[0] for q in e["P"]} == {"J1"})
+    ch = pair._choices(conn)
+    assert len(ch) >= 2                                                 # the pair can leave from either side of the pad between
+    assert {(c[0]["tag"], c[1]["tag"]) for c in ch} >= {("J1-A6", "J1-A7"), ("J1-B6", "J1-A7")}
+    assert all(len(c[2]) == 2 for c in ch)                              # each choice names the tie of both nets
+
+
+def test_search_budget_is_a_count_of_cells_not_the_clock():
+    """The same board with the same budget gives the same result, and a budget that runs out says so."""
+    doc, box = dense_board(), [0, 0, 40, 30]
+    r = rules(clearance=0.254, width=0.254, width_min=0.254, via_dia=1.27, via_hole=0.71)
+    a = route.plan_routes(doc, box, r, seconds=60, max_expansions=3000)
+    b = route.plan_routes(doc, box, r, seconds=60, max_expansions=3000)
+    assert a["items"] == b["items"] and a["failed"] == b["failed"] and a["stats"]["expansions"] == b["stats"]["expansions"]
+    assert a["failed"] and all("budget" in why for _, why in a["failed"]), a["failed"]
+    assert a["stats"]["expansions"] <= 3000 + 1
+
+
+def test_a_poured_net_is_dropped_to_the_pour_by_vias_not_routed_by_tracks_to_each_other():
+    doc, box = dense_board(), [0, 0, 40, 30]
+    r = rules(clearance=0.254, width=0.254, width_min=0.254, via_dia=1.27, via_hole=0.71)
+    res = route.plan_routes(doc, box, r, seconds=60, pour_net="GND")
+    assert not res["failed"], res["failed"]
+    assert route.violations(doc, res["items"], r, box) == []
+    assert res["pour"]["net"] == "GND" and res["pour"]["mode"] in ("drops", "tracks")
+    gnd = [i for i in res["items"] if i["net"] == "GND"]
+    if res["pour"]["mode"] == "drops":
+        assert any(i["kind"] == "via" for i in gnd)
+        assert not [i for i in gnd if i["kind"] == "track" and i["layer"] == 32]      # the bottom layer copper of ground is the pour
+        assert all(abs(i["x1"] - i["x2"]) + abs(i["y1"] - i["y2"]) < 8 for i in gnd if i["kind"] == "track")   # stubs, not a web
