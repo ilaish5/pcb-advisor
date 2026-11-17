@@ -440,9 +440,11 @@ onAct('altium-step-dismiss', async (el, d, e) => {
   renderCenter(true);
 });
 
+const SCH_LIMITS = 'Not yet: a part whose library symbol has several sub-parts is not drawn (draw it by hand), and a design too big for one A4 sheet is refused with a split plan, because nets between sheets are not drawn.';
+const PCB_LIMITS = 'Not yet: the router is for small two-layer boards, with no differential pairs and no inner layers.';
 function schHTML(container) {
   const sheets = S.sheets || [];
-  if (!sheets.length) return `<div class="pv">${viewHeader({title: 'Schematic'})}${emptyState('No schematic yet', 'The agent draws the sheets once the parts are chosen.')}</div>`;
+  if (!sheets.length) return `<div class="pv">${viewHeader({title: 'Schematic'})}${emptyState('No schematic yet', 'The agent draws the sheets once the parts are chosen.', '', SCH_LIMITS)}</div>`;
   if (!sheetId || !sheets.find(s => s.id === sheetId)) pvSetSheet(sheets[0].id);
   const fresh = svgCache.text && svgCache.key.startsWith(sheetId + '|');
   const inner = fresh ? svgCache.text
@@ -526,9 +528,9 @@ function formatPcbPreview(raw) {
     const linked = raw.match(/data-linked-project="([^"]*)"/);
     if (linked) {                    // linked, but the project has no PcbDoc yet: say that, not "not linked"
       const name = linked[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;/g, "'");
-      return `<div class="pcb-empty-state">${emptyState('No PCB file in the project yet', `${name} is linked but has no .PcbDoc. In Altium: File > New > PCB, save it in the project, then come back here.`, '')}</div>`;
+      return `<div class="pcb-empty-state">${emptyState('No PCB file in the project yet', `${name} is linked but has no .PcbDoc. In Altium: File > New > PCB, save it in the project, then come back here.`, '', PCB_LIMITS)}</div>`;
     }
-    return `<div class="pcb-empty-state">${emptyState('No PCB linked', 'Link an Altium project that has a PcbDoc to see the layout here.', btn('Link a project', {kind: 'pri', act: 'pv-link'}) + btn('Create an Altium project', {act: 'altium-create'}))}</div>`;
+    return `<div class="pcb-empty-state">${emptyState('No PCB linked', 'Link an Altium project that has a PcbDoc to see the layout here.', btn('Link a project', {kind: 'pri', act: 'pv-link'}) + btn('Create an Altium project', {act: 'altium-create'}), PCB_LIMITS)}</div>`;
   }
   return raw;
 }

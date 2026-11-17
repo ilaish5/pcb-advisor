@@ -75,7 +75,7 @@ def test_a_denied_command_is_a_card_with_allow_and_retry_or_an_explanation():
     cards = body("function chatDeniedHTML(", "const chatQueueOf")
     assert "The advisor wanted to run:" in cards and "d.reason" in cards
     assert "Allow and retry" in cards and "ts: m.ts" in cards and "d.compound" in cards
-    assert "It tried a combined command; Retry asks it to run them one by one." in cards
+    assert "It tried a combined command; the advisor is asked to run the parts one by one. Retry if it does not." in cards
     assert "esc(chatDeniedLabel(d))" in cards                           # the command is data, always escaped
 
 

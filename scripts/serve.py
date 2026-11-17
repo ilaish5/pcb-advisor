@@ -1502,14 +1502,38 @@ _FU_WARNED = re.compile(r"^(netlist\.write|altium\.|library\.|jlc\.|order\.check
 _FU_SKIP = ("stopped by the student", "Another step is still running")
 
 
-def followup_message(applied, refused, warned):
-    """The server's message to the agent after a turn whose actions were refused or came back with warnings: what really happened."""
+FOLLOWUP_SPLIT = ("These commands were denied because each joined several actions: {cmds}. Run every part again as its own plain "
+                  "command, one per tool call (no cd, &&, ;, pipe, 2>&1), then answer the student's question from the results, "
+                  "briefly. Do not tell the student to allow anything")
+
+
+def compound_denials(denied):
+    """The commands the engine refused because they joined several actions (flagged by the engine, or shell operators in a Bash/PowerShell command)."""
+    out = []
+    for d in denied or []:
+        if not isinstance(d, dict):
+            continue
+        cmd = str((d.get("input") or {}).get("command") or "").strip()
+        if d.get("compound") or (d.get("tool") in ("Bash", "PowerShell") and any(op in cmd for op in SHELL_OPS)):
+            out.append(cmd or str(d.get("tool") or "a command"))
+    return out
+
+
+def followup_message(applied, refused, warned, denied=None):
+    """The server's message to the agent after a turn whose actions were refused or came back with warnings: what really happened.
+    A combined command that was denied adds the retry hint: the agent splits it itself, the student does nothing."""
     j = lambda xs: "; ".join(str(x) for x in xs) or "none"
-    return FOLLOWUP_WAIT.format(applied=j(applied), refused=j(refused), warned=j(f"{k}: {v}" for k, v in (warned or {}).items()))
+    split = compound_denials(denied)
+    if split and not (applied or refused or warned):
+        return FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) + ". This is a text-only reply: no actions will run"
+    msg = FOLLOWUP_WAIT.format(applied=j(applied), refused=j(refused), warned=j(f"{k}: {v}" for k, v in (warned or {}).items()))
+    return msg + ("\n" + FOLLOWUP_SPLIT.format(cmds=j(c[:200] for c in split)) if split else "")
 
 
-def followup_worthy(applied, refused):
-    """True when a refusal or warning is of a kind whose action the reply may have claimed as done."""
+def followup_worthy(applied, refused, denied=None):
+    """True when a refusal or warning is of a kind whose action the reply may have claimed as done, or a combined command was denied."""
+    if compound_denials(denied):
+        return True
     for r in refused:
         r = str(r)
         if not any(x in r for x in _FU_SKIP) and _FU_REFUSED.match(r):
@@ -1522,7 +1546,7 @@ def start_followup(proj, sess, tkey, user_text, orig_rec, applied, refused, canc
     back with a warning (the reply's text often says "done" before the server's answer is known). True when it started; it runs in
     its own thread and the page shows it from /api/state. Not started: setting off, Stop in between, a failed first turn. It never
     chains, and a new student message or a step button cancels it."""
-    if cancelled or orig_rec.get("error") or orig_rec.get("partial") or not followup_worthy(applied, refused):
+    if cancelled or orig_rec.get("error") or orig_rec.get("partial") or not followup_worthy(applied, refused, orig_rec.get("denied")):
         return False
     if not workspace.get("chat.followup_on_refusal", True):
         return False
@@ -1556,7 +1580,7 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
         pguard = project_guard.begin(proj)
         BUSY["chat"] += 1
         try:
-            res = agent.respond(m, followup_message(applied, refused, warned), m["chat"], backend=BACKEND, cancel=fturn["cancel"],
+            res = agent.respond(m, followup_message(applied, refused, warned, orig_rec.get("denied")), m["chat"], backend=BACKEND, cancel=fturn["cancel"],
                                 typed=user_text, generated=False, on_event=lambda ev, k=tkey: _turn_event(k, ev))
         finally:
             BUSY["chat"] -= 1
