@@ -88,7 +88,10 @@ async function outRunExporter(f) {         // one api exporter; returns true whe
   if (tool === 'export_bom') {
     const m = /_BOM_([a-z0-9]+)\.csv$/i.exec(f.name);
     await api('/api/skill', {name: 'export_bom', args: [m[1]]});
-  } else if (tool === 'export_cpl') await api('/api/cpl/export', {});
+  } else if (tool === 'export_cpl') {
+    const r = await api('/api/cpl/export', {});
+    ((r && r.warnings) || []).forEach(w => toast(w, null, {bad: true}));
+  }
   else if (tool === 'outjob') await api('/api/outjob/generate', {filename: f.name});
   else if (tool === 'export_library') await api('/api/library/export', {});
   else if (tool === 'gerber_zip') {
@@ -204,6 +207,7 @@ onAct('gen-outjob', async (el, d, e) => {
 });
 onAct('gen-cpl', async (el, d, e) => {
   const r = await api('/api/cpl/export', {});
+  (r.warnings || []).forEach(w => toast(w, null, {bad: true}));
   await outWrote('Pick and place (CPL) exported', r.name);
   return;
 });

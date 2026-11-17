@@ -103,17 +103,17 @@ const chatCtxOf = m => m.source ? {kind: 'file', id: m.source, label: m.source} 
 
 /* ---------- proposal cards ---------- */
 const PROP_LABEL = {lcsc: 'LCSC code', mpn: 'MPN', manufacturer: 'Manufacturer', package: 'Package', value: 'Value', description: 'Description',
-  note: 'Note', datasheet: 'Datasheet', dnp: 'Not-fitted flag', nobuy: 'Not-bought flag', refs: 'Designators', role: 'Role', library: 'Library', sheet: 'Sheet'};
+  note: 'Note', datasheet: 'Datasheet', dnp: 'Not-fitted flag', nobuy: 'Not-bought flag', refs: 'Designators', role: 'Role', library: 'Library', sheet: 'Sheet', cpl_rotation: 'CPL rotation (added in pick and place)'};
 const propLabel = k => PROP_LABEL[k] || FIELD[k] || k;
 const propLower = s => /^[A-Z]{2,}/.test(s) ? s : s.charAt(0).toLowerCase() + s.slice(1);
-const propShow = v => Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'yes' : 'no') : (v === null || v === undefined) ? '' : String(v);
+const propShow = (v, k) => k === 'cpl_rotation' ? (Number(v) ? `${Number(v) > 0 ? '+' : ''}${Number(v)}°` : 'none') : Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'yes' : 'no') : (v === null || v === undefined) ? '' : String(v);
 const propPlural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
 /* The fields a proposal really changes: a value equal to the current one (after trimming) is not a change and is not listed or counted. */
 function propChangedKeys(p) {
   const keys = Object.keys(p.changes || {});
   if (p.new || !p.before) return keys;
-  return keys.filter(k => propShow(p.before[k]).trim() !== propShow(p.changes[k]).trim());
+  return keys.filter(k => propShow(p.before[k], k).trim() !== propShow(p.changes[k], k).trim());
 }
 
 /* How many blocks and links a diagram proposal touches: added, removed or moved/renamed, compared with what is on the canvas now. */
@@ -171,10 +171,11 @@ function diffHTML(p) {
       acts(btn('Review on the canvas', {kind: 'link', act: 'review-diagram', cls: 'go'})) + '</div>';
   }
   const rows = keys.map(k => {
-    const old = p.before ? propShow(p.before[k]) : '', now = propShow(p.changes[k]);
+    const old = p.before ? propShow(p.before[k], k) : '', now = propShow(p.changes[k], k);
     const label = keys.length > 1 || p.library ? `<span class="k">${esc(propLabel(k))}</span> ` : '';
     return `<div class="row" dir="auto">${label}${old && !p.new ? `<s>${esc(old)}</s> &rarr; ` : ''}<b>${esc(now)}</b></div>`;
   });
+  if (p.clears_offset) rows.push(`<div class="row"><span class="k">${esc(propLabel('cpl_rotation'))}</span> <span class="t">${esc(propShow(p.clears_offset, 'cpl_rotation'))} will be cleared (the part changes)</span></div>`);
   if (p.library) rows.push(`<div class="row"><span class="k">Library</span> <span class="t">Model from ${esc(p.library.model_source || 'the agent')}, needs your check</span></div>`);
   const title = p.new ? 'add a new line' : keys.length ? 'change the ' + what : 'change';
   return `<div class="prop" data-pid="${pid}"><h4>${refBtn}: ${esc(title)}</h4><div class="chg">${rows.join('')}</div>${why}${srcs}${acts()}</div>`;
@@ -185,7 +186,7 @@ function propSummary(p) {
   if (p.kind === 'idea_diagram') return 'Diagram changes';
   const ref = ((lineByKey(p.line) || {}).refs || [p.line])[0];
   const keys = propChangedKeys(p).filter(k => k !== 'refs' || p.new);
-  return `${p.new ? 'New ' : ''}${ref}: ${keys.map(k => propLabel(k).toLowerCase() + ' ' + propShow(p.changes[k])).join(', ')}`;
+  return `${p.new ? 'New ' : ''}${ref}: ${keys.map(k => propLabel(k).toLowerCase() + ' ' + propShow(p.changes[k], k)).join(', ')}`;
 }
 function propGroupTitle(ps) {
   const bom = ps.filter(p => p.kind !== 'idea_diagram').length, dia = ps.length - bom;

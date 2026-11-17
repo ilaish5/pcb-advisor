@@ -79,7 +79,9 @@ DOMAIN_COLORS = {
 }
 
 BOM_FIELDS = ("refs", "value", "description", "mpn", "manufacturer", "package",
-              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role", "lcsc", "footprint_lock")
+              "dnp", "nobuy", "note", "library", "datasheet", "sheet", "role", "lcsc", "footprint_lock", "cpl_rotation")
+# `cpl_rotation`: degrees (multiple of 90) added to the PcbDoc rotation of every ref of the line in the CPL export,
+# because JLC's 0 follows the tape/reel orientation. Not in BOM_DESCRIPTIVE: it changes what the factory places.
 # `lcsc` is a code the student or an import declared for the line; what LCSC answered is in supply-log
 # a change to one of these makes the old stock/price answer stale
 SUPPLY_KEYS = ("mpn", "lcsc")
@@ -124,6 +126,23 @@ def append(project, filename, record):
 
 # ---------------------------------------------------------------- BOM
 
+def offset_dropped(line, changes):
+    """The CPL rotation offset a change to `line` clears (the part really changes: mpn, lcsc or package differ and
+    the change does not set the offset itself), else None."""
+    if "cpl_rotation" in changes or not Number_ok(line.get("cpl_rotation")):
+        return None
+    if any(k in changes and not _same_field(k, changes[k], line.get(k)) for k in ("mpn", "lcsc", "package")):
+        return line["cpl_rotation"]
+    return None
+
+
+def Number_ok(v):
+    try:
+        return bool(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
 def bom_lines(project):
     """Fold bom-log.jsonl into lines, in the order they first appeared."""
     lines = {}
@@ -138,6 +157,8 @@ def bom_lines(project):
         ch = ev.get("changes") or {}
         if "footprint_lock" not in ch and any(k in ch for k in LOCK_BREAKS):
             line.pop("footprint_lock", None)
+        if offset_dropped(line, ch) is not None:
+            line.pop("cpl_rotation", None)       # a turn proved for the old part says nothing about the new one
         line.update(ch)
     for line in lines.values():
         # a line approved without references is still known by its key when that is a designator
@@ -421,9 +442,27 @@ def _vet_lock(project, line, changes, known):
     return bare, f"no footprint lock: {m['match']} ({m['why']}): a design change"
 
 
+def cpl_rotation_value(value):
+    """A CPL rotation offset as an int in 0..270 (a multiple of 90, any sign); None for "" / None (clears the offset);
+    ValueError for anything else."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        raise ValueError("cpl_rotation must be a number of degrees, a multiple of 90")
+    try:
+        deg = float(str(value).strip().removesuffix("deg").strip()) if isinstance(value, str) else float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"cpl_rotation must be a number of degrees, a multiple of 90, not {value!r}") from None
+    if deg != deg or deg in (float("inf"), float("-inf")) or deg % 90:
+        raise ValueError(f"cpl_rotation must be a multiple of 90 degrees, not {value!r}")
+    return int(deg) % 360
+
+
 def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False, reserved=()):
     """Record a proposal. Nothing about the BOM changes until the student approves.
     `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty)."""
+    if "cpl_rotation" in changes:
+        changes = {**changes, "cpl_rotation": cpl_rotation_value(changes["cpl_rotation"])}
     existing = {l["key"]: l for l in bom_lines(project)}
     if line not in existing:
         # a line still waiting for approval: this card replaces it, carrying what it already said
@@ -436,6 +475,8 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
     changes, lock_note = _vet_lock(project, line, changes, line in existing)
+    if list(changes) == ["cpl_rotation"] and changes["cpl_rotation"] is None and line in existing             and not Number_ok(existing[line].get("cpl_rotation")):
+        raise ValueError(f"{line} has no CPL rotation offset to clear")
     before = {k: existing.get(line, {}).get(k) for k in changes}
     if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):
         changes = {**changes, "refs": [line]}
@@ -461,6 +502,9 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
            "library": library or None, "session": session, "status": "pending"}
     if lock_note:
         rec["lock_note"] = lock_note
+    cleared = offset_dropped(existing.get(line, {}), changes)
+    if cleared is not None:
+        rec["clears_offset"] = cleared          # the card says the approval clears it
     return append(project, "proposals.jsonl", rec)
 
 
@@ -1032,10 +1076,16 @@ def decide(project, pid, decision, by="student"):
                     fresh = bool(changes.get("footprint_lock")) and _lock_keeps_library(project, prop["line"], changes["footprint_lock"])
                 except Exception as exc:            # the proof failing is no proof: a design change
                     changes, note = {k: v for k, v in changes.items() if k != "footprint_lock"}, f"no footprint lock: {exc}"
+            changes = _drop_stale_lcsc(project, prop["line"], changes)
+            before = prop.get("before")
+            cur = next((l for l in bom_lines(project) if l["key"] == prop["line"]), {})
+            cleared = offset_dropped(cur, changes)
+            if cleared is not None:         # kept in `before` so an undo puts the offset back
+                before = {**(before or {}), "cpl_rotation": cleared}
             append(project, "bom-log.jsonl", {
                 "ts": now(), "by": "agent-approved", "line": prop["line"],
-                "changes": _drop_stale_lcsc(project, prop["line"], changes),
-                "before": prop.get("before"), "reason": prop.get("reason"),
+                "changes": changes,
+                "before": before, "reason": prop.get("reason"),
                 "sources": prop.get("sources"), "proposal": pid})
             if fresh:           # an order-only swap: the library and the board stay as they are
                 try:
@@ -1113,6 +1163,8 @@ def classify_proposal(prop):
             return "critical"
         if prop.get("new"):                  # a new line adds a part to the BOM
             return "important"
+        if "cpl_rotation" in ch and not _same_field("cpl_rotation", ch["cpl_rotation"], before.get("cpl_rotation")):
+            return "critical"                # changes what the factory places: always the student's click, in every mode
         for key, val in ch.items():          # a real change to anything that is built or connected
             if key not in BOM_DESCRIPTIVE and not _same_field(key, val, before.get(key)):
                 return "important"
@@ -1190,9 +1242,10 @@ def undo_proposal(project, pid, by="student"):
                                               "changes": {}, "before": entry.get("changes"), "undoes": pid})
         else:
             before = entry.get("before") or prop.get("before") or {}
+            keys = list(entry["changes"]) + (["cpl_rotation"] if "cpl_rotation" in before and "cpl_rotation" not in entry["changes"] else [])
             append(project, "bom-log.jsonl", {
                 "ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
-                "changes": {k: _restore_value(k, before.get(k)) for k in entry["changes"]},
+                "changes": {k: _restore_value(k, before.get(k)) for k in keys},
                 "before": entry.get("changes"), "reason": "undo of " + pid})
         if prop.get("library"):
             append(project, "library-log.jsonl", {"ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
@@ -1296,6 +1349,8 @@ def edit_bom(project, line, field, value):
         raise ValueError(f"not an editable BOM field: {field}")
     if field == "footprint_lock":
         raise ValueError("footprint_lock is set only by a proposal that proves the footprint is the same")
+    if field == "cpl_rotation":
+        value = cpl_rotation_value(value)
     existing = {l["key"]: l for l in bom_lines(project)}
     if line not in existing:
         raise KeyError(f"no BOM line {line!r}")

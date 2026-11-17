@@ -8,7 +8,9 @@ Writes projects/<project>/exports/<project>_cpl.csv with columns:
 
 Positions are relative to the board origin (Board6 ORIGINX/ORIGINY), as Altium writes them; Mid is the centre
 of the part's pads, which matched Altium's "Center" column on 148 of 149 parts of a real board (a U.FL was
-0.29 mm off). Rotation is the PcbDoc rotation: JLC rotation fixes are not applied here.
+0.29 mm off). Rotation is the PcbDoc rotation plus the BOM line's CPL rotation offset (`cpl_rotation`, set by the student's
+approval after JLC's preview shows the part turned; never set from the package name). Top parts only: a Bottom
+part keeps its PcbDoc rotation and is named in the result's warnings (JLC does not document the bottom side).
 """
 import collections
 import csv
@@ -51,8 +53,41 @@ def pad_centres(doc: dict) -> dict[str, tuple[float, float]]:
     return {ref: ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2) for ref, b in boxes.items()}
 
 
-def cpl_rows(project: str, pcb_path: str | pathlib.Path | None = None) -> list[dict]:
-    """The rows the CPL file holds: from the PcbDoc when there is one, else a stub per BOM reference."""
+BOTTOM_WARNING = ("{refs}: CPL rotation offset not applied on the bottom side (JLC does not document its direction); "
+                  "check these parts in JLC's placement preview and rotate them there")
+
+
+def rotation_offsets(project: str) -> dict[str, int]:
+    """ref -> CPL rotation offset (degrees) of the BOM line that holds it. Only what the student approved."""
+    import store
+    out = {}
+    for l in store.bom_lines(project):
+        if l.get("cpl_rotation") not in (None, ""):
+            for r in l.get("refs", []):
+                out[r] = store.cpl_rotation_value(l["cpl_rotation"])
+    return out
+
+
+def _apply_offsets(rows: list[dict], offsets: dict[str, int], applied: list | None) -> None:
+    for row in rows:
+        off = offsets.get(row["Designator"])
+        if off:
+            top = row["Layer"] == "Top"      # bottom: the direction is not documented by JLC, the rotation stays as in the PcbDoc
+            if top:
+                row["Rotation"] = f"{(float(row['Rotation']) + off) % 360:.1f}"
+            if applied is not None:
+                applied.append({"ref": row["Designator"], "offset": off, "layer": row["Layer"], "applied": top})
+
+
+def cpl_rows(project: str, pcb_path: str | pathlib.Path | None = None, applied: list | None = None) -> list[dict]:
+    """The rows the CPL file holds: from the PcbDoc when there is one, else a stub per BOM reference.
+    The BOM line's CPL rotation offset is added to the PcbDoc rotation; `applied` collects the refs that got one."""
+    rows = _raw_rows(project, pcb_path)
+    _apply_offsets(rows, rotation_offsets(project), applied)
+    return rows
+
+
+def _raw_rows(project: str, pcb_path: str | pathlib.Path | None = None) -> list[dict]:
     p_pcb = pcb_path or project_mod.altium_link(project).get("pcb_file")
     rows = []
     if p_pcb and pathlib.Path(p_pcb).is_file():
@@ -93,7 +128,8 @@ def cpl_rows(project: str, pcb_path: str | pathlib.Path | None = None) -> list[d
 def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict:
     p_pcb = pcb_path or project_mod.altium_link(project).get("pcb_file")
     from_pcb = str(p_pcb) if p_pcb and pathlib.Path(p_pcb).is_file() else ""
-    rows = cpl_rows(project, from_pcb or None)
+    applied: list = []
+    rows = cpl_rows(project, from_pcb or None, applied)
 
     out_dir = workspace.project_dir(project) / "exports"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -110,11 +146,17 @@ def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict
 
     home = workspace.home()
     shown = out_file.relative_to(home).as_posix() if out_file.is_relative_to(home) else str(out_file)
-    return {
+    res = {
         "file": shown,
         "name": out_file.name,
         "count": len(rows),
+        "rotation_offsets": [{k: v for k, v in a.items() if k != "applied"} for a in applied if a["applied"]],
+        "warnings": [],
     }
+    bottom = [a["ref"] for a in applied if not a["applied"]]
+    if bottom:
+        res["warnings"].append(BOTTOM_WARNING.format(refs=", ".join(bottom)))
+    return res
 
 
 def main(argv=None):
