@@ -175,6 +175,7 @@ function diffHTML(p) {
     const label = keys.length > 1 || p.library ? `<span class="k">${esc(propLabel(k))}</span> ` : '';
     return `<div class="row" dir="auto">${label}${old && !p.new ? `<s>${esc(old)}</s> &rarr; ` : ''}<b>${esc(now)}</b></div>`;
   });
+  if (p.clears_offset) rows.push(`<div class="row"><span class="k">${esc(propLabel('cpl_rotation'))}</span> <span class="t">${esc(propShow(p.clears_offset, 'cpl_rotation'))} will be cleared (the part changes)</span></div>`);
   if (p.library) rows.push(`<div class="row"><span class="k">Library</span> <span class="t">Model from ${esc(p.library.model_source || 'the agent')}, needs your check</span></div>`);
   const title = p.new ? 'add a new line' : keys.length ? 'change the ' + what : 'change';
   return `<div class="prop" data-pid="${pid}"><h4>${refBtn}: ${esc(title)}</h4><div class="chg">${rows.join('')}</div>${why}${srcs}${acts()}</div>`;

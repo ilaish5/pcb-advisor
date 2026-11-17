@@ -161,3 +161,33 @@ def test_approval_card_labels_the_offset():
     chat = (ui / "chat.js").read_text(encoding="utf-8")
     assert "'none'" in chat and "'+'" in chat and "°" in chat
     assert "(r.warnings || []).forEach" in (ui / "views" / "outputs.js").read_text(encoding="utf-8").split("onAct('gen-cpl'")[1][:300]
+
+
+def test_offset_stays_when_the_part_value_is_unchanged(empty):
+    import store
+    _line(store, empty, mpn="A", lcsc="C1234", package="0603", cpl_rotation=90)
+    assert _line(store, empty, mpn="A", lcsc="c1234", package="0603")["cpl_rotation"] == 90
+    assert "cpl_rotation" not in _line(store, empty, package="0805")
+
+
+def test_undo_of_a_part_change_restores_the_offset(empty):
+    import store
+    _line(store, empty, mpn="A", package="0603", cpl_rotation=90)
+    rec = store.propose_bom(empty, "U1", {"package": "0805"})
+    assert rec["clears_offset"] == 90
+    store.decide(empty, rec["id"], "approved", by="student")
+    line = next(l for l in store.bom_lines(empty) if l["key"] == "U1")
+    assert line["package"] == "0805" and "cpl_rotation" not in line
+    store.undo_proposal(empty, rec["id"])
+    line = next(l for l in store.bom_lines(empty) if l["key"] == "U1")
+    assert line["package"] == "0603" and line["cpl_rotation"] == 90
+
+
+def test_clearing_nothing_makes_no_card_and_the_card_says_what_is_cleared(empty):
+    import pytest
+    import store
+    _line(store, empty, cpl_rotation=0)
+    with pytest.raises(ValueError):
+        store.propose_bom(empty, "U1", {"cpl_rotation": ""})
+    chat = (REPO / "ui" / "js" / "chat.js").read_text(encoding="utf-8")
+    assert "will be cleared (the part changes)" in chat and "p.clears_offset" in chat

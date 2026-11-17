@@ -126,6 +126,23 @@ def append(project, filename, record):
 
 # ---------------------------------------------------------------- BOM
 
+def offset_dropped(line, changes):
+    """The CPL rotation offset a change to `line` clears (the part really changes: mpn, lcsc or package differ and
+    the change does not set the offset itself), else None."""
+    if "cpl_rotation" in changes or not Number_ok(line.get("cpl_rotation")):
+        return None
+    if any(k in changes and not _same_field(k, changes[k], line.get(k)) for k in ("mpn", "lcsc", "package")):
+        return line["cpl_rotation"]
+    return None
+
+
+def Number_ok(v):
+    try:
+        return bool(float(v))
+    except (TypeError, ValueError):
+        return False
+
+
 def bom_lines(project):
     """Fold bom-log.jsonl into lines, in the order they first appeared."""
     lines = {}
@@ -140,7 +157,7 @@ def bom_lines(project):
         ch = ev.get("changes") or {}
         if "footprint_lock" not in ch and any(k in ch for k in LOCK_BREAKS):
             line.pop("footprint_lock", None)
-        if "cpl_rotation" not in ch and any(k in ch for k in ("mpn", "lcsc", "package")):
+        if offset_dropped(line, ch) is not None:
             line.pop("cpl_rotation", None)       # a turn proved for the old part says nothing about the new one
         line.update(ch)
     for line in lines.values():
@@ -458,6 +475,8 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
     changes, lock_note = _vet_lock(project, line, changes, line in existing)
+    if list(changes) == ["cpl_rotation"] and changes["cpl_rotation"] is None and line in existing             and not Number_ok(existing[line].get("cpl_rotation")):
+        raise ValueError(f"{line} has no CPL rotation offset to clear")
     before = {k: existing.get(line, {}).get(k) for k in changes}
     if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):
         changes = {**changes, "refs": [line]}
@@ -483,6 +502,9 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
            "library": library or None, "session": session, "status": "pending"}
     if lock_note:
         rec["lock_note"] = lock_note
+    cleared = offset_dropped(existing.get(line, {}), changes)
+    if cleared is not None:
+        rec["clears_offset"] = cleared          # the card says the approval clears it
     return append(project, "proposals.jsonl", rec)
 
 
@@ -1054,10 +1076,16 @@ def decide(project, pid, decision, by="student"):
                     fresh = bool(changes.get("footprint_lock")) and _lock_keeps_library(project, prop["line"], changes["footprint_lock"])
                 except Exception as exc:            # the proof failing is no proof: a design change
                     changes, note = {k: v for k, v in changes.items() if k != "footprint_lock"}, f"no footprint lock: {exc}"
+            changes = _drop_stale_lcsc(project, prop["line"], changes)
+            before = prop.get("before")
+            cur = next((l for l in bom_lines(project) if l["key"] == prop["line"]), {})
+            cleared = offset_dropped(cur, changes)
+            if cleared is not None:         # kept in `before` so an undo puts the offset back
+                before = {**(before or {}), "cpl_rotation": cleared}
             append(project, "bom-log.jsonl", {
                 "ts": now(), "by": "agent-approved", "line": prop["line"],
-                "changes": _drop_stale_lcsc(project, prop["line"], changes),
-                "before": prop.get("before"), "reason": prop.get("reason"),
+                "changes": changes,
+                "before": before, "reason": prop.get("reason"),
                 "sources": prop.get("sources"), "proposal": pid})
             if fresh:           # an order-only swap: the library and the board stay as they are
                 try:
@@ -1214,9 +1242,10 @@ def undo_proposal(project, pid, by="student"):
                                               "changes": {}, "before": entry.get("changes"), "undoes": pid})
         else:
             before = entry.get("before") or prop.get("before") or {}
+            keys = list(entry["changes"]) + (["cpl_rotation"] if "cpl_rotation" in before and "cpl_rotation" not in entry["changes"] else [])
             append(project, "bom-log.jsonl", {
                 "ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
-                "changes": {k: _restore_value(k, before.get(k)) for k in entry["changes"]},
+                "changes": {k: _restore_value(k, before.get(k)) for k in keys},
                 "before": entry.get("changes"), "reason": "undo of " + pid})
         if prop.get("library"):
             append(project, "library-log.jsonl", {"ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
