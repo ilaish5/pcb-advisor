@@ -20,7 +20,7 @@ BAT = (REPO / "start.bat").read_text(encoding="utf-8")
 
 # ------------------------------------------------------------------ readiness
 
-def _patch(monkeypatch, engine_ok=True, altium_ok=True, linked=True):
+def _patch(monkeypatch, engine_ok=True, altium_ok=True, linked=True, past=True, sheets=False):
     class Prov:
         def available(self):
             return (True, "") if engine_ok else (False, "`claude` is not on PATH")
@@ -35,8 +35,8 @@ def _patch(monkeypatch, engine_ok=True, altium_ok=True, linked=True):
         return "X2.EXE"
     monkeypatch.setattr(bridge, "_exe", exe)
     monkeypatch.setattr(project_mod, "altium_link", lambda n: {"project_file": "a.PrjPcb" if linked else ""})
-    import doctor
-    monkeypatch.setattr(doctor, "_cache", {"at": 0.0, "engine": None, "result": None})
+    monkeypatch.setattr(serve, "_past_idea", lambda n: past)
+    monkeypatch.setattr(serve.store, "sheet_ids", lambda n: ["s1"] if sheets else [])
 
 
 def ids(res):
@@ -65,15 +65,28 @@ def test_project_not_linked(monkeypatch):
     assert ids(serve.readiness("demo")) == ["link"]
 
 
-def test_all_three_and_a_cached_doctor_fix(monkeypatch):
+def test_all_three(monkeypatch):
     _patch(monkeypatch, False, False, False)
-    import doctor
-    doctor._cache["result"] = {"checks": [{"id": "port", "title": "Port 8931", "status": "fix", "detail": "taken",
-                                           "fix": {"command": "python pcb.py serve --port 8932"}},
-                                          {"id": "git", "title": "git", "status": "ok"}]}
-    res = serve.readiness("demo")
-    assert ids(res) == ["engine", "altium", "link", "doctor-port"]
-    assert res["problems"][-1]["fix"] == "python pcb.py serve --port 8932"
+    assert ids(serve.readiness("demo")) == ["engine", "link"]      # not linked and no drawing: Altium is not needed yet
+    _patch(monkeypatch, False, False, True)
+    assert ids(serve.readiness("demo")) == ["engine", "altium"]
+
+
+def test_idea_stage_project_shows_no_link_row(monkeypatch):
+    _patch(monkeypatch, linked=False, past=False)
+    assert serve.readiness("demo") == {"problems": []}
+
+
+def test_altium_missing_is_silent_without_link_or_drawing(monkeypatch):
+    _patch(monkeypatch, altium_ok=False, linked=False, past=False)
+    assert serve.readiness("demo") == {"problems": []}
+    _patch(monkeypatch, altium_ok=False, linked=False, past=False, sheets=True)
+    assert ids(serve.readiness("demo")) == ["altium"]
+
+
+def test_no_doctor_merge():
+    import inspect
+    assert "import doctor" not in inspect.getsource(serve.readiness)
 
 
 def test_probe_that_raises_does_not_break(monkeypatch):
@@ -85,6 +98,7 @@ def test_probe_that_raises_does_not_break(monkeypatch):
 def test_banner_source():
     js = (UI / "js" / "ready.js").read_text(encoding="utf-8")
     assert "/api/readiness" in js and "data-ready-x" in js and "problems.length" in js
+    assert "localStorage" in js and "try {" in js and "readyDismiss" in js
     assert "readyLoad()" in (UI / "js" / "boot.js").read_text(encoding="utf-8")
     html = (UI / "index.html").read_text(encoding="utf-8")
     assert 'id="ready"' in html and html.index("/ui/js/ready.js") < html.index("/ui/js/boot.js")
@@ -153,7 +167,37 @@ def test_serve_on_a_foreign_port_exits_nonzero_without_the_browser(monkeypatch, 
         srv.shutdown()
     out = capsys.readouterr().out
     assert rc == serve.EXIT_PORT_TAKEN and rc not in (0, 75)
-    assert not opened and str(srv.server_port) in out and "--port" in out
+    assert not opened and str(srv.server_port) in out and "--port" in out and "pcb.py serve --port" in out
+
+
+def _bind(monkeypatch, capsys, exc, who="other"):
+    opened = []
+    monkeypatch.setattr(serve.webbrowser, "open", lambda u: opened.append(u))
+    monkeypatch.setattr(serve, "port_holder", lambda h, p, timeout=2.0: who)
+    rc = serve._bind_failed(exc, "127.0.0.1", 8931, "http://127.0.0.1:8931", {"server": {"open_browser": True}}, False)
+    return rc, capsys.readouterr().out, opened
+
+
+def test_silent_holder_does_not_suggest_another_port(monkeypatch, capsys):
+    import errno
+    rc, out, opened = _bind(monkeypatch, capsys, OSError(errno.EADDRINUSE, "in use"), who="silent")
+    assert rc == 78 and not opened
+    assert "--port" not in out and "stuck" in out and "close it" in out
+
+
+def test_reserved_port_and_bad_host_messages(monkeypatch, capsys):
+    e = OSError(13, "denied")
+    e.winerror = 10013
+    rc, out, _ = _bind(monkeypatch, capsys, e)
+    assert rc == 78 and "reserved by Windows" in out and "another program" not in out
+    rc, out, _ = _bind(monkeypatch, capsys, socket.gaierror(11001, "no host"))
+    assert rc == 78 and "not valid" in out and "another program" not in out
+
+
+def test_in_use_and_ours_opens_browser(monkeypatch, capsys):
+    import errno
+    rc, out, opened = _bind(monkeypatch, capsys, OSError(errno.EADDRINUSE, "in use"), who="ours")
+    assert rc == 0 and opened and "already running" in out
 
 
 # ------------------------------------------------------------------ install

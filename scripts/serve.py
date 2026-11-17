@@ -19,6 +19,7 @@ import mimetypes
 import os
 import pathlib
 import re
+import socket
 import sys
 import threading
 import time
@@ -3368,9 +3369,18 @@ def _server_mode():
     bridge.allow_writes()
 
 
+def _past_idea(project):
+    """The project is past the idea stage: the idea is confirmed, or it already has a BOM or a netlist."""
+    try:
+        return bool(store.load_idea(project).get("confirmed") or store.bom_lines(project) or store.sheet_ids(project))
+    except Exception:                           # noqa: BLE001
+        return False
+
+
 def readiness(project):
     """{"problems": [{id, title, fix, page?}]}: what does not work yet and the one step that fixes it. Cheap on purpose
-    (a PATH lookup, a registry read, a file read): the slow doctor checks only count when a run is already cached."""
+    (a PATH lookup, a registry read, a file read); no subprocess. Altium rows show only once Altium is the next useful
+    thing, so a fresh or idea-stage project (and the demo) shows only an engine problem."""
     problems = []
     try:
         ok, why = gateway.provider(gateway.resolve(BACKEND)).available()
@@ -3379,30 +3389,21 @@ def readiness(project):
     if not ok:
         problems.append({"id": "engine", "title": "The AI engine is not available" + (f" ({why})" if why else "") + ". Chat and the agent will not answer.",
                          "fix": "Open Settings, then Engine, and follow the setup there.", "page": "settings"})
-    if sys.platform == "win32":
+    try:
+        linked = bool(project_mod.altium_link(project).get("project_file"))
+    except Exception:                           # noqa: BLE001
+        linked = True
+    drawn = bool(store.sheet_ids(project)) if hasattr(store, "sheet_ids") else False
+    if sys.platform == "win32" and (linked or drawn):          # doctor rates Altium as optional: only when it is in use
         try:
             from altium import bridge
             bridge._exe()
         except Exception:                       # noqa: BLE001 - BridgeError: not found
             problems.append({"id": "altium", "title": "Altium Designer was not found, so the Make in Altium steps cannot run.",
                              "fix": "Open Settings and set the Altium folder (altium.install_path).", "page": "settings"})
-    try:
-        linked = bool(project_mod.altium_link(project).get("project_file"))
-    except Exception:                           # noqa: BLE001
-        linked = True
-    if not linked:
+    if not linked and _past_idea(project):
         problems.append({"id": "link", "title": "This project is not linked to an Altium project, so nothing can be drawn or read from Altium.",
                          "fix": "Open Altium (Settings) and link the .PrjPcb file.", "page": "settings"})
-    try:
-        import doctor
-        cached = doctor._cache.get("result") or {}
-        for c in cached.get("checks", []):
-            if c.get("status") == "fix" and c.get("id") not in ("engine", "altium", "link"):
-                fix = (c.get("fix") or {}).get("command") or "Open Settings and run the checks."
-                problems.append({"id": "doctor-" + str(c.get("id")), "title": f"{c.get('title')}: {c.get('detail') or 'needs a fix'}",
-                                 "fix": fix, "page": "settings"})
-    except Exception:                           # noqa: BLE001
-        pass
     return {"problems": problems}
 
 
@@ -3442,6 +3443,37 @@ def _log_start(port, engine, available, why):
                      home=str(workspace.home()))
     except Exception:
         pass
+
+
+def _bind_failed(exc, host, port, url, cfg, no_browser):
+    """What to say, and the exit code, when the server cannot bind. Only EADDRINUSE means the port is in use."""
+    import errno
+    import socket
+    py = r".venv\Scripts\python pcb.py" if sys.platform == "win32" else ".venv/bin/python pcb.py"
+    code = getattr(exc, "winerror", None) or getattr(exc, "errno", None)
+    if isinstance(exc, socket.gaierror):
+        print(f"The host {host!r} is not valid ({exc}). Set server.host in the config (normally 127.0.0.1): {py} config server.host 127.0.0.1")
+        return EXIT_PORT_TAKEN
+    if code in (10013, errno.EACCES):
+        print(f"Port {port} is reserved by Windows (Hyper-V/WSL) or not allowed; choose another: {py} serve --port {port + 1}")
+        print(f"Or save it: {py} config server.port {port + 1}, then run start.bat.")
+        return EXIT_PORT_TAKEN
+    if code not in (10048, errno.EADDRINUSE):
+        print(f"The server could not listen on {host}:{port} ({exc}).")
+        return EXIT_PORT_TAKEN
+    who = port_holder(host, port)
+    if who == "ours":
+        print(f"already running at {url}")
+        if cfg["server"].get("open_browser") and not no_browser:
+            webbrowser.open(url)
+        return 0
+    if who == "silent":
+        print(f"Port {port} is held by something that does not answer. A previous pcb-advisor window may be stuck: close it, or wait a minute and run start.bat again.")
+        print("Do not start a second server on the same workspace.")
+        return EXIT_PORT_TAKEN
+    print(f"Port {port} is used by another program that is not pcb-advisor.")
+    print(f"Choose another port: {py} serve --port {port + 1}   or save it: {py} config server.port {port + 1}, then run start.bat.")
+    return EXIT_PORT_TAKEN
 
 
 def main(argv=None):
@@ -3487,17 +3519,8 @@ def main(argv=None):
 
     try:
         httpd = _Server((host, port), Handler)
-    except OSError as exc:
-        who = port_holder(host, port)
-        if who == "ours":
-            print(f"already running at {url}")
-            if cfg["server"].get("open_browser") and not a.no_browser:
-                webbrowser.open(url)
-            return 0
-        print(f"Port {port} is used by another program ({'it does not answer' if who == 'silent' else 'it is not pcb-advisor'}; {exc}).")
-        print(f"Choose another port: run  python pcb.py serve --port {port + 1}  or set server.port in the config "
-              f"(python pcb.py config server.port {port + 1}).")
-        return EXIT_PORT_TAKEN
+    except (OSError, socket.gaierror) as exc:
+        return _bind_failed(exc, host, port, url, cfg, a.no_browser)
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     HTTPD = httpd
