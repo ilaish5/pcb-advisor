@@ -136,7 +136,8 @@ function Install-PcbAdvisorCore {
     }
 
     function Winget-Install($id) {
-        & winget install -e --id $id --scope user --accept-package-agreements --accept-source-agreements 2>&1 | ForEach-Object { Write-Host "$_"; Pcb-Note ("  $_") }
+        Write-Host "Installing $id with winget. This can take a few minutes; wait for it to finish..."
+    & winget install -e --id $id --scope user --accept-package-agreements --accept-source-agreements 2>&1 | ForEach-Object { Write-Host "$_"; Pcb-Note ("  $_") }
         Refresh-Path
     }
 
@@ -212,6 +213,7 @@ function Install-PcbAdvisorCore {
             return
         }
         if ($haveGit) {
+            Write-Host 'Downloading pcb-advisor with git (a minute or two)...'
             Pcb-Run git clone $repoUrl $dir
             if ($LASTEXITCODE -ne 0) { Fail 'git clone failed (network, or a proxy: set HTTPS_PROXY).'; return }
             if ($ref) { & git -C $dir checkout $ref 2>&1 | Out-Null }
@@ -222,6 +224,7 @@ function Install-PcbAdvisorCore {
             $tmp = Join-Path ([IO.Path]::GetTempPath()) ('pcb-' + [Guid]::NewGuid().ToString('N'))
             New-Item -ItemType Directory -Path $tmp | Out-Null
             $zip = Join-Path $tmp 'src.zip'
+            Write-Host 'Downloading the pcb-advisor ZIP (a minute or two)...'
             try {
                 if ($zipUrl -match '^https?://') { Invoke-WebRequest -Uri $zipUrl -OutFile $zip -UseBasicParsing }
                 else { Copy-Item -LiteralPath ($zipUrl -replace '^file:///', '') -Destination $zip }
@@ -249,7 +252,9 @@ function Install-PcbAdvisorCore {
         Pcb-Run $py -m venv (Join-Path $dir '.venv')
         if ($LASTEXITCODE -ne 0) { Fail 'could not create .venv'; return }
     }
+    Write-Host 'Updating pip (a few seconds)...'
     Pcb-Run $venvPy -m pip install --quiet --upgrade pip
+    Write-Host 'Installing the Python libraries from requirements.txt. This can take a few minutes and prints nothing until it is done; wait...'
     Pcb-Run $venvPy -m pip install --quiet -r requirements.txt
     if ($LASTEXITCODE -ne 0) { Fail 'installing requirements failed (network or proxy?)'; return }
     & $venvPy pcb.py init
@@ -316,6 +321,7 @@ function Install-PcbAdvisorCore {
         }
         if ($engine -eq 'claude' -and -not $claude) {
             if ($asked -or (Ask 'Claude Code is not installed. Install it now (official installer)?')) {
+                Write-Host 'Downloading and installing Claude Code (a minute or two)...'
                 try { Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression } catch { Say "The Claude Code installer failed ($_). See docs\ENGINES.md." }
                 Refresh-Path
                 $env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
@@ -324,6 +330,7 @@ function Install-PcbAdvisorCore {
         }
         if ($engine -eq 'agy' -and -not $agy) {
             if ($asked -or (Ask 'Antigravity (agy) is not installed. Install it now (official installer)?')) {
+                Write-Host 'Downloading and installing Antigravity (a minute or two)...'
                 try { Invoke-RestMethod https://antigravity.google/cli/install.ps1 | Invoke-Expression } catch { Say "The Antigravity installer failed ($_). See docs\ENGINES.md." }
                 Refresh-Path
                 $env:Path = "$env:LOCALAPPDATA\agy\bin;$env:Path"
@@ -358,6 +365,7 @@ function Install-PcbAdvisorCore {
 
     # ---- 5. doctor, then start
     Step 'Checking everything'
+    Write-Host 'Running the checks (up to a minute; they look for Claude, Altium and the network)...'
     Pcb-Run $venvPy pcb.py doctor --exit-start
     if ($LASTEXITCODE -ne 0) {
         Say ''
@@ -368,10 +376,12 @@ function Install-PcbAdvisorCore {
     Say ''
     Say "Installed in $dir. Next time: double-click start.bat in that folder."
     if ($env:PCB_NO_START -eq '1') { return }
-    Pcb-Finish        # the server runs in this window from here on: save the log of the install now
+    Pcb-Finish        # the install is over: save its log now
     $port = if ($env:PCB_ADVISOR_PORT) { $env:PCB_ADVISOR_PORT } else { '8931' }
-    Step "Starting pcb-advisor (http://localhost:$port). Close this window to stop it."
-    & cmd /c .\start.bat         # .\ : cmd may not search the current folder (NoDefaultCurrentDirectoryInExePath, set by agent shells)
+    Step "Starting pcb-advisor (http://localhost:$port) in its own window."
+    # Its own window: closing this installer does not stop the server. Close the new window (or press Ctrl+C there) to stop it.
+    Start-Process -FilePath (Join-Path $dir 'start.bat') -WorkingDirectory $dir
+    Say 'The pcb-advisor window opened and the browser follows in a few seconds. You can close this installer window.'
 }
 
 Install-PcbAdvisor -Argv $args

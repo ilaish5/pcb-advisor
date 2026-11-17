@@ -27,6 +27,7 @@ function initialMain() {
     if (URLQ.get('convs')) convsOpen = true;
     render(true);
     updLoad(false);                // the server checked GitHub at its start: offer Update when this install is behind
+    readyLoad();                   // what is not ready (engine, Altium, link): one banner, nothing when all is well
   } catch (err) { document.body.innerHTML = '<p style="padding:20px">Could not load the project: ' + esc(err.message) + '</p>'; return; }
   setInterval(() => { if (!pending && !document.hidden) refresh(); }, 4000);
 })();

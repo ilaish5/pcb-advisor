@@ -2038,6 +2038,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/doctor":                  # the same list as `pcb.py doctor --json`; ?refresh=1 runs it again
             import doctor
             return self._send(200, doctor.cached(refresh=bool(self.query("refresh"))))
+        if path == "/api/readiness":               # what is not ready yet (the banner on open); never runs a subprocess
+            return self._send(200, readiness(self.project()))
         if path == "/api/update":                  # the check made at start; ?refresh=1 checks again now
             if self.query("refresh"):
                 check_updates(fetch=True)
@@ -3366,7 +3368,64 @@ def _server_mode():
     bridge.allow_writes()
 
 
-QUIET_PATHS = ("/api/state", "/api/chat/progress", "/api/log/usage", "/api/log/client", "/api/altium/step-status")
+def readiness(project):
+    """{"problems": [{id, title, fix, page?}]}: what does not work yet and the one step that fixes it. Cheap on purpose
+    (a PATH lookup, a registry read, a file read): the slow doctor checks only count when a run is already cached."""
+    problems = []
+    try:
+        ok, why = gateway.provider(gateway.resolve(BACKEND)).available()
+    except Exception as exc:                    # noqa: BLE001 - a probe never breaks the page
+        ok, why = False, str(exc)
+    if not ok:
+        problems.append({"id": "engine", "title": "The AI engine is not available" + (f" ({why})" if why else "") + ". Chat and the agent will not answer.",
+                         "fix": "Open Settings, then Engine, and follow the setup there.", "page": "settings"})
+    if sys.platform == "win32":
+        try:
+            from altium import bridge
+            bridge._exe()
+        except Exception:                       # noqa: BLE001 - BridgeError: not found
+            problems.append({"id": "altium", "title": "Altium Designer was not found, so the Make in Altium steps cannot run.",
+                             "fix": "Open Settings and set the Altium folder (altium.install_path).", "page": "settings"})
+    try:
+        linked = bool(project_mod.altium_link(project).get("project_file"))
+    except Exception:                           # noqa: BLE001
+        linked = True
+    if not linked:
+        problems.append({"id": "link", "title": "This project is not linked to an Altium project, so nothing can be drawn or read from Altium.",
+                         "fix": "Open Altium (Settings) and link the .PrjPcb file.", "page": "settings"})
+    try:
+        import doctor
+        cached = doctor._cache.get("result") or {}
+        for c in cached.get("checks", []):
+            if c.get("status") == "fix" and c.get("id") not in ("engine", "altium", "link"):
+                fix = (c.get("fix") or {}).get("command") or "Open Settings and run the checks."
+                problems.append({"id": "doctor-" + str(c.get("id")), "title": f"{c.get('title')}: {c.get('detail') or 'needs a fix'}",
+                                 "fix": fix, "page": "settings"})
+    except Exception:                           # noqa: BLE001
+        pass
+    return {"problems": problems}
+
+
+def port_holder(host, port, timeout=2.0):
+    """Who answers on host:port: "ours" (a pcb-advisor server: /api/update has a version), "other" (answers, but is not
+    one) or "silent" (nothing answers within `timeout`). Never raises."""
+    import urllib.request
+    probe = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
+    try:
+        with urllib.request.urlopen(f"http://{probe}:{port}/api/update", timeout=timeout) as r:
+            data = json.loads(r.read(65536).decode("utf-8", "replace"))
+        return "ours" if isinstance(data, dict) and "version" in data else "other"
+    except Exception as exc:                    # noqa: BLE001
+        import socket
+        if isinstance(exc, (socket.timeout, TimeoutError)) or isinstance(getattr(exc, "reason", None), (socket.timeout, TimeoutError)):
+            return "silent"
+        return "other"
+
+
+EXIT_PORT_TAKEN = 78      # start.bat: not 75 (restart); it stops with the message already printed
+
+
+QUIET_PATHS = ("/api/state", "/api/chat/progress", "/api/log/usage", "/api/log/client", "/api/altium/step-status", "/api/readiness")
 
 
 def _log_start(port, engine, available, why):
@@ -3428,11 +3487,17 @@ def main(argv=None):
 
     try:
         httpd = _Server((host, port), Handler)
-    except OSError:
-        print(f"already running at {url}")
-        if cfg["server"].get("open_browser") and not a.no_browser:
-            webbrowser.open(url)
-        return 0
+    except OSError as exc:
+        who = port_holder(host, port)
+        if who == "ours":
+            print(f"already running at {url}")
+            if cfg["server"].get("open_browser") and not a.no_browser:
+                webbrowser.open(url)
+            return 0
+        print(f"Port {port} is used by another program ({'it does not answer' if who == 'silent' else 'it is not pcb-advisor'}; {exc}).")
+        print(f"Choose another port: run  python pcb.py serve --port {port + 1}  or set server.port in the config "
+              f"(python pcb.py config server.port {port + 1}).")
+        return EXIT_PORT_TAKEN
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     HTTPD = httpd

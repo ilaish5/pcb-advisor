@@ -134,3 +134,11 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
 .upd-list{list-style:none;margin:0 0 12px;padding:0;max-height:240px;overflow:auto;display:grid;gap:6px;font-size:13px}
 .upd-list .m{font-family:var(--mono,monospace);color:var(--ink-3);margin-right:6px}
 .upd-dlg p{margin:0 0 10px}
+
+/* readiness banner (ready.js): what is not ready on open, one fix each */
+.ready{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:70;width:min(720px,calc(100% - 32px))}
+.ready[hidden]{display:none}
+.ready-bar{display:flex;align-items:flex-start;gap:12px;padding:10px 14px;border-radius:10px;background:var(--btn);color:var(--btn-ink);font-size:13px;box-shadow:var(--float)}
+.ready-bar ul{list-style:none;margin:0;padding:0;display:grid;gap:6px;flex:1}
+.ready-fix{opacity:.85}
+.ready-bar button{color:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
