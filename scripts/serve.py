@@ -1399,7 +1399,8 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
 
 
 FOLLOWUP_WAIT = ("Results of your actions: {applied}; refused: {refused}; warnings: {warned}. Correct anything in your previous "
-                 "reply that claimed otherwise, in one or two short sentences, and do not repeat actions that need the student's approval")
+                 "reply that claimed otherwise, in one or two short sentences, and do not repeat actions that need the student's approval. "
+                 "This is a text-only reply: no actions will run")
 # refusals / warnings whose action the agent's text probably reported as done; value-only warnings, stops, a busy Altium and the
 # guards' notes are not worth a second turn
 _FU_REFUSED = re.compile(r"^(netlist\.write|altium\.|library\.|jlc\.|order\.check|bom\.(?!check)|the reply's actions block)")
@@ -1478,6 +1479,8 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
             runlog.event("chat", phase="followup-actions-dropped", project=proj, kinds=dropped)
             print(f"[followup] follow-up actions dropped: {', '.join(dropped)}", file=sys.stderr, flush=True)
         reply = (res.get("reply") or "").strip()
+        if reply == "(no reply)":                   # agent.respond's placeholder for an empty answer
+            reply = ""
         tail = session_mod.load_chat(proj, sess)    # a message sent while it answered: the follow-up would land under the wrong question
         if (res.get("error") or res.get("partial") or fturn["cancel"].is_set() or not reply
                 or not tail or tail[-1].get("ts") != orig_rec["ts"]):
@@ -1486,12 +1489,14 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
             _followup_guard_note(proj, sess, notes)  # nothing else is stored; the first reply and its red refusals stay
             notes = []
             return
-        f_refused = [*(res.get("parse_refused") or []), *notes]
+        f_refused = list(notes)                     # only the guards' notes: a broken actions block of a text-only reply means nothing
         notes = []
         rec = {"ts": now(), "role": "agent", "followup": True, "text": reply, "applied": []}
         if f_refused:
             rec["refused"] = f_refused
             rec["text"] += "\n\n(Not applied: " + "; ".join(f_refused) + ")"
+        if dropped:                                 # its text must not pass as a claim that something ran
+            rec["text"] += "\n\n(Not run: follow-up replies do not run actions: " + ", ".join(dict.fromkeys(dropped)) + ")"
         for k in ("tools", "steps"):
             if res.get(k):
                 rec[k] = res[k]

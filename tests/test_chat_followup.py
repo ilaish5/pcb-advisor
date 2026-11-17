@@ -68,7 +68,8 @@ def test_a_refused_action_triggers_exactly_one_text_only_followup(server, empty,
     assert history[-1]["text"].startswith("Sheet 01 is written")
     assert len(seen) == 1                                           # A: the follow-up's actions were dropped, never applied
     f = followups(empty)[0]
-    assert f["text"] == "Sorry, the sheet was not written." and f["applied"] == [] and not f.get("proposals")
+    assert f["text"].startswith("Sorry, the sheet was not written.") and f["applied"] == [] and not f.get("proposals")
+    assert f["text"].endswith("(Not run: follow-up replies do not run actions: netlist.write, bom.propose)") and "text-only reply" in msg
 
 
 def test_which_refusals_and_warnings_are_worth_a_followup():
@@ -215,7 +216,7 @@ def test_the_followup_is_wrapped_in_both_guards_and_its_citations_are_verified(s
     assert wait_for(lambda: followups(empty)) and idle(server, empty)
     assert order == ["begin", "end", "begin", "end"]               # the first turn's guards, then the follow-up's
     f = followups(empty)[0]
-    assert any("cut off" in r for r in f["refused"])
+    assert "refused" not in f and "cut off" not in f["text"]                  # a parse problem of a text-only reply means nothing
     assert any(v.startswith("Not written [datasheet.pdf p.3]") for v in verified) and len(calls) == 2
 
 
@@ -239,6 +240,34 @@ def test_a_discarded_followup_still_reports_what_the_guards_restored(server, emp
     assert idle(server, empty)
     f = followups(empty)
     assert len(f) == 1 and "edited project files" in f[0]["refused"][0] and f[0]["text"].startswith("(Not applied: ")
+
+
+def test_an_empty_answer_placeholder_stores_nothing(server, empty, monkeypatch):
+    refuse_everything(monkeypatch)
+    calls = scripted_respond(monkeypatch, [{"reply": "done", "actions": [{"type": "x"}]}, {"reply": "(no reply)", "actions": []}])
+    assert call(server, "POST", "/api/chat", empty, {"text": "go"})[0] == 200
+    assert wait_for(lambda: len(calls) == 2) and idle(server, empty)
+    assert not followups(empty)
+
+
+def test_a_cancelled_followup_note_leaves_parse_refusals_out(server, empty, monkeypatch):
+    import serve
+    refuse_everything(monkeypatch)
+    monkeypatch.setattr(serve.project_guard, "end", lambda g: (["sheets/01.json"], []))
+    started = threading.Event()
+
+    def cancelled(cancel):
+        started.set()
+        cancel.wait(10)
+        return {"reply": "half", "actions": [], "parse_refused": ["the reply's actions block was cut off"]}
+
+    scripted_respond(monkeypatch, [{"reply": "done", "actions": [{"type": "x"}]}, cancelled])
+    assert call(server, "POST", "/api/chat", empty, {"text": "go"})[0] == 200
+    assert started.wait(5)
+    assert call(server, "POST", "/api/chat/stop", empty)[0] == 200
+    assert idle(server, empty)
+    f = followups(empty)
+    assert len(f) == 1 and len(f[0]["refused"]) == 1 and "cut off" not in f[0]["text"]
 
 
 def test_followup_ui_label_indicator_and_config_default():
