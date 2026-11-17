@@ -56,7 +56,7 @@ the one command that fixes each item; the same list is in the app under Settings
    check at jlcdfm.com and reads its report back.
 
 Every Altium step copies the file to `.advisor-backup` first. Parts whose pins no datasheet confirmed are listed under
-DFM > Unverified parts; the outputs are made anyway, with a warning.
+DFM > Unverified parts; the Altium outputs and the Gerber zip are not made until each one is verified against its datasheet or you accept it there.
 
 ## Run
 
@@ -69,6 +69,26 @@ The install comes with an example project, "LED chaser" (USB-C, NE555, CD4017, 1
 **Updates.** At every start the tool checks GitHub. When there is a new version, an **Update** button shows at the bottom left: it lists what changed, updates, and restarts by itself (your projects and settings are not touched; if the new version does not start, it goes back). This needs the `git clone` install; a ZIP install shows the download link instead. From a terminal: `.venv\Scripts\python pcb.py update`.
 
 Want to see a finished example first? Run `.venv\Scripts\python pcb.py seed` and open the project `lte-tracker`.
+
+## Capabilities and limits
+
+**What it does.** Draws the schematic, places the parts and routes the board in Altium, on two copper layers, up to about 60 parts.
+Placement keeps each decoupling capacitor within 3 mm of its supply pin and a crystal within 5 mm of its MCU pins. The router sets
+track width by the current you give a net (IPC-2221, neck-down at fine-pitch pads), routes a USB differential pair coupled when the
+clearances allow, adds a GND pour and checks it for islands and unjoined pads. The Altium DRC list is read in full: a report that
+is truncated or unreadable counts as "unchecked", never as clean.
+
+**What it refuses, and says so before routing:** copper on inner layers, BGA packages, pads of different nets closer than 0.4 mm,
+impedance or length-matching rules (other than the USB pair), and a board too big for the router.
+
+**Known limits.**
+- A 3x3 BGA is not recognised as a BGA, and a board with an empty inner layer is not detected as multilayer.
+- On the synthetic 60-part STM32 test board 43 of 45 nets are routed (see [docs/SUBMISSION.md](docs/SUBMISSION.md)): GND
+  falls back to tracks and fails there, and one signal (IO_PA7) has no way out of the LQFP fan-out. The USB pair is routed and
+  tied but not coupled on that board.
+- Automatic split of a design over several schematic sheets and multi-part symbols are not done.
+- The STM32 board has not yet been run live in Altium; the numbers come from the offline test.
+- A part whose pins no datasheet confirmed is drawn and marked "unverified"; the manufacturing files wait until you verify or accept it.
 
 ## Problems?
 
@@ -91,7 +111,7 @@ The zip holds the logs, your chat with the advisor, the setup check and your set
 ```
 
 Code: `scripts/serve.py` (server), `scripts/store.py` (project state), `scripts/agent.py` (agent actions), `ui/index.html` (UI).
-Docs: [architecture](docs/ARCHITECTURE.md), [engines](docs/ENGINES.md), [product plan](docs/PRODUCT-PLAN.md).
+Docs: [submission summary](docs/SUBMISSION.md), [architecture](docs/ARCHITECTURE.md), [engines](docs/ENGINES.md), [product plan](docs/PRODUCT-PLAN.md), [benchmark](docs/BENCHMARK.md), [status](docs/STATUS-2026-11-11.md).
 Windows verification still open: [docs/next-tasks/windows-verification.md](docs/next-tasks/windows-verification.md)
 (a brief for an agent on a Windows PC: everything that could only be checked there, with the results file it writes).
 Commands: `.venv\Scripts\python pcb.py --help` (macOS/Linux: `.venv/bin/python`). License: [MIT](LICENSE).
