@@ -797,9 +797,63 @@ def draw_schematic(project, sheet=None, replace=False):
     res = {"sheets": [str(d) for _, d, _, _ in plans], "parts": parts, "nets": sorted(nets), "warnings": warnings,
            "problems": problems, "backup": backup, "created": [str(d) for d in new_docs], "saved_first": saved_first,
            "renamed_nets": renamed}
+    if not problems:
+        res["stale"] = remove_stale_sheets(project, prj)
+        res["warnings"] += [f"{x['name']} was left in the project: {x['why']}" for x in res["stale"]["left"] if x["name"]]
     if problems:
         raise BridgeError(f"Drawn and saved {parts} parts, but the sheet does not match the netlist: " + "; ".join(problems[:6])
                           + (f" (+{len(problems) - 6} more)" if len(problems) > 6 else ""))
+    return res
+
+
+def _tool_made_sheets(project):
+    """Lower-cased file names of the SchDocs this tool created for the project (altium-log.jsonl: new-project, add-sheet, skeleton,
+    draw-schematic)."""
+    out = set()
+    for e in store.read_jsonl(store.pdir(project) / "altium-log.jsonl"):
+        names = list(e.get("created") or []) + list(e.get("documents") or []) + ([e["file"]] if e.get("file") else [])
+        out |= {pathlib.PureWindowsPath(str(n)).name.lower() for n in names if str(n).lower().endswith(".schdoc")}
+    return out
+
+
+def remove_stale_sheets(project, prj):
+    """After a draw: take out of the Altium project a SchDoc that (1) this tool created, (2) no sheet of the design points at any
+    more (a placeholder such as Main.SchDoc, or a sheet that was renamed when the netlist was split), and (3) holds nothing of a
+    design. Never a sheet with content, never one the student made. The file is copied to .advisor-backup, taken out of the
+    project, the saved PrjPcb is read again, and only when the document is really gone is the file deleted. Returns
+    {"removed": [names], "left": [{"name", "why"}]}; never raises."""
+    from altium.schdoc import is_blank_sheet
+    res = {"removed": [], "left": []}
+    try:
+        keep = {_find_doc(prj, sid) for sid, _t, _s in _sheets(project)}
+        keep = {os.path.normcase(str(d)) for d in keep if d}
+        made = _tool_made_sheets(project)
+        stale = []
+        for d in read_prjpcb(prj)["sheets"]:
+            doc = prj.parent / pathlib.Path(d.replace("\\", "/"))
+            if os.path.normcase(str(doc)) in keep or doc.name.lower() not in made or not doc.is_file():
+                continue
+            if is_blank_sheet(doc):
+                stale.append(doc)
+            else:
+                res["left"].append({"name": doc.name, "why": "it is not empty"})
+        if not stale:
+            return res
+        _backup(prj, stale + [prj])
+        run_commands([("PROJECT", str(prj))] + [("REMDOC", str(prj), str(d)) for d in stale] + [("SAVEPRJ", str(prj))])
+        still = {os.path.normcase(str(prj.parent / pathlib.Path(d.replace("\\", "/")))) for d in read_prjpcb(prj)["sheets"]}
+        for d in stale:
+            if os.path.normcase(str(d)) in still:
+                res["left"].append({"name": d.name, "why": "Altium did not take it out of the project: remove it in Altium (right-click > Remove from Project)"})
+            elif is_blank_sheet(d):          # re-checked: deleted only while still blank
+                d.unlink()
+                res["removed"].append(d.name)
+            else:
+                res["left"].append({"name": d.name, "why": "it changed meanwhile"})
+        if res["removed"]:
+            _log(project, "remove-stale-sheets", removed=res["removed"])
+    except (BridgeError, AltiumReadError, OSError, ValueError) as exc:
+        res["left"].append({"name": "", "why": f"the empty leftover sheets could not be checked or removed: {exc}"})
     return res
 
 
@@ -1326,6 +1380,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     try:
         from checks import board as board_checks
         res["drills"] = [f["message"] for f in board_checks.check_drills(saved)]
+        res["footprint_findings"] = [f["message"] for f in board_checks.check_footprint_rules(saved)]
     except Exception:
         pass
     probs += narrow                      # drawn narrow as agreed: the step is not finished
@@ -1442,10 +1497,11 @@ def route_pcb(project, replace=False, keep_partial=False):
     if res["problems"] or res["failed"] or not res["written"]:
         raise BridgeError(res["summary"] if not res["written"] else
                           "The route does not check out: " + "; ".join(res["problems"][:5])
+                          + f" Altium DRC, every rule: {res.get('drc_line') or 'unchecked'}."
                           + (" The board file was put back as it was before (backup kept)." if res["restored"]
                              else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
                              else f" Backup in {res['backup']}."))
-    res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"footprint: {m}" for m in res.get("footprint_findings", [])[:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
     return res
 

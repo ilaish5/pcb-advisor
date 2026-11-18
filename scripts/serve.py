@@ -468,8 +468,28 @@ _OTHER_ACTION = {      # words that name ANOTHER action: a self-do clause with o
     "place": re.compile(DRAW_WORD.pattern + "|" + ROUTE_WORD.pattern, re.I),
     "route": re.compile(DRAW_WORD.pattern + "|" + PLACE_WORD.pattern, re.I)}
 _CLAUSE = re.compile(r"[,;.!?\n]+|\s+(?=ו)|\s+(?:and|but|while|אבל)\s+", re.I)
-_STOP = re.compile(r"\bno\b|\bnope\b|\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?mind\b|\bcancel\b|\bdon[’']?t\b|\bdo not\b"
-                   r"|(?<!\w)(?:לא|חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב)(?!\w)|אל ת\S+", re.I)
+_STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?mind\b|\bcancel\b|\bdon[’']?t\b|\bdo not\b"
+                   r"|(?<!\w)(?:חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב)(?!\w)|אל ת\S+", re.I)
+_STOP_BARE = re.compile(r"^(?:no|nope|לא)(?!\w)", re.I)      # "no" is a stop only as a short reply or at the start of a clause
+
+
+class _Stops:
+    """The student's words that say no, wait or stop. The unambiguous words (stop, wait, don't, עצור ...) count anywhere; a bare
+    "no"/"לא" only as a short reply (the clause is at most three words: "no", "no thanks", "לא עכשיו"), never inside a sentence
+    such as "so that no signal net runs between the sheets"."""
+    @staticmethod
+    def search(text):
+        text = str(text or "")
+        if _STOP.search(text):
+            return True
+        for clause in _CLAUSE.split(text):
+            words = clause.strip().split()
+            if words and len(words) <= 3 and _STOP_BARE.match(words[0]):
+                return True
+        return False
+
+
+_STOP_ANY = _Stops()
 _SENT = re.compile(r"[^.!?\n]+[.!?]*")
 _FILLER = re.compile(r"^(?:(?:ok|okay|yes|yeah|sure|so|well|fine|כן|בסדר|אוקיי|טוב)[,\s]+)+", re.I)
 _QUESTION = re.compile(r"^(?:how|what|why|can|could|should|would|is|are|do|does|when|where|which|who|איך|מה|למה|האם|אפשר|כיצד|מתי|איפה)(?!\w)", re.I)
@@ -539,7 +559,7 @@ def _consent(kind, a, last_user, earlier=()):
     verdict = _self_verdict(kind, last_user)
     if verdict:
         return _self_text(kind, verdict)
-    if _STOP.search(str(last_user or "")):
+    if _STOP_ANY.search(last_user):
         return f"The student's last message says no, wait or stop. Do not {verb}; ask the student what they want first."
     for u in earlier:
         w = _consent_one(kind, a, u, True)
@@ -550,7 +570,7 @@ def _consent(kind, a, last_user, earlier=()):
         verdict = _self_verdict(kind, u)
         if verdict:
             return _self_text(kind, verdict)
-        if _STOP.search(u):
+        if _STOP_ANY.search(u):
             return f"The student said no, wait or stop after that. Do not {verb}; ask the student what they want first."
     return why
 
@@ -662,31 +682,59 @@ def bom_value_warning(project, a):
     return f' (warning: {a["line"]} has no value such as "5.1k" or "100nF"; the student sees only the MPN)'
 
 
-def _renumber_by_name(part, symbol):
-    """Rewrite the netlist pin numbers of a part from the symbol when every pin NAME matches exactly one symbol pin
-    (case-insensitive and unique both ways): by the exact name, else by another spelling of it (RESET for RST, ~RST,
-    and on a two-pin part K for "-"), see pinnames.py. True when done; False (part untouched) on any ambiguity or
-    unmatched name."""
+def _renumber_by_name(part, symbol, why=None):
+    """Rewrite the netlist pin numbers of a part from the symbol when every pin NAME matches the symbol's pins (case-insensitive:
+    by the exact name, else by another spelling of it (RESET for RST, ~RST, and on a two-pin part K for "-"), see pinnames.py).
+    A name the symbol has on several pins (USB-C: GND, VBUS, SHELL) is one electrical node: the net given to it (once, or on every
+    listing of that name, all alike) is connected to every pin of that name, so the part gets one netlist pin per symbol pin. Never
+    guessed: a name listed more than once with DIFFERENT nets, a name the symbol lacks, an alias that fits several pins, or one
+    symbol pin claimed by two names leave the part untouched. True when done; False otherwise, and the cause goes into the list
+    `why` when one is given."""
     import pinnames
     pins = part["pins"]
-    wanted = [str(p.get("name") or "").strip() for p in pins]
-    if not pins or not all(wanted) or len({w.upper() for w in wanted}) != len(wanted):
+
+    def fail(msg):
+        if why is not None:
+            why.append(f"{part.get('ref')}: {msg}")
         return False
+    wanted = [str(p.get("name") or "").strip() for p in pins]
+    if not pins or not all(wanted):
+        return fail("a netlist pin has no name and no number, so it cannot be matched to a pin of the library symbol")
     two = len(pins) == 2 and len(symbol["pins"]) == 2
-    chosen = []
-    for w in wanted:
-        hit = [lp for lp in symbol["pins"] if str(lp.get("name") or "").strip().upper() == w.upper()]
+    groups = {}
+    for p, w in zip(pins, wanted):
+        groups.setdefault(w.upper(), []).append(p)
+    names = [lp.get("name") for lp in symbol["pins"]]
+    claimed, plan = set(), []
+    for key, group in groups.items():
+        w = str(group[0].get("name")).strip()
+        hit = [lp for lp in symbol["pins"] if str(lp.get("name") or "").strip().upper() == key]
         if not hit:
             mine = pinnames.forms_among(w, wanted, two)
-            names = [lp.get("name") for lp in symbol["pins"]]
             hit = [lp for lp in symbol["pins"] if mine & pinnames.forms_among(lp.get("name"), names, two)]
-        if len(hit) != 1:
-            return False
-        chosen.append(str(hit[0]["number"]))
-    if len(set(chosen)) != len(chosen):
-        return False
-    for p, num in zip(pins, chosen):
-        p["number" if "number" in p and "num" not in p else "num"] = num
+            if len(hit) > 1:
+                return fail(f"pin name {w} fits several pins of library symbol {symbol['name']} "
+                            f"({', '.join(str(h['number']) for h in hit)}): give the pin number")
+        if not hit:
+            return fail(f"pin name {w} is not a pin of library symbol {symbol['name']}: give the pin number")
+        nets = {str(p.get("net") or "").strip().upper() for p in group}
+        if len(nets) > 1:
+            return fail(f"pin name {w} is listed {len(group)} times with different nets ({', '.join(sorted(nets))}), "
+                        f"and library symbol {symbol['name']} has {len(hit)} pins of that name: give the pin numbers")
+        if len(group) > len(hit):
+            return fail(f"pin name {w} is listed {len(group)} times, but library symbol {symbol['name']} has only {len(hit)} pin(s) of that name: give the pin numbers")
+        nums = [str(h["number"]) for h in hit]
+        if claimed & set(nums):
+            return fail(f"two pin names fit the same pin of library symbol {symbol['name']}: give the pin numbers")
+        claimed |= set(nums)
+        plan.append((group[0], nums))
+    new_pins = []
+    for p, nums in plan:
+        for num in nums:
+            q = dict(p)
+            q["number" if "number" in q and "num" not in q else "num"] = num
+            new_pins.append(q)
+    pins[:] = new_pins
     return True
 
 
@@ -718,10 +766,14 @@ def netlist_symbol_errors(project, data, notes=None):
         symbol = {"name": name, "pins": [{"number": p["num"], "name": p["name"]} for p in spec[name]["pins"]]}
         try:
             errs = draw.pin_nets(part, symbol)[2]
-            if errs and any("has no pin in library symbol" in e for e in errs) and _renumber_by_name(part, symbol):
+            cause = []
+            if errs and any("has no pin in library symbol" in e or "has no pin number" in e for e in errs) \
+                    and _renumber_by_name(part, symbol, cause):
                 errs = draw.pin_nets(part, symbol)[2]
                 if not errs and notes is not None:
                     notes.append(f"{part['ref']}: pin numbers taken from the library symbol {name} (matched by pin name)")
+            elif cause:
+                errs = [*cause, *errs]
         except (KeyError, TypeError, AttributeError):
             continue
         if errs:
@@ -792,7 +844,13 @@ def place_summary(res):
 
 
 def route_summary(res):
-    return f"{res['summary']}" + _warn_tail(res)
+    """The route's own summary, which carries Altium's DRC line with every rule and its count (not only the watched six in
+    drc_after); when a summary lacks it (a result from elsewhere), the line is added here."""
+    line = str(res.get("drc_line") or "")
+    s = str(res["summary"])
+    if line and line not in s:
+        s += f"; Altium DRC, every rule: {line}"
+    return s + _warn_tail(res)
 
 
 def library_build_summary(project, res):

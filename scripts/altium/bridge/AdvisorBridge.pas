@@ -13,7 +13,7 @@
 
   Commands:  PROJECT prj | SCH path | PCB path | SAVEPRJ prj | CLEAR path | PARAM path name value
              FRAME path x y w h text | TITLEBLOCK path | SAVE path | PING
-             RULE pcb kind name scope1 scope2 priority prop=value... | RULESIN pcb | ADDDOC prj path | OUTJOB path medium basepath
+             RULE pcb kind name scope1 scope2 priority prop=value... | RULESIN pcb | ADDDOC prj path | REMDOC prj path | OUTJOB path medium basepath
 
   Library commands (stage L2, see "project library" below):
              LIBCLOSE libpkg schlib pcblib intlib | FPBATCH pcblib spec | FPREMOVE pcblib name
@@ -469,6 +469,21 @@ begin
     end;
     P.DM_AddSourceDocument(Path);
     Log('added to project ' + Path);
+end;
+
+{ take a document out of the project (the file stays on disk; the caller checks the saved PrjPcb and deletes the file itself) }
+procedure RemoveDocument(Prj: String; Path: String);
+var
+    P : IDispatch;
+begin
+    P := GetWorkspace.DM_GetProjectFromPath(Prj);
+    if (P = nil) then
+    begin
+        Say('ERR project not open ' + Prj);
+        Exit;
+    end;
+    P.DM_RemoveSourceDocument(Path);
+    Log('removed from project ' + Path);
 end;
 
 { ======================================================================== project library (stage L2) }
@@ -2391,6 +2406,7 @@ begin
     else if (Cmd = 'RULE') then ApplyRule(Line)
     else if (Cmd = 'RULESIN') then RulesIn(Field(Line, 1))
     else if (Cmd = 'ADDDOC') then AddDocument(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'REMDOC') then RemoveDocument(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'OUTJOB') then RunOutJob(Field(Line, 1), Field(Line, 2), Field(Line, 3))
     else if (Cmd = 'LIBCLOSE') then LibClose(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
     else if (Cmd = 'FPBATCH') then LibFootprintsBatch(Field(Line, 1), Field(Line, 2))

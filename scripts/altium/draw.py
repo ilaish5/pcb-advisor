@@ -73,10 +73,20 @@ def pin_nets(part, symbol):
     ref = part["ref"]
     by_num = {}
     errors = []
+    unnumbered = []
     for p in part.get("pins", []):
-        by_num[str(p.get("num", p.get("number", "")) or "")] = p
+        n = str(p.get("num", p.get("number", "")) or "").strip()
+        if n:
+            by_num[n] = p
+        else:
+            unnumbered.append(p)
     lib_nums = {str(lp["number"]) for lp in symbol["pins"]}
     out, warn = [], []
+    for p in unnumbered:        # a pin with no number cannot be wired: say that, not "pin  has no pin in the symbol"
+        nm = str(p.get("name") or "").strip()
+        errors.append(f"{ref}: netlist pin {nm or '(no name)'} has no pin number" + (
+            f", and the name {nm} could not be matched by name to one pin of library symbol {symbol['name']}"
+            if nm else "") + ". Give the pin number")
     for num in by_num:
         if num not in lib_nums:
             errors.append(f"{ref}: netlist pin {num} ({by_num[num].get('name') or ''}) has no pin in library symbol {symbol['name']}")
@@ -420,8 +430,18 @@ def _too_big_message(cells, sections):
     shared = sorted(n for n in {x for v in nets.values() for x in v}
                     if n and net_kind(n) == "label" and sum(1 for g in groups if any(n in nets.get(sid, ()) for sid in g)) > 1)
 
+    titles = {s["id"]: str(s.get("title") or "").strip() for s in sections}
+    refs = {}
+    for sid, c in cells:
+        refs.setdefault(sid, []).append(str(c.get("ref") or ""))
+
     def label(sid):
-        return sid or "the design"
+        """What the student sees for a section: its title and the parts in it (never the internal section letter alone)."""
+        if not sid:
+            return "the design"
+        r = [x for x in refs.get(sid, []) if x]
+        shown = ", ".join(r[:6]) + (" ..." if len(r) > 6 else "")
+        return (titles.get(sid) or f"section {sid}") + (f" ({shown})" if shown else "")
     msg = (f"the design does not fit on one A4 sheet. It needs about {len(groups)} sheets: "
            + "; ".join(f"sheet {i}: {', '.join(label(x) for x in g)}" for i, g in enumerate(groups, 1)) + ". ")
     if too_big:

@@ -275,6 +275,13 @@ def convert_footprint(text):
 SILK_TO_PAD = 0.15                     # mm, JLC's silkscreen-to-pad clearance (pcb-capabilities: "Pad to silkscreen")
 SILK_DANGER = 5.0                      # mil: JLCDFM rates silk closer than this to a pad Danger (pcb-capabilities, 14/10)
 MIN_PIECE = 5.0                        # mil: a silk piece shorter than this after clipping is dropped
+# Altium measures silk to the MASK OPENING, not to the copper: the JLC preset's rules are a mask expansion of 2 mil per side and a
+# silk-to-solder-mask clearance of 6 mil (jlc_preset.py; a test keeps these two numbers equal to the preset's), so silk must stay
+# 8 mil from the copper edge or the board's own design rule check fails (218 violations on the first live STM32 board, silk 5 mil
+# from the mask). SILK_TO_PAD (JLC's fab limit, 0.15 mm = 5.9 mil) alone is not enough.
+MASK_EXPANSION_MIL = 2.0
+SILK_TO_MASK_MIL = 6.0
+SILK_TO_COPPER_MIL = max(SILK_TO_PAD / MM * 1000, MASK_EXPANSION_MIL + SILK_TO_MASK_MIL)    # silk edge to copper edge, mil
 
 
 def _pad_boxes(lines):
@@ -317,10 +324,10 @@ def _runs(points, ok):
 
 def clip_silk(lines):
     """Cut the top silkscreen of a vendor footprint (EasyEDA's USB-C and LED outlines run over their pads: JLC DFM flagged
-    them, 16/11) so no silk line is closer to the copper than JLCDFM's Danger limit (SILK_DANGER). A vendor outline between
-    that and SILK_TO_PAD (C0805's at 0.149 mm) stays: at most a DFM Warning, and JLC clips silk off pads itself; the generated
-    footprints keep SILK_TO_PAD + 0.02 mm. Lines and arcs are cut into the pieces that stay clear; pieces under MIN_PIECE
-    are dropped. Text, regions and other layers are left as they are."""
+    them, 16/11) so no silk line is closer to the copper than SILK_TO_COPPER_MIL: the mask expansion plus the silk-to-solder-mask
+    rule (SILK_DANGER, JLCDFM's Danger limit, is looser and would leave silk the board's own design rule check flags). The generated
+    footprints keep the same distance (partlib_generate.CLEAR). Lines and arcs are cut into the pieces that stay clear; pieces under
+    MIN_PIECE are dropped. Text, regions and other layers are left as they are."""
     boxes = _pad_boxes(lines)
     if not boxes:
         return lines
@@ -331,7 +338,7 @@ def clip_silk(lines):
             out.append(ln)
             continue
         w = float(f[5] if f[0] == "TRACK" else f[6])
-        need = SILK_DANGER + w / 2
+        need = max(SILK_DANGER, SILK_TO_COPPER_MIL) + w / 2
         if f[0] == "TRACK":
             x1, y1, x2, y2 = (float(v) for v in f[1:5])
             n = max(1, math.ceil(math.hypot(x2 - x1, y2 - y1)))            # a point per mil

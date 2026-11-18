@@ -112,16 +112,29 @@ def cmd_list(args):
 def cmd_show(args):
     import model
     m = model.write(args[0] if args else None)
-    t = m["totals"]
-    print(f"{m['project']}: idea {'confirmed' if m['idea']['confirmed'] else 'open'} · "
-          f"{t['lines']} BOM lines · {len(m['sheets'])} sheets")
-    print(f"  {t['parts']} parts to place · ${t['cost']:.2f} parts/board · "
-          f"{t['out_of_stock']} out of stock · {t['checking']} checking · {t['to_verify']} to verify")
-    for p in m["proposals"]:
-        if p["status"] == "pending":
-            print(f"  PENDING  {p['id']}  {p['line']}: {', '.join(p['changes'])}  ({p['reason'][:60]})")
-    for r in m["requirements"]:
-        print(f"  {'✓' if r['ok'] else '·' if r['ok'] is None else '✗'} {r['text']} {r['detail']}")
+    print(chr(10).join(show_lines(m)))
+
+
+def show_lines(m):
+    """The lines `show` prints. Tolerant of a model (or idea) that lacks a key: an older or newer project has no
+    requirements, no totals or no proposals, and that is no reason to crash."""
+    t = m.get("totals") or {}
+    idea = m.get("idea") or {}
+    out = [f"{m.get('project', '?')}: idea {'confirmed' if idea.get('confirmed') else 'open'} · "
+           f"{t.get('lines', 0)} BOM lines · {len(m.get('sheets') or [])} sheets",
+           f"  {t.get('parts', 0)} parts to place · ${float(t.get('cost') or 0):.2f} parts/board · "
+           f"{t.get('out_of_stock', 0)} out of stock · {t.get('checking', 0)} checking · {t.get('to_verify', 0)} to verify"]
+    for p in m.get("proposals") or []:
+        if p.get("status") == "pending":
+            out.append(f"  PENDING  {p.get('id', '?')}  {p.get('line', '?')}: {', '.join(p.get('changes') or [])}  "
+                       f"({str(p.get('reason') or '')[:60]})")
+    reqs = m.get("requirements") or idea.get("requirements") or []
+    for r in reqs if isinstance(reqs, list) else []:
+        if not isinstance(r, dict):
+            continue
+        ok = r.get("ok")
+        out.append(f"  {'✓' if ok else '·' if ok is None else '✗'} {r.get('text', '')} {r.get('detail', '')}")
+    return out
 
 
 def cmd_seed(args):

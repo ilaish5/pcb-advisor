@@ -64,6 +64,7 @@ JLC_MIN_VIA_RING_MM = 0.05     # via ring follows the via diameter rule (diamete
 JLC_MIN_PTH_RING_MM = 0.15     # absolute min plated pad ring (multilayer 1 oz); 2-layer 1 oz is 0.18, 0.25 recommended
 JLC_MIN_PTH_RING_2L_MM = 0.18
 JLC_MIN_NPTH_MM = 0.50         # smallest non-plated hole
+JLC_MIN_MASK_DAM_MM = 0.10     # smallest solder mask bridge, 1 oz green (pcb-capabilities)
 
 
 def is_connector(comp: dict[str, Any]) -> bool:
@@ -372,6 +373,7 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
     findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm))
     findings.extend(check_cpl_rotation_sanity(doc))
     findings.extend(check_drills(doc))
+    findings.extend(check_footprint_rules(doc))
 
     return {
         "file": doc.get("file", ""),
@@ -419,6 +421,88 @@ def check_drills(doc: dict[str, Any]) -> list[dict[str, Any]]:
             add("via_too_small", None, f"{where}: diameter {dia:g} mm is below the JLC minimum {JLC_MIN_VIA_DIA_MM:g} mm.", ev)
         elif round((dia - hole) / 2, 4) < JLC_MIN_VIA_RING_MM:
             add("annular_ring_too_thin", None, f"{where}: ring {round((dia - hole) / 2, 4):g} mm is below the JLC via minimum {JLC_MIN_VIA_RING_MM:g} mm.", ev)
+    return out
+
+
+def _rule_mm(doc, kind, attr, scope_has=None):
+    """The value in mm of a board rule attribute ('10mil', '0.254mm'), the strictest (largest) one for annular ring / sliver, or None."""
+    vals = []
+    for r in doc.get("rules") or []:
+        if r.get("RULEKIND") != kind or str(r.get("ENABLED", "TRUE")).upper() != "TRUE":
+            continue
+        if scope_has and scope_has.lower() not in str(r.get("SCOPE1EXPRESSION", "")).lower():
+            continue
+        m = re.fullmatch(r"\s*(-?[\d.]+)\s*(mil|mm|um)?\s*", str(r.get(attr, "")))
+        if m:
+            v = float(m.group(1))
+            vals.append(v * {"mil": 0.0254, "um": 0.001}.get(m.group(2), 1.0))
+    return max(vals) if vals else None
+
+
+def _pad_box(p):
+    sx, sy = p.get("sx_mm") or 0, p.get("sy_mm") or 0
+    if round(float(p.get("rot") or 0)) % 180 == 90:
+        sx, sy = sy, sx
+    return p["x_mm"] - sx / 2, p["y_mm"] - sy / 2, p["x_mm"] + sx / 2, p["y_mm"] + sy / 2
+
+
+def check_footprint_rules(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the footprints of the board cannot meet of the board's OWN rules (the rules the JLC preset imported), found in the saved
+    file before Altium's design rule check says so: (1) a plated pad whose ring is thinner than the Minimum Annular Ring rule for pads;
+    (2) top-layer pads so close that the mask dam left between their openings (gap minus twice the Solder Mask Expansion) is below the
+    Minimum Solder Mask Sliver rule. Both come from the part's footprint, not from the routing, so each finding names the part and a
+    way forward. Silently nothing when the file has no such rule."""
+    out = []
+    ring_rule = _rule_mm(doc, "MinimumAnnularRing", "MINIMUMRING", "IsPad")
+    if ring_rule is not None:
+        bad = {}
+        for p in doc.get("drilled_pads") or []:
+            hole, size = p.get("hole_mm") or 0, p.get("min_size_mm") or 0
+            if not p.get("plated") or size <= hole:
+                continue                       # (no ring at all is check_drills' error)
+            ring = (size - hole) / 2
+            if ring < ring_rule - 1e-4:
+                bad.setdefault(p.get("ref") or "?", []).append((p, ring))
+        for ref, rows in sorted(bad.items()):
+            p0, ring = rows[0]
+            hole = p0.get("hole_mm") or 0
+            need = round(hole + 2 * ring_rule, 3)
+            names = ", ".join(str(p.get("name") or "?") for p, _ in rows[:6])
+            out.append({"id": "footprint_ring_below_rule", "severity": "warning", "refs": [ref],
+                        "message": (f"{ref}: pad(s) {names} have an annular ring of {ring:.3f} mm, below the board's rule {ring_rule:.3f} mm "
+                                    f"(JLC itself needs {JLC_MIN_PTH_RING_MM:g} mm); it is the footprint that comes with the part (LCSC / EasyEDA), "
+                                    f"not the routing. Way forward: enlarge the copper of those pads to at least {need:g} mm in the PcbLib "
+                                    f"footprint (hole {hole:g} mm), choose a part whose footprint has larger pads, or accept it knowing JLC can make "
+                                    f"it and Altium's design rule check will keep reporting it"),
+                        "evidence": f"ring {ring:.3f} mm < rule {ring_rule:.3f} mm"})
+    sliver = _rule_mm(doc, "MinimumSolderMaskSliver", "MINSOLDERMASKWIDTH")
+    exp = _rule_mm(doc, "SolderMaskExpansion", "EXPANSION") or 0.0
+    if sliver is not None:
+        pads = [p for p in doc.get("pads") or [] if p.get("layer") == 1 and p.get("x_mm") is not None and p.get("ref")]
+        boxes = [(p, _pad_box(p)) for p in pads]
+        bad = {}
+        for i, (a, ba) in enumerate(boxes):
+            for b, bb in boxes[i + 1:]:
+                if a["ref"] != b["ref"]:
+                    continue                   # between parts is placement, within one part is the footprint
+                dx = max(bb[0] - ba[2], ba[0] - bb[2], 0.0)
+                dy = max(bb[1] - ba[3], ba[1] - bb[3], 0.0)
+                gap = math.hypot(dx, dy)
+                dam = gap - 2 * exp
+                if 0 < gap and 0 < dam < sliver - 1e-4:
+                    bad.setdefault(a["ref"], []).append((dam, gap))
+        for ref, rows in sorted(bad.items()):
+            dam, gap = min(rows)
+            ok_exp = max(round((gap - sliver) / 2, 3), 0.0)
+            out.append({"id": "footprint_mask_sliver", "severity": "warning", "refs": [ref],
+                        "message": (f"{ref}: {len(rows)} pad pair(s) leave a solder mask dam of only {dam:.3f} mm (pad gap {gap:.3f} mm minus "
+                                    f"2 x the {exp:g} mm mask expansion), below the board's rule {sliver:.3f} mm"
+                                    + (f" and JLC's {JLC_MIN_MASK_DAM_MM:g} mm" if dam < JLC_MIN_MASK_DAM_MM
+                                       else f" (JLC's own minimum {JLC_MIN_MASK_DAM_MM:g} mm is met: the rule is the preset's stricter value)")
+                                    + f". It is the fine pitch of the footprint (comes with the part), not the routing. Way forward: give those pads "
+                                      f"a smaller Solder Mask Expansion in the footprint (at most {ok_exp:g} mm per side keeps the dam), or choose a "
+                                      f"part with a wider pad pitch"),
+                        "evidence": f"dam {dam:.3f} mm < rule {sliver:.3f} mm"})
     return out
 
 

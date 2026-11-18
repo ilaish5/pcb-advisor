@@ -430,13 +430,13 @@ def _silk(lines):
     return [ln.split("|") for ln in lines if ln.endswith("Top Overlay")]
 
 
-def test_vendor_silk_over_a_pad_is_cut_and_a_line_just_short_of_015_stays():
+def test_vendor_silk_over_a_pad_is_cut_and_a_line_8_mil_clear_stays():
     # JLC DFM of 16/11 (Dark sensor LED): EasyEDA's USB-C and LED outlines ran over their pads, "Silkscreen to pad" Danger
     mod = """(module "x:SILK" (layer F.Cu)
   (pad 1 smd rect (at -1 0 0) (size 1 1) (layers F.Cu F.Paste F.Mask))
   (pad 2 smd rect (at 1 0 0) (size 1 1) (layers F.Cu F.Paste F.Mask))
   (fp_line (start -2 0) (end 2 0) (layer F.SilkS) (width 0.15))
-  (fp_line (start -2 0.774) (end 2 0.774) (layer F.SilkS) (width 0.15))
+  (fp_line (start -2 0.8) (end 2 0.8) (layer F.SilkS) (width 0.15))
   (fp_circle (center -1 0) (end -0.97 0) (layer F.SilkS) (width 0.15))
   (fp_line (start -2 0) (end 2 0) (layer F.Fab) (width 0.1))
 )"""
@@ -450,11 +450,11 @@ def test_vendor_silk_over_a_pad_is_cut_and_a_line_just_short_of_015_stays():
             px, py = x1 + (x2 - x1) * t, y1 + (y2 - y1) * t
             for cx, cy, hx, hy in pads_:
                 gap = math.hypot(max(abs(px - cx) - hx, 0), max(abs(py - cy) - hy, 0)) - w / 2
-                assert gap >= 5.0 - 1e-6, (f, gap)
+                assert gap >= conv.SILK_TO_COPPER_MIL - 1e-6, (f, gap)      # mask expansion + silk-to-mask rule
     mid = sorted((float(f[1]), float(f[3])) for f in silk if float(f[2]) == 0)
     assert len(mid) == 3                                            # left stub, centre gap piece, right stub
-    assert any(float(f[2]) == pytest.approx(-0.774 * MM, abs=0.01) and float(f[1]) == pytest.approx(-2 * MM, abs=0.01)
-               and float(f[3]) == pytest.approx(2 * MM, abs=0.01) for f in silk)     # 0.149 mm from the pads: kept whole
+    assert any(float(f[2]) == pytest.approx(-0.8 * MM, abs=0.01) and float(f[1]) == pytest.approx(-2 * MM, abs=0.01)
+               and float(f[3]) == pytest.approx(2 * MM, abs=0.01) for f in silk)     # 0.225 mm (8.9 mil) from the pads: kept whole
     assert [ln for ln in fp["lines"] if ln.endswith("Mechanical Layer 13")]           # other layers untouched
 
 
@@ -473,11 +473,23 @@ def test_vendor_silk_arcs_are_cut_by_angle():
 
 def test_clip_silk_takes_a_backwards_arc_and_a_hole_bigger_than_its_pad():
     arc = "ARC|0|0|40|300|60|6.0|Top Overlay"                                         # counter-clockwise through 0
-    assert _silk(conv.clip_silk(["PAD|1|0|40|0|Top Layer|1|0|0|0|0|20|20|2|", arc])) == [arc.split("|")]   # clear: as it was
+    clear = "ARC|0|0|40|300|45|6.0|Top Overlay"
+    assert _silk(conv.clip_silk(["PAD|1|0|40|0|Top Layer|1|0|0|0|0|20|20|2|", clear])) == [clear.split("|")]   # clear: as it was
     arcs = _silk(conv.clip_silk(["PAD|1|40|0|0|Top Layer|1|0|0|0|0|20|20|2|", arc]))  # a pad at 0 deg cuts it in two
     assert len(arcs) == 2 and all(0 <= float(f[4]) < 360 and float(f[5]) > float(f[4]) for f in arcs)
-    assert 60 < sum(float(f[5]) - float(f[4]) for f in arcs) < 115
+    assert 50 < sum(float(f[5]) - float(f[4]) for f in arcs) < 115
     npth = "PAD||0|0|0|Multi-Layer|0|60|0|0|0|20|20|1|"                               # 60 mil hole, 20 mil copper
     kept = _silk(conv.clip_silk([npth, "TRACK|-50|0|50|0|6.0|Top Overlay"]))
     assert len(kept) == 2                                                             # one piece each side
-    assert all(min(abs(float(f[1])), abs(float(f[3]))) >= 30 + 5 + 3 - 0.01 for f in kept)   # cut by the hole, not the copper
+    assert all(min(abs(float(f[1])), abs(float(f[3]))) >= 30 + conv.SILK_TO_COPPER_MIL + 3 - 0.01 for f in kept)   # cut by the hole, not the copper
+
+
+def test_silk_clearance_covers_the_mask_expansion_and_the_silk_to_mask_rule_of_the_jlc_preset():
+    """Altium measures silk to the mask opening: the generator's distance must be the preset's mask expansion plus its
+    silk-to-solder-mask clearance, or the board's own DRC fails (218 violations on the first live STM32 board)."""
+    import jlc_preset
+    rules = {r["kind"]: r["attributes"] for r in jlc_preset.build_preset()["rules"]}
+    exp = float(rules["SolderMaskExpansion"]["EXPANSION"].replace("mil", ""))
+    gap = float(rules["SilkToSolderMaskClearance"]["MINSILKSCREENTOMASKGAP"].replace("mil", ""))
+    assert conv.MASK_EXPANSION_MIL == exp and conv.SILK_TO_MASK_MIL == gap
+    assert conv.SILK_TO_COPPER_MIL >= exp + gap

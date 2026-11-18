@@ -11,7 +11,7 @@ Footprints are built in mm with y up (Altium axes) and written in mil, relative 
 import math
 import re
 
-from partlib_convert import MM, MIN_SILK, SILK_TO_PAD, snap_symbol
+from partlib_convert import MM, MIN_SILK, SILK_TO_PAD, SILK_TO_COPPER_MIL, snap_symbol
 
 # chip body width, body height -- mm
 CHIPS = {"0402": (1.0, 0.5), "0603": (1.6, 0.8), "0805": (2.0, 1.25), "1206": (3.2, 1.6)}
@@ -82,7 +82,7 @@ def _rect(x1, y1, x2, y2, layer, w):
             _track(x2, y2, x1, y2, layer, w), _track(x1, y2, x1, y1, layer, w)]
 
 
-CLEAR = SILK_TO_PAD + 0.02 + MIN_SILK / MM / 2      # copper edge to the centre of a silk line, 0.02 mm to spare
+CLEAR = SILK_TO_COPPER_MIL * 0.0254 + 0.02 + MIN_SILK / MM / 2      # copper edge to the centre of a silk line: mask expansion + silk-to-mask rule, 0.02 mm to spare
 DOT_R = 0.12                            # pin-1 dot radius, mm
 
 
@@ -118,7 +118,7 @@ _FAMILY_NAME = {"R": "CHIP", "C": "C-CHIP", "L": "L-CHIP", "LED": "LED-CHIP", "D
 
 def _cathode_bar(cx, pw, y):
     """A silk bar beyond pad 1 (the cathode, as the symbol draws pin 1 and KiCad's LED/diode footprints mark it),
-    its edge SILK_TO_PAD + 0.02 mm clear of the copper (CLEAR)."""
+    its edge SILK_TO_COPPER_MIL + 0.02 mm clear of the copper (CLEAR)."""
     bx = -cx - pw / 2 - CLEAR
     return _track(bx, -y, bx, y, "Top Overlay")
 

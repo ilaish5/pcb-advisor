@@ -274,3 +274,19 @@ def read_schdoc(path) -> dict:
         "system_font": int(recs[1].get("SYSTEMFONT", "1")) if len(recs) > 1 else 1,
         "record_counts": record_counts,
     }
+
+
+
+def is_blank_sheet(path) -> bool:
+    """True only when the SchDoc holds nothing of a design: no part, wire, label, port, power port, junction, NC cross, and no other
+    object than the text frames and parameters the tool's own skeleton puts on a sheet. An unreadable file is not blank."""
+    p = pathlib.Path(path)
+    try:
+        with open_doc(p) as ole:
+            blob = stream(ole, "FileHeader")
+        recs = text_records(blob, prefix=0)
+    except (AltiumReadError, OSError):
+        return False
+    if not recs:
+        return False
+    return all(r.get("RECORD") in ("28", "41") for r in recs[1:])
