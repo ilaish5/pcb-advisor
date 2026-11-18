@@ -31,7 +31,7 @@ def test_a_part_in_the_schematic_but_not_in_the_bom_is_named(empty):
     _sheet(empty, ["R1", "R2", "C1", "U4"])
     c = store.bom_design_count(empty)
     assert c["only_in_design"] == ["U4"] and c["only_in_bom"] == []
-    assert c["message"] == "BOM lists 3 parts, the schematic has 4: U4 is in the schematic but not in the BOM"
+    assert c["message"] == "3 designators in the BOM (DNP and test points included), 4 in the schematic: U4 is in the schematic but not in the BOM"
     import model
     assert model.build(empty)["bom_count_check"] == c
 
@@ -138,3 +138,20 @@ def test_the_page_offers_the_second_button_and_sends_keep_partial():
     assert "Route the rest and leave ' + n.partial.join(', ') + ' open'" in js
     assert "keep_partial: true" in js and "partial: r && Array.isArray(r.partial_offer)" in js
     assert "d.partial === '1'" in js
+
+
+# ---- BOM page: pending proposals, readable cards, auto stock check, tooltips
+
+
+
+def test_bom_page_wiring_for_pending_proposals_and_stock():
+    assert "bomPending()" in BOM_JS and "bom-approve-pending" in BOM_JS and "waiting for your approval" in BOM_JS
+    assert "bomAutoCheck" in BOM_JS and "priced lines only" in BOM_JS
+    assert "No symbol or footprint" in BOM_JS and "more problem" in BOM_JS
+
+
+def test_group_card_lists_fields_not_raw_text():
+    import pathlib
+    chat = (pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / "chat.js").read_text(encoding="utf-8")
+    assert "propSummaryHTML(p)" in chat and "esc(propSummary(p))" not in chat
+    assert "bomAutoCheck" in chat
