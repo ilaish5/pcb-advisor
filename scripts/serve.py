@@ -2595,6 +2595,8 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(n) or b"{}")
         except json.JSONDecodeError:
             return self._send(400, {"error": "bad json"})
+        if not isinstance(data, dict) and path != "/api/log/usage":
+            return self._send(400, {"error": "The request body must be a JSON object."})     # every handler below reads data.get(...)
 
         def state():
             m = model.build(project=proj, session=sess)
@@ -3357,7 +3359,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"memory": text, "trimmed": trimmed})
 
         if path == "/api/projects/new":
-            name = (data.get("name") or "").strip() or "untitled"
+            name = str(data.get("name") or "").strip()
+            if not name:
+                return self._send(400, {"error": "Give the project a name"})
             wanted = workspace.safe_name(name)          # the folder name this text gives
             if project_mod.exists(wanted) and not data.get("allow_copy"):
                 # never a silent "name-2": the page asks whether to open the one that is there

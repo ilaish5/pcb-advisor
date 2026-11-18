@@ -81,7 +81,7 @@ def _existing(name):
         have = [r["name"] for r in project.list_all()]
         print(f"no project named {name if name is not None else safe}. "
               + (f"Existing: {', '.join(have)}" if have else "None yet - see: python3 pcb.py list"), file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(2)         # an unknown name is a usage error, like a bad option
     return safe
 
 
@@ -327,6 +327,8 @@ def cmd_trace(args):
         return 2
     if not args:
         return bad()
+    if len(args) % 2 == 0:          # amps plus flag/value pairs: an odd one out is a flag with no value
+        return bad(f"{args[-1]} needs a value")
     opts = dict(zip(args[1::2], args[2::2]))
     # unstated options come from the board you are actually designing
     board = project.board(_existing(opts.get("--project")) if "--project" in opts else workspace.default_project())

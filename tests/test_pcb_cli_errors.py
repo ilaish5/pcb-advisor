@@ -37,7 +37,7 @@ def test_bench_bad_only(pcb, monkeypatch, capsys):
 @pytest.mark.parametrize("cmd", ["show", "check", "outputs", "usage", "timeline", "chats", "reset"])
 def test_unknown_project_not_created(pcb, monkeypatch, capsys, cmd):
     code = run(pcb, monkeypatch, cmd, "nosuchproject")
-    assert code not in (0, None)
+    assert code == 2
     assert "no project named nosuchproject" in capsys.readouterr().err
     assert not (workspace.projects_dir() / "nosuchproject").exists()
 
@@ -59,3 +59,8 @@ def test_trace_rejects_bad_input(pcb, monkeypatch, capsys, argv):
 def test_trace_good(pcb, monkeypatch, capsys):
     assert run(pcb, monkeypatch, "trace", "1.5") in (0, None)
     assert "mm" in capsys.readouterr().out
+
+
+def test_trace_flag_without_value_is_usage_error(pcb, monkeypatch, capsys):
+    assert run(pcb, monkeypatch, "trace", "1.5", "--layer") == 2
+    assert "usage: pcb.py trace" in capsys.readouterr().err
