@@ -54,7 +54,7 @@ function bomProblems(l, q, b) {
   // A model still to review is the normal state of a new or imported BOM: the meta line counts those, the Library page
   // lists them. Only a missing model is a problem worth a tag on the row.
   if (l.library === 'missing') out.push({rank: 4, text: 'No model', tone: 'warn', title: 'No symbol or footprint in your Altium library for this part yet. Open the Library page and add or import one, or ask the agent to.'});
-  if (l.pins_status === 'unverified') out.push({rank: 6, text: 'unverified', title: 'Pins from the agent; add the datasheet to verify'});
+  if (l.pins_status === 'unverified') out.push({rank: 6, text: 'unverified', title: l.pins_issues || 'Pins not checked against a datasheet'});
   if (l.pins_status === 'mismatch') out.push({rank: 3, text: 'pins conflict', tone: 'warn', title: 'Pins differ from the datasheet: ' + (l.pins_issues || '')});
   return out.sort((a, c) => a.rank - c.rank);
 }

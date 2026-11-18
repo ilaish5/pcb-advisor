@@ -191,7 +191,7 @@ onChange(t => t.dataset && t.dataset.attachDoc !== undefined, async e => {
   toast(attachMsg(r.attached));
 });
 function attachMsg(a) {
-  return `${a.name} -> ${refsLabel(a.refs)}, ` + (a.status === 'verified' ? 'pins verified' : a.status === 'mismatch' ? 'pins conflict: ' + a.issues : 'nothing to check yet');
+  return `${a.name} -> ${refsLabel(a.refs)}, ` + (a.status === 'verified' ? 'pins verified' : a.status === 'mismatch' ? 'pins conflict: ' + a.issues : 'not verified: ' + (a.issues || 'the pins were not checked'));
 }
 // a document the server just added shows where it landed: the new row is scrolled to and flashes once;
 // what the matcher did with it is said in a toast, and a file nobody claimed gets a question
@@ -201,7 +201,7 @@ async function srcAdded(st) {
   if (st.matched || st.unmatched) {
     srcUnmatched = st.unmatched || [];
     const m = st.matched || [];
-    if (m.length) setTimeout(() => toast(m.map(x => `${x.name} -> ${x.ref}, ` + (x.status === 'verified' ? 'pins verified' : x.status === 'mismatch' ? 'pins conflict: ' + x.issues : 'linked')).join('; ')), 50);
+    if (m.length) setTimeout(() => toast(m.map(x => `${x.name} -> ${x.ref}, ` + (x.status === 'verified' ? 'pins verified' : x.status === 'mismatch' ? 'pins conflict: ' + x.issues : 'linked, not verified: ' + (x.issues || 'the pins were not checked'))).join('; ')), 50);
   }
   setState(st);
   if (fresh) hitSrc = fresh.name;

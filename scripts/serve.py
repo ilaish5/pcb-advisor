@@ -636,20 +636,50 @@ def earlier_student_messages(chat, kind, last_user=""):
     return out
 
 
-_TABLE_REFS = re.compile(r"^\s*\|\s*((?:[A-Z]{1,3}\d{1,3})(?:\s*,\s*[A-Z]{1,3}\d{1,3})+)\s*\|", re.M)
+_DESIG = r"[A-Z]{1,3}\d{1,3}(?!\w)(?!\.\d)"
+# two or more designators written together: "R1, R2", "C2/C3", "R1-R4", "R1–R4", "R1..R4"
+_REF_GROUP = re.compile(rf"(?<![\w.+-]){_DESIG}(?:\s*(?:,|/|-|–|\.\.)\s*{_DESIG})+")
+_REF_TOKEN = re.compile(rf"([A-Z]{{1,3}})(\d{{1,3}})(?!\w)(?!\.\d)|(-|–|\.\.)")
+_LISTED_LINE = re.compile(r"^\s*(?:\||[-*•]\s|\d{1,2}[.)]\s)")        # a table row or a list item: where a reply names its parts
+
+
+def _ref_groups(reply):
+    """[[designator, ...]] for each group of designators a table row or list item of the reply writes together, ranges expanded
+    ("R1-R3" -> R1, R2, R3; same letters, at most 32 apart). {{ref:R1}} tokens, bold and code marks are read as plain text."""
+    text = re.sub(r"\{\{ref:([^}|]+)\}\}", r"\1", str(reply or "")).replace("**", "").replace("`", "")
+    groups = []
+    for line in text.splitlines():
+        if not _LISTED_LINE.match(line):
+            continue
+        for m in _REF_GROUP.finditer(line):
+            refs, dash = [], False
+            for pre, num, sep in _REF_TOKEN.findall(m.group(0)):
+                if sep:
+                    dash = True
+                    continue
+                if dash and refs:
+                    p0, n0 = re.match(r"([A-Z]+)(\d+)", refs[-1]).groups()
+                    if p0 == pre and 0 < int(num) - int(n0) <= 32:
+                        refs += [f"{pre}{n}" for n in range(int(n0) + 1, int(num))]
+                refs.append(pre + num)
+                dash = False
+            groups.append(list(dict.fromkeys(refs)))
+    return groups
 
 
 def refs_missing_from_bom(project, reply):
-    """Designators that the first cell of a table row in the reply lists together ("| C1, C2 | 100nF |") but that no BOM line (nor a
-    pending BOM proposal) holds: one line proposed for several identical parts with only the first ref. [] when all are covered."""
-    named = [r.strip() for row in _TABLE_REFS.findall(reply or "") for r in row.split(",")]
-    if not named:
+    """Designators that a table row or list item of the reply names together with others ("| C1, C2 | 100nF |", "- R1, R2: 5.1k",
+    "R1-R4") but that no BOM line (nor a pending BOM proposal) holds, while another designator of the same group is held: one line
+    proposed for several identical parts with only the first ref (AGENTS.md: every part named in the reply table is in some line's
+    refs). A group none of whose names is in the BOM is left alone (pin names "PA9, PA10", "CC1/CC2"). [] when all are covered."""
+    groups = _ref_groups(reply)
+    if not groups:
         return []
     held = {r for l in store.bom_lines(project) for r in [l["key"], *(l.get("refs") or [])]}
     for p in store.proposals(project):
         if p.get("kind") == "bom" and p.get("status") == "pending":
             held |= {p.get("line"), *((p.get("changes") or {}).get("refs") or [])}
-    return [r for r in dict.fromkeys(named) if r not in held]
+    return list(dict.fromkeys(r for g in groups if any(r in held for r in g) for r in g if r not in held))
 
 
 _WARN_RE = re.compile(r"\(\s*(?:\d+\s+)?warnings?:\s*(.*)\)\s*$|WARNING:\s*(.*)$|(\(\d+ with issues\))|(missing [^()]*)|(Could not[^;]*)", re.I | re.S)
@@ -2386,7 +2416,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._send(500, {"error": str(exc)})
         if path == "/api/final/unverified":
-            return self._send(200, {"unverified": store.unverified_parts(self.project())})
+            return self._send(200, store.recheck_pins(self.project()))
         if path == "/api/final/incomplete":
             return self._send(200, store.sheet_gaps(self.project()))
         if path == "/api/checks":

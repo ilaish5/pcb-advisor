@@ -355,9 +355,16 @@ def bom(project, write=True):
         if lcsc_sup.get("datasheet_url") and not l.get("datasheet_url"):
             l["datasheet_url"] = lcsc_sup["datasheet_url"]
     if write:
+        # only a real change is written: the page reads the state (and so this) on every view, which must not touch the file
         p = pdir(project) / "bom.json"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        _write_text(p, json.dumps(lines, ensure_ascii=False, indent=2))
+        text = json.dumps(lines, ensure_ascii=False, indent=2)
+        try:
+            same = p.read_text(encoding="utf-8") == text
+        except (OSError, UnicodeDecodeError):
+            same = False
+        if not same:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            _write_text(p, text)
     return lines
 
 
@@ -1704,6 +1711,7 @@ def save_idea_from_draft(project, by="student"):
         _push_idea_version(project, saved, "before first save", "the idea as it was before drafts")
     keep = {k: saved[k] for k in ("confirmed", "confirmed_at") if k in saved}
     draft.update(keep)
+    board_from_text(draft)
     save_idea(project, draft)
     _push_idea_version(project, draft, by, f"{changes} change{'s' if changes != 1 else ''} saved")
     revert_idea_draft(project)
@@ -1947,7 +1955,25 @@ def confirm_idea(project):
         idea = load_idea(project)
     idea["confirmed"] = True
     idea["confirmed_at"] = now()
+    board_from_text(idea)
     return save_idea(project, idea)
+
+
+def board_from_text(idea):
+    """Store in idea["board"] the board size the idea's own text states ("board 30x25", "לוח 3x2 ס"מ"; altium.layout.board_size), so
+    the Board size fields and placement read one stored value. Marked "source": "text" and read again on every save/confirm, so an
+    edited requirement moves it; a size the student typed (set_board_size, no source) is never replaced. No size in the text: a size
+    read from the text earlier is dropped, nothing is guessed."""
+    b = idea.get("board")
+    if isinstance(b, dict) and b.get("width_mm") and b.get("height_mm") and b.get("source") != "text":
+        return idea
+    from altium import layout
+    size = layout.board_size({k: v for k, v in idea.items() if k != "board"})
+    if size:
+        idea["board"] = {"width_mm": size[0], "height_mm": size[1], "source": "text"}
+    elif isinstance(b, dict) and b.get("source") == "text":
+        idea.pop("board", None)
+    return idea
 
 
 # ---------------------------------------------------------------- diagram history & edit
@@ -2802,6 +2828,8 @@ def pins_status(line, entry, project=None):
         if entry.get("verify") == "mismatch":
             return "mismatch", entry.get("issues", "")
         if conn:
+            if line.get("datasheet") and entry.get("verify") == "unchecked" and entry.get("issues"):
+                return "unverified", _unchecked_reason(line, entry)
             if line.get("datasheet"):
                 return "unverified", f"{refs[0]}: {line['datasheet']} is linked, but the pin numbers and names are not verified yet"
             return "unverified", f"{refs[0]}: no datasheet linked, the pin numbers and names were never verified"
@@ -2816,7 +2844,18 @@ def pins_status(line, entry, project=None):
         return ("accepted" if entry.get("pins_accepted") else "mismatch"), entry.get("issues", "")
     if entry.get("pins_accepted"):
         return "accepted", ""
-    return "unverified", ""
+    if entry.get("verify") == "unchecked" and entry.get("issues"):
+        return "unverified", _unchecked_reason(line, entry)
+    if line.get("datasheet"):
+        return "unverified", f"{line['datasheet']} is linked, but the pins are not checked against it yet: press Re-check datasheets"
+    return "unverified", "no datasheet linked: the pins are from the agent; add the datasheet to verify them"
+
+
+def _unchecked_reason(line, entry):
+    """Why a part whose datasheet check could not decide stays unverified: the check's own reason (library entry `issues`), said
+    the same way on every page (DFM Unverified parts, the BOM tag, the datasheet-link toast)."""
+    ds = line.get("datasheet")
+    return (f"{ds} is linked, but its pins could not be checked against it: " if ds else "") + str(entry["issues"])
 
 
 def _mark_pins_source(project, parts):
@@ -2857,9 +2896,10 @@ def _polarised_only(line):
     return bool(refs) and all(_prefix_of(r) in POLARISED_PREFIXES for r in refs)
 
 
-def unverified_parts(project, verify_new=True):
+def unverified_parts(project, verify_new=True, checked=None):
     """Every BOM line on a sheet whose pins are not verified or accepted. With verify_new, a datasheet that has
-    appeared since is used first (verify_part), which clears the mark or raises the conflicting pins."""
+    appeared since is used first (verify_part), which clears the mark or raises the conflicting pins. `checked`, a list,
+    receives one {line, refs, datasheet} per part checked again (what Re-check datasheets tells the student)."""
     if verify_new:
         auto_attach(project)           # a document that arrived by hand is matched to its part first
     lines = [l for l in bom(project, write=False) if l.get("on_sheet") and l.get("pins_status") in ("unverified", "mismatch")]
@@ -2873,11 +2913,35 @@ def unverified_parts(project, verify_new=True):
             if l["pins_status"] == "unverified" and (l.get("datasheet") or sources.find_for(project, l.get("mpn"))):
                 verify_part.verify(project, l["key"])
                 ran = True
+                if checked is not None:
+                    checked.append({"line": l["key"], "refs": l.get("refs", []),
+                                    "datasheet": l.get("datasheet") or sources.find_for(project, l.get("mpn")) or ""})
         if ran:
             refresh_pins_source(project)
             lines = [l for l in bom(project, write=False) if l.get("on_sheet") and l.get("pins_status") in ("unverified", "mismatch")]
     return [{"line": l["key"], "refs": l.get("refs", []), "mpn": l.get("mpn"), "status": l["pins_status"],
              "issues": l.get("pins_issues", "")} for l in lines]
+
+
+def recheck_pins(project):
+    """Re-check datasheets: unverified_parts with a verify of every part a datasheet is there for. {unverified: rows,
+    checked: [{line, refs, datasheet, status: verified|unverified|mismatch, issues}], message}: what was checked and what came
+    of it, in one sentence for the toast."""
+    ran = [{"line": m["line"], "refs": (_line_of(project, m["line"]).get("refs") or [m["ref"]]), "datasheet": m["name"]}
+           for m in auto_attach(project)["matched"]]           # a document that arrived by hand: linked and checked first
+    rows = unverified_parts(project, checked=ran)
+    left = {r["line"]: r for r in rows}
+    checked = [{**c, "status": left[c["line"]]["status"] if c["line"] in left else "verified",
+                "issues": left[c["line"]]["issues"] if c["line"] in left else ""} for c in ran]
+    if not checked:
+        msg = (f"No datasheet to check against: {len(rows)} {'part stays' if len(rows) == 1 else 'parts stay'} unverified "
+               "(add the datasheet in Sources, or accept the pins)") if rows else "Every part's pins are verified or accepted"
+    else:
+        said = [", ".join(c["refs"] or [c["line"]]) + " "
+                + {"verified": "pins verified", "mismatch": "pins conflict with " + (c["datasheet"] or "the datasheet")}.get(
+                    c["status"], "still unverified: " + c["issues"]) for c in checked]
+        msg = f"Checked {len(checked)} against {'its datasheet' if len(checked) == 1 else 'their datasheets'}: " + "; ".join(said)
+    return {"unverified": rows, "checked": checked, "message": msg}
 
 
 def manufacturing_warning(project):
@@ -2934,7 +2998,12 @@ def attach_datasheet(project, line_or_ref, doc_name, by="student"):
     if line.get("datasheet") != name:
         append(project, "bom-log.jsonl", {"ts": now(), "by": by, "line": line["key"], "changes": {"datasheet": name},
                                           "before": {"datasheet": line.get("datasheet")}})
-    return {"ok": True, "line": line["key"], "refs": line.get("refs", []), "name": name, **_verify_line(project, line["key"])}
+    res = {"ok": True, "line": line["key"], "refs": line.get("refs", []), "name": name, **_verify_line(project, line["key"])}
+    if res["status"] != "verified":           # the reason as pins_status says it, so the toast and the DFM list read the same
+        fresh = _line_of(project, line["key"])
+        why = pins_status(fresh, library_parts(project).get(fresh["key"]), project)[1]
+        res["issues"] = why or res["issues"]
+    return res
 
 
 def detach_datasheet(project, line_or_ref, by="student"):
