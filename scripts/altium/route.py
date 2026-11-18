@@ -40,14 +40,16 @@ POWER_WIDTH = 0.3          # rail nets are routed at least this wide when the bo
 NECK_MAX = 1.0             # a neck-down (a narrower track into a pad that cannot take the wanted width) is at most this long outside the pad, mm
 DEFAULT_EXPANSIONS = 4_000_000   # the cells all searches of one plan_routes together may expand (deterministic; the clock is a safety cap only)
 EXPANSIONS_PER_CELL = 20         # ... or this many per grid cell of the board, whichever is more
-MAX_RIPS = 3               # a net is ripped up at most this many times for the benefit of others
+MAX_RIPS = 5               # a net is ripped up at most this many times for the benefit of others
 ROUNDS = 8                 # rip-up rounds, at least; or this many per net that failed in the first pass
 ROUNDS_PER_FAILED = 2
 VIA_COST = 30.0
 CROSS_COST = 25.0          # relaxed search: entering a cell that holds another net's track (the nets to rip up are those crossed)
 CHECK_POPS = 5000          # a search that has expanded this many cells asks once whether a goal can be reached at all
+POUR_TIES = 3                 # times the pads that the pour does not reach are tied by tracks to the pads it does (each may move other nets)
 THRU_COST = 2.0            # a change of layer inside a through hole pad: no via, only the cost of leaving the layer
 TURN_45, TURN_90 = 0.3, 0.7
+_TO01 = bytes([48] + [49] * 255)                  # byte 0 -> '0', any other -> '1' (a cell array as a binary string)
 MARGINS = (0.05, 0.1, 0.2, 0.3, 0.45, 0.6)        # extra distance asked of a net that the exact check found too close to something
 _LEN = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*(mil|mm)?\s*$", re.I)
 _INNET = re.compile(r"InNet\s*\(\s*'([^']+)'\s*\)", re.I)
@@ -261,8 +263,10 @@ class Router:
         self.novia = bytearray(self.n)                  # cells where a via would sit in or too close to an SMD pad
         self.tht = {}                                   # net id -> cells of its through hole pads (a change of layer there needs no via)
         self.status = "none"                            # why the last astar() found nothing: none | limit | budget | time
+        self._cols = None                               # bit masks of the grid's columns (see _connected)
         self.pour_lenient = False                       # a poured net: a pad that cannot be joined is left out and named (pour_unjoined), not a failure
         self.pour_unjoined = []                         # [(pad tag, why)] of the last pour routing
+        self.pour_tree = {}                             # {(layer, cell): pad tag} of the copper the last pour routing drew or found (see _route_pour)
         self.tie = {}                                   # net -> {"items", "cells", "vias", "pads": (tag, tag)}: copper that joins two pads of the net
         self.spent = 0                                  # cells expanded by all searches so far
         self.cap = float("inf")                         # the most cells all searches together may expand (the deterministic limit)
@@ -525,10 +529,11 @@ class Router:
             came[k] = 8
             heapq.heappush(heap, (h(i), 0.0, k))
         pops = 0
-        dirs = list(enumerate(DIRS))
+        dirs = [(nd, dx, dy, SQ2 if dx and dy else 1.0) for nd, (dx, dy) in enumerate(DIRS)]
+        push, pop, bget = heapq.heappush, heapq.heappop, best.get
         while heap:
-            f, gc, k = heapq.heappop(heap)
-            if gc > best.get(k, 1e18) + 1e-9:
+            f, gc, k = pop(heap)
+            if gc > bget(k, 1e18) + 1e-9:
                 continue
             pops += 1
             self.spent += 1
@@ -556,7 +561,7 @@ class Router:
             bl, wl = base[l], wide[l]
             d = came[k]
             fl = foreign[l]
-            for nd, (dx, dy) in dirs:
+            for nd, dx, dy, step in dirs:
                 a, b = ix + dx, iy + dy
                 if not (0 <= a < nx and 0 <= b < ny):
                     continue
@@ -566,7 +571,7 @@ class Router:
                 if dx and dy:                                    # a diagonal must not cut between two blocked cells
                     if bl[ix * ny + b] or bl[a * ny + iy]:
                         continue
-                cost = gc + (SQ2 if dx and dy else 1.0)
+                cost = gc + step
                 if d != 8 and d != nd:
                     t = min((d - nd) % 8, (nd - d) % 8)
                     if t > 2:
@@ -575,11 +580,11 @@ class Router:
                 if fl is not None and fl[j]:
                     cost += CROSS_COST
                 nk = l * n + j
-                if cost < best.get(nk, 1e18) - 1e-9:
+                if cost < bget(nk, 1e18) - 1e-9:
                     best[nk] = cost
                     parent[nk] = k
                     came[nk] = nd
-                    heapq.heappush(heap, (cost + h(j), cost, nk))
+                    push(heap, (cost + h(j), cost, nk))
             o = 1 - l
             if not base[o][i]:
                 if i in tht:                                     # inside a through hole pad of the net: the pad is the change of layer
@@ -599,32 +604,44 @@ class Router:
                         heapq.heappush(heap, (cost + h(i), cost, nk))
         return None
 
+    def _bits(self, arr):
+        """A per cell bytearray (0 / nonzero) as one big integer with bit i set when cell i is."""
+        return int(bytes(arr).translate(_TO01)[::-1], 2)
+
     def _connected(self, net, sources, goals, base, wide, vblock, tht, relaxed, goal_bot=None):
         """A cheap flood fill (4 neighbours, vias where they could be) from the sources: is any goal reachable at all? A search that
-        has no way would otherwise try every cell of the board before saying so."""
-        ny, nx, n = self.ny, self.nx, self.n
-        novia = self.novia
-        seen = [bytearray(n), bytearray(n)]
-        stack = []
+        has no way would otherwise try every cell of the board before saying so. Done on bit sets (one big integer per layer, a bit
+        per cell): a step of the fill is a few shifts of the whole grid instead of a visit of each cell."""
+        ny, n = self.ny, self.n
+        if self._cols is None:
+            self._cols = (self._bits(bytes(([0] + [1] * (ny - 1)) * self.nx)),        # cells that are not in the first row of their column
+                          self._bits(bytes(([1] * (ny - 1) + [0]) * self.nx)))        # ... not in the last
+        not_first, not_last = self._cols
+        full = (1 << n) - 1
+        free = [full ^ self._bits(wide[l]) for l in (TOP, BOT)]
+        nv = full ^ self._bits(self.novia if relaxed else vblock)
+        t = 0
+        for i in tht:
+            t |= 1 << i
+        jump = [(full ^ self._bits(base[l])) & (t | nv) for l in (TOP, BOT)]         # where a change of layer may land
+        r, goal = [0, 0], [0, 0]
         for l, i in sources:
-            if not seen[l][i]:
-                seen[l][i] = 1
-                stack.append((l, i))
-        goalset = set(goals)
-        while stack:
-            l, i = stack.pop()
-            if (l, i) in goalset or (goal_bot is not None and l == BOT and goal_bot[i]):
+            r[l] |= 1 << i
+        for l, i in goals:
+            goal[l] |= 1 << i
+        if goal_bot is not None:
+            goal[BOT] |= self._bits(goal_bot)
+        r0, r1 = r
+        while True:
+            if (r0 & goal[0]) | (r1 & goal[1]):
                 return True
-            wl, sl = wide[l], seen[l]
-            ix, iy = divmod(i, ny)
-            for j, ok in ((i + ny, ix + 1 < nx), (i - ny, ix > 0), (i + 1, iy + 1 < ny), (i - 1, iy > 0)):
-                if ok and not sl[j] and not wl[j]:
-                    sl[j] = 1
-                    stack.append((l, j))
-            o = 1 - l
-            if not seen[o][i] and not base[o][i] and (i in tht or (not novia[i] if relaxed else not vblock[i])):
-                seen[o][i] = 1
-                stack.append((o, i))
+            a0 = (r0 << ny) | (r0 >> ny) | ((r0 & not_last) << 1) | ((r0 & not_first) >> 1)
+            a1 = (r1 << ny) | (r1 >> ny) | ((r1 & not_last) << 1) | ((r1 & not_first) >> 1)
+            n0 = r0 | (a0 & free[0]) | (r1 & jump[0])
+            n1 = r1 | (a1 & free[1]) | (r0 & jump[1])
+            if n0 == r0 and n1 == r1:
+                break
+            r0, r1 = n0, n1
         self.status = "none"
         return False
 
@@ -637,9 +654,17 @@ class Router:
             if x - hw < box[0] + edge or x + hw > box[2] - edge or y - hw < box[1] + edge or y + hw > box[3] - edge:
                 return False
         for a, b in zip(pts, pts[1:]) if len(pts) > 1 else [(pts[0], pts[0])]:
+            reach = hw + clear                                  # a shape whose box is farther than this from the segment's box cannot be too close
+            sx0, sx1, sy0, sy1 = min(a[0], b[0]) - reach, max(a[0], b[0]) + reach, min(a[1], b[1]) - reach, max(a[1], b[1]) + reach
             for s in self.shapes:
-                if s["net"] != net and l in s["layers"] and _dist(s["geo"], a, b) - hw < clear:
-                    return False
+                if s["net"] != net and l in s["layers"]:
+                    bb = s.get("bb")
+                    if bb is None:
+                        bb = s["bb"] = _bbox(s["geo"])
+                    if bb[2] < sx0 or bb[0] > sx1 or bb[3] < sy0 or bb[1] > sy1:
+                        continue
+                    if _dist(s["geo"], a, b) - hw < clear:
+                        return False
             if relaxed:
                 continue
             for other, r in self.routed.items():
@@ -708,11 +733,13 @@ class Router:
         return {"limit": "search limit reached", "time": "ran out of time",
                 "budget": "ran out of search budget"}.get(self.status, "no way")
 
-    def route_net(self, net, width, relaxed=False, deadline=None, margin=0.0, stub_width=None, pour_mask=None):
+    def route_net(self, net, width, relaxed=False, deadline=None, margin=0.0, stub_width=None, pour_mask=None, pour_tie=None):
         """Join every pad of `net`. Returns (path list of segments-as-cell-paths, pad stubs, None) or (None, None, reason).
         stub_width: a neck-down, the narrower width allowed for the escape stub of a pad that cannot take `width`.
         pour_mask: the net is poured on the bottom layer (pour_region): its pads are not joined to each other by tracks but each
-        top layer pad to the pour, by a short stub and a via (or by a short track to a pad that is in the pour already)."""
+        top layer pad to the pour, by a short stub and a via (or by a short track to a pad that is in the pour already).
+        pour_tie: (tree, tags): the pads `tags` of the poured net are joined by tracks to the copper `tree` ({(layer, cell): tag}) of its
+        pads that the pour does reach (a pad whose drop the pour does not reach is tied to another pad's copper instead)."""
         pads = self.pads[net]
         nid = self.netid[net]
         use = lambda pad: {(l, c) for l, cs in pad["cells"].items() for c in cs if self.usable(nid, l, c, width, margin, relaxed)}
@@ -735,8 +762,8 @@ class Router:
                 escaped.add(id(pad))
                 return {(esc["layer"], esc["cell"])}
             return cells
-        if pour_mask is not None:
-            return self._route_pour(nid, pads, width, margin, deadline, start, stubs, escaped, pour_mask, relaxed)
+        if pour_mask is not None or pour_tie is not None:
+            return self._route_pour(nid, pads, width, margin, deadline, start, stubs, escaped, pour_mask, relaxed, pour_tie)
         tree = start(pads[0])
         if not tree:
             return None, None, f"pad {pads[0]['tag']} is too close to other copper for a {width:g} mm track"
@@ -778,21 +805,30 @@ class Router:
             absorb(tgt)
         return paths, stubs, None
 
-    def _route_pour(self, nid, pads, width, margin, deadline, start, stubs, escaped, pour_mask, relaxed=False):
+    def _route_pour(self, nid, pads, width, margin, deadline, start, stubs, escaped, pour_mask, relaxed=False, tie=None):
         """Each pad of a poured net that is on the top layer only is joined to the pour: a path from the pad to a via that lands in
         the pour (pour_mask, bottom layer) or to a pad already in the pour (a through hole pad or a bottom layer pad: the pour covers
         the whole bottom layer, so the pad is in it) or to copper already drawn for another pad. Returns like route_net, and sets
-        self.pour_links: {pad tag: ("pour", cell) | ("pad", other tag)} for the check that the pour really reaches each of them."""
-        tree, paths = {}, []
+        self.pour_links: {pad tag: ("pour", cell) | ("pad", other tag)} for the check that the pour really reaches each of them, and
+        self.pour_tree. tie = (tree, tags): only those pads, each joined by a track to the copper in tree (no drop to the pour)."""
+        paths = []
         self.pour_links = links = {}
         self.pour_unjoined = unjoined = []
-        for pad in pads:
-            if len(pad["layers"]) == 2 or pad["layers"][0] == BOT:      # in the pour by itself
-                for l, cs in pad["cells"].items():
-                    for c in cs:
-                        tree[(l, c)] = pad["tag"]
-                links[pad["tag"]] = ("pour", None)
-        for pad in sorted((q for q in pads if q["tag"] not in links), key=lambda q: q["tag"]):
+        if tie is not None:
+            tree = dict(tie[0])
+            only = set(tie[1])
+            todo = sorted((q for q in pads if q["tag"] in only), key=lambda q: q["tag"])
+        else:
+            tree = {}
+            for pad in pads:
+                if len(pad["layers"]) == 2 or pad["layers"][0] == BOT:      # in the pour by itself
+                    for l, cs in pad["cells"].items():
+                        for c in cs:
+                            tree[(l, c)] = pad["tag"]
+                    links[pad["tag"]] = ("pour", None)
+            todo = sorted((q for q in pads if q["tag"] not in links), key=lambda q: q["tag"])
+        self.pour_tree = tree
+        for pad in todo:
             src = start(pad)
             if not src:
                 why_ = f"pad {pad['tag']} is too close to other copper for a {width:g} mm track"
@@ -802,7 +838,8 @@ class Router:
                 return None, None, why_
             path = self.astar(nid, src, set(tree), width, relaxed=relaxed, deadline=deadline, margin=margin, goal_bot=pour_mask)
             if path is None:
-                why_ = f"{self.why_stopped()} from {pad['tag']} to the pour (a via into the bottom layer or a pad in the pour)"
+                why_ = (f"{self.why_stopped()} from {pad['tag']} to the pour (a via into the bottom layer or a pad in the pour)" if tie is None
+                        else f"{self.why_stopped()} from {pad['tag']} to other copper of the net that the pour reaches")
                 if self.pour_lenient and self.status not in ("time", "budget"):
                     unjoined.append((pad["tag"], why_))
                     continue
@@ -857,7 +894,8 @@ class Router:
         mask = bytearray(1 if (best and lab_ == best) else 0 for lab_ in labels)
         return mask, labels, sizes
 
-    def commit(self, net, paths, stubs, width):
+    def commit(self, net, paths, stubs, width, extend=False):
+        """Draw `paths` (and the stubs) as the copper of net; extend: add it to what the net has drawn already."""
         nid = self.netid[net]
         cells, vias, items = [], [], []
         tht = self.tht.get(nid, ())
@@ -899,6 +937,12 @@ class Router:
             x, y = self.xy(i)
             items.append({"kind": "via", "x": x, "y": y, "dia": self.rules["via_dia"], "hole": self.rules["via_hole"], "net": net})
         t = self.tie.get(net)
+        if extend and net in self.routed:
+            r0 = self.routed[net]
+            self.routed[net] = {"cells": r0["cells"] + cells, "vias": r0["vias"] + vias, "items": r0["items"] + items, "width": r0["width"],
+                                "necks": r0["necks"] + necks}
+            self._stamp_net(net)
+            return
         if t:                                                      # the copper that joined two pads before routing is part of the net
             items += t["items"]
             cells += t["cells"]
@@ -987,15 +1031,23 @@ class Router:
             for l, i in r["cells"]:
                 where.setdefault((l, i), set()).add(other)
         hit = set()
-        reach = self.offsets(self.clear + self.rules["via_dia"] / 2 + self.wb)
-        for l, i in path:
+        via_r = self.rules["via_dia"] / 2
+        reach = self.offsets(self.clear + via_r + self.wb)
+        # a via of the path (a change of layer) keeps a via's distance from the track cells of both layers: what a strict search asks
+        # (vblock) is the stamp of a routed track or via plus the via's own radius, so a net that is only that far is in the way too
+        r_via = self.clear + via_r + self.wb / 2 + self.q + (via_r - self.wb / 2) + self.reach_q
+        reach_via = self.offsets(r_via)
+        for (l, i), nxt in zip(path, list(path[1:]) + [None]):
             ix, iy = i // self.ny, i % self.ny
-            for dx, dy in reach:
+            is_via = nxt is not None and nxt[0] != l and nxt[1] == i
+            layers = (TOP, BOT) if is_via else (l,)
+            for dx, dy in (reach_via if is_via else reach):
                 a, b = ix + dx, iy + dy
                 if 0 <= a < self.nx and 0 <= b < self.ny:
-                    s = where.get((l, a * self.ny + b))
-                    if s:
-                        hit |= s
+                    for ll in layers:
+                        s = where.get((ll, a * self.ny + b))
+                        if s:
+                            hit |= s
         hit.discard(net)
         return hit
 
@@ -1115,7 +1167,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             region[0] = rt.pour_region(rt.netid[pour])[0]                  # the pour as it is with the tracks drawn so far
             r = _try_widths(n, margin, region[0])
             if r is None:
-                pour_state["mode"], pour_state["links"] = "drops", dict(rt.pour_links)
+                pour_state["mode"], pour_state["links"], pour_state["tree"] = "drops", dict(rt.pour_links), dict(rt.pour_tree)
             return r
         return _try_widths(n, margin, None)
 
@@ -1158,6 +1210,13 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             break
     ripped = {}
     hard = set()                  # nets whose search is blocked by fixed copper even with every track passable: ripping up cannot help
+    best = [None]                 # the state with the fewest nets failed so far: a round that makes it worse is not kept
+
+    def keep_best():
+        k = len(set(failed))
+        if best[0] is None or k < best[0][0]:
+            best[0] = (k, dict(rt.routed), list(failed), dict(why), dict(pour_state["links"]), pour_state["mode"], pour_state.get("tree"))
+    keep_best()
     for rnd in range(rounds if rounds is not None else max(ROUNDS, ROUNDS_PER_FAILED * len(failed))):
         cand = [m for m in failed if m not in hard]
         if not cand or stopped() or time.time() > deadline:
@@ -1176,7 +1235,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         for p in paths:
             blockers |= rt.blockers(n, p)
         blockers |= rt.escape_blockers(n, esc_stubs, rules["width"])      # a fine pitch pad's escape can be what a track blocks
-        blockers = {b for b in blockers if ripped.get(b, 0) < MAX_RIPS and b not in pair_state["done"] and b != pour}   # a coupled pair and a poured net are not ripped up
+        blockers = {b for b in blockers if ripped.get(b, 0) < MAX_RIPS and b not in pair_state["done"]}   # a coupled pair is not ripped up
         if not blockers:
             if "(no track of another net to move)" not in (why.get(n) or ""):
                 why[n] = (why.get(n) or "no way") + " (no track of another net to move)"
@@ -1186,12 +1245,19 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             ripped[b] = ripped.get(b, 0) + 1
             rt.routed.pop(b)
         rt.rebuild()
-        again = [n] + sorted(blockers, key=key)
+        again = [n] + sorted(blockers, key=lambda m: (m != pour, key(m)))      # the poured net's drops come before the others are laid again
         for m in again:
             r = try_route(m)
             if r:
                 failed.append(m)
                 why[m] = r + (f" (after moving {', '.join(sorted(blockers - {m}))})" if m != n else "")
+        keep_best()
+    if best[0] is not None and len(set(failed)) > best[0][0] and not stopped():     # the rounds ended worse than the best state they passed
+        _, routed_, failed[:], why_, pour_state["links"], pour_state["mode"], pour_state["tree"] = best[0]
+        rt.routed = dict(routed_)
+        why.clear()
+        why.update(why_)
+        rt.rebuild()
     partial = {}                  # a poured net some of whose pads could not be joined: {net: why}; its other pads are drawn
     if pour and pour in failed and not stopped():          # no way to the pour for some pad, even moving the nets in the way
         # 1. every pad that can be dropped to the pour is, and the pad that cannot is named; 2. tracks for the whole net, which is
@@ -1265,8 +1331,70 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
                     break
         rt.rebuild()
     final_check()
+
+    def cut_now():
+        return _pour_cut_off(rt, pour, pour_state["links"], pour_state.get("unjoined", ()) if pour in partial else ())
+
+    def tie_cut(cut):
+        """The pads the pour does not reach (`cut`) are joined by tracks to the copper of the pads it does reach: only those pads get
+        tracks, the others stay dropped to the pour. When the tracks of other nets are in the way those nets are taken up and laid
+        again after (as in the rounds above). Kept only when every net is still routed and the exact check still passes; else
+        nothing is changed. True when kept."""
+        tree = pour_state.get("tree")
+        if not tree or pour in partial:
+            return False
+        goal = {c: t for c, t in tree.items() if t not in cut}
+        w = width_for(pour)[0]
+        snap = (dict(rt.routed), list(failed), dict(why), dict(pour_state["links"]), dict(tree), dict(ripped))
+        moved = []
+        paths, stubs, why_ = rt.route_net(pour, w, deadline=deadline, pour_tie=(goal, sorted(cut)))
+        if paths is None and not stopped():                # what is in the way: the nets whose tracks a way through crosses
+            paths_r, st_r, why_r = rt.route_net(pour, w, relaxed=True, deadline=deadline, pour_tie=(goal, sorted(cut)))
+            if paths_r is not None:
+                bl = set()
+                for p_ in paths_r:
+                    bl |= rt.blockers(pour, p_)
+                bl |= rt.escape_blockers(pour, st_r, w)
+                moved = sorted((b for b in bl if ripped.get(b, 0) < MAX_RIPS + 2 and b not in pair_state["done"]), key=key)
+                if moved:
+                    for b in moved:
+                        ripped[b] = ripped.get(b, 0) + 1
+                        rt.routed.pop(b)
+                    rt.rebuild()
+                    paths, stubs, why_ = rt.route_net(pour, w, deadline=deadline, pour_tie=(goal, sorted(cut)))
+        ok = paths is not None
+        if ok:
+            links = dict(pour_state["links"])
+            links.update(rt.pour_links)
+            rt.commit(pour, paths, stubs, w, extend=True)
+            pour_state["links"], pour_state["tree"] = links, dict(rt.pour_tree)
+            for m in moved:                                 # the nets that were in the way, laid again round the new copper
+                r = try_route(m)
+                if r:
+                    ok = False
+                    break
+        if ok:
+            before = set(snap[1])
+            final_check()
+            ok = pour in rt.routed and set(failed) <= before
+        if ok:
+            return True
+        rt.routed = dict(snap[0])                          # not accepted: as it was
+        failed[:] = snap[1]
+        why.clear()
+        why.update(snap[2])
+        pour_state["links"], pour_state["tree"] = snap[3], snap[4]
+        ripped.clear()
+        ripped.update(snap[5])
+        rt.rebuild()
+        return False
+
     if pour and pour in rt.routed and pour_state["mode"] == "drops":       # the pour must really reach every pad: no track of another net may cut it off
-        cut = _pour_cut_off(rt, pour, pour_state["links"], pour_state.get("unjoined", ()) if pour in partial else ())
+        cut = cut_now()
+        for _ in range(POUR_TIES):
+            if not cut or not tie_cut(cut):
+                break
+            cut = cut_now() if pour in rt.routed else []
         if cut:
             rt.routed.pop(pour)
             partial.pop(pour, None)
