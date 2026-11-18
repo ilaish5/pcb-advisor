@@ -36,7 +36,9 @@ def _handler(act):
 def test_the_table_has_no_inputs_and_no_inline_styles():
     """A part is edited in the inspector. The table is read-only and styled from bom.css."""
     code = re.sub(r"/\*.*?\*/", "", BOM, flags=re.S)
-    assert "<input" not in code and "<textarea" not in code and "<select" in _fn("importHTML")   # the import picker is the one control
+    table = code.replace(_fn("bomPendingList"), "")     # the pending-change list ticks proposals, not parts
+    assert "<input" not in table and "<textarea" not in code and "<select" in _fn("importHTML")   # the import picker is the one control
+    assert 'type="checkbox"' in _fn("bomPendingList")
     assert "style=" not in code
     assert "data-edit" not in _fn("bomRow")
 
@@ -77,7 +79,7 @@ def test_the_tag_column_names_problems_only():
 
 def test_a_row_with_several_problems_shows_the_worst_and_a_count():
     tags = _fn("bomTags")
-    assert "ps[0]" in tags and "'+' + rest.length" in tags and "'Also: '" in tags      # the rest is named in the tooltip
+    assert "ps[0]" in tags and "'+' + rest.length" in tags and "more problem" in tags      # the rest is named in the tooltip
     assert "slice(0, 2)" not in tags                                                    # never stacked: the row keeps its height
     assert "out.sort((a, c) => a.rank - c.rank)" in _fn("bomProblems")                  # worst first
 

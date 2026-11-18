@@ -162,6 +162,9 @@ reference in the UI and the structure of the Altium script.
   routing; the tool reports them as footprint findings. Of the 271, about 110 are silk at pads, because that board's library was built
   before the 8 mil silk clip (rebuilding the library removes them; the tool flags the library as stale), and about 161 are footprint silk
   over routed tracks and vias: the router does not yet keep out of silk. `check_silk_to_mask` reports both kinds per part.
+- After the tool rebuilt that library (2026-11-18), the live DRC went to 20 silk-to-solder-mask and 0 silk-to-silk findings. The new
+  placement then routed 17 of 18 live (USB_DM open). The router now also tries ripping up one, then two, blocking nets, and that
+  frozen board routes 18 of 18 offline (`tests/test_live_stm32_rebuilt_routing.py`).
 - Clean-computer installation (no Python, no Claude) has not been tested end to end.
 - Windows is the supported platform for the Altium steps.
 
