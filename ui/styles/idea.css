@@ -203,3 +203,6 @@
 .miro-diagram-editor.is-preview .diag-context-toolbar,
 .miro-diagram-editor.is-preview .diag-popover{display:none !important}
 .miro-diagram-editor.is-preview::after{content:"";position:absolute;inset:0;z-index:50;border-radius:inherit;box-shadow:inset 0 0 0 2px var(--sig-line);pointer-events:none}
+.board-size{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0}
+.board-size-label{color:var(--muted,inherit);font-size:12px}
+.board-size .in{width:84px}

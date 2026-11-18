@@ -214,6 +214,20 @@ function descHTML() {
     </div>`;
 }
 
+// The board size, typed directly: it does not wait for "Confirm idea". Placement reads it from the saved idea.
+function boardSizeHTML() {
+  const b = ((S && S.idea) || {}).board || {};
+  const has = b.width_mm && b.height_mm;
+  return `<div class="board-size" aria-label="Board size">
+      <span class="board-size-label">Board size</span>
+      <input type="number" class="in board-w" min="10" max="500" step="any" inputmode="decimal" placeholder="width" aria-label="Board width" value="${has ? esc(String(b.width_mm)) : ''}">
+      <span aria-hidden="true">x</span>
+      <input type="number" class="in board-h" min="10" max="500" step="any" inputmode="decimal" placeholder="height" aria-label="Board height" value="${has ? esc(String(b.height_mm)) : ''}">
+      <span class="board-size-unit">mm</span>
+      ${btn('Set', {size: 'sm', kind: 'line', act: 'set-board-size', title: 'Use this board size (10 to 500 mm per side); no need to confirm the idea first'})}
+    </div>`;
+}
+
 function requirementsHTML() {
   const items = ideaItems(), cap = ideaSplitPct();
   const desc = descHTML();
@@ -228,7 +242,7 @@ function requirementsHTML() {
     ? `<div class="req-bulk">${btn('Accept all', {size: 'sm', icon: 'check', act: 'accept-all', title: 'Agree to everything the agent proposed'})}${btn('Dismiss all', {size: 'sm', act: 'dismiss-all', title: 'Remove everything the agent proposed'})}</div>`
     : '';
   return `<section class="idea-reqs"${cap ? ` style="max-height:${cap}%"` : ''} aria-label="Agreed requirements">
-      <div class="req-scroll">${bulk}${desc}${body}</div>
+      <div class="req-scroll">${bulk}${desc}${boardSizeHTML()}${body}</div>
       <div class="req-add-row">
         <button type="button" class="btn sm" data-act="show-add-req">+ Add requirement</button>
         <div class="req-add-form" hidden>
@@ -592,6 +606,18 @@ window.addEventListener('resize', () => {
 });
 
 /* ---------- action handlers (dispatched by the delegates in core.js) ---------- */
+onAct('set-board-size', async (el) => {
+  const row = el.closest('.board-size');
+  const w = row.querySelector('.board-w').value.trim(), h = row.querySelector('.board-h').value.trim();
+  if (!w !== !h) { toast('Give both the width and the height in mm'); return; }
+  try {
+    setState(await api('/api/idea/board', {width: w, height: h, unit: 'mm'}));
+    ideaRedraw();
+    toast(w ? 'Board size set' : 'Board size cleared');
+  } catch (e) {
+    if (e instanceof TypeError) toast("Couldn't reach the server");      // api() already showed the server's reason
+  }
+});
 onAct('confirmidea', async () => {
   if (await ideaPost('/api/idea/confirm', {})) ideaRedraw();
 });

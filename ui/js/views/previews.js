@@ -372,12 +372,14 @@ function pvStepNote(page) {       // under the header: Altium is working, or wha
   const busy = pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || loadingLine(PV_STEPS[pvBusy].busy)}<div class="acts">${pvStopBtn()}</div></div>` : '';
   const n = pvNote[page];
   if (busy || !n) return busy;
-  const acts = (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
+  const acts = (n.partial ? btn('Route the rest and leave ' + n.partial.join(', ') + ' open', {size: 'sm', kind: 'line', act: 'altium-step', step: 'route', partial: '1', disabled: pvBusy ? true : undefined,
+      title: 'Routes every net that can be routed, keeps those tracks, and leaves ' + n.partial.join(', ') + ' unrouted for you to finish in Altium'}) : '') +
+    (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
     btn(n.replace ? 'Keep it' : 'Dismiss', {size: 'sm', act: 'altium-step-dismiss', page});
   const warns = (n.warnings || []).slice(n.from === undefined ? 4 : n.from).map(w => `<br>Warning: ${esc(w)}`).join('');
   return `<div class="pv-note"><div class="note ${n.kind}" role="${n.kind === 'bad' ? 'alert' : 'status'}"><span>${esc(n.text)}${warns}</span><span class="acts">${acts}</span></div></div>`;
 }
-async function pvRunStep(step, replace) {
+async function pvRunStep(step, replace, partial) {
   const c = PV_STEPS[step];
   if (pvBusy) return;
   pvBusy = step;
@@ -385,7 +387,7 @@ async function pvRunStep(step, replace) {
   renderCenter(true);
   pvPollStart(false);
   let r = null, lost = false;
-  try { r = await api(c.url, {replace: !!replace}, {soft: true}); } catch (err) { lost = true; }
+  try { r = await api(c.url, partial ? {replace: !!replace, keep_partial: true} : {replace: !!replace}, {soft: true}); } catch (err) { lost = true; }
   pvPollStop();
   await pvFinish(step, r, lost);
 }
@@ -402,7 +404,7 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
     if (lost) pvNote[c.page] = {kind: 'bad', text: 'Lost contact with the server while Altium was working. The step may still be running or may have finished: look at the board in Altium, and at the chat for its result, before starting it again.'};
     else if (r && r.gone) pvNote[c.page] = {kind: 'warn', text: 'The step ended while this page was loading, and its answer went to the page that started it. Look at the board in Altium, and at the chat, before starting it again.'};       // ended, not "succeeded": this page never saw the answer
     else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', stopped: true, text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
-    else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server')};
+    else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server'), partial: r && Array.isArray(r.partial_offer) && r.partial_offer.length ? r.partial_offer : undefined};
     else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
     try { await refresh(true); } catch (err) { /* the note still says what happened */ }
@@ -424,7 +426,7 @@ async function pvResume() {       // once per page load: a step started before a
 }
 onAct('altium-step', async (el, d, e) => {
   if (el.disabled || !PV_STEPS[d.step]) return;
-  await pvRunStep(d.step, d.replace === '1');
+  await pvRunStep(d.step, d.replace === '1', d.partial === '1');
 });
 onAct('altium-step-stop', async (el, d, e) => {       // the run ends before its next step; the answer arrives through the same path as any run
   if (!pvBusy || pvStopping) return;

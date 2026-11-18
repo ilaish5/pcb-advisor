@@ -256,6 +256,7 @@ def build(project=None, session=None):
         "autonomy": store.autonomy(),
         "sheets": sheets(project),
         "sheet_gaps": store.sheet_gaps(project),
+        "bom_count_check": store.bom_design_count(project),
         "library": store.library_view(project),
         "sources": list_sources(project),
         "checks": checks_list,

@@ -107,6 +107,11 @@ function bomHeader(t) {
   const primary = btn(bomChecking ? 'Checking…' : 'Check stock', {kind: 'pri', act: 'check-all', disabled: bomChecking, title: 'Look up stock and prices for every line'});
   return viewHeader({title: 'BOM', meta, actions, primary});
 }
+// The BOM and the schematic disagree on the parts: the server says which designators differ (only when both sides are known).
+function bomCountNote() {
+  const c = S.bom_count_check;
+  return c && c.message ? `<div class="pv-note"><div class="note warn bom-count-note" role="status"><span>${esc(c.message)}</span></div></div>` : '';
+}
 function bomFoot() {
   const at = checkedAt(), st = at ? bomStamp(at) : null;
   return `<p class="bom-foot${st && st.stale ? ' stale' : ''}"${st && st.stale ? ' title="Prices change. Check stock again before you order."' : ''}>Prices at qty 10, excl. shipping. ${st ? `Checked ${esc(st.text)}.` : 'Not checked yet.'} ${btn('Before you order', {kind: 'link', size: 'sm', act: 'order-open', title: 'Stock again, and in-stock alternatives by footprint'})}</p>`;
@@ -128,7 +133,7 @@ function bomHTML(container) {
       <tbody>${lines().map(bomRow).join('')}</tbody></table></div>${bomFoot()}`;
   }
   if (top || left) requestAnimationFrame(() => { const s = container.querySelector('.bom-scroll'); if (s) { s.scrollTop = top; s.scrollLeft = left; } });
-  return `<div class="bom-view">${bomHeader(t)}${body}${bomDrawerHTML()}</div>`;
+  return `<div class="bom-view">${bomHeader(t)}${t.lines ? bomCountNote() : ''}${body}${bomDrawerHTML()}</div>`;
 }
 
 /* ---------- drawer ---------- */

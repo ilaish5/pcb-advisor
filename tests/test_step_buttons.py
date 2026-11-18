@@ -37,8 +37,8 @@ def test_each_endpoint_calls_its_bridge_function_with_replace_only_when_asked(se
     assert call(server, "POST", ENDPOINTS["place"], empty, {"replace": True})[0] == 200
     assert call(server, "POST", ENDPOINTS["route"], empty, {})[0] == 200
     assert call(server, "POST", ENDPOINTS["route"], empty, {"replace": True, "keep_partial": True})[0] == 200
-    # keep_partial in the body is ignored: half a route stays only by consent in words, in the chat
-    assert spy == [("draw", None, False), ("draw", "1", True), ("place", False), ("place", True), ("route", False, False), ("route", True, False)]
+    # keep_partial in the body is the click of "Route the rest and leave X open": it is the consent (the chat path asks for words)
+    assert spy == [("draw", None, False), ("draw", "1", True), ("place", False), ("place", True), ("route", False, False), ("route", True, True)]
 
 
 def test_the_summary_is_the_sentence_the_chat_path_writes(server, empty, spy):
@@ -166,7 +166,7 @@ def test_the_pages_have_the_buttons_and_hit_the_endpoints():
     # replace is sent only by the Replace button of the note, never by the header button
     assert "replace(/^Altium refused a step: /, '')" in run and "nothing was changed" in run      # the note drops the script's step log
     assert "refresh(true)" in run and "loadAltium(true)" in run and "Lost contact with the server" in run
-    assert "pvRunStep(d.step, d.replace === '1')" in js
+    assert "pvRunStep(d.step, d.replace === '1', d.partial === '1')" in js
     header = js[js.index("function pvStepBtn"):js.index("function pvStepNote")]
     assert "replace" not in header
     note = js[js.index("function pvStepNote"):js.index("async function pvRunStep")]

@@ -1136,6 +1136,8 @@ def _step_failed(project, sess, step, done, current, exc, unexpected):
         body["prepared"] = prepared
     if final and done:
         body["done_first"] = f"{_and([PREP_WORDS[k][1] for k, _ in done])}."       # the page puts it before the step's own error
+    if final and not unexpected and step == "route" and getattr(exc, "open_nets", None):
+        body["partial_offer"] = list(exc.open_nets)       # nets the router could not do: the page offers a partial route (the click is the consent)
     if final and not unexpected and needs_replace(exc):
         body["needs_replace"] = True       # the caller drops it when replace was on
     _run_mark(project, current, "failed", reason)
@@ -1236,7 +1238,8 @@ def _run_step(project, sess, step, data, bridge):
                 return bridge.import_rules(project)
             if step == "outputs":
                 return bridge.run_outjob(project)
-            return bridge.route_pcb(project, replace=replace)      # keep_partial is never set here: half a route stays only when the student agreed to that in words (chat)
+            # keep_partial only from the "Route the rest and leave X open" button (its click is the consent; the agent's chat path asks for words instead)
+            return bridge.route_pcb(project, replace=replace, keep_partial=_truthy(data.get("keep_partial")))
         current = final
         _stop_check(project)
         _run_mark(project, final, "running")
@@ -3078,6 +3081,13 @@ class Handler(BaseHTTPRequestHandler):
                 store.decide_idea_goal(proj, accept=path.endswith("/confirm"))
             except KeyError as exc:
                 return self._send(400, {"error": str(exc).strip("'")})
+            return self._send(200, state())
+
+        if path == "/api/idea/board":      # the board size typed in directly: no confirmed idea needed (validation in the store)
+            try:
+                store.set_board_size(proj, data.get("width"), data.get("height"), data.get("unit") or "mm")
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
             return self._send(200, state())
 
         if path == "/api/idea/confirm":

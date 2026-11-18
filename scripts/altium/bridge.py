@@ -1491,15 +1491,25 @@ def route_pcb(project, replace=False, keep_partial=False):
          vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],
          restored=res["restored"], drc_before=res["drc_before"], drc_after=res["drc_after"],
          drawn_widths={n: w["width_mm"] for n, w in res["widths"].items() if w["width_mm"] is not None})
-    if res["problems"] or res["failed"] or not res["written"]:
-        raise BridgeError(res["summary"] if not res["written"] else
+    open_nets = [n for n, _ in res["failed"]]
+    partial_kept = bool(keep_partial and open_nets and res["written"] and not res["restored"] and res["problems"]
+                        and all(_partial_ok(p) for p in res["problems"]))        # the student asked for it: tracks stay, the answer names the open nets
+    if not partial_kept and (res["problems"] or res["failed"] or not res["written"]):
+        err = BridgeError(res["summary"] if not res["written"] else
                           "The route does not check out: " + "; ".join(res["problems"][:5])
                           + f" Altium DRC, every rule: {res.get('drc_line') or 'unchecked'}."
                           + (" The board file was put back as it was before (backup kept)." if res["restored"]
                              else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
                              else f" Backup in {res['backup']}."))
+        if res["failed"] and not res["written"] and not keep_partial:
+            err.open_nets = open_nets          # the page offers "route the rest and leave these open": the student's click is the consent
+        raise err
     res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"footprint: {m}" for m in res.get("footprint_findings", [])[:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
+    if partial_kept:
+        res["open_nets"] = open_nets
+        res["summary"] += "; PARTIAL ROUTE, left open: " + "; ".join(f"{n} ({why})" for n, why in res["failed"])
+        res["warnings"] = [f"open nets, not routed: {', '.join(open_nets)}"] + [f"route check: {m}" for m in res["problems"] if not m.startswith("not routed")] + res["warnings"]
     return res
 
 

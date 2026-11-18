@@ -1898,6 +1898,40 @@ def move_idea_item(project, from_index, to_index):
     return idea
 
 
+def set_board_size(project, width, height, unit="mm"):
+    """The board size the student types in directly (no "Confirm idea" first): idea["board"] = {"width_mm", "height_mm"}, in the saved
+    idea (what placement reads) and in the draft when there is one (so a later Save keeps it). Both positive numbers, unit mm or cm,
+    each side 10..500 mm like the sizes read from the requirement text. width and height both None/"" clears it. ValueError otherwise."""
+    if width in (None, "") and height in (None, ""):
+        size = None
+    else:
+        u = str(unit or "mm").strip().lower()
+        if u not in ("mm", "cm"):
+            raise ValueError("the unit must be mm or cm")
+        try:
+            w, h = float(width), float(height)
+        except (TypeError, ValueError):
+            raise ValueError("the board width and height must be numbers")
+        k = 10.0 if u == "cm" else 1.0
+        w, h = round(w * k, 3), round(h * k, 3)
+        if not (w == w and h == h) or not (10 <= w <= 500 and 10 <= h <= 500):
+            raise ValueError("the board width and height must each be between 10 and 500 mm")
+        size = {"width_mm": w, "height_mm": h}
+    saved = load_idea(project)
+    draft = load_idea_working(project) if has_idea_draft(project) else None
+    for idea in (saved, draft):
+        if idea is None:
+            continue
+        if size:
+            idea["board"] = dict(size)
+        else:
+            idea.pop("board", None)
+    save_idea(project, saved)
+    if draft is not None:
+        save_idea_draft(project, draft)
+    return size
+
+
 def confirm_idea(project):
     """Confirm the idea: the draft (if any) is saved first, then the saved idea is marked confirmed."""
     idea = load_idea_working(project)
@@ -2631,6 +2665,38 @@ def mark_bom_status(project, parts):
             part.pop("bom_status", None)
         out.append(part)
     return out
+
+
+def _ref_sort(refs):
+    return sorted(refs, key=lambda r: (re.sub(r"\d+$", "", r), int(m.group(0)) if (m := re.search(r"\d+$", r)) else 0, r))
+
+
+def bom_design_count(project):
+    """The BOM's part count against the parts of the design (the schematic netlist sheets the server holds), by designator.
+    None when either side is unknown (no netlist parts, no BOM lines, or a BOM line without references: its parts cannot be counted)
+    or when they agree. Otherwise {bom_parts, design_parts, only_in_design, only_in_bom, message}: never a guess, never a false warning."""
+    lines = bom_lines(project)
+    design = set()
+    for sh in sheet_ids(project):
+        for part in load_sheet(project, sh).get("parts", []) or []:
+            if isinstance(part, dict) and part.get("ref"):
+                design.add(str(part["ref"]))
+    if not lines or not design or any(not l.get("refs") for l in lines):
+        return None
+    bom = {str(r) for l in lines for r in l["refs"]}
+    n_bom = sum(len(l["refs"]) for l in lines)           # a ref held by two lines counts twice, like the part count of the BOM header
+    only_design, only_bom = _ref_sort(design - bom), _ref_sort(bom - design)
+    if n_bom == len(design) and not only_design and not only_bom:
+        return None
+    def _verb(refs, where, other):
+        return f"{', '.join(refs[:8])}{' and ' + str(len(refs) - 8) + ' more' if len(refs) > 8 else ''} {'is' if len(refs) == 1 else 'are'} in the {where} but not in the {other}"
+    said = [_verb(only_design, "schematic", "BOM")] if only_design else []
+    if only_bom:
+        said.append(_verb(only_bom, "BOM", "schematic"))
+    if not said:
+        said.append("a designator is listed more than once")
+    return {"bom_parts": n_bom, "design_parts": len(design), "only_in_design": only_design, "only_in_bom": only_bom,
+            "message": f"BOM lists {n_bom} parts, the schematic has {len(design)}: " + "; ".join(said)}
 
 
 def sheet_gaps(project):
