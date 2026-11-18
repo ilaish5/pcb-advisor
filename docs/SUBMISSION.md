@@ -125,7 +125,8 @@ Per-question answers: `local/bench-runs/2026-11-18-claude_code/`, `local/bench-r
 A synthetic board of 60 parts, two layers, 50 x 40 mm, placed by `layout.py` and routed by `route.py` with no Altium. The tests
 assert what the tool really reports, and where it cannot do something they assert the stated reason instead of loosening the check.
 - Placement: 8 of 8 decoupling capacitors within the limit, crystal at 4.96 mm, 0 findings.
-- Routing: 43 of 45 nets (96%), 0 violations, about 23 s CPU, deterministic (commit `b84b58d`).
+- Routing: 45 of 45 nets, GND dropped to the bottom pour, 0 violations, about 17 s CPU alone, deterministic (commit `fa1601a`;
+  the test's floor is 44 because 45 depends on the fifth rip-up round).
 - Budgets in the test are CPU time (15 s placement, 30 s routing), so a busy machine does not fail it.
 
 ### The strictness principle: fail closed, no false findings
@@ -139,8 +140,8 @@ assert what the tool really reports, and where it cannot do something they asser
 
 ## 5. Known limits
 
-- GND on the offline STM32 board falls back to tracks because the pour is cut off from several pads, and fails there.
-- IO_PA7 has no way out through the congested LQFP fan-out.
+- On the offline STM32 board all 45 nets route only with the fifth rip-up round (four give 44); a denser board may leave a net
+  open, which is then reported with its reason.
 - The USB pair is not coupled on that board (clearance 0.085 mm versus the 0.127 mm rule near J1-B6), but both nets are routed and tied.
 - A 3x3 BGA is not refused.
 - A board with an empty inner layer is not detected.

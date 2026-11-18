@@ -83,9 +83,8 @@ impedance or length-matching rules (other than the USB pair), and a board too bi
 
 **Known limits.**
 - A 3x3 BGA is not recognised as a BGA, and a board with an empty inner layer is not detected as multilayer.
-- On the synthetic 60-part STM32 test board 43 of 45 nets are routed (see [docs/SUBMISSION.md](docs/SUBMISSION.md)): GND
-  falls back to tracks and fails there, and one signal (IO_PA7) has no way out of the LQFP fan-out. The USB pair is routed and
-  tied but not coupled on that board.
+- On the synthetic 60-part STM32 test board all 45 nets are routed with GND dropped to the pour (see
+  [docs/SUBMISSION.md](docs/SUBMISSION.md)). The USB pair is routed and tied but not coupled on that board.
 - Automatic split of a design over several schematic sheets and multi-part symbols are not done.
 - The STM32 board has not yet been run live in Altium; the numbers come from the offline test.
 - A part whose pins no datasheet confirmed is drawn and marked "unverified"; the manufacturing files wait until you verify or accept it.
