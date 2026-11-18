@@ -1,4 +1,4 @@
-"""Crops the raw captures (run capture_ui.py for the app views; the Altium window shots come from the altium MCP screenshot tool) into the images the deck uses. Pixels are not changed, only cut; the raw files are not kept in git.
+"""Crops the raw captures (run capture_ui.py for the app views; the Altium window shots come from the altium MCP screenshot tool) into the images the deck uses. Pixels are not changed, only cut; the raw files are not kept in git."""
 from pathlib import Path
 from PIL import Image
 
