@@ -86,7 +86,7 @@ impedance or length-matching rules (other than the USB pair), and a board too bi
 - On the synthetic 60-part STM32 test board all 45 nets are routed with GND dropped to the pour (see
   [docs/SUBMISSION.md](docs/SUBMISSION.md)). The USB pair is routed and tied but not coupled on that board.
 - Automatic split of a design over several schematic sheets and multi-part symbols are not done.
-- The STM32 board has not yet been run live in Altium; the numbers come from the offline test.
+- A synthetic 26-part STM32 test board was also placed and routed live in Altium (18/18 nets with the GND pour, Altium DRC 0 clearance / 0 short / 0 un-routed); see [docs/SUBMISSION.md](docs/SUBMISSION.md) section 5.
 - A part whose pins no datasheet confirmed is drawn and marked "unverified"; the manufacturing files wait until you verify or accept it.
 
 ## Problems?
