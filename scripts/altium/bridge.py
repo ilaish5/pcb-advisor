@@ -817,43 +817,27 @@ def _tool_made_sheets(project):
 
 
 def remove_stale_sheets(project, prj):
-    """After a draw: take out of the Altium project a SchDoc that (1) this tool created, (2) no sheet of the design points at any
-    more (a placeholder such as Main.SchDoc, or a sheet that was renamed when the netlist was split), and (3) holds nothing of a
-    design. Never a sheet with content, never one the student made. The file is copied to .advisor-backup, taken out of the
-    project, the saved PrjPcb is read again, and only when the document is really gone is the file deleted. Returns
-    {"removed": [names], "left": [{"name", "why"}]}; never raises."""
+    """After a draw: REPORT (never remove) the SchDocs of the project that this tool created, that no sheet of the design uses any
+    more (a placeholder such as Main.SchDoc, or a sheet renamed when the netlist was split) and that hold nothing of a design.
+    Removal through Altium's script API was tried on a live project and left duplicate [Document] sections in the PrjPcb, and the
+    bridge cannot close and reload a project, so the tool does not touch the project's document list or any file. The student
+    removes them in Altium (right-click > Remove from Project). A sheet with content, or one the student made, is not named at all.
+    Returns {"removed": [] (always), "left": [{"name", "why"}]}; never raises."""
     from altium.schdoc import is_blank_sheet
     res = {"removed": [], "left": []}
     try:
         keep = {_find_doc(prj, sid) for sid, _t, _s in _sheets(project)}
         keep = {os.path.normcase(str(d)) for d in keep if d}
         made = _tool_made_sheets(project)
-        stale = []
         for d in read_prjpcb(prj)["sheets"]:
             doc = prj.parent / pathlib.Path(d.replace("\\", "/"))
             if os.path.normcase(str(doc)) in keep or doc.name.lower() not in made or not doc.is_file():
                 continue
             if is_blank_sheet(doc):
-                stale.append(doc)
-            else:
-                res["left"].append({"name": doc.name, "why": "it is not empty"})
-        if not stale:
-            return res
-        _backup(prj, stale + [prj])
-        run_commands([("PROJECT", str(prj))] + [("REMDOC", str(prj), str(d)) for d in stale] + [("SAVEPRJ", str(prj))])
-        still = {os.path.normcase(str(prj.parent / pathlib.Path(d.replace("\\", "/")))) for d in read_prjpcb(prj)["sheets"]}
-        for d in stale:
-            if os.path.normcase(str(d)) in still:
-                res["left"].append({"name": d.name, "why": "Altium did not take it out of the project: remove it in Altium (right-click > Remove from Project)"})
-            elif is_blank_sheet(d):          # re-checked: deleted only while still blank
-                d.unlink()
-                res["removed"].append(d.name)
-            else:
-                res["left"].append({"name": d.name, "why": "it changed meanwhile"})
-        if res["removed"]:
-            _log(project, "remove-stale-sheets", removed=res["removed"])
+                res["left"].append({"name": doc.name, "why": "it is empty and no sheet of the design uses it any more; remove it in Altium "
+                                                             "(right-click it in the Projects panel > Remove from Project)"})
     except (BridgeError, AltiumReadError, OSError, ValueError) as exc:
-        res["left"].append({"name": "", "why": f"the empty leftover sheets could not be checked or removed: {exc}"})
+        res["left"].append({"name": "", "why": f"the empty leftover sheets could not be checked: {exc}"})
     return res
 
 
