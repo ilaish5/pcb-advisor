@@ -74,6 +74,22 @@ def cmd_serve(args):
         raise
 
 
+def _existing(name):
+    """A read-only command must not create a project: an unknown name stops here with the list of real ones."""
+    safe = workspace.safe_name(name if name is not None else workspace.default_project())
+    if not project.exists(safe):
+        have = [r["name"] for r in project.list_all()]
+        print(f"no project named {name if name is not None else safe}. "
+              + (f"Existing: {', '.join(have)}" if have else "None yet - see: python3 pcb.py list"), file=sys.stderr)
+        raise SystemExit(1)
+    return safe
+
+
+def _prog(sub):
+    """argparse in the calc/rules/library scripts names itself after sys.argv[0]; make it 'pcb.py <sub>'."""
+    sys.argv[0] = f"pcb.py {sub}"
+
+
 def cmd_report(args):
     import runlog
     path = runlog.make_report()
@@ -85,7 +101,7 @@ def cmd_report(args):
 def cmd_timeline(args):
     import runlog
     names = [a for a in args if not a.startswith("--")]
-    lines = runlog.timeline(workspace.safe_name(names[0]) if names else workspace.default_project(), full="--full" in args)
+    lines = runlog.timeline(_existing(names[0] if names else None), full="--full" in args)
     print("\n".join(lines) if lines else "nothing logged yet")
 
 
@@ -111,7 +127,7 @@ def cmd_list(args):
 
 def cmd_show(args):
     import model
-    m = model.write(args[0] if args else None)
+    m = model.write(_existing(args[0] if args else None))
     print(chr(10).join(show_lines(m)))
 
 
@@ -232,7 +248,11 @@ def cmd_bench(args):
     def opt(name):
         i = args.index(name) + 1 if name in args else 0
         return args[i] if 0 < i < len(args) else None
-    only = [int(x) for x in opt("--only").split(",")] if opt("--only") else None
+    try:
+        only = [int(x) for x in opt("--only").split(",")] if opt("--only") else None
+    except ValueError:
+        print("usage: pcb.py bench [--engine X] [--evals] [--only 1,5]  (--only takes whole numbers)", file=sys.stderr)
+        return 2
     res = runner.run(engine=opt("--engine"), evals="--evals" in args, only=only)
     print(res["text"])
     for p in res["problems"]:
@@ -242,7 +262,7 @@ def cmd_bench(args):
 
 def cmd_chats(args):
     import session
-    proj = args[0] if args else workspace.default_project()
+    proj = _existing(args[0] if args else None)
     rows = session.list_all(proj)
     if not rows:
         print("no conversations yet")
@@ -278,7 +298,7 @@ def cmd_check(args):
     """Every sheet validates against the BOM, every citation resolves to a source."""
     import store
     import verify_sources
-    projects = args or [p["name"] for p in project.list_all()]
+    projects = [_existing(a) for a in args] or [p["name"] for p in project.list_all()]
     bad = 0
     refs = None
     for name in projects:
@@ -293,22 +313,36 @@ def cmd_check(args):
 
 
 def cmd_reset(args):
-    print(f"reset {project.reset(args[0] if args else workspace.default_project())}")
+    print(f"reset {project.reset(_existing(args[0] if args else None))}")
 
 
 def cmd_trace(args):
     import trace_width
+    usage = "usage: pcb.py trace <amps> [--project NAME] [--layer external] [--oz 1] [--rise 10]"
+
+    def bad(msg=None):
+        print(usage, file=sys.stderr)
+        if msg:
+            print(f"error: {msg}", file=sys.stderr)
+        return 2
     if not args:
-        raise SystemExit("usage: pcb.py trace <amps> [--project NAME] "
-                         "[--layer external] [--oz 1] [--rise 10]")
+        return bad()
     opts = dict(zip(args[1::2], args[2::2]))
     # unstated options come from the board you are actually designing
-    board = project.board(opts.get("--project", workspace.default_project()))
-    w = trace_width.width_mm(
-        float(args[0]),
-        opts.get("--layer", board.get("trace_layer", "external")),
-        float(opts.get("--rise", board.get("max_temp_rise_c", 10))),
-        float(opts.get("--oz", board.get("copper_oz", 1.0))))
+    board = project.board(_existing(opts.get("--project")) if "--project" in opts else workspace.default_project())
+    layer = opts.get("--layer", board.get("trace_layer", "external"))
+    if layer not in trace_width.K:
+        return bad(f"unknown layer '{layer}' (use: {', '.join(trace_width.K)})")
+    try:
+        amps = float(args[0])
+        rise = float(opts.get("--rise", board.get("max_temp_rise_c", 10)))
+        oz = float(opts.get("--oz", board.get("copper_oz", 1.0)))
+    except ValueError as exc:
+        return bad(exc)
+    for label, v in (("amps", amps), ("--rise", rise), ("--oz", oz)):
+        if not v > 0 or v == float("inf"):
+            return bad(f"{label} must be a positive number")
+    w = trace_width.width_mm(amps, layer, rise, oz)
     print(f"{w:.3f} mm ({w / 0.0254:.1f} mil)   source: IPC-2221 section 6.2")
 
 
@@ -321,27 +355,30 @@ def cmd_skills(args):
 
 def cmd_rules(args):
     import rules
+    _prog("rules")
     return rules.main(args)
 
 
 def cmd_calc(args):
     import calc
+    _prog("calc")
     return calc.main(args)
 
 
 def cmd_library(args):
     import library
+    _prog("library")
     return library.main(args)
 
 
 def cmd_outputs(args):
     import lineage
-    return lineage.main([args[0] if args else workspace.default_project(), *args[1:]])
+    return lineage.main([_existing(args[0] if args else None), *args[1:]])
 
 
 def cmd_usage(args):
     import introspect
-    return introspect.main([args[0] if args else workspace.default_project(), *args[1:]])
+    return introspect.main([_existing(args[0] if args else None), *args[1:]])
 
 
 def cmd_update(args):
