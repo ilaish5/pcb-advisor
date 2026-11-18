@@ -131,6 +131,36 @@ def is_crystal(part, npads):
     return bool(_XTAL_TEXT.search(part_text(part)))
 
 
+_TOKEN = re.compile(r"[^\W\d_]+|\d+(?:[.,]\d+)?|[,;:()\[\]|]")
+_ARTICLE = re.compile(r"(?:a|an|the)$", re.I)
+# the words that may stand right before a board size: size words, "about", "of", "be" ("the PCB must be 50x40"), Hebrew alike
+_PRE_OK = re.compile(r"(?:size[sd]?|dimensions?|outline|approx|approximately|about|around|roughly|max|maximum|of|is|be|at|most|"
+                     r"to|under|within|גודל|בגודל|מידות|במידות|מוערך|מוערכות|בערך|כ|של|עד|הוא|מקסימום|כמעט)$", re.I)
+# the words that may follow it: "30x25 mm board", "100 x 80 mm with 4 M3 holes"
+_POST_OK = re.compile(r"(?:with|and|or|max|maximum|approx|approximately|total|overall|outline|עם|או|מקסימום|בערך|בלבד|לכל|סה)$", re.I)
+
+
+def _tied_to_board(before, after):
+    """True when a W x H found in a sentence is a board size by the words beside it: the word before it (articles skipped) is a board
+    or size word or a list break (",", start), and the word after it (its unit already read) is none, a board word or a joining word.
+    "board shows a 128x64 OLED", "OLED 128x64", "LCD 16x2", "8x8 matrix" are not."""
+    nxt = _TOKEN.findall(after)[:1]
+    if nxt and _BOARD_WORD.fullmatch(nxt[0]):
+        return True                                    # "a 40x30 board", "on a 40 x 30 mm PCB"
+    toks = _TOKEN.findall(before)
+    while toks and _ARTICLE.match(toks[-1]):
+        toks.pop()
+    if toks and not re.match(r"[,;:()\[\]|]$", toks[-1]):
+        w = toks[-1]
+        if w[0].isdigit() or not (_BOARD_WORD.fullmatch(w) or _PRE_OK.match(w)):
+            return False
+    if nxt and not re.match(r"[,;:()\[\]|]$", nxt[0]):
+        w = nxt[0]
+        if w[0].isdigit() or not _POST_OK.match(w):
+            return False
+    return True
+
+
 def _sizes_in(text, topic=""):
     """(w, h) mm candidates in one piece of text. The sentence (or the topic) must talk about the board, the unit (mm, cm, מ"מ, ס"מ; none = mm)
     is converted, and both sides must be 10..500 mm."""
@@ -138,6 +168,8 @@ def _sizes_in(text, topic=""):
     for sentence in re.split(r"[;\n]|\.\s|׃", str(text or "")):
         talks = bool(_BOARD_WORD.search(f"{topic} {sentence}"))
         for m in _SIZE.finditer(sentence):
+            if not _tied_to_board(sentence[:m.start()], sentence[m.end():]):
+                continue                               # "a board with a 128x64 OLED": the size of another thing
             w, h = float(m.group(1).replace(",", ".")), float(m.group(3).replace(",", "."))
             u1, u2 = (m.group(2) or "").lower(), (m.group(4) or "").lower()
             u1, u2 = u1 or u2, u2 or u1                # a unit written once covers both sides, two units may differ

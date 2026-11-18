@@ -1930,6 +1930,9 @@ def set_board_size(project, width, height, unit="mm"):
     for idea in (saved, draft):
         if idea is None:
             continue
+        old = idea.get("board") if isinstance(idea.get("board"), dict) else {}
+        if size and (old.get("width_mm"), old.get("height_mm")) == (size["width_mm"], size["height_mm"]):
+            continue                    # the same numbers: a size read from the idea text stays one (it follows the text)
         if size:
             idea["board"] = dict(size)
         else:
@@ -2848,7 +2851,10 @@ def pins_status(line, entry, project=None):
         return "unverified", _unchecked_reason(line, entry)
     if line.get("datasheet"):
         return "unverified", f"{line['datasheet']} is linked, but the pins are not checked against it yet: press Re-check datasheets"
-    return "unverified", "no datasheet linked: the pins are from the agent; add the datasheet to verify them"
+    return "unverified", NO_DATASHEET
+
+
+NO_DATASHEET = "no datasheet linked: the pins are from the agent; add the datasheet to verify them"
 
 
 def _unchecked_reason(line, entry):
@@ -2923,24 +2929,50 @@ def unverified_parts(project, verify_new=True, checked=None):
              "issues": l.get("pins_issues", "")} for l in lines]
 
 
+def pins_to_resolve(project, verify_new=False, checked=None):
+    """The DFM page's Unverified parts list and the manufacturing gate's: unverified_parts without DNP / do-not-buy lines."""
+    skip = {l["key"] for l in bom(project, write=False) if l.get("dnp") or l.get("nobuy")}
+    rows = unverified_parts(project, verify_new=verify_new, **({"checked": checked} if checked is not None else {}))
+    return [r for r in rows if r["line"] not in skip]
+
+
+def _checked_outcome(line, entry):
+    """(status, words) of a part just checked again, from its own library entry and pins_status: verified only on a pin-table pass."""
+    st = line.get("pins_status") or ""
+    if passed_by_table(entry):
+        out = ("verified", "pins verified")
+    elif entry.get("verify") == "mismatch":
+        out = ("accepted", "conflicts with the datasheet, your accept stands") if entry.get("pins_accepted") else ("mismatch", "pins conflict")
+    elif st == "accepted" or entry.get("pins_accepted") or entry.get("accepted"):
+        out = ("accepted", "not verified by the datasheet, your accept stands")
+    else:
+        out = ("unverified", "still unverified")
+    if not line.get("on_sheet"):
+        out = (out[0], out[1] + " (not on a sheet yet)")
+    return out
+
+
 def recheck_pins(project):
-    """Re-check datasheets: unverified_parts with a verify of every part a datasheet is there for. {unverified: rows,
-    checked: [{line, refs, datasheet, status: verified|unverified|mismatch, issues}], message}: what was checked and what came
-    of it, in one sentence for the toast."""
+    """Re-check datasheets: a document that arrived is linked, and every part a datasheet is there for is verified again.
+    {unverified: the Unverified parts list (pins_to_resolve), checked: [{line, refs, datasheet, status: verified|accepted|unverified|
+    mismatch, issues, said}], message}: what was checked and what came of it, in one sentence for the toast."""
     ran = [{"line": m["line"], "refs": (_line_of(project, m["line"]).get("refs") or [m["ref"]]), "datasheet": m["name"]}
            for m in auto_attach(project)["matched"]]           # a document that arrived by hand: linked and checked first
-    rows = unverified_parts(project, checked=ran)
-    left = {r["line"]: r for r in rows}
+    rows = pins_to_resolve(project, verify_new=True, checked=ran)
     ran = list({c["line"]: c for c in ran}.values())          # a part linked just now and checked again in the loop: once
-    checked = [{**c, "status": left[c["line"]]["status"] if c["line"] in left else "verified",
-                "issues": left[c["line"]]["issues"] if c["line"] in left else ""} for c in ran]
+    fresh = {l["key"]: l for l in bom(project, write=False)}
+    lib = library_parts(project)
+    checked = []
+    for c in ran:
+        line = fresh.get(c["line"]) or {}
+        status, said = _checked_outcome(line, lib.get(c["line"]) or {})
+        checked.append({**c, "status": status, "issues": line.get("pins_issues", ""), "said": said})
     still = f"{len(rows)} {'part stays' if len(rows) == 1 else 'parts stay'} in the list"
     if not checked:
         msg = (f"Nothing new to check against a datasheet: {still}, each with its reason" if rows
                else "Every part's pins are verified or accepted")
     else:
-        said = [", ".join(c["refs"] or [c["line"]]) + " "
-                + {"verified": "pins verified", "mismatch": "pins conflict"}.get(c["status"], "still unverified") for c in checked]
+        said = [", ".join(c["refs"] or [c["line"]]) + " " + c["said"] for c in checked]
         msg = (f"Checked {len(checked)} against {'its datasheet' if len(checked) == 1 else 'their datasheets'}: " + "; ".join(said)
                + (f". {still}, each with its reason" if rows else ""))
     return {"unverified": rows, "checked": checked, "message": msg}
@@ -2950,8 +2982,7 @@ def manufacturing_warning(project):
     """"" when every part on the board has verified or accepted pins; else the refusal that stops the manufacturing outputs (Altium
     OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list, without DNP / do-not-buy lines).
     The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins)."""
-    skip = {l["key"] for l in bom(project, write=False) if l.get("dnp") or l.get("nobuy")}
-    rows = [r for r in unverified_parts(project, verify_new=False) if r["line"] not in skip]
+    rows = pins_to_resolve(project)
     if not rows:
         return ""
     bad = [r for r in rows if r["status"] == "mismatch"]
@@ -3014,7 +3045,7 @@ def detach_datasheet(project, line_or_ref, by="student"):
     if line.get("datasheet"):
         append(project, "bom-log.jsonl", {"ts": now(), "by": by, "line": line["key"], "changes": {"datasheet": ""},
                                           "before": {"datasheet": line.get("datasheet")}})
-    add_library(project, line["key"], {"verify": "unchecked", "issues": "datasheet detached", "verified_at": now()}, by=by)
+    add_library(project, line["key"], {"verify": "unchecked", "issues": NO_DATASHEET, "verified_at": now()}, by=by)
     refresh_pins_source(project)
     return {"ok": True, "line": line["key"], "refs": line.get("refs", [])}
 

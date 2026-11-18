@@ -224,6 +224,7 @@ function boardSizeHTML() {
       <span aria-hidden="true">x</span>
       <input type="number" class="in board-h" min="10" max="500" step="any" inputmode="decimal" placeholder="e.g. 20" aria-label="Board height" title="e.g. 30 x 20 mm" value="${has ? esc(String(b.height_mm)) : ''}">
       <span class="board-size-unit">mm</span>
+      ${has && b.source === 'text' ? '<span class="muted board-size-src" title="Read from the board size the idea states; Set with other numbers to choose your own">from the idea text</span>' : ''}
       ${btn('Set', {size: 'sm', kind: 'line', act: 'set-board-size', title: 'Use this board size (10 to 500 mm per side); no need to confirm the idea first'})}
     </div>`;
 }
@@ -610,6 +611,11 @@ onAct('set-board-size', async (el) => {
   const row = el.closest('.board-size');
   const w = row.querySelector('.board-w').value.trim(), h = row.querySelector('.board-h').value.trim();
   if (!w !== !h) { toast('Give both the width and the height in mm'); return; }
+  const cur = ((S && S.idea) || {}).board || {};
+  // the same numbers again: nothing changes, and a size read from the idea text stays one (it follows the text)
+  if (w && cur.width_mm && cur.height_mm && Number(w) === Number(cur.width_mm) && Number(h) === Number(cur.height_mm)) {
+    toast('Board size unchanged'); return;
+  }
   try {
     setState(await api('/api/idea/board', {width: w, height: h, unit: 'mm'}));
     ideaRedraw();

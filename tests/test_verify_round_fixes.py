@@ -102,3 +102,50 @@ def test_the_chat_warns_when_the_reply_names_a_ref_no_line_holds(server, empty, 
     assert call(server, "POST", "/api/chat", empty, {"text": "go"})[0] == 200
     rec = [r for r in session_mod.load_chat(empty, session_mod.current(empty, None)) if r["role"] == "agent" and r.get("applied")][-1]
     assert any(k.startswith("bom.check") and "R2" in v for k, v in (rec.get("warned") or {}).items())
+
+
+def test_a_size_of_another_thing_is_not_the_board():
+    from altium import layout
+    for text in ("LED blinker, the board shows a 128x64 OLED", "OLED 128x64 on top", "LCD 16x2 display", "an 8x8 LED matrix",
+                 "board with an OLED 128x64", "OLED size 128x64 pixels"):
+        assert layout.board_size({"goal": text}) is None, text
+    assert layout.board_size({"goal": "a 128x64 OLED on a 40x30 board"}) == (40.0, 30.0)
+    assert layout.board_size({"goal": "board 40x30, OLED 128x64"}) == (40.0, 30.0)
+    assert layout.board_size({"goal": "the PCB must be 50x40 mm"}) == (50.0, 40.0)
+
+
+def test_set_with_the_same_numbers_keeps_a_size_read_from_the_text(empty):
+    store.set_idea_goal(empty, "a blinker, board 30x25", by="agent")
+    store.propose_idea(empty, "Power", "USB-C", by="agent")
+    store.confirm_idea(empty)
+    store.set_board_size(empty, "30", "25")
+    assert store.load_idea(empty)["board"]["source"] == "text"
+    store.set_board_size(empty, 31, 25)
+    assert "source" not in store.load_idea(empty)["board"]
+
+
+def test_recheck_words_an_accepted_conflict_and_an_off_sheet_part_honestly(empty):
+    _ic_on_sheet(empty, "ABCD1234 datasheet\nPin Functions\nPIN NAME DESCRIPTION\n1 VIN Supply\n2 GND Ground\n")
+    store.attach_datasheet(empty, "U1", "ABCD1234.pdf")
+    store.accept_pins(empty, "U1")
+    line = {**_u1(empty)}
+    assert store._checked_outcome(line, store.library_parts(empty)["U1"]) == ("accepted", "conflicts with the datasheet, your accept stands")
+    line.update(on_sheet=[], pins_status="unverified")
+    assert store._checked_outcome(line, {"verify": "unchecked"}) == ("unverified", "still unverified (not on a sheet yet)")
+
+
+def test_the_recheck_count_leaves_out_do_not_buy_lines_like_the_gate(empty):
+    _ic_on_sheet(empty)
+    assert len(store.recheck_pins(empty)["unverified"]) == 1
+    store.propose_bom(empty, "U1", {"nobuy": True})
+    store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
+    out = store.recheck_pins(empty)
+    assert out["unverified"] == [] and out["message"] == "Every part's pins are verified or accepted"
+    assert store.manufacturing_warning(empty) == ""
+
+
+def test_detach_says_the_full_no_datasheet_reason(empty):
+    _ic_on_sheet(empty, "ABCD1234 datasheet\nno table\n")
+    store.attach_datasheet(empty, "U1", "ABCD1234.pdf")
+    store.detach_datasheet(empty, "U1")
+    assert _u1(empty)["pins_issues"] == store.NO_DATASHEET
