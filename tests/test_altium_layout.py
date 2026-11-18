@@ -74,7 +74,9 @@ def test_every_part_placed_inside_without_overlap():
 def test_connector_is_on_an_edge_turned_out():
     plan = layout.plan_placement(PARTS, FPS, OUT, connector_dirs={"J1": 0})
     box = boxes(plan)["J1"]
-    assert box[0] <= OUT[0] + 0.06 or box[2] >= OUT[2] - 0.06 or box[1] <= OUT[1] + 0.06 or box[3] >= OUT[3] - 0.06
+    # on an edge: its box touches it, but for the strip that keeps the silkscreen line off the edge (outline clearance rule)
+    near = layout.EDGE_COPPER_MM + layout.SILK_EDGE_MM + 0.06
+    assert box[0] <= OUT[0] + near or box[2] >= OUT[2] - near or box[1] <= OUT[1] + near or box[3] >= OUT[3] - near
     assert not [w for w in plan["warnings"] if "J1" in w]          # direction was given: no 3D warning
     assert [w for w in layout.plan_placement(PARTS, FPS, OUT)["warnings"] if "J1" in w]
 

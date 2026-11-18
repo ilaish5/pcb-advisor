@@ -27,6 +27,8 @@ FANOUT_PITCHES = 2.0     # the fan-out band of a fine-pitch IC, for its decoupli
 FANOUT_FREE_PITCHES = 6.0   # the same band for every other part: wide enough for the tracks of a pin row to run along it to the gaps between parts
 CSP_TRIES = 5000        # choices the search for the places beside an IC makes before it gives up
 CSP_DOMAIN = 400        # candidate places kept for one part
+IC_TRIES = 10           # places (turns, designator sides) tried for an IC whose crystal or caps did not all find a place beside it
+IC_TRY_APART_MM = 0.75   # a place tried again with the same turn and designator side is this far from every place tried before
 DECAP_NEAR_MM = 3.0      # this tool's threshold (datasheets only say "as close as possible"): pad to pad, a decoupling cap's rail pad to its supply pin pad
 DECAP_TOL_MM = 0.05      # a cap this much over DECAP_NEAR_MM still passes (so '3.0 mm, limit 3 mm' is never reported)
 DECAP_WINDOW_MM = 3.0   # the search for a place around a supply pin reaches this much beyond DECAP_NEAR_MM
@@ -41,6 +43,8 @@ LABEL_LINE = 0.16       # stroke, mm: JLC's minimum is 0.15, but JLCDFM warns be
 LABEL_W = 0.65         # width of one designator character at LABEL_H
 LABEL_GAP = 0.25       # between a part and its designator
 EDGE_COPPER_MM = 0.3   # copper (pads) stays this far from the board edge (JLC)
+SILK_EDGE_MM = 0.2     # a connector's silkscreen outline stays EDGE_COPPER_MM + this from the board edge: the outline clearance rule (12 mil) is
+                       # measured to the edge of the silkscreen line (0.25 mm wide), and Altium's DRC reports a connector flush with the edge
 OPEN_MIN_MM = 0.8
 CONNECTOR_OVERHANG_MM = 1.0   # a connector's body may stick out of the outline this far, on its mating side only
 _GND = re.compile(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", re.I)
@@ -208,6 +212,12 @@ def footprint_extent(fp):
     return _union([pads_box(fp)] + [[v * MIL for v in ext[k]] for k in ("silk", "mech", "body") if ext.get(k)])
 
 
+def _silk_box(fp):
+    """The box of the silkscreen of a read_pcblib footprint, mm, relative to its origin (None when it has none)."""
+    silk = (fp.get("extent") or {}).get("silk")
+    return [v * MIL for v in silk] if silk else None
+
+
 def footprint_box(fp, margin=COURT_MM):
     """footprint_extent grown by `margin`: the box other parts keep out of. None when the footprint has no pads with a size."""
     e = footprint_extent(fp)
@@ -289,26 +299,31 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
     caps: when a decoupling cap does not get next to its supply pin, the crystal is farther than XTAL_NEAR_MM from the oscillator pins
     (or a part finds no place), the plan is made again, with the connectors starting on another side of the board (up to three more)
     and, on a board with a crystal, with the crystal placed before the decoupling caps instead of after them (the two compete for the
-    room beside the MCU). The best plan is returned: fewest errors, then caps too far, then crystals too far, then findings; the first
-    one on a tie."""
+    room beside the MCU). When no plan is free of findings, the same plans are made once more with the MCU (any IC with a crystal or
+    caps to place beside it) tried at other places and turns: where the board edge leaves room for them beside its pins (a first place
+    that leaves a crystal or a supply pin without room is the usual reason for a finding). The best plan is returned: fewest errors,
+    then caps too far, then crystals too far, then findings; the first one on a tie."""
     best, best_key = None, None
-    for shift in range(4 if any(is_connector(p["ref"]) for p in parts) else 1):
-        plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, best_key)
-        if plan is None:                        # cannot beat the best so far
-            continue
-        far = sum(1 for f in plan.get("findings", []) if f["level"] == "error")
-        xfar = sum(1 for c in plan.get("crystals", []) if c["max_mm"] > XTAL_NEAR_MM)
-        key = (len(plan["errors"]), far, xfar, len(plan.get("findings", [])))
-        if best is None or key < best_key:
-            best, best_key = plan, key
-        if key == (0, 0, 0, 0):
-            break                               # nothing left to improve
+    for trials in (False, True):
+        for shift in range(4 if any(is_connector(p["ref"]) for p in parts) else 1):
+            plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, best_key, trials)
+            if plan is None:                        # cannot beat the best so far
+                continue
+            far = sum(1 for f in plan.get("findings", []) if f["level"] == "error")
+            xfar = sum(1 for c in plan.get("crystals", []) if c["max_mm"] > XTAL_NEAR_MM)
+            key = (len(plan["errors"]), far, xfar, len(plan.get("findings", [])))
+            if best is None or key < best_key:
+                best, best_key = plan, key
+            if key == (0, 0, 0, 0):
+                break                               # nothing left to improve
+        if best_key == (0, 0, 0, 0):
+            break
     best.setdefault("findings", [])
     best.setdefault("crystals", [])
     return best
 
 
-def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, bound=None):
+def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, bound=None, trials=False):
     """Places every part inside the outline, by its real extent (pads, silkscreen, courtyard, 3D body) plus the strip its designator
     needs, so no two parts and no designator overlap.
     parts: netlist parts [{ref, footprint, pins: [{num, net}]}]; footprints: {footprint name: read_pcblib footprint};
@@ -340,7 +355,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         if box is None:
             errors.append(f"{p['ref']}: footprint {fpname} has no pads")
             continue
-        info[p["ref"]] = {"part": p, "fp": fpname, "box": box, "padbox": pads_box(fp), "pads": _pads_of(p, fp), "open": opening_dir(fp),
+        info[p["ref"]] = {"part": p, "fp": fpname, "box": box, "padbox": pads_box(fp), "silk": _silk_box(fp), "pads": _pads_of(p, fp), "open": opening_dir(fp),
                           "names": {str(q.get("num", q.get("number", ""))): str(q.get("name") or "") for q in p.get("pins", [])},
                           "reg": is_regulator(p, fpname)}
     if errors:
@@ -471,6 +486,8 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             rot = (face - (face0 or 0)) % 360
             b = rot_box(info[ref]["box"], rot)
             pb = rot_box(info[ref]["padbox"], rot)
+            eb = rot_box(info[ref]["silk"], rot) if info[ref]["silk"] else pb                # no silkscreen: the copper again, nothing more is asked
+            silk = edge_copper_mm + SILK_EDGE_MM if info[ref]["silk"] else edge_copper_mm
             w, h = b[2] - b[0], b[3] - b[1]
             lw = max(w, label_size(ref)[0])
             horizontal = s in "LR"
@@ -484,14 +501,16 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                 if horizontal:
                     x = outline[0] - b[0] if s == "L" else outline[2] - b[2]
                     y = outline[1] + along - b[1]
-                    pbx = _moved(pb, x, y)
-                    d = max(0.0, outline[0] + edge_copper_mm - pbx[0]) if s == "L" else -max(0.0, pbx[2] - (outline[2] - edge_copper_mm))
+                    pbx, ebx = _moved(pb, x, y), _moved(eb, x, y)
+                    d = (max(0.0, outline[0] + edge_copper_mm - pbx[0], outline[0] + silk - ebx[0]) if s == "L"
+                         else -max(0.0, pbx[2] - (outline[2] - edge_copper_mm), ebx[2] - (outline[2] - silk)))
                     x += d
                 else:
                     y = outline[1] - b[1] if s == "B" else outline[3] - b[3]
                     x = outline[0] + along - b[0] - (lw - w) / 2
-                    pbx = _moved(pb, x, y)
-                    d = max(0.0, outline[1] + edge_copper_mm - pbx[1]) if s == "B" else -max(0.0, pbx[3] - (outline[3] - edge_copper_mm))
+                    pbx, ebx = _moved(pb, x, y), _moved(eb, x, y)
+                    d = (max(0.0, outline[1] + edge_copper_mm - pbx[1], outline[1] + silk - ebx[1]) if s == "B"
+                         else -max(0.0, pbx[3] - (outline[3] - edge_copper_mm), ebx[3] - (outline[3] - silk)))
                     y += d
                 side = free(ref, rot, x, y, -1e-6)
                 if side:
@@ -790,12 +809,15 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         else can take the room there. Every named supply pin gets a cap, the smallest values first, and then each rail's caps in proportion
         to this IC's share of the rail's supply pins (a rail with one pin here and two caps gives both to it). Candidates: the crystal
         within XTAL_NEAR_MM of every oscillator pin, a cap within DECAP_NEAR_MM of its pin (pad to pad), every free place and turn on
-        the grid; solve() finds places that do not touch. What it cannot place is left to the later steps."""
+        the grid; solve() finds places that do not touch. What it cannot place is left to the later steps. Returns how many of the
+        crystals and caps it wanted to place it found no place for."""
         parts_, doms = [], []
         bands = fan_bands()
+        wanted = 0
         for yref, links in xtals.items():
             if yref in done_x or any(o not in placed for _, o, _, _ in links):
                 continue
+            wanted += 1
             targets = [(pad, pad_xy(o, opad)) for pad, o, opad, _ in links]
             dom = []
             for x, y, rot, side, cost in near_places(yref, targets, len(targets) * XTAL_NEAR_MM, all_sides=True):
@@ -821,6 +843,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             allpins = max(allpins, len(mine))                                       # an IC that is not a U/IC/M/MOD (a Q...) counts too
             quota = max(len(mine), -(-len(rail_caps) * len(mine) // allpins))        # ceil(caps * my pins / all pins), one per pin at least
             for k, c in enumerate(todo[:quota]):
+                wanted += 1
                 pad = mine[k % len(mine)]
                 rp = next(p for p, (_, _, n) in info[c]["pads"].items() if n == net)
                 dom = []
@@ -833,7 +856,8 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                 if dom:
                     parts_.append(("c", c, (ic, pad)))
                     doms.append(dom)
-        for i, e in sorted(solve(doms).items()):
+        sol = solve(doms)
+        for i, e in sorted(sol.items()):
             kind, ref, extra = parts_[i]
             commit(ref, e[1], e[2], e[3], side=e[4])
             if kind == "c":
@@ -843,6 +867,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             else:
                 done_x.add(ref)
                 record_crystal(ref, extra)
+        return wanted - len(sol)
 
     def net_of(c):
         return _decap_rail(info[c])
@@ -869,6 +894,115 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
     # can take the room beside its pins: a decoupling cap at each supply pin, then the crystal (and its load caps) at its oscillator pins
     halos = []      # while the ICs are placed, the room round an IC that has supply pins is kept for its caps: the next IC is put outside it
 
+    def snapshot():
+        return (dict(placed), {k: list(v) for k, v in grid.items()}, dict(assigned), dict(pin_caps), dict(cap_pin), set(done_x),
+                list(crystals), list(findings), list(warnings), list(todo_loads), dict(band_cache), list(errors), list(halos))
+
+    def restore(saved):
+        for target, was in zip((placed, grid, assigned, pin_caps, cap_pin, done_x, crystals, findings, warnings, todo_loads, band_cache,
+                                errors, halos), saved):
+            if isinstance(target, dict):
+                target.clear()
+                target.update({k: list(v) for k, v in was.items()} if target is grid else was)
+            elif isinstance(target, set):
+                target.clear()
+                target.update(was)
+            else:
+                target[:] = was
+
+    def min_dim(r):
+        b = info[r]["box"]
+        return min(b[2] - b[0], b[3] - b[1])
+
+    def pitch_of(o):
+        """The smallest centre to centre distance between two pads of an IC (None for one pad)."""
+        pts = sorted(set((round(x, 3), round(y, 3)) for x, y, _ in info[o]["pads"].values()))
+        return min((math.hypot(a[0] - b[0], a[1] - b[1]) for i, a in enumerate(pts) for b in pts[i + 1:]), default=None)
+
+    def ic_needs(ic):
+        """{pad of the IC: the room (mm, across) a part needs beside it} for the parts the neighbourhood puts beside this IC: the
+        crystal beside each oscillator pin, the smallest decoupling cap beside each supply pin (only when there are caps for every
+        pin: with fewer, which pins get one is not known yet)."""
+        out = {}
+        for yref, links in xtals.items():
+            if yref not in done_x:
+                for _, o, opad, _ in links:
+                    if o == ic:
+                        out[opad] = max(out.get(opad, 0.0), min_dim(yref))
+        for net in {n for _, _, n in info[ic]["pads"].values() if is_rail(n)}:
+            mine = [p for p, (_, _, n) in info[ic]["pads"].items() if n == net and info[ic]["names"].get(p, "").strip() and pin_ok(ic, p)]
+            todo_c = [c for c in caps if c not in placed and _decap_rail(info[c]) == net
+                      and (cap_farads(part_value(info[c]["part"])) is None or cap_farads(part_value(info[c]["part"])) <= BULK_F)]
+            if mine and len(todo_c) >= len(mine):
+                d = min(min_dim(c) for c in todo_c)
+                for p in mine:
+                    out[p] = max(out.get(p, 0.0), d)
+        return out
+
+    def room_ok(ic, needs, x, y, rot, band):
+        """True when, at this place and turn, the board edge leaves room beside every pad that has a need: on the side of the pad row the
+        pad is on, from the pads' box to the keep-out line of the edge there must be the fan-out band and the part."""
+        pb = _moved(rot_box(info[ic]["padbox"], rot), x, y)
+        room = (pb[0] - outline[0] - EDGE_MM, outline[2] - EDGE_MM - pb[2], pb[1] - outline[1] - EDGE_MM, outline[3] - EDGE_MM - pb[3])
+        for pad, d in needs.items():
+            px, py = pad_abs(ic, pad, x, y, rot)
+            gaps = (px - pb[0], pb[2] - px, py - pb[1], pb[3] - py)
+            if room[gaps.index(min(gaps))] < band + d - 1e-6:
+                return False
+        return True
+
+    def ic_poses(ic, tx, ty, edge, needs, band):
+        """Places and turns for an IC, nearest to (tx, ty) first, that leave room beside its pads (room_ok): (x, y, rot, side of the
+        designator), one for every side of the designator that fits."""
+        n = int(max(outline[2] - outline[0], outline[3] - outline[1]) / STEP_MM)
+        for k in range(n + 1):
+            pts = {(round(x / STEP_MM) * STEP_MM, round(y / STEP_MM) * STEP_MM) for x, y in ([(tx, ty)] if k == 0 else _ring(tx, ty, k * STEP_MM))}
+            for x, y in sorted(pts, key=lambda q: (math.hypot(q[0] - tx, q[1] - ty), q)):
+                for rot in ROTS:
+                    if room_ok(ic, needs, x, y, rot, band):
+                        for side in fit_sides(ic, rot, x, y, edge):
+                            yield x, y, rot, side
+
+    def settle(ic, pose):
+        """Put the IC at `pose`, then its crystal and caps beside it. -> how many of them did not get a place within reach."""
+        commit(ic, *pose[:3], side=pose[3])
+        short = neighbourhood(ic)
+        place_crystals()                # a crystal with no place within XTAL_NEAR_MM of its pins: the cheapest free one
+        place_loads()                   # after the caps at the supply pins: a load cap is not held to a distance from the MCU
+        for yref, links in xtals.items():
+            if any(o == ic for _, o, _, _ in links) and all(o in placed for _, o, _, _ in links):
+                rec = next((c for c in crystals if c["ref"] == yref), None)
+                short += rec is None or rec["max_mm"] > XTAL_NEAR_MM
+        return short
+
+    def settle_best(ic, tgt, hit):
+        """The IC at the first free place (`hit`) when its crystal and caps all get a place beside it; else the first of up to IC_TRIES
+        other places and turns, nearest to the target first, where they do (the designator may go to another side too), else the one
+        that left the fewest without. A place where the edge leaves no room beside the pads for them is not tried."""
+        base = snapshot()
+        needs = ic_needs(ic) if trials else None
+        short = settle(ic, hit)
+        if not short or not needs:
+            return
+        pitch = pitch_of(ic)
+        band = FANOUT_PITCHES * pitch if pitch is not None and pitch <= FANOUT_PITCH_MM else COURT_MM + gap
+        best, last, tried = (short, hit), hit, [hit]
+        for pose in ic_poses(ic, *tgt, EDGE_MM + 0.5, needs, band):
+            if len(tried) >= IC_TRIES:
+                break
+            if any(q[2] == pose[2] and q[3] == pose[3] and math.hypot(q[0] - pose[0], q[1] - pose[1]) < IC_TRY_APART_MM for q in tried):
+                continue
+            tried.append(pose)
+            restore(base)
+            short, last = settle(ic, pose), pose
+            if short < best[0]:
+                best = (short, pose)
+            if not short:
+                return
+        if last != best[1]:
+            restore(base)
+            settle(ic, best[1])
+
     for ref in ics:
         tgt = toward_middle(_target(ref, info, placed, centre, (cx, cy)))
         hit = find(ref, *tgt, edge=EDGE_MM + 0.5)
@@ -880,10 +1014,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         if hit is None:
             errors.append(f"{ref}: no free place inside the board")
             continue
-        commit(ref, *hit[:3], side=hit[3])
-        neighbourhood(ref)
-        place_crystals()                # a crystal with no place within XTAL_NEAR_MM of its pins: the cheapest free one
-        place_loads()                   # after the caps at the supply pins: a load cap is not held to a distance from the MCU
+        settle_best(ref, tgt, hit)
         if checked_ic(ref) and any(is_rail(n) and pin_ok(ref, pad) and info[ref]["names"].get(pad, "").strip()
                                    for pad, (_, _, n) in info[ref]["pads"].items()):
             b = placed[ref]["box"]
