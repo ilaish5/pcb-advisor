@@ -2931,16 +2931,18 @@ def recheck_pins(project):
            for m in auto_attach(project)["matched"]]           # a document that arrived by hand: linked and checked first
     rows = unverified_parts(project, checked=ran)
     left = {r["line"]: r for r in rows}
+    ran = list({c["line"]: c for c in ran}.values())          # a part linked just now and checked again in the loop: once
     checked = [{**c, "status": left[c["line"]]["status"] if c["line"] in left else "verified",
                 "issues": left[c["line"]]["issues"] if c["line"] in left else ""} for c in ran]
+    still = f"{len(rows)} {'part stays' if len(rows) == 1 else 'parts stay'} in the list"
     if not checked:
-        msg = (f"No datasheet to check against: {len(rows)} {'part stays' if len(rows) == 1 else 'parts stay'} unverified "
-               "(add the datasheet in Sources, or accept the pins)") if rows else "Every part's pins are verified or accepted"
+        msg = (f"Nothing new to check against a datasheet: {still}, each with its reason" if rows
+               else "Every part's pins are verified or accepted")
     else:
         said = [", ".join(c["refs"] or [c["line"]]) + " "
-                + {"verified": "pins verified", "mismatch": "pins conflict with " + (c["datasheet"] or "the datasheet")}.get(
-                    c["status"], "still unverified: " + c["issues"]) for c in checked]
-        msg = f"Checked {len(checked)} against {'its datasheet' if len(checked) == 1 else 'their datasheets'}: " + "; ".join(said)
+                + {"verified": "pins verified", "mismatch": "pins conflict"}.get(c["status"], "still unverified") for c in checked]
+        msg = (f"Checked {len(checked)} against {'its datasheet' if len(checked) == 1 else 'their datasheets'}: " + "; ".join(said)
+               + (f". {still}, each with its reason" if rows else ""))
     return {"unverified": rows, "checked": checked, "message": msg}
 
 

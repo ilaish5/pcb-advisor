@@ -60,7 +60,7 @@ function libModels(r) {
 /* the pins' state, as the BOM and the sheet show it: a line on a sheet whose pins came from the agent says so here too */
 function libPins(r) {
   const l = (S.bom || []).find(b => b.key === r.line), st = l && l.pins_status;
-  if (st === 'unverified') return `<span class="mdl no" title="Pins from the agent, not checked against a datasheet: Verify, or accept them">${icon('x', 's')}Pins unverified</span>`;
+  if (st === 'unverified') return `<span class="mdl no" title="${esc(l.pins_issues || 'Pins not checked against a datasheet')}: Verify, or accept them">${icon('x', 's')}Pins unverified</span>`;
   if (st === 'mismatch') return `<span class="mdl no" title="${esc('Pins differ from the datasheet: ' + (l.pins_issues || ''))}">${icon('x', 's')}Pins conflict</span>`;
   return '';
 }

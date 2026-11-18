@@ -3,6 +3,7 @@ line, and a view that does not rewrite bom.json."""
 import serve
 import sources
 import store
+from test_chat_turns import server  # noqa: F401
 
 
 def _ic_on_sheet(empty, ds_text=None):
@@ -43,7 +44,7 @@ def test_unverified_always_says_why(empty):
 def test_recheck_says_what_it_checked(empty):
     _ic_on_sheet(empty)
     out = store.recheck_pins(empty)
-    assert out["checked"] == [] and "No datasheet to check against" in out["message"] and len(out["unverified"]) == 1
+    assert out["checked"] == [] and "Nothing new to check" in out["message"] and len(out["unverified"]) == 1
     _ic_on_sheet(empty, "ABCD1234 datasheet\nPin Functions\nPIN NAME DESCRIPTION\n1 VCC Supply\n2 GND Ground\n")
     out = store.recheck_pins(empty)
     assert [c["status"] for c in out["checked"]] == ["verified"] and "U1 pins verified" in out["message"]
@@ -72,7 +73,8 @@ def test_refs_listed_in_bullets_ranges_and_ref_tokens_must_be_in_a_line(empty):
     for key in ("R1", "R3", "C2"):
         store.propose_bom(empty, key, {"mpn": "", "refs": [key], "value": "1k"}, new=True)
     reply = ("| Part | Refs | Value |\n|---|---|---|\n| CC pull-down | {{ref:R1}}, {{ref:R2}} | 5.1k |\n"
-             "- **R3-R4** 22R series\n- C2/C3: 100nF\n- PA9, PA10 go to the UART\nprose names R7, R8 freely\n")
+             "- **R3-R4** 22R series\n- C2/C3: 100nF\n- PA9, PA10 go to the UART\nprose names R7, R8 freely\n"
+             "- R1, NE555: timer, C2, SS14: the diode\n")
     assert serve.refs_missing_from_bom(empty, reply) == ["R2", "R4", "C3"]
 
 
@@ -88,3 +90,15 @@ def test_a_view_does_not_rewrite_an_unchanged_bom_json(empty, monkeypatch):
     store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
     store.bom(empty)
     assert "bom.json" in wrote
+
+
+def test_the_chat_warns_when_the_reply_names_a_ref_no_line_holds(server, empty, monkeypatch):
+    from test_chat_turns import call
+    import session as session_mod
+    monkeypatch.setattr(serve.agent, "respond", lambda *a, **k: {
+        "reply": "Proposed:\n- {{ref:R1}}, {{ref:R2}}: 5.1k CC pull-downs",
+        "actions": [{"type": "bom.propose", "line": "R1", "new": True, "changes": {"refs": ["R1"], "value": "5.1k", "role": "CC"}}],
+        "provider": "fake", "seconds": 1, "usage": {}})
+    assert call(server, "POST", "/api/chat", empty, {"text": "go"})[0] == 200
+    rec = [r for r in session_mod.load_chat(empty, session_mod.current(empty, None)) if r["role"] == "agent" and r.get("applied")][-1]
+    assert any(k.startswith("bom.check") and "R2" in v for k, v in (rec.get("warned") or {}).items())

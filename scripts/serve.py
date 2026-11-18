@@ -679,7 +679,10 @@ def refs_missing_from_bom(project, reply):
     for p in store.proposals(project):
         if p.get("kind") == "bom" and p.get("status") == "pending":
             held |= {p.get("line"), *((p.get("changes") or {}).get("refs") or [])}
-    return list(dict.fromkeys(r for g in groups if any(r in held for r in g) for r in g if r not in held))
+    letters = lambda r: re.match(r"[A-Z]+", r).group(0)
+    # one line holds identical parts: only a name with the letters of a held one in its group counts ("U1, NE555" is a part and its MPN)
+    return list(dict.fromkeys(r for g in groups for r in g if r not in held
+                              and any(h in held and letters(h) == letters(r) for h in g)))
 
 
 _WARN_RE = re.compile(r"\(\s*(?:\d+\s+)?warnings?:\s*(.*)\)\s*$|WARNING:\s*(.*)$|(\(\d+ with issues\))|(missing [^()]*)|(Could not[^;]*)", re.I | re.S)

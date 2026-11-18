@@ -247,7 +247,7 @@ def render_part(p, line, bom_line, bom_status=None):
         body = part_ic(p, sub)
     svg, w, h = body
     if p.get("pins_source") == "agent":
-        svg += (f'<g class="unv"><title>Pins from the agent; add the datasheet to verify</title>'
+        svg += (f'<g class="unv"><title>Pins not checked against a datasheet yet: DFM > Unverified parts says why</title>'
                 f'<text x="{max(w - 4, 0):g}" y="-2" text-anchor="end" font-size="9" fill="#b7791f" '
                 f'font-style="italic">unverified</text></g>')
     if bom_status:

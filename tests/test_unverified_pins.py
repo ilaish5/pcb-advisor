@@ -65,7 +65,7 @@ def test_unverified_badge_in_the_schematic(empty):
     import render_sheet
     _sheet(empty)
     svg = render_sheet.render_sheet(store.load_sheet(empty, "01"), store.bom_lines(empty))
-    assert svg.count("add the datasheet to verify") == 1
+    assert svg.count("Pins not checked against a datasheet yet") == 1
 
 
 def _jd_sheet(empty, d_names=("A", "K")):
