@@ -206,6 +206,7 @@ function render(force) {
   // click must not rebuild the sheet (that reset the schematic and PCB zoom).
   document.title = S.title + ' · PCB Advisor';
   renderNav();
+  if (typeof readyShow === 'function') readyShow();
   renderChat(force);
   const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy, libBusy, libNote]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
@@ -277,6 +278,21 @@ function askText(o) {
     document.body.appendChild(dlg);
     dlg.showModal();
     dlg.querySelector('input').select();
+  });
+}
+
+/* A two-way question: resolves true (yes), false (no) or null (cancelled). askChoice({title, text, yes, no}) */
+function askChoice(o) {
+  return new Promise(resolve => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dlg';
+    dlg.setAttribute('aria-labelledby', 'dlg-title');
+    dlg.innerHTML = `<form method="dialog"><h2 id="dlg-title">${esc(o.title || '')}</h2><p>${esc(o.text || '')}</p>
+      <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn" value="no">${esc(o.no || 'No')}</button><button type="submit" class="btn pri" value="yes">${esc(o.yes || 'Yes')}</button></div></form>`;
+    dlg.querySelector('[data-cancel]').addEventListener('click', () => dlg.close('cancel'));
+    dlg.addEventListener('close', () => { const v = dlg.returnValue; dlg.remove(); resolve(v === 'yes' ? true : v === 'no' ? false : null); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
   });
 }
 

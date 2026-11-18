@@ -3358,9 +3358,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/projects/new":
             name = (data.get("name") or "").strip() or "untitled"
+            wanted = workspace.safe_name(name)          # the folder name this text gives
+            if project_mod.exists(wanted) and not data.get("allow_copy"):
+                # never a silent "name-2": the page asks whether to open the one that is there
+                return self._send(409, {"error": f"A project named \"{wanted}\" already exists.", "exists": wanted,
+                                        "projects": model.list_projects()})
             created = project_mod.create(name, title=data.get("title") or name, brief=data.get("brief", ""))
             runlog.usage(None, "project", action="create", name=name, ok=True)
-            return self._send(200, {"created": created, "projects": model.list_projects()})
+            out = {"created": created, "projects": model.list_projects()}
+            if created != name:                         # the folder is not the text typed: say what it is
+                out["folder"] = created
+                out["note"] = f"The folder is named \"{created}\"" + (" (the characters a folder cannot hold became \"-\")." if created.startswith(wanted) and wanted != name else ".")
+            return self._send(200, out)
 
         if path == "/api/projects/delete":
             name = (data.get("name") or "").strip()

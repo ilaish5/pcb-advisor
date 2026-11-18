@@ -323,7 +323,7 @@ function toolsHTML(items) {
   const tip = items.every(t => t.s === 'claimed') ? ` title="${CLAIMED_TIP}"` : '';
   if (items.length === 1) return `<div class="runs"${tip}>${mark}<span>${esc([items[0].t, items[0].d].filter(Boolean).join(' · '))}</span></div>`;
   const step = t => `<li${t.s === 'claimed' ? ` title="${CLAIMED_TIP}"` : ''}>${toolMark(t)}<span>${esc(t.t)}${t.d ? ` <span class="d">${esc(t.d)}</span>` : ''}</span></li>`;
-  return `<details class="runs"${tip}><summary>${mark}<span>${esc(items[0].t)} · ${items.length} steps</span></summary><ul>${items.map(step).join('')}</ul></details>`;
+  return `<details class="runs"${tip}><summary>${mark}<span>Ran ${items.length} steps</span></summary><ul>${items.map(step).join('')}</ul></details>`;
 }
 /* The chip under an agent reply, in words: "bom.propose:R1" is "BOM proposal: R1". The server's text after the kind
    (counts, file names) is kept as the detail; an unknown kind is its name, humanised. */
@@ -587,9 +587,36 @@ async function chatPoll() {
   chatPolling = true;
   try {
     const p = await api('/api/chat/progress', undefined, {soft: true});
+    if (pending && chatResumed && p && !p.error && !p.running) { chatPolling = false; await chatResumeEnd(); return; }       // the reply of a turn started before a reload has arrived
     if (pending && p && !p.error) { chatProg = p; renderComposer(); }
   } catch (e) { /* silent */ }
   chatPolling = false;
+}
+/* A page loaded while the server is still working on a reply (the page that sent it was reloaded): show the working line until it arrives. */
+let chatResumed = false;
+async function chatResume() {
+  if (pending) return;
+  let p = null;
+  try { p = await api('/api/chat/progress', undefined, {soft: true}); } catch (e) { return; }
+  if (pending || !p || p.error || !p.running) return;
+  pending = true;
+  chatResumed = true;
+  chatSince = Date.now() - (p.seconds || 0) * 1000;
+  chatProg = p;
+  chatStopping = false;
+  clearInterval(chatTimer); chatTimer = setInterval(chatTick, 1000);
+  clearInterval(chatPoller); chatPoller = setInterval(chatPoll, 1000);
+  renderChat(true);
+}
+async function chatResumeEnd() {
+  pending = false;
+  chatResumed = false;
+  chatStopping = false;
+  clearInterval(chatTimer);
+  clearInterval(chatPoller);
+  chatProg = null;
+  try { await refresh(true); } catch (e) { /* the next refresh reads it */ }
+  render(true);
 }
 async function chatStop() {
   if (!pending || chatStopping) return;
@@ -634,6 +661,7 @@ async function send(text, opts) {
   if (own) chatSetChip(null);
   chatError = null;
   pending = true;
+  chatResumed = false;
   chatSince = Date.now();
   chatProg = null;
   chatStopping = false;

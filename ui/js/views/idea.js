@@ -220,9 +220,9 @@ function boardSizeHTML() {
   const has = b.width_mm && b.height_mm;
   return `<div class="board-size" aria-label="Board size">
       <span class="board-size-label">Board size</span>
-      <input type="number" class="in board-w" min="10" max="500" step="any" inputmode="decimal" placeholder="width" aria-label="Board width" value="${has ? esc(String(b.width_mm)) : ''}">
+      <input type="number" class="in board-w" min="10" max="500" step="any" inputmode="decimal" placeholder="e.g. 30" aria-label="Board width" title="e.g. 30 x 20 mm" value="${has ? esc(String(b.width_mm)) : ''}">
       <span aria-hidden="true">x</span>
-      <input type="number" class="in board-h" min="10" max="500" step="any" inputmode="decimal" placeholder="height" aria-label="Board height" value="${has ? esc(String(b.height_mm)) : ''}">
+      <input type="number" class="in board-h" min="10" max="500" step="any" inputmode="decimal" placeholder="e.g. 20" aria-label="Board height" title="e.g. 30 x 20 mm" value="${has ? esc(String(b.height_mm)) : ''}">
       <span class="board-size-unit">mm</span>
       ${btn('Set', {size: 'sm', kind: 'line', act: 'set-board-size', title: 'Use this board size (10 to 500 mm per side); no need to confirm the idea first'})}
     </div>`;
@@ -615,6 +615,10 @@ onAct('set-board-size', async (el) => {
     ideaRedraw();
     toast(w ? 'Board size set' : 'Board size cleared');
   } catch (e) {
+    // rejected: the fields show the saved size again (empty when none is saved), never the refused value
+    const sb = ((S && S.idea) || {}).board || {}, ok = sb.width_mm && sb.height_mm;
+    row.querySelector('.board-w').value = ok ? String(sb.width_mm) : '';
+    row.querySelector('.board-h').value = ok ? String(sb.height_mm) : '';
     if (e instanceof TypeError) toast("Couldn't reach the server");      // api() already showed the server's reason
   }
 });

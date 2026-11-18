@@ -376,8 +376,27 @@ function pvStepNote(page) {       // under the header: Altium is working, or wha
       title: 'Routes every net that can be routed, keeps those tracks, and leaves ' + n.partial.join(', ') + ' unrouted for you to finish in Altium'}) : '') +
     (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
     btn(n.replace ? 'Keep it' : 'Dismiss', {size: 'sm', act: 'altium-step-dismiss', page});
-  const warns = (n.warnings || []).slice(n.from === undefined ? 4 : n.from).map(w => `<br>Warning: ${esc(w)}`).join('');
-  return `<div class="pv-note"><div class="note ${n.kind}" role="${n.kind === 'bad' ? 'alert' : 'status'}"><span>${esc(n.text)}${warns}</span><span class="acts">${acts}</span></div></div>`;
+  const c = pvCompact(n.text, n.from === 999 ? [] : n.warnings || []);
+  const more = c.warnings.length ? `<details class="pv-more"><summary>Show ${c.warnings.length} ${c.warnings.length === 1 ? 'warning' : 'warnings'}</summary><ul>${c.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>` : '';
+  const rest = c.rest ? `<details class="pv-more"><summary>Show details</summary><p>${esc(c.rest)}</p></details>` : '';
+  return `<div class="pv-note"><div class="note ${n.kind}" role="${n.kind === 'bad' ? 'alert' : 'status'}"><span>${esc(c.head)}${rest}${more}</span><span class="acts">${acts}</span></div></div>`;
+}
+/* One summary line for a step's note: the DRC line keeps only the rules with violations (and the total), the "(N warnings: ...)" tail
+   moves into the warnings list, and a long remainder goes behind a toggle. Nothing is dropped, so the board preview keeps its size. */
+function pvCompact(text, warnings) {
+  let t = String(text || '');
+  const warns = (warnings || []).map(String);
+  const tail = t.match(/\s*\((\d+) warnings?: ([^]*)\)\.?\s*$/);
+  if (tail) { t = t.slice(0, tail.index); if (!warns.length) warns.push(...tail[2].split('; ').filter(Boolean)); }
+  t = t.replace(/(Altium DRC(?:, every rule)?: )((?:[A-Za-z][A-Za-z\- ]*? \d+, )+total \d+)( \(clean\))?/g, (m, lead, list, clean) => {
+    const items = list.split(', '), total = items.pop();
+    const bad = items.filter(i => !/ 0$/.test(i));
+    return lead + (bad.length ? bad.join(', ') + ', ' + total : clean ? 'clean' : total);
+  });
+  const max = 220;
+  if (t.length <= max) return {head: t, rest: '', warnings: warns};
+  const cut = t.lastIndexOf('; ', max) > 80 ? t.lastIndexOf('; ', max) : t.lastIndexOf(' ', max);
+  return {head: t.slice(0, cut) + ' ...', rest: t.slice(cut).replace(/^[;\s]+/, ''), warnings: warns};
 }
 async function pvRunStep(step, replace, partial) {
   const c = PV_STEPS[step];

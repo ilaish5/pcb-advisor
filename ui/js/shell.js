@@ -630,7 +630,14 @@ onAct('reset-layout', async () => { resetLayout(); toast('Layout reset to defaul
 onAct('newproj', async () => {
   const n = await askText({title: 'New project', label: 'Project name', placeholder: 'Temperature controller', confirm: 'Create'});
   if (!n) return;
-  const r = await api('/api/projects/new', {name: n});
+  let r = await api('/api/projects/new', {name: n}, {soft: true});
+  if (r && r.exists) {       // the name is taken: open that one, or make a numbered copy, never silently
+    const open = await askChoice({title: 'Project exists', text: `A project named "${r.exists}" already exists.`, yes: 'Open it', no: 'Create a copy'});
+    if (open === null) return;
+    if (open) r = {created: r.exists};
+    else r = await api('/api/projects/new', {name: n, allow_copy: true});
+  } else if (!r || !r.created) { toast((r && r.error) || 'Could not create the project', null, {bad: true}); return; }
+  if (r.note) { try { sessionStorage.setItem('pcb-new-note', r.note); } catch (e) { /* the note is lost, the folder is still named in the project list */ } }
   const u = new URL(location.href);
   u.searchParams.set('project', r.created);
   u.searchParams.delete('session');
