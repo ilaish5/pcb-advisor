@@ -248,6 +248,13 @@ def label_size(ref):
     return max(len(ref), 1) * LABEL_W, LABEL_H
 
 
+def label_rotation(part_rot, vertical=False):
+    """Text rotation of a designator, degrees: 0 (horizontal) or 90 (vertical), never 180 or 270 (upside down, or reading the wrong
+    way). The part's own rotation must not carry over: Altium turns a component's designator with it, so a part at 180 came out
+    upside down (C6, C9, U2, J2 of the Live-STM32 board). The label boxes this module reserves are horizontal, so 0 unless asked."""
+    return (90 if vertical else 0) % 180
+
+
 def rot_point(x, y, rot):
     r = int(rot) % 360
     return {0: (x, y), 90: (-y, x), 180: (-x, -y), 270: (y, -x)}[r]
@@ -1104,7 +1111,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         lab = placed[ref]["label"]
         places.append({"ref": ref, "footprint": i["fp"], "x": round(placed[ref]["x"], 3), "y": round(placed[ref]["y"], 3),
                        "rot": placed[ref]["rot"], "label": [round((lab[0] + lab[2]) / 2, 3), round((lab[1] + lab[3]) / 2, 3)],
-                       "label_h": LABEL_H})
+                       "label_h": LABEL_H, "label_rot": label_rotation(placed[ref]["rot"])})
     for ref in conns:
         if ref in placed and ref not in (connector_dirs or {}):
             if info[ref]["open"] is None:
@@ -1256,7 +1263,8 @@ def plan_commands(doc, outline, create_outline, places, footprints, parts, pcbli
                      str(p.get("lib_ref") or p.get("symbol") or ""), str(p.get("value") or ""),
                      f"{(pl.get('label') or [pl['x'], pl['y']])[0]:g}", f"{(pl.get('label') or [pl['x'], pl['y']])[1]:g}",
                      f"{pl.get('label_h', LABEL_H):g}", f"{LABEL_LINE:g}",
-                     ("\\" + p["uid"]) if p.get("uid") else "", str(p.get("sheet") or "")))
+                     ("\\" + p["uid"]) if p.get("uid") else "", str(p.get("sheet") or ""),
+                     f"{pl.get('label_rot', label_rotation(pl['rot'])):g}"))
         for pin in p.get("pins", []):
             net = str(pin.get("net") or "").strip()
             if net and net.upper() not in ("NC", "N/C"):

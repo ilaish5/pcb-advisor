@@ -1190,7 +1190,7 @@ def _partial_ok(problem):
     return problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem
 
 
-def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None):
+def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None):
     """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
     script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
     Altium's batch design rule check (no new clearance / short / width / un-routed violations over the check made before routing).
@@ -1377,7 +1377,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     try:
         from checks import board as board_checks
         res["drills"] = [f["message"] for f in board_checks.check_drills(saved)]
-        res["footprint_findings"] = [f["message"] for f in board_checks.check_footprint_rules(saved)]
+        res["footprint_findings"] = [f["message"] for f in board_checks.check_footprint_rules(saved, stale_library)]
     except Exception:
         pass
     probs += narrow                      # drawn narrow as agreed: the step is not finished
@@ -1485,7 +1485,11 @@ def route_pcb(project, replace=False, keep_partial=False):
     if missing:
         raise BridgeError("Import the JLC rules first (altium.import_rules), then route: the board does not have "
                           + ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "") + ". Nothing was changed.")
-    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, **net_current_inputs(project))
+    try:
+        stale = library_stale(project)        # tells the silk-to-mask finding whether "rebuild the library" is true
+    except Exception:
+        stale = None
+    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, **net_current_inputs(project))
     from altium import netcurrent
     _log(project, "route-pcb", pcb=str(pcb), routed=res["routed"], failed=[n for n, _ in res["failed"]], tracks=res["tracks"],
          vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],

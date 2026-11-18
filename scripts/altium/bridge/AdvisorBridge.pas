@@ -2204,7 +2204,7 @@ end;
 
 { PLACEFP path ref footprint pcblib x y rot libref: the footprint comes from the project PcbLib and is linked the way Update PCB
   links it (designator, source designator, library reference, footprint library) so that a later Update PCB matches it }
-procedure PcbPlace(Path: String; Ref: String; Pattern: String; PcbLib: String; X, Y, Rot, LibRef, Value, LX, LY, LH, LLine, SrcId, SrcPath: String);
+procedure PcbPlace(Path: String; Ref: String; Pattern: String; PcbLib: String; X, Y, Rot, LibRef, Value, LX, LY, LH, LLine, SrcId, SrcPath, LRot: String);
 var
     B, Lib, C, It, P : IDispatch;
     n                : Integer;
@@ -2255,7 +2255,8 @@ begin
     if (LH <> '') then
     begin
         C.Name.UseTTFonts := False;
-        C.Name.Rotation := 0;
+        if (LRot = '') then LRot := '0';
+        C.Name.Rotation := SFloat(LRot);        { 0 or 90 only: a part at 180 must not carry its designator upside down }
         C.Name.Size := MmCoord(LH);
         C.Name.Width := MmCoord(LLine);
         C.Name.XLocation := MmCoord(LX) - MmCoord(FloatToStr(Length(Ref) * 0.6 * SFloat(LH) / 2));
@@ -2433,7 +2434,7 @@ begin
     else if (Cmd = 'OUTLINEDRAW') then PcbOutlineDraw(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
     else if (Cmd = 'PLACEFP') then
         PcbPlace(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7), Field(Line, 8),
-                 Field(Line, 9), Field(Line, 10), Field(Line, 11), Field(Line, 12), Field(Line, 13), Field(Line, 14), Field(Line, 15))
+                 Field(Line, 9), Field(Line, 10), Field(Line, 11), Field(Line, 12), Field(Line, 13), Field(Line, 14), Field(Line, 15), Field(Line, 16))
     else if (Cmd = 'PCBEXTENT') then PcbExtent(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'PADNET') then PcbPadNet(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
     else if (Cmd = 'PCBSAVE') then SaveByPath(Field(Line, 1))

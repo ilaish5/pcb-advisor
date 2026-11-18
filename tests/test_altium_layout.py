@@ -132,6 +132,16 @@ def test_commands_link_the_part_and_give_pad_nets():
     assert layout.plan_commands("a", OUT, False, [], FPS, PARTS, "l", replace=True)[0][2] == "1"
 
 
+def test_designator_text_is_never_upside_down_whatever_the_part_rotation():
+    assert [layout.label_rotation(r) for r in (0, 90, 180, 270)] == [0, 0, 0, 0]
+    assert layout.label_rotation(180, vertical=True) == 90
+    plan = layout.plan_placement(PARTS, FPS, OUT)
+    assert all(p["label_rot"] in (0, 90) for p in plan["places"])
+    places = [dict(p, rot=r) for p, r in zip(plan["places"], (180, 270, 90, 0, 180, 270))]
+    cmds = [c for c in layout.plan_commands("a.PcbDoc", OUT, True, places, FPS, PARTS, "lib.PcbLib") if c[0] == "PLACEFP"]
+    assert cmds and all(c[-1] in ("0", "90") for c in cmds)
+
+
 def test_non_ascii_names_refused():
     assert layout.text_problems([part("R1", "R0603", ["Nét", "GND"])])
     assert not layout.text_problems(PARTS)

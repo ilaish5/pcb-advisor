@@ -277,3 +277,53 @@ def test_diode_pin_names_spelled_out_are_read_as_anode_and_cathode():
     assert gen.symbol_for("D", "1N4148W", [{"num": "1", "name": "Anode"}, {"num": "2", "name": "Cathode"}], 2) is None
     ok = gen.symbol_for("LED", "red", [{"num": "1", "name": "C"}, {"num": "2", "name": "A"}], 2)
     assert ok is not None and not any("unverified" in i for i in ok[2])
+
+
+def silk_to_mask_mil(lines):
+    """Smallest distance (mil) from any top-silk line or arc edge to a pad's mask opening: the copper grown by the mask expansion,
+    square at the corners (a round pad as a circle), exactly as Altium's Silk To Solder Mask check measures it."""
+    import math
+    import partlib_convert as conv
+    pads_ = [ln.split("|") for ln in lines if ln.startswith("PAD|")]
+    best = 1e9
+    for f in (ln.split("|") for ln in lines if ln.endswith("|Top Overlay")):
+        if f[0] == "TRACK":
+            x1, y1, x2, y2 = (float(v) for v in f[1:5])
+            hw = float(f[5]) / 2
+            pts = [(x1 + (x2 - x1) * i / 200, y1 + (y2 - y1) * i / 200) for i in range(201)]
+        else:
+            cx, cy, r, a0, a1 = (float(v) for v in f[1:6])
+            hw = float(f[6]) / 2
+            a1 += 360 if a1 < a0 else 0
+            pts = [(cx + r * math.cos(math.radians(a0 + (a1 - a0) * i / 200)), cy + r * math.sin(math.radians(a0 + (a1 - a0) * i / 200)))
+                   for i in range(201)]
+        for p in pads_:
+            px, py, rot, sx, sy = (float(p[i]) for i in (2, 3, 4, 11, 12))
+            for x, y in pts:
+                if p[13] == "1" and sx == sy:
+                    d = max(math.hypot(x - px, y - py) - sx / 2 - conv.MASK_EXPANSION_MIL, 0.0)
+                else:
+                    a = math.radians(-rot)
+                    u, v = (x - px) * math.cos(a) - (y - py) * math.sin(a), (x - px) * math.sin(a) + (y - py) * math.cos(a)
+                    d = math.hypot(max(abs(u) - sx / 2 - conv.MASK_EXPANSION_MIL, 0), max(abs(v) - sy / 2 - conv.MASK_EXPANSION_MIL, 0))
+                best = min(best, d - hw)
+    return best
+
+
+@pytest.mark.parametrize("key,prefix", [(k, None) for k in ALL_KEYS] + [(k, "LED") for k in gen.CHIPS])
+def test_generated_silk_keeps_the_silk_to_mask_rule_to_the_mask_opening(key, prefix):
+    import partlib_convert as conv
+    assert silk_to_mask_mil(gen.footprint_for(key, prefix)["lines"]) >= conv.SILK_TO_MASK_MIL - 0.05
+
+
+def test_converted_led_silk_is_cut_back_from_the_mask_opening_at_the_pad_corner():
+    """Live-STM32 D1 (KT-0603R): the vendor silk ends were 8 mil from the copper corner but 5.7 mil (0.140 mm) from the mask opening."""
+    import partlib_convert as conv
+    lines = ["PAD|2|-29.528|0.0|0.0|Top Layer|1|0|0|0|0|31.496|31.496|2|", "PAD|1|29.528|0.0|0.0|Top Layer|1|0|0|0|0|31.496|31.496|2|",
+             "TRACK|50.874|27.559|57.874|27.559|9.843|Top Overlay", "TRACK|57.874|27.559|57.874|0|9.843|Top Overlay",
+             "TRACK|57.874|0|57.874|-27.559|9.843|Top Overlay", "TRACK|57.874|-27.559|50.874|-27.559|9.843|Top Overlay",
+             "TRACK|-55.118|27.559|-66.929|15.748|9.843|Top Overlay", "TRACK|-66.929|15.748|-66.929|-15.748|9.843|Top Overlay"]
+    out = conv.clip_silk(lines)
+    assert any(ln.endswith("Top Overlay") for ln in out)
+    assert silk_to_mask_mil(out) >= conv.SILK_TO_MASK_MIL - 0.05
+    assert silk_to_mask_mil(lines) == pytest.approx(5.53, abs=0.02)         # the input did break the rule: 0.140 mm, as Altium said

@@ -446,7 +446,7 @@ def _pad_box(p):
     return p["x_mm"] - sx / 2, p["y_mm"] - sy / 2, p["x_mm"] + sx / 2, p["y_mm"] + sy / 2
 
 
-def check_footprint_rules(doc: dict[str, Any]) -> list[dict[str, Any]]:
+def check_footprint_rules(doc: dict[str, Any], library_stale: bool | None = None) -> list[dict[str, Any]]:
     """What the footprints of the board cannot meet of the board's OWN rules (the rules the JLC preset imported), found in the saved
     file before Altium's design rule check says so: (1) a plated pad whose ring is thinner than the Minimum Annular Ring rule for pads;
     (2) top-layer pads so close that the mask dam left between their openings (gap minus twice the Solder Mask Expansion) is below the
@@ -503,7 +503,7 @@ def check_footprint_rules(doc: dict[str, Any]) -> list[dict[str, Any]]:
                                       f"a smaller Solder Mask Expansion in the footprint (at most {ok_exp:g} mm per side keeps the dam), or choose a "
                                       f"part with a wider pad pitch"),
                         "evidence": f"dam {dam:.3f} mm < rule {sliver:.3f} mm"})
-    out.extend(check_silk_to_mask(doc))
+    out.extend(check_silk_to_mask(doc, library_stale))
     return out
 
 
@@ -563,12 +563,13 @@ def _seg_dist(p, a, b):
     return math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
 
 
-def check_silk_to_mask(doc: dict[str, Any]) -> list[dict[str, Any]]:
+def check_silk_to_mask(doc: dict[str, Any], library_stale: bool | None = None) -> list[dict[str, Any]]:
     """Top silkscreen lines and arcs closer than the board's Silk To Solder Mask rule to (a) a pad's mask opening or (b) routed
     top-layer copper (a track or a via, grown by the Solder Mask Expansion: Altium's design rule check counts both, the 35 vias of
     the third live STM32 run match this to the piece), found in the saved file before Altium's check says so. (a) is the silkscreen
-    drawn in the part's footprint, which the project library's converter cuts back from the pads (partlib_convert.SILK_TO_COPPER_MIL):
-    it says a library built by older code is on the board. (b) is the routing running under a part's silkscreen. One finding per
+    drawn in the part's footprint, which the project library's converter cuts back from the pads (partlib_convert.SILK_TO_COPPER_MIL).
+    Only a STALE library (library_stale True: bridge.library_stale(project), built by older converter code) is told to rebuild; a
+    current one (False) is told the footprint's own silk is too close; unknown (None) gets the plain advice without a claim. (b) is the routing running under a part's silkscreen. One finding per
     part and source. A piece's gap is its edge to the opening; the count is (piece, copper object) pairs (Altium lists fewer: do not
     compare the two numbers). The rule is the enabled Silk To Solder Mask rule of the highest priority (lowest PRIORITY number; the
     strictest value on a tie): a board carries the preset's 6 mil rule and Altium's own 10 mil one for pads at priority 2, and the
@@ -628,9 +629,15 @@ def check_silk_to_mask(doc: dict[str, Any]) -> list[dict[str, Any]]:
                         "message": (f"{ref}: {len(rows)} silkscreen piece/pad pair(s) of its footprint come closer than the board's Silk To "
                                     f"Solder Mask rule {gap_rule:.3f} mm to a mask opening (worst {max(worst, 0.0):.3f} mm, at {what}, "
                                     f"with the {exp:g} mm mask expansion counted); Altium's design rule check reports these. The silkscreen is"
-                                    f" drawn in the part's footprint, not by the placement. Way forward: rebuild the project library "
-                                    f"(the converter cuts silk back from the pads; a library built by older code does not), or delete "
-                                    f"those silk lines in the PcbLib footprint"),
+                                    f" drawn in the part's footprint, not by the placement. Way forward: " + (
+                                        "rebuild the project library (the library was built by older converter code, which did not cut "
+                                        "the silk back far enough from the pads), or delete those silk lines in the PcbLib footprint"
+                                        if library_stale else
+                                        "the footprint's own silk is too close to the pads: edit or delete those silk lines in the "
+                                        "PcbLib footprint (the library is current, rebuilding it will not change them)"
+                                        if library_stale is False else
+                                        "the footprint's own silk is too close to the pads: edit or delete those silk lines in the "
+                                        "PcbLib footprint")),
                         "evidence": f"silk to mask {max(worst, 0.0):.3f} mm < rule {gap_rule:.3f} mm"})
         else:
             out.append({"id": "silk_over_routed_copper", "severity": "warning", "refs": refs,
