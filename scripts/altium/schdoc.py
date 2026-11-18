@@ -289,4 +289,4 @@ def is_blank_sheet(path) -> bool:
         return False
     if not recs:
         return False
-    return all(r.get("RECORD") in ("28", "41") for r in recs[1:])
+    return all(r.get("RECORD") in ("28", "31", "41") for r in recs[1:])
