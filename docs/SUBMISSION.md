@@ -156,7 +156,10 @@ reference in the UI and the structure of the Altium script.
 - A board with an empty inner layer is not detected.
 - Automatic split into several sheets and multi-part symbols are deferred (the draw step refuses with a ready split plan).
 - Two copper layers only; USB at 90 ohm differential impedance is not guaranteed in two layers.
-- The live Altium rerun with the latest router is not done yet; the 18/18 above is from the offline fixture of that board.
+- Live STM32 run in Altium, 2026-11-18 (26 parts, commit 7c7a7ad): placed in 21 s, routed 18 of 18 nets with 180 tracks, 36 vias and
+  the GND pour in 47 s. Altium's DRC: 0 clearance, 0 short-circuit, 0 un-routed. It is not clean: 4 annular-ring, 81 solder-mask-sliver
+  and 271 silk-to-solder-mask findings remain, from the footprints that come with the parts (J1's fine pitch) and silkscreen, not the
+  routing; the tool reports them as footprint findings.
 - Clean-computer installation (no Python, no Claude) has not been tested end to end.
 - Windows is the supported platform for the Altium steps.
 
