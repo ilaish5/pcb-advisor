@@ -108,8 +108,18 @@ Last run recorded in `docs/BENCHMARK.md`: 2026-10-18, commit b51642b, `engine:an
 From the same file's history: on `engine:claude_code`, 2026-10-13 21:57 (bd68c2e), deterministic caught 12/12, engine caught 12/12,
 earlier than reality 7. The history also records runs with lower scores, which were kept in the file.
 
-<!-- BENCHMARK-TONIGHT -->
-*(Tonight's re-run of both engines goes here.)*
+#### Re-run on 2026-11-18, both engines (after phase 3)
+
+| Engine | Commit | Deterministic | Engine caught | Earlier than reality | QA eval (25) | Behaviour eval (13) |
+|---|---|:-:|:-:|:-:|:-:|:-:|
+| Antigravity | ed317a8 | 12/12 | 10/12 (missed 7, 12: timed out after 300 s) | 7 | 0.94 | 0.92 |
+| Claude Code | 13f2320 | 12/12 | 10/12 (missed 2, 4: JLC no-match and stock) | 7 | 0.88 | 0.61 |
+
+Claude Code behaviour misses (5 of 13), as recorded: three answers a few words over the length limit (81/80, 104/100, 67/60),
+one answer that listed part numbers from a search without marking them unverified (b03), and one correct refusal
+("the project is empty, routing cannot start") whose wording the eval's refusal pattern does not recognise (b05).
+A first Claude Code run the same night hit the account's usage limit during the evals; it was discarded, not reported.
+Per-question answers: `local/bench-runs/2026-11-18-claude_code/`, `local/bench-runs/2026-11-17-antigravity/` (local only, not in git).
 
 ### Offline STM32 board (`tests/test_stm32_board_offline.py`, 9 tests)
 A synthetic board of 60 parts, two layers, 50 x 40 mm, placed by `layout.py` and routed by `route.py` with no Altium. The tests
