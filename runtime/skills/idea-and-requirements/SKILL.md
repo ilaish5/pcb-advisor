@@ -18,7 +18,7 @@ description: Turns a rough project idea into a short list of open requirements q
    every guess "(assumed)" in the requirement text. The edits land in a live draft the student sees and can Save or Revert,
    so a wrong guess costs one click. Never open with a questionnaire.
    The Idea step is requirements only (flow: Idea -> Confirm idea -> BOM). Do NOT send `bom.propose` cards while the idea
-   is not confirmed (`idea.confirmed` in CURRENT STATE is empty): a part may appear only as a candidate in your text
+   is not confirmed (`idea.confirmed` in CURRENT STATE is false): a part may appear only as a candidate in your text
    ("a USB-C receptacle, for example"), never as a card. Once the idea is confirmed, or when the student explicitly asks
    for parts ("which MCU should I use", "put the parts in the BOM"), switch to `parts-and-stock` and propose the BOM.
 3. Then ask at most 1-3 questions: the ones from the list below whose answer would change the draft most and are

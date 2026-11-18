@@ -1486,7 +1486,7 @@ def route_pcb(project, replace=False, keep_partial=False):
         raise BridgeError("Import the JLC rules first (altium.import_rules), then route: the board does not have "
                           + ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "") + ". Nothing was changed.")
     try:
-        stale = library_stale(project)        # tells the silk-to-mask finding whether "rebuild the library" is true
+        stale = partlib.converter_stale(project)        # tells the silk-to-mask finding whether "rebuild the library" is true
     except Exception:
         stale = None
     res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, **net_current_inputs(project))

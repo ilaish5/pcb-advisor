@@ -357,7 +357,7 @@ def outline_bbox_containing_parts(path, doc: dict[str, Any], findings: list) -> 
 
 def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: list[float] | None = None,
                 connector_specs: dict[str, Any] | None = None,
-                decap_max_dist_mm: float = DECAP_MAX_DIST_MM) -> dict[str, Any]:
+                decap_max_dist_mm: float = DECAP_MAX_DIST_MM, library_stale: bool | None = None) -> dict[str, Any]:
     """Run all board checks on a PcbDoc (a path, or a read_pcbdoc dict; footprint geometry comes from
     read_pcbdoc(path, geometry=True), i.e. body_bbox_mm / outline_bbox_mm on each component)."""
     findings = []
@@ -373,7 +373,7 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
     findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm))
     findings.extend(check_cpl_rotation_sanity(doc))
     findings.extend(check_drills(doc))
-    findings.extend(check_footprint_rules(doc))
+    findings.extend(check_footprint_rules(doc, library_stale))
 
     return {
         "file": doc.get("file", ""),
@@ -568,8 +568,9 @@ def check_silk_to_mask(doc: dict[str, Any], library_stale: bool | None = None) -
     top-layer copper (a track or a via, grown by the Solder Mask Expansion: Altium's design rule check counts both, the 35 vias of
     the third live STM32 run match this to the piece), found in the saved file before Altium's check says so. (a) is the silkscreen
     drawn in the part's footprint, which the project library's converter cuts back from the pads (partlib_convert.SILK_TO_COPPER_MIL).
-    Only a STALE library (library_stale True: bridge.library_stale(project), built by older converter code) is told to rebuild; a
-    current one (False) is told the footprint's own silk is too close; unknown (None) gets the plain advice without a claim. (b) is the routing running under a part's silkscreen. One finding per
+    Only a library built by older converter code (library_stale True: partlib.converter_stale(project), the converter fingerprint
+    only, not file times) is told to rebuild; with a current one (False) the board may hold old footprint copies (update them
+    from the library) and only a finding that stays means the library's own silk is too close; unknown (None) makes no claim. (b) is the routing running under a part's silkscreen. One finding per
     part and source. A piece's gap is its edge to the opening; the count is (piece, copper object) pairs (Altium lists fewer: do not
     compare the two numbers). The rule is the enabled Silk To Solder Mask rule of the highest priority (lowest PRIORITY number; the
     strictest value on a tie): a board carries the preset's 6 mil rule and Altium's own 10 mil one for pads at priority 2, and the
@@ -633,11 +634,14 @@ def check_silk_to_mask(doc: dict[str, Any], library_stale: bool | None = None) -
                                         "rebuild the project library (the library was built by older converter code, which did not cut "
                                         "the silk back far enough from the pads), or delete those silk lines in the PcbLib footprint"
                                         if library_stale else
-                                        "the footprint's own silk is too close to the pads: edit or delete those silk lines in the "
-                                        "PcbLib footprint (the library is current, rebuilding it will not change them)"
+                                        "the library was built by the current converter, but the board may still hold old copies of "
+                                        "the footprints: update the board's footprints from the library (place the parts again, or "
+                                        "Design > Update from PCB Libraries). If the finding stays, the footprint in the library itself "
+                                        "is too close: edit or delete those silk lines in the PcbLib footprint"
                                         if library_stale is False else
-                                        "the footprint's own silk is too close to the pads: edit or delete those silk lines in the "
-                                        "PcbLib footprint")),
+                                        "update the board's footprints from the library if the board holds old copies (place the parts "
+                                        "again, or Design > Update from PCB Libraries); if the finding stays, edit or delete those silk "
+                                        "lines in the PcbLib footprint")),
                         "evidence": f"silk to mask {max(worst, 0.0):.3f} mm < rule {gap_rule:.3f} mm"})
         else:
             out.append({"id": "silk_over_routed_copper", "severity": "warning", "refs": refs,
@@ -712,7 +716,14 @@ def main(argv=None):
                                      "(adds design_* findings: a net or part the board lacks)")
     args = ap.parse_args(argv)
 
-    res = check_board(args.pcb, outline_mm=args.outline, decap_max_dist_mm=args.decap_max_mm)
+    stale = None
+    if args.design:
+        try:
+            import partlib
+            stale = partlib.converter_stale(pathlib.Path(args.design).name)      # a project name, or its folder
+        except Exception:
+            stale = None
+    res = check_board(args.pcb, outline_mm=args.outline, decap_max_dist_mm=args.decap_max_mm, library_stale=stale)
     if args.design:
         from checks import schematic
         res["findings"].extend(schematic.design_vs_board(args.design, args.pcb))

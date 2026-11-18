@@ -59,6 +59,17 @@ def library_dir(project):
     return store.pdir(project) / "library"
 
 
+def converter_stale(project):
+    """True when the project's library was built by older converter code (converter.txt differs from converter_fingerprint()),
+    False when it was built by the current code, None when it is unknown (no project or no build). Unlike bridge.library_stale
+    this ignores a BOM or netlist newer than the build: it answers only "would a rebuild cut the silk differently"."""
+    try:
+        f = library_dir(project) / "converter.txt"
+        return f.read_text(encoding="utf-8").strip() != converter_fingerprint() if f.is_file() else None
+    except (OSError, ValueError, TypeError):
+        return None
+
+
 # ---------------------------------------------------------------- fetch
 
 def fetch_one(cid, dest, timeout=FETCH_TIMEOUT):

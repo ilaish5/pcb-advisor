@@ -477,7 +477,7 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
                 f'<g class="pcb-comp comp-bottom" data-ref="{esc(ref)}" id="pcb-comp-{esc(ref)}" '
                 f'transform="rotate({rot:.1f} {cx:.1f} {cy:.1f})">'
                 f'<rect x="{cx - 16:.1f}" y="{cy - 12:.1f}" width="32" height="24"/>'
-                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}">{esc(ref)}</text>'
+                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}" transform="rotate({-rot:.1f} {cx:.1f} {cy + 3:.1f})">{esc(ref)}</text>'
                 f'</g>'
             )
     svg.append('</g>')
@@ -579,7 +579,7 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
                 f'<g class="pcb-comp comp-top" data-ref="{esc(ref)}" id="pcb-comp-{esc(ref)}" '
                 f'transform="rotate({rot:.1f} {cx:.1f} {cy:.1f})">'
                 f'<rect x="{cx - 16:.1f}" y="{cy - 12:.1f}" width="32" height="24"/>'
-                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}">{esc(ref)}</text>'
+                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}" transform="rotate({-rot:.1f} {cx:.1f} {cy + 3:.1f})">{esc(ref)}</text>'
                 f'</g>'
             )
     svg.append('</g>')
