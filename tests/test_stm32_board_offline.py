@@ -9,7 +9,7 @@ import pytest
 import stm32_board_fixture as fx
 from altium import layout, route
 
-# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 4-7 s placement, 23 s routing
+# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 4-7 s placement, 25-30 s routing
 PLACE_BUDGET_S = 15.0
 ROUTE_BUDGET_S = 30.0
 ROUTE_SECONDS = 50.0                      # the router's own deadline (it then says what ran out of time)
@@ -110,9 +110,9 @@ def test_routing_within_budget_with_zero_violations_and_every_net_accounted(boar
     assert viol == []                                                   # whatever was drawn is rule-clean
     assert routed | set(failed) == multi and not routed & set(failed)  # every net routed or failed, none lost
     assert all(why.strip() for why in failed.values())                 # each failure has a reason
-    # the honest outcome measured today (same every run: the search budget is a count of cells, not the clock); below it is a
-    # regression of the placement (fan-out room round the MCU) or of the router
-    assert frac >= 0.95, (frac, failed)
+    # the outcome measured today (same every run: the search budget is a count of cells, not the clock): every net, the ground
+    # dropped to the pour; below it is a regression of the placement (fan-out room round the MCU) or of the router
+    assert frac == 1.0 and failed == {}, (frac, failed)
     # what is drawn leaves no open gap on the nets reported as routed (the ground pour is modelled: see _with_pour)
     open_nets = {n for n, *_ in layout.unrouted(_with_pour(doc, res))}
     assert not (open_nets & routed), open_nets & routed
@@ -137,6 +137,7 @@ def test_ground_is_dropped_to_the_pour_or_routed_by_tracks_with_a_stated_reason(
     pour = res["pour"]
     print(f"\nPOUR {pour}")
     assert pour["net"] == POUR_NET
+    assert POUR_NET in res["routed"] and pour["mode"] == "drops", pour      # dropped to the pour, nothing cut off
     if POUR_NET in res["routed"]:
         assert pour["mode"] in ("drops", "tracks")
         gnd = [p for p in doc["pads"] if p["net"] == POUR_NET]
