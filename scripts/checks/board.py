@@ -503,6 +503,143 @@ def check_footprint_rules(doc: dict[str, Any]) -> list[dict[str, Any]]:
                                       f"a smaller Solder Mask Expansion in the footprint (at most {ok_exp:g} mm per side keeps the dam), or choose a "
                                       f"part with a wider pad pitch"),
                         "evidence": f"dam {dam:.3f} mm < rule {sliver:.3f} mm"})
+    out.extend(check_silk_to_mask(doc))
+    return out
+
+
+SILK_LAYER = 33                # Top Overlay in the PcbDoc layer numbering
+_SILK_STEP_MM = 0.02           # silk is sampled this finely when its distance to a mask opening is measured
+
+
+def _top_overlay_points(doc: dict[str, Any]):
+    """[(kind, sample points, half width mm)] of every top-overlay line and arc of a read board (design text is left out: its glyph
+    strokes are not in the file, a box around them would claim more than Altium measures)."""
+    out = []
+    for t in doc.get("tracks") or []:
+        if t.get("layer") != SILK_LAYER:
+            continue
+        x1, y1, x2, y2 = t["x1_mm"], t["y1_mm"], t["x2_mm"], t["y2_mm"]
+        n = max(1, math.ceil(math.hypot(x2 - x1, y2 - y1) / _SILK_STEP_MM))
+        out.append(("line", [(x1 + (x2 - x1) * i / n, y1 + (y2 - y1) * i / n) for i in range(n + 1)], (t.get("width_mm") or 0) / 2))
+    for a in doc.get("arcs") or []:
+        if a.get("layer") != SILK_LAYER:
+            continue
+        a1, a2 = a["a1"], a["a2"]
+        if a2 <= a1:
+            a2 += 360.0
+        r = a["r_mm"]
+        n = max(2, math.ceil(math.radians(a2 - a1) * r / _SILK_STEP_MM))
+        out.append(("arc", [(a["cx_mm"] + r * math.cos(math.radians(a1 + (a2 - a1) * i / n)),
+                             a["cy_mm"] + r * math.sin(math.radians(a1 + (a2 - a1) * i / n))) for i in range(n + 1)],
+                    (a.get("width_mm") or 0) / 2))
+    return out
+
+
+def _mask_gap(px: float, py: float, p: dict[str, Any], exp: float) -> float:
+    """Distance in mm from a point to the mask opening of a top pad: its copper grown by the mask expansion (a round pad as a
+    circle, an oval as a capsule, anything else as the rectangle of its size, turned as the pad is)."""
+    hx, hy = (p.get("sx_mm") or 0) / 2 + exp, (p.get("sy_mm") or 0) / 2 + exp
+    a = math.radians(-(p.get("rot") or 0.0))
+    dx, dy = px - p["x_mm"], py - p["y_mm"]
+    u, v = dx * math.cos(a) - dy * math.sin(a), dx * math.sin(a) + dy * math.cos(a)
+    if p.get("shape") == 1:                                 # round / oval: a capsule along the longer side
+        r = min(hx, hy)
+        along = max(hx, hy) - r
+        if hx >= hy:
+            u = max(abs(u) - along, 0.0)
+            v = abs(v)
+        else:
+            v = max(abs(v) - along, 0.0)
+            u = abs(u)
+        return max(math.hypot(u, v) - r, 0.0)
+    return math.hypot(max(abs(u) - hx, 0.0), max(abs(v) - hy, 0.0))
+
+
+def _seg_dist(p, a, b):
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    n = dx * dx + dy * dy
+    t = 0.0 if n == 0 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / n))
+    return math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
+
+
+def check_silk_to_mask(doc: dict[str, Any]) -> list[dict[str, Any]]:
+    """Top silkscreen lines and arcs closer than the board's Silk To Solder Mask rule to (a) a pad's mask opening or (b) routed
+    top-layer copper (a track or a via, grown by the Solder Mask Expansion: Altium's design rule check counts both, the 35 vias of
+    the third live STM32 run match this to the piece), found in the saved file before Altium's check says so. (a) is the silkscreen
+    drawn in the part's footprint, which the project library's converter cuts back from the pads (partlib_convert.SILK_TO_COPPER_MIL):
+    it says a library built by older code is on the board. (b) is the routing running under a part's silkscreen. One finding per
+    part and source. A piece's gap is its edge to the opening; the count is (piece, copper object) pairs (Altium lists fewer: do not
+    compare the two numbers). The rule is the enabled Silk To Solder Mask rule of the highest priority (lowest PRIORITY number; the
+    strictest value on a tie): a board carries the preset's 6 mil rule and Altium's own 10 mil one for pads at priority 2, and the
+    third live run counted 0 under the 10 mil one. Silently nothing when the file has no such rule."""
+    rules = []
+    for rec in doc.get("rules") or []:
+        if rec.get("RULEKIND") == "SilkToSolderMaskClearance" and str(rec.get("ENABLED", "TRUE")).upper() == "TRUE":
+            m = re.fullmatch(r"\s*(-?[\d.]+)\s*(mil|mm|um)?\s*", str(rec.get("MINSILKSCREENTOMASKGAP", "")))
+            if m:
+                prio = str(rec.get("PRIORITY") or "99")
+                rules.append((int(prio) if prio.isdigit() else 99, -float(m.group(1)) * {"mil": 0.0254, "um": 0.001}.get(m.group(2), 1.0)))
+    if not rules:
+        return []
+    gap_rule = -min(rules)[1]
+    exp = _rule_mm(doc, "SolderMaskExpansion", "EXPANSION") or 0.0
+    pads = [p for p in doc.get("pads") or [] if p.get("layer") in (1, 74) and p.get("x_mm") is not None]
+    tracks = [t for t in doc.get("tracks") or [] if t.get("layer") == 1]
+    vias = [v for v in doc.get("vias") or [] if v.get("from_layer") == 1 and v.get("x_mm") is not None]
+    comps = [c for c in doc.get("components") or [] if c.get("outline_bbox_mm")]
+    reach = gap_rule + exp + 0.5                            # nothing farther than this from a piece can be within the rule of it
+    bad: dict[tuple[str, str], list[tuple[float, str]]] = {}
+    for _kind, pts, hw in _top_overlay_points(doc):
+        xs, ys = [p[0] for p in pts], [p[1] for p in pts]
+        x0, x1, y0, y1 = min(xs) - reach, max(xs) + reach, min(ys) - reach, max(ys) + reach
+        mx, my = pts[len(pts) // 2]
+        owner, best = "?", None
+        for c in comps:                                     # the part whose silk box holds the piece (smallest box wins)
+            b = c["outline_bbox_mm"]
+            if b[0] - 0.01 <= mx <= b[2] + 0.01 and b[1] - 0.01 <= my <= b[3] + 0.01:
+                area = (b[2] - b[0]) * (b[3] - b[1])
+                if best is None or area < best:
+                    best, owner = area, c["ref"]
+        hits = []
+        for p in pads:
+            r = max(p.get("sx_mm") or 0, p.get("sy_mm") or 0)
+            if x0 - r <= p["x_mm"] <= x1 + r and y0 - r <= p["y_mm"] <= y1 + r:
+                hits.append(("pad", min(_mask_gap(x, y, p, exp) for x, y in pts) - hw, f"pad {p.get('ref') or '?'}-{p.get('name')}"))
+        for t in tracks:
+            if (max(t["x1_mm"], t["x2_mm"]) < x0 or min(t["x1_mm"], t["x2_mm"]) > x1
+                    or max(t["y1_mm"], t["y2_mm"]) < y0 or min(t["y1_mm"], t["y2_mm"]) > y1):
+                continue
+            g = min(_seg_dist(p, (t["x1_mm"], t["y1_mm"]), (t["x2_mm"], t["y2_mm"])) for p in pts) - hw - (t.get("width_mm") or 0) / 2 - exp
+            hits.append(("routed", g, f"a track of net {t.get('net') or '-'}"))
+        for v in vias:
+            if x0 <= v["x_mm"] <= x1 and y0 <= v["y_mm"] <= y1:
+                g = min(math.hypot(x - v["x_mm"], y - v["y_mm"]) for x, y in pts) - hw - (v.get("dia_mm") or 0) / 2 - exp
+                hits.append(("routed", g, f"a via of net {v.get('net') or '-'}"))
+        for src, g, what in hits:
+            if g < gap_rule - 1e-4:
+                bad.setdefault((owner, src), []).append((g, what))
+    out = []
+    for (ref, src), rows in sorted(bad.items()):
+        worst, what = min(rows)
+        refs = [ref] if ref != "?" else []
+        if src == "pad":
+            out.append({"id": "footprint_silk_to_mask", "severity": "warning", "refs": refs,
+                        "message": (f"{ref}: {len(rows)} silkscreen piece/pad pair(s) of its footprint come closer than the board's Silk To "
+                                    f"Solder Mask rule {gap_rule:.3f} mm to a mask opening (worst {max(worst, 0.0):.3f} mm, at {what}, "
+                                    f"with the {exp:g} mm mask expansion counted); Altium's design rule check reports these. The silkscreen is"
+                                    f" drawn in the part's footprint, not by the placement. Way forward: rebuild the project library "
+                                    f"(the converter cuts silk back from the pads; a library built by older code does not), or delete "
+                                    f"those silk lines in the PcbLib footprint"),
+                        "evidence": f"silk to mask {max(worst, 0.0):.3f} mm < rule {gap_rule:.3f} mm"})
+        else:
+            out.append({"id": "silk_over_routed_copper", "severity": "warning", "refs": refs,
+                        "message": (f"{ref}: {len(rows)} silkscreen piece/copper pair(s) of its footprint come closer than the board's Silk "
+                                    f"To Solder Mask rule {gap_rule:.3f} mm to routed top-layer copper (worst {max(worst, 0.0):.3f} mm, "
+                                    f"{what}); Altium's design rule check counts silk over a track or via as well. It is the routing "
+                                    f"running under the part's silkscreen. Way forward: move the track or via off the silk outline, "
+                                    f"or remove that silk line from the footprint"),
+                        "evidence": f"silk to routed copper {max(worst, 0.0):.3f} mm < rule {gap_rule:.3f} mm"})
     return out
 
 

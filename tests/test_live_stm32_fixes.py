@@ -148,3 +148,48 @@ def test_the_split_message_shows_section_titles_and_parts_not_the_internal_lette
     assert "sheet 1: Power supply (" in msg and "sheet 1: A," not in msg
 
 
+def _silk_doc(silk_y, rules=(("6mil", "1"),)):
+    """One 0.8 x 0.9 mm top pad at the origin (mask opening 2 mil bigger) and one 0.25 mm silk line at y = silk_y; rules: (gap, priority)."""
+    r = [{"RULEKIND": "SilkToSolderMaskClearance", "MINSILKSCREENTOMASKGAP": g, "PRIORITY": p, "ENABLED": "TRUE"} for g, p in rules]
+    r.append({"RULEKIND": "SolderMaskExpansion", "EXPANSION": "2mil", "ENABLED": "TRUE"})
+    return {"rules": r,
+            "components": [{"ref": "C1", "outline_bbox_mm": [-1.0, silk_y - 0.2, 1.0, silk_y + 0.2]}],
+            "pads": [{"ref": "C1", "name": "1", "layer": 1, "x_mm": 0.0, "y_mm": 0.0, "sx_mm": 0.8, "sy_mm": 0.9, "rot": 0.0, "shape": 2}],
+            "tracks": [{"layer": 33, "x1_mm": -0.5, "y1_mm": silk_y, "x2_mm": 0.5, "y2_mm": silk_y, "width_mm": 0.25}], "arcs": [], "vias": []}
+
+
+def test_silk_to_mask_is_reported_per_part_like_altium_measures_it():
+    # copper edge y = 0.45, mask edge 0.5008; a 0.25 mm line at 0.70 has its edge at 0.575: 0.074 mm = 2.9 mil from the mask opening
+    found = board.check_footprint_rules(_silk_doc(0.70))
+    assert [f["id"] for f in found] == ["footprint_silk_to_mask"] and found[0]["refs"] == ["C1"]
+    assert "0.152" in found[0]["message"] and "0.074" in found[0]["message"]            # the 6 mil rule, the real gap
+    assert board.check_footprint_rules(_silk_doc(0.80)) == []                            # 0.174 mm = 6.9 mil: meets 6
+    assert board.check_footprint_rules({k: v for k, v in _silk_doc(0.70).items() if k != "rules"}) == []     # no rule on the board: silent
+
+
+def test_the_silk_to_mask_rule_of_the_highest_priority_governs_not_the_strictest():
+    # the preset's 6 mil rule (priority 1) and Altium's default 10 mil one for pads (priority 2): 6.9 mil is fine, as Altium counts it
+    both = (("6mil", "1"), ("10mil", "2"))
+    assert board.check_footprint_rules(_silk_doc(0.80, rules=both)) == []
+    assert [f["id"] for f in board.check_footprint_rules(_silk_doc(0.80, rules=(("10mil", "1"), ("6mil", "2"))))] == ["footprint_silk_to_mask"]
+
+
+def test_silk_over_a_routed_track_or_via_is_named_as_the_routing_not_the_footprint():
+    doc = _silk_doc(2.0)
+    doc["tracks"].append({"layer": 1, "net": "GND", "x1_mm": -0.5, "y1_mm": 2.1, "x2_mm": 0.5, "y2_mm": 2.1, "width_mm": 0.15})    # under the silk
+    doc["vias"] = [{"net": "VCC", "x_mm": 0.0, "y_mm": 2.4, "dia_mm": 0.45, "from_layer": 1, "to_layer": 32}]                        # 0.2 mm off its edge
+    found = board.check_footprint_rules(doc)
+    assert [f["id"] for f in found] == ["silk_over_routed_copper"] and found[0]["refs"] == ["C1"]
+    assert "2 silkscreen piece/copper pair" in found[0]["message"] and "routing" in found[0]["message"]
+    assert board.check_footprint_rules(dict(doc, tracks=doc["tracks"][:1], vias=[])) == []                                           # no copper there
+
+
+def test_converted_silk_that_the_converter_keeps_passes_the_silk_to_mask_check():
+    import partlib_convert as conv
+    pad = "PAD|1|0|0|0|Top Layer|1|0|0|0|0|31.5|35.4|2|"          # 0.8 x 0.9 mm in mil: copper edge y = 17.7
+    near, far = "TRACK|-20|29.7|20|29.7|10.0|Top Overlay", "TRACK|-20|31.7|20|31.7|10.0|Top Overlay"     # edges 7 and 9 mil from the copper
+    kept = [ln for ln in conv.clip_silk([pad, near, far]) if ln.endswith("Top Overlay")]
+    assert kept == [far]
+    mm = lambda ln: float(ln.split("|")[2]) * 0.0254
+    assert board.check_footprint_rules(_silk_doc(mm(far))) == []       # the kept line is clear of the 6 mil rule (mask expansion counted)
+    assert [f["id"] for f in board.check_footprint_rules(_silk_doc(mm(near)))] == ["footprint_silk_to_mask"]     # the cut one is not

@@ -278,7 +278,8 @@ MIN_PIECE = 5.0                        # mil: a silk piece shorter than this aft
 # Altium measures silk to the MASK OPENING, not to the copper: the JLC preset's rules are a mask expansion of 2 mil per side and a
 # silk-to-solder-mask clearance of 6 mil (jlc_preset.py; a test keeps these two numbers equal to the preset's), so silk must stay
 # 8 mil from the copper edge or the board's own design rule check fails (218 violations on the first live STM32 board, silk 5 mil
-# from the mask). SILK_TO_PAD (JLC's fab limit, 0.15 mm = 5.9 mil) alone is not enough.
+# from the mask). SILK_TO_PAD (JLC's fab limit, 0.15 mm = 5.9 mil) alone is not enough. (Altium's own default rule for pads, 10 mil,
+# stays on the board at priority 2 and the preset's priority 1 rule governs: its DRC counts 0 under it.)
 MASK_EXPANSION_MIL = 2.0
 SILK_TO_MASK_MIL = 6.0
 SILK_TO_COPPER_MIL = max(SILK_TO_PAD / MM * 1000, MASK_EXPANSION_MIL + SILK_TO_MASK_MIL)    # silk edge to copper edge, mil
