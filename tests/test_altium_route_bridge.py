@@ -93,7 +93,7 @@ def test_drc_raising_after_routing_restores_the_backup(tmp_path, monkeypatch):
 
 def test_route_commands_are_sent_with_the_pour_when_ground_has_three_pads(tmp_path, monkeypatch):
     import altium.pcbdoc as pcbdoc
-    calls = _route_fakes(monkeypatch, tmp_path)
+    _route_fakes(monkeypatch, tmp_path)
     doc = {"nets": ["A", "GND"], "rules": [], "pads": [pad("R1", "1", 5, 5, "A"), pad("R2", "1", 15, 5, "A"), pad("C1", "1", 5, 9, "GND"),
                                                          pad("C2", "1", 10, 9, "GND"), pad("C3", "1", 15, 9, "GND")]}
     monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
@@ -161,7 +161,7 @@ def test_pourcheck_not_checked_or_raising_is_never_ok(tmp_path, monkeypatch):
 
 
 def test_an_unreadable_drc_report_after_routing_is_unchecked_and_restores(tmp_path, monkeypatch):
-    calls = _route_fakes(monkeypatch, tmp_path)
+    _route_fakes(monkeypatch, tmp_path)
     state = {"n": 0}
 
     def drc(prj, pcb, report):

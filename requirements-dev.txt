@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest          # tests/
+ruff            # Python lint gate (ruff.toml), tests/test_static_gates.py
+tree-sitter     # JS syntax gate: parses ui/**/*.js offline, no Node needed
+tree-sitter-javascript

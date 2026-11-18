@@ -715,7 +715,6 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
     pin_details: dict[str, dict[str, Any]] = {}
     sch: dict[str, Any] = {}
     n_sheets = 0
-    is_pcb = False
 
     # 1. Determine source type and extract netlist
     sheet_docs: list[dict[str, Any]] = []
@@ -739,7 +738,6 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
                 pcb_files = sorted(p.glob("*.PcbDoc"))
                 if pcb_files:
                     doc = read_pcbdoc(pcb_files[0])
-                    is_pcb = True
                     netlist = pad_net_map(doc)
                     pin_details = _pcb_details(doc)
         elif p.suffix.lower() == ".prjpcb":
@@ -747,7 +745,6 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
             sheet_docs = [read_schdoc(f) for f in paths]
         elif p.suffix.lower() == ".pcbdoc":
             doc = read_pcbdoc(p)
-            is_pcb = True
             netlist = pad_net_map(doc)
             pin_details = _pcb_details(doc)
         elif p.suffix.lower() == ".schdoc":
@@ -756,7 +753,6 @@ def check_schematic(source: Any, board: Any = None) -> dict[str, Any]:
         sheet_docs = [read_schdoc(f) if isinstance(f, (str, pathlib.Path)) else f for f in source]
     elif isinstance(source, dict):
         if "pads" in source and "components" in source:  # PcbDoc dict
-            is_pcb = True
             netlist = pad_net_map(source)
             pin_details = _pcb_details(source)
         elif "wires" in source and "components" in source:  # Single SchDoc dict

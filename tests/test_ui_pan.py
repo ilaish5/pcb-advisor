@@ -5,7 +5,6 @@ Idea tab full-height layout, compact diagram toolbar, and right nav overflow fix
 """
 import pathlib
 import re
-import pytest
 
 from ui_source import ui_all
 

@@ -7,7 +7,6 @@ disk-caching of queries under the workspace shared cache directory.
 import datetime as dt
 import hashlib
 import json
-import os
 import pathlib
 import re
 import sys

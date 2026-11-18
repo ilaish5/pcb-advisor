@@ -1,0 +1,11 @@
+# Correctness-only lint (no style rules). Run by tests/test_static_gates.py.
+extend-exclude = ["projects", ".claude"]
+# TODO: remove this exclude once the route.py work lands and these three files are cleaned up.
+exclude = ["scripts/altium/route.py", "scripts/altium/pair.py", "scripts/altium/layout.py"]
+
+[lint]
+select = ["E9", "F63", "F7", "F82", "F401", "F811", "F841"]
+
+[lint.per-file-ignores]
+# pytest fixtures imported from a module and used as arguments look like redefinitions (F811)
+"tests/**" = ["F811"]

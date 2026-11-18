@@ -7,7 +7,7 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 
 from checks import board
-from checks.board import check_board, check_decoupling_caps, check_edge_components, derive_opening_direction
+from checks.board import check_board, check_decoupling_caps, derive_opening_direction
 
 FIXTURES = REPO / "tests" / "fixtures" / "altium"
 OUTLINE = [0, 0, 100, 80]

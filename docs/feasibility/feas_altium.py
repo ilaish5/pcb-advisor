@@ -1,5 +1,5 @@
 """Feasibility: read Altium SchDoc / PcbDoc straight from disk, read-only."""
-import os, sys, re, struct, olefile, collections, pathlib
+import os, sys, struct, olefile, collections, pathlib
 
 PROJECT = os.environ.get("PROJECT_DIR") or (sys.argv[1] if len(sys.argv) > 1 else None)
 assert PROJECT, "usage: PROJECT_DIR=<folder with the .PcbDoc> python feas_altium.py"

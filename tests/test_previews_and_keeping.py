@@ -8,7 +8,6 @@ import pytest
 import keeping
 import preview_pcb
 import preview_sch
-import store
 
 
 @pytest.fixture

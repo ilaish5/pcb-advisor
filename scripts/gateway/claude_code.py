@@ -1,7 +1,6 @@
 """Claude Code CLI: spawn `claude -p`, take stdout."""
 import json
 import re
-import shutil
 import time
 
 import oscompat

@@ -5,7 +5,7 @@ The behaviour itself (autosize, Enter, Retry, aria-live) was driven in a real br
 """
 import re
 
-from ui_source import UI, ui_html, ui_js
+from ui_source import UI, ui_html
 
 CHAT_JS = (UI / "js" / "chat.js").read_text(encoding="utf-8")
 CHAT_CSS = (UI / "styles" / "chat.css").read_text(encoding="utf-8")

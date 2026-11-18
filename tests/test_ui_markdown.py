@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from ui_source import UI, ui_html, ui_js
+from ui_source import UI, ui_html
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 MARKDOWN = (UI / "js" / "markdown.js").read_text(encoding="utf-8")

@@ -1,6 +1,5 @@
 """Offline tests for the synthetic JLC test board (scripts/jlc_testboard.py). No network: the live
 check (scripts/jlc_live.py) is not collected by pytest."""
-import json
 import pathlib
 import re
 import zipfile

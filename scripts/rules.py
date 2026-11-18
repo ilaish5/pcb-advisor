@@ -8,7 +8,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 REPO = HERE.parent
 
-from altium import parse_rul_bytes, read_pcbdoc, read_rul  # noqa: E402
+from altium import read_pcbdoc  # noqa: E402
 import jlc_preset  # noqa: E402
 
 

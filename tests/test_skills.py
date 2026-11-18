@@ -3,7 +3,6 @@ The skills the agent runs. They work on files in the project, so each is tested
 against the seeded example; the network is replaced.
 """
 import csv
-import json
 
 import check_availability
 import compare_prices

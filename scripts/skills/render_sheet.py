@@ -21,13 +21,11 @@ Pins of an ic go to "side" left/right, else alternate left/right in order.
 Two-pin parts: pins[0] is the top (or left) end, pins[1] the bottom (or right) end.
 """
 import html
-import json
 import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import store      # noqa: E402
-import workspace  # noqa: E402
 
 CW = 5.9            # estimated width of one monospace label character
 PITCH = 26

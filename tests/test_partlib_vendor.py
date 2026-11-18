@@ -2,7 +2,6 @@
 their KiCad files converted; the staleness, the library.build action, the build/prepare endpoints and the manifest in the views."""
 import json
 import os
-import pathlib
 import threading
 import time
 import urllib.error

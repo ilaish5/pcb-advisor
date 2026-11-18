@@ -222,7 +222,6 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
 
     components = doc.get("components", [])
     pads = doc.get("pads", [])
-    nets = doc.get("nets", [])
     vias = doc.get("vias", [])
     tracks = doc.get("tracks", [])
     arcs = doc.get("arcs", [])

@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 import pytest
 
-from ui_source import ui_all, ui_css
+from ui_source import ui_all
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 

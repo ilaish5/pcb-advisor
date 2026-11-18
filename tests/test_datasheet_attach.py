@@ -1,12 +1,8 @@
 """A datasheet that is dropped in finds its part: matched by name, family or text, or linked on request."""
 import base64
-import json
-import threading
-import urllib.request
 
 import pytest
 
-import sources
 import store
 from test_server import get, post, server  # noqa: F401  (the server fixture)
 

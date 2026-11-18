@@ -2,7 +2,6 @@
 Lineage: every exported file says what it was made from, and whether it still matches.
 """
 import os
-import pathlib
 
 import export_bom
 import lineage

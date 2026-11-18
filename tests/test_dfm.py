@@ -1,9 +1,6 @@
 """Tests for scripts/dfm.py (JLCDFM PDF ingest, slice generation, triage table)."""
-import io
-import json
 import pathlib
 import sys
-import pytest
 from PIL import Image
 
 REPO = pathlib.Path(__file__).resolve().parent.parent

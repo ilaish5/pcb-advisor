@@ -2288,7 +2288,7 @@ def build_library(project, fetch=True):
         prepared = True
     build = partlib.library_dir(project) / "build"
     check_ansi(lp, build)
-    syms, fps = spec_symbols(build / "symbols_spec.txt"), spec_footprints(build / "footprints_spec.txt")
+    syms, _fps = spec_symbols(build / "symbols_spec.txt"), spec_footprints(build / "footprints_spec.txt")
     if not syms or not (build / "parts.json").is_file():
         raise BridgeError("The library data has no symbols to build. Prepare the part library first and fix its issues.")
     old = [lp[k] for k in ("schlib", "pcblib", "libpkg", "intlib")] + (sorted(lp["d3"].glob("*.step")) if lp["d3"].is_dir() else [])

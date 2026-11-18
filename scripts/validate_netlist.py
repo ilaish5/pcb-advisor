@@ -1,6 +1,5 @@
 import json
 import sys
-import pathlib
 
 def validate(sheet_json_path, bom_json_path):
     with open(sheet_json_path, 'r', encoding='utf-8') as f:

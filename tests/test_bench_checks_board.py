@@ -1,6 +1,5 @@
 """Benchmark detectors for incidents 8, 10, 11, 12 plus the product functions behind them."""
 import json
-import pathlib
 
 import pytest
 

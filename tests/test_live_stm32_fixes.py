@@ -7,8 +7,7 @@ import pytest
 
 import project as project_mod  # noqa: F401
 import serve
-import store
-from altium import bridge, draw
+from altium import draw
 from checks import board
 from test_altium_draw import drawn, SHEET, SYMS  # noqa: F401  (drawn: the fixture)
 

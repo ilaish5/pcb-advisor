@@ -8,7 +8,6 @@ Usage:
 """
 import argparse
 import datetime as dt
-import json
 import pathlib
 import re
 import sys

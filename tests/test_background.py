@@ -5,7 +5,6 @@ check after a BOM change. Nothing here touches the network: check_availability i
 import json
 import pathlib
 import threading
-import time
 
 import pytest
 

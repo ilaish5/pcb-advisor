@@ -5,7 +5,6 @@ import pathlib
 import threading
 import urllib.request
 
-import pytest
 
 import doctor
 import oscompat

@@ -106,7 +106,7 @@ The zip holds the logs, your chat with the advisor, the setup check and your set
 
 ```
 .venv\Scripts\python -m pip install -r requirements-dev.txt
-.venv\Scripts\python -m pytest -q
+.venv\Scripts\python -m pytest -q        # includes the static gates: JS syntax, ruff, UI file references, AdvisorBridge.pas (tests/test_static_gates.py)
 ```
 
 Code: `scripts/serve.py` (server), `scripts/store.py` (project state), `scripts/agent.py` (agent actions), `ui/index.html` (UI).

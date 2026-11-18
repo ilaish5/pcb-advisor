@@ -4,7 +4,6 @@ import pathlib
 
 import pytest
 
-import project as project_mod
 import serve
 import store
 import workspace

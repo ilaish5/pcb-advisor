@@ -1,7 +1,6 @@
 """Tests for scripts/outjob.py (Altium OutJob generation)."""
 import pathlib
 import sys
-import pytest
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "scripts"))

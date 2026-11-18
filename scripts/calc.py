@@ -125,10 +125,8 @@ def voltage_divider(
     if vout is not None:
         if vout >= vin:
             raise ValueError("vout must be less than vin for a passive divider")
-        target_ratio = vout / vin
 
         # Search standard E24 combinations (1k to 1M)
-        e24_pool = _get_e24_values(min_val=100.0, max_val=1000000.0)
         best_pair = None
         min_err = float("inf")
 

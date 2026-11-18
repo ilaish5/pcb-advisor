@@ -1,5 +1,4 @@
 """The example project that every install ships: examples/led-chaser -> projects/led-chaser."""
-import json
 
 import project
 import render_sheet

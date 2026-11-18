@@ -1,7 +1,6 @@
 """Verify later, don't block now: an IC without a datasheet is placed and marked unverified; the Final checks list it."""
 import sources
 import store
-import verify_part
 
 
 def _add(empty, key, mpn):
@@ -133,7 +132,6 @@ def test_diode_never_runs_the_datasheet_text_check(empty):
     import verify_part
     store.propose_bom(empty, "D1", {"mpn": "LED-RED", "refs": ["D1"]}, new=True)
     store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
-    before = len(store.library_log(empty)) if hasattr(store, "library_log") else None
     r = verify_part.verify(empty, "D1")
     assert r["verify"] == "unchecked"
     assert (store.library_parts(empty).get("D1") or {}).get("verify") is None

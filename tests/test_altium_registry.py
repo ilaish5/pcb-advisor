@@ -1,9 +1,7 @@
 """Tests for scripts/altium/registry.py with fake and error registries."""
 import builtins
-import pathlib
 import sys
 
-import pytest
 
 from altium import registry
 

@@ -19,7 +19,6 @@ The LIBRARY|/FPLIB| lines carry the placeholders <SCHLIB>/<PCBLIB>; stage L2 fil
 import argparse
 import hashlib
 import json
-import os
 import pathlib
 import re
 import shutil

@@ -1,6 +1,5 @@
 """Tests for PCB layer extraction and rendering."""
 import pathlib
-import pytest
 
 from scripts.altium.pcbdoc import (
     parse_arcs,

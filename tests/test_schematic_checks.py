@@ -8,7 +8,6 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 from checks.schematic import (
     build_schdoc_sheet_netlist,
-    build_multisheet_schdoc_netlist,
     check_schematic,
 )
 from altium.schdoc import read_schdoc

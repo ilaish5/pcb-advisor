@@ -4,7 +4,6 @@ Integration tests for checks, dfm, outjob, and anchored discussion endpoints.
 import base64
 import io
 import json
-import pathlib
 import threading
 import urllib.error
 import urllib.request

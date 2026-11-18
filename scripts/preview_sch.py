@@ -20,7 +20,6 @@ if str(HERE) not in sys.path:
 
 from altium.schdoc import pin_tip, read_schdoc
 import project as project_mod
-import workspace
 
 
 def esc(s: str) -> str:

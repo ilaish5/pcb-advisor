@@ -7,7 +7,6 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-import pytest
 
 import project as project_mod
 import serve

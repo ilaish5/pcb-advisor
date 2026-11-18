@@ -23,7 +23,6 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "skills"))
 import jlc  # noqa: E402
-import partlib  # noqa: E402
 import partlib_order  # noqa: E402
 import store  # noqa: E402
 

@@ -276,7 +276,6 @@ def cmd_config(args):
 
 def cmd_check(args):
     """Every sheet validates against the BOM, every citation resolves to a source."""
-    import model
     import store
     import verify_sources
     projects = args or [p["name"] for p in project.list_all()]

@@ -5,7 +5,6 @@ that carries the real results, so the reply no longer says "written" over a red 
 import threading
 import time
 
-import pytest
 
 import session as session_mod
 import workspace
