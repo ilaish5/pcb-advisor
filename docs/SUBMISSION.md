@@ -159,7 +159,9 @@ reference in the UI and the structure of the Altium script.
 - Live STM32 run in Altium, 2026-11-18 (26 parts, commit 7c7a7ad): placed in 21 s, routed 18 of 18 nets with 180 tracks, 36 vias and
   the GND pour in 47 s. Altium's DRC: 0 clearance, 0 short-circuit, 0 un-routed. It is not clean: 4 annular-ring, 81 solder-mask-sliver
   and 271 silk-to-solder-mask findings remain, from the footprints that come with the parts (J1's fine pitch) and silkscreen, not the
-  routing; the tool reports them as footprint findings.
+  routing; the tool reports them as footprint findings. Of the 271, about 110 are silk at pads, because that board's library was built
+  before the 8 mil silk clip (rebuilding the library removes them; the tool flags the library as stale), and about 161 are footprint silk
+  over routed tracks and vias: the router does not yet keep out of silk. `check_silk_to_mask` reports both kinds per part.
 - Clean-computer installation (no Python, no Claude) has not been tested end to end.
 - Windows is the supported platform for the Altium steps.
 
