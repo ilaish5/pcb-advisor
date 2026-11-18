@@ -129,6 +129,21 @@ def test_silk_texts_lie_within_board_bbox():
         assert min(ys) <= t["y_mm"] <= max(ys), f"{t['text']} y {t['y_mm']} outside board"
 
 
+def test_component_reference_text_stays_upright_for_a_part_turned_180_or_90():
+    """The designator drawn inside a turned part's box was turned with it (upside down at 180, sideways at 90): the file's own
+    designator text of the Live-STM32 board is at 0 for every part, so the preview must not turn it."""
+    import re
+    comps = [{"ref": f"C{r}", "x_mm": 10 + r / 10, "y_mm": 10, "rotation": float(r), "layer": "TOP"} for r in (0, 90, 180, 270)]
+    doc = {"components": comps, "pads": [], "tracks": [], "arcs": [], "texts": [], "vias": [], "nets": [], "polygons": [],
+           "regions": [], "fills": []}
+    svg = render_pcbdoc(doc)
+    for r in (90, 180, 270):
+        m = re.search(r'transform="rotate\((-?[\d.]+) [\d.]+ [\d.]+\)">'
+                      r'<rect[^>]*/><text class="comp-ref" x="[\d.]+" y="[\d.]+" transform="rotate\((-?[\d.]+) ',
+                      svg.split(f'data-ref="C{r}"')[1])
+        assert m and (float(m[1]) + float(m[2])) % 360 == 0, r            # the box's turn and the text's cancel out
+
+
 def test_svg_reports_copper_layer_count():
     """The SVG carries the real copper layer count that the Layout header shows."""
     svg = render_pcbdoc(FIXTURES / "finished-board.PcbDoc")

@@ -48,8 +48,10 @@ Never split it over turns, never say "I'll write the netlist next turn" or tell 
    Place > Power Port); cite the AD20 manual step. Say the grey cross-sheet hints are not drawn objects.
 10. Send the image path plus a short table (see Output). Say clearly: generated from data, verify with Alt+Click on a net.
 11. If the student has NOT said who draws (in this turn or any earlier turn of this conversation), end the preview with ONE question, in
-    their language: "Draw this in Altium yourself, press Draw in Altium on the Schematic page, or should I draw it?" (name the button only
-    once the Altium project exists; before that it is not shown). Then stop and wait; never answer for them.
+    their language, naming the next click and not a bare question. Altium project linked: "Press Draw in Altium on the Schematic
+    page (or redraw it by hand in Altium, or tell me to draw it)". No Altium project yet (the button is not shown): "Create or link
+    the Altium project in Settings > Altium first, then press Draw in Altium on the Schematic page". Never "will you redraw it or
+    do you want me to draw it?" alone. Then stop and wait; never answer for them.
     If they already said it ("תצייר אתה", "you draw it"), do NOT ask again: run the chain above now, quoting that message.
     - "Myself" (or no clear answer): the manual path, steps 9-10 stay as they are; do not run the action.
     - "You draw it": run `{"type": "altium.draw_schematic", "student_said": "<their words, most of their last message>"}` (add

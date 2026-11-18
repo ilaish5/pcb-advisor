@@ -88,7 +88,7 @@ def test_empty_states_state_the_limits():
     assert "function emptyState(title, text, actions, limits)" in kit and 'class="limits"' in kit
     pv = (ui / "views" / "previews.js").read_text(encoding="utf-8")
     assert "SCH_LIMITS)" in pv and pv.count("PCB_LIMITS)") >= 2
-    assert "several sub-parts stops the sheet from drawing" in pv and "too big for one A4 sheet" in pv
+    assert "split into several separate blocks" in pv and "too big for one A4 sheet" in pv and "sub-parts" not in pv and "between two sheets are not drawn" in pv
     assert "two-layer boards, with no differential pairs" in pv
     out = (ui / "views" / "outputs.js").read_text(encoding="utf-8")
     assert "Altium outputs and the Gerber zip are refused while a part" in out and "production files" not in out

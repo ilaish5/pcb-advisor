@@ -167,6 +167,28 @@ def test_silk_to_mask_is_reported_per_part_like_altium_measures_it():
     assert board.check_footprint_rules({k: v for k, v in _silk_doc(0.70).items() if k != "rules"}) == []     # no rule on the board: silent
 
 
+def test_rebuild_advice_only_when_the_library_is_really_stale():
+    doc = _silk_doc(0.70)
+    stale = board.check_footprint_rules(doc, library_stale=True)[0]["message"]
+    current = board.check_footprint_rules(doc, library_stale=False)[0]["message"]
+    unknown = board.check_footprint_rules(doc)[0]["message"]
+    assert "rebuild the project library" in stale
+    assert "rebuild the project library" not in current and "rebuild the project library" not in unknown
+    assert "Update from PCB Libraries" in current and "Update from PCB Libraries" in unknown and "PcbLib footprint" in current
+    assert "old copies" in current
+    assert board.check_board(doc, outline_mm=[-5, -5, 5, 5], library_stale=True)["findings"][-1]["message"].count("rebuild the project library")
+
+
+def test_converter_stale_follows_the_fingerprint_only(tmp_path, monkeypatch):
+    import partlib
+    monkeypatch.setattr(partlib, "library_dir", lambda project: tmp_path)
+    assert partlib.converter_stale("p") is None                       # no build
+    (tmp_path / "converter.txt").write_text("old\n", encoding="utf-8")
+    assert partlib.converter_stale("p") is True
+    (tmp_path / "converter.txt").write_text(partlib.converter_fingerprint() + "\n", encoding="utf-8")
+    assert partlib.converter_stale("p") is False
+
+
 def test_the_silk_to_mask_rule_of_the_highest_priority_governs_not_the_strictest():
     # the preset's 6 mil rule (priority 1) and Altium's default 10 mil one for pads (priority 2): 6.9 mil is fine, as Altium counts it
     both = (("6mil", "1"), ("10mil", "2"))

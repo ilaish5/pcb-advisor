@@ -297,9 +297,11 @@ def _pad_boxes(lines):
     return out
 
 
-def _gap(px, py, box):
-    """Distance in mil from a point to a pad's copper (a rectangle in the pad's own frame; a round pad as a circle)."""
+def _gap(px, py, box, grow=0.0):
+    """Distance in mil from a point to a pad's copper grown by `grow` on every side (a rectangle in the pad's own frame, grown
+    square at the corners the way Altium's mask opening is; a round pad as a circle)."""
     x, y, rot, hx, hy, round_ = box
+    hx, hy = hx + grow, hy + grow
     dx, dy = px - x, py - y
     if round_:
         return max(math.hypot(dx, dy) - hx, 0.0)
@@ -325,7 +327,10 @@ def _runs(points, ok):
 def clip_silk(lines):
     """Cut the top silkscreen of a vendor footprint (EasyEDA's USB-C and LED outlines run over their pads: JLC DFM flagged
     them, 16/11) so no silk line is closer to the copper than SILK_TO_COPPER_MIL: the mask expansion plus the silk-to-solder-mask
-    rule (SILK_DANGER, JLCDFM's Danger limit, is looser and would leave silk the board's own design rule check flags). The generated
+    rule (SILK_DANGER, JLCDFM's Danger limit, is looser and would leave silk the board's own design rule check flags). The
+    mask opening is the copper grown SQUARE (a rectangle pad's corner stays a corner), so near a pad's corner the silk must be
+    SILK_TO_MASK_MIL from that grown rectangle, not just SILK_TO_COPPER_MIL from the copper: a silk end 12.6 mil sideways and
+    3 mil beyond a pad corner is 8 mil from the copper but only 5.7 mil from its opening (the LED of the Live-STM32 board: 0.140 mm). The generated
     footprints keep the same distance (partlib_generate.CLEAR). Lines and arcs are cut into the pieces that stay clear; pieces under
     MIN_PIECE are dropped. Text, regions and other layers are left as they are."""
     boxes = _pad_boxes(lines)
@@ -338,7 +343,8 @@ def clip_silk(lines):
             out.append(ln)
             continue
         w = float(f[5] if f[0] == "TRACK" else f[6])
-        need = max(SILK_DANGER, SILK_TO_COPPER_MIL) + w / 2
+        need = max(SILK_DANGER, SILK_TO_PAD / MM * 1000) + w / 2             # from the copper (JLC's fab limit)
+        need_mask = SILK_TO_MASK_MIL + w / 2                                # from the mask opening
         if f[0] == "TRACK":
             x1, y1, x2, y2 = (float(v) for v in f[1:5])
             n = max(1, math.ceil(math.hypot(x2 - x1, y2 - y1)))            # a point per mil
@@ -349,7 +355,7 @@ def clip_silk(lines):
             n = max(1, math.ceil(math.radians(a1 - a0) * r))
             angs = [a0 + (a1 - a0) * i / n for i in range(n + 1)]
             pts = [(cx + r * math.cos(math.radians(a)), cy + r * math.sin(math.radians(a))) for a in angs]
-        ok = [all(_gap(px, py, b) >= need for b in boxes) for px, py in pts]
+        ok = [all(_gap(px, py, b) >= need and _gap(px, py, b, MASK_EXPANSION_MIL) >= need_mask for b in boxes) for px, py in pts]
         if all(ok):
             out.append(ln)
             continue
