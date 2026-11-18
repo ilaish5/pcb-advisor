@@ -46,7 +46,7 @@ ROUNDS = 8                 # rip-up rounds, at least; or this many per net that 
 ROUNDS_PER_FAILED = 2
 GRADED_TRIES = 10          # tries of taking up one or two blocking nets only, per failed net and round, before taking up all of them
 SECOND_SHARE = 0.3         # the share of a plan's search budget the second pass of rip-up rounds (graded_rip first) may spend
-GRADED_SHARE = 0.2         # ... and the share of a plan's search budget (cells) all those tries together may spend (a failed try searches the whole board)
+GRADED_SHARE = 0.2         # ... and the share of the second pass's search cap (cells) all those tries together may spend (a failed try searches the whole board)
 VIA_COST = 30.0
 CROSS_COST = 25.0          # relaxed search: entering a cell that holds another net's track (the nets to rip up are those crossed)
 CHECK_POPS = 5000          # a search that has expanded this many cells asks once whether a goal can be reached at all
@@ -1215,7 +1215,7 @@ def _width_report(nets, plan_w, routed):
 
 
 def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None,
-                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False, ground_early=False):
+                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False, ground_early=False, second_pass=False):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1].
     Returns {"items", "routed", "failed": [(net, reason)], "stats"}. Nets with one pad are not routed. Order: rails (wide) first, then
     signals shortest first, ground last. A net that is blocked rips up the nets in its way and everything is retried (`rounds`: 8 or twice the nets that failed first, whichever is more).
@@ -1330,6 +1330,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
             break
     ripped = {}
     graded = [0]                  # cells expanded by the graded tries so far
+    graded_cap = [0]              # the search cap of the second pass the tries share is taken from
 
     def graded_rip(n, blockers):
         """The least disturbance first: of the nets whose tracks a way for `n` crosses, one (then two) is taken up and laid again after
@@ -1337,7 +1338,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
         can go round in circles). The first try with every net routed is kept (True); else everything is as it was (False)."""
         cands = sorted(blockers, key=key)
         for sub in ([(b,) for b in cands] + list(itertools.combinations(cands, 2)))[:GRADED_TRIES]:
-            if graded[0] > GRADED_SHARE * rt.cap:
+            if graded[0] > GRADED_SHARE * graded_cap[0]:
                 break
             spent0 = rt.spent
             snap = (dict(rt.routed), list(failed), dict(why), dict(pour_state["links"]), pour_state["mode"], pour_state.get("tree"))
@@ -1350,8 +1351,8 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
                 for b in sub:
                     ripped[b] = ripped.get(b, 0) + 1
                 return True
-            rt.routed = dict(snap[0])
-            failed[:] = snap[1]
+            rt.routed = dict(snap[0])                                            # plan that stays open is as the rounds left it (later plans start from it)
+            failed[:] = snap[1]                                                  # rounds left it, so the plans after it start from the same open nets
             why.clear()
             why.update(snap[2])
             pour_state["links"], pour_state["mode"], pour_state["tree"] = snap[3], snap[4], snap[5]
@@ -1415,13 +1416,24 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
             rt.rebuild()
 
     run_rounds(False)
-    if any(m not in hard and m != pour for m in failed) and not stopped():       # still open: the same again, taking up one or two nets first
-        cap0 = rt.cap                                                            # (see graded_rip); it may spend only a share of the plan's budget
-        rt.cap = min(cap0, rt.spent + int(SECOND_SHARE * cap0))
+    if second_pass and any(m not in hard and m != pour for m in failed) and not stopped():   # still open, in a later plan: the same again,
+        snap = (dict(rt.routed), list(failed), dict(why), dict(pour_state["links"]), pour_state["mode"], pour_state.get("tree"), dict(ripped))
+        cap0 = rt.cap                                                            # taking up one or two nets first (see graded_rip); it may
+        rt.cap = min(cap0, rt.spent + int(SECOND_SHARE * cap0))                  # spend only a share of the plan's budget
+        graded_cap[0] = cap0
         run_rounds(True)
         rt.cap = cap0
         if rt.status == "budget" and rt.spent < cap0:
             rt.status = "none"                                                   # the share ran out, not the plan's budget
+        if len(set(failed)) >= len(set(snap[1])) or any(m != pour for m in failed):   # kept only when it leaves no net but the poured one open: a
+            rt.routed = dict(snap[0])
+            failed[:] = snap[1]
+            why.clear()
+            why.update(snap[2])
+            pour_state["links"], pour_state["mode"], pour_state["tree"] = snap[3], snap[4], snap[5]
+            ripped.clear()
+            ripped.update(snap[6])
+            rt.rebuild()
     partial = {}                  # a poured net some of whose pads could not be joined: {net: why}; its other pads are drawn
     if pour and pour in failed and not stopped():          # no way to the pour for some pad, even moving the nets in the way
         # 1. every pad that can be dropped to the pour is, and the pad that cannot is named; 2. tracks for the whole net, which is
@@ -1619,7 +1631,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         info = {}
         t1 = time.time()
         res = _plan_routes_once(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, first=first, t0=t0, info=info,
-                                sampling=sampling, spans_last=spans_last, ground_early=ground_early)
+                                sampling=sampling, spans_last=spans_last, ground_early=ground_early, second_pass=tried > 0)
         tried += 1
         took = time.time() - t1
         if best is None or len(res["failed"]) < len(best["failed"]):
