@@ -1252,7 +1252,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
                 failed.append(m)
                 why[m] = r + (f" (after moving {', '.join(sorted(blockers - {m}))})" if m != n else "")
         keep_best()
-    if best[0] is not None and len(set(failed)) > best[0][0] and not stopped():     # the rounds ended worse than the best state they passed
+    if best[0] is not None and len(set(failed)) > best[0][0]:     # the rounds ended worse than the best state they passed (also when out of time: final_check runs after)
         _, routed_, failed[:], why_, pour_state["links"], pour_state["mode"], pour_state["tree"] = best[0]
         rt.routed = dict(routed_)
         why.clear()
