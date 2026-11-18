@@ -45,3 +45,17 @@ def test_unknown_project_not_created(pcb, monkeypatch, capsys, cmd):
 def test_calc_prog_name(pcb, monkeypatch, capsys):
     run(pcb, monkeypatch, "calc", "led")
     assert "pcb.py calc led" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("argv", [
+    ["trace"], ["trace", "1.5", "--layer", "foo"], ["trace", "-2"], ["trace", "0"],
+    ["trace", "1.5", "--rise", "-5"], ["trace", "1.5", "--oz", "0"], ["trace", "nan"],
+])
+def test_trace_rejects_bad_input(pcb, monkeypatch, capsys, argv):
+    assert run(pcb, monkeypatch, *argv) == 2
+    assert "usage: pcb.py trace" in capsys.readouterr().err
+
+
+def test_trace_good(pcb, monkeypatch, capsys):
+    assert run(pcb, monkeypatch, "trace", "1.5") in (0, None)
+    assert "mm" in capsys.readouterr().out

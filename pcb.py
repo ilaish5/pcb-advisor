@@ -318,23 +318,31 @@ def cmd_reset(args):
 
 def cmd_trace(args):
     import trace_width
-    if not args:
-        raise SystemExit("usage: pcb.py trace <amps> [--project NAME] "
-                         "[--layer external] [--oz 1] [--rise 10]")
     usage = "usage: pcb.py trace <amps> [--project NAME] [--layer external] [--oz 1] [--rise 10]"
+
+    def bad(msg=None):
+        print(usage, file=sys.stderr)
+        if msg:
+            print(f"error: {msg}", file=sys.stderr)
+        return 2
+    if not args:
+        return bad()
     opts = dict(zip(args[1::2], args[2::2]))
     # unstated options come from the board you are actually designing
     board = project.board(_existing(opts.get("--project")) if "--project" in opts else workspace.default_project())
+    layer = opts.get("--layer", board.get("trace_layer", "external"))
+    if layer not in trace_width.K:
+        return bad(f"unknown layer '{layer}' (use: {', '.join(trace_width.K)})")
     try:
-        w = trace_width.width_mm(
-            float(args[0]),
-            opts.get("--layer", board.get("trace_layer", "external")),
-            float(opts.get("--rise", board.get("max_temp_rise_c", 10))),
-            float(opts.get("--oz", board.get("copper_oz", 1.0))))
-    except (ValueError, ZeroDivisionError) as exc:
-        print(usage, file=sys.stderr)
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
+        amps = float(args[0])
+        rise = float(opts.get("--rise", board.get("max_temp_rise_c", 10)))
+        oz = float(opts.get("--oz", board.get("copper_oz", 1.0)))
+    except ValueError as exc:
+        return bad(exc)
+    for label, v in (("amps", amps), ("--rise", rise), ("--oz", oz)):
+        if not v > 0 or v == float("inf"):
+            return bad(f"{label} must be a positive number")
+    w = trace_width.width_mm(amps, layer, rise, oz)
     print(f"{w:.3f} mm ({w / 0.0254:.1f} mil)   source: IPC-2221 section 6.2")
 
 
