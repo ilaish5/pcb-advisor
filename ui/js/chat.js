@@ -790,5 +790,4 @@ onAct('batch-decide', async (el, d, e) => {
   setState(r); render(true);
   const failed = (r.results || []).filter(x => !x.ok);
   if (failed.length) toast(`${failed.length} not applied: ${failed[0].error}`, null, {bad: true});
-  if (d.decision === 'approved' && typeof bomAutoCheck === 'function') bomAutoCheck();
 });

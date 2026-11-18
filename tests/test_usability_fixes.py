@@ -146,7 +146,7 @@ def test_the_page_offers_the_second_button_and_sends_keep_partial():
 
 def test_bom_page_wiring_for_pending_proposals_and_stock():
     assert "bomPending()" in BOM_JS and "bom-approve-pending" in BOM_JS and "waiting for your approval" in BOM_JS
-    assert "bomAutoCheck" in BOM_JS and "priced lines only" in BOM_JS
+    assert "bomAutoCheck" not in BOM_JS and "priced lines only" in BOM_JS and "data-bpid" in BOM_JS and "propSummaryHTML" in BOM_JS
     assert "No symbol or footprint" in BOM_JS and "more problem" in BOM_JS
 
 
@@ -154,4 +154,4 @@ def test_group_card_lists_fields_not_raw_text():
     import pathlib
     chat = (pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / "chat.js").read_text(encoding="utf-8")
     assert "propSummaryHTML(p)" in chat and "esc(propSummary(p))" not in chat
-    assert "bomAutoCheck" in chat
+    assert "bomAutoCheck" not in chat

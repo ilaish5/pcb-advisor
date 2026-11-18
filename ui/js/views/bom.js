@@ -91,8 +91,8 @@ function bomHeader(t) {
   const meta = metaLine([
     {n: t.lines, label: t.lines === 1 ? 'line' : 'lines'},
     {n: t.parts, label: t.parts === 1 ? 'part' : 'parts', title: 'Parts to place, by quantity. Lines marked DNP are not counted.'},
-    {n: cost > 0 ? money(cost) : '', label: t.checking > 0 && cost > 0 ? `per board (priced lines only: ${t.in_stock} of ${t.buy})` : 'per board',
-      title: t.checking > 0 ? `${t.checking} line${t.checking === 1 ? ' has' : 's have'} no stock answer yet, so this total is incomplete. Press Check stock.` : ''},
+    {n: cost > 0 ? money(cost) : '', label: (t.checking > 0 || t.in_stock < t.buy) && cost > 0 ? `per board (priced lines only: ${t.in_stock} of ${t.buy})` : 'per board',
+      title: t.checking > 0 ? `${t.checking} line${t.checking === 1 ? ' has' : 's have'} no stock answer yet (checked in the background, or press Check stock), so this total is incomplete.` : t.in_stock < t.buy ? 'Lines with no in-stock offer are not in this total.' : ''},
     fee > 0 && {always: true, label: `plus $${fee.toFixed(2)} extended fees`,
       title: `Assumes $${CONFIG?.jlc?.extended_fee_usd || 3} for each Extended part type, once per order. The JLC quote has the real fee.`},
     {n: t.checking, label: 'not checked', tone: 'warn', title: 'Lines with no stock answer yet'},
@@ -110,22 +110,23 @@ function bomHeader(t) {
 }
 // The BOM and the schematic disagree on the parts: the server says which designators differ (only when both sides are known).
 function bomPending() { return (S.proposals || []).filter(p => p.status === 'pending' && p.kind === 'bom'); }
-function bomPendingNote(pend) {
-  return pend.length ? `<div class="pv-note"><div class="note warn" role="status"><span>${bomPl(pend.length, 'proposed change')} waiting for your approval in the chat.</span> ${btn('Approve all', {kind: 'link', size: 'sm', act: 'bom-approve-pending'})}</div></div>` : '';
+// The pending BOM proposals as a list, one tick each (all ticked at first): only the ticked ones are approved or rejected.
+function bomPendingList(pend) {
+  return `<div class="bom-pend">${pend.map(p => `<label class="prop-grow"><input type="checkbox" data-bpid="${esc(p.id)}" checked> <span dir="auto">${propSummaryHTML(p)}</span></label>`).join('')}</div>`;
 }
-// After parts were approved, lines that were never checked get their stock answer without a click (the same action as Check stock).
-function bomAutoCheck() { if (S.totals && S.totals.checking > 0 && !bomChecking && ACTIONS['check-all']) ACTIONS['check-all'](); }
-async function bomDecidePending(decision) {
-  const ids = bomPending().map(p => p.id);
-  if (!ids.length) return;
+function bomPendingNote(pend) {
+  return pend.length ? `<div class="pv-note"><div class="note warn bom-pend-note" role="status"><span>${bomPl(pend.length, 'proposed change')} waiting for your approval.</span>${bomPendingList(pend)}<div class="acts">${btn('Approve', {kind: 'pri', size: 'sm', act: 'bom-approve-pending'})}${btn('Reject', {size: 'sm', act: 'bom-reject-pending'})}</div></div></div>` : '';
+}
+async function bomDecidePending(el, decision) {
+  const ids = [...el.closest('.bom-view').querySelectorAll('input[data-bpid]:checked')].map(i => i.dataset.bpid);
+  if (!ids.length) { toast('Tick at least one change'); return; }
   const r = await api('/api/proposals/batch', {ids, decision});
   setState(r); render(true);
   const failed = (r.results || []).filter(x => !x.ok);
   if (failed.length) toast(`${failed.length} not applied: ${failed[0].error}`, null, {bad: true});
-  if (decision === 'approved') bomAutoCheck();
 }
-onAct('bom-approve-pending', () => bomDecidePending('approved'));
-onAct('bom-reject-pending', () => bomDecidePending('rejected'));
+onAct('bom-approve-pending', el => bomDecidePending(el, 'approved'));
+onAct('bom-reject-pending', el => bomDecidePending(el, 'rejected'));
 function bomCountNote() {
   const c = S.bom_count_check;
   return c && c.message ? `<div class="pv-note"><div class="note warn bom-count-note" role="status"><span>${esc(c.message)}</span></div></div>` : '';

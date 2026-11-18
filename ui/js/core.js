@@ -305,7 +305,7 @@ document.addEventListener('click', async e => {
     // arguments for its action (btn() in kit.js turns plain keys into data-* attributes).
     const fn = d.act && ACTIONS[d.act];
     if (fn) { await fn(el, d, e); return; }
-    if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); if (d.decide === 'approved' && ((S.proposals || []).find(p => p.id === d.pid) || {}).kind === 'bom' && typeof bomAutoCheck === 'function') bomAutoCheck(); return; }      // the proposal card shows the decision; no toast
+    if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); return; }      // the proposal card shows the decision; no toast
     if (d.accept) { setState(await api('/api/library/accept', {line: d.accept})); render(true); toast('Accepted'); return; }
     if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast('Result: ' + r.result.verify); return; }
     if (d.thread !== undefined && el.dataset.thread !== undefined) { if (d.thread) switchSession(d.thread); return; }
