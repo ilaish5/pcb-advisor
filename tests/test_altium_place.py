@@ -275,3 +275,14 @@ def test_place_warns_only_when_the_board_shape_cannot_be_set(tmp_path, monkeypat
     assert not res["problems"] and any("could not be set" in w and "Redefine Board Shape" in w for w in res["warnings"])
     res, steps = _place_fakes(monkeypatch, tmp_path, [25.4, 25.4, 177.8, 127.0], modified=True)       # unsaved edits: the board is not closed
     assert any("unsaved changes" in w for w in res["warnings"]) and not any(s[0] in ("SETSHAPE", "REVERT") for s in steps)
+
+
+def test_place_says_each_layout_warning_once_in_the_order_it_was_first_given(tmp_path, monkeypatch):
+    """The planner and the check of the saved board both find "C1 is 3.2 mm from U2 pin 3 VIN ...": the place step's warnings list it once."""
+    from altium import layout
+    same = "C1 is 3.2 mm from U2 pin 3 VIN: place it as close as possible"
+    plan = layout.plan_placement
+    monkeypatch.setattr(layout, "plan_placement", lambda *a, **k: dict(plan(*a, **k), warnings=["first", same, "first"]))
+    monkeypatch.setattr(layout, "decap_distance_warnings", lambda doc, parts: [same, "last"])
+    res, _ = _place_fakes(monkeypatch, tmp_path, [0.0, 0.0, 30.0, 25.0])
+    assert res["warnings"] == ["first", same, "last"]

@@ -320,6 +320,19 @@ def _gnd_doc():
                                                          pad("C2", "1", 10, 9, "GND"), pad("C3", "1", 15, 9, "GND")]}
 
 
+def _plan_log(monkeypatch, pour_model=True):
+    """Records the pour_net each plan_routes call gets; pour_model=False plans the ground by tracks whatever route_on asks (a board whose
+    ground is drawn by tracks, the pour on top: what the tests of taking a pour off again are about)."""
+    from altium import route as route_mod
+    real, seen = route_mod.plan_routes, []
+
+    def plan(doc, box, rules=None, **kw):
+        seen.append(kw.get("pour_net"))
+        return real(doc, box, rules, **dict(kw, pour_net=kw.get("pour_net") if pour_model else None))
+    monkeypatch.setattr(route_mod, "plan_routes", plan)
+    return seen
+
+
 def test_the_board_is_reloaded_before_the_tracks_and_the_pour_are_drawn(tmp_path, monkeypatch):
     """T28: a board placed in the same Altium session kept the placing script's pad nets and the pour shorted other-net through-hole pads."""
     import altium.pcbdoc as pcbdoc
@@ -338,6 +351,7 @@ def test_the_board_is_reloaded_before_the_tracks_and_the_pour_are_drawn(tmp_path
 def test_a_pour_that_breaks_the_rules_is_taken_off_and_the_tracks_stay(tmp_path, monkeypatch):
     import altium.pcbdoc as pcbdoc
     calls = _route_fakes(monkeypatch, tmp_path)
+    _plan_log(monkeypatch, pour_model=False)
     from altium import layout
     monkeypatch.setattr(layout, "unrouted", lambda d: [])        # the fake read-back has no tracks
     doc = _gnd_doc()
@@ -429,6 +443,7 @@ def _pour_broken_fakes(monkeypatch, tmp_path, copper_after, read_after_raises=Fa
     import altium.pcbdoc as pcbdoc
     from altium import layout
     calls = _route_fakes(monkeypatch, tmp_path)
+    _plan_log(monkeypatch, pour_model=False)
     monkeypatch.setattr(layout, "unrouted", lambda d: [])
     sent = []
     doc = _gnd_doc()
@@ -561,3 +576,65 @@ def test_set_board_shape_rewrites_the_four_corners_in_place_and_refuses_other_re
     written.clear()
     monkeypatch.setattr(pcbdoc, "_optional_stream", lambda ole, name: head + b"\x00" + struct.pack("<I", 6) + b"\0" * 100)
     assert pcbdoc.set_board_shape("x", [0, 0, 30, 20]) is False and "BoardRegions/Data" not in written
+
+
+def _poured_board(monkeypatch, tmp_path, copper=4, drc_after=None):
+    """_gnd_doc routed with the ground planned as poured (pour model on, the board shape fits); the read-back has no tracks, and unrouted()
+    (which does not read pours) says the ground is open, as it does of a ground that the pour joins. Returns (calls, sent, the pour_net of each plan)."""
+    import altium.pcbdoc as pcbdoc
+    import altium.pourcheck as pourcheck
+    from altium import layout
+    calls = _route_fakes(monkeypatch, tmp_path)
+    seen = _plan_log(monkeypatch)
+    doc = _gnd_doc()
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(doc, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: copper)
+    monkeypatch.setattr(layout, "unrouted", lambda d: [("GND", ["C1-1", "C2-1"])])
+    monkeypatch.setattr(pourcheck, "check", lambda d, net=None, layer=None: {"islands": [], "unjoined_pads": [], "checked": True, "note": "", "ok": True})
+    sent = []
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: sent.append([c[0] for c in cmds]) or
+                        ["pcbcheck rect=1 objects=0 parts=2 tracks=0 outline_pts=4 box_mil=0,0,787,787"])
+    n = []
+
+    def fake_drc(prj, pcb, report):
+        n.append(1)
+        if len(n) == 2 and drc_after:
+            return drc_after
+        return {"rules": {}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True}
+    monkeypatch.setattr(bridge, "run_drc", fake_drc)
+    return calls, sent, seen
+
+
+def test_the_ground_is_planned_for_the_pour_when_the_pour_is_drawn_as_planned(tmp_path, monkeypatch):
+    calls, sent, seen = _poured_board(monkeypatch, tmp_path)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert seen == ["GND"] and res["pour"] == "GND" and any("POLY" in run for run in sent)
+    assert "GND" in res["routed"] and not res["problems"] and not res["restored"] and calls["restore"] == 0       # the pour is the ground's copper
+
+
+def test_a_ground_routed_to_the_pour_is_not_routed_when_the_pour_has_no_copper(tmp_path, monkeypatch):
+    calls, _, seen = _poured_board(monkeypatch, tmp_path, copper=0)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert seen == ["GND"] and res["pour"] is None
+    assert any("GND was routed to the pour" in p and "not connected" in p for p in res["problems"])
+    assert res["restored"] and calls["restore"] == 1
+
+
+def test_a_ground_routed_to_the_pour_is_restored_not_left_open_when_the_pour_breaks_the_rules(tmp_path, monkeypatch):
+    bad = {"rules": {"Clearance Constraint (Gap=6mil)": 1}, "violations": ["Clearance Constraint (Gap=6mil): Between Pad J1-1 And Polygon Region"],
+           "unrouted": 0, "total": 1}
+    calls, sent, _ = _poured_board(monkeypatch, tmp_path, drc_after=bad)
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert not any("POLYDEL" in c for c in sent)         # taking only the pour off would leave the ground pads joined to nothing
+    assert res["problems"] and res["restored"] and calls["restore"] == 1
+
+
+def test_a_board_whose_shape_cannot_be_set_is_planned_with_the_ground_by_tracks(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    from altium import layout
+    _, _, seen = _poured_board(monkeypatch, tmp_path)
+    monkeypatch.setattr(pcbdoc, "board_shape_box", lambda path: [25.4, 25.4, 177.8, 127.0])
+    monkeypatch.setattr(pcbdoc, "set_board_shape", lambda path, box: False)
+    monkeypatch.setattr(layout, "unrouted", lambda d: [])
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
+    assert seen == [None] and res["pour"] is None and "could not be set" in res["pour_warning"] and not res["problems"]

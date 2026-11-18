@@ -1141,6 +1141,7 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     restored = False
     if problems and backup:
         restored = _restore(prj, pcb, backup)
+    warnings = list(dict.fromkeys(warnings))             # the planner and the check of the saved board can say the same thing: once, order kept
     return {"placed": [p["ref"] for p in plan["places"]], "outline": outline, "outline_created": create, "warnings": warnings,
             "backup": backup, "problems": problems, "pads": len(saved.get("pads", [])), "restored": restored,
             "places": plan["places"], "drill_findings": drills}
@@ -1162,7 +1163,8 @@ def place_pcb(project, replace=False):
     res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace)
     _log(project, "place-pcb", pcb=str(pcb), parts=len(res["placed"]), outline=res["outline"], replace=bool(replace),
          backup=res["backup"], problems=res["problems"], warnings=res["warnings"])
-    res["warnings"] = res["warnings"] + [f"drill check: {m}" for m in res["drill_findings"][:6]] +         [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    res["warnings"] = list(dict.fromkeys(res["warnings"] + [f"drill check: {m}" for m in res["drill_findings"][:6]]
+                                         + [f"design vs board: {m}" for m in design_problems(project)[:6]]))
     if res["problems"]:
         raise BridgeError(f"Placed {len(res['placed'])} parts but the saved board does not check out: "
                           + "; ".join(res["problems"][:6]) + (f" (+{len(res['problems']) - 6} more)" if len(res["problems"]) > 6 else "")
@@ -1229,12 +1231,16 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
     drc_before_full = run_drc(prj, pcb, tmp / "before.txt")
     drc_before = _drc_counts(drc_before_full)
-    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds)
+    pour_net = route.pour_net_for(doc) if pour else None
+    shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
+    # The ground is planned as poured (each pad dropped to the pour by a short stub and a via) only when the pour is certain to be drawn
+    # as planned: a board shape that has to be rewritten first could fail, and then the ground would have no copper; that board is
+    # planned with the ground routed by tracks (the pour is still drawn on top).
+    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds, pour_net=None if shape else pour_net)
+    pour_dep = bool(plan.get("pour") and plan["pour"].get("mode") == "drops")       # some ground pad is joined by the pour alone
     names = names or {}                  # {drawn name: netlist name}: the PcbDoc carries the drawn names, the student knows the netlist's
     shown = {names.get(n, n): w for n, w in plan["widths"].items()}
-    pour_net = route.pour_net_for(doc) if pour else None
     pour_skipped = ""
-    shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": shown, "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped,
@@ -1282,6 +1288,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     try:        # whatever goes wrong from here on (read back, reload, the check itself) puts the backed-up board back
         saved = read_pcbdoc(pcb, geometry=True)
         open_nets = layout.unrouted(saved)
+        if pour_dep:      # unrouted() does not read pours: the ground pads that the pour joins show as open here; the pour is checked below
+            open_nets = [(n, t) for n, t in open_nets if n != pour_net]
         if open_nets:
             probs.append("the saved board still has open nets: " + "; ".join(f"{n} ({', '.join(t[:4])})" for n, t in open_nets[:5]))
         try:    # Altium checks connectivity from what it loaded: close the board (saved, nothing lost) so the check reads the file again
@@ -1309,7 +1317,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         return out
 
     new_probs = drc_problems(after, drc)
-    if pour_net and new_probs:       # the pour may be all that is wrong: take only the polygon off, keep the tracks, and check again
+    if pour_net and new_probs and not pour_dep:       # the pour may be all that is wrong: take only the polygon off, keep the tracks, and check again
+        # (not when the ground was routed to the pour: without the pour its pads are not connected, so the board is put back as it was)
         only_pour = all(after.get(w, 0) - drc_before.get(w, 0) <= sum(1 for v in drc["violations"] if v.startswith(w) and "polygon" in v.lower())
                         for w in ("Clearance Constraint", "Short-Circuit", "Width Constraint")) and after.get("Un-Routed Net", 0) == 0
         if only_pour:
@@ -1336,7 +1345,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                         probs.append("the saved board still has open nets: " + "; ".join(f"{n} ({', '.join(t[:4])})" for n, t in open_nets[:5]))
                     res["pour"], pour_net = None, None
                     res["pour_warning"] = ("the ground pour was taken off again: Altium's design rule check found it too close to other copper. "
-                                           "All GND pads are connected by tracks; add a pour in Altium (Place > Polygon Pour) if you want a ground plane")
+                                           + ("" if pour_dep else "All GND pads are connected by tracks; ")
+                                           + "add a pour in Altium (Place > Polygon Pour) if you want a ground plane")
     res["drc_after"] = after
     res.update(drc_rules=dict(drc.get("rules") or {}), drc_total=drc.get("total"), drc_clean=drc_clean(drc), drc_line=drc_line(drc))
     if not drc.get("complete"):
@@ -1358,6 +1368,9 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
             res["pour"] = None
             res["pour_warning"] = (f"the {pour_net} pour was drawn but Altium did not fill it (no copper): repour it in Altium with "
                                    "Tools > Polygon Pours > Repour All, or route without it")
+    if pour_dep and not res["pour"]:       # fail closed: the ground was routed to the pour, so without the pour it is not routed at all
+        probs.append(f"{pour_net} was routed to the pour on the bottom layer but the pour is not in the saved board (see the pour warning): "
+                     f"the {pour_net} pads are not connected")
     if res["pour"]:         # the pour exists in the file: islands (cut-off copper) and pads it does not reach
         pc_probs, res["pour_warnings"] = _pour_findings(saved, pour_net)
         probs += pc_probs

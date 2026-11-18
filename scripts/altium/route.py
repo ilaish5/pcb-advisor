@@ -1211,7 +1211,7 @@ def _width_report(nets, plan_w, routed):
 
 
 def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None,
-                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False):
+                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False, ground_early=False):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1].
     Returns {"items", "routed", "failed": [(net, reason)], "stats"}. Nets with one pad are not routed. Order: rails (wide) first, then
     signals shortest first, ground last. A net that is blocked rips up the nets in its way and everything is retried (`rounds`: 8 or twice the nets that failed first, whichever is more).
@@ -1235,6 +1235,8 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     spanning = _spanning_nets(rt.pads) if spans_last else set()
 
     def key(n):
+        if ground_early and _is_gnd(n):
+            return (0.5, _hpwl(rt.pads[n]), n)                 # after the rails, before the signals (see STRATEGIES)
         return (2 if _is_gnd(n) else 0 if _RAIL.match(n) and n not in spanning else 1, _hpwl(rt.pads[n]), n)
     order = sorted(nets, key=key)
     # --- coupled USB pair hook (logic in pair.py): D+/D- are routed together first and leave the normal order
@@ -1307,7 +1309,13 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     def all_items():
         return [it for r in rt.routed.values() for it in r["items"]]
 
-    order = ([pour] if pour in rank else []) + order + ([pour] if pour and pour not in rank else [])   # a poured net last: its vias go where the signals left the pour whole
+    if pour and pour not in rank and ground_early:               # the poured net's drops are laid after the rails, before the signals: a ground pin
+        k = 0
+        while k < len(order) and (order[k] in rank or (_RAIL.match(order[k]) and order[k] not in spanning)):
+            k += 1                                              # in the middle of a fine pitch row gets its stub and via before the
+        order = order[:k] + [pour] + order[k:]                  # signals' fan-out closes the way
+    else:
+        order = ([pour] if pour in rank else []) + order + ([pour] if pour and pour not in rank else [])   # a poured net last: its vias go where the signals left the pour whole
     failed, why = [], {}
     for n in order:
         r = try_route(n)
@@ -1538,8 +1546,10 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
 
 
 # The plans tried, in order, until every net is routed: (sampling, the nets left open by the earlier plans are laid first, a rail that
-# spans other nets' pads on a connector is laid after them).
-STRATEGIES = ((SAMPLING, False, False), (SAMPLING, True, True), (SAMPLING_TIGHT, True, True), (SAMPLING_TIGHT, True, False))
+# spans other nets' pads on a connector is laid after them, the ground (the poured net, or a ground net routed by tracks) is laid after
+# the rails and before the signals).
+STRATEGIES = ((SAMPLING, False, False, False), (SAMPLING_TIGHT, False, True, True), (SAMPLING_TIGHT, True, True, False),
+              (SAMPLING_TIGHT, True, False, False))
 
 def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1]; the arguments and the result are those of
@@ -1551,7 +1561,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     t0 = time.time()
     rules = rules or rules_from_doc(doc)
     best, info, first, tried = None, {}, [], 0
-    for sampling, promote, spans_last in STRATEGIES:
+    for sampling, promote, spans_last, ground_early in STRATEGIES:
         if best is not None:
             open_ = [n for n, _ in best["failed"]]
             if not open_ or time.time() - t0 > seconds * 0.5 or not [n for n in open_ if n not in info.get("hard", ())]:
@@ -1560,7 +1570,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
                 first = open_ + [n for n in first if n not in open_]
         info = {}
         res = _plan_routes_once(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, first=first, t0=t0, info=info,
-                                sampling=sampling, spans_last=spans_last)
+                                sampling=sampling, spans_last=spans_last, ground_early=ground_early)
         tried += 1
         if best is None or len(res["failed"]) < len(best["failed"]):
             best = res
