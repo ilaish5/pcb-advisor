@@ -45,6 +45,8 @@ MAX_RIPS = 5               # a net is ripped up at most this many times for the 
 ROUNDS = 8                 # rip-up rounds, at least; or this many per net that failed in the first pass
 ROUNDS_PER_FAILED = 2
 GRADED_TRIES = 10          # tries of taking up one or two blocking nets only, per failed net and round, before taking up all of them
+SECOND_SHARE = 0.3         # the share of a plan's search budget the second pass of rip-up rounds (graded_rip first) may spend
+GRADED_SHARE = 0.2         # ... and the share of a plan's search budget (cells) all those tries together may spend (a failed try searches the whole board)
 VIA_COST = 30.0
 CROSS_COST = 25.0          # relaxed search: entering a cell that holds another net's track (the nets to rip up are those crossed)
 CHECK_POPS = 5000          # a search that has expanded this many cells asks once whether a goal can be reached at all
@@ -1327,18 +1329,24 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
         if stopped():
             break
     ripped = {}
+    graded = [0]                  # cells expanded by the graded tries so far
 
     def graded_rip(n, blockers):
         """The least disturbance first: of the nets whose tracks a way for `n` crosses, one (then two) is taken up and laid again after
-        `n`, instead of all together (which lets the greedy search close other nets' ways in turn). The first try with every net
-        routed is kept (True); else everything is as it was (False)."""
+        `n`, instead of all together (which lets the greedy search close other nets' ways in turn; the rounds above do that and
+        can go round in circles). The first try with every net routed is kept (True); else everything is as it was (False)."""
         cands = sorted(blockers, key=key)
         for sub in ([(b,) for b in cands] + list(itertools.combinations(cands, 2)))[:GRADED_TRIES]:
+            if graded[0] > GRADED_SHARE * rt.cap:
+                break
+            spent0 = rt.spent
             snap = (dict(rt.routed), list(failed), dict(why), dict(pour_state["links"]), pour_state["mode"], pour_state.get("tree"))
             for b in sub:
                 rt.routed.pop(b)
             rt.rebuild()
-            if all(not try_route(m) for m in [n] + sorted(sub, key=lambda m: (m != pour, key(m)))) and not stopped():
+            done = all(not try_route(m) for m in [n] + sorted(sub, key=lambda m: (m != pour, key(m)))) and not stopped()
+            graded[0] += rt.spent - spent0
+            if done:
                 for b in sub:
                     ripped[b] = ripped.get(b, 0) + 1
                 return True
@@ -1359,50 +1367,61 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
         if best[0] is None or k < best[0][0]:
             best[0] = (k, dict(rt.routed), list(failed), dict(why), dict(pour_state["links"]), pour_state["mode"], pour_state.get("tree"))
     keep_best()
-    for rnd in range(rounds if rounds is not None else max(ROUNDS, ROUNDS_PER_FAILED * len(failed))):
-        cand = [m for m in failed if m not in hard]
-        if not cand or stopped() or time.time() > deadline:
-            break
-        n = cand[0]
-        failed.remove(n)
-        paths, esc_stubs, reason = rt.route_net(n, rules["width"], relaxed=True, deadline=deadline,
-                                                pour_mask=(rt.pour_region(rt.netid[n])[0] if n == pour and pour_state["mode"] != "tracks" else None))
-        if paths is None:
-            why[n] = reason + (": blocked by fixed copper (pads, board edge), not by other tracks" if not stopped() else "")
-            if not stopped():
-                hard.add(n)
-            failed.append(n)
-            continue
-        blockers = set()
-        for p in paths:
-            blockers |= rt.blockers(n, p)
-        blockers |= rt.escape_blockers(n, esc_stubs, rules["width"])      # a fine pitch pad's escape can be what a track blocks
-        blockers = {b for b in blockers if ripped.get(b, 0) < MAX_RIPS and b not in pair_state["done"]}   # a coupled pair is not ripped up
-        if not blockers:
-            if "(no track of another net to move)" not in (why.get(n) or ""):
-                why[n] = (why.get(n) or "no way") + " (no track of another net to move)"
-            failed.append(n)
-            continue
-        if len(blockers) > 1 and graded_rip(n, blockers):
+
+    def run_rounds(gentle):
+        for rnd in range(rounds if rounds is not None else max(ROUNDS, ROUNDS_PER_FAILED * len(failed))):
+            cand = [m for m in failed if m not in hard and not (gentle and m == pour)]
+            if not cand or stopped() or time.time() > deadline:
+                break
+            n = cand[0]
+            failed.remove(n)
+            paths, esc_stubs, reason = rt.route_net(n, rules["width"], relaxed=True, deadline=deadline,
+                                                    pour_mask=(rt.pour_region(rt.netid[n])[0] if n == pour and pour_state["mode"] != "tracks" else None))
+            if paths is None:
+                why[n] = reason + (": blocked by fixed copper (pads, board edge), not by other tracks" if not stopped() else "")
+                if not stopped():
+                    hard.add(n)
+                failed.append(n)
+                continue
+            blockers = set()
+            for p in paths:
+                blockers |= rt.blockers(n, p)
+            blockers |= rt.escape_blockers(n, esc_stubs, rules["width"])      # a fine pitch pad's escape can be what a track blocks
+            blockers = {b for b in blockers if ripped.get(b, 0) < MAX_RIPS and b not in pair_state["done"]}   # a coupled pair is not ripped up
+            if not blockers:
+                if "(no track of another net to move)" not in (why.get(n) or ""):
+                    why[n] = (why.get(n) or "no way") + " (no track of another net to move)"
+                failed.append(n)
+                continue
+            if gentle and len(blockers) > 1 and graded_rip(n, blockers):
+                keep_best()
+                continue
+            for b in sorted(blockers):
+                ripped[b] = ripped.get(b, 0) + 1
+                rt.routed.pop(b)
+            rt.rebuild()
+            again = [n] + sorted(blockers, key=lambda m: (m != pour, key(m)))      # the poured net's drops come before the others are laid again
+            for m in again:
+                r = try_route(m)
+                if r:
+                    failed.append(m)
+                    why[m] = r + (f" (after moving {', '.join(sorted(blockers - {m}))})" if m != n else "")
             keep_best()
-            continue
-        for b in sorted(blockers):
-            ripped[b] = ripped.get(b, 0) + 1
-            rt.routed.pop(b)
-        rt.rebuild()
-        again = [n] + sorted(blockers, key=lambda m: (m != pour, key(m)))      # the poured net's drops come before the others are laid again
-        for m in again:
-            r = try_route(m)
-            if r:
-                failed.append(m)
-                why[m] = r + (f" (after moving {', '.join(sorted(blockers - {m}))})" if m != n else "")
-        keep_best()
-    if best[0] is not None and len(set(failed)) > best[0][0]:     # the rounds ended worse than the best state they passed (also when out of time: final_check runs after)
-        _, routed_, failed[:], why_, pour_state["links"], pour_state["mode"], pour_state["tree"] = best[0]
-        rt.routed = dict(routed_)
-        why.clear()
-        why.update(why_)
-        rt.rebuild()
+        if best[0] is not None and len(set(failed)) > best[0][0]:     # the rounds ended worse than the best state they passed (also when out of time: final_check runs after)
+            _, routed_, failed[:], why_, pour_state["links"], pour_state["mode"], pour_state["tree"] = best[0]
+            rt.routed = dict(routed_)
+            why.clear()
+            why.update(why_)
+            rt.rebuild()
+
+    run_rounds(False)
+    if any(m not in hard and m != pour for m in failed) and not stopped():       # still open: the same again, taking up one or two nets first
+        cap0 = rt.cap                                                            # (see graded_rip); it may spend only a share of the plan's budget
+        rt.cap = min(cap0, rt.spent + int(SECOND_SHARE * cap0))
+        run_rounds(True)
+        rt.cap = cap0
+        if rt.status == "budget" and rt.spent < cap0:
+            rt.status = "none"                                                   # the share ran out, not the plan's budget
     partial = {}                  # a poured net some of whose pads could not be joined: {net: why}; its other pads are drawn
     if pour and pour in failed and not stopped():          # no way to the pour for some pad, even moving the nets in the way
         # 1. every pad that can be dropped to the pour is, and the pad that cannot is named; 2. tracks for the whole net, which is
