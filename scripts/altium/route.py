@@ -51,6 +51,12 @@ THRU_COST = 2.0            # a change of layer inside a through hole pad: no via
 TURN_45, TURN_90 = 0.3, 0.7
 _TO01 = bytes([48] + [49] * 255)                  # byte 0 -> '0', any other -> '1' (a cell array as a binary string)
 MARGINS = (0.05, 0.1, 0.2, 0.3, 0.45, 0.6)        # extra distance asked of a net that the exact check found too close to something
+# How far the grid search keeps off an obstacle beyond the rule, as a share of the grid pitch: (obstacles grown by q, wide tracks and vias
+# looked at by reach). The track centre sits on a grid point and the obstacle is sampled on the same grid, so some margin is needed so
+# that a diagonal run does not clip a corner; the exact check (violations) repairs what is left. The wide setting is the first try; the
+# tight one leaves a fine pitch fan-out (0.5 mm pitch, 0.2 mm clearance) room that the wide one takes away, and is tried when nets are open.
+SAMPLING = (0.8, 0.71)
+SAMPLING_TIGHT = (0.3, 0.3)
 _LEN = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*(mil|mm)?\s*$", re.I)
 _INNET = re.compile(r"InNet\s*\(\s*'([^']+)'\s*\)", re.I)
 _RAIL = re.compile(r"^[+-]\d|^\d+V\d*$|^(?:VCC|VDD|VBUS|VBAT|VIN|VSYS|VDDA|VCCA|AVDD|DVDD)\w*$", re.I)
@@ -236,7 +242,7 @@ def fixed_shapes(doc, rules):
 
 
 class Router:
-    def __init__(self, doc, box, rules, pitch=0.1):
+    def __init__(self, doc, box, rules, pitch=0.1, sampling=SAMPLING):
         self.g = g = pitch
         self.rules = rules
         self.x0, self.y0 = box[0], box[1]
@@ -247,8 +253,8 @@ class Router:
         self.clear = rules["clearance"]
         # The track centre sits on a grid point, an obstacle is sampled on the same grid: half a cell diagonal (0.71 g) plus what a
         # diagonal segment dips between two cells is the most the sampling can miss. Every obstacle is grown by it.
-        self.q = 0.8 * g
-        self.reach_q = 0.71 * g
+        self.q = sampling[0] * g
+        self.reach_q = sampling[1] * g
         self.S = [[-1] * self.n, [-1] * self.n]        # fixed copper and the board edge: -1 free, net id, -2 blocks everything
         self.D = [[-1] * self.n, [-1] * self.n]        # tracks and vias routed so far
         # the same two as bitmaps (1 where the cell holds anything) and the cells each net id owns alone, so that "blocked for this net"
@@ -830,13 +836,21 @@ class Router:
         self.pour_tree = tree
         for pad in todo:
             src = start(pad)
+            path = self.astar(nid, src, set(tree), width, relaxed=relaxed, deadline=deadline, margin=margin, goal_bot=pour_mask) if src else None
             if not src:
+                self.status = "none"
+            if path is None and pour_mask is not None and not relaxed and self.status not in ("time", "budget"):
+                drop = self._drop_exact(nid, pad, width, margin, pour_mask)      # the grid keeps off more than the rules ask: look by exact geometry
+                if drop is not None:
+                    path, esc = drop
+                    stubs[:] = [q for q in stubs if q.get("tag") != pad["tag"]] + [esc]
+                    escaped.add(id(pad))
+            if path is None and not src:
                 why_ = f"pad {pad['tag']} is too close to other copper for a {width:g} mm track"
                 if self.pour_lenient:
                     unjoined.append((pad["tag"], why_))
                     continue
                 return None, None, why_
-            path = self.astar(nid, src, set(tree), width, relaxed=relaxed, deadline=deadline, margin=margin, goal_bot=pour_mask)
             if path is None:
                 why_ = (f"{self.why_stopped()} from {pad['tag']} to the pour (a via into the bottom layer or a pad in the pour)" if tie is None
                         else f"{self.why_stopped()} from {pad['tag']} to other copper of the net that the pour reaches")
@@ -855,6 +869,72 @@ class Router:
             if pad["stub"] and id(pad) not in escaped:
                 stubs.append(pad)
         return paths, stubs, None
+
+    def _via_clean(self, net, x, y, margin=0.0):
+        """A via of `net` at (x, y) keeps the clearance (+ margin) from all other copper and the board edge, by exact geometry: the same
+        tests as _violations (a via is never in or near an SMD pad, whatever its net; copper of other nets on either layer)."""
+        r, clear, edge, box = self.rules["via_dia"] / 2, self.clear + margin + 2e-4, self.rules["edge"], self.box
+        if x - r < box[0] + edge or x + r > box[2] - edge or y - r < box[1] + edge or y + r > box[3] - edge:
+            return False
+        reach = r + clear
+        for s in self.shapes:
+            bb = s.get("bb")
+            if bb is None:
+                bb = s["bb"] = _bbox(s["geo"])
+            if bb[2] < x - reach or bb[0] > x + reach or bb[3] < y - reach or bb[1] > y + reach:
+                continue
+            if (s["smd"] or s["net"] != net) and _dist(s["geo"], (x, y), (x, y)) - r < clear:
+                return False
+        for other, rr in self.routed.items():
+            if other == net:
+                continue
+            for it in rr["items"]:
+                if it["kind"] == "track":
+                    if _pt_seg(x, y, it["x1"], it["y1"], it["x2"], it["y2"]) - r - it["width"] / 2 < clear:
+                        return False
+                elif math.hypot(it["x"] - x, it["y"] - y) - r - it["dia"] / 2 < clear:
+                    return False
+        return True
+
+    def _drop_exact(self, nid, pad, width, margin, pour_mask, radius=2.5):
+        """A poured net's top layer pad that the grid search could not join to the pour: look for a stub (from the pad centre, along the
+        pad's long axis or straight) and a via in the pour by exact geometry instead of the grid's keep-off, which is wider than the rules
+        ask (it grows every obstacle by the sampling error). Nearest via first; kept only when the stub and the via keep the clearance
+        from everything routed so far. Returns (path [(top, cell), (bottom, cell)], stub dict) or None."""
+        if len(pad["layers"]) != 1 or pad["layers"][0] != TOP:
+            return None
+        net = next(k for k, v in self.netid.items() if v == nid)
+        l, px, py = TOP, pad["x"], pad["y"]
+        r = pad["rect"]
+        vert = (r[3] - r[1]) >= (r[2] - r[0])
+        half = ((r[3] - r[1]) if vert else (r[2] - r[0])) / 2
+        ix0, iy0 = self.cell_of(px - radius, py - radius)
+        ix1, iy1 = self.cell_of(px + radius, py + radius)
+        cands = []
+        for ix in range(ix0, ix1 + 1):
+            for iy in range(iy0, iy1 + 1):
+                i = self.idx(ix, iy)
+                x, y = self.xy(i)
+                d = math.hypot(x - px, y - py)
+                if d <= radius and pour_mask[i] and not self.novia[i]:
+                    cands.append((round(d, 3), ix, iy, i))
+        cands.sort()
+        for _d, _ix, _iy, i in cands[:400]:
+            x, y = self.xy(i)
+            if not self._via_clean(net, x, y, margin):
+                continue
+            along, across = ((y - py), (x - px)) if vert else ((x - px), (y - py))
+            sgn = 1 if along >= 0 else -1
+            routes = [[(px, py), (round(x, 4), round(y, 4))]]                      # straight
+            if abs(across) > 1e-6:
+                axis = (lambda t: (px, round(py + t, 4))) if vert else (lambda t: (round(px + t, 4), py))
+                for t in (along, sgn * (abs(along) - abs(across)), sgn * (half + 0.05)):      # along the axis, then to the via
+                    if abs(t) > 1e-6 and t * sgn > 0 and abs(t) <= abs(along) + 1e-9:
+                        routes.append([(px, py), axis(t), (round(x, 4), round(y, 4))])
+            for pts in routes:
+                if self._clean(net, l, pts, width, margin, False):
+                    return [(l, i), (BOT, i)], {"escape": pts, "layer": l, "cell": i, "tag": pad["tag"]}
+        return None
 
     def pour_region(self, nid, neck=POUR_NECK):
         """(mask, labels, sizes): the bottom layer cells where copper of net nid can be (not blocked by the fixed copper or the tracks
@@ -1080,6 +1160,29 @@ def _pour_cut_off(rt, net, links, skip=()):
     return sorted(t for t in by_tag if t not in skip and not joined(t))
 
 
+def _spanning_nets(pads):
+    """Nets with two pads on one part that have a pad of another net between them (+5V at the two ends of a USB-C pad row): their way
+    from one pad to the other runs along the row, in front of the pads of the nets in between, whose way out it can close."""
+    out = set()
+    items = [(net, q) for net, ps in pads.items() for q in ps]
+    for net, ps in pads.items():
+        for k, a in enumerate(ps):
+            for b in ps[k + 1:]:
+                if a["tag"].split("-")[0] != b["tag"].split("-")[0]:
+                    continue
+                dx, dy = b["x"] - a["x"], b["y"] - a["y"]
+                L2 = dx * dx + dy * dy
+                if L2 < 1e-9:
+                    continue
+                for other, q in items:
+                    if other == net or q["tag"].split("-")[0] != a["tag"].split("-")[0]:
+                        continue
+                    t = ((q["x"] - a["x"]) * dx + (q["y"] - a["y"]) * dy) / L2
+                    if 0.0 < t < 1.0 and math.hypot(q["x"] - (a["x"] + t * dx), q["y"] - (a["y"] + t * dy)) < 1.0:
+                        out.add(net)
+    return out
+
+
 def _hpwl(pads):
     xs, ys = [p["x"] for p in pads], [p["y"] for p in pads]
     return (max(xs) - min(xs)) + (max(ys) - min(ys))
@@ -1107,7 +1210,8 @@ def _width_report(nets, plan_w, routed):
     return out
 
 
-def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None):
+def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None,
+                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1].
     Returns {"items", "routed", "failed": [(net, reason)], "stats"}. Nets with one pad are not routed. Order: rails (wide) first, then
     signals shortest first, ground last. A net that is blocked rips up the nets in its way and everything is retried (`rounds`: 8 or twice the nets that failed first, whichever is more).
@@ -1119,17 +1223,19 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     by a short stub and a via each instead of by tracks to each other; where that cannot be done the net is routed by tracks as
     usual. The result's "pour" says which."""
     rules = rules or rules_from_doc(doc)
-    t0 = time.time()
+    t0 = t0 or time.time()
     deadline = t0 + seconds
-    rt = Router(doc, box, rules, pitch)
+    rt = Router(doc, box, rules, pitch, sampling)
     rt.cap = max_expansions or max(DEFAULT_EXPANSIONS, EXPANSIONS_PER_CELL * rt.n)
     nets = sorted(n for n, ps in rt.pads.items() if len(ps) >= 2 and (only is None or n in only))
     pour = pour_net if pour_net in nets else None
     pour_state = {"net": pour, "mode": None, "note": "", "links": {}}
     region = [None]
 
+    spanning = _spanning_nets(rt.pads) if spans_last else set()
+
     def key(n):
-        return (2 if _is_gnd(n) else 0 if _RAIL.match(n) else 1, _hpwl(rt.pads[n]), n)
+        return (2 if _is_gnd(n) else 0 if _RAIL.match(n) and n not in spanning else 1, _hpwl(rt.pads[n]), n)
     order = sorted(nets, key=key)
     # --- coupled USB pair hook (logic in pair.py): D+/D- are routed together first and leave the normal order
     from . import pair as _pair
@@ -1137,6 +1243,8 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     _pair.fallback_ties(rt, rules, pair_state)       # an uncoupled pair: the pads of a net at the connector are tied first
     order = [n for n in order if n not in pair_state["done"] and n != pour]
     # --- end hook
+    rank = {n: k for k, n in enumerate(first)}                 # nets that failed in an earlier attempt are laid first (see plan_routes)
+    order = sorted(order, key=lambda n: rank.get(n, len(rank)))        # a stable sort: the rest keeps its order
 
     from altium import netcurrent
     plan_w = netcurrent.net_widths(nets, rules, rules.get("net_current"), rules.get("net_estimate"), rules.get("copper_oz") or 1.0,
@@ -1199,7 +1307,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     def all_items():
         return [it for r in rt.routed.values() for it in r["items"]]
 
-    order = order + ([pour] if pour else [])                  # a poured net last: its vias go where the signals left the pour whole
+    order = ([pour] if pour in rank else []) + order + ([pour] if pour and pour not in rank else [])   # a poured net last: its vias go where the signals left the pour whole
     failed, why = [], {}
     for n in order:
         r = try_route(n)
@@ -1418,6 +1526,8 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             failed.append(n)
             why[n] = partial[n]
     items = all_items()
+    if info is not None:
+        info["hard"] = set(hard)
     return {"pairs": _pair.report(rt, rules, pair_state, items),     # pair.py hook
             "items": items, "routed": sorted(n for n in rt.routed if n not in partial), "failed": [(n, explain(n, why.get(n) or last_msg.get(n) or "no path")) for n in failed],
             "widths": (rep := _width_report(nets, plan_w, rt.routed)), "width_problems": netcurrent.width_problems(rep),
@@ -1425,6 +1535,37 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch,
                       "expansions": rt.spent}}
+
+
+# The plans tried, in order, until every net is routed: (sampling, the nets left open by the earlier plans are laid first, a rail that
+# spans other nets' pads on a connector is laid after them).
+STRATEGIES = ((SAMPLING, False, False), (SAMPLING, True, True), (SAMPLING_TIGHT, True, True), (SAMPLING_TIGHT, True, False))
+
+def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None):
+    """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1]; the arguments and the result are those of
+    _plan_routes_once. A net left open that is not blocked by fixed copper alone is a search that went wrong, not a board that cannot be
+    routed (the search is greedy: one net's track can close a fine pitch pad's only way out): the whole plan is then made again, by the
+    next of STRATEGIES (the open nets laid first; a tighter keep-off), and the plan with the fewest nets open is returned (ties: the
+    earlier). Every plan passes the same exact checks, so a later plan can only complete the route, never weaken it. Each plan has its own
+    budget of cells, so the result is the same for the same board; `seconds` (all plans together) is the safety cap."""
+    t0 = time.time()
+    rules = rules or rules_from_doc(doc)
+    best, info, first, tried = None, {}, [], 0
+    for sampling, promote, spans_last in STRATEGIES:
+        if best is not None:
+            open_ = [n for n, _ in best["failed"]]
+            if not open_ or time.time() - t0 > seconds * 0.5 or not [n for n in open_ if n not in info.get("hard", ())]:
+                break                                  # done, out of time, or only fixed copper is in the way: another plan cannot help
+            if promote:
+                first = open_ + [n for n in first if n not in open_]
+        info = {}
+        res = _plan_routes_once(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, first=first, t0=t0, info=info,
+                                sampling=sampling, spans_last=spans_last)
+        tried += 1
+        if best is None or len(res["failed"]) < len(best["failed"]):
+            best = res
+    best["stats"]["attempts"] = tried
+    return best
 
 
 def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3):
