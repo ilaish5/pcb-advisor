@@ -20,6 +20,20 @@ def test_new_project_with_odd_characters_names_the_folder_used(server, empty):
     assert code == 200 and body["created"] == "a-b-c" and "a-b-c" in body["note"]
 
 
+def test_new_project_body_must_be_an_object_with_a_name(server, empty):
+    for bad in ([1, 2], "x", {}, {"name": "  "}):
+        code, body = call(server, "POST", "/api/projects/new", empty, bad)
+        assert code == 400 and body["error"], bad
+    assert call(server, "POST", "/api/projects/new", empty, {"name": "Kiln"})[0] == 200
+
+
+def test_empty_bom_pending_state_renders_the_ticked_list():
+    js = ui_js()
+    i = js.index("waiting for your approval`, 'The agent proposed")
+    block = js[i:i + 500]
+    assert "bomPendingList(pend)" in block and "Approve all" not in block
+
+
 def test_the_ui_contracts():
     js = ui_js()
     assert "function pvCompact" in js and "Show ${c.warnings.length}" in js          # compact step note, warnings behind a toggle

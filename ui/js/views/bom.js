@@ -145,7 +145,7 @@ function bomHTML(container) {
   const pend = bomPending();
   if (!t.lines && pend.length) {
     body = emptyState(`${bomPl(pend.length, 'proposed part')} waiting for your approval`, 'The agent proposed these parts in the chat. Approve them to add them to the BOM.',
-      btn('Approve all', {kind: 'pri', act: 'bom-approve-pending'}) + btn('Reject all', {act: 'bom-reject-pending'}));
+      bomPendingList(pend) + `<div class="acts">${btn('Approve', {kind: 'pri', act: 'bom-approve-pending'})}${btn('Reject', {act: 'bom-reject-pending'})}</div>`);
   } else if (!t.lines) {
     body = emptyState('No parts yet', bomLinked() ? 'Import the BOM you exported from Altium, or describe your idea in the chat.' : 'Describe your idea in the chat and the agent will propose parts.',
       bomLinked() ? btn('Import from Altium', {kind: 'pri', act: 'imp-open'}) : '');
