@@ -617,9 +617,9 @@ onAct('set-board-size', async (el) => {
   } catch (e) {
     // rejected: the fields show the saved size again (empty when none is saved), never the refused value
     const sb = ((S && S.idea) || {}).board || {}, ok = sb.width_mm && sb.height_mm;
+    if (e instanceof TypeError) { toast("Couldn't reach the server"); return; }       // nothing was refused: what was typed stays
     row.querySelector('.board-w').value = ok ? String(sb.width_mm) : '';
-    row.querySelector('.board-h').value = ok ? String(sb.height_mm) : '';
-    if (e instanceof TypeError) toast("Couldn't reach the server");      // api() already showed the server's reason
+    row.querySelector('.board-h').value = ok ? String(sb.height_mm) : '';      // api() already showed the server's reason
   }
 });
 onAct('confirmidea', async () => {

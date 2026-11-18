@@ -377,26 +377,52 @@ function pvStepNote(page) {       // under the header: Altium is working, or wha
     (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
     btn(n.replace ? 'Keep it' : 'Dismiss', {size: 'sm', act: 'altium-step-dismiss', page});
   const c = pvCompact(n.text, n.from === 999 ? [] : n.warnings || []);
-  const more = c.warnings.length ? `<details class="pv-more"><summary>Show ${c.warnings.length} ${c.warnings.length === 1 ? 'warning' : 'warnings'}</summary><ul>${c.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>` : '';
-  const rest = c.rest ? `<details class="pv-more"><summary>Show details</summary><p>${esc(c.rest)}</p></details>` : '';
-  return `<div class="pv-note"><div class="note ${n.kind}" role="${n.kind === 'bad' ? 'alert' : 'status'}"><span>${esc(c.head)}${rest}${more}</span><span class="acts">${acts}</span></div></div>`;
+  const op = k => pvMoreOpen[page + ':' + k] ? ' open' : '';
+  const more = c.warnings.length ? `<details class="pv-more" data-pvk="${page}:w"${op('w')}><summary>Show ${c.warnings.length} ${c.warnings.length === 1 ? 'warning' : 'warnings'}</summary><ul>${c.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>` : '';
+  const rest = c.rest ? `<details class="pv-more" data-pvk="${page}:r"${op('r')}><summary>Show details</summary><p>${esc(c.rest)}</p></details>` : '';
+  const alerts = c.alerts.map(w => `<br>Warning: ${esc(w)}`).join('');
+  return `<div class="pv-note"><div class="note ${n.kind}" role="${n.kind === 'bad' ? 'alert' : 'status'}"><span>${esc(c.head)}${alerts}${rest}${more}</span><span class="acts">${acts}</span></div></div>`;
 }
-/* One summary line for a step's note: the DRC line keeps only the rules with violations (and the total), the "(N warnings: ...)" tail
-   moves into the warnings list, and a long remainder goes behind a toggle. Nothing is dropped, so the board preview keeps its size. */
+const pvMoreOpen = {};       // which "Show ..." toggles of the step notes are open, kept across redraws
+document.addEventListener('toggle', e => { const k = e.target && e.target.dataset && e.target.dataset.pvk; if (k) pvMoreOpen[k] = e.target.open; }, true);
+/* One summary for a step's note. The head keeps what matters: the first sentence, Altium's own check, the DRC line reduced to the rules
+   with violations (and the total), and a partial route's open nets. The "(N warnings: ...)" tail moves into the warnings list (placement
+   errors stay in the head), the other segments go behind "Show details". Nothing is dropped, so the board preview keeps its size.
+   The two regexes are read by tests/test_ui_findings.py, which runs the same logic on the real strings. */
+const PV_TAIL_RE = /\s*\((\d+) warnings?: ([^]*)\)\.?\s*$/;
+const PV_DRC_RE = /(Altium DRC(?:, every rule)?: )((?:[A-Za-z][^,()]*(?:\([^,()]*\))? \d+, )+total \d+)( \(clean\))?/g;
+function pvSegments(t) {       // split at "; " outside brackets: a parenthesis may hold a "; " of its own
+  const out = [];
+  let depth = 0, from = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (t[i] === '(') depth++;
+    else if (t[i] === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && t[i] === ';' && t[i + 1] === ' ') { out.push(t.slice(from, i)); from = i + 2; }
+  }
+  out.push(t.slice(from));
+  return out;
+}
 function pvCompact(text, warnings) {
   let t = String(text || '');
-  const warns = (warnings || []).map(String);
-  const tail = t.match(/\s*\((\d+) warnings?: ([^]*)\)\.?\s*$/);
-  if (tail) { t = t.slice(0, tail.index); if (!warns.length) warns.push(...tail[2].split('; ').filter(Boolean)); }
-  t = t.replace(/(Altium DRC(?:, every rule)?: )((?:[A-Za-z][A-Za-z\- ]*? \d+, )+total \d+)( \(clean\))?/g, (m, lead, list, clean) => {
+  let warns = (warnings || []).map(String);
+  const tail = t.match(PV_TAIL_RE);
+  if (tail) { t = t.slice(0, tail.index); if (!warns.length) warns = tail[2].split('; ').filter(Boolean); }
+  const alerts = warns.filter(w => w.startsWith('placement error'));
+  warns = warns.filter(w => !w.startsWith('placement error'));
+  t = t.replace(PV_DRC_RE, (m, lead, list, clean) => {
     const items = list.split(', '), total = items.pop();
     const bad = items.filter(i => !/ 0$/.test(i));
     return lead + (bad.length ? bad.join(', ') + ', ' + total : clean ? 'clean' : total);
   });
+  const segs = pvSegments(t);
+  if (segs.length > 1) {
+    const keep = (x, i) => i === 0 || /^own check|Altium DRC|^PARTIAL ROUTE/.test(x);
+    return {head: segs.filter(keep).join('; '), rest: segs.filter((x, i) => !keep(x, i)).join('; '), warnings: warns, alerts};
+  }
   const max = 220;
-  if (t.length <= max) return {head: t, rest: '', warnings: warns};
-  const cut = t.lastIndexOf('; ', max) > 80 ? t.lastIndexOf('; ', max) : t.lastIndexOf(' ', max);
-  return {head: t.slice(0, cut) + ' ...', rest: t.slice(cut).replace(/^[;\s]+/, ''), warnings: warns};
+  if (t.length <= max) return {head: t, rest: '', warnings: warns, alerts};
+  const sp = t.lastIndexOf(' ', max);
+  return {head: t.slice(0, sp) + ' ...', rest: t.slice(sp).trim(), warnings: warns, alerts};
 }
 async function pvRunStep(step, replace, partial) {
   const c = PV_STEPS[step];

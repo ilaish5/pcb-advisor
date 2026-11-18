@@ -15,17 +15,17 @@ function readyBannerHTML(problems) {
   return `<div class="ready-bar" role="alert"><ul>${rows}</ul><button type="button" class="ready-x" data-ready-x aria-label="Dismiss">Dismiss</button></div>`;
 }
 
-const READY_ALTIUM_IDS = ['altium', 'link'], READY_ALTIUM_VIEWS = ['sch', 'pcb', 'rules', 'outputs'];
+const READY_ALTIUM_IDS = ['altium', 'link'], READY_ALTIUM_VIEWS = ['sch', 'pcb', 'rules', 'outputs', 'library', 'checks', 'settings'];
 let readyAll = [];
 function readyShow() {       // Altium problems show only on an Altium step (Schematic, Layout, Rules, Outputs); the others show wherever the user is
   const host = $('#ready');
   if (!host) return;
-  const onAltium = typeof mainView === 'function' && READY_ALTIUM_VIEWS.includes(mainView());
+  const onAltium = typeof mainView === 'function' && (READY_ALTIUM_VIEWS.includes(mainView()) || (typeof sideView === 'function' && READY_ALTIUM_VIEWS.includes(sideView())));
   const seen = readyDismissed();
   const problems = readyAll.filter(p => !seen.includes(p.id) && (onAltium || !READY_ALTIUM_IDS.includes(p.id)));
-  if (!problems.length) { if (!host.hidden) { host.hidden = true; host.innerHTML = ''; } return; }
+  if (!problems.length) { if (!host.hidden) { host.hidden = true; host.innerHTML = ''; host.dataset.k = ''; } return; }
   const html = readyBannerHTML(problems);
-  if (host.innerHTML !== html) host.innerHTML = html;
+  if (host.dataset.k !== html) { host.dataset.k = html; host.innerHTML = html; }
   host.hidden = false;
   host.onclick = e => {
     if (e.target.closest('[data-ready-x]')) { readyDismiss(problems.map(p => p.id)); readyShow(); return; }

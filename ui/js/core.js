@@ -293,6 +293,7 @@ function askChoice(o) {
     dlg.addEventListener('close', () => { const v = dlg.returnValue; dlg.remove(); resolve(v === 'yes' ? true : v === 'no' ? false : null); });
     document.body.appendChild(dlg);
     dlg.showModal();
+    dlg.querySelector('.btn.pri').focus();
   });
 }
 

@@ -3368,7 +3368,8 @@ class Handler(BaseHTTPRequestHandler):
             out = {"created": created, "projects": model.list_projects()}
             if created != name:                         # the folder is not the text typed: say what it is
                 out["folder"] = created
-                out["note"] = f"The folder is named \"{created}\"" + (" (the characters a folder cannot hold became \"-\")." if created.startswith(wanted) and wanted != name else ".")
+                spaced = re.sub(r"\s+", "-", name.strip()) == wanted           # only spaces became "-"
+                out["note"] = f"The project folder is named \"{created}\"" + ("." if spaced else " (characters a folder cannot hold were changed or dropped).")
             return self._send(200, out)
 
         if path == "/api/projects/delete":
