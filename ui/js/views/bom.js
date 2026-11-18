@@ -53,7 +53,7 @@ function bomProblems(l, q, b) {
   if (risks.includes('no exact MPN match')) out.push({rank: 2, text: 'No exact match', tone: 'warn', title: 'No supplier lists exactly this MPN'});
   // A model still to review is the normal state of a new or imported BOM: the meta line counts those, the Library page
   // lists them. Only a missing model is a problem worth a tag on the row.
-  if (l.library === 'missing') out.push({rank: 4, text: 'No model', tone: 'warn', title: LIBTXT.missing});
+  if (l.library === 'missing') out.push({rank: 4, text: 'No model', tone: 'warn', title: 'No symbol or footprint in your Altium library for this part yet. Open the Library page and add or import one, or ask the agent to.'});
   if (l.pins_status === 'unverified') out.push({rank: 6, text: 'unverified', title: 'Pins from the agent; add the datasheet to verify'});
   if (l.pins_status === 'mismatch') out.push({rank: 3, text: 'pins conflict', tone: 'warn', title: 'Pins differ from the datasheet: ' + (l.pins_issues || '')});
   return out.sort((a, c) => a.rank - c.rank);
@@ -61,7 +61,7 @@ function bomProblems(l, q, b) {
 function bomTags(ps) {      // the worst problem; the others are counted, and named in the tooltip, so a row keeps its height
   if (!ps.length) return '';
   const rest = ps.slice(1);
-  return tag(ps[0].text, ps[0].tone, ps[0].title) + (rest.length ? tag('+' + rest.length, '', 'Also: ' + rest.map(p => p.text).join(', ')) : '');
+  return tag(ps[0].text, ps[0].tone, ps[0].title) + (rest.length ? tag('+' + rest.length, '', `${rest.length} more problem${rest.length === 1 ? '' : 's'} on this line: ` + rest.map(p => p.text).join(', ') + '. Click the row to see them.') : '');
 }
 function bomRow(l) {
   const q = qty(l), b = best(l), refs = l.refs || [], label = refsLabel(refs);
@@ -90,13 +90,14 @@ function bomHeader(t) {
   const fee = t.extended_fee || 0, cost = t.cost_per_board ?? t.cost ?? 0;
   const meta = metaLine([
     {n: t.lines, label: t.lines === 1 ? 'line' : 'lines'},
-    {n: t.parts, label: t.parts === 1 ? 'part' : 'parts'},
-    {n: cost > 0 ? money(cost) : '', label: 'per board'},
+    {n: t.parts, label: t.parts === 1 ? 'part' : 'parts', title: 'Parts to place, by quantity. Lines marked DNP are not counted.'},
+    {n: cost > 0 ? money(cost) : '', label: (t.checking > 0 || t.in_stock < t.buy) && cost > 0 ? `per board (priced lines only: ${t.in_stock} of ${t.buy})` : 'per board',
+      title: t.checking > 0 ? `${t.checking} line${t.checking === 1 ? ' has' : 's have'} no stock answer yet (checked in the background, or press Check stock), so this total is incomplete.` : t.in_stock < t.buy ? 'Lines with no in-stock offer are not in this total.' : ''},
     fee > 0 && {always: true, label: `plus $${fee.toFixed(2)} extended fees`,
       title: `Assumes $${CONFIG?.jlc?.extended_fee_usd || 3} for each Extended part type, once per order. The JLC quote has the real fee.`},
     {n: t.checking, label: 'not checked', tone: 'warn', title: 'Lines with no stock answer yet'},
     {n: t.out_of_stock, label: 'out of stock', tone: 'bad', title: 'Lines no supplier has enough of'},
-    {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model is not verified yet'},
+    {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model nobody has confirmed yet. Open the Library page and accept or fix each one.'},
   ]);
   const actions = menu({label: 'Export', iconAfter: 'chev'}, [
       {label: BOM_EXPORTS.jlc, act: 'export', attrs: {fmt: 'jlc'}},
@@ -108,6 +109,24 @@ function bomHeader(t) {
   return viewHeader({title: 'BOM', meta, actions, primary});
 }
 // The BOM and the schematic disagree on the parts: the server says which designators differ (only when both sides are known).
+function bomPending() { return (S.proposals || []).filter(p => p.status === 'pending' && p.kind === 'bom'); }
+// The pending BOM proposals as a list, one tick each (all ticked at first): only the ticked ones are approved or rejected.
+function bomPendingList(pend) {
+  return `<div class="bom-pend">${pend.map(p => `<label class="prop-grow"><input type="checkbox" data-bpid="${esc(p.id)}" checked> <span dir="auto">${propSummaryHTML(p)}</span></label>`).join('')}</div>`;
+}
+function bomPendingNote(pend) {
+  return pend.length ? `<div class="pv-note"><div class="note warn bom-pend-note" role="status"><span>${bomPl(pend.length, 'proposed change')} waiting for your approval.</span>${bomPendingList(pend)}<div class="acts">${btn('Approve', {kind: 'pri', size: 'sm', act: 'bom-approve-pending'})}${btn('Reject', {size: 'sm', act: 'bom-reject-pending'})}</div></div></div>` : '';
+}
+async function bomDecidePending(el, decision) {
+  const ids = [...el.closest('.bom-view').querySelectorAll('input[data-bpid]:checked')].map(i => i.dataset.bpid);
+  if (!ids.length) { toast('Tick at least one change'); return; }
+  const r = await api('/api/proposals/batch', {ids, decision});
+  setState(r); render(true);
+  const failed = (r.results || []).filter(x => !x.ok);
+  if (failed.length) toast(`${failed.length} not applied: ${failed[0].error}`, null, {bad: true});
+}
+onAct('bom-approve-pending', el => bomDecidePending(el, 'approved'));
+onAct('bom-reject-pending', el => bomDecidePending(el, 'rejected'));
 function bomCountNote() {
   const c = S.bom_count_check;
   return c && c.message ? `<div class="pv-note"><div class="note warn bom-count-note" role="status"><span>${esc(c.message)}</span></div></div>` : '';
@@ -123,7 +142,11 @@ function bomHTML(container) {
   const scroller = container && container.querySelector ? container.querySelector('.bom-scroll') : null;
   const top = scroller ? scroller.scrollTop : 0, left = scroller ? scroller.scrollLeft : 0;
   let body;
-  if (!t.lines) {
+  const pend = bomPending();
+  if (!t.lines && pend.length) {
+    body = emptyState(`${bomPl(pend.length, 'proposed part')} waiting for your approval`, 'The agent proposed these parts in the chat. Approve them to add them to the BOM.',
+      btn('Approve all', {kind: 'pri', act: 'bom-approve-pending'}) + btn('Reject all', {act: 'bom-reject-pending'}));
+  } else if (!t.lines) {
     body = emptyState('No parts yet', bomLinked() ? 'Import the BOM you exported from Altium, or describe your idea in the chat.' : 'Describe your idea in the chat and the agent will propose parts.',
       bomLinked() ? btn('Import from Altium', {kind: 'pri', act: 'imp-open'}) : '');
   } else {
@@ -133,7 +156,7 @@ function bomHTML(container) {
       <tbody>${lines().map(bomRow).join('')}</tbody></table></div>${bomFoot()}`;
   }
   if (top || left) requestAnimationFrame(() => { const s = container.querySelector('.bom-scroll'); if (s) { s.scrollTop = top; s.scrollLeft = left; } });
-  return `<div class="bom-view">${bomHeader(t)}${t.lines ? bomCountNote() : ''}${body}${bomDrawerHTML()}</div>`;
+  return `<div class="bom-view">${bomHeader(t)}${t.lines ? bomPendingNote(pend) + bomCountNote() : ''}${body}${bomDrawerHTML()}</div>`;
 }
 
 /* ---------- drawer ---------- */

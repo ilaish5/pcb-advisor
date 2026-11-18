@@ -143,3 +143,5 @@
 .msgs button.src.cite-bad .cite-m{color:var(--warn)}
 
 .chat-followup{font-size:11px;color:var(--ink-3);margin-bottom:2px;letter-spacing:.02em}
+.prop-glist .prop-grow>span{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline;font-family:var(--f-ui, inherit)}
+.prop-glist .pf .k{color:var(--text-3, var(--muted, inherit));font-size:var(--t-xs, 11px)}

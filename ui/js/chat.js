@@ -188,6 +188,14 @@ function propSummary(p) {
   const keys = propChangedKeys(p).filter(k => k !== 'refs' || p.new);
   return `${p.new ? 'New ' : ''}${ref}: ${keys.map(k => propLabel(k).toLowerCase() + ' ' + propShow(p.changes[k], k)).join(', ')}`;
 }
+/* The same summary as fields, for the lists: ref, then each changed field as label and value. */
+function propSummaryHTML(p) {
+  if (p.kind === 'idea_diagram') return esc('Diagram changes');
+  const ref = ((lineByKey(p.line) || {}).refs || [p.line])[0];
+  const keys = propChangedKeys(p).filter(k => k !== 'refs' || p.new);
+  const f = keys.map(k => `<span class="pf"><span class="k">${esc(propLabel(k))}</span> <b>${esc(propShow(p.changes[k], k))}</b></span>`).join(' ');
+  return `${p.new ? '<span class="t">New</span> ' : ''}<b>${esc(ref)}</b> ${f}`;
+}
 function propGroupTitle(ps) {
   const bom = ps.filter(p => p.kind !== 'idea_diagram').length, dia = ps.length - bom;
   return [bom && propPlural(bom, 'BOM line'), dia && propPlural(dia, 'diagram change')].filter(Boolean).join(', ');
@@ -196,8 +204,8 @@ function propGroupTitle(ps) {
    Decided together (autonomy): one "Done" line with the list and an Undo per row. */
 function propGroupHTML(ps, pending) {
   const items = ps.map(p => pending
-    ? `<label class="prop-grow"><input type="checkbox" data-gpid="${esc(p.id)}" checked> <span dir="auto">${esc(propSummary(p))}</span></label>`
-    : `<div class="prop-grow"><span dir="auto">${p.status === 'undone' ? '<s>' : ''}${esc(propSummary(p))}${p.status === 'undone' ? '</s>' : ''}</span>` +
+    ? `<label class="prop-grow"><input type="checkbox" data-gpid="${esc(p.id)}" checked> <span dir="auto">${propSummaryHTML(p)}</span></label>`
+    : `<div class="prop-grow"><span dir="auto">${p.status === 'undone' ? '<s>' : ''}${propSummaryHTML(p)}${p.status === 'undone' ? '</s>' : ''}</span>` +
       (p.status === 'approved' ? btn('Undo', {kind: 'link', size: 'sm', icon: 'undo', act: 'undo-change', pid: p.id}) : '<span class="muted">undone</span>') + '</div>').join('');
   if (pending) {
     return `<div class="prop batch" data-pids="${esc(ps.map(p => p.id).join(','))}"><h4>${esc(propGroupTitle(ps))}</h4>` +

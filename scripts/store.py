@@ -2696,7 +2696,7 @@ def bom_design_count(project):
     if not said:
         said.append("a designator is listed more than once")
     return {"bom_parts": n_bom, "design_parts": len(design), "only_in_design": only_design, "only_in_bom": only_bom,
-            "message": f"BOM lists {n_bom} parts, the schematic has {len(design)}: " + "; ".join(said)}
+            "message": f"{n_bom} designators in the BOM (DNP and test points included), {len(design)} in the schematic: " + "; ".join(said)}
 
 
 def sheet_gaps(project):
