@@ -127,7 +127,16 @@ assert what the tool really reports, and where it cannot do something they asser
 - Placement: 8 of 8 decoupling capacitors within the limit, crystal at 4.96 mm, 0 findings.
 - Routing: 45 of 45 nets, GND dropped to the bottom pour, 0 violations, about 17 s CPU alone, deterministic (commit `fa1601a`;
   the test's floor is 44 because 45 depends on the fifth rip-up round).
-- Budgets in the test are CPU time (15 s placement, 30 s routing), so a busy machine does not fail it.
+- Budgets in the test are CPU time (15 s placement, 45 s routing), so a busy machine does not fail it.
+
+### Live STM32 board as an offline fixture (`tests/test_live_stm32_routing.py`)
+The 26-part board that was placed live in Altium, rebuilt as a fixture: 18 of 18 nets routed, 0 violations, at clearance 0.127 mm
+and 0.2 mm, deterministic, and still 18/18 when four passives are moved by up to 0.25 mm. When a first plan leaves a net open that
+fixed copper alone does not block, the router plans again (the open nets first, then a tighter keep-off); every plan passes the same
+exact check. At 0.2 mm this takes about 40 to 55 s of CPU instead of about 11 s.
+
+Code checks: `tests/test_static_gates.py` parses every UI JavaScript file, runs ruff (correctness rules), checks every script
+reference in the UI and the structure of the Altium script.
 
 ### The strictness principle: fail closed, no false findings
 - Any doubt is reported as "not checked" or "unverified", never as "passed". Examples: a pin table row that lacks the number or the
@@ -147,7 +156,7 @@ assert what the tool really reports, and where it cannot do something they asser
 - A board with an empty inner layer is not detected.
 - Automatic split into several sheets and multi-part symbols are deferred (the draw step refuses with a ready split plan).
 - Two copper layers only; USB at 90 ohm differential impedance is not guaranteed in two layers.
-- The live Altium run of the STM32 board is not done yet; its numbers are from the offline test only.
+- The live Altium rerun with the latest router is not done yet; the 18/18 above is from the offline fixture of that board.
 - Clean-computer installation (no Python, no Claude) has not been tested end to end.
 - Windows is the supported platform for the Altium steps.
 

@@ -11,7 +11,7 @@ Footprints are built in mm with y up (Altium axes) and written in mil, relative 
 import math
 import re
 
-from partlib_convert import MM, MIN_SILK, SILK_TO_COPPER_MIL
+from partlib_convert import MM, MIN_SILK, SILK_TO_PAD, SILK_TO_COPPER_MIL, snap_symbol  # noqa: F401  (SILK_TO_PAD, snap_symbol: re-exported for callers and tests)
 
 # chip body width, body height -- mm
 CHIPS = {"0402": (1.0, 0.5), "0603": (1.6, 0.8), "0805": (2.0, 1.25), "1206": (3.2, 1.6)}
