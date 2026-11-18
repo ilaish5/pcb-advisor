@@ -277,7 +277,7 @@ function dfmGuideHTML(empty) {
   const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // unverified pins: the server refuses the zip, so the button says why before the click
   const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy || !!held, title: held || undefined});
   const steps = [
-    dfmStep('Get the Gerber zip', zipBtn, dfmZipBody()),
+    dfmStep('Get the Gerber zip', zipBtn, (held ? `<p class="note warn dfm-zip-why" role="status"><span>${esc(held)}</span></p>` : '') + dfmZipBody()),
     dfmStep('Open jlcdfm.com and sign in', `<a class="btn line sm" href="${DFM_JLC}" target="_blank" rel="noopener"><span>Open jlcdfm.com</span>${icon('ext', 's')}</a>`,
       '<p>Use your own JLCPCB account. The advisor never asks for your password.</p>'),
     dfmStep('Upload and run the checks', '', '<p>Upload the zip and run PCB DFM. For assembly, also run SMT DFM with the BOM and CPL. Then export the PDF report.</p>'),

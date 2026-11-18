@@ -204,6 +204,12 @@ function outAltHTML() {
     <p class="muted out-root">${(a.roots && a.roots.length ? a.roots : [a.root]).map(esc).join('<br>')}</p>
     <table class="tbl rows out-tbl"><thead><tr><th>Folder</th><th class="num">Files</th><th>Newest</th></tr></thead><tbody>${rows}</tbody></table></section>`;
 }
+function outLimits(linked) {                  // only the reasons that are true now: no Altium project linked, unverified pins
+  const r = [];
+  if (!linked) r.push('The automatic run needs a linked Altium project.');
+  if (typeof dfmUnverified === 'function' && dfmUnverified().length) r.push("The Altium outputs and the Gerber zip are refused while a part's pins are unverified (see above).");
+  return r.join(' ');
+}
 function outputsHTML(container) {
   const files = S.exports || [];
   const alt = outAltHTML();
@@ -211,7 +217,7 @@ function outputsHTML(container) {
     const linked = outLinked();
     return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
-      'Not yet: the automatic run needs Altium. The Altium outputs and the Gerber zip are refused while a part\'s pins are unverified.');
+      outLimits(linked));
   }
   const showTimes = files.some(f => f.modified), showLin = files.some(f => f.lineage);
   return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>

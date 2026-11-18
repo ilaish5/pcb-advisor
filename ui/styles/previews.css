@@ -81,3 +81,8 @@
 .sch text[data-net]{cursor:pointer}
 .sch text.hl-net{fill:var(--net);font-weight:800;text-decoration:underline}
 .sch.netfocus text[data-net]:not(.hl-net){opacity:.35}
+.pv-note .pv-more{margin-top:4px;font-size:12px}
+.pv-note .pv-more summary{cursor:pointer;color:var(--muted)}
+.pv-note .pv-more ul,.pv-note .pv-more p{margin:4px 0 0;padding-left:18px;max-height:140px;overflow:auto}
+.pv-note .pv-more p{padding-left:0}
+.dfm-zip-why{margin:0 0 8px}
