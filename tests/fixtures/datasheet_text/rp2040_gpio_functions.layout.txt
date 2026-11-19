@@ -1,0 +1,125 @@
+                    1.4.2. Pin Descriptions
+
+Table 1. The function Name                    Description
+of each pin is briefly
+described here. Full  GPIOx                   General-purpose digital input and output. RP2040 can connect one of a number of internal
+electrical
+specifications can be                         peripherals to each GPIO, or control GPIOs directly from software.
+found in Chapter 5.
+                      GPIOx/ADCy              General-purpose digital input and output, with analogue-to-digital converter function. The RP2040
+                                              ADC has an analogue multiplexer which can select any one of these pins, and sample the voltage.
+
+                      QSPIx                   Interface to a SPI, Dual-SPI or Quad-SPI flash device, with execute-in-place support. These pins can
+                                              also be used as software-controlled GPIOs, if they are not required for flash access.
+
+                      USB_DM and              USB controller, supporting Full Speed device and Full/Low Speed host. A 27Ω series termination
+                      USB_DP                  resistor is required on each pin, but bus pullups and pulldowns are provided internally.
+
+                      XIN and XOUT            Connect a crystal to RP2040’s crystal oscillator. XIN can also be used as a single-ended CMOS
+                                              clock input, with XOUT disconnected. The USB bootloader requires a 12 MHz crystal or 12 MHz
+                                              clock input.
+
+                      RUN                     Global asynchronous reset pin. Reset when driven low, run when driven high. If no external reset is
+                                              required, this pin can be tied directly to IOVDD.
+
+                      SWCLK and               Access to the internal Serial Wire Debug multi-drop bus. Provides debug access to both
+                      SWDIO                   processors, and can be used to download code.
+
+                      TESTEN                  Factory test mode pin. Tie to GND.
+
+                      GND                     Single external ground connection, bonded to a number of internal ground pads on the RP2040 die.
+
+                      IOVDD                   Power supply for digital GPIOs, nominal voltage 1.8 V to 3.3 V
+
+1.4. Pinout Reference                                                                                                                                                   12
+RP2040 Datasheet
+
+                   Name                 Description
+
+                   USB_VDD              Power supply for internal USB Full Speed PHY, nominal voltage 3.3 V
+
+                   ADC_AVDD             Power supply for analogue-to-digital converter, nominal voltage 3.3 V
+
+                   VREG_VIN             Power input for the internal core voltage regulator, nominal voltage 1.8 V to 3.3 V
+
+                   VREG_VOUT            Power output for the internal core voltage regulator, nominal voltage 1.1 V, 100 mA max current
+
+                   DVDD                 Digital core power supply, nominal voltage 1.1 V. Can be connected to VREG_VOUT, or to some
+                                        other board-level power supply.
+
+                  1.4.3. GPIO Functions
+
+                  Each individual GPIO pin can be connected to an internal peripheral via the GPIO functions defined below. Some internal
+                  peripheral connections appear in multiple places to allow some system level flexibility. SIO, PIO0 and PIO1 can connect
+                  to all GPIO pins and are controlled by software (or software controlled state machines) so can be used to implement
+                  many functions.
+
+Table 2. General           Function
+Purpose Input/Output
+(GPIO) Bank 0      GPIO    F1            F2              F3           F4           F5     F6      F7       F8                   F9
+Functions
+                   0       SPI0 RX       UART0 TX        I2C0 SDA     PWM0 A       SIO    PIO0    PIO1                          USB OVCUR DET
+
+                   1       SPI0 CSn      UART0 RX        I2C0 SCL     PWM0 B       SIO    PIO0    PIO1                          USB VBUS DET
+
+                   2       SPI0 SCK      UART0 CTS       I2C1 SDA     PWM1 A       SIO    PIO0    PIO1                          USB VBUS EN
+
+                   3       SPI0 TX       UART0 RTS       I2C1 SCL     PWM1 B       SIO    PIO0    PIO1                          USB OVCUR DET
+
+                   4       SPI0 RX       UART1 TX        I2C0 SDA     PWM2 A       SIO    PIO0    PIO1                          USB VBUS DET
+
+                   5       SPI0 CSn      UART1 RX        I2C0 SCL     PWM2 B       SIO    PIO0    PIO1                          USB VBUS EN
+
+                   6       SPI0 SCK      UART1 CTS       I2C1 SDA     PWM3 A       SIO    PIO0    PIO1                          USB OVCUR DET
+
+                   7       SPI0 TX       UART1 RTS       I2C1 SCL     PWM3 B       SIO    PIO0    PIO1                          USB VBUS DET
+
+                   8       SPI1 RX       UART1 TX        I2C0 SDA     PWM4 A       SIO    PIO0    PIO1                          USB VBUS EN
+
+                   9       SPI1 CSn      UART1 RX        I2C0 SCL     PWM4 B       SIO    PIO0    PIO1                          USB OVCUR DET
+
+                   10      SPI1 SCK      UART1 CTS       I2C1 SDA     PWM5 A       SIO    PIO0    PIO1                          USB VBUS DET
+
+                   11      SPI1 TX       UART1 RTS       I2C1 SCL     PWM5 B       SIO    PIO0    PIO1                          USB VBUS EN
+
+                   12      SPI1 RX       UART0 TX        I2C0 SDA     PWM6 A       SIO    PIO0    PIO1                          USB OVCUR DET
+
+                   13      SPI1 CSn      UART0 RX        I2C0 SCL     PWM6 B       SIO    PIO0    PIO1                          USB VBUS DET
+
+                   14      SPI1 SCK      UART0 CTS       I2C1 SDA     PWM7 A       SIO    PIO0    PIO1                          USB VBUS EN
+
+                   15      SPI1 TX       UART0 RTS       I2C1 SCL     PWM7 B       SIO    PIO0    PIO1                          USB OVCUR DET
+
+                   16      SPI0 RX       UART0 TX        I2C0 SDA     PWM0 A       SIO    PIO0    PIO1                          USB VBUS DET
+
+                   17      SPI0 CSn      UART0 RX        I2C0 SCL     PWM0 B       SIO    PIO0    PIO1                          USB VBUS EN
+
+                   18      SPI0 SCK      UART0 CTS       I2C1 SDA     PWM1 A       SIO    PIO0    PIO1                          USB OVCUR DET
+
+                   19      SPI0 TX       UART0 RTS       I2C1 SCL     PWM1 B       SIO    PIO0    PIO1                          USB VBUS DET
+
+                   20      SPI0 RX       UART1 TX        I2C0 SDA     PWM2 A       SIO    PIO0    PIO1     CLOCK GPIN0          USB VBUS EN
+
+                   21      SPI0 CSn      UART1 RX        I2C0 SCL     PWM2 B       SIO    PIO0    PIO1     CLOCK GPOUT0         USB OVCUR DET
+
+1.4. Pinout Reference                                                                                                                            13
+RP2040 Datasheet                                                                                                                                                                                                                    variety of interfaces, and has its own internal pin mapping hardware, allowing flexible
+
+                             Function
+
+                    22       SPI0 SCK       UART1 CTS        I2C1 SDA      PWM3 A        SIO    PIO0     PIO1     CLOCK GPIN1            USB VBUS DET
+
+                    23       SPI0 TX        UART1 RTS        I2C1 SCL      PWM3 B        SIO    PIO0     PIO1     CLOCK GPOUT1           USB VBUS EN
+
+                    24       SPI1 RX        UART1 TX         I2C0 SDA      PWM4 A        SIO    PIO0     PIO1     CLOCK GPOUT2           USB OVCUR DET
+
+                    25       SPI1 CSn       UART1 RX         I2C0 SCL      PWM4 B        SIO    PIO0     PIO1     CLOCK GPOUT3           USB VBUS DET
+
+                    26       SPI1 SCK       UART1 CTS        I2C1 SDA      PWM5 A        SIO    PIO0     PIO1                            USB VBUS EN
+
+                    27       SPI1 TX        UART1 RTS        I2C1 SCL      PWM5 B        SIO    PIO0     PIO1                            USB OVCUR DET
+
+                    28       SPI1 RX        UART0 TX         I2C0 SDA      PWM6 A        SIO    PIO0     PIO1                            USB VBUS DET
+
+                    29       SPI1 CSn       UART0 RX         I2C0 SCL      PWM6 B        SIO    PIO0     PIO1                            USB VBUS EN
+

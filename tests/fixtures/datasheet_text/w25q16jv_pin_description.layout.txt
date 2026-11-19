@@ -1,0 +1,23 @@
+  Figure 1b. Pad Assignments, 8-pad WSON 6x5-mm, USON 2X3-mm/4x3-mm, XSON 4x4-mm (Package Code ZP, UX, UU, XG)
+3.3    Pin Description SOIC 150/208-mil, WSON 6x5-mm, USON 2x3-mm/4x3-mm,
+       XSON 4x4-mm
+
+      PIN NO.            PIN NAME               I/O                                  FUNCTION
+          1                  /CS                 I        Chip Select Input
+          2               DO (IO1)              I/O       Data Output (Data Input Output 1)(1)
+          3              /WP (IO2)              I/O       Write Protect Input ( Data Input Output 2)(2)
+
+          4                 GND                           Ground
+          5                DI (IO0)             I/O       Data Input (Data Input Output 0)(1)
+
+          6                  CLK                 I        Serial Clock Input
+          7          /HOLD or /RESET            I/O       Hold or Reset Input (Data Input Output 3)(2)
+                            (IO3)
+          8                 VCC                           Power Supply
+Notes:
+     1.   IO0 and IO1 are used for Standard and Dual SPI instructions
+     2.   IO0 – IO3 are used for Quad SPI instructions, /HOLD (or /RESET) function is only available for Standard/Dual SPI.
+
+                                                              - 5 -
+                                                                                                                      W25Q16JV
+
