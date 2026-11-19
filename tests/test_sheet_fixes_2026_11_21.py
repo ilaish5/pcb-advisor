@@ -435,7 +435,6 @@ def test_the_sheet_as_the_direct_object_is_still_accepted(kind, to, said):
     ("netlist.remove", "Main", None, "delete Main resistors"),
     ("netlist.remove", "Main", None, "תמחק את Main הנגדים"),
     ("netlist.remove", "Power", None, "delete the power LED"),                       # a LED, not sheet Power (case matters)
-    ("netlist.remove", "Power", None, "delete power"),
     ("netlist.rename", "Main", "01", "rename Main's title to 01"),
     ("netlist.rename", "Main", "01", "rename Main to 01 and the LED"),
     ("netlist.remove", "Main", None, "delete Main and the LED"),
@@ -466,3 +465,40 @@ def test_words_after_the_sheet_name_make_it_about_something_else(kind, sheet, to
 def test_the_whole_clause_shape_is_accepted(kind, sheet, to, said):
     a = {"type": kind, "sheet": sheet, "student_said": said, **({"to": to} if to else {})}
     assert serve._sheet_edit_consent(kind, a, said) == "", said
+
+
+# ---------------------------------------------------------------- fifth round: the student's whole clause, not the agent's quote of it
+
+@pytest.mark.parametrize("kind,sheet,to,said,quote", [
+    ("netlist.remove", "Main", None, "delete the Main LED", "delete the Main"),
+    ("netlist.remove", "Main", None, "delete Main's parts", "delete Main"),
+    ("netlist.remove", "Main", None, "תמחק את Main הנגדים", "תמחק את Main"),
+    ("netlist.rename", "Main", "01", "rename Main to 01.5", "rename Main to 01"),
+    ("netlist.remove", "Main", None, "please delete Main and the LED, thanks", "delete Main"),
+    ("netlist.remove", "Power", None, "delete the power LED", "delete the power"),
+])
+def test_a_partial_quote_of_a_longer_clause_is_no_consent(kind, sheet, to, said, quote):
+    a = {"type": kind, "sheet": sheet, "student_said": quote, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) != "", (said, quote)
+
+
+@pytest.mark.parametrize("kind,sheet,to,said,quote", [
+    ("netlist.remove", "Main", None, "please, delete Main. We draw later.", "delete Main"),      # the clause ends at the comma / dot
+    ("netlist.remove", "Main", None, "delete main", "delete main"),
+    ("netlist.remove", "Power", None, "delete the sheet power", "delete the sheet power"),
+    ("netlist.remove", "Main", None, "ותמחק את Main", "ותמחק את Main"),
+    ("netlist.remove", "Main", None, "I'd like you to delete Main", "delete Main"),
+    ("netlist.remove", "Main", None, "can you delete Main", "delete Main"),
+    ("netlist.remove", "Main", None, "please can you delete the sheet Main", "delete the sheet Main"),
+    ("netlist.rename", "Main", "01", "rename Main to 01.", "rename Main to 01"),
+    ("netlist.remove", "Main", None, "first look at the board, delete Main", "delete Main"),      # "first" alone is no condition
+])
+def test_the_whole_clause_is_checked_and_polite_or_hebrew_lead_ins_are_fine(kind, sheet, to, said, quote):
+    a = {"type": kind, "sheet": sheet, "student_said": quote, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) == "", (said, quote)
+
+
+def test_a_question_is_still_a_question_but_a_polite_request_is_not():
+    a = {"type": "netlist.remove", "sheet": "Main", "student_said": "delete Main"}
+    for q in ("do you think we should delete Main", "should I delete Main", "do you want me to delete Main?"):
+        assert serve._sheet_edit_consent("netlist.remove", a, q) != "", q

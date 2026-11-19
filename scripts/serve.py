@@ -674,25 +674,29 @@ def _asked(word, u):
 
 
 _ME = re.compile(r"myself|\bi[’']?ll\b|\bi will\b|בעצמי|(?<!\w)א(?:מחק|סיר|שנה|מחוק)\w*", re.I)
-_CONDITION = re.compile(r"(?<!\w)(?:after|first|then|before|until|once)(?!\w)|(?<!\w)(?:אחרי|קודם|לפני|אחר כך)(?!\w)|(?<!\w)עד ש", re.I)
+_CONDITION = re.compile(r"(?<!\w)(?:after|then|before|until|once)(?!\w)|(?<!\w)(?:אחרי|קודם|לפני|אחר כך)(?!\w)|(?<!\w)עד ש", re.I)
 _FILL = r"(?:please|now|just|quickly|entirely|completely|נא|בבקשה|עכשיו|מהר|כבר|גם|לגמרי)"
 _GAP = r"(?:the|sheet|page|schematic|את|ה|ה-|הגיליון|גיליון|הדף|דף|השם|שם|של)"
 _TAILWORD = r"(?:sheet|page|גיליון|דף|from the project|מהפרויקט|" + _FILL + ")"
+_LEADIN = (r"(?:i[’']?d like you to|i would like you to|i want you to|i need you to|you can|you should|can you|could you|would you|will you|"
+           r"ok|okay|yes|כן|תוכל|תוכלי|אני רוצה שתמחק|אני רוצה ש)")
+_POLITE = re.compile(r"^(?:(?:ok|okay|yes|כן)[,\s]+)*(?:(?:can|could|would|will) you\b|תוכל)", re.I)      # "can you delete Main" is a request
 _AFTER = re.compile(r"\s+(?:since|because|כי|מפני ש)\s+.*$", re.I)       # the reason is no part of the instruction
 
 
 def _name_pat(name):
-    """The sheet name: case-sensitive unless it is only digits, with one Hebrew prefix letter (ל ב ה ו, optional hyphen) allowed."""
-    flag = "i" if name.isdigit() else "-i"
-    return r"(?:[לבהו]-?)?(?" + flag + ":" + re.escape(name) + r")(?!\w)"
+    """The sheet name (any case: the rest of the clause is strict, so "the power LED" fails on "LED"), with one Hebrew prefix letter
+    (ל ב ה ו, optional hyphen) allowed."""
+    return r"(?:[לבהו]-?)?(?i:" + re.escape(name) + r")(?!\w)"
 
 
 def _clause_ok(kind, clause, name, to=""):
     """True when the whole `clause` has the shape  [filler]* VERB [filler / article / sheet words]* NAME [tail]  with nothing else: the
     tail is nothing, sheet / page / גיליון, filler, "from the project" (for a rename: "to <new id>" / "ל<new id>" first). The passive
     "NAME should/must be deleted / renamed (to X)" also fits. A "'s", a part, a title, a preposition, a second noun anywhere in the clause
-    is about something else than the sheet: refused. The name is matched case-sensitively (a LED of "Power" is not sheet Power)."""
+    is about something else than the sheet: refused. A leading Hebrew "ו" (and) and a polite lead-in ("I'd like you to", "can you") are fine."""
     clause = _AFTER.sub("", clause.strip(" .!?\"'\t")).strip()
+    clause = re.sub(r"^ו(?=\S)", "", clause)
     rename = kind == "netlist.rename"
     verb = (r"(?:renam\w*(?:\s+the\s+name\s+of)?|chang\w*\s+(?:the\s+)?(?:name|id)(?:\s+of)?|(?<!\w)(?:ת?שנה|ת?שני|לשנות|שינוי)(?!\w))"
             if rename else "(?:" + _SHEET_REMOVE.pattern + ")")
@@ -703,7 +707,7 @@ def _clause_ok(kind, clause, name, to=""):
         if not to_pat:
             return False
         tail = tail + r"\s+" + to_pat + tail
-    lead = r"(?:" + _FILL + r"\s+)*"
+    lead = r"(?:(?:" + _FILL + "|" + _LEADIN + r")\s+)*"
     act = re.compile("^" + lead + verb + r"\s+(?:(?:" + _FILL + "|" + _GAP + r")\s+)*" + nm + tail + "$", re.I)
     passive = re.compile(r"^(?:the\s+)?(?:(?:sheet|page)\s+)?" + nm + r"\s+(?:should|must)\s+be\s+(?:" + _FILL + r"\s+)*(?:" +
                          (r"renam\w*" if rename else _SHEET_REMOVE.pattern) + ")" + tail + "$", re.I)
@@ -722,7 +726,9 @@ def _sheet_edit_consent(kind, a, last_user):
         return f"student_said must be a verbatim quote of the student's message that tells you to {what} the sheet. Ask the student first."
     to = str(a.get("to") or "")
     names = [sheet] + ([to] if kind == "netlist.rename" else [])
-    verb_clauses = [c for c in re.split(r"[,;.!?\n]+", said) if word.search(c)]      # split on punctuation only: "and the LED" stays in the clause
+    # the student's whole clauses (not only the quote of them: "delete the Main" is part of "delete the Main LED"); punctuation splits,
+    # "and" does not, and a dot between digits ("01.5") is no split
+    verb_clauses = [c for c in re.split(r"[,;!?\n]+|(?<!\d)\.|\.(?!\d)", str(last_user or "")) if word.search(re.sub(r"^\s*ו(?=\S)", "", c))]
     ok = bool(verb_clauses) and all(n.strip() for n in names) and all(_clause_ok(kind, c, sheet, to) for c in verb_clauses)
     if not ok:
         return f"the quote must ask to {what} the sheet {sheet}" + (f" to {to}" if kind == "netlist.rename" else "") + " (the sheet itself, named). Ask the student first."
@@ -731,7 +737,7 @@ def _sheet_edit_consent(kind, a, last_user):
     if _CONDITION.search(str(last_user or "")):
         return "the student's message makes it conditional (after, first, then ...). Do not change the sheet yet; ask what they want."
     for sent in _SENT.findall(str(last_user or "")):
-        if word.search(sent) and _is_question(sent):
+        if word.search(sent) and _is_question(sent) and not _POLITE.match(sent.strip().lower()):
             return "the student asked a question about it; it is no instruction. Answer it and ask."
     for clause in _CLAUSE.split(str(last_user or "")):
         m = word.search(clause)
