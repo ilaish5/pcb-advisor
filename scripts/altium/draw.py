@@ -33,6 +33,10 @@ NUM_CHAR = NAME_CHAR                   # width of one pin number character (the 
 TEXT_H = 100                           # height of one text line (the designator, the comment, a label)
 TEXT_PITCH = 150                       # line to line of the designator and the comment
 TEXT_GAP = 50                          # between the body (or other ink) and the part's texts
+TEXT_CHAR = 65                         # width of one character of the designator and the comment (partlib uses 60; a little over)
+TEXT_SPACE = 100                       # between the designator and the comment on one row
+ONE_ROW = 800                          # designator and comment share a row up to this width (or the body's width)
+MAX_COMMENT = 16                       # a longer comment is displayed cut (the library parameter keeps the whole value)
 GROUND_STYLE, RAIL_STYLE = 5, 2        # Altium: power port styles "Signal ground" and "Bar"
 
 _GROUND = re.compile(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", re.I)
@@ -87,9 +91,13 @@ def pin_nets(part, symbol):
             unnumbered.append(p)
     lib_nums = {str(lp["number"]) for lp in symbol["pins"]}
     out, warn = [], []
-    joined = {n: g for g in symbol.get("joined") or [] for n in g}      # pins the symbol's drawing joins: one terminal (a tactile switch)
-    twice = (not joined and 0 < len(by_num) and len(symbol["pins"]) == 2 * len(by_num) <= 8
+    # pins the symbol's drawing joins: one terminal (a tactile switch); only on a symbol of 4 or more pins (a diode drawn as a line
+    # between its two pins is no joined pair). joined None = the drawing could not be read: only then the count fallback is allowed
+    joined = {n: g for g in (symbol.get("joined") or []) if len(symbol["pins"]) >= 4 for n in g}
+    twice = (symbol.get("joined") is None and 0 < len(by_num) and len(symbol["pins"]) == 2 * len(by_num) <= 8
              and all(str(q.get("electrical")) == "Passive" for q in symbol["pins"]))
+    listed = [str(q.get("name") or "").strip().upper() for q in by_num.values()]
+    named = any(nm and nm != n for nm, n in zip(listed, by_num))
     for p in unnumbered:        # a pin with no number cannot be wired: say that, not "pin  has no pin in the symbol"
         nm = str(p.get("name") or "").strip()
         errors.append(f"{ref}: netlist pin {nm or '(no name)'} has no pin number" + (
@@ -109,7 +117,7 @@ def pin_nets(part, symbol):
                 out.append((lp, next(iter(nets))))
                 warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is joined to pin {mates[0]} inside the symbol (one terminal); "
                             f"drawn on the same net {next(iter(nets))}")
-            elif num in joined or twice:
+            elif num in joined or (twice and _may_duplicate(lp, listed, named)):
                 why = (f"the symbol joins it with pin {', '.join(m for m in joined[num] if m != num)}" if num in joined
                        else "the symbol has twice the pins of the netlist, so it is probably a duplicate pad of the same terminal")
                 out.append((lp, "NC"))
@@ -156,6 +164,15 @@ def number_lead(lp):
         return 0
     over = len(str(lp.get("number") or "")) * NUM_CHAR - int(lp.get("length", 0))
     return over + 50 if over > 0 else 0
+
+
+def _may_duplicate(lp, listed, named):
+    """May an unlisted pin be a duplicate pad of a listed terminal (the count fallback)? Not when it is a supply or ground pin, nor
+    when the netlist names its pins and this pin's name is none of them (a crystal's GND pins beside OSC1/OSC2)."""
+    nm = str(lp.get("name") or "").strip()
+    if str(lp.get("electrical")) == "Power" or net_kind(nm) != "label":
+        return False
+    return not named or nm.upper() in listed
 
 
 def stub_length(net, lead=0, extra=0, label=False):
@@ -249,31 +266,51 @@ def _body(symbol):
     return tuple(box)
 
 
+def shown_comment(comment):
+    """The comment as displayed: a long one is cut with '...' (the full value stays in the library parameter)."""
+    c = str(comment or "").strip()
+    return c if len(c) <= MAX_COMMENT else c[:MAX_COMMENT - 3] + "..."
+
+
 def part_texts(ref, comment, body, ink):
-    """Where the designator and the comment go: (designator, comment) as (x, y, width) or None, symbol coordinates, the lower left
-    corner of each text (Altium anchors a text there). Both are left aligned in two lines above the body (comment next to it,
-    designator above), at the body's left edge; if a stub, label or power port is in the way there, aligned to the body's right
-    edge; if that is no better, above everything the part draws. Deterministic: same part, same spots."""
+    """Where the designator and the comment go: {"des": (x, y, width), "com": ...}, symbol coordinates, the lower left corner of each
+    text (Altium anchors a text there). The first of these spots that touches no stub, label, power port or pin number is taken, so
+    the cell grows as little as it can: both on one row above the body (designator, then comment), the same right aligned to the
+    body, two rows above (comment next to the body, designator over it), two rows beside the body (right, then left), and last two rows
+    above everything the part draws. Deterministic: same part, same spots."""
     items = [("des", str(ref or ""))] + ([("com", str(comment))] if str(comment or "").strip() else [])
-    wid = {k: len(t) * CHAR for k, t in items}
-    top = body[3] + TEXT_GAP
+    wid = {k: len(t) * TEXT_CHAR for k, t in items}
+    y0 = _snap50(body[3] + TEXT_GAP)
 
-    def put(x, y):
-        rows = {}
-        for i, (k, _) in enumerate(reversed(items)):          # the last item (comment) lowest, the designator above it
-            rows[k] = (x, y + i * TEXT_PITCH, wid[k])
-        return rows
+    def row(x, y):
+        out, cx = {}, x
+        for k, _ in items:
+            out[k] = (int(cx), y, wid[k])
+            cx += wid[k] + TEXT_SPACE
+        return out
 
-    def clash(rows):
-        return any(_hit((x, y, x + w, y + TEXT_H), r, 20) for x, y, w in rows.values() for r in ink)
-    y0 = _snap_up(top) if top % 50 else top
+    def rows(x, y):
+        return {k: (int(x), y + i * TEXT_PITCH, wid[k]) for i, (k, _) in enumerate(reversed(items))}   # the comment lowest
+
+    def clash(spots):
+        return any(_hit((x, y, x + w, y + TEXT_H), r, 20) for x, y, w in spots.values() for r in ink)
+    one = sum(wid.values()) + TEXT_SPACE * (len(items) - 1)
     w = max(wid.values())
-    for x in (body[0], body[2] - w):
-        rows = put(int(x), y0)
-        if not clash(rows):
-            return rows
-    y1 = max([y0] + [r[3] + TEXT_GAP for r in ink])
-    return put(int(body[0]), _snap_up(y1) if y1 % 50 else y1)
+    mid = _snap50((body[1] + body[3]) // 2 - TEXT_PITCH // 2)
+    cands = []
+    if len(items) == 1 or one <= max(body[2] - body[0], ONE_ROW):
+        cands += [row(body[0], y0), row(body[2] - one, y0)]
+    cands += [rows(body[0], y0), rows(body[2] - w, y0),
+              rows(body[2] + TEXT_GAP + 100, mid), rows(body[0] - TEXT_GAP - 100 - w, mid)]
+    for c in cands:
+        if not clash(c):
+            return c
+    y1 = _snap50(max([y0] + [r[3] + TEXT_GAP for r in ink]))
+    return rows(body[0], y1)
+
+
+def _snap50(v):
+    return int(math.ceil(v / 50)) * 50
 
 
 def _build_run(run, extra=0):
@@ -298,11 +335,12 @@ def _crowded_edges(todo):
     """Pins 100 mil apart on a top or bottom edge are text columns that touch. Same-net neighbours become one run with one label or
     port (_build_run); neighbours of different nets are staggered: every second label starts past the end of its neighbours' labels."""
     side = sorted((t for t in todo if t[3]["kind"] in ("label", "power") and t[3]["ori"] in (1, 3)),
-                  key=lambda t: (t[3]["ori"], t[0]["x"]))
+                  key=lambda t: (t[3]["ori"], tip(t[0])[1], t[0]["x"]))
     runs = []
     for t in side:
         last = runs[-1][-1] if runs else None
-        if last and last[3]["ori"] == t[3]["ori"] and last[1] == t[1] and t[0]["x"] - last[0]["x"] <= GRID:
+        if (last and last[3]["ori"] == t[3]["ori"] and last[1] == t[1] and t[0]["x"] - last[0]["x"] <= GRID
+                and tip(last[0])[1] == tip(t[0])[1]):          # same net and the same height: a stepped edge never gets a diagonal
             runs[-1].append(t)
         else:
             runs.append([t])
@@ -313,11 +351,13 @@ def _crowded_edges(todo):
     tier = []
     for i, (ori, xa, xb, r) in enumerate(items):
         prev = items[i - 1] if i else None
-        tier.append(1 - tier[-1] if prev and prev[0] == ori and xa - prev[2] <= GRID else 0)
+        tier.append(1 - tier[-1] if prev and prev[0] == ori and xa - prev[2] <= GRID
+                    and tip(prev[3][0][0])[1] == tip(r[0][0])[1] else 0)
     for i, (ori, xa, xb, r) in enumerate(items):
         if tier[i]:
             near = [items[k] for k in (i - 1, i + 1) if 0 <= k < len(items) and tier[k] == 0 and items[k][0] == ori
-                    and (xa - items[k][2] <= GRID if k < i else items[k][1] - xb <= GRID)]
+                    and (xa - items[k][2] <= GRID if k < i else items[k][1] - xb <= GRID)
+                    and tip(items[k][3][0][0])[1] == tip(r[0][0])[1]]
             _build_run(r, _snap_up(max([label_width(n[3][0][1]) for n in near] + [0]) + 100))
 
 
@@ -356,13 +396,13 @@ def part_cell(part, symbol):
     for lp in symbol["pins"]:                      # the number of a pin that has no stub is drawn too
         if not any(t[0] is lp for t in todo):
             ink += ink_rects({"kind": "nc", "tip": tip(lp), "end": tip(lp), "net": ""}, lp)
-    comment = str(symbol.get("comment") or "").strip() or str(symbol.get("name") or "")
+    comment = shown_comment(str(symbol.get("comment") or "").strip() or str(symbol.get("name") or ""))
     texts = part_texts(part["ref"], comment, _body(symbol), ink)
-    for x, y, w in texts.values():
-        xs += [x, x + w]
-        ys += [y, y + TEXT_H]
     pad = MARGIN
-    box = (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
+    box = [min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad]
+    for x, y, w in texts.values():          # the texts already keep TEXT_GAP from everything: no margin of their own
+        box = [min(box[0], x), min(box[1], y), max(box[2], x + w), max(box[3], y + TEXT_H)]
+    box = tuple(box)
     open_pins = [f"{part['ref']}.{lp.get('name') or lp['number']}" for lp, net in pins if not net]
     for p in open_pins:
         warn.append(f"{p}: open pin (no net in the netlist), left undrawn")
@@ -371,7 +411,7 @@ def part_cell(part, symbol):
             if v:
                 warn.append(f"{part['ref']}.{s['pin']}: the library pin is off the {GRID} mil grid")
                 break
-    return {"ref": part["ref"], "symbol": symbol["name"], "stubs": stubs, "box": box, "texts": texts, "ink": ink,
+    return {"ref": part["ref"], "symbol": symbol["name"], "stubs": stubs, "box": box, "texts": texts, "comment": comment, "comment_cut": comment != str(symbol.get("comment") or "").strip() and bool(str(symbol.get("comment") or "").strip()), "ink": ink,
             "pins": len(symbol["pins"]), "warnings": warn, "errors": errors, "pin_nets": pins}
 
 
@@ -427,7 +467,7 @@ def layout(cells, sections, area=AREA, texts=None):
             x = ox + bx1 + GAP
             shelf_h = max(shelf_h, h)
         fx = x0 - FRAME_PAD
-        fw = max(right + FRAME_PAD - fx, FRAME_MIN_W)
+        fw = max(_snap_up(right + FRAME_PAD - fx), FRAME_MIN_W)
         strip = _strip_height(texts.get(sid) or frame_text(sid, titles.get(sid, "")), fw)
         shift = y - strip - FRAME_PAD                         # a multiple of GRID, so the placed cells stay on the grid
         fy = int(math.floor((bottom + shift - FRAME_PAD) / GRID)) * GRID     # a box edge may be off the grid (a 50 mil pin offset)
@@ -611,30 +651,26 @@ def alias_scope(text, aliases):
     return _INNET.sub(lambda m: m.group(1) + aliases.get(m.group(2), m.group(2)) + m.group(3), str(text or ""))
 
 
-def split_groups(cells, sections, area=AREA, texts=None):
-    """How the sections would be spread over several sheets: ([[section id]], [section id that is too big even alone]). Sections stay
-    together and in order; a sheet is filled until the next section no longer fits."""
-    ids = [s["id"] for s in sections] or [""]
-    groups, too_big, cur = [], [], []
+def _tie(c, members):
+    """How strongly a part is connected to the parts already on a sheet: shared signal nets count 10, shared supply or ground 1 (so
+    decoupling capacitors and a crystal stay with the MCU they serve)."""
+    mine = {x["net"] for x in c["stubs"] if x["kind"] != "nc" and x["net"]}
+    got = 0
+    for m in members:
+        for n in mine & {x["net"] for x in m["stubs"] if x["kind"] != "nc" and x["net"]}:
+            got += 10 if net_kind(n) == "label" else 1
+    return got
 
-    sec = {s["id"]: s for s in sections}
 
-    def fits(sids):
-        return not layout([(s, c) for s, c in cells if s in sids], [sec.get(i, {"id": i}) for i in sids], area, texts)[2]
-    for sid in ids:
-        if not [c for s, c in cells if s == sid]:
-            continue
-        if cur and fits(cur + [sid]):
-            cur = cur + [sid]
-            continue
-        if cur:
-            groups.append(cur)
-        cur = [sid]
-        if not fits(cur):
-            too_big.append(sid)
-    if cur:
-        groups.append(cur)
-    return groups, too_big
+def _join(a, b):
+    out = list(a)
+    for sid, refs in b:
+        k = next((n for n, (i, r) in enumerate(out) if i == sid and r is not None and refs is not None), None)
+        if k is None:
+            out.append((sid, refs))
+        else:
+            out[k] = (sid, out[k][1] + refs)
+    return out
 
 
 def suggest_sheets(cells, sections, area=AREA, texts=None):
@@ -666,20 +702,33 @@ def suggest_sheets(cells, sections, area=AREA, texts=None):
             continue
         if cur:
             sheets.append(cur)
-        cur, piece = [], []
-        for c in [c for s_, c in cells if s_ == sid]:
-            if fits([(sid, piece + [c["ref"]])]):
-                piece.append(c["ref"])
+        cur = []
+        todo = [c for s_, c in cells if s_ == sid]
+        while todo:
+            seed = max(todo, key=lambda c: (c["pins"], -todo.index(c)))      # the biggest part first, its neighbours after it
+            todo.remove(seed)
+            if not fits([(sid, [seed["ref"]])]):
+                hopeless.append(seed["ref"])
                 continue
-            if piece:
-                sheets.append([(sid, piece)])
-            piece = [c["ref"]] if fits([(sid, [c["ref"]])]) else []
-            if not piece:
-                hopeless.append(c["ref"])
-        if piece:
-            cur = [(sid, piece)]
+            piece, members = [seed["ref"]], [seed]
+            while True:
+                best = sorted((c for c in todo if _tie(c, members) > 0), key=lambda c: (-_tie(c, members), todo.index(c)))
+                add = next((c for c in best if fits([(sid, piece + [c["ref"]])])), None)
+                if add is None:
+                    break
+                todo.remove(add)
+                piece.append(add["ref"])
+                members.append(add)
+            sheets.append([(sid, piece)])
     if cur:
         sheets.append(cur)
+    k = 0
+    while k + 1 < len(sheets):          # small pieces that fit together (and are next to each other) share a sheet
+        both = _join(sheets[k], sheets[k + 1])
+        if fits(both):
+            sheets[k:k + 2] = [both]
+        else:
+            k += 1
     return sheets, hopeless
 
 
@@ -803,7 +852,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
         for k in ("des", "com"):
             t = c["texts"].get(k)
             spots += [str(ox + t[0]), str(oy + t[1])] if t else ["", ""]
-        cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"]), *spots))
+        cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"]), *spots, c["comment"] if c["comment_cut"] else ""))
         out["parts"].append({"ref": c["ref"], "symbol": c["symbol"], "pins": c["pins"], "x": ox, "y": oy})
         for s in c["stubs"]:
             tx, ty = ox + s["tip"][0], oy + s["tip"][1]

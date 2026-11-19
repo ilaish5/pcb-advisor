@@ -1,0 +1,250 @@
+{
+  "id": "02",
+  "title": "USB",
+  "sections": [
+    {
+      "id": "C",
+      "title": "USB"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "J1",
+      "section": "C",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "GND",
+          "num": "A1B12",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "VBUS",
+          "num": "A4B9",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "CC1",
+          "num": "A5",
+          "net": "CC1",
+          "side": "left"
+        },
+        {
+          "name": "DP1",
+          "num": "A6",
+          "net": "USB_DP",
+          "side": "left"
+        },
+        {
+          "name": "DN1",
+          "num": "A7",
+          "net": "USB_DM",
+          "side": "left"
+        },
+        {
+          "name": "SBU1",
+          "num": "A8",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "CC2",
+          "num": "B5",
+          "net": "CC2",
+          "side": "left"
+        },
+        {
+          "name": "DP2",
+          "num": "B6",
+          "net": "USB_DP",
+          "side": "left"
+        },
+        {
+          "name": "DN2",
+          "num": "B7",
+          "net": "USB_DM",
+          "side": "left"
+        },
+        {
+          "name": "SBU2",
+          "num": "B8",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "VBUS",
+          "num": "B4A9",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "GND",
+          "num": "B1A12",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "SHELL",
+          "num": "1",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "SHELL",
+          "num": "2",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "SHELL",
+          "num": "3",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "SHELL",
+          "num": "4",
+          "net": "GND",
+          "side": "left"
+        }
+      ]
+    },
+    {
+      "ref": "U3",
+      "section": "C",
+      "kind": "ic",
+      "pins_source": "agent",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "USB_DP",
+          "side": "left"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "3",
+          "num": "3",
+          "net": "USB_DM",
+          "side": "left"
+        },
+        {
+          "name": "4",
+          "num": "4",
+          "net": "USB_DM",
+          "side": "right"
+        },
+        {
+          "name": "5",
+          "num": "5",
+          "net": "+5V",
+          "side": "right"
+        },
+        {
+          "name": "6",
+          "num": "6",
+          "net": "USB_DP",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "section": "C",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC1"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "section": "C",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC2"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "section": "C",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "USB_DP"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "MCU_DP"
+        }
+      ]
+    },
+    {
+      "ref": "R4",
+      "section": "C",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "USB_DM"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "MCU_DM"
+        }
+      ]
+    },
+    {
+      "ref": "R5",
+      "section": "C",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "MCU_DP"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "C",
+      "text": "MCU_DP and MCU_DM continue on sheet 03 as net labels with the same name."
+    }
+  ]
+}

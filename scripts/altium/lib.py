@@ -52,8 +52,8 @@ def symbol_graphics(text, pins):
     """(body, joined) of a symbol from its text records (a list of kv dicts). body: (x0, y0, x1, y1) in mils, the box of its
     drawing (rectangles, polylines, polygons; the pins are not in it), or None when it has none. joined: [[pin number, ...]] groups
     of pins whose bases a drawn straight line connects (a 4-pad tactile switch: A-B on one rail, C-D on the other), the symbol
-    saying those pads are one terminal. Only a line from one pin base to another counts, and only for small symbols of passive
-    pins (the box outline of an IC may touch pin bases and means nothing)."""
+    saying those pads are one terminal. Only a line from one pin base to another counts, and only for symbols of 4 to 8 passive
+    pins (a diode or fuse drawn as a line between its two pins is not one terminal) (the box outline of an IC may touch pin bases and means nothing)."""
     xs, ys, segs = [], [], []
     for r in text:
         rec = r.get("RECORD")
@@ -68,8 +68,10 @@ def symbol_graphics(text, pins):
             if rec == "6" and len(pts) == 2:
                 segs.append(pts)
     body = (min(xs), min(ys), max(xs), max(ys)) if xs else None
+    if body is None and not segs:
+        return body, None                  # no drawing could be read: nothing is known about joined pads (None, not [])
     joined = []
-    if len(pins) <= 8 and all(str(p.get("electrical")) == "Passive" for p in pins):
+    if 4 <= len(pins) <= 8 and all(str(p.get("electrical")) == "Passive" for p in pins):
         at = {}
         for p in pins:
             at.setdefault((p["x"], p["y"]), []).append(str(p["number"]))
@@ -77,7 +79,14 @@ def symbol_graphics(text, pins):
             ka = next((k for k in at if abs(k[0] - a[0]) <= 10 and abs(k[1] - a[1]) <= 10), None)
             kb = next((k for k in at if abs(k[0] - b[0]) <= 10 and abs(k[1] - b[1]) <= 10), None)
             if ka and kb and ka != kb and len(at[ka]) == 1 and len(at[kb]) == 1:
-                joined.append(sorted(at[ka] + at[kb]))
+                g = sorted(at[ka] + at[kb])
+                if g not in joined:
+                    joined.append(g)
+        count = {}
+        for g in joined:
+            for n in g:
+                count[n] = count.get(n, 0) + 1
+        joined = [g for g in joined if all(count[n] == 1 for n in g)]      # disjoint pairs only: a 2-pin part is never "joined"
     return body, joined
 
 

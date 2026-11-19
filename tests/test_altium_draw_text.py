@@ -19,10 +19,10 @@ SYMBOL_OF = {"Y1": "X322512MSB4SI", "J1": "TYPE-C-31-M-12", "U1": "RP2040", "U2"
              "D1": "KT-0603R", "J2": "2.54-1_3PPin", "R": "0603WAF1001T5E", "C": "CC0603KRX7R9BB104"}
 
 
-def _symbols():
+def symbols_from(path):
     """{name: symbol dict as read_schlib returns it} from the spec file the library builder wrote."""
     out, cur = {}, None
-    for line in (FIX / "symbols_spec.txt").read_text(encoding="utf-8").splitlines():
+    for line in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
         f = line.split("|")
         if f[0] == "SYMBOL":
             cur = out[f[1]] = {"name": f[1], "pins": [], "comment": f[1], "_text": []}
@@ -45,7 +45,7 @@ def _symbols():
     return out
 
 
-SYMS = _symbols()
+SYMS = symbols_from(FIX / "symbols_spec.txt")
 
 
 def _sym_for(ref):
@@ -94,7 +94,7 @@ def drawn(p, lib):
             ref, ox, oy = c[2], int(c[5]), int(c[6])
             for k, (xi, yi) in (("designator", (8, 9)), ("comment", (10, 11))):
                 if c[xi]:
-                    s = ref if k == "designator" else str(lib[ref].get("comment") or lib[ref]["name"])
+                    s = ref if k == "designator" else draw.shown_comment(lib[ref].get("comment") or lib[ref]["name"])
                     x, y = int(c[xi]), int(c[yi])
                     text.append((f"{ref} {k}", (x, y, x + len(s) * CH, y + H)))
             for pin in lib[ref]["pins"]:        # the pin number text
@@ -170,7 +170,8 @@ def test_a_long_pin_number_leaves_the_net_label_clear_of_it():
     by_num = {q["number"]: q for q in lib["J1"]["pins"]}
     long_ = stubs[(ox + draw.tip(by_num["A1B12"])[0], oy + draw.tip(by_num["A1B12"])[1])]
     short = stubs[(ox + draw.tip(by_num["A5"])[0], oy + draw.tip(by_num["A5"])[1])]
-    assert long_ > short or len("A1B12") * CH <= by_num["A1B12"]["length"]
+    overhang = len("A1B12") * CH - by_num["A1B12"]["length"]            # how far the number runs past the pin's tip
+    assert overhang > 0 and long_ >= overhang + 50 + len("GND") * draw.CHAR + 100 and long_ > short
 
 
 def test_labels_on_adjacent_top_pins_are_staggered_not_crammed():
@@ -191,7 +192,7 @@ def test_labels_on_adjacent_top_pins_are_staggered_not_crammed():
 def test_every_part_gets_both_text_spots_from_the_plan_not_the_library_symbol():
     p, sh = planned("Clock")
     places = [c for c in p["commands"] if c[0] == "PLACE"]
-    assert places and all(len(c) == 12 and all(v != "" for v in c[8:]) for c in places)
+    assert places and all(len(c) == 13 and all(v != "" for v in c[8:12]) for c in places)
 
 
 def test_the_cell_box_and_so_the_frame_enclose_the_part_texts():
@@ -217,6 +218,15 @@ def test_the_pascal_side_moves_the_designator_and_the_comment_and_the_old_eight_
     assert all(ord(ch) < 128 for ch in pas)
 
 
+def test_the_text_anchor_is_made_bottom_left_before_the_spot_is_set():
+    # the planner's boxes assume the text starts at the spot and runs right and up: the Pascal side forces that (a library text may
+    # be centred or turned), and does it before it moves the text
+    pas = (pathlib.Path(draw.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
+    for what in ("Designator", "Comment"):
+        j = pas.index(f"C.{what}.Justification := eJustify_BottomLeft;")
+        assert j < pas.index(f"C.{what}.Location :=") and pas.index(f"C.{what}.Orientation := eRotate0;") < pas.index(f"C.{what}.Location :=")
+
+
 # ---------------------------------------------------------------- crowded top pins of the same net share one label or port
 
 def _top_part(nets):
@@ -226,18 +236,31 @@ def _top_part(nets):
     return {"ref": "U9", "pins": [{"num": str(i + 1), "name": f"P{i + 1}", "net": n} for i, n in enumerate(nets)]}, sym
 
 
-def test_twelve_same_net_pins_side_by_side_share_one_name_and_stay_connected():
+def test_five_same_net_pins_side_by_side_share_one_name_and_stay_connected():
     part, sym = _top_part(["+3V3"] * 5)
     p = draw.plan_sheet({"parts": [{**part, "section": ""}], "sections": []}, {"U9": sym}, "l", "d")
     assert not p["errors"]
     names = [c for c in p["commands"] if c[0] in ("NETLABEL", "POWER")]
     assert len(names) == 1                                       # one name for the five pins, not five stacked ones
     wires = [tuple(int(v) for v in c[2:6]) for c in p["commands"] if c[0] == "WIRE"]
-    assert len(wires) == 5 + 4                                    # five stubs and four wires joining their ends
+    stubs = sorted(w for w in wires if w[0] == w[2])                    # vertical: the stubs of the pins
+    links = sorted(w for w in wires if w[1] == w[3] and w[0] != w[2])  # horizontal: the wires that join them
+    assert len(stubs) == 5 and len(links) == 4
     assert sorted(p["expected"]["+3V3"]) == [f"U9-{i}" for i in range(1, 6)]
-    # the ends are chained: every stub end is the end of a joining wire
-    ends = {(w[2], w[3]) for w in wires[:5]} | {(w[0], w[1]) for w in wires[:5]}
-    assert all(any((w[0], w[1]) in ends or (w[2], w[3]) in ends for _ in [0]) for w in wires[5:])
+    # chained at the ends: link k runs from the end of stub k to the end of stub k+1, so nothing hangs in the air
+    for k, (a, b) in enumerate(zip(links, [(stubs[i][2], stubs[i][3], stubs[i + 1][2], stubs[i + 1][3]) for i in range(4)])):
+        assert a == b, (k, a, b)
+
+
+def test_a_stepped_top_edge_never_gets_a_diagonal_link():
+    # pins 3 and 4 of a same-net group sit 100 mil higher than the others: runs break at the step, every wire is horizontal or vertical
+    part, sym = _top_part(["+3V3"] * 5)
+    sym["pins"][3]["y"] = sym["pins"][4]["y"] = 200
+    p = draw.plan_sheet({"parts": [{**part, "section": ""}], "sections": []}, {"U9": sym}, "l", "d")
+    assert not p["errors"]
+    wires = [tuple(int(v) for v in c[2:6]) for c in p["commands"] if c[0] == "WIRE"]
+    assert all(w[0] == w[2] or w[1] == w[3] for w in wires)
+    assert len([c for c in p["commands"] if c[0] in ("NETLABEL", "POWER")]) == 2        # one name per height, not one for the step
 
 
 def test_a_run_of_same_net_pins_is_read_back_as_one_net():
@@ -360,7 +383,7 @@ def test_the_evidence_switches_give_two_notes_not_eight_warnings():
 
 
 def test_a_symbol_with_twice_the_netlist_pins_and_no_drawing_info_marks_the_extra_pads_no_erc():
-    sym = {"name": "SWX", "joined": [], "pins": [{"number": str(i), "name": "ABCD"[i - 1], "electrical": "Passive", "orientation": 0 if i % 2 else 2,
+    sym = {"name": "SWX", "joined": None, "pins": [{"number": str(i), "name": "ABCD"[i - 1], "electrical": "Passive", "orientation": 0 if i % 2 else 2,
                                                   "x": 100 * (i % 2), "y": -100 * (i // 3), "length": 100, "part_id": 1} for i in range(1, 5)]}
     pins, warn, _ = draw.pin_nets({"ref": "SW9", "pins": [{"num": "1", "name": "1", "net": "A"}, {"num": "2", "name": "2", "net": "B"}]}, sym)
     assert {lp["number"]: n for lp, n in pins}["3"] == "NC" and any("duplicate pad" in w for w in warn)
@@ -370,11 +393,40 @@ def test_a_symbol_with_twice_the_netlist_pins_and_no_drawing_info_marks_the_extr
     assert [lp["number"] for lp, _ in pins] == ["1", "2"] and any("left unconnected" in w for w in warn)
 
 
-def test_symbol_graphics_finds_the_body_and_only_pin_to_pin_lines_on_small_passive_symbols():
-    pins = [{"number": "1", "x": -100, "y": 0, "electrical": "Passive"}, {"number": "2", "x": 100, "y": 0, "electrical": "Passive"}]
-    line = {"RECORD": "6", "LOCATIONCOUNT": "2", "X1": "-10", "Y1": "0", "X2": "10", "Y2": "0"}
+def _four_pads():
+    return [{"number": str(i + 1), "x": x, "y": y, "electrical": "Passive"} for i, (x, y) in enumerate([(-100, 100), (100, 100), (-100, -200), (100, -200)])]
+
+
+def _line(x1, y1, x2, y2):
+    return {"RECORD": "6", "LOCATIONCOUNT": "2", "X1": str(x1 // 10), "Y1": str(y1 // 10), "X2": str(x2 // 10), "Y2": str(y2 // 10)}
+
+
+def test_symbol_graphics_finds_the_body_and_only_pin_to_pin_lines_on_passive_symbols_of_four_or_more_pins():
+    pins = _four_pads()
     box = {"RECORD": "14", "LOCATION.X": "-5", "LOCATION.Y": "-5", "CORNER.X": "5", "CORNER.Y": "5"}
-    body, joined = symbol_graphics([line, box], pins)
-    assert joined == [["1", "2"]] and body == (-100, -50, 100, 50)
-    assert symbol_graphics([line], [{**p, "electrical": "Input"} for p in pins])[1] == []           # an IC's drawing means nothing here
+    body, joined = symbol_graphics([_line(-100, 100, 100, 100), _line(-100, -200, 100, -200), box], pins)
+    assert joined == [["1", "2"], ["3", "4"]] and body == (-100, -200, 100, 100)
+    assert symbol_graphics([_line(-100, 100, 100, 100)], [{**p, "electrical": "Input"} for p in pins])[1] == []   # an IC's drawing
     assert symbol_graphics([box], pins) == ((-50, -50, 50, 50), [])
+    assert symbol_graphics([], pins) == (None, None)                    # no drawing read: unknown, not "nothing joined"
+    # lines that make pin 1 a member of two groups give no pairs at all for it
+    assert symbol_graphics([_line(-100, 100, 100, 100), _line(-100, 100, -100, -200)], pins)[1] == []
+
+
+def test_a_diode_or_fuse_drawn_as_a_line_between_its_two_pins_is_never_joined():
+    two = [{"number": "1", "x": -100, "y": 0, "electrical": "Passive"}, {"number": "2", "x": 100, "y": 0, "electrical": "Passive"}]
+    assert symbol_graphics([_line(-100, 0, 100, 0)], two)[1] == []
+    sym = {"name": "FUSE", "joined": [["1", "2"]], "pins": [{**q, "name": q["number"], "orientation": 0, "length": 100, "part_id": 1} for q in two]}
+    pins, warn, _ = draw.pin_nets({"ref": "F1", "pins": [{"num": "1", "name": "1", "net": "VIN"}]}, sym)
+    assert [(lp["number"], n) for lp, n in pins] == [("1", "VIN")] and any("left unconnected" in w for w in warn)
+
+
+def test_a_crystals_ground_pins_are_never_marked_no_erc_for_not_being_listed():
+    xt = SYMS["X322512MSB4SI"]                      # the C9002 crystal: OSC1, GND, OSC2, GND
+    part = {"ref": "Y1", "pins": [{"num": "1", "name": "OSC1", "net": "XIN"}, {"num": "3", "name": "OSC2", "net": "XOUT"}]}
+    for sym in (xt, {**xt, "joined": None}):          # with a read drawing and with none (the count fallback must not take it)
+        pins, warn, _ = draw.pin_nets(part, sym)
+        assert sorted(lp["number"] for lp, _ in pins) == ["1", "3"] and not any(n == "NC" for _, n in pins)
+        assert [w for w in warn if "left unconnected" in w and w.startswith("Y1")] and not any("No ERC" in w for w in warn)
+    p = draw.plan_sheet({"parts": [{**part, "section": ""}], "sections": []}, {"Y1": {**xt, "joined": None}}, "l", "d")
+    assert p["no_erc"] == []

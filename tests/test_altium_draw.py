@@ -498,12 +498,12 @@ def test_a_section_frame_encloses_everything_drawn_for_its_section():
 
 
 def test_three_or_more_section_frames_do_not_overlap_and_stay_between_the_border_and_the_title_block():
-    rows = [("R%d" % i, "R1") for i in range(1, 13)]
-    p, sec = _sections_sheet([("A", "First", rows[:5]), ("B", "Second", rows[5:9]), ("C", "Third", rows[9:12])],
+    rows = [("R%d" % i, "R1") for i in range(1, 15)]
+    p, sec = _sections_sheet([("A", "First", rows[:5]), ("B", "Second", rows[5:9]), ("C", "Third", rows[9:12]), ("D", "Fourth", rows[12:])],
                              extra={"R1": {"pins_source": "agent"}})
     assert not p["errors"]
     frames = list(_frames(p).values())
-    assert len(frames) == 3
+    assert len(frames) == 4
     for i, (ax, ay, aw, ah) in enumerate(frames):
         for bx, by, bw, bh in frames[i + 1:]:
             assert ay >= by + bh or by >= ay + ah or ax + aw <= bx or bx + bw <= ax
@@ -553,7 +553,8 @@ def test_the_sheet_estimate_uses_the_same_title_strip_height_as_the_drawing():
     long_text = "[advisor] A - T | pins not checked against a datasheet: " + ", ".join(f"U{i}" for i in range(40))
     assert draw.layout(cells, secs, texts={"A": long_text})[1][0][0][3] > short
     many = [("A", draw.part_cell(part(f"R{i}", [{"num": "1", "net": "X"}, {"num": "2", "net": "GND"}]), SYMS["R1"])) for i in range(1, 30)]
-    assert draw.split_groups(many, secs)[1] == [] and draw.split_groups(many, secs, texts={"A": "x" * 6000})[1] == ["A"]
+    assert draw.suggest_sheets(many, secs) == ([[("A", None)]], [])
+    assert draw.suggest_sheets(many, secs, texts={"A": "x" * 6000})[1]       # a title strip that tall: not even one part fits
 
 
 def test_every_frame_text_starts_with_the_advisor_tag_so_a_redraw_clears_only_ours():
@@ -634,14 +635,34 @@ def test_a_too_big_design_names_the_sheets_it_needs_and_the_nets_between_them():
     assert "does not fit" in msg and "needs about" in msg and "SHARED_SIGNAL_NAME" in msg and "ports" in msg
 
 
-def test_the_split_groups_sections_in_order_and_flags_a_section_too_big_alone():
+def test_the_suggested_sheets_keep_sections_in_order_and_cut_a_section_too_big_alone_by_parts():
     sheet = _big()
     cells = [(p["section"], draw.part_cell(p, SYMS["R1"])) for p in sheet["parts"]]
-    groups, too_big = draw.split_groups(cells, sheet["sections"])
-    assert [sid for g in groups for sid in g] == ["A", "B"] and groups[0][0] == "A"
-    assert too_big          # 40 parts do not fit one sheet even alone
+    sheets, hopeless = draw.suggest_sheets(cells, sheet["sections"])
+    assert hopeless == [] and sheets[0][0][0] == "A"
+    assert all(r is not None for sh in sheets for _, r in sh)        # 40 parts do not fit one sheet alone: cut by parts
+    assert sorted(x for sh in sheets for _, rs in sh for x in rs) == sorted(p["ref"] for p in sheet["parts"])
     small = [c for c in cells if c[0] == "A"][:5] + [("B", c) for _, c in cells[40:45]]
-    assert draw.split_groups(small, sheet["sections"]) == ([["A", "B"]], [])
+    assert draw.suggest_sheets(small, sheet["sections"]) == ([[("A", None), ("B", None)]], [])
+
+
+def test_a_cut_section_keeps_connected_parts_together():
+    # a big IC with its own decoupling capacitors and a second, unrelated IC with its own: each IC's capacitors land on its sheet
+    def pins(prefix, n):
+        return [{"num": str(i), "name": str(i), "net": f"{prefix}{i}"} for i in range(1, n + 1)]
+    ic = symbol("BIG", [(str(i), str(i), -300, 100 * i, 2) for i in range(1, 31)])
+    parts = [{"ref": "U1", "section": "A", "pins": pins("X", 30)}, {"ref": "U2", "section": "A", "pins": pins("Y", 30)}]
+    syms = {"U1": ic, "U2": ic}
+    for k in range(1, 15):
+        for u, pre in (("U1", "X"), ("U2", "Y")):
+            ref = f"C{u[1]}{k}"
+            parts.append({"ref": ref, "section": "A", "pins": [{"num": "1", "name": "1", "net": f"{pre}{k}"}, {"num": "2", "name": "2", "net": "GND"}]})
+            syms[ref] = SYMS["R1"]
+    cells = [(p["section"], draw.part_cell(p, syms[p["ref"]])) for p in parts]
+    sheets, hopeless = draw.suggest_sheets(cells, [{"id": "A", "title": "Both"}])
+    assert hopeless == [] and len(sheets) >= 2
+    where = {r: i for i, sh in enumerate(sheets) for _, rs in sh for r in rs}
+    assert all(where[f"C1{k}"] == where["U1"] for k in range(1, 15))
 
 
 def _dirty_sheet(project, monkeypatch, saves=True):

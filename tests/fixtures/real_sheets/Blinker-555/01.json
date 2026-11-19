@@ -1,0 +1,171 @@
+{
+  "parts": [
+    {
+      "ref": "J1",
+      "pins": [
+        {
+          "name": "1",
+          "net": "+5V",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "U1",
+      "pins": [
+        {
+          "name": "GND",
+          "net": "GND",
+          "num": "1"
+        },
+        {
+          "name": "TRIG",
+          "net": "TIMING",
+          "num": "2"
+        },
+        {
+          "name": "OUT",
+          "net": "OUT",
+          "num": "3"
+        },
+        {
+          "name": "RST",
+          "net": "+5V",
+          "num": "4"
+        },
+        {
+          "name": "CONT",
+          "net": "CTRL",
+          "num": "5"
+        },
+        {
+          "name": "THRES",
+          "net": "TIMING",
+          "num": "6"
+        },
+        {
+          "name": "DISCH",
+          "net": "DISCH",
+          "num": "7"
+        },
+        {
+          "name": "VCC",
+          "net": "+5V",
+          "num": "8"
+        }
+      ],
+      "pins_source": "datasheet"
+    },
+    {
+      "ref": "R1",
+      "pins": [
+        {
+          "name": "1",
+          "net": "+5V",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "DISCH",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "pins": [
+        {
+          "name": "1",
+          "net": "DISCH",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "TIMING",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "pins": [
+        {
+          "name": "1",
+          "net": "TIMING",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "pins": [
+        {
+          "name": "1",
+          "net": "+5V",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "pins": [
+        {
+          "name": "1",
+          "net": "CTRL",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "pins": [
+        {
+          "name": "1",
+          "net": "OUT",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "LED_A",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "pins": [
+        {
+          "name": "+",
+          "net": "LED_A",
+          "num": "2"
+        },
+        {
+          "name": "-",
+          "net": "GND",
+          "num": "1"
+        }
+      ]
+    }
+  ],
+  "id": "01"
+}

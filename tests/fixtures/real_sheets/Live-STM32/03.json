@@ -1,0 +1,478 @@
+{
+  "id": "03",
+  "title": "MCU, clock, debug",
+  "sections": [
+    {
+      "id": "D",
+      "title": "MCU"
+    },
+    {
+      "id": "E",
+      "title": "Clock, debug, status LED"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "U1",
+      "section": "D",
+      "kind": "ic",
+      "pins_source": "agent",
+      "pins": [
+        {
+          "name": "VBAT",
+          "num": "1",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "PC13-TAMPER-RTC",
+          "num": "2",
+          "net": "PC13",
+          "side": "left"
+        },
+        {
+          "name": "PC14-OSC32_IN",
+          "num": "3",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PC15-OSC32_OUT",
+          "num": "4",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PD0-OSC_IN",
+          "num": "5",
+          "net": "XIN",
+          "side": "left"
+        },
+        {
+          "name": "PD1-OSC_OUT",
+          "num": "6",
+          "net": "XOUT",
+          "side": "left"
+        },
+        {
+          "name": "NRST",
+          "num": "7",
+          "net": "NRST",
+          "side": "left"
+        },
+        {
+          "name": "VSSA",
+          "num": "8",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "VDDA",
+          "num": "9",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "PA0-WKUP",
+          "num": "10",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PA1",
+          "num": "11",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PA2",
+          "num": "12",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PA3",
+          "num": "13",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PA4",
+          "num": "14",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PA5",
+          "num": "15",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PA6",
+          "num": "16",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PA7",
+          "num": "17",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PB0",
+          "num": "18",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PB1",
+          "num": "19",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PB2",
+          "num": "20",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PB10",
+          "num": "21",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "PB11",
+          "num": "22",
+          "net": "NC",
+          "side": "left"
+        },
+        {
+          "name": "VSS_1",
+          "num": "23",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "VDD_1",
+          "num": "24",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "PB12",
+          "num": "25",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB13",
+          "num": "26",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB14",
+          "num": "27",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB15",
+          "num": "28",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PA8",
+          "num": "29",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PA9",
+          "num": "30",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PA10",
+          "num": "31",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PA11",
+          "num": "32",
+          "net": "MCU_DM",
+          "side": "right"
+        },
+        {
+          "name": "PA12",
+          "num": "33",
+          "net": "MCU_DP",
+          "side": "right"
+        },
+        {
+          "name": "PA13",
+          "num": "34",
+          "net": "SWDIO",
+          "side": "right"
+        },
+        {
+          "name": "VSS_2",
+          "num": "35",
+          "net": "GND",
+          "side": "right"
+        },
+        {
+          "name": "VDD_2",
+          "num": "36",
+          "net": "+3V3",
+          "side": "right"
+        },
+        {
+          "name": "PA14",
+          "num": "37",
+          "net": "SWCLK",
+          "side": "right"
+        },
+        {
+          "name": "PA15",
+          "num": "38",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB3",
+          "num": "39",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB4",
+          "num": "40",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB5",
+          "num": "41",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB6",
+          "num": "42",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB7",
+          "num": "43",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "BOOT0",
+          "num": "44",
+          "net": "BOOT0",
+          "side": "right"
+        },
+        {
+          "name": "PB8",
+          "num": "45",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "PB9",
+          "num": "46",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "VSS_3",
+          "num": "47",
+          "net": "GND",
+          "side": "right"
+        },
+        {
+          "name": "VDD_3",
+          "num": "48",
+          "net": "+3V3",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "C10",
+      "section": "D",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "NRST"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R6",
+      "section": "D",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "BOOT0"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "Y1",
+      "section": "E",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "XIN",
+          "side": "left"
+        },
+        {
+          "name": "GND",
+          "num": "4",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "3",
+          "num": "3",
+          "net": "XOUT",
+          "side": "right"
+        },
+        {
+          "name": "GND",
+          "num": "2",
+          "net": "GND",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "section": "E",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "XIN"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C4",
+      "section": "E",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "XOUT"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "J2",
+      "section": "E",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "SWDIO"
+        },
+        {
+          "name": "3",
+          "num": "3",
+          "net": "SWCLK"
+        },
+        {
+          "name": "4",
+          "num": "4",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R8",
+      "section": "E",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "PC13"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "LED_ST"
+        }
+      ]
+    },
+    {
+      "ref": "D2",
+      "section": "E",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "1",
+          "net": "LED_ST"
+        },
+        {
+          "name": "C",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "D",
+      "text": "Unused MCU pins are marked NC (No ERC). MCU_DP and MCU_DM come from sheet 02 as net labels with the same name."
+    }
+  ]
+}
