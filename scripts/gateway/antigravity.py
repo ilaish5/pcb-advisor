@@ -178,6 +178,37 @@ class AntigravityProvider(Provider):
             if not isinstance(ev, dict):
                 continue
             kind = str(ev.get("event") or ev.get("type") or "").lower()
+            su = ev.get("step_update")
+            if kind == "step_update" and isinstance(su, dict):
+                # agy's real shape: {"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE"|"DONE",
+                # "step_type":"tool","tool_name":"run_command","tool_info":{"name","parameters","output"}}}
+                if su.get("step_type") != "tool":
+                    continue
+                info = su.get("tool_info") if isinstance(su.get("tool_info"), dict) else {}
+                name = str(su.get("tool_name") or info.get("name") or "tool")
+                inp = info.get("parameters") if isinstance(info.get("parameters"), dict) else {}
+                out = info.get("output")
+                text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str) if out is not None else ""
+                state = str(su.get("state") or "").upper()
+                failed = state in ("ERROR", "FAILED", "CANCELED", "CANCELLED") or bool(su.get("error") or info.get("error"))
+                if failed and not text:
+                    text = str(su.get("error") or info.get("error") or state)
+                idx = su.get("step_index")
+                call = next((c for c in reversed(calls) if c.get("step") == idx and idx is not None), None)
+                if call is None:
+                    if len(calls) >= events.MAX_CALLS:
+                        continue
+                    call = {"ts": ts, "step": idx, "tool": name,
+                            "label": events._clip(f"{name} {json.dumps(inp, ensure_ascii=False, default=str)}"),
+                            "input": events.clip_input(inp), "failed": False, "error": False}
+                    calls.append(call)
+                if text:
+                    call["result"] = clip_text(text)
+                if su.get("duration_seconds") is not None:
+                    call["seconds"] = su["duration_seconds"]
+                if state != "ACTIVE":
+                    call.update(failed=failed, error=failed, result_ts=ts)
+                continue
             if kind in cls.SKIP_EVENTS:
                 continue
             body = ev

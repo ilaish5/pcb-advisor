@@ -351,3 +351,26 @@ def test_the_page_download_uses_fetch_with_the_header_and_checks_the_answer():
     import pathlib
     src = (pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / "views" / "pages.js").read_text(encoding="utf-8")
     assert "X-PCB-Report" in src and "r.ok" in src and "createObjectURL" in src and "PG_PROJ_REPORT_BUSY" in src
+
+
+def test_agy_real_step_update_stream_becomes_calls():
+    """The shape a real `agy -p= --output-format stream-json` run printed (19/11, trimmed)."""
+    from gateway.antigravity import AntigravityProvider
+    ev = lambda d: json.dumps({"event": "step_update", "step_update": d})
+    lines = [
+        json.dumps({"event": "init", "init": {"tools": ["run_command"]}}),
+        ev({"step_index": 0, "state": "DONE", "step_type": "user_input"}),
+        ev({"step_index": 2, "state": "ACTIVE", "step_type": "tool", "tool_name": "run_command",
+            "tool_info": {"name": "run_command", "parameters": {"CommandLine": "dir"}}}),
+        ev({"step_index": 2, "state": "DONE", "step_type": "tool", "tool_name": "run_command", "duration_seconds": 2.0,
+            "tool_info": {"name": "run_command", "parameters": {"CommandLine": "dir"}, "output": "Command exited with code 0."}}),
+        ev({"step_index": 4, "state": "DONE", "step_type": "tool", "tool_name": "read_file",
+            "tool_info": {"name": "read_file", "parameters": {"Path": "a.txt"}, "output": "1 lines, 6 bytes"}}),
+        ev({"step_index": 5, "state": "DONE", "step_type": "agent_response", "text_delta": "hello"}),
+        json.dumps({"event": "result", "result": {"status": "SUCCESS", "response": "hello\n"}}),
+    ]
+    calls, raw = AntigravityProvider._calls(lines, list(range(len(lines))))
+    assert [c["tool"] for c in calls] == ["run_command", "read_file"]
+    assert calls[0]["input"] == {"CommandLine": "dir"} and "exited with code 0" in calls[0]["result"]
+    assert calls[0]["seconds"] == 2.0 and calls[0]["ts"] == 2 and not calls[0]["failed"]
+    assert raw == []
