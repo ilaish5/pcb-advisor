@@ -217,7 +217,7 @@ def test_the_model_list_skips_the_banner_and_takes_new_models(home, monkeypatch)
     assert [m["id"] for m in models] == ["gemini-4-neon-high", "claude-opus-5-5-high"]
     assert models[0]["name"] == "Gemini 4 Neon (High)"
     gateway.provider("antigravity").describe()
-    assert len(calls) == 1                                   # cached for a while
-    monkeypatch.setattr(antigravity, "_AGY_MODELS_CACHE", (antigravity.time.monotonic() - antigravity.MODELS_TTL - 1, models))
+    assert len(calls) == 1                                   # read once per server run
+    monkeypatch.setattr(antigravity, "_AGY_MODELS_CACHE", None)                  # a new server run
     gateway.provider("antigravity").describe()
-    assert len(calls) == 2                                   # then read again: new models appear without a restart
+    assert len(calls) == 2

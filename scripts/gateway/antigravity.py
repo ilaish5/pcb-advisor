@@ -20,8 +20,7 @@ from . import events, stream
 from .base import Provider, Request, Result
 
 
-_AGY_MODELS_CACHE = None          # (time it was read, models)
-MODELS_TTL = 600                  # seconds a model listing is trusted
+_AGY_MODELS_CACHE = None          # the models this agy listed, read once per server run
 
 
 def parse_models(out):
@@ -74,15 +73,11 @@ class AntigravityProvider(Provider):
     def describe(self):
         global _AGY_MODELS_CACHE
         d = super().describe()
-        fresh = _AGY_MODELS_CACHE and time.monotonic() - _AGY_MODELS_CACHE[0] < MODELS_TTL
-        if not fresh:
-            models = list_models(self.config.get("command", "agy"))
-            # a failed listing is retried on the next page load; a good one is kept for a while,
-            # so models Antigravity adds show up without restarting the server
-            _AGY_MODELS_CACHE = (time.monotonic(), models) if models else None
-            d["models"] = models
-        else:
-            d["models"] = list(_AGY_MODELS_CACHE[1])
+        if not _AGY_MODELS_CACHE:
+            # read once per server run (models Antigravity adds show up after a restart);
+            # a failed listing is not kept, so the next page load tries again
+            _AGY_MODELS_CACHE = list_models(self.config.get("command", "agy")) or None
+        d["models"] = list(_AGY_MODELS_CACHE or [])
         return d
 
     def _argv(self, request, model):
