@@ -25,8 +25,10 @@ KEEP_DAYS = 14                  # run-*.jsonl files kept; older ones go at the f
 MAX_STR = 4000
 MAX_BODY = 16000                # the client error endpoint refuses bigger bodies
 SECRET_NAME = re.compile(r"token|key|password|passwd|secret|cookie|authorization", re.I)
-SECRET_TEXT = re.compile(r"(?i)\b(sk-[a-z0-9_-]{16,}|bearer\s+[a-z0-9._~+/=-]{12,}|"
-                         r"(?:token|api[_-]?key|password|passwd|secret)\s*[=:]\s*\S+)")
+SECRET_TEXT = re.compile(
+    r"(?i)(sk-ant-[a-z0-9_-]{10,}|sk-[a-z0-9_-]{16,}|AIza[0-9a-z_-]{30,}|gh[pousr]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|xox[bpa]-[a-z0-9-]{10,}|"
+    r"bearer\s+[a-z0-9._~+/=-]{12,}|"
+    r"[\w$:.-]*(?:token|api[_-]?key|apikey|password|passwd|secret)[\"']?\s*[=:]\s*(?:\"[^\"]*\"|'[^']*'|[^\s,}]+))")
 _lock = threading.Lock()
 _state = {"pruned": None}
 ctx = threading.local()         # ctx.session: the page-load id of the request being served (the usage log carries it)
@@ -73,12 +75,12 @@ def _prune(d):
     if _state["pruned"] == today:
         return
     _state["pruned"] = today
-    files = sorted(d.glob("run-*.jsonl"))
-    for f in files[:-KEEP_DAYS]:
-        try:
-            f.unlink()
-        except OSError:
-            pass
+    for pattern in ("run-*.jsonl", "server-output-*.log"):
+        for f in sorted(d.glob(pattern))[:-KEEP_DAYS]:
+            try:
+                f.unlink()
+            except OSError:
+                pass
 
 
 def event(kind, **fields):
@@ -96,6 +98,78 @@ def event(kind, **fields):
                 fh.write(line + "\n")
     except Exception:
         pass
+
+
+OUTPUT_CAP = 5 * 1024 * 1024        # one process writes at most this much of its stdout/stderr into logs/server-output-<day>.log
+
+
+class _Tee:
+    """Wraps sys.stdout / sys.stderr: everything still reaches the console, and a capped copy goes to the server output file
+    (the [guard] lines, stock-sweep failures and any other print end up in the report). Never raises."""
+
+    def __init__(self, stream, path, tag, budget):
+        self._stream, self._path, self._tag, self._budget = stream, path, tag, budget
+
+    def write(self, text):
+        n = self._stream.write(text)
+        try:
+            if text and self._budget[0] > 0:
+                self._budget[0] -= len(text)
+                with open(self._path, "a", encoding="utf-8", errors="replace", newline="\n") as fh:
+                    for line in str(text).splitlines(True):
+                        fh.write(f"{dt.datetime.now().isoformat(timespec='milliseconds')} {self._tag} {_clean(line)}" + ("" if line.endswith("\n") else "\n")
+                                 if line.strip() else "")
+        except Exception:
+            pass
+        return n
+
+    def __getattr__(self, name):
+        return getattr(self._stream, name)
+
+
+def tee_output():
+    """Called once by the server at start. Idempotent."""
+    try:
+        if isinstance(sys.stderr, _Tee):
+            return
+        d = log_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / f"server-output-{dt.date.today().isoformat()}.log"
+        budget = [OUTPUT_CAP]
+        sys.stderr = _Tee(sys.stderr, path, "err", budget)
+        sys.stdout = _Tee(sys.stdout, path, "out", budget)
+    except Exception:
+        pass
+
+
+def output_files():
+    d = log_dir()
+    return sorted(d.glob("server-output-*.log")) if d.is_dir() else []
+
+
+_cli_cache = {}
+
+
+def cli_versions():
+    """{"claude": "...", "agy": "..."} for the engine CLIs found on PATH (each `--version` with a 5 s limit; kept for the process)."""
+    import shutil
+    import subprocess
+    out = {}
+    for name in ("claude", "agy"):
+        if name in _cli_cache:
+            out[name] = _cli_cache[name]
+            continue
+        found = shutil.which(name)
+        if not found:
+            out[name] = "not on PATH"
+        else:
+            try:
+                r = subprocess.run([found, "--version"], capture_output=True, text=True, timeout=5, encoding="utf-8", errors="replace")
+                out[name] = (r.stdout or r.stderr or "").strip()[:200] or f"exit {r.returncode}"
+            except Exception as exc:
+                out[name] = f"{type(exc).__name__}: {exc}"[:200]
+        _cli_cache[name] = out[name]
+    return out
 
 
 def project_ok(name):
@@ -293,10 +367,24 @@ def _tsnorm(ts):
     return t[:23] if "." in t else t[:19] + ".000"
 
 
+def _shift(ts, seconds):
+    """A normalized ts moved by some (fractional) seconds."""
+    try:
+        return _tsnorm((dt.datetime.fromisoformat(ts) + dt.timedelta(seconds=seconds)).isoformat(timespec="milliseconds"))
+    except ValueError:
+        return ts
+
+
 def _short(v, n=300):
     t = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
     t = t.replace("\n", " ").strip()
     return t if len(t) <= n else t[:n] + "..."
+
+
+def _window(rows):
+    """(first, last) record time of a project's rows; the end is moved to now (the report time) so late project-less errors are inside."""
+    stamps = [t for t, _, _ in rows if t]
+    return (min(stamps) if stamps else ""), max([_tsnorm(dt.datetime.now().isoformat(timespec="milliseconds"))] + stamps)
 
 
 def _project_run_events(project, since, until):
@@ -307,7 +395,8 @@ def _project_run_events(project, since, until):
             if r.get("project") == project:
                 out.append(r)
             elif not r.get("project") and since <= _tsnorm(r.get("ts")) <= until and (
-                    r.get("kind") in ("exception", "crash", "ui-error") or (r.get("kind") == "altium" and r.get("ok") is False)):
+                    r.get("kind") in ("exception", "crash", "ui-error") or (r.get("kind") == "altium" and r.get("ok") is False)
+                    or (r.get("kind") == "request" and (r.get("status") or 0) >= 400)):
                 out.append({**r, "window": True})
     return out
 
@@ -344,29 +433,38 @@ def _timeline_rows(project):
                 else:
                     notes = "; ".join(f"{x.get('step')}={x.get('state')}" + (f" ({_short(x.get('note'), 160)})" if x.get("note") else "")
                                       for x in (r.get("steps") or []) if isinstance(x, dict))
-                    add(r, f"STEP {r.get('op')} {'ok' if r.get('ok') else 'FAILED'} in {r.get('seconds', '?')}s: {_short(r.get('shown'), 600)}"
+                    word = "ok" if r.get("ok") else "STOPPED by the student" if r.get("stopped") else "FAILED"
+                    add(r, f"STEP {r.get('op')} {word} in {r.get('seconds', '?')}s: {_short(r.get('shown'), 600)}"
                            + (f" [{notes}]" if notes else "") + (f" warnings: {_short(r['warnings'], 400)}" if r.get("warnings") else ""),
-                        r.get("ok") is False)
+                        r.get("ok") is False and not r.get("stopped"))
             elif k == "ui-error":
                 add(r, f"UI ERROR: {_short(r.get('message'), 400)} ({r.get('source', '')}:{r.get('line', '')}) view={r.get('view', '')}", True)
             else:
                 bits = [f"{key}={_short(r[key], 200)}" for key in ("view", "name", "act", "text", "shown", "choice", "action")
                         if r.get(key) not in (None, "", [])]
                 add(r, f"{k.upper()}: " + " | ".join(bits) + ("  FAILED" if r.get("ok") is False else ""), r.get("ok") is False)
-    for r in _jsonl(base / "turns-log.jsonl"):
+    for r in _jsonl(base / "turns-log.1.jsonl") + _jsonl(base / "turns-log.jsonl"):
+        started = r.get("started") or r.get("ts")
         head = (f"AGENT TURN ({r.get('kind')}, {r.get('engine')} {r.get('model', '')}, {r.get('seconds')}s, tokens {r.get('tokens_in')}/{r.get('tokens_out')}, "
                 f"applied {r.get('applied')} proposed {r.get('proposed')} refused {r.get('refused')}) "
                 + ("ok" if r.get("ok") else "FAILED " + _short(r.get("error"), 300)))
-        add(r, head, not r.get("ok", True))
-        for c in r.get("calls") or []:
+        add({"ts": started}, head, not r.get("ok", True))
+        base_ts = _tsnorm(started)
+        for i, c in enumerate(r.get("calls") or []):
             if isinstance(c, dict):
                 cmd = c.get("input") or {}
                 cmd = cmd.get("command") or cmd.get("file_path") or cmd.get("pattern") or cmd
-                add(r, f"    tool {c.get('tool')}: {_short(cmd, 400)}  ->  {'FAILED' if c.get('failed') else 'ok'}: {_short(c.get('result'), 400)}",
-                    c.get("failed"))
+                when = c.get("ts") or _shift(base_ts, (i + 1) * 0.001)         # the stream's own time, else turn start + order
+                code = re.match(r"\s*Exit code:?\s*(-?\d+)", str(c.get("result") or ""))
+                state = "ERROR" if c.get("error") else (f"exit {code.group(1)}" if c.get("failed") else "ok")
+                add({"ts": when}, f"    tool {c.get('tool')}: {_short(cmd, 400)}  ->  {state}: {_short(c.get('result'), 400)}", c.get("error"))
+        if r.get("calls_dropped"):
+            add({"ts": _shift(base_ts, 0.0005)}, f"    ({r['calls_dropped']} more tool calls in this turn were not recorded)")
         for d in r.get("denied") or []:
             if isinstance(d, dict):
-                add(r, f"    DENIED tool {d.get('tool')}: {_short(d.get('input'), 300)} ({_short(d.get('reason'), 200)})", True)
+                add({"ts": _shift(base_ts, 0.0007)}, f"    DENIED tool {d.get('tool')}: {_short(d.get('input'), 300)} ({_short(d.get('reason'), 200)})", True)
+        for ev in r.get("raw_events") or []:
+            add({"ts": ev.get("ts") or started}, f"    engine event: {_short(ev.get('event'), 400)}")
     for f in sorted(base.glob("*-log*.jsonl")) + [base / "proposals.jsonl"]:
         if f.name.startswith(("usage-log", "turns-log")):
             continue
@@ -376,24 +474,24 @@ def _timeline_rows(project):
     return rows
 
 
-def project_timeline_text(project, run_events=None):
+def project_timeline_text(project, run_events=None, rows=None):
     """The readable story of one project: a summary on top, then every record in time order, errors marked '!!'."""
     import workspace
-    rows = _timeline_rows(project)
-    stamps = [t for t, _, _ in rows if t]
-    since, until = (min(stamps), max(stamps)) if stamps else ("", "9999")
-    runs = run_events if run_events is not None else _project_run_events(project, since, until)
-    steps_ok = steps_bad = 0
+    rows = list(rows) if rows is not None else _timeline_rows(project)
+    runs = run_events if run_events is not None else _project_run_events(project, *_window(rows))
+    steps_ok = steps_bad = steps_stopped = 0
     for r in runs:
         ts = _tsnorm(r.get("ts"))
         kind = r.get("kind")
         if kind == "op":
             if r.get("phase") == "end":
-                bad = r.get("ok") is False
+                stopped = bool(r.get("stopped"))
+                bad = r.get("ok") is False and not stopped
                 if str(r.get("op", "")).startswith("step."):
                     steps_bad += bad
-                    steps_ok += not bad
-                rows.append((ts, f"RUN {r.get('op')} {'FAILED' if bad else 'ok'} in {r.get('seconds', '?')}s"
+                    steps_ok += r.get("ok") is not False
+                    steps_stopped += stopped
+                rows.append((ts, f"RUN {r.get('op')} {'STOPPED' if stopped else 'FAILED' if bad else 'ok'} in {r.get('seconds', '?')}s"
                                  + (f": {_short(r.get('error'), 800)}" if r.get("error") else "")
                                  + (f" summary: {_short(r.get('summary'), 300)}" if r.get("summary") else ""), bad))
         elif kind == "altium":
@@ -406,19 +504,19 @@ def project_timeline_text(project, run_events=None):
         elif kind == "chat" and r.get("phase") in ("end", "followup-end"):
             acts = r.get("actions") or []
             rows.append((ts, f"CHAT TURN {r.get('phase')} ok={r.get('ok')} applied={r.get('applied')} refused={r.get('refused')} warned={r.get('warned')} "
-                             f"proposed={r.get('proposed')} actions asked: {_short([a.get('type') for a in acts if isinstance(a, dict)], 300)}"
+                             f"proposed={r.get('proposed')} actions asked: {_short([a.get('type') if isinstance(a, dict) else a for a in acts], 300)}"
                              + (f" error: {_short(r.get('error'), 600)}" if r.get("error") else "")
                              + (f"\n{r['traceback']}" if r.get("traceback") else ""), r.get("ok") is False))
         elif kind == "request" and (r.get("status") or 0) >= 400:
             rows.append((ts, f"HTTP {r.get('method')} {r.get('path')} -> {r.get('status')}: {_short(r.get('error'), 400)}"
                              + (f"\n{r['traceback']}" if r.get("traceback") else ""), True))
     rows.sort(key=lambda x: x[0])
-    turns = _jsonl(workspace.projects_dir() / project / "turns-log.jsonl")
+    turns = (_jsonl(workspace.projects_dir() / project / "turns-log.1.jsonl") + _jsonl(workspace.projects_dir() / project / "turns-log.jsonl"))
     errs = sum(1 for _, _, e in rows if e)
     head = [f"PCB Advisor activity timeline: project {project}",
             f"first record: {rows[0][0] if rows else '-'}   last record: {rows[-1][0] if rows else '-'}",
             f"agent turns: {len(turns)} (failed: {sum(1 for t in turns if not t.get('ok', True))})   "
-            f"step buttons: {steps_ok} ok, {steps_bad} failed   records marked as errors (!!): {errs}",
+            f"step buttons: {steps_ok} ok, {steps_bad} failed, {steps_stopped} stopped   records marked as errors (!!): {errs}",
             "Lines starting with '!!' are failures. Times are local to the tester's computer.", "=" * 78]
     return "\n".join(head + [f"{ts[:23]}  {'!! ' if err else '   '}{text}" for ts, text, err in rows]) + "\n"
 
@@ -432,6 +530,7 @@ config.json             settings with secrets hidden
 logs/run-project.jsonl  server records of this project (steps, Altium batches with commands/results, exceptions with tracebacks,
                         failed requests) plus project-less exceptions from the same time window
 logs/install-*.log      installer logs, if any
+logs/server-output-*.log what the server printed to the console (last 1MB per day)
 project/*-log*.jsonl    per-project logs: usage (clicks, views, messages, answers, steps), turns (agent tool calls and results),
                         altium, bom, library, sheet, supply, lineage; rotated files too
 project/proposals.jsonl proposals the agent made and what was decided
@@ -440,14 +539,14 @@ state/                  project.json, idea.json, bom.json, netlist/*.json, notes
 """
 
 
-def _add_capped(z, path, arcname):
+def _add_capped(z, path, arcname, cap=PROJECT_REPORT_MAX_FILE):
     try:
         size = path.stat().st_size
-        if size <= PROJECT_REPORT_MAX_FILE:
+        if size <= cap:
             z.write(path, arcname)
         else:
             with open(path, "rb") as fh:
-                fh.seek(size - PROJECT_REPORT_MAX_FILE)
+                fh.seek(size - cap)
                 z.writestr(arcname, b"[cut: only the last part of this file]\n" + fh.read())
     except OSError as exc:
         z.writestr(arcname + ".error.txt", str(exc))
@@ -456,17 +555,19 @@ def _add_capped(z, path, arcname):
 def _fill_project_report(z, project):
     import workspace
     base = workspace.projects_dir() / project
-    stamps = [t for t, _, _ in _timeline_rows(project) if t]
-    since, until = (min(stamps), max(stamps)) if stamps else ("", "9999")
-    runs = _project_run_events(project, since, until)
     z.writestr("README.txt", README_TEXT)
+    runs = []
     try:
-        z.writestr("timeline.txt", project_timeline_text(project, run_events=runs))
+        rows = _timeline_rows(project)
+        runs = _project_run_events(project, *_window(rows))
+        z.writestr("timeline.txt", project_timeline_text(project, run_events=runs, rows=rows))
     except Exception as exc:         # the raw files below still tell the story
-        z.writestr("timeline.txt", f"The timeline could not be built ({type(exc).__name__}: {exc}). Read the raw files.\n{tb(exc)}")
+        z.writestr("timeline-error.txt", f"The timeline could not be built ({type(exc).__name__}: {exc}). Read the raw files.\n{tb(exc)}")
     z.writestr("logs/run-project.jsonl", "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n" for r in runs))
     for f in install_files():
         z.write(f, f"logs/{f.name}")
+    for f in output_files():         # what the server printed (the [guard] lines and other console output), last part only
+        _add_capped(z, f, f"logs/{f.name}", 1024 * 1024)
     if not base.is_dir():
         z.writestr("project-error.txt", f"no project folder named {project}")
         return
@@ -485,20 +586,32 @@ def _fill_project_report(z, project):
             _add_capped(z, f, f"state/netlist/{f.name}")
 
 
+_report_lock = threading.Lock()
+STAMP_RE = r"\d{8}-\d{6}(?:-\d+)?"
+
+
 def make_report(doctor=None, project=None):
     """Zip the run logs, install logs, the doctor result, the config without secrets and, per project, its *-log.jsonl files
     (usage-log.jsonl among them) and its chats. Never sources, datasheets or Altium files. Returns the path of the zip.
-    With project=<name>: only that project, with timeline.txt, README.txt, its run-log lines and a small JSON/text state snapshot."""
+    With project=<name>: only that project, with timeline.txt, README.txt, its run-log lines and a small JSON/text state snapshot.
+    One report is made at a time; the file is created exclusively, so two clicks never share a name."""
+    with _report_lock:
+        return _make_report(doctor, project)
+
+
+def _make_report(doctor, project):
     import workspace
     d = log_dir()
     d.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     prefix = f"pcb-advisor-report-{workspace.safe_name(project)}-" if project else "pcb-advisor-report-"
-    out = d / f"{prefix}{stamp}.zip"
-    n = 1
-    while out.exists():
-        n += 1
-        out = d / f"{prefix}{stamp}-{n}.zip"
+    n, z = 1, None
+    while z is None:
+        out = d / (f"{prefix}{stamp}.zip" if n == 1 else f"{prefix}{stamp}-{n}.zip")
+        try:
+            z = zipfile.ZipFile(out, "x", zipfile.ZIP_DEFLATED)
+        except FileExistsError:
+            n += 1
     if doctor is None:
         try:
             import doctor as doctor_mod
@@ -509,19 +622,19 @@ def make_report(doctor=None, project=None):
         cfg = redact(workspace.load())
     except BaseException as exc:         # load() exits on a broken config; the report still gets made
         cfg = {"error": f"{type(exc).__name__}: {exc}"}
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("about.json", json.dumps(start_info(), indent=2))
+    with z:
+        z.writestr("about.json", json.dumps({**start_info(), "cli_versions": cli_versions()}, indent=2))
         z.writestr("doctor.json", json.dumps(redact(doctor), indent=2, ensure_ascii=False, default=str))
         z.writestr("config.json", json.dumps(cfg, indent=2, ensure_ascii=False, default=str))
         if project:
             _fill_project_report(z, project)
         else:
-            for f in run_files() + install_files():
+            for f in run_files() + install_files() + output_files():
                 z.write(f, f"logs/{f.name}")
             try:
                 pdir = workspace.projects_dir()
                 for p in sorted(pdir.iterdir()) if pdir.is_dir() else []:
-                    for f in sorted([*p.glob("*-log.jsonl"), *p.glob("usage-log.1.jsonl")]):          # includes usage-log.jsonl
+                    for f in sorted([*p.glob("*-log.jsonl"), *p.glob("*-log.1.jsonl")]):          # includes usage-log and turns-log, rolled too
                         z.write(f, f"projects/{p.name}/{f.name}")
                     for f in sorted((p / "chats").rglob("*")) if (p / "chats").is_dir() else []:     # the conversation: needed to follow the usage log
                         if f.is_file():
@@ -529,7 +642,8 @@ def make_report(doctor=None, project=None):
             except OSError as exc:
                 z.writestr("projects-error.txt", str(exc))
     event("report", path=str(out), project=project or "")
-    for old in sorted(d.glob("pcb-advisor-report-*.zip"), key=lambda f: f.stat().st_mtime)[:-KEEP_REPORTS]:      # only the last few are kept
+    mine = re.compile(re.escape(prefix) + STAMP_RE + r"\.zip")        # each kind (the full report, each project) keeps its own last few
+    for old in sorted((f for f in d.glob(prefix + "*.zip") if mine.fullmatch(f.name)), key=lambda f: f.stat().st_mtime)[:-KEEP_REPORTS]:
         try:
             old.unlink()
         except OSError:

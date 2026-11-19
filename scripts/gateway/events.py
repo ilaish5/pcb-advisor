@@ -1,5 +1,6 @@
 """Human labels for engine steps and a kind for every way a turn can fail."""
 import datetime
+import json
 import os
 import re
 import urllib.parse
@@ -80,3 +81,37 @@ def classify(text="", stderr="", returncode=None):
                 retry = None
         return "usage_limit", retry
     return "engine_error", None
+
+
+CALL_CUT = 1500          # one string in a recorded tool call
+CALL_BYTES = 8000        # one recorded call input, as json
+MAX_CALLS = 80
+
+
+def clip_value(v, cut=CALL_CUT, depth=0):
+    """A copy of any json-like value with strings cut, lists at 20 items, nesting at 5 levels (for the debug record)."""
+    if isinstance(v, str):
+        return v if len(v) <= cut else v[:cut] + f"...[+{len(v) - cut} chars]"
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    if depth >= 5:
+        return str(v)[:200]
+    if isinstance(v, dict):
+        return {str(k): clip_value(x, cut, depth + 1) for k, x in list(v.items())[:20]}
+    if isinstance(v, (list, tuple)):
+        return [clip_value(x, cut, depth + 1) for x in list(v)[:20]]
+    return str(v)[:cut]
+
+
+def clip_input(inp):
+    """A tool call's input, clipped recursively and held to about CALL_BYTES in all."""
+    out = clip_value(inp) if isinstance(inp, dict) else {}
+    try:
+        text = json.dumps(out, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return {}
+    return out if len(text) <= CALL_BYTES else {"_cut": text[:CALL_BYTES]}
+
+
+def now_iso():
+    return datetime.datetime.now().isoformat(timespec="milliseconds")

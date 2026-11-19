@@ -2100,12 +2100,12 @@ class Handler(BaseHTTPRequestHandler):
         if not make and not name:
             return self._send(405, {"error": "use POST to make a report"})
         if name:
-            if not re.fullmatch(r"pcb-advisor-report-[0-9-]+\.zip", name) or not (runlog.log_dir() / name).is_file():
+            if not re.fullmatch(r"pcb-advisor-report-[\w-]+\.zip", name) or not (runlog.log_dir() / name).is_file():
                 return self._send(404, {"error": "no such report"})
             zpath = runlog.log_dir() / name
         else:
             try:
-                zpath = runlog.make_report()
+                zpath = runlog.make_report(doctor=_cached_doctor())
             except Exception as exc:
                 runlog.exception("exception", exc, where="report")
                 return self._send(500, {"error": f"The report could not be made ({type(exc).__name__}: {exc})"})
@@ -2117,12 +2117,13 @@ class Handler(BaseHTTPRequestHandler):
     def _report_project(self):
         """GET /api/report/project?project=<name>: make that project's activity zip now (a copy stays in logs/) and send it as a download."""
         name = self.query("project")
-        if self._cross_origin():
-            return self._send(403, {"error": "forbidden"})
+        site = self.headers.get("Sec-Fetch-Site") or ""
+        if self._cross_origin() or not (site in ("same-origin", "none") or self.headers.get("X-PCB-Report") == "1"):
+            return self._send(403, {"error": "forbidden"})        # a page of another site must not make zips; the page's own fetch sets the header
         if not runlog.project_ok(name):
             return self._send(404, {"error": "no such project"})
         try:
-            zpath = runlog.make_report(project=name)
+            zpath = runlog.make_report(project=name, doctor=_cached_doctor())
             data = zpath.read_bytes()
         except Exception as exc:
             runlog.exception("exception", exc, where="report.project", project=name)
@@ -2706,6 +2707,7 @@ class Handler(BaseHTTPRequestHandler):
                 runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}")
                 _turn_end(tkey, turn)
                 raise
+            res = None
             try:             # _turn_end runs exactly once, whatever fails between the start and the end of apply_actions
                 _eng = gateway.resolve(BACKEND)       # the run log gets counts and seconds, never the text
                 _chat_info = {"project": proj, "engine": _eng, "model": workspace.get(f"agent.providers.{_eng}.model", "")}
@@ -2735,6 +2737,14 @@ class Handler(BaseHTTPRequestHandler):
             except BaseException as exc:
                 runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}", engine=_chat_info["engine"])
                 runlog.exception("chat", exc, phase="end", ok=False, seconds=round(time.time() - _chat_t0, 1), **_chat_info)
+                try:        # the turn that crashed is the one a debugger needs: its engine calls so far, and the error
+                    import introspect
+                    crashed = dict(res) if isinstance(res, dict) else {}
+                    crashed.setdefault("provider", _chat_info["engine"])
+                    crashed["error"] = f"{type(exc).__name__}: {exc}"
+                    introspect.record(proj, sess, "chat", crashed, time.time() - _chat_t0, reply=crashed["error"])
+                except Exception:
+                    pass
                 raise
             finally:
                 _turn_end(tkey, turn)
@@ -2746,8 +2756,8 @@ class Handler(BaseHTTPRequestHandler):
                 refused.append(project_guard.refusal(data_edited, data_unrestored))
             runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
                          refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
-                         actions=[x for x in (res.get("actions") or [])[:30] if isinstance(x, dict)], parse_refused=res.get("parse_refused") or [],
-                         error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:600]),
+                         actions=[x.get("type") for x in (res.get("actions") or [])[:30] if isinstance(x, dict)], parse_refused=res.get("parse_refused") or [],
+                         error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:4000]),
                          **_chat_info)
             if proposals and not partial:
                 try:
@@ -3718,6 +3728,15 @@ EXIT_PORT_TAKEN = 78      # start.bat: not 75 (restart); it stops with the messa
 QUIET_PATHS = ("/api/state", "/api/chat/progress", "/api/log/usage", "/api/log/client", "/api/altium/step-status", "/api/readiness")
 
 
+def _cached_doctor():
+    """The setup check for a report: the cached one (a fresh run is several seconds); a failure is a note in the report, not an error."""
+    try:
+        import doctor
+        return doctor.cached()
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def _log_start(port, engine, available, why):
     """The start record: which version, which machine, what is configured. Looking for Altium only reads the registry; it never starts it."""
     try:
@@ -3813,6 +3832,7 @@ def main(argv=None):
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     HTTPD = httpd
+    runlog.tee_output()           # console output also goes (capped) to logs/server-output-<day>.log for the report
     _log_start(port, _engine, ok, why)
     threading.Thread(target=check_updates, daemon=True).start()
     try:

@@ -52,8 +52,8 @@ def _result_failed(part):
     return bool(m and int(m.group(1)) != 0)
 
 
-MAX_CALLS = 80
-CALL_CUT = 1500
+MAX_CALLS = events.MAX_CALLS
+CALL_CUT = events.CALL_CUT
 
 
 def _result_text(part):
@@ -64,12 +64,7 @@ def _result_text(part):
     return c if len(c) <= CALL_CUT else c[:CALL_CUT] + f"...[+{len(c) - CALL_CUT} chars]"
 
 
-def _clip_input(inp):
-    """The tool's own input as the engine sent it, long values cut (for the debug record, not for the page)."""
-    if not isinstance(inp, dict):
-        return {}
-    return {str(k): (v if not isinstance(v, str) or len(v) <= CALL_CUT else v[:CALL_CUT] + f"...[+{len(v) - CALL_CUT} chars]")
-            for k, v in list(inp.items())[:12]}
+_clip_input = events.clip_input
 
 
 class _Turn:
@@ -82,6 +77,7 @@ class _Turn:
         self.steps = []
         self.uses = {}                  # tool_use_id -> (name, input)
         self.runs = []                  # script runs: {"id", "label", "failed"}
+        self.calls_dropped = 0
         self.calls = []                 # every tool call for the debug record: {"id", "tool", "input", "result", "failed"}
         self.denied = {}                # tool_use_id (or an index key) -> entry
         self.result = None
@@ -128,7 +124,9 @@ class _Turn:
                     self.uses[part.get("id")] = (name, inp)
                     lab = events.label(name, inp)
                     if len(self.calls) < MAX_CALLS:
-                        self.calls.append({"id": part.get("id"), "tool": name, "label": lab, "input": _clip_input(inp), "failed": False})
+                        self.calls.append({"id": part.get("id"), "ts": events.now_iso(), "tool": name, "label": lab, "input": _clip_input(inp), "failed": False})
+                    else:
+                        self.calls_dropped += 1
                     self.steps.append(lab)
                     if events.is_script_run(name, inp):
                         self.runs.append({"id": part.get("id"), "label": lab, "failed": False})
@@ -146,6 +144,8 @@ class _Turn:
                         if call["id"] == part.get("tool_use_id"):
                             call["result"] = _result_text(part)
                             call["failed"] = _result_failed(part)
+                            call["error"] = bool(part.get("is_error"))      # the tool said it failed (a non-zero exit alone is not that)
+                            call["result_ts"] = events.now_iso()
                 if isinstance(part, dict) and part.get("type") == "tool_result" and _result_failed(part):
                     for run in self.runs:
                         if run["id"] == part.get("tool_use_id"):
@@ -191,6 +191,8 @@ class _Turn:
             meta["runs"] = [{"label": r["label"], "failed": r["failed"]} for r in self.runs]
         if self.calls:
             meta["calls"] = [{k: v for k, v in c.items() if k != "id"} for c in self.calls]
+            if self.calls_dropped:
+                meta["calls_dropped"] = self.calls_dropped
         den = self.denials()
         if den:
             meta["denied"] = den

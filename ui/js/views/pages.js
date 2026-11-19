@@ -233,7 +233,7 @@ function reportNoteHTML() {
 function doctorHTML() {
   const run = btn(PG_DOCTOR_BUSY ? 'Checking…' : 'Run checks', {size: 'sm', act: 'doctor-run', disabled: PG_DOCTOR_BUSY}) + ' ' +
     btn(PG_REPORT_BUSY ? 'Saving…' : 'Save diagnostic report', {size: 'sm', act: 'report-save', disabled: PG_REPORT_BUSY});
-  const dl = PROJECT ? setRow('Send to the developer', btn('Download activity report (zip)', {act: 'report-project'}), {saved: false}) +
+  const dl = PROJECT ? setRow('Send to the developer', btn(PG_PROJ_REPORT_BUSY ? 'Preparing...' : 'Download activity report (zip)', {act: 'report-project', disabled: PG_PROJ_REPORT_BUSY}), {saved: false}) +
     '<div class="set-hint">One zip with everything you did in this project: your clicks, the chat, what the agent ran, Altium steps and every error. ' +
     'Nothing is sent anywhere; email the downloaded file to the developer.</div>' : '';
   if (!PG_DOCTOR) return dl + setRow('Setup', run, {saved: false}) + reportNoteHTML();
@@ -244,14 +244,36 @@ function doctorHTML() {
     (c.fix && c.fix.command && c.status !== 'ok' ? `<div class="m">${esc(c.fix.command)} ${btn('Copy', {kind: 'link', size: 'sm', act: 'doctor-copy', cmd: c.fix.command})}</div>` : '') + '</li>').join('');
   return dl + setRow('Setup', run, {saved: false}) + reportNoteHTML() + `<ul class="doctor-list" aria-live="polite">${rows}</ul>`;
 }
-/* one click: the browser downloads this project's activity zip (a copy also stays in logs/) */
-onAct('report-project', () => {
-  if (!PROJECT) return;
-  const a = document.createElement('a');
-  a.href = '/api/report/project?project=' + encodeURIComponent(PROJECT);
-  a.download = '';
-  document.body.appendChild(a); a.click(); a.remove();
-  toast('Preparing the report - the download starts in a moment');
+/* one click: the report is fetched (so an error can be shown), then saved by the browser under the server's file name; a copy also stays in logs/ */
+let PG_PROJ_REPORT_BUSY = false;
+function reportFileName(r) {
+  const d = r.headers.get('Content-Disposition') || '';
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(d);
+  if (star) { try { return decodeURIComponent(star[1]); } catch (e) { /* use the plain name */ } }
+  const plain = /filename="([^"]+)"/i.exec(d);
+  return plain ? plain[1] : 'pcb-advisor-report.zip';
+}
+onAct('report-project', async () => {
+  if (!PROJECT || PG_PROJ_REPORT_BUSY) return;
+  PG_PROJ_REPORT_BUSY = true; render(true);
+  toast('Preparing the report...');
+  try {
+    const r = await fetch('/api/report/project?project=' + encodeURIComponent(PROJECT), {headers: {'X-PCB-Report': '1'}});
+    if (!r.ok) {
+      let msg = 'The report could not be made (' + r.status + ')';
+      try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) { /* keep the status text */ }
+      toast(msg);
+      return;
+    }
+    const url = URL.createObjectURL(await r.blob());
+    const a = document.createElement('a');
+    a.href = url; a.download = reportFileName(r);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast('Report downloaded: ' + a.download);
+  } catch (err) {
+    toast('The report could not be made: ' + (err && err.message ? err.message : err));
+  } finally { PG_PROJ_REPORT_BUSY = false; render(true); }
 });
 onAct('report-save', async () => {
   PG_REPORT_BUSY = true; render(true);
