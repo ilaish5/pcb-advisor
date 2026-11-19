@@ -455,13 +455,53 @@ def _sch_name(sid, title):
 
 
 def _find_doc(prj_file, name_or_id, kind=".schdoc"):
-    """The project's document that belongs to a sheet id (its name starts with '<id> ') or has exactly that name."""
+    """The project's document that belongs to a sheet id (its name starts with '<id> ') or has exactly that name; else the one named
+    by the bare id ('02.SchDoc', what altium.add_sheet with the name '02' made)."""
     summary = read_prjpcb(prj_file)
+    bare = None
     for d in summary["documents"]:
         base = pathlib.PureWindowsPath(d).name
-        if base.lower().endswith(kind) and (base.lower() == str(name_or_id).lower() or base.startswith(f"{name_or_id} ")):
+        if not base.lower().endswith(kind):
+            continue
+        if base.lower() == str(name_or_id).lower() or base.startswith(f"{name_or_id} "):
             return prj_file.parent / pathlib.Path(d.replace("\\", "/"))
-    return None
+        if bare is None and base[:-len(kind)].lower() == str(name_or_id).lower():
+            bare = prj_file.parent / pathlib.Path(d.replace("\\", "/"))
+    return bare
+
+
+PLACEHOLDER_SHEET = "Main.SchDoc"       # the sheet new_project makes when no sheet is planned yet
+
+
+def _logged_sheet_docs(project):
+    """{sheet id: SchDoc file name} as the latest draw / skeleton recorded it (altium-log.jsonl "sheet_docs")."""
+    out = {}
+    for e in store.read_jsonl(store.pdir(project) / "altium-log.jsonl"):
+        out.update({str(k): str(v) for k, v in (e.get("sheet_docs") or {}).items()})
+    return out
+
+
+def _sheet_doc(project, prj, sid, taken=(), adopt=True):
+    """The project SchDoc that holds advisor sheet `sid`, or None (a new one is made then): the one a draw / skeleton used for it
+    before (logged), else the one named after it (_find_doc), else the empty placeholder this tool made (Main.SchDoc, made when no
+    sheet was planned yet) when no other sheet uses it: the first sheet is drawn on it instead of leaving it behind empty.
+    `taken`: placeholder paths already given to another sheet in the same call; adopt=False: never the placeholder."""
+    from altium.schdoc import is_blank_sheet
+    sheets = read_prjpcb(prj)["sheets"]
+    in_prj = {pathlib.PureWindowsPath(d).name.lower(): prj.parent / pathlib.Path(d.replace("\\", "/")) for d in sheets}
+    logged = _logged_sheet_docs(project)
+    name = logged.get(str(sid))
+    if name and name.lower() in in_prj:
+        return in_prj[name.lower()]
+    doc = _find_doc(prj, sid)
+    if doc is not None:
+        return doc
+    ph = in_prj.get(PLACEHOLDER_SHEET.lower())
+    if not adopt or ph is None or ph in taken or not ph.is_file() or PLACEHOLDER_SHEET.lower() not in _tool_made_sheets(project):
+        return None
+    if any(v.lower() == PLACEHOLDER_SHEET.lower() for k, v in logged.items() if k != str(sid)):
+        return None                                      # another sheet is drawn on it
+    return ph if is_blank_sheet(ph) else None
 
 
 def _doc_key(prj, rel):
@@ -519,8 +559,25 @@ def new_project(project):
     return {"project_file": str(prj), "pcb_file": str(pcb), "documents": summary["documents"]}
 
 
+def _planned_sheet(project, name):
+    """(id, title) of the advisor sheet `name` means (its id, '<id> <title>' or its title), else None."""
+    key = str(name or "").strip().lower()
+    for sid, title, _sh in _sheets(project):
+        if key and key in (str(sid).lower(), str(title).lower(), f"{sid} {title}".lower(), _sch_name(sid, title).lower()):
+            return sid, title
+    return None
+
+
 def add_sheet(project, name):
+    """A new SchDoc in the Altium project. A planned sheet (named by its id or title) gets the file the draw and skeleton steps use
+    for it (<id> <title>.SchDoc), and when it has one already nothing is made: no empty look-alike is left next to the drawn sheet."""
     prj = _linked(project)
+    planned = _planned_sheet(project, name)
+    if planned:
+        have = _sheet_doc(project, prj, planned[0], adopt=False)
+        if have is not None:
+            return {"file": str(have), "backup": "", "existing": True}
+        name = _sch_name(*planned)
     fname = _file_name(name, "Sheet")
     fname = fname if fname.lower().endswith(".schdoc") else fname + ".SchDoc"
     target = prj.parent / fname
@@ -611,15 +668,16 @@ def skeleton(project, sheet=None):
         planned = [s for s in planned if s[0] == str(sheet)]
         if not planned:
             raise BridgeError(f"No sheet {sheet} in this project.")
-    cmds, todo, existing, new_docs = [("PROJECT", str(prj))], [], [], []
+    cmds, todo, existing, new_docs, sheet_docs = [("PROJECT", str(prj))], [], [], [], {}
     if planned:
         for sid, title, sh in planned:
-            doc = _find_doc(prj, sid)
+            doc = _sheet_doc(project, prj, sid, taken=existing)
             if doc is None:
                 doc = prj.parent / _sch_name(sid, title)
                 new_docs.append(doc)
             else:
                 existing.append(doc)
+            sheet_docs[sid] = doc.name
             todo.append((doc, title, section_frames(sh)))
     else:
         doc = _find_doc(prj, "Main.SchDoc")
@@ -638,7 +696,7 @@ def skeleton(project, sheet=None):
     if new_docs:
         cmds.append(("SAVEPRJ", str(prj)))
     run_commands(cmds)
-    _log(project, "skeleton", sheets=[str(d) for d, _, _ in todo], created=[str(d) for d in new_docs], backup=backup)
+    _log(project, "skeleton", sheets=[str(d) for d, _, _ in todo], created=[str(d) for d in new_docs], backup=backup, sheet_docs=sheet_docs)
     return {"sheets": [str(d) for d, _, _ in todo], "created": [str(d) for d in new_docs], "backup": backup}
 
 
@@ -747,7 +805,7 @@ def draw_schematic(project, sheet=None, replace=False):
         errors, _ = store.check_sheet(sh, bom_refs)
         if errors:
             raise BridgeError(f"Sheet {sid} cannot be drawn: " + "; ".join(errors[:6]))
-        doc = _find_doc(prj, sid)
+        doc = _sheet_doc(project, prj, sid, taken=existing)
         if doc is None:
             doc = prj.parent / _sch_name(sid, title)
             new_docs.append(doc)
@@ -804,7 +862,8 @@ def draw_schematic(project, sheet=None, replace=False):
             found = [f for f in check_schematic(doc)["findings"] if f.get("severity") == "error"]
             problems += [f"sheet {sid}: {f['message']}" for f in found[:5]]
     _log(project, "draw-schematic", sheets=[str(d) for _, d, _, _ in plans], parts=parts, nets=len(nets), replace=bool(replace),
-         created=[str(d) for d in new_docs], backup=backup, problems=problems, warnings=warnings)
+         created=[str(d) for d in new_docs], backup=backup, problems=problems, warnings=warnings,
+         sheet_docs={sid: d.name for sid, d, _, _ in plans})
     if saved_first:
         warnings.insert(0, f"saved {', '.join(saved_first)} before drawing (it had unsaved changes in Altium)")
     renamed = {n: a for _, _, plan, _ in plans for n, a in plan.get("renamed", {}).items()}
@@ -840,7 +899,7 @@ def remove_stale_sheets(project, prj):
     from altium.schdoc import is_blank_sheet
     res = {"removed": [], "left": []}
     try:
-        keep = {_find_doc(prj, sid) for sid, _t, _s in _sheets(project)}
+        keep = {_sheet_doc(project, prj, sid, adopt=False) for sid, _t, _s in _sheets(project)}
         keep = {os.path.normcase(str(d)) for d in keep if d}
         made = _tool_made_sheets(project)
         for d in read_prjpcb(prj)["sheets"]:
