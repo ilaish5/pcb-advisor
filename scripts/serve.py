@@ -674,7 +674,10 @@ def _asked(word, u):
 
 
 _ME = re.compile(r"myself|\bi[’']?ll\b|\bi will\b|בעצמי|(?<!\w)א(?:מחק|סיר|שנה|מחוק)\w*", re.I)
-_FROM = re.compile(r"(?<!\w)from(?!\w)|(?<!\w)(?:מ-|מן|מה)", re.I)
+_LINK = {"the", "sheet", "page", "schematic", "את", "ה", "הגיליון", "גיליון", "הדף", "דף", "השם", "שם", "של", "ה-",      # words that may stand between the
+         "please", "now", "just", "quickly", "בבקשה", "נא", "עכשיו", "מהר", "כבר", "גם",                             # verb and the sheet it takes
+         "should", "must", "be"}                                                                                      # ("Main should be deleted")
+_CONDITION = re.compile(r"(?<!\w)(?:after|first|then|before|until|once)(?!\w)|(?<!\w)(?:אחרי|קודם|לפני|אחר כך)(?!\w)|(?<!\w)עד ש", re.I)
 
 
 def _name_re(name):
@@ -683,12 +686,15 @@ def _name_re(name):
 
 
 def _verb_takes_sheet(word, clause, name):
-    """True when the verb of `word` in `clause` takes the sheet `name` as its object: the name is at most three words from the verb and
-    no "from" / "מ-" stands between them ("remove the LED from sheet Main" removes a part)."""
+    """True when the sheet `name` is the direct object of the verb of `word` in `clause`: only articles, "sheet" / "גיליון", "the name
+    of" and filler (please, now) stand between them. Any other word is a preposition or an object of its own: "delete the parts on
+    Main", "remove the LED on sheet Main", "תמחק את הנגד בגיליון Main", "remove the LED from Main", "rename the title of Main" are
+    about something on the sheet, not the sheet."""
     for v in word.finditer(clause):
         for n in _name_re(name).finditer(clause):
             between = clause[v.end():n.start()] if v.end() <= n.start() else clause[n.end():v.start()]
-            if len(between.split()) <= 3 and not _FROM.search(between):
+            between = re.sub(r"\bthe name of\b", " ", between, flags=re.I)
+            if all(w.strip(",;:.!?\"'()").lower() in _LINK for w in between.split()):
                 return True
     return False
 
@@ -711,6 +717,8 @@ def _sheet_edit_consent(kind, a, last_user):
         return f"the quote must ask to {what} the sheet {sheet}" + (f" to {to}" if kind == "netlist.rename" else "") + " (the sheet itself, named). Ask the student first."
     if _STOP_ANY.search(last_user):
         return "the student's message says no, wait or stop. Do not change the sheet; ask what they want."
+    if _CONDITION.search(str(last_user or "")):
+        return "the student's message makes it conditional (after, first, then ...). Do not change the sheet yet; ask what they want."
     for sent in _SENT.findall(str(last_user or "")):
         if word.search(sent) and _is_question(sent):
             return "the student asked a question about it; it is no instruction. Answer it and ask."

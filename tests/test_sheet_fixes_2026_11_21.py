@@ -386,3 +386,41 @@ def test_undoing_a_rename_refuses_when_the_old_file_belongs_to_another_sheet_now
     with pytest.raises(store.UndoRefused):
         store.undo(empty, res["change"])
     assert store.sheet_ids(empty) == ["01", "05"]
+
+
+# ---------------------------------------------------------------- third review round: the sheet must be the verb's direct object
+
+@pytest.mark.parametrize("kind,to,said", [
+    ("netlist.remove", None, "delete the parts on Main"),
+    ("netlist.remove", None, "remove the LED on Main"),
+    ("netlist.remove", None, "delete everything on sheet Main"),
+    ("netlist.remove", None, "תמחק את הנגד בגיליון Main"),
+    ("netlist.remove", None, "תמחק את הנגד על Main"),
+    ("netlist.remove", None, "remove the LED from Main"),
+    ("netlist.remove", None, "remove D1 in Main"),
+    ("netlist.rename", "01", "rename the title of Main to 01"),
+    ("netlist.rename", "01", "שנה את הכותרת של Main ל-01"),
+    ("netlist.remove", None, "תמחק את Main אבל רק אחרי שתשרטט"),
+    ("netlist.remove", None, "delete Main, but only after you draw"),
+    ("netlist.remove", None, "first draw, then delete Main"),
+    ("netlist.remove", None, "תמחק את Main קודם"),
+    ("netlist.remove", None, "תמחק את הנגד מהגיליון Main"),
+])
+def test_a_part_on_a_sheet_a_title_or_a_condition_is_no_consent_to_change_the_sheet(kind, to, said):
+    a = {"type": kind, "sheet": "Main", "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) != ""
+
+
+@pytest.mark.parametrize("kind,to,said", [
+    ("netlist.remove", None, "תמחק מהר את Main"),                    # "מהר" is "quickly", not "from"
+    ("netlist.remove", None, "delete Main now, please"),
+    ("netlist.remove", None, "delete the sheet Main"),
+    ("netlist.remove", None, "תמחק את גיליון Main"),
+    ("netlist.remove", None, "Main should be deleted"),
+    ("netlist.rename", "01", "rename the name of Main to 01"),
+    ("netlist.rename", "01", "תשנה את שם הגיליון Main ל-01"),
+    ("netlist.rename", "01", "Main should be renamed to 01"),
+])
+def test_the_sheet_as_the_direct_object_is_still_accepted(kind, to, said):
+    a = {"type": kind, "sheet": "Main", "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) == "", said
