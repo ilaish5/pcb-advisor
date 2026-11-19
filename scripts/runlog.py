@@ -111,7 +111,7 @@ class _Tee:
         self._stream, self._path, self._tag, self._budget = stream, path, tag, budget
 
     def write(self, text):
-        n = self._stream.write(text)
+        n = self._stream.write(text) if self._stream is not None else len(text or "")    # pythonw has no console
         try:
             if text and self._budget[0] > 0:
                 self._budget[0] -= len(text)
