@@ -467,7 +467,7 @@ def _quote_holds(said, last_user) -> bool:
 SELF_DRAW = re.compile(r"myself|\bi[\u2019']?ll draw|i will draw|\bi draw|בעצמי|אני אשרטט|אני אצייר|אשרטט אני"
                        r"|\bdon[’']?t draw|\bdo not draw|אל תשרטט|אל תצייר|לא לשרטט|לא תשרטט|אני לא רוצה ש", re.I)
 REDRAW_WORD = re.compile(
-    r"\b(?:replace|re-?draw|re-?do|overwrite|start\s+over)\b"
+    r"(?<![\w-])(?:replace|re-?draw|re-?do|overwrite|start\s+over)\b"
     r"|(?<!\w)(?:[וש])?(?:מחדש|תחליף|תחליפי|החלף|להחליף|תמחק|תמחקי|תדרוס|תדרוסי|דרוס|לדרוס)(?!\w)",
     re.I,
 )
@@ -481,7 +481,7 @@ SELF_PLACE = re.compile(r"myself|\bi[\u2019']?ll place|i will place|\bi place|\b
 SELF_ROUTE = re.compile(r"myself|\bi[\u2019']?ll route|i will route|\bi route|\bi[\u2019']?ll do the routing|בעצמי|אני אנתב|אנתב אני"
                         r"|\bdon[\u2019']?t route|\bdo not route|אל תנתב|לא לנתב|לא תנתב|אני לא רוצה ש", re.I)
 REPLACE_WORD = re.compile(
-    r"\b(?:re-?place|re-?do|re-?route|overwrite|start\s+over)\b"
+    r"(?<![\w-])(?:re-?place|re-?do|re-?route|overwrite|start\s+over)\b"
     r"|(?<!\w)(?:[וש])?(?:מחדש|תחליף|תחליפי|החלף|להחליף|תמחק|תמחקי|תדרוס|תדרוסי|דרוס|לדרוס|תמקם מחדש|תנתב מחדש)(?!\w)",
     re.I,
 )
@@ -688,35 +688,45 @@ _HARD_STOP = re.compile(r"(?<!\w)(?:not yet|wait|stop|hold (?:on|off)|never ?min
                         r"|(?<!\w)(?:חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב|רגע|עוד לא|לא)(?!\w)", re.I)
 _REPLACE_NEG = re.compile(
     r"\b\w+n[’']t\b"
-    r"|\b(?:cannot|dont|cant|wont|shouldnt|wouldnt|couldnt|didnt|doesnt|isnt|arent|nah|naw|negative|nothing|none|no\s+reason|avoid|never)\b"
-    r"|(?<!\w)(?:וש|ו|ש)?(?:לא|אל|אין|אינ(?:י|ני|ו|ה|ם|ן|נו)|בלי|מבלי|ללא|אסור|תי?מנעי?|מ?להי?מנע|הי?מנעי?|נמנע(?:ת|ים|ות)?|מיותר(?:ת|ים|ות)?|חבל|בשום)(?!\w)",
+    r"|\b(?:cannot|dont|cant|wont|shouldnt|wouldnt|couldnt|didnt|doesnt|isnt|arent|mustnt|neednt|hasnt|havent|wasnt|werent"
+    r"|nah|naw|negative|nothing|none|neither|nor|no\s+reason|avoid|never|refus(?:e|ing)|declin(?:e|ing)|object(?:ing)?)\b"
+    r"|(?<!\w)(?:וש|ו|ש)?(?:לא|אל|אין|אינ(?:י|ני|ו|ה|ם|ן|נו)|בלי|מבלי|ללא|אסור|תי?מנעי?|מ?להי?מנע|הי?מנעי?|נמנע(?:ת|ים|ות)?"
+    r"|מיותר(?:ת|ים|ות)?|חבל|בשום|מתנגד|מתנגדת|מסרב|מסרבת|כלום)(?!\w)",
     re.I,
 )
 _REPLACE_REVERSAL = re.compile(
     r"\b(?:keep(?:ing)?|leav(?:e|ing)|preserv(?:e|ing)|retain(?:ing)?|sav(?:e|ing)|back\s*up|scratch\s+that|forget(?:ting)?|ignor(?:e|ing)"
-    r"|skip(?:ping)?|abort(?:ing)?|paus(?:e|ing)|hang\s+on|second\s+thought|chang(?:ed|ing)\s+my\s+mind|change\s+of\s+mind"
+    r"|skip(?:ping)?|abort(?:ing)?|paus(?:e|ing)|hang\s+on|hold\s+(?:up|it)|drop\s+it|undo|disregard(?:ing)?|nvm"
+    r"|second\s+thoughts?|chang(?:ed|ing)\s+my\s+mind|change\s+of\s+mind"
     r"|actually|instead|rather|but|however|though|although|except|bad\s+idea|unnecessary)\b"
-    r"|(?<!\w)(?:וש|ו|ש)?(?:תשאיר|תשאירי|להשאיר|השאר|השאירי|נשאיר|שמור|שמרי|תשמור|תשמרי|לשמור|אשמור|נשמור|גיבוי|לגבות|תגבה"
-    r"|תוותר|תוותרי|וותר|וותרי|לוותר|נוותר|שכח|שכחי|תשכח|תשכחי|לשכוח|בעצם|במקום|עדיף|אבל|אך|חוץ|מלבד"
-    r"|הפסק|הפסיקי|תפסיק|תפסיקי|להפסיק|חכה|חכי|תחכה|תחכי|לחכות|עצור|עצרי|תעצור|תעצרי|לעצור"
-    r"|בטל|בטלי|תבטל|תבטלי|ביטול|לבטל|עזוב|עזבי|תעזוב|תעזבי|לעזוב|דלג|תדלג|תדלגי|לדלג|התחרטתי|מתחרט|מתחרטת|רגע|עוד\s+לא)(?!\w)",
+    r"|(?<!\w)(?:וש|ו|ש)?(?:תשאיר|תשאירי|להשאיר|השאר|השאירי|נשאיר|אשאיר|שמור|שמרי|תשמור|תשמרי|לשמור|אשמור|נשמור|גיבוי|לגבות|תגבה"
+    r"|תוותר|תוותרי|וותר|וותרי|לוותר|נוותר|אוותר|שכח|שכחי|תשכח|תשכחי|לשכוח|בעצם|במקום|עדיף|אבל|אך|חוץ|מלבד"
+    r"|הפסק|הפסיקי|תפסיק|תפסיקי|להפסיק|חכה|חכי|תחכה|תחכי|לחכות|תמתין|תמתיני|המתן|המתיני|להמתין|עצור|עצרי|תעצור|תעצרי|לעצור"
+    r"|בטל|בטלי|תבטל|תבטלי|ביטול|לבטל|עזוב|עזבי|תעזוב|תעזבי|לעזוב|דלג|תדלג|תדלגי|לדלג|התחרטתי|מתחרט|מתחרטת|רד\s+מזה|רדי\s+מזה|רגע|עוד\s+לא)(?!\w)",
     re.I,
 )
 _REPLACE_HEDGE_COND = re.compile(
-    r"\b(?:first|when|whenever|while|later|soon|might|may|could|would|should|shall|unsure|uncertain|guess|suppose|wonder(?:ing)?"
-    r"|possibly|potentially|likely|pending|assuming|provided|if|unless|only)\b"
+    r"\b(?:first|when|whenever|while|later|soon|tomorrow|next\s+time|eventually|might|may|could|would|should|shall|unsure|uncertain"
+    r"|guess|suppose|wonder(?:ing)?|possibly|potentially|likely|pending|assuming|provided|if|unless|only)\b"
     r"|(?<!\w)(?:וש|ו|ש)?(?:כדאי|אפשר|אפשרי|אז|כאשר|בהמשך|בינתיים|עדיין|כרגע|שנייה|שניה|מאוחר\s+יותר|אחר[\s\-–]+כך|אח[\"״]כ"
-    r"|בתנאי|תלוי|תלויה|ב?ספק|כנראה|יי?תכן|לדעתי|מתלבט|מתלבטת|מתלבטים|אם|אלא|רק|אולי|אחרי|קודם|לפני|לאחר|במידה|במקרה|עד\s+ש)(?!\w)"
+    r"|עוד\s+מעט|מחר|בתנאי|תלוי|תלויה|ב?ספק|כנראה|יי?תכן|לדעתי|מתלבט|מתלבטת|מתלבטים|אם|אלא|רק|אולי|אחרי|קודם|לפני|לאחר|במידה|במקרה|עד\s+ש)(?!\w)"
     r"|(?<!\w)ו?כש",
     re.I,
 )
 _REPLACE_SELF = re.compile(
-    r"\b(?:myself|on\s+my\s+own|i[’']?ll|i\s+will|i[’']?m\s+going\s+to|i\s+am\s+going\s+to|i\s+(?:want|need|plan|prefer|intend|have)\s+to"
-    r"|i[’']?d\s+like\s+to|i\s+would\s+like\s+to|let\s+me)\b"
+    r"\b(?:myself|on\s+my\s+own|by\s+hand|manually|i[’']?ll|i\s+will|let\s+me"
+    r"|(?:i[’']?m|i\s+am)(?:\s+(?:just|really|also|simply))?\s+(?:going\s+to|gonna)"
+    r"|i(?:\s+(?:just|really|also|simply))?\s+(?:(?:want|need|plan|prefer|intend|have)\s+to|gonna|wanna)"
+    r"|i[’']?d(?:\s+(?:just|really|also|simply))?\s+like\s+to|i\s+would(?:\s+(?:just|really|also|simply))?\s+like\s+to)\b"
     r"|\bi\s+(?:re-?place|re-?draw|re-?do|re-?route|overwrit\w*|start\s+over)\b"
-    r"|(?<!\w)(?:ו)?(?:בעצמי|א(?:חליף|דרוס|מחק|מחוק|שרטט|צייר|מקם|נתב|עשה))(?!\w)"
+    r"|(?<!\w)(?:ו)?(?:בעצמי|ביד|ידנית|א(?:חליף|דרוס|מחק|מחוק|שרטט|צייר|מקם|נתב|עשה|תחיל|נסה))(?!\w)"
     r"|(?<!\w)(?:אני\s+)?(?:רוצה|צריך|צריכה|מעדיף|מעדיפה|מתכוון|מתכוונת|הולך|הולכת)\s+ל\S+"
     r"|(?<!\w)אני\s+(?:מחליף|מחליפה|דורס|דורסת|מוחק|מוחקת|משרטט|משרטטת|מצייר|מציירת|ממקם|ממקמת|מנתב|מנתבת|עושה|מתחיל|מתחילה|לבד)(?!\w)",
+    re.I,
+)
+_REPLACE_INDIRECT_Q = re.compile(
+    r"\b(?:how|why|whether|explain(?:ing)?)\b"
+    r"|(?<!\w)(?:וש|ו|ש)?(?:איך|למה|מדוע|האם|כיצד|מתי|איפה|להסביר|תסביר|תסבירי|הסבר)(?!\w)",
     re.I,
 )
 _YES = re.compile(r"(?<!\w)(?:yes|yeah|yep|yup|sure|ok|okay|go ahead|כן|אוקיי|אוקי|בסדר|סבבה|מאשר|מאשרת|בהחלט)(?!\w)", re.I)
@@ -728,12 +738,18 @@ _BARE_YES = re.compile(r"^[\s,.!]*?" + _YES_TOKEN + r"(?:[\s,.!]+" + _YES_TOKEN 
 _URL_RE = re.compile(r"https?://\S+", re.I)
 _NOT_APPLIED_TAIL = re.compile(r"(?:^|\n\n)\(Not applied:.*$", re.S)
 _REPLACE_ASKED_MANUAL = re.compile(
-    r"\b(?:by\s+hand|yourself|yourselves|manually|on\s+your\s+own|or\s+should\s+i|will\s+you\s+(?:re-?draw|re-?place|re-?do|re-?route|draw|place|route|overwrite))\b"
-    r"|(?<!\w)(?:ו)?(?:ביד|בעצמך|בעצמכם|ידנית|לבדך)(?!\w)",
+    r"\b(?:by\s+hand|yourself|yourselves|manually|on\s+your\s+own|or\s+should\s+i|or\s+will\s+you|or\s+do\s+you"
+    r"|will\s+you\s+(?:re-?draw|re-?place|re-?do|re-?route|draw|place|route|overwrite))\b"
+    r"|(?<!\w)(?:ו)?(?:ביד|בעצמך|בעצמכם|ידנית|לבדך)(?!\w)"
+    r"|(?<!\w)או\s+ש?(?:אני|אנחנו|אתה|את)(?!\w)"
+    r"|(?<!\w)(?:אתה|את)\s+(?:תשרטט|תשרטטי|תצייר|תציירי|תמקם|תמקמי|תנתב|תנתבי|תחליף|תחליפי)(?!\w)",
     re.I,
 )
+_REPLACE_ASKED_PART = re.compile(
+    r"(?i:\bbom\b)|(?i:\breplac(?:e|ing)\s+(?:the\s+)?|(?:להחליף|תחליף|אחליף)\s+(?:את\s+)?)(?:\{\{ref:)?[A-Z]{1,3}\d{1,3}(?!\w)"
+)
 _REPLACE_ASKED_VERB = re.compile(
-    r"\b(?:replac(?:e|ing)|overwrit(?:e|ing)|re-?draw(?:ing)?|re-?do(?:ing)?|re-?plac(?:e|ing)|re-?rout(?:e|ing)|wip(?:e|ing)|start\s+over)\b"
+    r"(?<![\w-])(?:replac(?:e|ing)|overwrit(?:e|ing)|re-?draw(?:ing)?|re-?do(?:ing)?|re-?plac(?:e|ing)|re-?rout(?:e|ing)|wip(?:e|ing)|start\s+over)\b"
     r"|(?<!\w)(?:[ולש])?(?:מחדש|להחליף|תחליף|אחליף|לדרוס|תדרוס|אדרוס)(?!\w)",
     re.I,
 )
@@ -744,18 +760,18 @@ _REPLACE_ASKED_DEL_CTX = re.compile(
 )
 _REPLACE_SPECIFIC = {
     "draw": re.compile(
-        r"\b(?:sheets?|schematics?|draw(?:ing)?|re-?draw(?:ing)?)\b"
-        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:גיליון|גליון|סכמה|סכימה|ציור|שרטוט|לשרטט|לצייר|תשרטט|תצייר)(?!\w)",
+        r"(?<![\w-])(?:sheets?|schematics?|draw(?:ing)?|re-?draw(?:ing)?)\b"
+        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:גיליון|גליון|סכמה|סכימה|ציור|שרטוט|לשרטט|לצייר|תשרטט|תשרטטי|תצייר|תציירי|שרטט|צייר|אשרטט|אצייר)(?!\w)",
         re.I,
     ),
     "place": re.compile(
-        r"\b(?:re-plac(?:e|ing)|plac(?:e|ing|ement)|parts|components|copper)\b"
-        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:רכיבים|השמה|מיקום|נחושת|למקם|תמקם)(?!\w)",
+        r"(?<![\w-])(?:re-plac(?:e|ing)|plac(?:e|ing|ement)|parts|components|copper)\b"
+        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:רכיבים|השמה|מיקום|נחושת|למקם|תמקם|תמקמי|מקם|אמקם)(?!\w)",
         re.I,
     ),
     "route": re.compile(
-        r"\b(?:re-?rout(?:e|ing)|rout(?:e|ing)|tracks|traces)\b"
-        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:מסלולים|ניתוב|לנתב|תנתב)(?!\w)",
+        r"(?<![\w-])(?:re-?rout(?:e|ing)|rout(?:e|ing)|tracks|traces)\b"
+        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:מסלולים|ניתוב|לנתב|תנתב|תנתבי|נתב|אנתב)(?!\w)",
         re.I,
     ),
 }
@@ -786,7 +802,7 @@ def _asked_replace(kind, prev_agent):
     """True when a question sentence of `prev_agent` asked whether the agent may replace the existing work of `kind`."""
     cleaned = _URL_RE.sub("", str(prev_agent or ""))
     for sent in _SENT.findall(cleaned):
-        if "?" not in sent or _REPLACE_ASKED_MANUAL.search(sent):
+        if "?" not in sent or _REPLACE_ASKED_MANUAL.search(sent) or _REPLACE_ASKED_PART.search(sent):
             continue
         has_verb = bool(_REPLACE_ASKED_VERB.search(sent)) or (
             bool(_REPLACE_ASKED_DEL.search(sent)) and bool(_REPLACE_ASKED_DEL_CTX.search(sent))
@@ -810,9 +826,12 @@ def _replace_consent(kind, a, last_user, prev_agent=""):
     text = str(last_user or "")
     words = re.findall(r"[\w’'\-]+", text)
     asked_yes = bool(_YES.search(text)) and bool(_BARE_YES.match(text.strip())) and _asked_replace(kind, prev_agent)
-    has_q = "?" in text or (not asked_yes and (any(_is_question(s) for s in _SENT.findall(text))
-                                               or any(_is_question(c) for c in _CLAUSE.split(text) if c.strip())))
-    clean = (len(words) <= REPLACE_MAX_WORDS and not has_q
+    has_q = ("?" in text or bool(_REPLACE_INDIRECT_Q.search(text))
+             or (not asked_yes and (any(_is_question(s) for s in _SENT.findall(text))
+                                    or any(_is_question(c) for c in _CLAUSE.split(text) if c.strip()))))
+    other_kind = (not _REPLACE_SPECIFIC[kind].search(text)
+                  and any(_REPLACE_SPECIFIC[k].search(text) for k in _REPLACE_SPECIFIC if k != kind))
+    clean = (len(words) <= REPLACE_MAX_WORDS and not has_q and not other_kind
              and not _NEGATED.search(text) and not _REPLACE_NEG.search(text)
              and not _REPLACE_REVERSAL.search(text)
              and not _HEDGE.search(text) and not _CONDITION.search(text) and not _REPLACE_HEDGE_COND.search(text)

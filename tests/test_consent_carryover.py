@@ -283,6 +283,11 @@ def test_place_and_route_short_reply_works_only_after_kind_matching_replace_ques
     "Will you redraw sheet 01 yourself?",
     "תשרטט מחדש בעצמך?",
     "תשרטט את זה ביד?",
+    "תשרטט מחדש או שאני?",
+    "אתה תשרטט מחדש את הסכמה או שאני?",
+    "Shall I replace the parts in the BOM?",
+    "Should I replace U1 on sheet 01?",
+    "להחליף את R1 בגיליון 01?",
     "See https://example.com/?x=1 to redraw sheet 01.",
     "Check the potentiometer wiper on sheet 01?",
     "Shall I add the replacement chip?",
@@ -291,6 +296,15 @@ def test_unrelated_manual_or_url_questions_never_enable_bare_yes_replace(prev):
     for kind in ("draw", "place", "route"):
         assert serve._consent(kind, {"student_said": "yes", "replace": True}, "yes", (), prev) != "", (kind, prev)
         assert serve._consent(kind, {"student_said": "כן", "replace": True}, "כן", (), prev) != "", (kind, prev)
+
+
+def test_cross_kind_replace_messages_never_grant_wrong_action():
+    assert _rep("תמקם מחדש את הרכיבים") != ""
+    assert _rep("תנתב מחדש את הלוח") != ""
+    for msg in ("re-route the board", "redo sheet 01", "תשרטט מחדש"):
+        assert serve._consent("place", {"student_said": msg, "replace": True}, msg, (), ASKED_PLACE) != "", msg
+    for msg in ("re-place the parts", "תמקם מחדש את הרכיבים", "redo sheet 01"):
+        assert serve._consent("route", {"student_said": msg, "replace": True}, msg, (), ASKED_ROUTE) != "", msg
 
 
 @pytest.mark.parametrize("msg", [
@@ -326,15 +340,23 @@ def test_yes_with_unrelated_command_never_grants_replace(msg):
     "תשרטט מחדש אבל לאט", "תשרטט מחדש אך 01", "תשרטט מחדש חוץ מ-02", "תשרטט מחדש מלבד 02",
     "הפסק, תשרטט מחדש", "תפסיק, תשרטט מחדש", "תחכי, תשרטט מחדש", "תעצרי, תשרטט מחדש",
     "תבטל, תשרטט מחדש", "תבטלי, תשרטט מחדש", "עזבי, תשרטט מחדש", "תעזוב, תשרטט מחדש", "תעזבי, תשרטט מחדש",
-    # English contractions / negations / nothing / none
+    # English contractions / negations / nothing / none / refusals
     "won't redraw sheet 01", "can't redraw sheet 01", "wouldn't redraw sheet 01", "couldn't redraw",
     "mustn't redraw", "needn't redraw", "didn't redraw", "doesn't redraw", "isn't redraw", "aren't redraw",
     "cannot redraw sheet 01", "nah, redraw", "naw, redraw", "negative, redraw", "draw it, replace nothing", "replace none",
-    # Questions without ? (sentence-start and comma-joined)
+    "I refuse to replace it", "I decline to overwrite it", "I object to redraw", "neither redraw nor overwrite",
+    "מתנגד להחליף את 01", "מסרב שתחליף את 01", "תשרטט, תחליף כלום",
+    "Redraw it. On second thoughts.", "Redraw it. Undo that.", "Redraw it. Disregard.",
+    "Redraw it. Hold up.", "Redraw it. Hold it.", "Redraw it. Drop it.", "Redraw it. nvm",
+    "תשרטט מחדש. אשאיר את מה שיש.", "תשרטט מחדש. אוותר.", "תשרטט מחדש. תמתין.", "תשרטט מחדש. המתן.", "תשרטט מחדש. רד מזה.",
+    # Questions without ? (sentence-start, comma-joined, and mid-clause indirect/explain)
     "should we redraw sheet 01", "why redraw sheet 01", "האם להחליף את 01", "אפשר להחליף את 01",
     "draw the schematic, why replace it",
+    "explain how to redraw sheet 01", "tell me how to redraw sheet 01",
+    "תסביר איך לשרטט מחדש את 01", "תגיד לי למה להחליף את 01", "תגיד לי האם להחליף את 01",
     # Hedges & conditions (English & Hebrew)
     "first redraw sheet 01", "when done redraw", "whenever redraw", "while redraw", "later redraw", "soon redraw",
+    "redraw sheet 01 tomorrow", "redraw sheet 01 next time", "תשרטט מחדש עוד מעט", "תשרטט מחדש מחר",
     "might redraw", "may redraw", "could redraw", "would redraw", "should redraw",
     "unsure, redraw", "uncertain, redraw", "guess redraw", "suppose redraw", "wonder redraw",
     "possibly redraw", "potentially redraw", "likely redraw", "pending redraw", "assuming redraw", "provided redraw",
@@ -343,11 +365,14 @@ def test_yes_with_unrelated_command_never_grants_replace(msg):
     "שנייה, תשרטט מחדש", "שניה, תשרטט מחדש", "מאוחר יותר תשרטט מחדש", "אחר-כך תשרטט מחדש", 'אח"כ תשרטט מחדש',
     "בתנאי שתשרטט מחדש", "תלוי, תשרטט מחדש", "בספק, תשרטט מחדש", "כנראה תשרטט מחדש",
     "יתכן ותשרטט מחדש", "ייתכן ותשרטט מחדש", "לדעתי תשרטט מחדש", "מתלבט אם להחליף", "מתלבטת להחליף",
-    # Self-do replace
+    # Self-do & manual replace
     "I will replace sheet 01", "I'll overwrite sheet 01", "I'll redraw sheet 01", "I want to redraw it",
+    "I just want to redraw sheet 01", "I'm gonna redraw sheet 01", "I'm just going to redraw sheet 01",
+    "redraw sheet 01 by hand", "redraw sheet 01 manually",
     "אני אחליף את 01", "אני רוצה לשרטט מחדש", "אני אעשה את הסכמה מחדש",
-    # Substring traps
-    "draw it, irreplaceable part", "draw the schematic for the replacement chip", "draw with freedom",
+    "אני אתחיל מחדש", "אנסה להחליף את 01", "לשרטט מחדש ביד", "להחליף את 01 ידנית",
+    # Substring & hyphen-prefix traps
+    "draw it, irreplaceable part", "draw the schematic for the replacement chip", "draw with freedom", "non-replace draw sheet 01",
 ])
 def test_a_short_negated_hedged_conditional_or_stopped_message_never_grants_replace(msg):
     assert _rep(msg) != "", msg
