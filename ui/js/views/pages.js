@@ -121,7 +121,7 @@ function libHTML(container) {
     btn('Export', {size: 'sm', act: 'libexport', disabled: !!libBusy || !rows.length, title: 'Write a package of the library files to compile yourself'});
   const note = libBusy === 'build' ? `<div class="note"><span>Building in Altium. It can take a few minutes and Altium may flash while it works.</span></div>`
     : libNote ? `<div class="note ${libNote.tone}"><span>${esc(libNote.text)}</span>${/No Altium project is linked/.test(libNote.text)
-      ? `<span class="acts">${btn('Create an Altium project', {size: 'sm', kind: 'pri', act: 'altium-create', title: 'Altium makes the project, an empty PCB and one sheet per planned sheet, with no components'})}${btn('Link a project', {size: 'sm', act: 'pv-link'})}</span>` : ''}</div>` : '';
+      ? `<span class="acts">${btn('Create an Altium project', {size: 'sm', act: 'altium-create', title: 'Altium makes the project, an empty PCB and one sheet per planned sheet, with no components'})}${btn('Link a project', {size: 'sm', act: 'pv-link'})}</span>` : ''}</div>` : '';
   const head = known ? '<th>Part</th><th>Source</th><th>Models</th><th>Status and what to do</th>' : '<th>Part</th><th>Models</th><th>Status</th>';
   const body = rows.length
     ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr>${head}<th><span class="sr">Action</span></th></tr></thead>

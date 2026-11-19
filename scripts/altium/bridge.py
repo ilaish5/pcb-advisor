@@ -1085,7 +1085,10 @@ def drc_line(res):
     "unchecked" when the report is missing or was not read in full."""
     if not isinstance(res, dict) or not res.get("rules"):
         return "unchecked (no readable design rule check report)"
-    body = ", ".join(f"{_drc_short(k)} {v}" for k, v in res["rules"].items())
+    shown = {}                                   # two rules of one kind (other scope or value) are one name: their counts add up
+    for k, v in res["rules"].items():
+        shown[_drc_short(k)] = shown.get(_drc_short(k), 0) + v
+    body = ", ".join(f"{k} {v}" for k, v in shown.items())
     if not res.get("complete"):
         return f"unchecked (the report was not read in full; read so far: {body}, total {res.get('total', 0)})"
     return f"{body}, total {res['total']}" + (" (clean)" if drc_clean(res) else "")
