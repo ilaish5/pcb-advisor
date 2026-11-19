@@ -254,6 +254,7 @@ begin
     F.Corner := Point(MilsToCoord(X + W), MilsToCoord(Y + H));
     F.Text := Txt;
     F.ShowBorder := True;
+    F.IsSolid := False;                  { a tall frame must not paint over the parts inside it }
     F.WordWrap := True;
     Sch.RegisterSchObjectInContainer(F);
     Log('frame at ' + IntToStr(X) + ',' + IntToStr(Y));

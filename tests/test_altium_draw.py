@@ -505,6 +505,13 @@ def test_a_long_title_with_the_unverified_note_still_fits_its_strip():
     assert strip >= 100 + lines * draw.TITLE_LINE - draw.FRAME_PAD
 
 
+def test_a_text_frame_is_not_solid_so_it_never_hides_what_is_inside_it():
+    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
+    seg = pas[pas.index("procedure AddFrame"):pas.index("procedure TitleBlock")]
+    assert "F.IsSolid := False;" in seg
+    assert "AddFrame(" in pas[pas.index("Cmd = 'FRAME'"):][:200]          # the skeleton's FRAME lines take the same path
+
+
 def test_a_redraw_clears_frames_by_the_advisor_tag_only():
     pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
     seg = pas[pas.index("procedure ClearFrames"):pas.index("procedure SetParam")]
