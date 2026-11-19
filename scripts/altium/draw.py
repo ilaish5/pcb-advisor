@@ -666,28 +666,50 @@ def _nets(c):
     return {x["net"] for x in c["stubs"] if x["kind"] != "nc" and x["net"]}
 
 
+def _count(c, net):
+    return sum(1 for x in c["stubs"] if x["kind"] != "nc" and x["net"] == net)
+
+
 def own_parts(seed, todo):
-    """The small parts (up to 4 pins) that belong to an IC: decoupling capacitors on its supply, a crystal with its resistor and
-    capacitors, pull-ups. A small part belongs to it when it shares a net with the IC (or with a part already found) and none of its
-    signal nets reaches another large part. Returned in a stable order: parts with the fewest signal nets first (decoupling
-    capacitors), then by tie."""
+    """The small parts that belong to an IC, in the order they should join its sheet:
+    1. decoupling capacitors (2 pins, every net a supply or ground) on a supply of the IC: a supply only this IC uses (the +1V1 core
+       rail) gives all its capacitors to it; a supply several ICs share is split by their supply pin counts (9 of the 10 +3V3
+       capacitors to an IC with 9 of the 10 +3V3 pins), so the first IC does not take every capacitor;
+    2. 2-pin parts on the IC's signal nets only (pull-ups, a series resistor): every signal net of the part is one of the IC's and
+       none reaches another large part;
+    3. an oscillator (reference X or Y) on a signal net of the IC, and the 2-pin parts whose signal nets are the IC's or the
+       oscillator's (its load capacitors and damping resistor).
+    A signal net never pulls in a part of more than 2 pins (a switch, a connector, an LED chain), and a supply net never pulls in
+    anything but a 2-pin supply/ground part."""
     if seed["pins"] <= 4:
         return []
-    others = set()
+    large = [c for c in todo if c["pins"] > 4 and c is not seed]
+    sig = lambda c: {n for n in _nets(c) if net_kind(n) == "label"}      # noqa: E731
+    mine, others = sig(seed), set()
+    for c in large:
+        others |= sig(c)
+    got = []
+    caps = [c for c in todo if c["pins"] == 2 and not sig(c)]
+    for net in sorted({n for c in caps for n in _nets(c) if net_kind(n) == "rail"}):
+        have = _count(seed, net)
+        if not have:
+            continue
+        group = [c for c in caps if net in _nets(c) and c not in got]
+        total = have + sum(_count(o, net) for o in large)
+        take = group if total == have else group[:len(group) * have // total]
+        got += take
+    got.sort(key=lambda c: todo.index(c))
+    for c in todo:                                                            # 2-pin parts on the IC's own signal nets
+        if c["pins"] == 2 and c not in got and sig(c) and sig(c) <= mine and not (sig(c) & others):
+            got.append(c)
+    osc = [c for c in todo if c["pins"] <= 4 and c["ref"][:1] in "XY" and sig(c) & mine and not (sig(c) & others)]
+    nets = mine.union(*[sig(c) for c in osc]) if osc else mine
+    for c in osc:
+        if c not in got:
+            got.append(c)
     for c in todo:
-        if c["pins"] > 4 and c is not seed:
-            others |= {n for n in _nets(c) if net_kind(n) == "label"}
-    got, nets = [], set(_nets(seed))
-    more = True
-    while more:
-        more = False
-        for c in sorted((c for c in todo if c["pins"] <= 4 and c not in got),
-                        key=lambda c: (len([n for n in _nets(c) if net_kind(n) == "label"]), -_tie(c, [seed]), todo.index(c))):
-            mine = _nets(c)
-            if mine & nets and not any(n in others for n in mine if net_kind(n) == "label"):
-                got.append(c)
-                nets |= mine - {n for n in mine if net_kind(n) != "label"}      # a part's signal nets (not GND or a supply) extend the group
-                more = True
+        if c["pins"] == 2 and c not in got and sig(c) and sig(c) <= nets and not (sig(c) & others) and osc:
+            got.append(c)
     return got
 
 

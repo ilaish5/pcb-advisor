@@ -446,6 +446,9 @@ def test_one_section_of_the_evidence_sheets_keeps_the_mcu_with_its_own_caps_crys
     by = {c["ref"]: c for _, c in cells}
     mine = [c["ref"] for c in draw.own_parts(by["U1"], [c for r, c in by.items() if r != "U1"])]
     assert {"Y1", "C3", "C4", "C13"} <= set(mine) and len(mine) >= 8  # the crystal and the caps tied to U1 only by +3V3 / GND
+    assert {"Y1", "C1", "C2", "R7", "C9", "C12"} <= set(mine)         # the crystal chain and the caps of the +1V1 rail only U1 uses
+    assert not {"SW1", "SW2", "D1", "R5", "R6", "J2", "U2", "C14"} & set(mine)   # not switches, LED chain, connector, U2 and its cap
+    assert len(mine) == 15                                            # 9 of the 10 shared +3V3 caps (U1 has 9 of the 10 pins)
     first = next(sh for sh in sheets if any("U1" in rs for _, rs in sh))
     on = {r for _, rs in first for r in rs}
     assert on - {"U1"} <= set(mine), on                               # U1's sheet holds its own parts, never U2 or the LED first
