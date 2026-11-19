@@ -570,6 +570,28 @@ def add_intlib_to_project(prj, intlib):
         return False
 
 
+def ensure_sheets_in_project(prj, files):
+    """Every SchDoc in `files` must be a document of the saved PrjPcb. Altium's own add can miss a new sheet (it lands in the project
+    that has the focus), so a missing one is added by hand once (ADDDOC + SAVEPRJ) and the PrjPcb read again; a sheet still missing
+    then is an error that names it. Returns the files that had to be added by hand."""
+    prj = pathlib.Path(prj)
+    files = [pathlib.Path(f) for f in files]
+
+    def missing():
+        have = {_doc_key(prj, d) for d in read_prjpcb(prj)["documents"]}
+        return [f for f in files if _doc_key(prj, f) not in have]
+
+    lost = missing()
+    if lost:
+        cmds = [("PROJECT", str(prj))] + [("ADDDOC", str(prj), str(f)) for f in lost if f.is_file()] + [("SAVEPRJ", str(prj))]
+        run_commands(cmds)
+        still = missing()
+        if still:
+            raise BridgeError(f"The sheet file(s) {', '.join(f.name for f in still)} are not in the Altium project {prj.name} "
+                              "(Altium did not add them). Add them by hand: right-click the project > Add Existing to Project, then File > Save All.")
+    return lost
+
+
 def new_project(project):
     """Create the Altium project for an advisor project: PrjPcb, one PcbDoc, one SchDoc per sheet. Links it."""
     meta = project_mod.load_meta(project)
@@ -587,6 +609,7 @@ def new_project(project):
     cmds += [("SCH", str(folder / f)) for f in sch_files]
     cmds += [("PCB", str(pcb)), ("SAVEPRJ", str(prj))]
     run_commands(cmds)
+    ensure_sheets_in_project(prj, [folder / f for f in sch_files])
     summary = read_prjpcb(prj)
     if not pcb.is_file() or len(summary["sheets"]) != len(sch_files):
         raise BridgeError("Altium ran the script but the project does not list all its documents: "
@@ -645,6 +668,7 @@ def add_sheet(project, name):
     run_commands([("PROJECT", str(prj)), ("SCH", str(target)), ("SAVEPRJ", str(prj))])
     if not target.is_file():
         raise BridgeError("Altium ran the script but did not write the sheet. Check Altium for a dialog box.")
+    ensure_sheets_in_project(prj, [target])
     _log(project, "add-sheet", file=str(target), backup=backup, **({"sheet_docs": {planned[0]: target.name}} if planned else {}))
     return {"file": str(target), "backup": backup}
 
@@ -915,6 +939,8 @@ def draw_schematic(project, sheet=None, replace=False):
     # the sheets are in the Altium project now: their files are recorded before anything below can fail, so a later run never
     # makes a second copy of a sheet whose check broke off
     _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans}, created=[str(d) for d in new_docs])
+    if new_docs:
+        ensure_sheets_in_project(prj, new_docs)      # every new sheet, not only the first one, must be in the saved project
     problems, warnings, parts, nets = [], [], 0, set()
     for sid, doc, plan, fps in plans:
         warnings += plan["warnings"] + circular_pin_warnings(project, [p["ref"] for p in plan["parts"] if isinstance(p, dict) and p.get("ref")])
