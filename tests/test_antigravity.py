@@ -116,9 +116,9 @@ def test_model_wins_over_effort_and_the_drop_is_reported(home, monkeypatch):
     assert res.meta["dropped"] == ["effort"]
 
 
-def test_the_default_model_is_flash(home, monkeypatch):
+def test_the_default_model_is_hydrogen(home, monkeypatch):
     _, seen = _run(monkeypatch)
-    assert seen["argv"][seen["argv"].index("--model") + 1] == "gemini-3.8-flash-high"
+    assert seen["argv"][seen["argv"].index("--model") + 1] == "gemini-4-hydrogen-high"
 
 
 def test_effort_reaches_the_cli_only_when_set(home, monkeypatch):
