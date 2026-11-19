@@ -656,13 +656,24 @@ def _consent_one(kind, a, last_user, earlier_turn):
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
         # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
-        if not r or not replace_re.search(r) or not _asked(r, u, replace_re):
+        if r and replace_re.search(r) and _STOP_ANY.search(last_user, kind):
+            return f"The student's message says no, wait or stop. Do not wipe the {wipes}; ask the student what they want first."
+        if r and replace_re.search(r) and (_HEDGE.search(str(last_user or "")) or _CONDITION.search(str(last_user or ""))
+                                      or _IF_COND.search(str(last_user or ""))):
+            return f"The student's message hedges or makes the replace conditional (maybe, not sure, only if, after ...). Do not wipe the {wipes}; ask first."
+        if r and replace_re.search(r) and not _asked(r, u, replace_re):
+            return (f"The {wipes} are only wiped when the student says so, and a replace word of the quote is negated or breaks off. If their "
+                    "replace sentence is a plain yes, send just that sentence as replace_said; otherwise ask whether what is there may be replaced.")
+        if not r or not replace_re.search(r):
             return (f"The {wipes} are only wiped when the student says so: ask whether what is there may be replaced, then run this with "
                     "replace_said = a quote of their words (replace, redo, overwrite, start over / מחדש, תחליף, תמחק).")
     return ""
 
 
-_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|not|without|don[’']?t|do not|(?:ו)?(?:אסור|אל|לא))(?!\w)", re.I)
+_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|no reason|not|without|don[’']?t|do not|"
+                      r"(?:ו)?(?:אסור|אל|לא|אין צורך|מבלי|בלי|ללא))(?!\w)", re.I)
+_IF_COND = re.compile(r"(?<!\w)(?:if|only|unless)(?!\w)|(?<!\w)(?:אם|רק|אלא)(?!\w)", re.I)      # "replace only if empty"
+_HARD = re.compile(r"[,;.!?\n]+|\s+(?:but|אבל)\s+", re.I)
 
 
 def _asked(word, u, replace_re=None):
@@ -672,7 +683,7 @@ def _asked(word, u, replace_re=None):
     is checked for a negation in the text before it, within the clause where it stands. A Hebrew "ו" before it is the word "and"."""
     u = str(u or "")
     pat = re.compile(r"(?<!\w)(?:ו)?" + re.escape(word) + r"(?!\w)")
-    starts = [m.end() for m in _CLAUSE.finditer(u)]
+    starts = [m.end() for m in _HARD.finditer(u)]
     for q in pat.finditer(u):
         qs = q.start()
         inner = [qs + m.start() for m in replace_re.finditer(q.group(0))] if replace_re else [qs]

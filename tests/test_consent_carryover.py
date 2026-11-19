@@ -246,6 +246,38 @@ def test_a_negation_after_the_and_split_still_refuses_replace():
     assert serve._draw_consent({"student_said": "תצייר ותחליף", "replace": True, "replace_said": "ותחליף"}, "תצייר ותחליף") == ""
 
 
+@pytest.mark.parametrize("msg,r", [
+    ("לא צריך לשרטט את 01 ו-02 מחדש", None),
+    ("לא חייבים לשרטט את 01 ו-02 מחדש", None),
+    ("שרטט את הסכמה, אין צורך להתחיל מחדש", None),
+    ("שרטט את הסכמה מבלי להחליף", "להחליף"),
+    ("שרטט את הסכמה בלי להתחיל מחדש", "מחדש"),
+    ("שרטט את הסכמה ללא להחליף", "להחליף"),
+    ("draw the schematic, there is no reason to start over", "start over"),
+    ("draw the schematic, it is not necessary to redo 01 and redraw 02", "redraw 02"),
+    ("draw the schematic and overwrite it. wait, stop", "overwrite it"),
+    ("תשרטט את הסכמה מחדש. רגע, עצור", "מחדש"),
+    ("I'm not sure, maybe redraw the schematic", "redraw"),
+    ("אולי תשרטט מחדש", "מחדש"),
+    ("draw the schematic, replace only if empty", "replace"),
+])
+def test_replace_is_refused_for_negation_stop_hedge_and_condition(msg, r):
+    a = {"student_said": msg, "replace": True, "replace_said": r or msg}
+    assert serve._draw_consent(a, msg) != "", msg
+
+
+def test_a_negated_replace_word_in_the_whole_quote_says_to_send_only_the_replace_sentence():
+    msg = "שרטט את הסכמה, אין צורך להתחיל מחדש"
+    why = serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg)
+    assert "replace_said" in why and "just that sentence" in why
+
+
+def test_a_negated_other_action_still_gives_draw_consent_and_the_live_message_replace():
+    msg = "don't delete Main, draw the sheets"
+    assert serve._draw_consent({"student_said": msg}, msg) == ""
+    assert serve._draw_consent({"student_said": LIVE, "replace": True, "replace_said": LIVE}, LIVE) == ""
+
+
 def test_the_too_short_quote_refusal_names_the_fix():
     msg = "תודה על הרשימה. תצייר את הסכמה באלטיום בבקשה, ואחר כך נמשיך הלאה לשלב הבא של הפרויקט"
     why = serve._draw_consent({"student_said": "תצייר את הסכמה באלטיום"}, msg)
