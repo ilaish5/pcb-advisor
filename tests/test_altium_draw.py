@@ -442,82 +442,131 @@ def test_a_sheet_with_every_pin_verified_has_a_plain_heading():
 
 # ---------------------------------------------------------------- section frames enclose their whole block
 
-def _two_sections(n=6, note=False):
-    sections = [{"id": "A", "title": "MCU Decoupling and Core Regulator"}, {"id": "B", "title": "Crystal"}]
-    parts = [{**part(f"C{i}", [{"num": "1", "net": f"VDD_{i}"}, {"num": "2", "net": "GND"}]), "section": "A"} for i in range(1, n + 1)]
-    parts += [{**part("R9", [{"num": "1", "net": "XIN"}, {"num": "2", "net": "GND"}]), "section": "B"},
-              {**part("R10", [{"num": "1", "net": "XOUT"}, {"num": "2", "net": "GND"}]), "section": "B"}]
-    if note:
-        parts[0]["pins_source"] = "agent"
-    syms = {x["ref"]: SYMS["R1"] for x in parts}
-    return draw.plan_sheet({"sections": sections, "parts": parts}, syms, "l", "d"), parts
+def _frames(p):
+    return {c[6].split()[1]: tuple(int(v) for v in c[2:6]) for c in p["commands"] if c[0] == "FRAME"}
 
 
-def _frames_and_boxes(p, parts):
-    frames = {c[6].split()[1]: tuple(int(v) for v in c[2:6]) for c in p["commands"] if c[0] == "FRAME"}
-    sec = {x["ref"]: x["section"] for x in parts}
-    boxes = {}
-    for pl in p["parts"]:
-        cell = draw.part_cell(next(x for x in parts if x["ref"] == pl["ref"]), SYMS["R1"])
-        bx0, by0, bx1, by1 = cell["box"]
-        boxes.setdefault(sec[pl["ref"]], []).append((pl["x"] + bx0, pl["y"] + by0, pl["x"] + bx1, pl["y"] + by1))
-    return frames, boxes
+def _drawn_extent(p, sid_of_ref):
+    """{section: [(x0, y0, x1, y1)]} of everything the commands draw for that section's parts: pin tips, wires, labels (by their
+    text length), power ports. Read from the commands, not from the layout's own numbers."""
+    ext = {}
+    syms = {x["name"]: x for x in SYMS.values()}
+    cur = None
+    for c in p["commands"]:
+        if c[0] == "PLACE":
+            cur = c[2]
+            ox, oy = int(c[5]), int(c[6])
+            for pin in syms[c[3]]["pins"]:
+                ext.setdefault(sid_of_ref[cur], []).append((ox + pin["x"], oy + pin["y"], ox + pin["x"], oy + pin["y"]))
+        elif c[0] == "WIRE":
+            ext[sid_of_ref[cur]].append((min(int(c[2]), int(c[4])), min(int(c[3]), int(c[5])),
+                                         max(int(c[2]), int(c[4])), max(int(c[3]), int(c[5]))))
+        elif c[0] == "NETLABEL":
+            x, y, rot, text = int(c[2]), int(c[3]), int(c[4]), c[5]
+            w = len(text) * draw.CHAR
+            ext[sid_of_ref[cur]].append((x, y, x + (0 if rot else w), y + (w if rot else 0)))
+        elif c[0] == "POWER":
+            ext[sid_of_ref[cur]].append((int(c[2]) - 100, int(c[3]) - 100, int(c[2]) + 100, int(c[3]) + 100))
+    return ext
 
 
-def test_a_section_frame_encloses_every_part_stub_and_label_of_its_section():
-    p, parts = _two_sections()
+def _sections_sheet(spec, extra=None):
+    """spec: [(section id, title, [(ref, key of SYMS)])] -> (plan, {ref: section})."""
+    sections = [{"id": sid, "title": title} for sid, title, _ in spec]
+    parts, sec, keys = [], {}, {}
+    for sid, _, refs in spec:
+        for ref, key in refs:
+            pins = [{"num": q["number"], "name": q["name"],
+                     "net": "GND" if q["name"] == "GND" else "+5V" if q["name"] == "VIN" else f"N_{ref}_{q['number']}"}
+                    for q in SYMS[key]["pins"]]
+            parts.append({"ref": ref, "section": sid, "pins": pins, **(extra or {}).get(ref, {})})
+            sec[ref], keys[ref] = sid, key
+    return draw.plan_sheet({"sections": sections, "parts": parts}, {r: SYMS[k] for r, k in keys.items()}, "l", "d"), sec
+
+
+def test_a_section_frame_encloses_everything_drawn_for_its_section():
+    # a real IC symbol with long labels, power ports and a no-ERC pin, and resistors with labels: all of it inside its frame
+    p, sec = _sections_sheet([("A", "MCU Decoupling and Core Regulator", [("U1", "U1"), ("R1", "R1"), ("R2", "R2"), ("U2", "U1")]),
+                              ("B", "Crystal", [("R3", "R1"), ("R4", "R2")])])
     assert not p["errors"]
-    frames, boxes = _frames_and_boxes(p, parts)
-    assert set(frames) == {"A", "B"}
+    frames = _frames(p)
+    ext = _drawn_extent(p, sec)
+    assert set(frames) == {"A", "B"} and set(ext) == {"A", "B"}
     for sid, (fx, fy, fw, fh) in frames.items():
-        for x0, y0, x1, y1 in boxes[sid]:
-            assert fx <= x0 and fy <= y0 and x1 <= fx + fw and y1 <= fy + fh, (sid, (fx, fy, fw, fh), (x0, y0, x1, y1))
-        assert max(b[3] for b in boxes[sid]) <= fy + fh - draw.HEADER       # the title strip is free of parts
-    doc = simulate(p["commands"])
-    for sid in frames:
-        fx, fy, fw, fh = frames[sid]
-        refs = {x["ref"] for x in parts if x["section"] == sid}
-        for c in doc["components"]:
-            if c["ref"] in refs:
-                for pin in c["pins"]:
-                    assert fx <= pin["x"] <= fx + fw and fy <= pin["y"] <= fy + fh
+        for x0, y0, x1, y1 in ext[sid]:
+            assert fx <= x0 and fy <= y0 and x1 <= fx + fw and y1 <= fy + fh - draw.HEADER, (sid, (fx, fy, fw, fh), (x0, y0, x1, y1))
 
 
-def test_section_frames_do_not_overlap_and_stay_on_the_sheet():
-    p, parts = _two_sections(n=14, note=True)
+def test_three_or_more_section_frames_do_not_overlap_and_stay_between_the_border_and_the_title_block():
+    rows = [("R%d" % i, "R1") for i in range(1, 15)]
+    p, sec = _sections_sheet([("A", "First", rows[:5]), ("B", "Second", rows[5:9]), ("C", "Third", rows[9:12]), ("D", "Fourth", rows[12:])],
+                             extra={"R1": {"pins_source": "agent"}})
     assert not p["errors"]
-    frames, _ = _frames_and_boxes(p, parts)
-    (ax, ay, aw, ah), (bx, by, bw, bh) = frames["A"], frames["B"]
-    assert ay >= by + bh or by >= ay + ah or ax + aw <= bx or bx + bw <= ax
-    for fx, fy, fw, fh in frames.values():
-        assert fx >= 0 and fy >= draw.AREA[1] - draw.FRAME_PAD and fx + fw <= draw.AREA[2] + draw.FRAME_PAD
-        assert fy + fh <= draw.AREA[3]
+    frames = list(_frames(p).values())
+    assert len(frames) == 4
+    for i, (ax, ay, aw, ah) in enumerate(frames):
+        for bx, by, bw, bh in frames[i + 1:]:
+            assert ay >= by + bh or by >= ay + ah or ax + aw <= bx or bx + bw <= ax
+        assert ax >= 0 and ax + aw <= draw.AREA[2] + draw.FRAME_PAD
+        assert ay >= draw.AREA[1] and ay + ah <= draw.AREA[3]           # above the title block, below the top of the area
 
 
-def test_a_long_title_with_the_unverified_note_still_fits_its_strip():
-    p, parts = _two_sections(n=14, note=True)
-    frames, boxes = _frames_and_boxes(p, parts)
-    text = next(c[6] for c in p["commands"] if c[0] == "FRAME" and c[6].startswith("[advisor] A"))
-    assert "pins not checked against a datasheet: C1" in text
-    fx, fy, fw, fh = frames["A"]
-    strip = fy + fh - max(b[3] for b in boxes["A"])
-    lines = -(-len(text) // ((fw - 2 * draw.FRAME_PAD) // draw.TITLE_CHAR))
-    assert strip >= 100 + lines * draw.TITLE_LINE - draw.FRAME_PAD
+def test_a_design_that_fits_only_without_the_frame_margins_is_refused():
+    rows = [("R%d" % i, "R1") for i in range(1, 80)]
+    p, _ = _sections_sheet([("A", "Many", rows)])
+    assert p["commands"] == [] and any("does not fit" in e for e in p["errors"])
 
 
-def test_a_text_frame_is_not_solid_so_it_never_hides_what_is_inside_it():
-    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
-    seg = pas[pas.index("procedure AddFrame"):pas.index("procedure TitleBlock")]
-    assert "F.IsSolid := False;" in seg
-    assert "AddFrame(" in pas[pas.index("Cmd = 'FRAME'"):][:200]          # the skeleton's FRAME lines take the same path
+def test_a_frame_never_reaches_below_the_drawing_area():
+    # shrink the area until the cells still fit but the frame (a margin lower) would not
+    cells = [("A", draw.part_cell(part("R1", [{"num": "1", "net": "X"}, {"num": "2", "net": "GND"}]), SYMS["R1"]))]
+    secs = [{"id": "A", "title": "T"}]
+    pos, heads, problems = draw.layout(cells, secs)
+    assert not problems
+    fy = heads[0][0][1]
+    cell_bottom = pos["R1"][1] + cells[0][1]["box"][1]
+    tight = (draw.AREA[0], cell_bottom, draw.AREA[2], draw.AREA[3])         # the cell box touches the bottom edge: the frame would not fit
+    assert fy < cell_bottom and draw.layout(cells, secs, tight)[2]
 
 
-def test_a_redraw_clears_frames_by_the_advisor_tag_only():
-    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
-    seg = pas[pas.index("procedure ClearFrames"):pas.index("procedure SetParam")]
-    assert "Pos(TAG, O.Text) = 1" in seg                                  # a student's own text frame has no tag and stays
-    p, _ = _two_sections()
-    assert all(c[6].startswith(draw.TAG) for c in p["commands"] if c[0] == "FRAME")
+def test_a_part_with_a_pin_off_the_grid_does_not_move_the_next_section_off_it():
+    odd = symbol("ODD", [("1", "1", -100, 50, 2), ("2", "2", 100, 0, 0)])        # a pin 50 mil off the grid
+    sheet = {"sections": [{"id": "A", "title": "One"}, {"id": "B", "title": "Two"}],
+             "parts": [{**part("R1", [{"num": "1", "net": "X"}, {"num": "2", "net": "GND"}]), "section": "A"},
+                       {**part("R2", [{"num": "1", "net": "Y"}, {"num": "2", "net": "GND"}]), "section": "B"}]}
+    p = draw.plan_sheet(sheet, {"R1": odd, "R2": SYMS["R2"]}, "l", "d")
+    assert not p["errors"]
+    for c in p["commands"]:
+        if c[0] == "PLACE":
+            assert int(c[5]) % 100 == 0 and int(c[6]) % 100 == 0, c
+        if c[0] == "FRAME":
+            assert all(int(v) % 100 == 0 for v in c[2:6]), c
+    r2 = next(c for c in p["commands"] if c[0] == "PLACE" and c[2] == "R2")
+    for pin in SYMS["R2"]["pins"]:                                           # R2's pin tips sit on the grid
+        assert (int(r2[5]) + draw.tip(pin)[0]) % 100 == 0 and (int(r2[6]) + draw.tip(pin)[1]) % 100 == 0
+
+
+def test_the_sheet_estimate_uses_the_same_title_strip_height_as_the_drawing():
+    cells = [("A", draw.part_cell(part("R1", [{"num": "1", "net": "X"}, {"num": "2", "net": "GND"}]), SYMS["R1"]))]
+    secs = [{"id": "A", "title": "T"}]
+    short = draw.layout(cells, secs)[1][0][0][3]
+    long_text = "[advisor] A - T | pins not checked against a datasheet: " + ", ".join(f"U{i}" for i in range(40))
+    assert draw.layout(cells, secs, texts={"A": long_text})[1][0][0][3] > short
+    many = [("A", draw.part_cell(part(f"R{i}", [{"num": "1", "net": "X"}, {"num": "2", "net": "GND"}]), SYMS["R1"])) for i in range(1, 30)]
+    assert draw.split_groups(many, secs)[1] == [] and draw.split_groups(many, secs, texts={"A": "x" * 6000})[1] == ["A"]
+
+
+def test_every_frame_text_starts_with_the_advisor_tag_so_a_redraw_clears_only_ours():
+    p, _ = _sections_sheet([("A", "One", [("R1", "R1")]), ("B", "Two", [("R2", "R2")])])
+    texts = [c[6] for c in p["commands"] if c[0] == "FRAME"]
+    assert len(texts) == 2 and all(t.startswith(draw.TAG) for t in texts)      # ClearFrames removes exactly the frames that start so
+    assert not "Note: my own text frame".startswith(draw.TAG)                  # a student's frame has no tag: it stays
+
+
+def test_the_pascal_frame_is_not_solid_and_the_hide_list_is_freed():
+    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")   # Pascal cannot run here
+    assert "F.IsSolid := False;" in pas[pas.index("procedure AddFrame"):pas.index("procedure TitleBlock")]
+    assert "Hide.Free;" in pas[pas.index("procedure LibHidePinNames"):pas.index("{ ---------------------------------------------------------------- package }")]
 
 
 # ---------------------------------------------------------------- U7: the draw step solves these itself

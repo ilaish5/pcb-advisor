@@ -512,10 +512,40 @@ def test_pin_names_that_would_overlap_inside_a_small_body_are_hidden():
 
 
 def test_a_normal_ic_symbol_keeps_its_pin_names():
-    ic = [_sym_pin(str(i + 1), f"PIN{i}", "eRotate180", -600, 300 - 100 * i, 200) for i in range(4)] + \
-         [_sym_pin(str(i + 5), f"IO{i}", "eRotate0", 600, 300 - 100 * i, 200) for i in range(4)]
+    ic = [_sym_pin(str(i + 1), f"PIN{i}", "eRotate180", -600, 300 - 100 * i, 200) for i in range(4)] +          [_sym_pin(str(i + 5), f"IO{i}", "eRotate0", 600, 300 - 100 * i, 200) for i in range(4)]
     assert conv.names_fit(ic) is True
 
 
-def test_the_library_spec_marks_a_symbol_whose_names_do_not_fit_for_hiding():
-    assert "len(pins) == 2 or not names_fit(pins)" in pathlib.Path(partlib.__file__).read_text(encoding="utf-8")
+REAL = FIX / "real"          # symbols exactly as EasyEDA delivered them (USB-C C393939, 4-pin crystal C5181477, STM32F103 C8734)
+
+
+def _real(code):
+    (sym,) = conv.convert_symbols((REAL / code / "lib.kicad_sym").read_text(encoding="utf-8"))
+    return sym["pins"]
+
+
+def test_the_real_usb_c_connector_and_a_large_ic_keep_their_pin_names():
+    usb = _real("C393939")
+    assert len(usb) == 16
+    assert conv.names_fit(usb) is True           # a 3-character pin number sits outside the body: it never counts against the names
+    ic = _real("C8734")
+    assert len(ic) >= 40 and conv.names_fit(ic) is True
+
+
+def test_the_real_four_pin_crystal_is_judged_by_its_own_geometry():
+    xt = _real("C5181477")
+    assert len(xt) == 4 and conv.names_fit(xt) is True         # 400 mil body, names "1", "3", "GND" fit
+    squeezed = [{**p, "x": p["x"] // 2} for p in xt]            # the same pins on a 200 mil body: the GND names collide
+    assert conv.names_fit(squeezed) is False
+
+
+def test_a_long_pin_number_on_a_100_mil_pin_is_not_a_reason_to_hide_names():
+    pins = [_sym_pin(f"A{10 + i}", f"P{i}", "eRotate180", -400, 100 * i) for i in range(5)]
+    assert conv.names_fit(pins) is True
+
+
+def test_a_generated_box_symbol_is_sized_so_its_names_fit():
+    pins, gfx, _ = gen.box_symbol("U", [{"num": "1", "name": "VIN"}, {"num": "2", "name": "GND"}, {"num": "3", "name": "VOUT"}], [])
+    assert conv.names_fit(pins) is True
+    x0, y0, x1, y1 = gfx[0][4:8]
+    assert y1 - y0 > 200                         # the old 3-pin box was 200 mil high: VIN (top) and GND (bottom) overlapped

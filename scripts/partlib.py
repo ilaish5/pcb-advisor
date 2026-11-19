@@ -434,7 +434,7 @@ def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None
             "comment": clean(line.get("value") or mpn, 60) if prefix in RATING_PREFIX else clean(mpn, 60),
             "params": {"MPN": clean(line.get("mpn") or mpn, 80), "Manufacturer": clean(line.get("manufacturer"), 80),
                        "LCSC": lcsc, "Description": _description(line)},
-            "hide_pin_names": len(pins) == 2 or not names_fit(pins)}
+            "hide_pin_names": len(pins) == 2 or (e.get("symbol_from") != "netlist" and not names_fit(pins))}     # a generated body is sized to its names
         e["symbol"], e["footprint"] = name, fpname
         if build.footprints[fpname]["steps"]:
             e["step"] = build.footprints[fpname]["steps"][0].relative_to(lib).as_posix()

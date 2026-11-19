@@ -402,13 +402,13 @@ NUMBER_RAISE = 45                   # mil: a pin number sits this far above its 
 
 
 def _text_box(p, text, inside):
-    """Rectangle (x0, y0, x1, y1) in mil that a pin's name (inside the body, from the pin's body end inwards) or number (centred
-    on the pin, beside it) takes. On a pin at the top or bottom the text is turned to run along the pin."""
+    """Rectangle (x0, y0, x1, y1) in mil that a pin's name (inside the body, from the pin's body end inwards) or number (along the pin,
+    from the body edge outwards, beside it) takes. On a pin at the top or bottom the text is turned to run along the pin."""
     dx, dy = DIRS.get(p.get("orient"), (1, 0))
     w = max(1, len(str(text))) * NAME_CHAR
-    x, y, ln = float(p["x"]), float(p["y"]), float(p.get("len") or 0)
+    x, y = float(p["x"]), float(p["y"])
     h = NAME_HEIGHT / 2
-    a, b = (0.0, -w) if inside else (ln / 2 + w / 2, ln / 2 - w / 2)
+    a, b = (0.0, -w) if inside else (0.0, w)          # the name runs into the body, the number out along the pin from the body edge
     if dy == 0:
         lo, hi = sorted((x + dx * a, x + dx * b))
         return (lo, y - h, hi, y + h) if inside else (lo, y + NUMBER_RAISE, hi, y + NUMBER_RAISE + NAME_HEIGHT)
@@ -417,16 +417,14 @@ def _text_box(p, text, inside):
 
 
 def names_fit(pins):
-    """False when the pin names (inside the body) and numbers (beside the pins) would be drawn on top of each other: a small body
-    whose pins face each other (a 4-pin crystal). Such a symbol gets its pin names hidden; the numbers stay."""
-    texts = []
-    for p in pins:
-        texts.append((_text_box(p, p.get("name") or "", True), "name"))
-        texts.append((_text_box(p, p.get("num") or "", False), "num"))
-    for i, (a, ka) in enumerate(texts):
-        for b, kb in texts[i + 1:]:
-            if ka == kb == "num":
-                continue                       # numbers sit on their own pins, outside the body
-            if a[0] + OVERLAP_OK < b[2] and b[0] + OVERLAP_OK < a[2] and a[1] + OVERLAP_OK < b[3] and b[1] + OVERLAP_OK < a[3]:
-                return False
+    """False when two pin names would be drawn on top of each other inside the body (a small body whose pins face each other: a 4-pin
+    crystal), or two pin numbers outside it. A name is never compared with a number: the name is inside the body, next to the pin's
+    end, the number is outside it, along the pin. Such a symbol gets its pin names hidden; the numbers stay."""
+    for kind in (True, False):
+        boxes = [_text_box(p, p.get("name") if kind else p.get("num"), kind) for p in pins
+                 if (p.get("name") if kind else p.get("num")) not in (None, "", "~")]
+        for i, a in enumerate(boxes):
+            for b in boxes[i + 1:]:
+                if a[0] + OVERLAP_OK < b[2] and b[0] + OVERLAP_OK < a[2] and a[1] + OVERLAP_OK < b[3] and b[1] + OVERLAP_OK < a[3]:
+                    return False
     return True

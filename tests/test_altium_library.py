@@ -148,6 +148,9 @@ def test_a_build_fills_the_specs_sends_the_steps_in_order_and_marks_every_line(l
     filled = (alt / "symbols_spec.txt").read_text(encoding="cp1252")
     assert "<SCHLIB>" not in filled and str(lp["schlib"]) in filled
     assert "Empty" not in (alt / "params.txt").read_text()
+    assert (alt / "hide.txt").read_bytes() == b"R10K=1\r\n"                 # only the symbols flagged hide_pin_names
+    hide = [c for run in stub.runs for c in run if c[0] == "HIDEPINS"]
+    assert hide == [("HIDEPINS", str(lp["schlib"]), str(alt / "hide.txt"))]
     man = manifest(lib)
     assert man["C1"]["built"] and man["U1"]["built"]
     assert man["X9"]["built"] is False and "no symbol" in man["X9"]["built_issues"][0]

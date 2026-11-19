@@ -252,13 +252,15 @@ def layout(cells, sections, area=AREA, texts=None):
         fw = max(right + FRAME_PAD - fx, FRAME_MIN_W)
         strip = _strip_height(texts.get(sid) or frame_text(sid, titles.get(sid, "")), fw)
         shift = y - strip - FRAME_PAD                         # a multiple of GRID, so the placed cells stay on the grid
-        fy = bottom + shift - FRAME_PAD
+        fy = int(math.floor((bottom + shift - FRAME_PAD) / GRID)) * GRID     # a box edge may be off the grid (a 50 mil pin offset)
         for c in mine:
             ox, oy = rel[c["ref"]]
             pos[c["ref"]] = (ox, oy + shift)
             bx0, by0, bx1, by1 = c["box"]
-            if ox + bx1 > x1 or oy + shift + by0 < y0:
+            if ox + bx1 > x1:
                 problems.append(f"{c['ref']} does not fit on the sheet")
+        if fy < y0 or fx + fw > x1 + FRAME_PAD:                # the frame itself stays above the title block and inside the border
+            problems.append(f"section {sid or '(all parts)'} does not fit on the sheet")
         heads.append(((fx, fy, fw, y - fy), sid))
         y = fy - FRAME_GAP
     return pos, heads, problems
@@ -431,14 +433,16 @@ def alias_scope(text, aliases):
     return _INNET.sub(lambda m: m.group(1) + aliases.get(m.group(2), m.group(2)) + m.group(3), str(text or ""))
 
 
-def split_groups(cells, sections, area=AREA):
+def split_groups(cells, sections, area=AREA, texts=None):
     """How the sections would be spread over several sheets: ([[section id]], [section id that is too big even alone]). Sections stay
     together and in order; a sheet is filled until the next section no longer fits."""
     ids = [s["id"] for s in sections] or [""]
     groups, too_big, cur = [], [], []
 
+    sec = {s["id"]: s for s in sections}
+
     def fits(sids):
-        return not layout([(s, c) for s, c in cells if s in sids], [{"id": i} for i in sids], area)[2]
+        return not layout([(s, c) for s, c in cells if s in sids], [sec.get(i, {"id": i}) for i in sids], area, texts)[2]
     for sid in ids:
         if not [c for s, c in cells if s == sid]:
             continue
@@ -455,8 +459,8 @@ def split_groups(cells, sections, area=AREA):
     return groups, too_big
 
 
-def _too_big_message(cells, sections):
-    groups, too_big = split_groups(cells, sections)
+def _too_big_message(cells, sections, texts=None):
+    groups, too_big = split_groups(cells, sections, texts=texts)
     nets = {}
     for sid, c in cells:
         nets.setdefault(sid, set()).update(s["net"] for s in c["stubs"] if s["kind"] != "nc")
@@ -548,7 +552,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
         texts[sid] = frame_text(head_names.get(sid, sid), titles.get(sid, ""), note)
     pos, heads, problems = layout(cells, sections, texts=texts)
     if problems:
-        errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections))
+        errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections, texts))
     if errors:
         return out
     d = str(doc)

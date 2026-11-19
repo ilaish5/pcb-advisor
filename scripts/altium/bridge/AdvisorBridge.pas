@@ -1448,6 +1448,7 @@ begin
         C := It.NextSchObject;
     end;
     Lib.SchIterator_Destroy(It);
+    Hide.Free;
     Lib.GraphicallyInvalidate;
     Log('pin names hidden ' + IntToStr(changed));
 end;
