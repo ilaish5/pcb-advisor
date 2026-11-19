@@ -503,6 +503,12 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
     sheets = read_prjpcb(prj)["sheets"]
     in_prj = {pathlib.PureWindowsPath(d).name.lower(): prj.parent / pathlib.Path(d.replace("\\", "/")) for d in sheets}
     logged = _logged_sheet_docs(project)
+    claimed = {v.lower() for k, v in logged.items() if k != str(sid)}          # one file, one sheet: what another sheet is drawn on is not free
+    claimed |= {pathlib.Path(t).name.lower() for t in taken}
+
+    def free(doc):
+        return doc is not None and doc.name.lower() not in claimed
+
     name = logged.get(str(sid))
     if name:
         if name.lower() in in_prj:
@@ -520,6 +526,8 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
         return doc
 
     doc = _find_doc(prj, sid)
+    if doc is not None and not free(doc):
+        doc = None
     if doc is not None:
         if not adopt or str(sid) not in store.sheet_docs_reset(project):
             return doc
@@ -528,8 +536,8 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
         raise BridgeError(f"{doc.name} belongs to an earlier sheet {sid} that was removed, and it still holds a drawing. Nothing was "
                           f"changed: rename or remove {doc.name} in Altium (it is not wiped for the new sheet {sid}).")
     made = _tool_made_sheets(project)
-    doc = _find_doc(prj, sid, bare=True)
-    if doc is not None and doc.is_file():
+    doc = _find_doc(prj, sid, bare=True)       # a plan sheet whose id is the file's name owns that file before the placeholder rule below
+    if doc is not None and doc.is_file() and free(doc):
         if not adopt:
             if doc.name.lower() in made or is_blank_sheet(doc):
                 return doc
@@ -538,8 +546,12 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
     ph = in_prj.get(PLACEHOLDER_SHEET.lower())
     if not adopt or ph is None or ph in taken or not ph.is_file() or PLACEHOLDER_SHEET.lower() not in made:
         return None
-    if any(v.lower() == PLACEHOLDER_SHEET.lower() for k, v in logged.items() if k != str(sid)):
+    if PLACEHOLDER_SHEET.lower() in claimed:
         return None                                      # another sheet is drawn on it
+    stem = PLACEHOLDER_SHEET[:-len(".SchDoc")].lower()
+    if any(str(o).lower() == stem or PLACEHOLDER_SHEET.lower().startswith(f"{str(o).lower()} ")
+           for o in store.sheet_ids(project) if str(o) != str(sid)):
+        return None                                      # a planned sheet is named after it (id Main): that sheet owns it, not the first other sheet
     if not _blank_after_save(prj, ph):
         return None
     return take(ph)

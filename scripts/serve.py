@@ -516,16 +516,22 @@ _STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?
 _STOP_BARE = re.compile(r"^(?:no|nope|לא)(?!\w)", re.I)      # "no" is a stop only as a short reply or at the start of a clause
 
 
+_OTHER_VERB = re.compile(r"\b(?:delet\w*|remov\w*|renam\w*|erase\w*)\b|(?<!\w)(?:ת?מחק\w*|ת?מחוק|ת?סיר\w*|ת?שנה|ת?שני|למחוק|להסיר|לשנות)(?!\w)", re.I)
+
+
 class _Stops:
     """The student's words that say no, wait or stop. The unambiguous words (stop, wait, don't, עצור ...) count anywhere; a bare
     "no"/"לא" only as a short reply (the clause is at most three words: "no", "no thanks", "לא עכשיו"), never inside a sentence
-    such as "so that no signal net runs between the sheets"."""
+    such as "so that no signal net runs between the sheets". With `kind` (draw / place / route) a clause that forbids ANOTHER
+    action ("don't delete Main", "אל תמחק את Main": a delete / remove / rename verb, and no word of this action) is not a stop for it."""
     @staticmethod
-    def search(text):
+    def search(text, kind=None):
         text = str(text or "")
-        if _STOP.search(text):
-            return True
         for clause in _CLAUSE.split(text):
+            if kind and _OTHER_VERB.search(clause) and not _ACTION_ANY[kind].search(clause):
+                continue
+            if _STOP.search(clause):
+                return True
             words = clause.strip().split()
             if words and len(words) <= 3 and _STOP_BARE.match(words[0]):
                 return True
@@ -602,7 +608,7 @@ def _consent(kind, a, last_user, earlier=()):
     verdict = _self_verdict(kind, last_user)
     if verdict:
         return _self_text(kind, verdict)
-    if _STOP_ANY.search(last_user):
+    if _STOP_ANY.search(last_user, kind):
         return f"The student's last message says no, wait or stop. Do not {verb}; ask the student what they want first."
     for u in earlier:
         w = _consent_one(kind, a, u, True)
@@ -613,7 +619,7 @@ def _consent(kind, a, last_user, earlier=()):
         verdict = _self_verdict(kind, u)
         if verdict:
             return _self_text(kind, verdict)
-        if _STOP_ANY.search(u):
+        if _STOP_ANY.search(u, kind):
             return f"The student said no, wait or stop after that. Do not {verb}; ask the student what they want first."
     return why
 
@@ -641,10 +647,25 @@ def _consent_one(kind, a, last_user, earlier_turn):
         return _self_text(kind, verdict)
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
-        # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here
-        if not r or not replace_re.search(r) or re.search(r"(?<!\w)" + re.escape(r) + r"(?!\w)", u) is None:
+        # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
+        if not r or not replace_re.search(r) or re.search(r"(?<!\w)(?:ו)?" + re.escape(r) + r"(?!\w)", u) is None:
             return (f"The {wipes} are only wiped when the student says so: ask whether what is there may be replaced, then run this with "
                     "replace_said = a quote of their words (replace, redo, overwrite, start over / מחדש, תחליף, תמחק).")
+    return ""
+
+
+def _sheet_edit_consent(kind, a, last_user):
+    """'' when the student's own words ask to remove (delete) or rename a netlist sheet, else why not. A quote of their message with a
+    delete / remove / rename word that is not negated ("don't delete Main" / "אל תמחק את Main" never removes anything)."""
+    said = a.get("student_said")
+    if not _quote_holds(said, last_user):
+        return "student_said must be a verbatim quote of the student's message that tells you to " + ("remove" if kind == "netlist.remove" else "rename") + " the sheet. Ask the student first."
+    if not _OTHER_VERB.search(said):
+        return "the student's words do not ask to remove or rename a sheet. Ask the student first."
+    if any(_OTHER_VERB.search(c) and _STOP_ANY.search(c) for c in _CLAUSE.split(str(last_user or ""))):      # "don't delete Main"; "rename X, don't draw yet" is fine
+        return "the student's message says no, wait or stop about this. Do not change the sheet; ask what they want."
+    if kind == "netlist.rename" and not str(a.get("to") or "").strip():
+        return "to (the new sheet id) is missing."
     return ""
 
 
@@ -1504,6 +1525,20 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(f"netlist.write:{res['sheet']}{note}")
                 else:
                     refused.append(f"netlist.write:{a['sheet']} refused: " + "; ".join(res["errors"][:8]))
+            elif kind in ("netlist.remove", "netlist.rename") and a.get("sheet"):
+                why = _sheet_edit_consent(kind, a, last_user)
+                if why:
+                    refused.append(f"{kind}:{a['sheet']} refused: {why}")
+                else:
+                    if kind == "netlist.remove":
+                        res = store.remove_sheet_logged(project, a["sheet"])
+                    else:
+                        res = store.rename_sheet_logged(project, a["sheet"], a.get("to") or "")
+                    if res["ok"]:
+                        applied.append(f"{kind}:{a['sheet']}" + (f" -> {res['sheet']}" if kind == "netlist.rename" else "")
+                                       + " (the SchDoc in Altium is not touched: remove or keep it there)")
+                    else:
+                        refused.append(f"{kind}:{a['sheet']} refused: " + "; ".join(res["errors"][:4]))
             elif kind == "library.add" and a.get("line"):
                 if a["line"] not in {l["key"] for l in store.bom_lines(project)}:
                     refused.append(f"library.add: no BOM line {a['line']}")

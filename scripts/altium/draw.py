@@ -23,7 +23,11 @@ from partlib_convert import NAME_CHAR, NAME_HEIGHT, NUMBER_RAISE  # noqa: E402
 TAG = "[advisor]"                      # the same first word the skeleton frames carry
 GRID = 100                             # mils: everything is placed on the 100 mil grid
 DIRECTION = {0: (1, 0), 1: (0, 1), 2: (-1, 0), 3: (0, -1)}      # pin rotation: right, up, left, down
-AREA = (800, 1000, 10800, 6800)        # usable drawing area of an A4 sheet in mils: x0, y0, x1, y1
+SHEET_STYLE = 0                        # Altium SheetStyle of the sheets drawn here: A4 (AdvisorBridge.pas SheetSetup sets the same value)
+SHEET_SIZE = (11500, 7600)             # that sheet in mils (Altium's A4); its inner border is SHEET_BORDER inside the edge
+SHEET_BORDER = 200
+AREA = (800, 1000, SHEET_SIZE[0] - 700, SHEET_SIZE[1] - 800)    # usable drawing area in mils: x0, y0, x1, y1 (frames reach FRAME_PAD past x1,
+                                                                # still inside the inner border; the title block sits below y0)
 HEADER = 300                           # height of a section heading
 GAP = 200                              # between two parts, on top of their own margin
 MARGIN = 200                           # room kept around a part for its power symbols and labels
@@ -287,21 +291,27 @@ def part_texts(ref, comment, body, ink):
             cx += wid[k] + TEXT_SPACE
         return out
 
-    def rows(x, y):
-        return {k: (int(x), y + i * TEXT_PITCH, wid[k]) for i, (k, _) in enumerate(reversed(items))}   # the comment lowest
+    def rows(x, y, right=False):
+        """Two rows, the comment lowest. right=False: both start at x (left aligned); right=True: x is the right end, each text ends
+        there, but never starts left of the body (a comment far wider than the body starts at its left edge and runs past the right,
+        so the designator stays beside the body)."""
+        return {k: (int(max(x - wid[k], body[0]) if right else x), y + i * TEXT_PITCH, wid[k]) for i, (k, _) in enumerate(reversed(items))}
+
+    def rows_left(x, y):
+        """Two rows left of the body: each text ends at x, the designator next to the body, a wide comment running further left."""
+        return {k: (int(x - wid[k]), y + i * TEXT_PITCH, wid[k]) for i, (k, _) in enumerate(reversed(items))}
 
     def clash(spots):
         return any(_hit((x, y, x + w, y + TEXT_H), r, 20) for x, y, w in spots.values() for r in ink)
     one = sum(wid.values()) + TEXT_SPACE * (len(items) - 1)
-    w = max(wid.values())
     mid = _snap50((body[1] + body[3]) // 2 - TEXT_PITCH // 2)
     cands = []
     if len(items) == 1 or one <= max(body[2] - body[0], ONE_ROW):
         cands += [row(body[0], y0), row(body[2] - one, y0)]
     y_low = _snap50(min([body[1]] + [r[1] for r in ink]) - TEXT_GAP - 2 * TEXT_PITCH)
-    cands += [rows(body[0], y0), rows(body[2] - w, y0),
-              rows(body[2] + TEXT_GAP + 100, mid), rows(body[0] - TEXT_GAP - 100 - w, mid),
-              rows(body[0], y_low), rows(body[2] - w, y_low)]
+    cands += [rows(body[0], y0), rows(body[2], y0, True),
+              rows(body[2] + TEXT_GAP + 100, mid), rows_left(body[0] - TEXT_GAP - 100, mid),
+              rows(body[0], y_low), rows(body[2], y_low, True)]
     for c in cands:
         if not clash(c):
             return c
