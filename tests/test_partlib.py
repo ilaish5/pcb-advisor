@@ -493,3 +493,29 @@ def test_silk_clearance_covers_the_mask_expansion_and_the_silk_to_mask_rule_of_t
     gap = float(rules["SilkToSolderMaskClearance"]["MINSILKSCREENTOMASKGAP"].replace("mil", ""))
     assert conv.MASK_EXPANSION_MIL == exp and conv.SILK_TO_MASK_MIL == gap
     assert conv.SILK_TO_COPPER_MIL >= exp + gap
+
+
+# ---------------------------------------------------------------- pin names that do not fit a small body
+
+def _sym_pin(num, name, orient, x, y, ln=100):
+    return {"num": num, "name": name, "type": "Passive", "orient": orient, "x": x, "y": y, "len": ln}
+
+
+def test_pin_names_that_would_overlap_inside_a_small_body_are_hidden():
+    # a 4-pad crystal: two pins facing each other 200 mil apart, the grounds above and below
+    xtal = [_sym_pin("1", "XIN", "eRotate180", -100, 0), _sym_pin("3", "XOUT", "eRotate0", 100, 0),
+            _sym_pin("2", "GND", "eRotate270", 0, -100), _sym_pin("4", "GND", "eRotate90", 0, 100)]
+    assert conv.names_fit(xtal) is False
+    big = [_sym_pin("1", "XIN", "eRotate180", -400, 0), _sym_pin("3", "XOUT", "eRotate0", 400, 0),
+           _sym_pin("2", "GND", "eRotate270", 0, -400), _sym_pin("4", "GND", "eRotate90", 0, 400)]
+    assert conv.names_fit(big) is True
+
+
+def test_a_normal_ic_symbol_keeps_its_pin_names():
+    ic = [_sym_pin(str(i + 1), f"PIN{i}", "eRotate180", -600, 300 - 100 * i, 200) for i in range(4)] + \
+         [_sym_pin(str(i + 5), f"IO{i}", "eRotate0", 600, 300 - 100 * i, 200) for i in range(4)]
+    assert conv.names_fit(ic) is True
+
+
+def test_the_library_spec_marks_a_symbol_whose_names_do_not_fit_for_hiding():
+    assert "len(pins) == 2 or not names_fit(pins)" in pathlib.Path(partlib.__file__).read_text(encoding="utf-8")

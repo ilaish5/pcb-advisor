@@ -18,7 +18,7 @@
   Library commands (stage L2, see "project library" below):
              LIBCLOSE libpkg schlib pcblib intlib | FPBATCH pcblib spec | FPREMOVE pcblib name
              SYMBATCH schlib spec | SYMREMOVE schlib name | SYMLINK schlib linksfile | SYMPROPS schlib propsfile
-             SYMPARAMS schlib paramsfile | HIDEPINS schlib | ATTACH3D spec | SAVELIB path kind
+             SYMPARAMS schlib paramsfile | HIDEPINS schlib hidefile | ATTACH3D spec | SAVELIB path kind
              COMPILE libpkg intlib | CHECKINST intlib
 
   Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace | PLACE path ref libref schlib x y pins
@@ -1407,24 +1407,28 @@ begin
     C.SchIterator_Destroy(PIt);
 end;
 
-{ HIDEPINS schlib: pin NAMES off on every 2-pin symbol (the numbers stay) }
-procedure LibHidePinNames(LibPath: String);
+{ HIDEPINS schlib hidefile: pin NAMES off on every 2-pin symbol and on every symbol listed in hidefile (Name=1 lines: its pin
+  names do not fit in the body); the numbers stay }
+procedure LibHidePinNames(LibPath: String; HidePath: String);
 var
     Lib   : ISch_Lib;
     It, PIt : ISch_Iterator;
     C     : ISch_Component;
     P     : ISch_Pin;
+    Hide  : TStringList;
     changed : Integer;
 begin
     if (not FocusLib(LibPath, 'SchLib')) then Exit;
     Lib := SchServer.GetCurrentSchDocument;
+    Hide := TStringList.Create;
+    if (HidePath <> '') then Hide.LoadFromFile(HidePath);
     changed := 0;
     It := Lib.SchLibIterator_Create;
     It.AddFilter_ObjectSet(MkSet(eSchComponent));
     C := It.FirstSchObject;
     while (C <> nil) do
     begin
-        if (PinCountOf(C) = 2) then
+        if (PinCountOf(C) = 2) or (Hide.Values[C.LibReference] <> '') then
         begin
             PIt := C.SchIterator_Create;
             PIt.AddFilter_ObjectSet(MkSet(ePin));
@@ -2401,7 +2405,7 @@ begin
     else if (Cmd = 'SYMLINK') then LibLinkFootprints(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'SYMPROPS') then LibSetProps(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'SYMPARAMS') then LibSetParams(Field(Line, 1), Field(Line, 2))
-    else if (Cmd = 'HIDEPINS') then LibHidePinNames(Field(Line, 1))
+    else if (Cmd = 'HIDEPINS') then LibHidePinNames(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'ATTACH3D') then LibAttach3D(Field(Line, 1))
     else if (Cmd = 'SAVELIB') then SaveLib(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'COMPILE') then LibCompile(Field(Line, 1), Field(Line, 2))

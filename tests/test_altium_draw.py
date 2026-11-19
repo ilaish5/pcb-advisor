@@ -440,6 +440,79 @@ def test_a_sheet_with_every_pin_verified_has_a_plain_heading():
     assert p["unverified"] == [] and [c[6] for c in p["commands"] if c[0] == "FRAME"] == ["[advisor] PWR - Input"]
 
 
+# ---------------------------------------------------------------- section frames enclose their whole block
+
+def _two_sections(n=6, note=False):
+    sections = [{"id": "A", "title": "MCU Decoupling and Core Regulator"}, {"id": "B", "title": "Crystal"}]
+    parts = [{**part(f"C{i}", [{"num": "1", "net": f"VDD_{i}"}, {"num": "2", "net": "GND"}]), "section": "A"} for i in range(1, n + 1)]
+    parts += [{**part("R9", [{"num": "1", "net": "XIN"}, {"num": "2", "net": "GND"}]), "section": "B"},
+              {**part("R10", [{"num": "1", "net": "XOUT"}, {"num": "2", "net": "GND"}]), "section": "B"}]
+    if note:
+        parts[0]["pins_source"] = "agent"
+    syms = {x["ref"]: SYMS["R1"] for x in parts}
+    return draw.plan_sheet({"sections": sections, "parts": parts}, syms, "l", "d"), parts
+
+
+def _frames_and_boxes(p, parts):
+    frames = {c[6].split()[1]: tuple(int(v) for v in c[2:6]) for c in p["commands"] if c[0] == "FRAME"}
+    sec = {x["ref"]: x["section"] for x in parts}
+    boxes = {}
+    for pl in p["parts"]:
+        cell = draw.part_cell(next(x for x in parts if x["ref"] == pl["ref"]), SYMS["R1"])
+        bx0, by0, bx1, by1 = cell["box"]
+        boxes.setdefault(sec[pl["ref"]], []).append((pl["x"] + bx0, pl["y"] + by0, pl["x"] + bx1, pl["y"] + by1))
+    return frames, boxes
+
+
+def test_a_section_frame_encloses_every_part_stub_and_label_of_its_section():
+    p, parts = _two_sections()
+    assert not p["errors"]
+    frames, boxes = _frames_and_boxes(p, parts)
+    assert set(frames) == {"A", "B"}
+    for sid, (fx, fy, fw, fh) in frames.items():
+        for x0, y0, x1, y1 in boxes[sid]:
+            assert fx <= x0 and fy <= y0 and x1 <= fx + fw and y1 <= fy + fh, (sid, (fx, fy, fw, fh), (x0, y0, x1, y1))
+        assert max(b[3] for b in boxes[sid]) <= fy + fh - draw.HEADER       # the title strip is free of parts
+    doc = simulate(p["commands"])
+    for sid in frames:
+        fx, fy, fw, fh = frames[sid]
+        refs = {x["ref"] for x in parts if x["section"] == sid}
+        for c in doc["components"]:
+            if c["ref"] in refs:
+                for pin in c["pins"]:
+                    assert fx <= pin["x"] <= fx + fw and fy <= pin["y"] <= fy + fh
+
+
+def test_section_frames_do_not_overlap_and_stay_on_the_sheet():
+    p, parts = _two_sections(n=14, note=True)
+    assert not p["errors"]
+    frames, _ = _frames_and_boxes(p, parts)
+    (ax, ay, aw, ah), (bx, by, bw, bh) = frames["A"], frames["B"]
+    assert ay >= by + bh or by >= ay + ah or ax + aw <= bx or bx + bw <= ax
+    for fx, fy, fw, fh in frames.values():
+        assert fx >= 0 and fy >= draw.AREA[1] - draw.FRAME_PAD and fx + fw <= draw.AREA[2] + draw.FRAME_PAD
+        assert fy + fh <= draw.AREA[3]
+
+
+def test_a_long_title_with_the_unverified_note_still_fits_its_strip():
+    p, parts = _two_sections(n=14, note=True)
+    frames, boxes = _frames_and_boxes(p, parts)
+    text = next(c[6] for c in p["commands"] if c[0] == "FRAME" and c[6].startswith("[advisor] A"))
+    assert "pins not checked against a datasheet: C1" in text
+    fx, fy, fw, fh = frames["A"]
+    strip = fy + fh - max(b[3] for b in boxes["A"])
+    lines = -(-len(text) // ((fw - 2 * draw.FRAME_PAD) // draw.TITLE_CHAR))
+    assert strip >= 100 + lines * draw.TITLE_LINE - draw.FRAME_PAD
+
+
+def test_a_redraw_clears_frames_by_the_advisor_tag_only():
+    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
+    seg = pas[pas.index("procedure ClearFrames"):pas.index("procedure SetParam")]
+    assert "Pos(TAG, O.Text) = 1" in seg                                  # a student's own text frame has no tag and stays
+    p, _ = _two_sections()
+    assert all(c[6].startswith(draw.TAG) for c in p["commands"] if c[0] == "FRAME")
+
+
 # ---------------------------------------------------------------- U7: the draw step solves these itself
 
 def test_a_hebrew_net_name_is_transliterated_deterministically():

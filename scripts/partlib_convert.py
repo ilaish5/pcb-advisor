@@ -391,3 +391,42 @@ def kicad_model(text, tht):
     k = [float(rot.group(i)) for i in (1, 2, 3)] if rot else [0.0, 0.0, 0.0]
     return {"file": mm.group(1), "rx": (-k[0]) % 360, "ry": (-k[1]) % 360, "rz": (-k[2]) % 360,
             "dx": round(dx, 3), "dy": round(dy, 3), "seat": 0 if tht else 1}
+
+
+# ---------------------------------------------------------------- pin names that do not fit the symbol body
+
+NAME_CHAR = 60                      # mil per character of a pin name or number (Altium default 10 pt, a little generous)
+OVERLAP_OK = 30                     # mil two texts may touch before they count as drawn on top of each other
+NAME_HEIGHT = 80                    # mil: the part of a text line that is ink (pins 100 mil apart do not touch)
+NUMBER_RAISE = 45                   # mil: a pin number sits this far above its pin line
+
+
+def _text_box(p, text, inside):
+    """Rectangle (x0, y0, x1, y1) in mil that a pin's name (inside the body, from the pin's body end inwards) or number (centred
+    on the pin, beside it) takes. On a pin at the top or bottom the text is turned to run along the pin."""
+    dx, dy = DIRS.get(p.get("orient"), (1, 0))
+    w = max(1, len(str(text))) * NAME_CHAR
+    x, y, ln = float(p["x"]), float(p["y"]), float(p.get("len") or 0)
+    h = NAME_HEIGHT / 2
+    a, b = (0.0, -w) if inside else (ln / 2 + w / 2, ln / 2 - w / 2)
+    if dy == 0:
+        lo, hi = sorted((x + dx * a, x + dx * b))
+        return (lo, y - h, hi, y + h) if inside else (lo, y + NUMBER_RAISE, hi, y + NUMBER_RAISE + NAME_HEIGHT)
+    lo, hi = sorted((y + dy * a, y + dy * b))
+    return (x - h, lo, x + h, hi) if inside else (x - NUMBER_RAISE - NAME_HEIGHT, lo, x - NUMBER_RAISE, hi)
+
+
+def names_fit(pins):
+    """False when the pin names (inside the body) and numbers (beside the pins) would be drawn on top of each other: a small body
+    whose pins face each other (a 4-pin crystal). Such a symbol gets its pin names hidden; the numbers stay."""
+    texts = []
+    for p in pins:
+        texts.append((_text_box(p, p.get("name") or "", True), "name"))
+        texts.append((_text_box(p, p.get("num") or "", False), "num"))
+    for i, (a, ka) in enumerate(texts):
+        for b, kb in texts[i + 1:]:
+            if ka == kb == "num":
+                continue                       # numbers sit on their own pins, outside the body
+            if a[0] + OVERLAP_OK < b[2] and b[0] + OVERLAP_OK < a[2] and a[1] + OVERLAP_OK < b[3] and b[1] + OVERLAP_OK < a[3]:
+                return False
+    return True

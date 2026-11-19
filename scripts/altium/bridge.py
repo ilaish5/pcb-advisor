@@ -2263,13 +2263,15 @@ def library_files(project, lp):
                                                         m.get("dx", 0), m.get("dy", 0), seat)))
         bodies[fpn] = dest.name
     _write_ansi(out / "attach3d.txt", "\r\n".join(attach) + "\r\n")
+    _write_ansi(out / "hide.txt", "".join(f"{n}=1\r\n" for n, s in parts["symbols"].items() if s.get("hide_pin_names")))
     pins = spec_symbols(out / "symbols_spec.txt")
     expected = {"symbols": {n: {"pins": pins.get(n, []), "footprint": links.get(n, ""), "props": props.get(n, "|").split("|", 1),
                                 "hide": bool(s.get("hide_pin_names")), "params": s.get("params", {})}
                             for n, s in parts["symbols"].items()},
                 "footprints": spec_footprints(out / "footprints_spec.txt"), "bodies": bodies}
     return {k: out / v for k, v in (("symbols", "symbols_spec.txt"), ("footprints", "footprints_spec.txt"), ("links", "links.txt"),
-                                    ("props", "props.txt"), ("params", "params.txt"), ("attach", "attach3d.txt"))}, expected
+                                    ("props", "props.txt"), ("params", "params.txt"), ("attach", "attach3d.txt"),
+                                    ("hide", "hide.txt"))}, expected
 
 
 def write_libpkg(lp):
@@ -2303,8 +2305,9 @@ def verify_library_files(lp, expected):
         pins = [(p["number"], p["name"], p["electrical"]) for p in got["pins"]]
         if sorted(pins) != sorted(want["pins"]):
             sym_bad(name, f"pins differ: {len(pins)} in the library, {len(want['pins'])} in the spec")
-        if len(want["pins"]) == 2 and want["hide"] and any(p["show_name"] for p in got["pins"]):
-            sym_bad(name, "pin names are still shown on a 2-pin part")
+        if want["hide"] and any(p["show_name"] for p in got["pins"]):
+            sym_bad(name, "pin names are still shown on a 2-pin part" if len(want["pins"]) == 2
+                    else "pin names are still shown although they do not fit in the symbol body")
         prefix, comment = (want["props"] + ["", ""])[:2]
         if got["designator"] != f"{prefix}?":
             sym_bad(name, f"designator {got['designator']!r}, expected {prefix}?")
@@ -2442,7 +2445,7 @@ def _create_libraries(project, lp):
             ("SYMLINK", str(lp["schlib"]), str(files["links"])),
             ("SYMPROPS", str(lp["schlib"]), str(files["props"])),
             ("SYMPARAMS", str(lp["schlib"]), str(files["params"])),
-            ("HIDEPINS", str(lp["schlib"])), ("SAVELIB", str(lp["schlib"]), "SchLib")]
+            ("HIDEPINS", str(lp["schlib"]), str(files["hide"])), ("SAVELIB", str(lp["schlib"]), "SchLib")]
     if expected["bodies"]:
         cmds.append(("ATTACH3D", str(files["attach"])))
     run_commands(cmds, stall_timeout=120, total_timeout=900)

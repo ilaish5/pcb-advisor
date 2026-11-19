@@ -201,20 +201,41 @@ def _snap_up(v):
     return int(math.ceil(v / GRID)) * GRID
 
 
-def layout(cells, sections, area=AREA):
-    """Places the cells on a grid, section after section from the top of the sheet: each section is a heading and shelves of
-    parts left to right. cells: [(section id, cell)]. Returns ({ref: (x, y)}, [(heading position, section id)], problems)."""
+FRAME_PAD = 100                        # between a section frame and the boxes of its parts
+FRAME_GAP = 200                        # between two section frames
+FRAME_MIN_W = 4500                     # a frame is never narrower than this (room for its title)
+TITLE_CHAR = 80                        # width of one character of the frame text, with some slack
+TITLE_LINE = 130                       # height of one line of the frame text
+
+
+def frame_text(sid, title="", note=""):
+    return f"{TAG} {sid} - {title}".strip(" -") + note
+
+
+def _strip_height(text, width):
+    """Height of the title strip at the top of a frame: one line is HEADER; a long title (the unverified-pins note) wraps."""
+    per_line = max(10, (width - 2 * FRAME_PAD) // TITLE_CHAR)
+    lines = max(1, int(math.ceil(len(str(text)) / per_line)))
+    return HEADER if lines == 1 else _snap_up(120 + TITLE_LINE * lines)
+
+
+def layout(cells, sections, area=AREA, texts=None):
+    """Places the cells on a grid, section after section from the top of the sheet. Each section is one frame that encloses its
+    title (a strip at the top) and all its parts with their stubs, labels and power ports (the cell boxes), the parts on shelves
+    left to right. cells: [(section id, cell)]; texts: {section id: the frame's text} (sizes the title strip).
+    Returns ({ref: (x, y)}, [((x, y, w, h), section id)], problems): the frame's lower left corner and size."""
     x0, y0, x1, y1 = area
     pos, heads, problems = {}, [], []
     y = y1
+    texts = texts or {}
+    titles = {s["id"]: s.get("title") or "" for s in sections}
     order = [s["id"] for s in sections] or [""]
     for sid in order:
         mine = [c for s, c in cells if s == sid]
         if not mine:
             continue
-        heads.append(((x0, y - HEADER + 100), sid))
-        y -= HEADER
-        x, shelf_h, top = x0, 0, y
+        rel, x, shelf_h, top = {}, x0, 0, 0                  # shelves relative to a top of 0, shifted below the title strip after
+        right, bottom = x0, 0
         for c in mine:
             bx0, by0, bx1, by1 = c["box"]
             w, h = bx1 - bx0, by1 - by0
@@ -222,12 +243,24 @@ def layout(cells, sections, area=AREA):
                 top -= shelf_h + GAP
                 x, shelf_h = x0, 0
             ox, oy = _snap_up(x - bx0), _snap_up(top - by1)       # the symbol origin that puts the box's corner at (x, top)
-            if ox + bx1 > x1 or oy + by0 < y0:
-                problems.append(f"{c['ref']} does not fit on the sheet")
-            pos[c["ref"]] = (ox, oy)
+            rel[c["ref"]] = (ox, oy)
+            right = max(right, ox + bx1)
+            bottom = min(bottom, oy + by0)
             x = ox + bx1 + GAP
             shelf_h = max(shelf_h, h)
-        y = top - shelf_h - GAP
+        fx = x0 - FRAME_PAD
+        fw = max(right + FRAME_PAD - fx, FRAME_MIN_W)
+        strip = _strip_height(texts.get(sid) or frame_text(sid, titles.get(sid, "")), fw)
+        shift = y - strip - FRAME_PAD                         # a multiple of GRID, so the placed cells stay on the grid
+        fy = bottom + shift - FRAME_PAD
+        for c in mine:
+            ox, oy = rel[c["ref"]]
+            pos[c["ref"]] = (ox, oy + shift)
+            bx0, by0, bx1, by1 = c["box"]
+            if ox + bx1 > x1 or oy + shift + by0 < y0:
+                problems.append(f"{c['ref']} does not fit on the sheet")
+        heads.append(((fx, fy, fw, y - fy), sid))
+        y = fy - FRAME_GAP
     return pos, heads, problems
 
 
@@ -494,13 +527,6 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
     out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors, "renamed": renamed}
     if errors:
         return out
-    pos, heads, problems = layout(cells, sections)
-    if problems:
-        errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections))
-    if errors:
-        return out
-    d = str(doc)
-    cmds = [("DRAWBEGIN", d, "1" if replace else "0")]
     titles = {s["id"]: s.get("title") or "" for s in sections}
     head_names = {}
     for n, s_ in enumerate(sections, 1):        # section headings are cosmetic: a non-ASCII one is drawn as "Section N" / without its title
@@ -515,12 +541,21 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
         if c.get("unverified"):
             unverified.setdefault(sid, []).append(c["ref"])
     out["unverified"] = sorted(r for refs in unverified.values() for r in refs)
-    for (hx, hy), sid in heads:
+    texts = {}
+    for sid in ids:
+        refs = unverified.get(sid) or []         # the title strip wraps; a long list is cut, the advisor has all of it
+        note = f" | pins not checked against a datasheet: {', '.join(refs[:6])}" + (f" +{len(refs) - 6}" if len(refs) > 6 else "") if refs else ""
+        texts[sid] = frame_text(head_names.get(sid, sid), titles.get(sid, ""), note)
+    pos, heads, problems = layout(cells, sections, texts=texts)
+    if problems:
+        errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections))
+    if errors:
+        return out
+    d = str(doc)
+    cmds = [("DRAWBEGIN", d, "1" if replace else "0")]
+    for (fx, fy, fw, fh), sid in heads:         # one frame around the whole section, its title at the top (a text frame starts its text there)
         if sid:
-            label = head_names.get(sid, sid)
-            refs = unverified.get(sid) or []         # the frame is one line high: a long list is cut, the advisor has all of it
-            note = f" | pins not checked against a datasheet: {', '.join(refs[:6])}" + (f" +{len(refs) - 6}" if len(refs) > 6 else "") if refs else ""
-            cmds.append(("FRAME", d, str(hx), str(hy - 100), "4500", str(HEADER - 100), f"{TAG} {label} - {titles.get(sid, '')}".strip(" -") + note))
+            cmds.append(("FRAME", d, str(fx), str(fy), str(fw), str(fh), texts[sid]))
     for _, c in cells:
         ox, oy = pos[c["ref"]]
         cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"])))
