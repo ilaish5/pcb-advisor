@@ -397,6 +397,20 @@ def _truthy(v):
     return v is True or v == 1 or str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _pending(project, ids):
+    """How many of these proposals still wait for the student (one approved at once by the autonomy setting is done, not pending)."""
+    try:
+        status = {p["id"]: p.get("status") for p in store.proposals(project)}
+        return sum(1 for i in ids if status.get(i) == "pending")
+    except Exception:
+        return len(ids)
+
+
+def _usage_applied(applied):
+    """The applied list for the usage log's answer: proposals are logged under the proposals, not as applied work."""
+    return [x for x in applied if not str(x).startswith("bom.propose:")]
+
+
 def _bridge_done(project, op, since):
     """The newest altium-log.jsonl entry of `op` that succeeded at or after `since` (epoch seconds), else None: a model
     that ran bridge.py itself in its shell has already done what the action would do."""
@@ -404,7 +418,7 @@ def _bridge_done(project, op, since):
         return None
     floor = dt.datetime.fromtimestamp(since).isoformat(timespec="seconds")
     ok = [r for r in store.read_jsonl(store.pdir(project) / "altium-log.jsonl")
-          if r.get("op") == op and "error" not in r and str(r.get("ts", "")) >= floor]
+          if r.get("op") == op and store.log_ok(r) and str(r.get("ts", "")) >= floor]
     return ok[-1] if ok else None
 
 
@@ -1049,6 +1063,21 @@ def _run_end(project, **final):
                 if st["state"] in ("waiting", "running"):
                     st["state"] = "stopped" if final.get("stopped") else "skipped" if final.get("error") else "done"
             run.update(final, running=False, stopping=False)
+
+
+class BadField(Exception):
+    """A body field that must be text was something else (a list, a number, an object): the answer is 400, not a dropped connection."""
+
+
+def _text_field(data, key, default=""):
+    """The one place a name / project / text is read from a request body: a string (or absent -> default), stripped.
+    A list or number is refused with BadField instead of being turned into "['a']" or crashing on .strip()."""
+    value = data.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise BadField(f"\"{key}\" must be text")
+    return value.strip()
 
 
 class StepStopped(Exception):
@@ -2231,6 +2260,8 @@ class Handler(BaseHTTPRequestHandler):
         """A project file another program holds open (Windows: an editor) is an answer, not a dropped connection."""
         try:
             return fn()
+        except BadField as exc:
+            return self._send(400, {"error": str(exc)})
         except PermissionError as exc:              # a Windows sharing violation; a missing file or a socket error is not
             if not exc.filename:
                 raise
@@ -2680,7 +2711,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # ---- the conversation
         if path == "/api/chat":
-            text = (data.get("text") or "").strip()
+            text = _text_field(data, "text")
             if not text:
                 return self._send(400, {"error": "text required"})
             source_file = data.get("file") or data.get("source")
@@ -2789,8 +2820,8 @@ class Handler(BaseHTTPRequestHandler):
             if data_edited or data_unrestored:
                 print(f"[guard] the agent edited project files: restored {data_edited}, not restorable {data_unrestored}", file=sys.stderr, flush=True)
                 refused.append(project_guard.refusal(data_edited, data_unrestored))
-            runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
-                         refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
+            runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=max(0, len(applied) - _pending(proj, proposals)),
+                         refused=len(refused), warned=len(warned_map(applied)), proposed=_pending(proj, proposals), partial=partial,
                          actions=[x.get("type") for x in (res.get("actions") or [])[:30] if isinstance(x, dict)], parse_refused=res.get("parse_refused") or [],
                          error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:4000]),
                          **_chat_info)
@@ -2804,7 +2835,7 @@ class Handler(BaseHTTPRequestHandler):
             if res.get("provider") != "external":         # an outside driver is not an engine turn
                 import introspect
                 introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
-                                  applied=len(applied), proposed=len(proposals), refused=len(refused))
+                                  applied=max(0, len(applied) - _pending(proj, proposals)), proposed=_pending(proj, proposals), refused=len(refused))     # a proposal is not "applied": it waits for the student
             if res.get("reply") or refused or partial or applied:       # an action that ran leaves its marker: it uses up the consent
                 reply = res.get("reply") or ""
                 if refused:
@@ -2844,7 +2875,7 @@ class Handler(BaseHTTPRequestHandler):
                         rec["split_retry"] = True       # the card says so only when the follow-up is really coming
                 say(proj, sess, rec)
                 runlog.usage(proj, "answer", text=rec["text"], chat=sess, engine=res.get("provider") or _eng, model=res.get("model") or "",
-                             seconds=rec.get("seconds"), applied=applied, refused=refused, warned=rec.get("warned") or {},
+                             seconds=rec.get("seconds"), applied=_usage_applied(applied), refused=refused, warned=rec.get("warned") or {},
                              error=(rec["text"] if res.get("error") else ""), error_kind=kind or "", ok=not res.get("error"),
                              words=len(rec["text"].split()))
                 _answered.append(1)
@@ -2852,7 +2883,7 @@ class Handler(BaseHTTPRequestHandler):
                 background.verify_record_async(proj, sess, rec["ts"], rec["text"])    # citations: checked after the reply, never before
             if not _answered:      # nothing to say and nothing applied: the usage log still gets its answer
                 runlog.usage(proj, "answer", text="", chat=sess, engine=res.get("provider") or _chat_info["engine"], model=res.get("model") or "",
-                             seconds=res.get("seconds"), applied=applied, refused=refused, ok=not res.get("error"), words=0)
+                             seconds=res.get("seconds"), applied=_usage_applied(applied), refused=refused, ok=not res.get("error"), words=0)
             if _answered and not partial:
                 try:
                     start_followup(proj, sess, tkey, text, rec, applied, refused, turn["cancel"].is_set())
@@ -2949,7 +2980,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/bom/import":
             import bom_import
-            target = workspace.safe_name(data["project"]) if data.get("project") else proj
+            target = workspace.safe_name(_text_field(data, "project")) if data.get("project") else proj
             if not project_mod.exists(target):
                 return self._send(404, {"error": f"no such project: {target}"})
             try:
@@ -3023,11 +3054,11 @@ class Handler(BaseHTTPRequestHandler):
             from altium import bridge
             if "amps" not in data:
                 return self._send(400, {"error": "amps is missing (send an empty value to clear the current)"})
-            if str(data.get("net") or "").strip() not in bridge.net_current_rows(proj)["all_nets"]:
+            if _text_field(data, "net") not in bridge.net_current_rows(proj)["all_nets"]:
                 return self._send(400, {"error": "that is not a net of this project's netlist"})
             try:
                 amps = data["amps"]
-                store.set_net_current(proj, str(data["net"]).strip(), None if amps is None or amps == "" else amps)
+                store.set_net_current(proj, _text_field(data, "net"), None if amps is None or amps == "" else amps)
             except ValueError as exc:
                 return self._send(400, {"error": str(exc)})
             return self._send(200, {"ok": True, **bridge.net_current_rows(proj)})
@@ -3093,7 +3124,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/skill":
             try:
-                name = data.get("name")
+                name = _text_field(data, "name")
                 if name == "export_bom" and not data.get("args"):
                     data["args"] = ["generic"]
                 return self._send(200, {"result": run_skill(name, proj, *[str(a) for a in data.get("args", [])]),
@@ -3291,7 +3322,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"session": sid, "sessions": session_mod.list_all(proj)})
 
         if path == "/api/altium/link":
-            raw_path = (data.get("path") or "").strip()
+            raw_path = _text_field(data, "path")
             if not raw_path:
                 return self._send(400, {"error": "path required"})
             target = pathlib.Path(raw_path)
@@ -3430,7 +3461,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"memory": text, "trimmed": trimmed})
 
         if path == "/api/projects/new":
-            name = str(data.get("name") or "").strip()
+            name = _text_field(data, "name")
             if not name:
                 return self._send(400, {"error": "Give the project a name"})
             wanted = workspace.safe_name(name)          # the folder name this text gives
@@ -3439,7 +3470,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, {"error": f"A project named \"{wanted}\" already exists.", "exists": wanted,
                                         "projects": model.list_projects()})
             created = project_mod.create(name, title=data.get("title") or name, brief=data.get("brief", ""))
-            runlog.usage(None, "project", action="create", name=name, ok=True)
+            runlog.usage(created, "project", action="create", name=name, ok=True)
             out = {"created": created, "projects": model.list_projects()}
             if created != name:                         # the folder is not the text typed: say what it is
                 out["folder"] = created
@@ -3448,13 +3479,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, out)
 
         if path == "/api/projects/delete":
-            name = (data.get("name") or "").strip()
+            name = _text_field(data, "name")
             if not name:
                 return self._send(400, {"error": "name required"})
             import shutil
             proj_dir = model.project_dir(name)
-            if proj_dir.exists():
-                shutil.rmtree(proj_dir)
+            if not proj_dir.is_dir():
+                return self._send(404, {"error": f"no such project: {name}"})
+            shutil.rmtree(proj_dir)
             projects = model.list_projects()
             default = projects[0]["name"] if projects else "demo"
             return self._send(200, {"deleted": name, "projects": projects, "default": default})
@@ -3474,7 +3506,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/upload":
             # base64 in JSON rather than multipart: the stdlib cgi module was removed in 3.13.
             # also strip what Windows refuses in a file name (: ? * " < > |)
-            name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", pathlib.Path(data.get("name") or "upload.bin").name)
+            name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", pathlib.Path(_text_field(data, "name") or "upload.bin").name)
             blob = data.get("data_b64")
             if not blob:
                 return self._send(400, {"error": "data_b64 required"})
@@ -3520,7 +3552,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, state())
 
         if path == "/api/delete_source":
-            name = data.get("name")
+            name = _text_field(data, "name")
             if not name:
                 return self._send(400, {"error": "name required"})
             sources.unuse(proj, name)
@@ -3607,7 +3639,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "extra": extra})
         if path == "/api/rules/preset/enabled":     # switch one JLC preset rule on or off for this project
             import rules as rules_mod
-            name = data.get("name")
+            name = _text_field(data, "name")
             if name not in {r["name"] for r in rules_mod.get_jlc_preset(project_mod.board(proj)).get("rules", [])}:
                 return self._send(404, {"error": "no such preset rule"})
             off = [n for n in _preset_off(proj) if n != name] + ([] if data.get("enabled") else [name])

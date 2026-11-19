@@ -97,6 +97,16 @@ def now():
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def log_ok(rec):
+    """An altium-log record that ended well: no error, no problems, nothing restored, nothing failed."""
+    return not (rec.get("error") or rec.get("problems") or rec.get("restored") or rec.get("failed"))
+
+
+def now_ms():
+    """Log records are ordered against the usage log's clicks (millisecond stamps): a second-precision stamp sorts before the click that caused it."""
+    return dt.datetime.now().isoformat(timespec="milliseconds")
+
+
 def pdir(project):
     return workspace.project_dir(project)
 
@@ -514,7 +524,7 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
         if waiting:
             changes, library, new = {**(waiting[-1].get("changes") or {}), **changes}, library or waiting[-1].get("library"), True
             for p in waiting:
-                append(project, "proposals.jsonl", {"id": p["id"], "ts": now(), "status": "rejected", "by": "superseded"})
+                append(project, "proposals.jsonl", {"id": p["id"], "ts": now_ms(), "status": "rejected", "by": "superseded"})
     if line not in existing and not new:
         raise ValueError(f"no BOM line {line!r} (use new: true to propose a new line)")
     changes, lock_note = _vet_lock(project, line, changes, line in existing)
@@ -541,7 +551,7 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
                 n += 1
             changes = {**changes, "refs": refs}
     pid = _new_proposal_id(project)
-    rec = {"id": pid, "ts": now(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
+    rec = {"id": pid, "ts": now_ms(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),
            "library": library or None, "session": session, "status": "pending"}
     if lock_note:
@@ -1064,7 +1074,7 @@ def propose_idea_diagram(project, changes, reason="", sources=(), session=None):
         "links": existing.get("links", []),
         "diagram": existing.get("diagram", {"shapes": [], "connectors": [], "frames": []}),
     }
-    rec = {"id": pid, "ts": now(), "kind": "idea_diagram", "line": "diagram",
+    rec = {"id": pid, "ts": now_ms(), "kind": "idea_diagram", "line": "diagram",
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),
            "session": session, "status": "pending"}
     return append(project, "proposals.jsonl", rec)
@@ -1102,7 +1112,7 @@ def propose_net_current(project, net, current_a, reason="", sources=(), session=
         if not math.isfinite(current_a) or current_a <= 0:
             raise ValueError("current_a must be a positive number of amps (or empty to clear it)")
     pid = _new_proposal_id(project)
-    rec = {"id": pid, "ts": now(), "kind": "net_current", "line": net, "changes": {"current_a": current_a},
+    rec = {"id": pid, "ts": now_ms(), "kind": "net_current", "line": net, "changes": {"current_a": current_a},
            "before": {"current_a": net_currents(project).get(net)}, "reason": reason, "sources": list(sources),
            "session": session, "status": "pending"}
     return append(project, "proposals.jsonl", rec)
@@ -1154,15 +1164,15 @@ def decide(project, pid, decision, by="student"):
                 idea["diagram"] = validate_diagram(idea["diagram"])
 
             save_idea_draft(project, idea)
-            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by,
+            append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by,
                                                 "after_hash": _idea_hash(load_idea_working(project))})
         elif prop.get("kind") == "net_current":
-            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
-            append(project, "net-currents.jsonl", {"ts": now(), "by": by, "net": prop["line"],
+            append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by})
+            append(project, "net-currents.jsonl", {"ts": now_ms(), "by": by, "net": prop["line"],
                                                    "current_a": (prop.get("changes") or {}).get("current_a"),
                                                    "before": net_currents(project).get(prop["line"]), "proposal": pid})   # the value at approval time
         else:
-            append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
+            append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by})
             changes, note, fresh = dict(prop["changes"]), "", False
             if changes.get("footprint_lock"):       # proven again now: the library may have changed since the proposal
                 try:
@@ -1177,7 +1187,7 @@ def decide(project, pid, decision, by="student"):
             if cleared is not None:         # kept in `before` so an undo puts the offset back
                 before = {**(before or {}), "cpl_rotation": cleared}
             append(project, "bom-log.jsonl", {
-                "ts": now(), "by": "agent-approved", "line": prop["line"],
+                "ts": now_ms(), "by": "agent-approved", "line": prop["line"],
                 "changes": changes,
                 "before": before, "reason": prop.get("reason"),
                 "sources": prop.get("sources"), "proposal": pid})
@@ -1192,10 +1202,10 @@ def decide(project, pid, decision, by="student"):
                 prop = {**prop, "lock_note": note}
             if prop.get("library"):
                 append(project, "library-log.jsonl", {
-                    "ts": now(), "by": "agent-approved", "line": prop["line"],
+                    "ts": now_ms(), "by": "agent-approved", "line": prop["line"],
                     "changes": prop["library"], "proposal": pid})
     else:
-        append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": decision, "by": by})
+        append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by})
     return prop
 
 
@@ -1327,7 +1337,7 @@ def undo_proposal(project, pid, by="student"):
         log = [e for e in read_jsonl(pdir(project) / "net-currents.jsonl") if e.get("net") == net]
         if not log or log[-1].get("proposal") != pid:       # by the entry, not by the value: the same number may have been set again
             raise UndoRefused(f"the current of {net} was changed after this; undo that later change first")
-        append(project, "net-currents.jsonl", {"ts": now(), "by": "undo", "net": net, "current_a": log[-1].get("before"), "undoes": pid})
+        append(project, "net-currents.jsonl", {"ts": now_ms(), "by": "undo", "net": net, "current_a": log[-1].get("before"), "undoes": pid})
     else:
         entry = next((e for e in read_jsonl(pdir(project) / "bom-log.jsonl") if e.get("proposal") == pid), None)
         if not entry:
@@ -1340,19 +1350,19 @@ def undo_proposal(project, pid, by="student"):
                 raise UndoRefused(f"{entry['line']} was changed after this ({k} is now {cur.get(k)!r}); "
                                   "undo that later change first")
         if prop.get("new"):
-            append(project, "bom-log.jsonl", {"ts": now(), "by": "undo", "line": entry["line"], "removed": True,
+            append(project, "bom-log.jsonl", {"ts": now_ms(), "by": "undo", "line": entry["line"], "removed": True,
                                               "changes": {}, "before": entry.get("changes"), "undoes": pid})
         else:
             before = entry.get("before") or prop.get("before") or {}
             keys = list(entry["changes"]) + (["cpl_rotation"] if "cpl_rotation" in before and "cpl_rotation" not in entry["changes"] else [])
             append(project, "bom-log.jsonl", {
-                "ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
+                "ts": now_ms(), "by": "undo", "line": entry["line"], "undoes": pid,
                 "changes": {k: _restore_value(k, before.get(k)) for k in keys},
                 "before": entry.get("changes"), "reason": "undo of " + pid})
         if prop.get("library"):
-            append(project, "library-log.jsonl", {"ts": now(), "by": "undo", "line": entry["line"], "undoes": pid,
+            append(project, "library-log.jsonl", {"ts": now_ms(), "by": "undo", "line": entry["line"], "undoes": pid,
                                                   "changes": {k: None for k in prop["library"]}})
-    append(project, "proposals.jsonl", {"id": pid, "ts": now(), "status": "undone", "by": by})
+    append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": "undone", "by": by})
     return prop
 
 
@@ -1374,7 +1384,7 @@ def write_sheet_logged(project, sheet_id, sheet, by="agent"):
             base = cid
             while cid in taken:
                 cid, n = f"{base}-{n}", n + 1
-            append(project, "sheet-log.jsonl", {"id": cid, "ts": now(), "kind": "sheet", "sheet": res["sheet"],
+            append(project, "sheet-log.jsonl", {"id": cid, "ts": now_ms(), "kind": "sheet", "sheet": res["sheet"],
                                                 "before": before, "after_hash": _sheet_hash(after), "by": by})
             res["change"] = cid
     return res
@@ -1407,7 +1417,7 @@ def undo_sheet_write(project, cid, by="student"):
             path.unlink(missing_ok=True)
     else:
         _write_text(path, json.dumps(ch["before"], ensure_ascii=False, indent=2))
-    append(project, "sheet-log.jsonl", {"id": cid, "ts": now(), "status": "undone", "by": by})
+    append(project, "sheet-log.jsonl", {"id": cid, "ts": now_ms(), "status": "undone", "by": by})
     return ch
 
 
@@ -1464,7 +1474,7 @@ def edit_bom(project, line, field, value):
         changes["manufacturer"] = "—"      # unknown until a check answers for the new MPN
         _drop_stale_lcsc(project, line, changes)
     return append(project, "bom-log.jsonl", {
-        "ts": now(), "by": "student", "line": line, "changes": changes,
+        "ts": now_ms(), "by": "student", "line": line, "changes": changes,
         "before": {field: existing[line].get(field)}})
 
 
@@ -1472,7 +1482,7 @@ def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, so
                library_type=None, package=None, code=None, datasheet_url=None, exact=None, code_mismatch=None,
                declared=None):
     rec = {
-        "ts": now(), "line": line, "mpn": mpn, "supplier": supplier, "stock": stock,
+        "ts": now_ms(), "line": line, "mpn": mpn, "supplier": supplier, "stock": stock,
         "unit_price": unit_price, "qty_break": qty_break, "source": source,
     }
     if library_type is not None: rec["library_type"] = library_type
@@ -1486,7 +1496,7 @@ def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, so
 
 
 def add_library(project, line, changes, by="agent"):
-    return append(project, "library-log.jsonl", {"ts": now(), "by": by, "line": line, "changes": changes})
+    return append(project, "library-log.jsonl", {"ts": now_ms(), "by": by, "line": line, "changes": changes})
 
 
 # ---------------------------------------------------------------- idea
@@ -1752,7 +1762,7 @@ def accept_all_proposed(project, accept=True):
                     continue
             else:
                 it["status"] = "confirmed"
-                it["ts"] = now()
+                it["ts"] = now_ms()
         kept.append(it)
     idea["agreed"] = kept
     if idea.get("goal_status") == "proposed":
@@ -1821,9 +1831,9 @@ def propose_idea(project, topic, text, by="agent"):
     if item:
         if by == "agent" and item.get("text") and item["text"] != text:
             item["prev_text"] = item["text"]
-        item.update(text=text, by=by, status=status, ts=now())
+        item.update(text=text, by=by, status=status, ts=now_ms())
     else:
-        idea["agreed"].append({"topic": topic, "text": text, "by": by, "status": status, "ts": now()})
+        idea["agreed"].append({"topic": topic, "text": text, "by": by, "status": status, "ts": now_ms()})
     return save_idea_draft(project, idea)
 
 
@@ -1849,7 +1859,7 @@ def update_idea_item(project, index=None, old_topic=None, topic=None, text=None)
     item["text"] = text
     item["by"] = "student"
     item["status"] = "confirmed"
-    item["ts"] = now()
+    item["ts"] = now_ms()
     save_idea_draft(project, idea)
     return idea
 
@@ -1876,18 +1886,18 @@ def confirm_idea_item(project, index=None, topic=None):
     agreed = idea.get("agreed", [])
     if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
         agreed[index]["status"] = "confirmed"
-        agreed[index]["ts"] = now()
+        agreed[index]["ts"] = now_ms()
     elif topic:
         item = next((it for it in agreed if it.get("topic") == topic), None)
         if not item:
             raise KeyError(f"no requirement with topic {topic!r}")
         item["status"] = "confirmed"
-        item["ts"] = now()
+        item["ts"] = now_ms()
     else:
         for it in agreed:
             if it.get("status") == "proposed":
                 it["status"] = "confirmed"
-                it["ts"] = now()
+                it["ts"] = now_ms()
     save_idea_draft(project, idea)
     return idea
 
@@ -2008,7 +2018,7 @@ def save_diagram_snapshot(project, diagram):
                 history = []
         except Exception:
             history = []
-    history.append({"ts": now(), "diagram": copy.deepcopy(diagram)})
+    history.append({"ts": now_ms(), "diagram": copy.deepcopy(diagram)})
     history = history[-20:]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -3029,7 +3039,7 @@ def attach_datasheet(project, line_or_ref, doc_name, by="student"):
     if not name or not ((sources.folder_of(project) / name).is_file() or (sources.cache() / name).is_file()):
         raise ValueError(f"no document {doc_name!r} in this project's sources or the shared library")
     if line.get("datasheet") != name:
-        append(project, "bom-log.jsonl", {"ts": now(), "by": by, "line": line["key"], "changes": {"datasheet": name},
+        append(project, "bom-log.jsonl", {"ts": now_ms(), "by": by, "line": line["key"], "changes": {"datasheet": name},
                                           "before": {"datasheet": line.get("datasheet")}})
     res = {"ok": True, "line": line["key"], "refs": line.get("refs", []), "name": name, **_verify_line(project, line["key"])}
     if res["status"] != "verified":           # the reason as pins_status says it, so the toast and the DFM list read the same
@@ -3043,7 +3053,7 @@ def detach_datasheet(project, line_or_ref, by="student"):
     """Take the link away: the part goes back to unverified until a datasheet is linked again."""
     line = _line_of(project, line_or_ref)
     if line.get("datasheet"):
-        append(project, "bom-log.jsonl", {"ts": now(), "by": by, "line": line["key"], "changes": {"datasheet": ""},
+        append(project, "bom-log.jsonl", {"ts": now_ms(), "by": by, "line": line["key"], "changes": {"datasheet": ""},
                                           "before": {"datasheet": line.get("datasheet")}})
     add_library(project, line["key"], {"verify": "unchecked", "issues": NO_DATASHEET, "verified_at": now()}, by=by)
     refresh_pins_source(project)

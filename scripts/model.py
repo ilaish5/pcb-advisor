@@ -156,6 +156,23 @@ def anchors(project=None):
     return out
 
 
+def altium_ok(project):
+    """{op: time of the newest altium-log entry that ended well} for the three steps whose note the page keeps (a record with an error,
+    problems, a restore or failed nets is not a success), and "draw_sheets": [{ts, sheets: [file stems]}] of the good draws, so a
+    note about some sheets is dropped only by a draw that drew those sheets. The page drops a failure note once the step has succeeded."""
+    out, draws = {}, []
+    try:
+        for r in store.read_jsonl(store.pdir(project) / "altium-log.jsonl"):
+            if r.get("op") in ("draw-schematic", "place-pcb", "route-pcb") and store.log_ok(r) and r.get("ts"):
+                out[r["op"]] = r["ts"]
+                if r["op"] == "draw-schematic":
+                    draws.append({"ts": r["ts"], "sheets": [pathlib.Path(str(x).replace("\\", "/")).stem for x in r.get("sheets") or []]})
+    except Exception:
+        pass
+    out["draw_sheets"] = draws[-20:]
+    return out
+
+
 def sheets(project):
     out = []
     for sid in store.sheet_ids(project):
@@ -175,7 +192,7 @@ def sheets(project):
                 for s in prj_info.get("sheets", []):
                     s_name = pathlib.Path(s.replace("\\", "/")).name
                     s_stem = pathlib.Path(s.replace("\\", "/")).stem
-                    if not any(x["id"] in (s_name, s_stem) for x in out):
+                    if not any(x["id"] in (s_name, s_stem) or s_stem.startswith(x["id"] + " ") for x in out if not x.get("altium")):      # plan "02" is file "02 RP2040.SchDoc"
                         out.append({"id": s_stem, "title": s_stem, "sections": [], "parts": {}, "altium": True, "file": s_name})
             except Exception:
                 pass
@@ -255,6 +272,7 @@ def build(project=None, session=None):
         "history": store.history(project),
         "autonomy": store.autonomy(),
         "sheets": sheets(project),
+        "altium_ok": altium_ok(project),
         "sheet_gaps": store.sheet_gaps(project),
         "bom_count_check": store.bom_design_count(project),
         "library": store.library_view(project),

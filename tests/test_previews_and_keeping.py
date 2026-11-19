@@ -399,3 +399,18 @@ def test_pcb_picture_without_a_pcb_says_so_in_the_words_the_ui_looks_for():
     assert "No Altium .PcbDoc linked" in svg
     assert "Place parts adds one" in svg          # the button beside it (previews.js) adds the PcbDoc itself
     assert not HEX.search(svg.replace("var(--pcb-bg,#121820)", "").replace("var(--ink-3,#94a0bd)", ""))
+
+
+def test_board6_drops_a_stale_vertex_inside_the_rectangle():
+    """After Place the 30 x 25 mm board had a fifth, leftover vertex inside it: it drew as a wedge with parts off the board."""
+    rec = {"VX0": "0mil", "VY0": "0mil", "VX1": "1181.1024mil", "VY1": "0mil",
+           "VX2": "1181.1024mil", "VY2": "984.252mil", "VX3": "0mil", "VY3": "984.252mil",
+           "VX4": "700mil", "VY4": "400mil"}
+    assert preview_pcb.board6_outline(rec) == [(0.0, 0.0), (30.0, 0.0), (30.0, 25.0), (0.0, 25.0)]
+    rec["VX4"], rec["VY4"] = "1181.1024mil", "500mil"          # on a side that is not the closing edge the polygon would cross itself
+    assert len(preview_pcb.board6_outline(rec)) == 4
+    wide = {"VX0": "0mil", "VY0": "0mil", "VX1": "1574.8031mil", "VY1": "0mil", "VX2": "1574.8031mil", "VY2": "1000mil",
+            "VX3": "0mil", "VY3": "1000mil", "VX4": "1000mil", "VY4": "1000mil"}      # 40 x 25.4 mm with the default's (1000, 1000)
+    assert preview_pcb.board6_outline(wide) == [(0.0, 0.0), (40.0, 0.0), (40.0, 25.4), (0.0, 25.4)]
+    wide["VX4"], wide["VY4"] = "0mil", "500mil"                  # on the closing edge: kept
+    assert len(preview_pcb.board6_outline(wide)) == 5

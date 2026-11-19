@@ -1398,6 +1398,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if plan["failed"]:
         probs.append("not routed: " + "; ".join(f"{n} ({why})" for n, why in plan["failed"]))
     res["problems"] = probs
+    res["saved_open"] = [n for n, _ in open_nets]        # nets still open on the saved board (the route plan's own "failed" list may name fewer)
     if probs and not (keep_partial and all(_partial_ok(p) for p in probs)):
         res["restored"] = _restore(prj, pcb, res["backup"])
     res["summary"] = (f"{len(plan['routed'])} nets routed with {res['tracks']} tracks and {res['vias']} vias"
@@ -1509,7 +1510,8 @@ def route_pcb(project, replace=False, keep_partial=False):
          vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],
          restored=res["restored"], drc_before=res["drc_before"], drc_after=res["drc_after"],
          drawn_widths={n: w["width_mm"] for n, w in res["widths"].items() if w["width_mm"] is not None})
-    open_nets = [n for n, _ in res["failed"]]
+    open_nets = list(dict.fromkeys([n for n, _ in res["failed"]] + list(res.get("saved_open") or [])))     # every open net, not only the ones the plan failed on
+    why = dict(res["failed"])
     partial_kept = bool(keep_partial and open_nets and res["written"] and not res["restored"] and res["problems"]
                         and all(_partial_ok(p) for p in res["problems"]))        # the student asked for it: tracks stay, the answer names the open nets
     if not partial_kept and (res["problems"] or res["failed"] or not res["written"]):
@@ -1526,7 +1528,7 @@ def route_pcb(project, replace=False, keep_partial=False):
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
     if partial_kept:
         res["open_nets"] = open_nets
-        res["summary"] += "; PARTIAL ROUTE, left open: " + "; ".join(f"{n} ({why})" for n, why in res["failed"])
+        res["summary"] += "; PARTIAL ROUTE, left open: " + ", ".join(f"{n} ({why[n]})" if n in why else n for n in open_nets)
         res["warnings"] = [f"open nets, not routed: {', '.join(open_nets)}"] + [f"route check: {m}" for m in res["problems"] if not m.startswith("not routed")] + res["warnings"]
     return res
 

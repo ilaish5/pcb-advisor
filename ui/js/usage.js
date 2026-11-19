@@ -20,7 +20,7 @@
     try {
       f = f || {};
       for (var k in f) if (typeof f[k] === 'string' && f[k].length > 2000) f[k] = f[k].slice(0, 2000);      // no single text runs away
-      f.kind = kind; f.project = proj(); f.ts = localIso();
+      f.kind = kind; f.project = f.project || proj(); f.ts = localIso();      // f.project: an event that belongs to another project than the open one (a project just created)
       if (kind !== 'view') f.view = view();
       Q.push(f);
       if (Q.length > 500) Q.shift();                // bounded: the oldest goes first
@@ -81,9 +81,16 @@
     try {
       var el = e.target && e.target.closest && e.target.closest('button, a, summary, [data-act], [data-tab], [data-key], [role=button], select, input[type=checkbox], input[type=radio]');
       if (!el || el.type === 'password') return;
+      if (el.getAttribute('data-act') === 'newproj') return;        // shell.js logs the creation under the new project
       var cls = typeof el.className === 'string' ? el.className : '';
-      usage('click', {text: cut(el.innerText || el.getAttribute('aria-label') || el.title || el.value, 80), id: el.id || '',
-        act: el.getAttribute('data-act') || el.getAttribute('data-tab') || '', tag: el.tagName.toLowerCase(), cls: cut(cls, 60)});
+      var box = el.type === 'checkbox' || el.type === 'radio';
+      var lab = box ? (el.closest('label') ? el.closest('label').innerText : '') : '';
+      var key = box ? (el.getAttribute('data-bpid') || el.getAttribute('data-gpid') || el.getAttribute('data-preset-toggle') || el.getAttribute('data-extra-toggle') ||
+        el.getAttribute('data-std-pick') || '') : '';
+      var rec = {text: cut(box ? (lab || el.getAttribute('aria-label') || el.name || key || el.id) : (el.innerText || el.getAttribute('aria-label') || el.title || el.value), 80),
+        id: el.id || key, act: el.getAttribute('data-act') || el.getAttribute('data-tab') || '', tag: el.tagName.toLowerCase(), cls: cut(cls, 60)};
+      if (box) rec.checked = !!el.checked;           // the click has already changed it: this is the state now
+      usage('click', rec);
     } catch (x) { /* silent */ }
   }, true);
   document.addEventListener('change', function (e) {
