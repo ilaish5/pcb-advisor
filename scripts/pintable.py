@@ -270,14 +270,29 @@ def _modal(rows):
 def _repeating_columns(rows):
     """The numbering columns (of the usual row width) that give one number to two rows. Such a column is not a pin numbering:
     a truth table (`0  0  X`, `0  1  Hardware`), or a package that bonds several pins to one (an SO8 column of an STM32G0
-    table); the other columns of the table stay."""
+    table); the other columns of the table stay. Rows of the variants of one part (`NR  4  Noise reduction, fixed version
+    only` beside `FB  4  Feedback, adjustable version only`) give one number twice and are a pinout: see _variant_rows."""
     k, use = _modal(rows)
     out = set()
     for i in range(k):
         nums = [n.upper() for r in use for n in r["nums"][i]]
-        if len(nums) != len(set(nums)):
+        if len(nums) != len(set(nums)) and not (k == 1 and _variant_rows(use, i)):
             out.add(i)
     return out, k
+
+
+_VARIANT = re.compile(r"\b(only|versions?|fixed|adjustable)\b", re.I)
+
+
+def _variant_rows(rows, i):
+    """Every row whose number another row also has says it is for one variant of the part (only, version, fixed,
+    adjustable): either reading of that pin is the part's."""
+    count = {}
+    for r in rows:
+        for n in r["nums"][i]:
+            count[n.upper()] = count.get(n.upper(), 0) + 1
+    twice = [r for r in rows if any(count[n.upper()] > 1 for n in r["nums"][i])]
+    return bool(twice) and all(_VARIANT.search(f"{r['name']} {r.get('rest', '')}") for r in twice)
 
 
 _CAPTION = re.compile(r"\b(figure|fig\.|top view|bottom view|package drawing)\b", re.I)
@@ -353,11 +368,13 @@ def _columns(table):
     tied = k > 1 and len(per_line) == 1 and len(per_line[0]) == k
     cols = []
     for i in range(k):
-        if i in repeating:
-            continue                     # one number on two rows: not a pin numbering (see _repeating_columns)
         label = per_line[0][i] if tied else None
+        if i in repeating:               # one number on two rows: not a pin numbering (see _repeating_columns)
+            table.setdefault("dropped", []).append(label)
+            continue
         cols.append({"index": i, "label": label, "scope": labels if label is None else [label], "k": k, "rows": rows,
-                     "mapped": k == 1 or tied, "heading": table["heading"], "ep_lines": table.get("ep_lines", [])})
+                     "mapped": k == 1 or tied, "heading": table["heading"], "ep_lines": table.get("ep_lines", []),
+                     "variants": k == 1 and _variant_rows(rows, i)})
     return cols
 
 
@@ -451,11 +468,37 @@ def name_matches(name, cell, table_names=None):
 
     if forms(name) & cells:
         return True
+    if any(_pn_same(name, alt) for alt in re.split(r"\s+(?:or|and)\s+|/", re.sub(r"\([^)]*\)", " ", str(cell))) if alt.strip()):
+        return True
     alts = _alternatives(name)
     primary = _cell_forms(re.sub(r"\([^)]*\)", " ", str(cell)))
     if not alts or not any(forms(a) & primary for a in alts):
         return False
     return all(forms(a) & cells or (table_names is not None and not forms(a) & table_names) for a in alts)
+
+
+def _pn_key(name):
+    """The name with the side of a pair written as a letter, or "" when its last word names no side: USB_D- = USB_DM = USB_DN,
+    USB_D+ = USB_DP, CLK+ = CLKP, CLK- = CLKN. A + is never a - (the two sides stay apart)."""
+    tokens = [t for t in re.split(r"[_.\s]+|-(?=.)", str(name).strip().upper()) if t]
+    if not tokens:
+        return "", False
+    last, marked = tokens[-1], True
+    if last in ("D+", "DP"):
+        last = "DP"
+    elif last in ("D-", "DM", "DN"):
+        last = "DN"
+    elif len(last) > 1 and last[-1] in "+-":
+        last = last[:-1] + ("P" if last[-1] == "+" else "N")
+    else:
+        marked = False
+    return re.sub(r"[^A-Z0-9]", "", "".join(tokens[:-1] + [last])), marked
+
+
+def _pn_same(a, b):
+    """One pin of a pair spelt two ways (USB_D- / USB_DM, CLK+ / CLKP): the same letters once a side mark is a letter."""
+    (ka, ma), (kb, mb) = _pn_key(a), _pn_key(b)
+    return bool(ka) and ka == kb and (ma or mb)
 
 
 def _alternatives(name):
@@ -616,7 +659,7 @@ def _evaluate(col, pins, pads):
     nums = _numbers(col)
     label = col["label"] or (col["scope"][0] if len(col["scope"]) == 1 else "")
     out = {"conflict": [], "absent": [], "notes": [], "count": None, "label": label, "nums": nums}
-    complete = _complete(nums)
+    complete = _complete(list(dict.fromkeys(nums)) if col.get("variants") else nums)     # variant rows: each pin once
     top = max(int(n) for n in nums if n.isdigit()) if complete else 0
     ep_rows = [r for r in col["rows"] if _is_ep_row(r)]
     ep_lines = list(col.get("ep_lines") or [])
@@ -738,6 +781,11 @@ def _units(tables, package, pads=None):
                 found = same or found
             return _by_pads(found, pads), ""
     seen = sorted({lb for u in units for lb in u["scope"]})
+    dropped = [lb for t in tables for lb in t.get("dropped", []) if lb and package_relation(lb, mine)]
+    if dropped:
+        return [], (f"the datasheet's {dropped[0]} column (the package of this part, {mine}) gives one pin number to several "
+                    f"rows (pins bonded together), so it is not compared" + (f"; the other columns are for {', '.join(seen)}"
+                                                                             if seen else ""))
     return [], f"the datasheet's pin tables are for {', '.join(seen)}, the package of this part is {mine}"
 
 

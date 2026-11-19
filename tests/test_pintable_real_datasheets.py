@@ -216,3 +216,50 @@ def test_package_families_are_read_in_any_case_but_short_words_only_as_printed()
     assert pintable.package_labels("tssop-20") == ["TSSOP-20"]
     assert pintable.package_labels("connect to 3 V") == [] and pintable.package_labels("so 8 pins") == []
     assert pintable.package_labels("SO-8") == ["SO-8"]
+
+
+# ---------------------------------------------------------------- re-review of 76edae5
+
+def test_a_pair_side_spelt_with_a_sign_or_a_letter_is_one_name():
+    assert pintable.name_matches("USB_D-", "USB_DM") and pintable.name_matches("USB_D+", "USB_DP")
+    assert pintable.name_matches("USB_DN", "USB_D-") and pintable.name_matches("CLK+", "CLKP") and pintable.name_matches("CLK-", "CLK_N")
+    assert not pintable.name_matches("USB_D+", "USB_DM") and not pintable.name_matches("CLK+", "CLKN")
+    t = "X\nPin Functions\nPIN NAME\n1 VBUS Supply\n2 USB_DM I/O\n3 USB_DP I/O\n4 GND Ground\n"
+    assert pintable.check([t], [("1", "VBUS"), ("2", "USB_D-"), ("3", "USB_D+"), ("4", "GND")])["verify"] == "pass"
+    r = pintable.check([t], [("1", "VBUS"), ("2", "USB_D+"), ("3", "USB_D-"), ("4", "GND")])
+    assert r["verify"] == "mismatch" and len(r["issues"]) == 2
+
+
+LDO_VARIANTS = """\
+TPS7A
+Table 4-1. Pin Functions
+PIN
+NAME  NO.  I/O  DESCRIPTION
+OUT   1    O    Regulated output
+GND   2    —    Ground
+EN    3    I    Enable input
+NR    4    —    Noise-reduction pin, fixed version only
+FB    4    I    Feedback input, adjustable version only
+IN    5    I    Input supply
+"""
+
+
+def test_variant_rows_of_one_pin_are_a_pinout_and_either_reading_passes():
+    fixed = [("1", "OUT"), ("2", "GND"), ("3", "EN"), ("4", "NR"), ("5", "IN")]
+    adj = [("1", "OUT"), ("2", "GND"), ("3", "EN"), ("4", "FB"), ("5", "IN")]
+    assert pintable.check([LDO_VARIANTS], fixed, pads=list("12345"))["verify"] == "pass"
+    assert pintable.check([LDO_VARIANTS], adj, pads=list("12345"))["verify"] == "pass"
+    r = pintable.check([LDO_VARIANTS], [("1", "OUT"), ("2", "GND"), ("3", "EN"), ("4", "IN"), ("5", "FB")])
+    assert r["verify"] == "mismatch"
+    plain = LDO_VARIANTS.replace(", fixed version only", "").replace(", adjustable version only", "")
+    assert pintable.check([plain], fixed)["verify"] == "unchecked"            # one number twice without a variant word
+
+
+def test_a_dropped_package_column_is_named_in_the_reason():
+    t = ("STM32G0\nTable 12. Pin definitions\n"
+         "PIN NUMBER  PIN NAME\n"
+         "LQFP32  TSSOP20  SO8  PIN NAME\n"
+         "1  1  1  PB9 I/O\n2  2  1  PC14 I/O\n3  3  2  VDD Supply\n4  4  3  VSS Ground\n5  5  4  NRST I/O\n6  6  5  PA0 I/O\n")
+    r = pintable.check([t], [("1", "PB9"), ("2", "VDD"), ("3", "VSS")], "SO-8")
+    assert r["verify"] == "unchecked"
+    assert "SO-8 column" in r["issues"][0] and "bonded" in r["issues"][0]
