@@ -597,7 +597,16 @@ def _self_text(kind, verdict):
             f"ask the student who {_WHO[kind]}: they themselves in Altium or should you? Run this only after their answer.")
 
 
-def _consent(kind, a, last_user, earlier=()):
+def _consent(kind, a, last_user, earlier=(), prev_agent=""):
+    """The action's consent (`_consent_base`); then, for replace, `_replace_consent`: only a short, unambiguous replace or yes of the
+    CURRENT message grants it (never a longer message, never an earlier one)."""
+    why = _consent_base(kind, a, last_user, earlier)
+    if why or not _truthy(a.get("replace")):
+        return why
+    return _replace_consent(kind, a, last_user, prev_agent)
+
+
+def _consent_base(kind, a, last_user, earlier=()):
     """'' when a student message really asked the agent to do `kind` ("draw" the schematic, "place" the parts, "route" the board) or,
     for replace, to do it over what is there, else why not. The quote is checked against the last message first, then against
     `earlier` (the student's messages of this conversation since `kind` last ran, newest first): a clear instruction given one
@@ -653,86 +662,49 @@ def _consent_one(kind, a, last_user, earlier_turn):
     verdict = _self_verdict(kind, last_user)
     if verdict:
         return _self_text(kind, verdict)
-    if _truthy(a.get("replace")):
-        r = norm(a.get("replace_said"))
-        # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
-        if r and replace_re.search(r):
-            lu = str(last_user or "")
-            if _HARD_STOP.search(lu) or _hard_no(lu):
-                return f"The student's message says wait or stop. Do not wipe the {wipes}; ask the student what they want first."
-            # the rest is read only in the sentences that carry a replace word ("then we move to the PCB", "I don't need the old one" are about other things)
-            for sent in (x for x in re.split(r"[.;!?\n]+", lu) if replace_re.search(x)):
-                sent = _SOFT.sub(" ", sent)
-                if _STOP_ANY.search(sent, kind):
-                    return f"The student's message says no, wait or stop. Do not wipe the {wipes}; ask the student what they want first."
-                if _HEDGE_R.search(sent) or _COND_R.search(sent) or _IF_R.search(sent):
-                    return (f"The student's message hedges or makes the replace conditional (maybe, not sure, only if, after ...). "
-                            f"Do not wipe the {wipes}; ask first.")
-        if r and replace_re.search(r) and not _asked(r, u, replace_re):
-            return (f"The {wipes} are only wiped when the student says so, and a replace word of the quote is negated or breaks off. If their "
-                    "replace sentence is a plain yes, send just that sentence as replace_said; otherwise ask whether what is there may be replaced.")
-        if not r or not replace_re.search(r):
-            return (f"The {wipes} are only wiped when the student says so: ask whether what is there may be replaced, then run this with "
-                    "replace_said = a quote of their words (replace, redo, overwrite, start over / מחדש, תחליף, תמחק).")
     return ""
 
 
-_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|no reason|not|without|avoid|don[’']?t|do not|"
-                      r"(?:ו)?(?:אסור|אל|לא|אין צורך|מבלי|בלי|ללא|תימנע))(?!\w)", re.I)
-_SOFT = re.compile(r"\b(?:don[’']?t|do not)\s+(?:you\s+)?(?:forget|worry|mind|care)\b|\bdon[’']?t need(?! to)\b|\bno (?:problem|worries)\b"
-                   r"|(?<!\w)(?:ו)?אל\s+ת?(?:שכח|דאג)\w*|(?<!\w)לא\s+משנה(?!\w)|(?<!\w)אין\s+בעיה(?!\w)", re.I)      # a negation of ANOTHER verb: no stop, no refusal
-_HARD_STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?mind\b|\bcancel\b"
-                        r"|(?<!\w)(?:חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב|רגע|עוד לא)(?!\w)", re.I)
-_HEDGE_R = re.compile(r"not sure|should i|maybe|perhaps|do you think|or should|or not|i think|i guess|probably|נראה לי|(?<!\w)חושב\w*|לא בטוח|אולי|(?<!\w)או ש|(?<!\w)או לא", re.I)
-_COND_R = re.compile(r"(?<!\w)(?:after|before|until)(?!\w)|(?<!\w)(?<!and )then(?!\w)|(?<!\w)once(?! more)(?!\w)|(?<!\w)(?:אחרי|קודם|לפני|אחר כך)(?!\w)|(?<!\w)עד ש", re.I)
-_IF_R = re.compile(r"(?<!\w)if(?!\w)(?!\s+possible)|(?<!\w)unless(?!\w)|(?<!\w)אם(?!\w)(?!\s+אפשר)|(?<!\w)אלא(?!\w)", re.I)      # "replace only if empty"
-_NO_PHRASE = re.compile(r"(?<!\w)(?:don[’']?t do (?:it|that)|do not do (?:it|that)|actually,? no|no,\s*don[’']?t|אל תעשה(?: את זה)?|לא לעשות|בעצם לא|לא,\s*אל)(?!\w)", re.I)
-_NO_REPLACE = re.compile(r"^(?:(?:and|but|please|no|ו)[,\s]+)*(?:don[’']?t|do not)\s+(?:replace|overwrite|wipe|delete|erase)|^(?:ו)?אל\s+ת(?:חליף|מחק|דרוס)", re.I)
+_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|not|without|don[’']?t|do not|אסור|אל|לא)(?!\w)", re.I)
+_HARD_STOP = re.compile(r"(?<!\w)(?:not yet|wait|stop|hold (?:on|off)|never ?mind|cancel|no|nope)(?!\w)"
+                        r"|(?<!\w)(?:חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב|רגע|עוד לא|לא)(?!\w)", re.I)
+_NEG_MORE = re.compile(r"(?<!\w)(?:no reason|avoid|never|(?:ו)?(?:אין|מבלי|בלי|ללא|תימנע|אסור|לא))(?!\w)", re.I)      # more negations, used for replace only
+_IF_WORD = re.compile(r"(?<!\w)(?:if|unless|only|אם|אלא|רק)(?!\w)", re.I)
+_YES = re.compile(r"(?<!\w)(?:yes|yeah|yep|sure|ok|okay|go ahead|כן|אוקיי|אוקי|בסדר)(?!\w)", re.I)
+_REPLACE_ASKED = re.compile(r"replac|overwrit|redraw|re-draw|wipe|start over|מחדש|להחליף|תחליף|לדרוס|למחוק|תמחק", re.I)
+REPLACE_MAX_WORDS = 8
 
 
-def _hard_no(text):
-    """A flat no anywhere in the message ("don't do it", "actually no", a sentence that is only "no", a clause that is itself "don't replace"):
-    it cancels a replace even in a sentence that carries no replace word. A negation of ANOTHER verb ("don't forget") is cut out first."""
-    text = _SOFT.sub(" ", str(text or ""))
-    if _NO_PHRASE.search(text):
-        return True
-    for sent in re.split(r"[.;!?\n]+", text):
-        if sent.strip(" ,\t\"'").lower() in ("no", "nope", "לא"):
-            return True
-    return any(_NO_REPLACE.search(c.strip()) for c in _HARD.split(text) if c)
+def previous_agent_text(chat, last_user=""):
+    """The agent's message right before the student's current one ('' when there is none)."""
+    recs = list(chat or [])
+    if recs and recs[-1].get("role") == "user" and recs[-1].get("text") == last_user:
+        recs = recs[:-1]
+    for r in reversed(recs):
+        if r.get("role") == "agent":
+            return str(r.get("text") or "")
+        if r.get("role") == "user" and not r.get("generated"):
+            return ""
+    return ""
 
 
-_HARD = re.compile(r"[,;.!?\n]+|\s+(?:but|אבל)\s+", re.I)
-
-
-def _asked(word, u, replace_re=None):
-    """True when `word` (a quote, e.g. the replace word, or the whole message) is found in the message `u` and is not negated ("don't
-    replace anything", "אל תמחק את מה שיש", "without replacing" ask for the opposite). The quote is located in the whole message: it need
-    not fit inside one clause (a "ו-02" is no break of it). Every replace word in the quote (`replace_re`; the quote itself when None)
-    is checked for a negation in the text before it, within the clause where it stands. A Hebrew "ו" before it is the word "and"."""
-    u = str(u or "")
-    pat = re.compile(r"(?<!\w)(?:ו)?" + re.escape(word) + r"(?!\w)")
-    starts = [m.end() for m in _HARD.finditer(u)]
-    for q in pat.finditer(u):
-        qs = q.start()
-        inner = [qs + m.start() for m in replace_re.finditer(q.group(0))] if replace_re else [qs]
-        if not inner:
-            continue
-        ok = True
-        for pos in inner:
-            cs = max([e for e in starts if e <= pos] or [0])
-            if _NEGATED.search(_SOFT.sub(" ", u[cs:pos])):
-                ok = False
-                break
-        for m in (replace_re.finditer(q.group(0)) if replace_re else ()):       # a negation AFTER the word, in the same clause ("redraw is not needed")
-            end = qs + m.end()
-            ce = min([e.start() for e in _HARD.finditer(u) if e.start() >= end] or [len(u)])
-            if _NEGATED.search(_SOFT.sub(" ", u[end:ce])):
-                ok = False
-                break
-        if ok:
-            return True
-    return False
+def _replace_consent(kind, a, last_user, prev_agent=""):
+    """'' when the student's last message is a short, unambiguous replace or yes, else why not. Simple by construction: at most 8 words,
+    a replace word (or a bare yes right after the agent asked about replacing), and no negation, hedge, condition, question or stop word
+    anywhere in it. A longer message never grants replace, however it is worded: the agent asks a yes/no question instead."""
+    wipes, replace_re = CONSENT[kind][3], CONSENT[kind][1]
+    text = str(last_user or "")
+    words = re.findall(r"[\w’'\-]+", text)
+    asked_yes = bool(_YES.search(text)) and "?" in str(prev_agent) and bool(_REPLACE_ASKED.search(str(prev_agent)))
+    clean = (len(words) <= REPLACE_MAX_WORDS and "?" not in text and not _NEGATED.search(text) and not _NEG_MORE.search(text) and not _HEDGE.search(text)
+             and not _CONDITION.search(text) and not _IF_WORD.search(text) and not _STOP_ANY.search(text) and not _HARD_STOP.search(text))
+    if clean and (replace_re.search(text) or asked_yes):
+        return ""
+    sheet = str(a.get("sheet") or "").strip()
+    what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
+    return (f"The {wipes} are only wiped on a short, clear yes from the student (a long message never grants replace). Ask a yes/no "
+            f"question: \"Replace {what}? This wipes what is there (a backup is kept). Answer yes/no.\" Run this again only after their "
+            "short answer (such as \"yes, replace\").")
 
 
 _ME = re.compile(r"myself|\bi[’']?ll\b|\bi will\b|בעצמי|(?<!\w)א(?:מחק|סיר|שנה|מחוק)\w*", re.I)
@@ -821,8 +793,8 @@ def _sheet_edit_consent(kind, a, last_user):
     return ""
 
 
-def _draw_consent(a, last_user, earlier=()):
-    return _consent("draw", a, last_user, earlier)
+def _draw_consent(a, last_user, earlier=(), prev_agent=""):
+    return _consent("draw", a, last_user, earlier, prev_agent)
 
 
 _CONSENT_ACTION = {"draw": "altium.draw_schematic", "place": "altium.place_pcb", "route": "altium.route_pcb",
@@ -1720,7 +1692,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 # the agent draws the sheet in Altium only when the student said so, in their own words (asked first: draw it
                 # yourself or should I?). replace needs that too, and never happens by default: a drawing is never wiped.
                 from altium import bridge
-                why = _draw_consent(a, consent_words(chat, last_user), earlier_student_messages(chat, "draw", last_user))
+                why = _draw_consent(a, consent_words(chat, last_user), earlier_student_messages(chat, "draw", last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
                     continue
@@ -1735,7 +1707,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 # each (asked first: do it yourself or should I?). replace needs that too and never happens by default.
                 from altium import bridge
                 step = "place" if kind == "altium.place_pcb" else "route"
-                why = _consent(step, a, consent_words(chat, last_user), earlier_student_messages(chat, step, last_user))
+                why = _consent(step, a, consent_words(chat, last_user), earlier_student_messages(chat, step, last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
                     continue

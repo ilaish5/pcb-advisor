@@ -258,19 +258,20 @@ def test_lavad_is_not_a_negation(drawn, spy):
     assert spy == [False] and applied and not refused
 
 
-def test_replace_needs_its_own_quote_with_a_redraw_word(drawn, spy):
+def test_replace_needs_a_short_clear_replace_message(drawn, spy):
     project = drawn[0]
-    said = "draw it and replace the old one"
-    _, _, refused = _run(project, {"student_said": said, "replace": True}, said)
-    assert not spy and "replaced" in refused[0]                      # no replace_said
-    _, _, refused = _run(project, {"student_said": said, "replace": True, "replace_said": "draw it"}, said)
-    assert not spy and refused                                        # a quote without a redraw word
-    _, _, refused = _run(project, {"student_said": said, "replace": True, "replace_said": "replace the sheet"}, said)
-    assert not spy and refused                                        # not their words
-    applied, _, refused = _run(project, {"student_said": said, "replace": True, "replace_said": "replace the old one"}, said)
+    said = "draw it and replace the old one"                      # 7 words, a replace word, nothing negated: granted
+    applied, _, refused = _run(project, {"student_said": said, "replace": True}, said)
     assert spy == [True] and applied and not refused
-    applied, _, _ = _run(project, {"student_said": "תשרטט מחדש", "replace": True, "replace_said": "מחדש"}, "תשרטט מחדש")
-    assert spy == [True, True]
+    spy.clear()
+    said = "draw it and don't replace the old one"
+    _, _, refused = _run(project, {"student_said": said, "replace": True}, said)
+    assert not spy and refused                                        # negated
+    said = "draw it for me, thanks a lot, and replace the old one as well"
+    _, _, refused = _run(project, {"student_said": said, "replace": True}, said)
+    assert not spy and refused and "yes/no" in refused[0]            # a long message never grants replace
+    applied, _, _ = _run(project, {"student_said": "תשרטט מחדש", "replace": True}, "תשרטט מחדש")
+    assert spy == [True]
 
 
 def test_replace_false_never_needs_the_second_quote(drawn, spy):

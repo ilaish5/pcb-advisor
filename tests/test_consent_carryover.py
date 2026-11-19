@@ -224,122 +224,63 @@ def test_a_failing_bom_check_cannot_lose_the_reply_or_the_marker(server, empty, 
     assert rec and rec[-1]["text"] == "done"
 
 
-# ---------------------------------------------------------------- the replace quote is found in the whole message
+# ---------------------------------------------------------------- replace: only a short, unambiguous replace or yes
 
 LIVE = "שרטט מחדש את 01 ו-02 באלטיום"
+ASKED = "Replace the drawing on sheet 01? This wipes what is drawn there (a backup is kept). Answer yes/no."
 
 
-def test_the_live_message_whole_is_accepted_as_the_replace_quote():
-    a = {"student_said": LIVE, "replace": True, "replace_said": LIVE}
-    assert serve._draw_consent(a, LIVE) == ""
-    assert serve._draw_consent({**a, "replace_said": "מחדש"}, LIVE) == ""
+def _rep(msg, prev=""):
+    return serve._draw_consent({"student_said": msg, "replace": True, "sheet": "01"}, msg, (), prev)
 
 
-def test_a_negation_after_the_and_split_still_refuses_replace():
-    msg = "שרטט את 01 ו-02 ואל תמחק כלום"
-    a = {"student_said": msg, "replace": True, "replace_said": "שרטט"}
-    assert serve._draw_consent(a, msg) != ""
-    a["replace_said"] = msg                              # the whole message as the replace quote: its תמחק is negated
-    assert serve._draw_consent(a, msg) != ""
-    for msg in ("תצייר את הסכמה אבל אל תמחק את מה שיש", "draw it but don't replace anything"):
-        assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) != "", msg
-    assert serve._draw_consent({"student_said": "תצייר ותחליף", "replace": True, "replace_said": "ותחליף"}, "תצייר ותחליף") == ""
+@pytest.mark.parametrize("msg", ["כן, תחליף", "yes, replace it", "תשרטט מחדש", "redraw sheet 01", "overwrite it", LIVE])
+def test_a_short_clear_replace_is_granted(msg):
+    assert _rep(msg) == "", msg
 
 
-@pytest.mark.parametrize("msg,r", [
-    ("לא צריך לשרטט את 01 ו-02 מחדש", None),
-    ("לא חייבים לשרטט את 01 ו-02 מחדש", None),
-    ("שרטט את הסכמה, אין צורך להתחיל מחדש", None),
-    ("שרטט את הסכמה מבלי להחליף", "להחליף"),
-    ("שרטט את הסכמה בלי להתחיל מחדש", "מחדש"),
-    ("שרטט את הסכמה ללא להחליף", "להחליף"),
-    ("draw the schematic, there is no reason to start over", "start over"),
-    ("draw the schematic, it is not necessary to redo 01 and redraw 02", "redraw 02"),
-    ("draw the schematic and overwrite it. wait, stop", "overwrite it"),
-    ("תשרטט את הסכמה מחדש. רגע, עצור", "מחדש"),
-    ("I'm not sure, maybe redraw the schematic", "redraw"),
-    ("אולי תשרטט מחדש", "מחדש"),
-    ("draw the schematic, replace only if empty", "replace"),
-])
-def test_replace_is_refused_for_negation_stop_hedge_and_condition(msg, r):
-    a = {"student_said": msg, "replace": True, "replace_said": r or msg}
-    assert serve._draw_consent(a, msg) != "", msg
+def test_a_bare_yes_counts_only_after_the_agent_asked_about_replacing():
+    assert _rep("כן", "להחליף את הציור בגיליון 01? זה ימחק מה שציור שם. כן/לא?") == ""
+    assert _rep("yes", ASKED) == ""
+    assert _rep("yes") != ""                                        # nothing was asked
+    assert _rep("yes", "Shall I add the LED?") != ""                 # asked about something else
 
 
 @pytest.mark.parametrize("msg", [
-    "תחליף רק את 02",
-    "רק תשרטט מחדש את הסכמה",
-    "redraw only sheet 02 of the schematic",
-    "תשרטט מחדש את הסכמה, אם אפשר",
-    "redraw the schematic and then we move to the PCB",
-    "redraw the schematic once more",
-    "overwrite 01 or 02, whatever",
-    "redraw the schematic, don't forget the LED",
-    "תשרטט מחדש את הסכמה ואל תשכח את הנגד",
-    "replace the schematic in Altium, I don't need the old one",
-    "overwrite the schematic, no problem",
-    "לא משנה לי, תשרטט מחדש את הסכמה",
-    "תשרטט מחדש את הסכמה שלא עבדה",
+    "לא, אל תחליף", "maybe redraw", "redraw? not sure", "I don't need you to redraw", "don't overwrite", "בעצם אל", "לא לא", "redraw, no",
+    "wait, overwrite it", "overwrite it, stop", "redraw only if empty", "אולי תשרטט מחדש", "redraw after the library",
+    "שרטט את הסכמה, אין צורך להתחיל מחדש", "שרטט את הסכמה מבלי להחליף", "תימנע מלהתחיל מחדש", "redraw is not needed",
 ])
-def test_normal_replace_requests_are_accepted(msg):
-    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) == "", msg
+def test_a_short_negated_hedged_conditional_or_stopped_message_never_grants_replace(msg):
+    assert _rep(msg) != "", msg
 
 
 @pytest.mark.parametrize("msg", [
-    "redraw is not needed",
-    "מחדש זה לא רעיון טוב",
-    "תימנע מלהתחיל מחדש",
-    "תשרטט מחדש אל",
-    "draw the schematic, overwrite only if it is empty",
-    "draw the schematic, wait. overwrite it",
+    "שרטט את 01 ו-02 ואל תמחק כלום", "שרטט את הסכמה ותחליף את כל מה שיש שם ואז נמשיך הלאה לשלב הבא",
+    "לא צריך לשרטט את 01 ו-02 מחדש", "draw the schematic and overwrite it. don't do it", "redraw the schematic and then we move to the PCB",
+    "replace the schematic in Altium, I don't need the old one", "I think it is a good idea to redraw the whole schematic now please",
+    "תצייר את הסכמה אבל אל תמחק את מה שיש", "draw it but don't replace anything",
 ])
-def test_negation_after_the_replace_word_and_stops_refuse(msg):
-    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) != "", msg
+def test_earlier_round_long_or_negated_messages_stay_refused(msg):
+    assert _rep(msg) != "", msg
 
 
-@pytest.mark.parametrize("msg", [
-    "draw it and overwrite. don't do it",
-    "draw it and overwrite. do not do that",
-    "draw it and overwrite. actually no",
-    "draw it and overwrite. no, don't",
-    "draw it and overwrite. no.",
-    "draw it and overwrite. nope",
-    "תשרטט מחדש. אל תעשה",
-    "תשרטט מחדש. אל תעשה את זה",
-    "תשרטט מחדש. לא לעשות",
-    "תשרטט מחדש. בעצם לא",
-    "תשרטט מחדש. לא, אל",
-    "תשרטט מחדש. לא.",
-    "תשרטט מחדש. אל תחליף את הנגד",
-    "תשרטט מחדש. אל תדרוס",
-    "draw it and overwrite. don't replace the LED",
-    "draw it and overwrite. don't wipe it",
-    "draw it and overwrite. but don't delete 02",
-])
-def test_a_flat_no_anywhere_cancels_replace(msg):
-    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": "overwrite" if msg[0] == "d" else "מחדש"}, msg) != "", msg
+def test_a_long_clear_replace_message_is_refused_and_the_text_asks_a_yes_no_question():
+    msg = "תשרטט את הסכמה כולה מחדש בבקשה עכשיו ותודה רבה על העזרה"
+    why = _rep(msg)
+    assert "yes/no" in why and "sheet 01" in why and "wipes" in why
 
 
-@pytest.mark.parametrize("msg", [
-    "replace the schematic in Altium, I don't need the old one",
-    "לא משנה לי, תשרטט מחדש",
-    "redraw, don't forget the LED",
-    "תשרטט מחדש. לא, אל תשכח את הנגד",
-])
-def test_soft_negations_still_allow_replace(msg):
-    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) == "", msg
+def test_an_earlier_message_never_grants_replace():
+    msg = "תצייר את הסכמה"
+    earlier = ["שרטט מחדש"]
+    assert serve._draw_consent({"student_said": msg, "replace": True}, msg, earlier) != ""
 
 
-def test_a_negated_replace_word_in_the_whole_quote_says_to_send_only_the_replace_sentence():
-    msg = "שרטט את הסכמה, אין צורך להתחיל מחדש"
-    why = serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg)
-    assert "replace_said" in why and "just that sentence" in why
-
-
-def test_a_negated_other_action_still_gives_draw_consent_and_the_live_message_replace():
-    msg = "don't delete Main, draw the sheets"
-    assert serve._draw_consent({"student_said": msg}, msg) == ""
-    assert serve._draw_consent({"student_said": LIVE, "replace": True, "replace_said": LIVE}, LIVE) == ""
+def test_the_previous_agent_text_is_found_before_the_current_message():
+    chat = [{"role": "agent", "text": ASKED}, {"role": "user", "text": "yes"}]
+    assert serve.previous_agent_text(chat, "yes") == ASKED
+    assert serve.previous_agent_text([{"role": "user", "text": "yes"}], "yes") == ""
 
 
 def test_the_too_short_quote_refusal_names_the_fix():
