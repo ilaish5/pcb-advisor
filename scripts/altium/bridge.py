@@ -479,6 +479,14 @@ def _logged_sheet_docs(project):
     return store.sheet_docs(project)
 
 
+def _save_placeholder(project, prj):
+    """Saves the tool-made Main.SchDoc when Altium holds it with unsaved changes, before _sheet_doc judges it empty: a hand drawing
+    on it that is not saved yet counts, so the sheet is then not empty and never taken over."""
+    ph = _find_doc(prj, PLACEHOLDER_SHEET)
+    if ph is not None and ph.is_file() and PLACEHOLDER_SHEET.lower() in _tool_made_sheets(project):
+        save_open_sheets(prj, [ph])
+
+
 def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
     """The project SchDoc that holds advisor sheet `sid`, or None (a new one is made then): the one recorded for it (add_sheet,
     skeleton, draw), else the one named after it ('<id> ...'), else a bare '<id>.SchDoc' this tool made or that is empty, else the
@@ -494,9 +502,13 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
     if name:
         if name.lower() in in_prj:
             return in_prj[name.lower()]
+        moved = _find_doc(prj, sid)          # renamed in Altium to a name that starts with the sheet id: that file holds it now
+        if moved is not None:
+            _log(project, "sheet-docs", sheet_docs={str(sid): moved.name}, was=name)
+            return moved
         raise BridgeError(f"Sheet {sid} was drawn on {name}, which is no longer in the Altium project (renamed or removed there?). "
                           f"Nothing was changed, so that no second copy of sheet {sid} is made: put {name} back in the project, "
-                          "or tell me which sheet file now holds it.")
+                          f"or give the sheet file that now holds it a name that starts with '{sid} ' (e.g. '{sid} <title>.SchDoc').")
     doc = _find_doc(prj, sid)
     if doc is not None:
         return doc
@@ -596,6 +608,7 @@ def add_sheet(project, name):
     planned = _planned_sheet(project, name)
     if planned:
         sid, title, by_title = planned
+        _save_placeholder(project, prj)
         how = []
         have = _sheet_doc(project, prj, sid, how=how)
         if have is not None and not how:
@@ -699,6 +712,7 @@ def skeleton(project, sheet=None):
             raise BridgeError(f"No sheet {sheet} in this project.")
     cmds, todo, existing, new_docs, sheet_docs = [("PROJECT", str(prj))], [], [], [], {}
     if planned:
+        _save_placeholder(project, prj)
         for sid, title, sh in planned:
             doc = _sheet_doc(project, prj, sid, taken=existing)
             if doc is None:
@@ -830,9 +844,7 @@ def draw_schematic(project, sheet=None, replace=False):
     plans, existing, new_docs, adopted = [], [], [], set()
     # one drawn name per net for the whole design (a net on two sheets keeps one name; two names never share one)
     aliases = drawn_names(project)
-    ph = _find_doc(prj, PLACEHOLDER_SHEET)
-    if ph is not None and ph.is_file() and PLACEHOLDER_SHEET.lower() in _tool_made_sheets(project):
-        save_open_sheets(prj, [ph])     # a hand drawing on it that is not saved yet counts: it is then no longer empty, never adopted
+    _save_placeholder(project, prj)
     for sid, title, sh in planned:
         errors, _ = store.check_sheet(sh, bom_refs)
         if errors:
@@ -888,7 +900,7 @@ def draw_schematic(project, sheet=None, replace=False):
         raise BridgeError(str(exc) + closed) from exc
     # the sheets are in the Altium project now: their files are recorded before anything below can fail, so a later run never
     # makes a second copy of a sheet whose check broke off
-    _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans})
+    _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans}, created=[str(d) for d in new_docs])
     problems, warnings, parts, nets = [], [], 0, set()
     for sid, doc, plan, fps in plans:
         warnings += plan["warnings"] + circular_pin_warnings(project, [p["ref"] for p in plan["parts"] if isinstance(p, dict) and p.get("ref")])

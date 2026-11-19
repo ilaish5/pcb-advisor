@@ -126,8 +126,22 @@ def test_main_saved_with_a_drawing_is_not_taken_and_an_adopted_sheet_is_never_wi
     hand = set()
     monkeypatch.setattr(bridge, "save_open_sheets", lambda prj, docs: (hand.update(pathlib.Path(d).name for d in docs), [])[1])
     monkeypatch.setattr(altium.schdoc, "is_blank_sheet", lambda path: pathlib.Path(path).name not in drawn_on | hand)
+    fake.runs.clear()
+    out = bridge.add_sheet(project, "01")      # the same through add_sheet: no mapping to Main, a file of its own
+    assert "Main.SchDoc" in hand and not out.get("adopted") and pathlib.Path(out["file"]).name == "01 Power.SchDoc"
+    assert "Main.SchDoc" not in store.sheet_docs(project).values()
     bridge.draw_schematic(project)       # the unsaved hand drawing on Main is saved first: Main is no longer empty
-    assert "Main.SchDoc" in hand and drawn_on == {"01 Power.SchDoc", "02 Logic.SchDoc"}
+    assert drawn_on == {"01 Power.SchDoc", "02 Logic.SchDoc"}
+
+
+def test_the_skeleton_saves_main_before_taking_it(started, monkeypatch):
+    project, fake, drawn_on = started
+    import altium.schdoc
+    hand = set()
+    monkeypatch.setattr(bridge, "save_open_sheets", lambda prj, docs: (hand.update(pathlib.Path(d).name for d in docs), [])[1])
+    monkeypatch.setattr(altium.schdoc, "is_blank_sheet", lambda path: pathlib.Path(path).name not in hand)
+    bridge.skeleton(project)
+    assert "Main.SchDoc" in hand and "Main.SchDoc" not in store.sheet_docs(project).values()
 
 
 def test_an_adopted_sheet_is_drawn_without_replace(started, monkeypatch):
@@ -162,7 +176,12 @@ def test_the_files_are_recorded_before_the_check_and_a_lost_file_is_reported(sta
     with pytest.raises(RuntimeError):
         bridge.draw_schematic(project)
     assert store.sheet_docs(project) == {"01": "Main.SchDoc", "02": "02 Logic.SchDoc"}
-    bridge._log(project, "sheet-docs", sheet_docs={"02": "Renamed.SchDoc"})       # recorded, but no longer in the project
+    assert "02 logic.schdoc" in bridge._tool_made_sheets(project)             # the file it made is known as its own
+    # renamed in Altium to a name that still starts with the id: that file is the sheet's from now on
+    bridge._log(project, "sheet-docs", sheet_docs={"02": "Old name.SchDoc"})
+    assert bridge._sheet_doc(project, bridge._linked(project), "02").name == "02 Logic.SchDoc"
+    assert store.sheet_docs(project)["02"] == "02 Logic.SchDoc"
+    bridge._log(project, "sheet-docs", sheet_docs={"01": "Renamed.SchDoc"})       # recorded, but no longer in the project
     fake.runs.clear()
     with pytest.raises(bridge.BridgeError, match="no longer in the Altium project"):
         bridge.draw_schematic(project, replace=True)
