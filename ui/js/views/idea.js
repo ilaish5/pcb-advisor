@@ -609,8 +609,15 @@ window.addEventListener('resize', () => {
 /* ---------- action handlers (dispatched by the delegates in core.js) ---------- */
 onAct('set-board-size', async (el) => {
   const row = el.closest('.board-size');
-  const w = row.querySelector('.board-w').value.trim(), h = row.querySelector('.board-h').value.trim();
-  if (!w !== !h) { toast('Give both the width and the height in mm'); return; }
+  const wi = row.querySelector('.board-w'), hi = row.querySelector('.board-h');
+  const w = wi.value.trim(), h = hi.value.trim();
+  const showSaved = () => {       // the fields show the saved size again (empty when none is saved), never the refused value
+    const sb = ((S && S.idea) || {}).board || {}, ok = sb.width_mm && sb.height_mm;
+    wi.value = ok ? String(sb.width_mm) : '';
+    hi.value = ok ? String(sb.height_mm) : '';
+  };
+  if (wi.validity.badInput || hi.validity.badInput) { toast('The board size must be numbers in mm'); showSaved(); return; }   // letters read as empty: not "clear the size"
+  if (!w !== !h) { toast('Give both the width and the height in mm'); showSaved(); return; }
   const cur = ((S && S.idea) || {}).board || {};
   // the same numbers again: nothing changes, and a size read from the idea text stays one (it follows the text)
   if (w && cur.width_mm && cur.height_mm && Number(w) === Number(cur.width_mm) && Number(h) === Number(cur.height_mm)) {
@@ -621,11 +628,9 @@ onAct('set-board-size', async (el) => {
     ideaRedraw();
     toast(w ? 'Board size set' : 'Board size cleared');
   } catch (e) {
-    // rejected: the fields show the saved size again (empty when none is saved), never the refused value
-    const sb = ((S && S.idea) || {}).board || {}, ok = sb.width_mm && sb.height_mm;
+    // rejected: the fields show the saved size again, never the refused value
     if (e instanceof TypeError) { toast("Couldn't reach the server"); return; }       // nothing was refused: what was typed stays
-    row.querySelector('.board-w').value = ok ? String(sb.width_mm) : '';
-    row.querySelector('.board-h').value = ok ? String(sb.height_mm) : '';      // api() already showed the server's reason
+    showSaved();      // api() already showed the server's reason
   }
 });
 onAct('confirmidea', async () => {

@@ -156,6 +156,19 @@ def anchors(project=None):
     return out
 
 
+def altium_ok(project):
+    """{op: time of the newest altium-log entry that ended without an error} for the three steps whose note the page keeps: the page
+    drops a failure note once the same step has succeeded later, by whichever way (button or chat)."""
+    out = {}
+    try:
+        for r in store.read_jsonl(store.pdir(project) / "altium-log.jsonl"):
+            if r.get("op") in ("draw-schematic", "place-pcb", "route-pcb") and "error" not in r and r.get("ts"):
+                out[r["op"]] = r["ts"]
+    except Exception:
+        pass
+    return out
+
+
 def sheets(project):
     out = []
     for sid in store.sheet_ids(project):
@@ -255,6 +268,7 @@ def build(project=None, session=None):
         "history": store.history(project),
         "autonomy": store.autonomy(),
         "sheets": sheets(project),
+        "altium_ok": altium_ok(project),
         "sheet_gaps": store.sheet_gaps(project),
         "bom_count_check": store.bom_design_count(project),
         "library": store.library_view(project),

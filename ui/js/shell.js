@@ -637,6 +637,7 @@ onAct('newproj', async () => {
     if (open) r = {created: r.exists};
     else r = await api('/api/projects/new', {name: n, allow_copy: true});
   } else if (!r || !r.created) { toast((r && r.error) || 'Could not create the project', null, {bad: true}); return; }
+  if (window.usage) window.usage('click', {text: 'New project: Create', act: 'newproj', id: 'newproj', tag: 'button', project: r.created});      // the click belongs to the new project's log
   if (r.note) { try { sessionStorage.setItem('pcb-new-note', r.note); } catch (e) { /* the note is lost, the folder is still named in the project list */ } }
   const u = new URL(location.href);
   u.searchParams.set('project', r.created);

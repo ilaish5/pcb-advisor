@@ -141,6 +141,14 @@ def board6_outline(rec: dict) -> list[tuple[float, float]] | None:
         last = pts[-1]
         if last == pts[0] or not (min(xs) <= last[0] <= max(xs) and min(ys) <= last[1] <= max(ys)):
             pts = rest
+    # Altium's own board has the four corners the placement wrote (BoardOutline.PointCount = 4); a leftover vertex of the previous
+    # shape inside that rectangle (seen 2026-11-19 after Place: a 5th point drew the board as a wedge with parts off it) is not a corner.
+    if len(pts) > 4 and all(str(rec.get(f"KIND{k}", "0")).strip() != "1" for k in range(len(pts))):
+        xs4, ys4 = sorted({p[0] for p in pts[:4]}), sorted({p[1] for p in pts[:4]})
+        if len(xs4) == 2 and len(ys4) == 2 and len(set(pts[:4])) == 4:
+            on_edge = lambda q: (q[0] in xs4 or q[1] in ys4) and xs4[0] <= q[0] <= xs4[1] and ys4[0] <= q[1] <= ys4[1]      # noqa: E731
+            if not any(on_edge(q) for q in pts[4:]):
+                pts = pts[:4]
     if len(pts) < 3 or len({p for p in pts}) < 3:
         return None
     return [(round(x * 0.0254, 4), round(y * 0.0254, 4)) for x, y in pts]
@@ -366,6 +374,12 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
     # Copper layers the board really uses (1 = top, 2..31 = inner, 32 = bottom), for the header count
     copper = {it.get("layer") for it in (*tracks, *arcs, *pads) if isinstance(it.get("layer"), int) and 1 <= it["layer"] <= 32}
     n_copper = len(copper)
+    if pcb_path and pcb_path.is_file():        # a freshly placed board has copper on the top layer only: the stack says how many layers it has
+        try:
+            from altium.pcbdoc import copper_layer_count
+            n_copper = max(n_copper, copper_layer_count(pcb_path) or 0)
+        except Exception:
+            pass
 
     svg = [
         f'<svg id="pcb-preview" class="pcb-preview layer-{active_layer}" data-copper-layers="{n_copper}" viewBox="0 0 {w_px:.1f} {h_px:.1f}" '

@@ -366,10 +366,16 @@ function pvStopBtn() {       // the run stops before its next step; the last ste
   return btn(pvStopping ? 'Stopping…' : 'Stop', {size: 'sm', kind: 'line', act: 'altium-step-stop', disabled: pvStopping || last ? true : undefined,
     title: last ? 'This step finishes as one Altium operation' : 'Ends the run before its next step. The step Altium is working on finishes first.'});
 }
+const PV_LOG_OP = {draw: 'draw-schematic', place: 'place-pcb', route: 'route-pcb'};
+function pvLaterOk(n) {        // the same step succeeded after this note was made: the note is stale
+  const t = n.step && S && S.altium_ok && S.altium_ok[PV_LOG_OP[n.step]];
+  return !!(t && n.at && new Date(t).getTime() > n.at);
+}
 function pvStepNote(page) {       // under the header: Altium is working, or what the last step answered
   pvResume();
   const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
   const busy = pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || loadingLine(PV_STEPS[pvBusy].busy)}<div class="acts">${pvStopBtn()}</div></div>` : '';
+  if (pvNote[page] && pvNote[page].kind !== 'ok' && pvLaterOk(pvNote[page])) delete pvNote[page];
   const n = pvNote[page];
   if (busy || !n) return busy;
   const acts = (n.partial ? btn('Route the rest and leave ' + n.partial.join(', ') + ' open', {size: 'sm', kind: 'line', act: 'altium-step', step: 'route', partial: '1', disabled: pvBusy ? true : undefined,
@@ -437,6 +443,7 @@ async function pvRunStep(step, replace, partial) {
   await pvFinish(step, r, lost);
 }
 async function pvFinish(step, r, lost) {       // the answer of a step (from its own POST, or read after a reload): the note, then the pages read again
+  const at0 = Date.now();
   const c = PV_STEPS[step];
   pvBusy = '';
   pvStopping = false;
@@ -451,6 +458,7 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
     else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', stopped: true, text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
     else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server'), partial: r && Array.isArray(r.partial_offer) && r.partial_offer.length ? r.partial_offer : undefined};
     else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
+    if (pvNote[c.page]) { pvNote[c.page].step = step; pvNote[c.page].at = at0; }       // lets a later success (by button or chat) retire a failure note
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
     try { await refresh(true); } catch (err) { /* the note still says what happened */ }
     if (typeof loadAltium === 'function') loadAltium(true);      // a draw can add a sheet to the project
@@ -489,6 +497,7 @@ onAct('altium-step-dismiss', async (el, d, e) => {
 
 const SCH_LIMITS = 'Not drawn automatically yet: a part whose library symbol is split into several separate blocks (for example a chip drawn as a power block and a signal block), and a circuit too big for one A4 sheet (it is refused with a plan to split it). Wires that run between two sheets are not drawn either. For these, draw that part by hand in Altium.';
 const PCB_LIMITS = 'Not yet: the router is for small two-layer boards, with no differential pairs and no inner layers.';
+const pvRealSheets = sheets => (sheets.filter(s => !s.altium).length || sheets.length);       // a sheet read from Altium that the plan also has is one sheet, not two
 function schHTML(container) {
   const sheets = S.sheets || [];
   if (!sheets.length) return `<div class="pv">${viewHeader({title: 'Schematic'})}${emptyState('No schematic yet', 'The agent draws the sheets once the parts are chosen.', '', SCH_LIMITS)}</div>`;
@@ -500,7 +509,7 @@ function schHTML(container) {
   const tabs = sheets.length > 1 ? `<div class="pv-tabs" role="tablist" aria-label="Sheets">${sheets.map(s =>
     `<button type="button" role="tab" class="pv-tab" aria-selected="${s.id === sheetId}" tabindex="${s.id === sheetId ? 0 : -1}" data-act="sch-sheet" data-sheet="${esc(s.id)}" title="${esc(pvSheetLabel(s) + (s.altium ? ' (read from Altium)' : ' (plan)'))}">${esc(pvTabLabel(s, sheets))}</button>`).join('')}</div>` : '';
   return `<div class="pv" data-pv="sch">` +
-    viewHeader({title: 'Schematic', meta: metaLine([{n: sheets.length, label: sheets.length === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + pvStepNote('sch') + tabs +
+    viewHeader({title: 'Schematic', meta: metaLine([{n: pvRealSheets(sheets), label: pvRealSheets(sheets) === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + pvStepNote('sch') + tabs +
     `<div class="pv-stage"><div class="pv-canvas sch-canvas" id="schwrap" tabindex="0" aria-label="Schematic sheet ${esc(sheetId)}. Scroll to zoom, drag to pan.">${inner}</div>${pvZoomHTML('sch')}</div></div>`;
 }
 const pvSheetKey = () => sheetId + '|' + JSON.stringify(lines().map(l => [l.key, l.mpn, l.value, l.dnp])) + JSON.stringify((S.sheets || []).map(s => Object.keys(s.parts || {}).length));

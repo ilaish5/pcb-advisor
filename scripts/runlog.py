@@ -364,7 +364,7 @@ def _tsnorm(ts):
     t = str(ts or "").replace("T", " ")
     if not t:
         return ""
-    return t[:23] if "." in t else t[:19] + ".000"
+    return t[:23] if "." in t else t[:19] + ".999"      # a second-precision record (older logs) sorts after the millisecond records of its second
 
 
 def _shift(ts, seconds):
@@ -375,10 +375,35 @@ def _shift(ts, seconds):
         return ts
 
 
+_PROFILE_RE = re.compile(r"(?i)\b[a-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/)(?!(?:Public|Default|All Users)(?:\\|/|\b))[^\\/\s\"'<>|:*?]+")
+
+
+def home_paths(text):
+    """C:\\Users\\<name> (a person's profile folder) written as %USERPROFILE%: the tester's name stays out of a report that is sent on."""
+    return _PROFILE_RE.sub("%USERPROFILE%", text) if isinstance(text, str) else text
+
+
 def _short(v, n=300):
     t = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
-    t = t.replace("\n", " ").strip()
+    t = home_paths(t.replace("\n", " ").strip())
     return t if len(t) <= n else t[:n] + "..."
+
+
+def _partial_text(shown):
+    """'PARTIAL ROUTE, left open: +3V3 (why), +1V1 (why)' out of a step's summary ('' when the step was not partial)."""
+    shown = str(shown or "")
+    i = shown.find("PARTIAL ROUTE")
+    if i < 0:
+        return ""
+    depth, end = 0, len(shown)
+    for j in range(i, len(shown)):                 # up to the next "; " outside brackets
+        c = shown[j]
+        depth += c == "("
+        depth -= (c == ")" and depth > 0)
+        if depth == 0 and shown[j:j + 2] == "; ":
+            end = j
+            break
+    return shown[i:end].strip()
 
 
 def _window(rows):
@@ -428,25 +453,35 @@ def _timeline_rows(project):
                     bits.append("ERROR: " + _short(r["error"], 600))
                 add(r, " | ".join(bits), bad)
             elif k == "step":
+                if str(r.get("op", "")).startswith("chat.") and r.get("ok") is not False:
+                    continue                    # the chat turn's own lines already tell it
                 if r.get("phase") == "begin":
                     add(r, f"STEP {r.get('op')} begins")
                 else:
                     notes = "; ".join(f"{x.get('step')}={x.get('state')}" + (f" ({_short(x.get('note'), 160)})" if x.get("note") else "")
                                       for x in (r.get("steps") or []) if isinstance(x, dict))
                     word = "ok" if r.get("ok") else "STOPPED by the student" if r.get("stopped") else "FAILED"
-                    add(r, f"STEP {r.get('op')} {word} in {r.get('seconds', '?')}s: {_short(r.get('shown'), 600)}"
+                    shown = r.get("shown") or ""
+                    left = _partial_text(shown)
+                    if r.get("ok") and left:
+                        word = "PARTIAL"                # the tracks stay, some nets are still open: not "ok"
+                        rest = shown.replace(left, "", 1).strip(" ;")
+                        shown = left + (" | " + rest if rest else "")
+                    add(r, f"STEP {r.get('op')} {word} in {r.get('seconds', '?')}s: {_short(shown, 700)}"
                            + (f" [{notes}]" if notes else "") + (f" warnings: {_short(r['warnings'], 400)}" if r.get("warnings") else ""),
-                        r.get("ok") is False and not r.get("stopped"))
+                        (r.get("ok") is False and not r.get("stopped")) or word == "PARTIAL")
             elif k == "ui-error":
                 add(r, f"UI ERROR: {_short(r.get('message'), 400)} ({r.get('source', '')}:{r.get('line', '')}) view={r.get('view', '')}", True)
             else:
-                bits = [f"{key}={_short(r[key], 200)}" for key in ("view", "name", "act", "text", "shown", "choice", "action")
+                bits = [f"{key}={_short(r[key], 200)}" for key in ("view", "name", "act", "id", "text", "shown", "choice", "action")
                         if r.get(key) not in (None, "", [])]
+                if "checked" in r:
+                    bits.append("now " + ("ticked" if r["checked"] else "unticked"))
                 add(r, f"{k.upper()}: " + " | ".join(bits) + ("  FAILED" if r.get("ok") is False else ""), r.get("ok") is False)
     for r in _jsonl(base / "turns-log.1.jsonl") + _jsonl(base / "turns-log.jsonl"):
         started = r.get("started") or r.get("ts")
         head = (f"AGENT TURN ({r.get('kind')}, {r.get('engine')} {r.get('model', '')}, {r.get('seconds')}s, tokens {r.get('tokens_in')}/{r.get('tokens_out')}, "
-                f"applied {r.get('applied')} proposed {r.get('proposed')} refused {r.get('refused')}) "
+                f"done {r.get('applied')}, proposed (waiting for approval) {r.get('proposed')}, refused {r.get('refused')}) "
                 + ("ok" if r.get("ok") else "FAILED " + _short(r.get("error"), 300)))
         add({"ts": started}, head, not r.get("ok", True))
         base_ts = _tsnorm(started)
@@ -480,6 +515,8 @@ def project_timeline_text(project, run_events=None, rows=None):
     rows = list(rows) if rows is not None else _timeline_rows(project)
     runs = run_events if run_events is not None else _project_run_events(project, *_window(rows))
     steps_ok = steps_bad = steps_stopped = 0
+    steps_partial = sum(1 for _, text, _ in rows if text.startswith("STEP ") and " PARTIAL in " in text)
+    partial_word = f"{steps_partial} partial, " if steps_partial else ""
     for r in runs:
         ts = _tsnorm(r.get("ts"))
         kind = r.get("kind")
@@ -503,8 +540,8 @@ def project_timeline_text(project, run_events=None, rows=None):
                          + ("  (no project on the record; same time window)" if r.get("window") else ""), True))
         elif kind == "chat" and r.get("phase") in ("end", "followup-end"):
             acts = r.get("actions") or []
-            rows.append((ts, f"CHAT TURN {r.get('phase')} ok={r.get('ok')} applied={r.get('applied')} refused={r.get('refused')} warned={r.get('warned')} "
-                             f"proposed={r.get('proposed')} actions asked: {_short([a.get('type') if isinstance(a, dict) else a for a in acts], 300)}"
+            rows.append((ts, f"CHAT TURN {r.get('phase')} ok={r.get('ok')} done={r.get('applied')} refused={r.get('refused')} warned={r.get('warned')} "
+                             f"proposed(waiting)={r.get('proposed')} actions asked: {_short([a.get('type') if isinstance(a, dict) else a for a in acts], 300)}"
                              + (f" error: {_short(r.get('error'), 600)}" if r.get("error") else "")
                              + (f"\n{r['traceback']}" if r.get("traceback") else ""), r.get("ok") is False))
         elif kind == "request" and (r.get("status") or 0) >= 400:
@@ -516,7 +553,7 @@ def project_timeline_text(project, run_events=None, rows=None):
     head = [f"PCB Advisor activity timeline: project {project}",
             f"first record: {rows[0][0] if rows else '-'}   last record: {rows[-1][0] if rows else '-'}",
             f"agent turns: {len(turns)} (failed: {sum(1 for t in turns if not t.get('ok', True))})   "
-            f"step buttons: {steps_ok} ok, {steps_bad} failed, {steps_stopped} stopped   records marked as errors (!!): {errs}",
+            f"step buttons: {steps_ok} ok, {partial_word}{steps_bad} failed, {steps_stopped} stopped   records marked as errors (!!): {errs}",
             "Lines starting with '!!' are failures. Times are local to the tester's computer.", "=" * 78]
     return "\n".join(head + [f"{ts[:23]}  {'!! ' if err else '   '}{text}" for ts, text, err in rows]) + "\n"
 
@@ -530,7 +567,8 @@ config.json             settings with secrets hidden
 logs/run-project.jsonl  server records of this project (steps, Altium batches with commands/results, exceptions with tracebacks,
                         failed requests) plus project-less exceptions from the same time window
 logs/install-*.log      installer logs, if any
-logs/server-output-*.log what the server printed to the console (last 1MB per day)
+logs/server-output-*.log what the server printed to the console: this project's time window only, other projects' lines and PDF parser
+                        noise left out, errors and tracebacks marked '!!' (last 1MB per day)
 project/*-log*.jsonl    per-project logs: usage (clicks, views, messages, answers, steps), turns (agent tool calls and results),
                         altium, bom, library, sheet, supply, lineage; rotated files too
 project/proposals.jsonl proposals the agent made and what was decided
@@ -552,11 +590,40 @@ def _add_capped(z, path, arcname, cap=PROJECT_REPORT_MAX_FILE):
         z.writestr(arcname + ".error.txt", str(exc))
 
 
+OUTPUT_NOISE = re.compile(r"Ignoring wrong pointing object|Rotated text discovered|Multiple definitions in dictionary|Xref table not zero-indexed|"
+                          r"invalid pdf header|EOF marker not found|incorrect startxref|^-{20,}\s*$")
+OUTPUT_ERROR = re.compile(r"Traceback \(most recent|ConnectionAbortedError|ConnectionResetError|BrokenPipeError|Exception occurred during|"
+                          r"^\w*(?:Error|Exception)\b|\bFAILED\b")
+
+
+def filter_output(lines, project, since, until):
+    """The lines of the server's console copy that belong in a project's report: inside its time window, and either naming the project
+    or naming no other one. PDF parser chatter is dropped; errors and tracebacks are marked '!!'."""
+    import workspace
+    try:
+        others = [p.name for p in workspace.projects_dir().iterdir() if p.is_dir() and p.name != project]
+    except OSError:
+        others = []
+    other = re.compile("|".join(r"(?:projects[\\/]+|project=|\[)" + re.escape(o) + r"(?=[\\/\]\s&\"',]|$)" for o in others), re.I) if others else None
+    out = []
+    for line in lines:
+        m = re.match(r"(\d{4}-\d\d-\d\dT[\d:.]+) (out|err) (.*)$", line)
+        if not m:
+            continue
+        ts, body = _tsnorm(m.group(1)), m.group(3)
+        if not (since <= ts <= until) or OUTPUT_NOISE.search(body):
+            continue
+        if project not in body and other is not None and other.search(body):
+            continue                                      # another project's line
+        out.append(f"{'!! ' if OUTPUT_ERROR.search(body) else '   '}{m.group(1)} {m.group(2)} {home_paths(body)}")
+    return "\n".join(out) + ("\n" if out else "")
+
+
 def _fill_project_report(z, project):
     import workspace
     base = workspace.projects_dir() / project
     z.writestr("README.txt", README_TEXT)
-    runs = []
+    runs, rows = [], []
     try:
         rows = _timeline_rows(project)
         runs = _project_run_events(project, *_window(rows))
@@ -566,8 +633,11 @@ def _fill_project_report(z, project):
     z.writestr("logs/run-project.jsonl", "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n" for r in runs))
     for f in install_files():
         z.write(f, f"logs/{f.name}")
-    for f in output_files():         # what the server printed (the [guard] lines and other console output), last part only
-        _add_capped(z, f, f"logs/{f.name}", 1024 * 1024)
+    since, until = _window(rows) if rows else ("", "9")
+    for f in output_files():         # what the server printed (the [guard] lines and other console output): this project's window, last part only
+        text = filter_output(_read_lines(f), project, since, until)
+        if text:
+            z.writestr(f"logs/{f.name}", text[-1024 * 1024:])
     if not base.is_dir():
         z.writestr("project-error.txt", f"no project folder named {project}")
         return

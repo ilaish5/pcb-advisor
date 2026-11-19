@@ -1051,6 +1051,21 @@ def _run_end(project, **final):
             run.update(final, running=False, stopping=False)
 
 
+class BadField(Exception):
+    """A body field that must be text was something else (a list, a number, an object): the answer is 400, not a dropped connection."""
+
+
+def _text_field(data, key, default=""):
+    """The one place a name / project / text is read from a request body: a string (or absent -> default), stripped.
+    A list or number is refused with BadField instead of being turned into "['a']" or crashing on .strip()."""
+    value = data.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str):
+        raise BadField(f"\"{key}\" must be text")
+    return value.strip()
+
+
 class StepStopped(Exception):
     """The student pressed Stop. Raised only between steps, never inside one: a step in Altium runs to its end, so no file is left
     half written (each bridge operation is one batch of commands that saves and checks its file before it reports)."""
@@ -2231,6 +2246,8 @@ class Handler(BaseHTTPRequestHandler):
         """A project file another program holds open (Windows: an editor) is an answer, not a dropped connection."""
         try:
             return fn()
+        except BadField as exc:
+            return self._send(400, {"error": str(exc)})
         except PermissionError as exc:              # a Windows sharing violation; a missing file or a socket error is not
             if not exc.filename:
                 raise
@@ -2680,7 +2697,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # ---- the conversation
         if path == "/api/chat":
-            text = (data.get("text") or "").strip()
+            text = _text_field(data, "text")
             if not text:
                 return self._send(400, {"error": "text required"})
             source_file = data.get("file") or data.get("source")
@@ -2789,7 +2806,7 @@ class Handler(BaseHTTPRequestHandler):
             if data_edited or data_unrestored:
                 print(f"[guard] the agent edited project files: restored {data_edited}, not restorable {data_unrestored}", file=sys.stderr, flush=True)
                 refused.append(project_guard.refusal(data_edited, data_unrestored))
-            runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
+            runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=max(0, len(applied) - len(proposals)),
                          refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
                          actions=[x.get("type") for x in (res.get("actions") or [])[:30] if isinstance(x, dict)], parse_refused=res.get("parse_refused") or [],
                          error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:4000]),
@@ -2804,7 +2821,7 @@ class Handler(BaseHTTPRequestHandler):
             if res.get("provider") != "external":         # an outside driver is not an engine turn
                 import introspect
                 introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
-                                  applied=len(applied), proposed=len(proposals), refused=len(refused))
+                                  applied=max(0, len(applied) - len(proposals)), proposed=len(proposals), refused=len(refused))     # a proposal is not "applied": it waits for the student
             if res.get("reply") or refused or partial or applied:       # an action that ran leaves its marker: it uses up the consent
                 reply = res.get("reply") or ""
                 if refused:
@@ -2949,7 +2966,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/bom/import":
             import bom_import
-            target = workspace.safe_name(data["project"]) if data.get("project") else proj
+            target = workspace.safe_name(_text_field(data, "project")) if data.get("project") else proj
             if not project_mod.exists(target):
                 return self._send(404, {"error": f"no such project: {target}"})
             try:
@@ -3093,7 +3110,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/skill":
             try:
-                name = data.get("name")
+                name = _text_field(data, "name")
                 if name == "export_bom" and not data.get("args"):
                     data["args"] = ["generic"]
                 return self._send(200, {"result": run_skill(name, proj, *[str(a) for a in data.get("args", [])]),
@@ -3430,7 +3447,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"memory": text, "trimmed": trimmed})
 
         if path == "/api/projects/new":
-            name = str(data.get("name") or "").strip()
+            name = _text_field(data, "name")
             if not name:
                 return self._send(400, {"error": "Give the project a name"})
             wanted = workspace.safe_name(name)          # the folder name this text gives
@@ -3439,7 +3456,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, {"error": f"A project named \"{wanted}\" already exists.", "exists": wanted,
                                         "projects": model.list_projects()})
             created = project_mod.create(name, title=data.get("title") or name, brief=data.get("brief", ""))
-            runlog.usage(None, "project", action="create", name=name, ok=True)
+            runlog.usage(created, "project", action="create", name=name, ok=True)
             out = {"created": created, "projects": model.list_projects()}
             if created != name:                         # the folder is not the text typed: say what it is
                 out["folder"] = created
@@ -3448,13 +3465,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, out)
 
         if path == "/api/projects/delete":
-            name = (data.get("name") or "").strip()
+            name = _text_field(data, "name")
             if not name:
                 return self._send(400, {"error": "name required"})
             import shutil
             proj_dir = model.project_dir(name)
-            if proj_dir.exists():
-                shutil.rmtree(proj_dir)
+            if not proj_dir.is_dir():
+                return self._send(404, {"error": f"no such project: {name}"})
+            shutil.rmtree(proj_dir)
             projects = model.list_projects()
             default = projects[0]["name"] if projects else "demo"
             return self._send(200, {"deleted": name, "projects": projects, "default": default})
@@ -3474,7 +3492,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/upload":
             # base64 in JSON rather than multipart: the stdlib cgi module was removed in 3.13.
             # also strip what Windows refuses in a file name (: ? * " < > |)
-            name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", pathlib.Path(data.get("name") or "upload.bin").name)
+            name = re.sub(r'[<>:"|?*\x00-\x1f]', "_", pathlib.Path(_text_field(data, "name") or "upload.bin").name)
             blob = data.get("data_b64")
             if not blob:
                 return self._send(400, {"error": "data_b64 required"})
@@ -3520,7 +3538,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, state())
 
         if path == "/api/delete_source":
-            name = data.get("name")
+            name = _text_field(data, "name")
             if not name:
                 return self._send(400, {"error": "name required"})
             sources.unuse(proj, name)
@@ -3607,7 +3625,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"ok": True, "extra": extra})
         if path == "/api/rules/preset/enabled":     # switch one JLC preset rule on or off for this project
             import rules as rules_mod
-            name = data.get("name")
+            name = _text_field(data, "name")
             if name not in {r["name"] for r in rules_mod.get_jlc_preset(project_mod.board(proj)).get("rules", [])}:
                 return self._send(404, {"error": "no such preset rule"})
             off = [n for n in _preset_off(proj) if n != name] + ([] if data.get("enabled") else [name])
