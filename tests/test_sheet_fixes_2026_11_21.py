@@ -424,3 +424,45 @@ def test_a_part_on_a_sheet_a_title_or_a_condition_is_no_consent_to_change_the_sh
 def test_the_sheet_as_the_direct_object_is_still_accepted(kind, to, said):
     a = {"type": kind, "sheet": "Main", "student_said": said, **({"to": to} if to else {})}
     assert serve._sheet_edit_consent(kind, a, said) == "", said
+
+
+# ---------------------------------------------------------------- fourth round: the whole clause must be the sheet shape
+
+@pytest.mark.parametrize("kind,sheet,to,said", [
+    ("netlist.remove", "Main", None, "delete Main's parts"),
+    ("netlist.remove", "Main", None, "remove Main's LED"),
+    ("netlist.remove", "Main", None, "delete the Main LED"),
+    ("netlist.remove", "Main", None, "delete Main resistors"),
+    ("netlist.remove", "Main", None, "תמחק את Main הנגדים"),
+    ("netlist.remove", "Power", None, "delete the power LED"),                       # a LED, not sheet Power (case matters)
+    ("netlist.remove", "Power", None, "delete power"),
+    ("netlist.rename", "Main", "01", "rename Main's title to 01"),
+    ("netlist.rename", "Main", "01", "rename Main to 01 and the LED"),
+    ("netlist.remove", "Main", None, "delete Main and the LED"),
+    ("netlist.remove", "Main", None, "delete Main sheet parts"),
+    ("netlist.rename", "Main", "01", "rename Main 01"),
+    ("netlist.remove", "Main", None, "delete Main, delete the parts on it"),         # every clause with the verb has to fit
+])
+def test_words_after_the_sheet_name_make_it_about_something_else(kind, sheet, to, said):
+    a = {"type": kind, "sheet": sheet, "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) != "", said
+
+
+@pytest.mark.parametrize("kind,sheet,to,said", [
+    ("netlist.remove", "Main", None, "delete Main sheet"),
+    ("netlist.remove", "Main", None, "please delete Main entirely"),
+    ("netlist.remove", "Main", None, "delete sheet Main from the project"),
+    ("netlist.remove", "Main", None, "תמחק את גיליון Main לגמרי"),
+    ("netlist.remove", "Main", None, "תמחק את Main מהפרויקט"),
+    ("netlist.remove", "Power", None, "delete the sheet Power"),
+    ("netlist.remove", "02", None, "delete the SHEET 02 completely"),
+    ("netlist.rename", "Main", "01", "change the name of Main to 01"),
+    ("netlist.rename", "Main", "01", "rename Main to 01 please"),
+    ("netlist.rename", "Main", "01", "rename sheet Main to 01"),
+    ("netlist.rename", "Main", "01", "שנה את Main ל01 בבקשה"),
+    ("netlist.rename", "Main", "01", "Main should be renamed to 01"),
+    ("netlist.remove", "Main", None, "Main must be deleted"),
+])
+def test_the_whole_clause_shape_is_accepted(kind, sheet, to, said):
+    a = {"type": kind, "sheet": sheet, "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) == "", said
