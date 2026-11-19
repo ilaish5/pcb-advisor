@@ -375,13 +375,32 @@ def _shift(ts, seconds):
         return ts
 
 
-_PROFILE_RE = re.compile(r"(?i)\b[a-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/)(?!(?:Public|Default|All Users)(?:\\|/|\b))"
-                         r"(?:[^\\/\s\"'<>|:*?]|\s(?=[^\\/\"'<>|:*?]*[\\/]))+")      # a space belongs to the name only when a separator follows
+# A separator as it is written in plain text (\ or /), in JSON (\\), in JSON inside JSON (4 backslashes, 8 and more when nested deeper; \/ too)
+# or in a URL (%5C, %2F); the drive colon may be %3A. A space belongs to the name only when a separator follows (%20 is always one).
+_SEP = r"(?:\\+/?|/|%5C|%2F)"
+_PROFILE_RE = re.compile(r"(?i)\b[a-z](?::|%3A)" + _SEP + "Users" + _SEP + r"(?!(?:Public|Default|All Users)(?:\\|/|%5C|%2F|\b))"
+                         r"(?:[^\\/\s\"'<>|:*?%]|%20|\s(?=[^\\/\"'<>|:*?]*(?:[\\/]|%5C|%2F)))+")
 
 
 def home_paths(text):
     """C:\\Users\\<name> (a person's profile folder) written as %USERPROFILE%: the tester's name stays out of a report that is sent on."""
     return _PROFILE_RE.sub("%USERPROFILE%", text) if isinstance(text, str) else text
+
+
+class _ScrubbedZip(zipfile.ZipFile):
+    """A report zip in which every text file passes home_paths: no file can be added that carries the tester's profile folder."""
+
+    def writestr(self, zinfo_or_arcname, data, *args, **kw):
+        if isinstance(data, bytes):
+            try:
+                data = data.decode("utf-8")
+            except UnicodeDecodeError:
+                return super().writestr(zinfo_or_arcname, data, *args, **kw)
+        return super().writestr(zinfo_or_arcname, home_paths(data), *args, **kw)
+
+    def write(self, filename, arcname=None, *args, **kw):
+        data = pathlib.Path(filename).read_bytes()
+        self.writestr(arcname or pathlib.Path(filename).name, data.decode("utf-8", errors="replace"))
 
 
 def _short(v, n=300):
@@ -691,7 +710,7 @@ def _make_report(doctor, project):
     while z is None:
         out = d / (f"{prefix}{stamp}.zip" if n == 1 else f"{prefix}{stamp}-{n}.zip")
         try:
-            z = zipfile.ZipFile(out, "x", zipfile.ZIP_DEFLATED)
+            z = _ScrubbedZip(out, "x", zipfile.ZIP_DEFLATED)
         except FileExistsError:
             n += 1
     if doctor is None:
