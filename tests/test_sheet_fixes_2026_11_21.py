@@ -539,3 +539,36 @@ def test_a_question_or_a_hedge_is_no_consent_to_change_a_sheet(kind, to, said):
 def test_a_polite_or_that_form_request_without_a_question_is_accepted(kind, to, said):
     a = {"type": kind, "sheet": "Main", "student_said": said, **({"to": to} if to else {})}
     assert serve._sheet_edit_consent(kind, a, said) == "", said
+
+
+# ---------------------------------------------------------------- seventh round: more hedges, want-to is no request
+
+@pytest.mark.parametrize("said", [
+    "i think delete Main", "delete Main, i think", "I guess delete Main", "delete Main probably",
+    "probably delete Main", "נראה לי שכדאי למחוק את Main", "תמחק את Main, נראה לי", "אני חושב שתמחק את Main",
+    "אני חושבת שאפשר למחוק את Main", "תמחק את Main אני חושב",
+    "אני רוצה למחוק את Main", "רוצה למחוק את Main", "אני מבקש למחוק את Main", "מבקש למחוק את Main",
+])
+def test_more_hedges_and_a_want_to_form_are_no_consent_to_remove(said):
+    a = {"type": "netlist.remove", "sheet": "Main", "student_said": said}
+    assert serve._sheet_edit_consent("netlist.remove", a, said) != "", said
+
+
+@pytest.mark.parametrize("said", [
+    "i think rename Main to 01", "אני חושב שתשנה את Main ל-01", "אני רוצה לשנות את Main ל-01", "רוצה לשנות את Main ל-01",
+])
+def test_the_same_refused_for_rename(said):
+    a = {"type": "netlist.rename", "sheet": "Main", "to": "01", "student_said": said}
+    assert serve._sheet_edit_consent("netlist.rename", a, said) != "", said
+
+
+@pytest.mark.parametrize("kind,to,said", [
+    ("netlist.remove", None, "אני רוצה שתמחק את Main"),
+    ("netlist.remove", None, "רוצה שתמחק את Main"),
+    ("netlist.remove", None, "אני מבקש שתמחק את Main"),
+    ("netlist.rename", "01", "אני רוצה שתשנה את Main ל-01"),
+    ("netlist.remove", None, "delete Main"),
+])
+def test_the_that_form_after_want_is_still_a_request(kind, to, said):
+    a = {"type": kind, "sheet": "Main", "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) == "", said

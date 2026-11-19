@@ -679,15 +679,16 @@ _FILL = r"(?:please|now|just|quickly|entirely|completely|נא|בבקשה|עכש�
 _GAP = r"(?:the|sheet|page|schematic|את|ה|ה-|הגיליון|גיליון|הדף|דף|השם|שם|של)"
 _TAILWORD = r"(?:sheet|page|גיליון|דף|from the project|מהפרויקט|" + _FILL + ")"
 _LEADIN = (r"(?:i[’']?d like you to|i would like you to|i want you to|i need you to|you can|you should|can you|could you|would you|"
-           r"ok|okay|yes|כן|תוכל|תוכלי|אני רוצה|רוצה|אני מבקש|מבקש)")
+           r"ok|okay|yes|כן|תוכל|תוכלי)")
 _POLITE = re.compile(r"^(?:(?:ok|okay|yes|כן)[,\s]+)*(?:(?:can|could|would) you\b|תוכל)", re.I)      # a polite request, when nothing in the message asks or hedges
-_HEDGE = re.compile(r"not sure|should i|maybe|perhaps|do you think|or should|(?<!\w)or\b|לא בטוח|אולי|(?<!\w)או ש|(?<!\w)או(?!\w)", re.I)
+_HEDGE = re.compile(r"not sure|should i|maybe|perhaps|do you think|or should|i think|i guess|probably|נראה לי|(?<!\w)חושב\w*|(?<!\w)or\b|לא בטוח|אולי|(?<!\w)או ש|(?<!\w)או(?!\w)", re.I)
 _WANT_THAT = re.compile(r"(?<!\w)(אני רוצה|רוצה|אני מבקש|מבקש) ש(?=\S)")          # "אני רוצה שתמחק": the ש is "that", not part of the verb
 
 
 def _unthat(clause):
-    """A leading Hebrew "ו" and the "ש" (that) of "אני רוצה שתמחק" taken off, so the verb stands alone."""
-    return _WANT_THAT.sub(r"\1 ", re.sub(r"^\s*ו(?=\S)", "", clause))
+    """A leading Hebrew "ו" and the "אני רוצה ש" of "אני רוצה שתמחק" (want that you delete) turned into "please": only that form is a request; "אני רוצה למחוק"
+    (I want to delete) is the student's own wish and has no lead-in."""
+    return _WANT_THAT.sub("please ", re.sub(r"^\s*ו(?=\S)", "", clause))
 _AFTER = re.compile(r"\s+(?:since|because|כי|מפני ש)\s+.*$", re.I)       # the reason is no part of the instruction
 
 
