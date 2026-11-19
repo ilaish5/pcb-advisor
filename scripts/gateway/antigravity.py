@@ -20,7 +20,35 @@ from . import events, stream
 from .base import Provider, Request, Result
 
 
-_AGY_MODELS_CACHE = None
+_AGY_MODELS_CACHE = None          # (time it was read, models)
+MODELS_TTL = 600                  # seconds a model listing is trusted
+
+
+def parse_models(out):
+    """`agy models` lines are "<id>\t<name>"; anything else (e.g. "Fetching available models...") is not a model."""
+    models = []
+    for line in (out or "").splitlines():
+        if "\t" not in line:
+            continue
+        mid, _, name = line.partition("\t")
+        mid, name = mid.strip(), name.strip()
+        if mid and " " not in mid:
+            models.append({"id": mid, "name": name or mid})
+    return models
+
+
+def list_models(cmd):
+    """Whatever this agy offers today ([] when it is missing, fails or hangs)."""
+    if not shutil.which(cmd):
+        return []
+    try:
+        # describe() runs while the settings page loads, so a CLI that
+        # hangs here must not hang the server with it
+        out = subprocess.check_output([oscompat.resolve(cmd), "models"], stderr=subprocess.DEVNULL,
+                                      **oscompat.TEXT, timeout=10)
+    except Exception:
+        return []
+    return parse_models(out)
 
 # what agy accepts for --effort
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
@@ -46,28 +74,15 @@ class AntigravityProvider(Provider):
     def describe(self):
         global _AGY_MODELS_CACHE
         d = super().describe()
-        if _AGY_MODELS_CACHE is None:
-            cmd = self.config.get("command", "agy")
-            if shutil.which(cmd):
-                try:
-                    # describe() runs while the settings page loads, so a CLI that
-                    # hangs here must not hang the server with it
-                    out = subprocess.check_output([oscompat.resolve(cmd), "models"],
-                                                  stderr=subprocess.DEVNULL,
-                                                  **oscompat.TEXT, timeout=10)
-                    models = []
-                    for line in out.strip().split("\n"):
-                        if line.strip():
-                            parts = line.split(maxsplit=1)
-                            if len(parts) >= 1:
-                                models.append({"id": parts[0], "name": parts[1] if len(parts)>1 else parts[0]})
-                    _AGY_MODELS_CACHE = models
-                except Exception:
-                    _AGY_MODELS_CACHE = []
-            else:
-                _AGY_MODELS_CACHE = []
-        # whatever this agy offers today: a fixed list went stale when gemini-3.1-pro was retired
-        d["models"] = list(_AGY_MODELS_CACHE)
+        fresh = _AGY_MODELS_CACHE and time.monotonic() - _AGY_MODELS_CACHE[0] < MODELS_TTL
+        if not fresh:
+            models = list_models(self.config.get("command", "agy"))
+            # a failed listing is retried on the next page load; a good one is kept for a while,
+            # so models Antigravity adds show up without restarting the server
+            _AGY_MODELS_CACHE = (time.monotonic(), models) if models else None
+            d["models"] = models
+        else:
+            d["models"] = list(_AGY_MODELS_CACHE[1])
         return d
 
     def _argv(self, request, model):

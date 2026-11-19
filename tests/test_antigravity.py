@@ -199,3 +199,25 @@ def test_empty_answer_without_denial_is_an_error(home, monkeypatch):
 def test_normal_answer_has_no_denied_meta(home, monkeypatch):
     res, _ = _run(monkeypatch)
     assert res.ok and "denied" not in res.meta
+
+
+def test_the_model_list_skips_the_banner_and_takes_new_models(home, monkeypatch):
+    out = ("Fetching available models...\n"
+           "gemini-4-neon-high\tGemini 4 Neon (High)\n"
+           "claude-opus-5-5-high\tClaude Opus 5.5 (High)\n")
+    calls = []
+
+    def fake(argv, **kw):
+        calls.append(argv)
+        return out
+    monkeypatch.setattr(antigravity, "_AGY_MODELS_CACHE", None)
+    monkeypatch.setattr(shutil, "which", lambda cmd: "/bin/" + cmd)
+    monkeypatch.setattr(subprocess, "check_output", fake)
+    models = gateway.provider("antigravity").describe()["models"]
+    assert [m["id"] for m in models] == ["gemini-4-neon-high", "claude-opus-5-5-high"]
+    assert models[0]["name"] == "Gemini 4 Neon (High)"
+    gateway.provider("antigravity").describe()
+    assert len(calls) == 1                                   # cached for a while
+    monkeypatch.setattr(antigravity, "_AGY_MODELS_CACHE", (antigravity.time.monotonic() - antigravity.MODELS_TTL - 1, models))
+    gateway.provider("antigravity").describe()
+    assert len(calls) == 2                                   # then read again: new models appear without a restart
