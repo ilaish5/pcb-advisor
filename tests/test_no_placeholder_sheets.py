@@ -66,6 +66,8 @@ def test_the_sheets_of_a_split_are_drawn_without_leaving_empty_placeholders(star
     assert drawn_on == {"Main.SchDoc", "02 Logic.SchDoc"}              # sheet 01 on the empty sheet the project started with
     assert _sheets(project) == ["02 Logic.SchDoc", "Main.SchDoc"]      # nothing new, nothing empty left
     assert res["stale"]["left"] == [] and not any("left in the project" in w for w in res["warnings"])
+    params = [c for c in fake.flat() if c[0] == "PARAM" and c[2] == "Title"]
+    assert [(pathlib.Path(c[1]).name, c[3]) for c in params][-1:] == [("Main.SchDoc", "Power")]       # its title block names sheet 01
     # a redraw finds the same files (the log keeps which file holds which sheet): no second copy of sheet 01
     drawn_on.clear()
     bridge.draw_schematic(project, replace=True)

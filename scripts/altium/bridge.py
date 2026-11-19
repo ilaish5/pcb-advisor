@@ -831,8 +831,12 @@ def draw_schematic(project, sheet=None, replace=False):
                                   + SAVE_BY_HAND) from exc
             raise
     cmds = [("PROJECT", str(prj))] + [("SCH", str(d)) for d in new_docs]
-    for _, _, plan, _fp in plans:
-        cmds += plan["commands"]
+    titles = {sid: title for sid, title, _ in planned}
+    for sid, doc, plan, _fp in plans:
+        pc = list(plan["commands"])
+        if doc.name.lower() == PLACEHOLDER_SHEET.lower() and pc:      # the empty sheet the project started with, drawn on: its title block
+            pc[1:1] = [("PARAM", str(doc), "Title", titles.get(sid, sid))]      # gets the sheet's title, not the project's
+        cmds += pc
     if new_docs:
         cmds.append(("SAVEPRJ", str(prj)))
     try:
