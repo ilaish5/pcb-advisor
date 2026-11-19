@@ -1,0 +1,210 @@
+{
+  "id": "01",
+  "title": "555 LED blinker",
+  "sections": [
+    {
+      "id": "A",
+      "title": "NE555 astable + LED"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "U1",
+      "section": "A",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "GND",
+          "num": "1",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "TRIG",
+          "num": "2",
+          "net": "TIMING",
+          "side": "left"
+        },
+        {
+          "name": "OUT",
+          "num": "3",
+          "net": "OUT",
+          "side": "right"
+        },
+        {
+          "name": "RESET",
+          "num": "4",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "CONT",
+          "num": "5",
+          "net": "CTRL",
+          "side": "right"
+        },
+        {
+          "name": "THRES",
+          "num": "6",
+          "net": "TIMING",
+          "side": "right"
+        },
+        {
+          "name": "DISCH",
+          "num": "7",
+          "net": "DISCH",
+          "side": "right"
+        },
+        {
+          "name": "VCC",
+          "num": "8",
+          "net": "+5V",
+          "side": "left"
+        }
+      ],
+      "pins_source": "agent"
+    },
+    {
+      "ref": "R1",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "DISCH"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "DISCH"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "TIMING"
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "OUT"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "LED_A"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "TIMING"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CTRL"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "section": "A",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "net": "LED_A",
+          "num": "2"
+        },
+        {
+          "name": "K",
+          "net": "GND",
+          "num": "1"
+        }
+      ]
+    },
+    {
+      "ref": "J1",
+      "section": "A",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "A",
+      "text": "C2 100nF sits next to U1 VCC and GND."
+    }
+  ]
+}

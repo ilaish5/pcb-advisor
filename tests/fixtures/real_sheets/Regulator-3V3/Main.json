@@ -1,0 +1,146 @@
+{
+  "id": "Main",
+  "title": "5V to 3V3 regulator",
+  "sections": [
+    {
+      "id": "PWR",
+      "title": "5V in, AMS1117-3.3, 3V3 out"
+    },
+    {
+      "id": "LED",
+      "title": "Power LED"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "J1",
+      "section": "PWR",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "section": "PWR",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "U1",
+      "section": "PWR",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "GND",
+          "num": "1",
+          "net": "GND"
+        },
+        {
+          "name": "VOUT",
+          "num": "2",
+          "net": "+3V3"
+        },
+        {
+          "name": "VIN",
+          "num": "3",
+          "net": "+5V"
+        },
+        {
+          "name": "VOUT",
+          "num": "4",
+          "net": "+3V3"
+        }
+      ],
+      "pins_source": "student"
+    },
+    {
+      "ref": "C2",
+      "section": "PWR",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "J2",
+      "section": "PWR",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "section": "LED",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "LED_A"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "section": "LED",
+      "kind": "led",
+      "pins": [
+        {
+          "name": "A",
+          "num": "1",
+          "net": "LED_A"
+        },
+        {
+          "name": "C",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    }
+  ]
+}

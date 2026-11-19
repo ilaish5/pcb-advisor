@@ -1,0 +1,368 @@
+{
+  "id": "Core",
+  "title": "RP2040",
+  "sections": [
+    {
+      "id": "B",
+      "title": "RP2040"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "U1",
+      "section": "B",
+      "kind": "ic",
+      "pins_source": "agent",
+      "pins": [
+        {
+          "name": "IOVDD",
+          "num": "1",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "GPIO0",
+          "num": "2",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO1",
+          "num": "3",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO2",
+          "num": "4",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO3",
+          "num": "5",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO4",
+          "num": "6",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO5",
+          "num": "7",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO6",
+          "num": "8",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO7",
+          "num": "9",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "IOVDD",
+          "num": "10",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "GPIO8",
+          "num": "11",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO9",
+          "num": "12",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO10",
+          "num": "13",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO11",
+          "num": "14",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO12",
+          "num": "15",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO13",
+          "num": "16",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO14",
+          "num": "17",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO15",
+          "num": "18",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "TESTEN",
+          "num": "19",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "XIN",
+          "num": "20",
+          "net": "XIN",
+          "side": "left"
+        },
+        {
+          "name": "XOUT",
+          "num": "21",
+          "net": "XOUT",
+          "side": "left"
+        },
+        {
+          "name": "IOVDD",
+          "num": "22",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "DVDD",
+          "num": "23",
+          "net": "+1V1",
+          "side": "left"
+        },
+        {
+          "name": "SWCLK",
+          "num": "24",
+          "net": "SWCLK",
+          "side": "left"
+        },
+        {
+          "name": "SWD",
+          "num": "25",
+          "net": "SWDIO",
+          "side": "left"
+        },
+        {
+          "name": "RUN",
+          "num": "26",
+          "net": "RUN",
+          "side": "left"
+        },
+        {
+          "name": "GPIO16",
+          "num": "27",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO17",
+          "num": "28",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO18",
+          "num": "29",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO19",
+          "num": "30",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO20",
+          "num": "31",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO21",
+          "num": "32",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "IOVDD",
+          "num": "33",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "GPIO22",
+          "num": "34",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO23",
+          "num": "35",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO24",
+          "num": "36",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO25",
+          "num": "37",
+          "net": "GPIO25",
+          "side": "right"
+        },
+        {
+          "name": "GPIO26_ADC0",
+          "num": "38",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO27_ADC1",
+          "num": "39",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO28_ADC2",
+          "num": "40",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "GPIO29_ADC3",
+          "num": "41",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "IOVDD",
+          "num": "42",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "ADC_AVDD",
+          "num": "43",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "VREG_IN",
+          "num": "44",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "VREG_VOUT",
+          "num": "45",
+          "net": "+1V1",
+          "side": "left"
+        },
+        {
+          "name": "USB_DM",
+          "num": "46",
+          "net": "USB_DN",
+          "side": "right"
+        },
+        {
+          "name": "USB_DP",
+          "num": "47",
+          "net": "USB_DP",
+          "side": "right"
+        },
+        {
+          "name": "USB_VDD",
+          "num": "48",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "IOVDD",
+          "num": "49",
+          "net": "+3V3",
+          "side": "left"
+        },
+        {
+          "name": "DVDD",
+          "num": "50",
+          "net": "+1V1",
+          "side": "left"
+        },
+        {
+          "name": "QSPI_SD3",
+          "num": "51",
+          "net": "QSPI_SD3",
+          "side": "left"
+        },
+        {
+          "name": "QSPI_SCLK",
+          "num": "52",
+          "net": "QSPI_SCLK",
+          "side": "left"
+        },
+        {
+          "name": "QSPI_SD0",
+          "num": "53",
+          "net": "QSPI_SD0",
+          "side": "left"
+        },
+        {
+          "name": "QSPI_SD2",
+          "num": "54",
+          "net": "QSPI_SD2",
+          "side": "left"
+        },
+        {
+          "name": "QSPI_SD1",
+          "num": "55",
+          "net": "QSPI_SD1",
+          "side": "left"
+        },
+        {
+          "name": "QSPI_SS",
+          "num": "56",
+          "net": "QSPI_SS",
+          "side": "left"
+        },
+        {
+          "name": "GND",
+          "num": "57",
+          "net": "GND",
+          "side": "left"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "B",
+      "text": "U1 alone. XIN, XOUT, +3V3 and +1V1 go to sheet Clock (crystal and decoupling); QSPI_*, RUN, SWCLK, SWDIO, GPIO25 go to sheet Periph; USB_DP/USB_DN and +3V3 come from sheet Main."
+    }
+  ]
+}

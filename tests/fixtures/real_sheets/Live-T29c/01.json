@@ -1,0 +1,210 @@
+{
+  "id": "01",
+  "title": "555 LED flasher",
+  "sections": [
+    {
+      "id": "A",
+      "title": "555 astable + LED"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "U1",
+      "section": "A",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "VCC",
+          "net": "+5V",
+          "side": "left",
+          "num": "8"
+        },
+        {
+          "name": "RESET",
+          "net": "+5V",
+          "side": "left",
+          "num": "4"
+        },
+        {
+          "name": "DISCH",
+          "net": "DISCH",
+          "side": "left",
+          "num": "7"
+        },
+        {
+          "name": "THRES",
+          "net": "TIMING",
+          "side": "left",
+          "num": "6"
+        },
+        {
+          "name": "TRIG",
+          "net": "TIMING",
+          "side": "right",
+          "num": "2"
+        },
+        {
+          "name": "CTRL",
+          "net": "CTRL",
+          "side": "right",
+          "num": "5"
+        },
+        {
+          "name": "OUT",
+          "net": "OUT",
+          "side": "right",
+          "num": "3"
+        },
+        {
+          "name": "GND",
+          "net": "GND",
+          "side": "right",
+          "num": "1"
+        }
+      ],
+      "pins_source": "agent"
+    },
+    {
+      "ref": "R1",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "net": "+5V",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "DISCH",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "net": "DISCH",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "TIMING",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "net": "TIMING",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "net": "+5V",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "net": "CTRL",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "net": "OUT",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "LED_A",
+          "num": "2"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "section": "A",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "net": "LED_A",
+          "num": "2"
+        },
+        {
+          "name": "K",
+          "net": "GND",
+          "num": "1"
+        }
+      ]
+    },
+    {
+      "ref": "J1",
+      "section": "A",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "1",
+          "net": "+5V",
+          "num": "1"
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "num": "2"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "A",
+      "text": "C2 close to U1 VCC pin. f = 1.44/((R1+2*R2)*C1)."
+    }
+  ]
+}

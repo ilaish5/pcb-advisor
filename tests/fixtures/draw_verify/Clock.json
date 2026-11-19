@@ -1,0 +1,295 @@
+{
+  "id": "Clock",
+  "title": "Clock and decoupling",
+  "sections": [
+    {
+      "id": "A",
+      "title": "Crystal"
+    },
+    {
+      "id": "B",
+      "title": "Decoupling"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "Y1",
+      "section": "A",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "OSC1",
+          "num": "1",
+          "net": "XIN",
+          "side": "left"
+        },
+        {
+          "name": "GND",
+          "num": "2",
+          "net": "GND",
+          "side": "right"
+        },
+        {
+          "name": "OSC2",
+          "num": "3",
+          "net": "XTAL_OUT",
+          "side": "right"
+        },
+        {
+          "name": "GND",
+          "num": "4",
+          "net": "GND",
+          "side": "left"
+        }
+      ]
+    },
+    {
+      "ref": "R7",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "XOUT"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "XTAL_OUT"
+        }
+      ]
+    },
+    {
+      "ref": "C1",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "XIN"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "XTAL_OUT"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C3",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C4",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C5",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C6",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C7",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C8",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C9",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+1V1"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C10",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C11",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C12",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+1V1"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C13",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "A",
+      "text": "12 MHz crystal Y1 with C1, C2 load caps and R7 series resistor on XOUT. XIN and XOUT link to U1 on sheet Core by net labels."
+    },
+    {
+      "section": "B",
+      "text": "Every IOVDD pin has its own 100nF; C9 on DVDD, C12 1uF on VREG_VOUT. +3V3 and +1V1 link to U1 on sheet Core by net labels."
+    }
+  ]
+}

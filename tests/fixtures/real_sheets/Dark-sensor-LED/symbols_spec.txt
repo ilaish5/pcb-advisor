@@ -1,0 +1,57 @@
+LIBRARY|lib.SchLib
+SYMBOL|0805W8F5101T5E|LCSC C27834|1
+GRAPHIC|rectangle|1|1|0|-100.0|40.157|100.0|-40.157
+PIN|2|2|eElectricPassive|eRotate0|100|0|1|100
+PIN|1|1|eElectricPassive|eRotate180|-100|0|1|100
+SYMBOL|0805W8F1003T5E|LCSC C149504|1
+GRAPHIC|rectangle|1|1|0|-100.0|40.157|100.0|-40.157
+PIN|2|2|eElectricPassive|eRotate0|100|0|1|100
+PIN|1|1|eElectricPassive|eRotate180|-100|0|1|100
+SYMBOL|0805W8F3300T5E|LCSC C17630|1
+GRAPHIC|rectangle|1|1|0|-100.0|40.157|100.0|-40.157
+PIN|2|2|eElectricPassive|eRotate0|100|0|1|100
+PIN|1|1|eElectricPassive|eRotate180|-100|0|1|100
+SYMBOL|KT-0805W|LCSC C34499|1
+GRAPHIC|polygon|1|1|1|-150.0|29.921|-109.843|9.843|-129.921|-9.843|-150.0|29.921
+GRAPHIC|polygon|1|1|1|-109.843|70.079|-70.079|50.0|-90.157|29.921|-109.843|70.079
+GRAPHIC|polygon|1|1|1|50.0|-159.843|-50.0|-100.0|50.0|-29.921|50.0|-159.843
+GRAPHIC|polyline|1|1|-79.921|-40.157|-150.0|29.921
+GRAPHIC|polyline|1|1|-40.157|0.0|-109.843|70.079
+GRAPHIC|polyline|1|1|-50.0|-20.079|-50.0|-179.921
+PIN|2|K|eElectricPassive|eRotate180|-50|-100|1|150
+PIN|1|A|eElectricPassive|eRotate0|50|-100|1|150
+SYMBOL|MMBT3904|LCSC C84104|1
+GRAPHIC|polyline|1|1|100.0|100.0|0.0|29.921
+GRAPHIC|polyline|1|1|0.0|-29.921|100.0|-100.0
+GRAPHIC|polyline|1|1|0.0|90.157|0.0|-90.157
+GRAPHIC|polygon|1|1|1|100.0|-100.0|70.079|-50.0|40.157|-90.157|100.0|-100.0
+PIN|3|C|eElectricPassive|eRotate90|100|100|1|200
+PIN|1|B|eElectricPassive|eRotate180|0|0|1|200
+PIN|2|E|eElectricPassive|eRotate270|100|-100|1|200
+SYMBOL|TYPE-C16PIN|LCSC C393939|1
+GRAPHIC|rectangle|1|1|0|-100.0|800.0|400.0|-900.0
+GRAPHIC|arc|1|1|-50.0|750.0|14.961|0|360
+PIN|A1B12|GND|eElectricPassive|eRotate180|-100|700|1|100
+PIN|A4B9|VBUS|eElectricPassive|eRotate180|-100|600|1|100
+PIN|A5|CC1|eElectricPassive|eRotate180|-100|500|1|100
+PIN|A6|DP1|eElectricPassive|eRotate180|-100|400|1|100
+PIN|A7|DN1|eElectricPassive|eRotate180|-100|300|1|100
+PIN|A8|SBU1|eElectricPassive|eRotate180|-100|200|1|100
+PIN|B5|CC2|eElectricPassive|eRotate180|-100|100|1|100
+PIN|B6|DP2|eElectricPassive|eRotate180|-100|0|1|100
+PIN|B7|DN2|eElectricPassive|eRotate180|-100|-100|1|100
+PIN|B8|SBU2|eElectricPassive|eRotate180|-100|-200|1|100
+PIN|B4A9|VBUS|eElectricPassive|eRotate180|-100|-300|1|100
+PIN|B1A12|GND|eElectricPassive|eRotate180|-100|-400|1|100
+PIN|1|SHELL|eElectricPassive|eRotate180|-100|-500|1|100
+PIN|2|SHELL|eElectricPassive|eRotate180|-100|-600|1|100
+PIN|3|SHELL|eElectricPassive|eRotate180|-100|-700|1|100
+PIN|4|SHELL|eElectricPassive|eRotate180|-100|-800|1|100
+SYMBOL|GL5516_5-10|LCSC C10077|1
+GRAPHIC|rectangle|1|1|0|-100.0|-59.843|100.0|-140.157
+GRAPHIC|polyline|1|1|0.0|20.079|59.843|-40.157
+GRAPHIC|polyline|1|1|59.843|0.0|59.843|-40.157|20.079|-40.157
+GRAPHIC|polyline|1|1|-100.0|20.079|-40.157|-40.157
+GRAPHIC|polyline|1|1|-40.157|0.0|-40.157|-40.157|-79.921|-40.157
+PIN|2|2|eElectricInput|eRotate0|100|-100|1|100
+PIN|1|1|eElectricInput|eRotate180|-100|-100|1|100

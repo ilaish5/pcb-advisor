@@ -1,0 +1,201 @@
+{
+  "id": "01",
+  "title": "Power",
+  "sections": [
+    {
+      "id": "A",
+      "title": "3V3 regulator"
+    },
+    {
+      "id": "B",
+      "title": "Power LED and MCU decoupling"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "U2",
+      "section": "A",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "GND",
+          "num": "1",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "VIN",
+          "num": "3",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "VOUT",
+          "num": "2",
+          "net": "+3V3",
+          "side": "right"
+        },
+        {
+          "name": "VOUT",
+          "num": "4",
+          "net": "+3V3",
+          "side": "right"
+        }
+      ],
+      "pins_source": "agent"
+    },
+    {
+      "ref": "C1",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C2",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R7",
+      "section": "B",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "LED_PWR"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "section": "B",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "1",
+          "net": "LED_PWR"
+        },
+        {
+          "name": "K",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C5",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C6",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C7",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C8",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C9",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    }
+  ]
+}

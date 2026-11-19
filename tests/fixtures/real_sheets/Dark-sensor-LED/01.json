@@ -1,0 +1,179 @@
+{
+  "id": "01",
+  "title": "Dark sensor LED",
+  "sections": [
+    {
+      "id": "A",
+      "title": "USB-C 5V input"
+    },
+    {
+      "id": "B",
+      "title": "Light sensor and LED switch"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "J1",
+      "section": "A",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "VBUS",
+          "num": "A4B9",
+          "net": "+5V",
+          "side": "right"
+        },
+        {
+          "name": "CC1",
+          "num": "A5",
+          "net": "CC1",
+          "side": "right"
+        },
+        {
+          "name": "CC2",
+          "num": "B5",
+          "net": "CC2",
+          "side": "right"
+        },
+        {
+          "name": "GND",
+          "num": "A1B12",
+          "net": "GND",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC1"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC2"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "section": "B",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "BASE"
+        }
+      ]
+    },
+    {
+      "ref": "LDR1",
+      "section": "B",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "BASE"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ],
+      "pins_source": "agent"
+    },
+    {
+      "ref": "Q1",
+      "section": "B",
+      "kind": "q",
+      "pins": [
+        {
+          "name": "B",
+          "num": "1",
+          "net": "BASE"
+        },
+        {
+          "name": "E",
+          "num": "2",
+          "net": "GND"
+        },
+        {
+          "name": "C",
+          "num": "3",
+          "net": "LEDK"
+        }
+      ],
+      "pins_source": "agent"
+    },
+    {
+      "ref": "R4",
+      "section": "B",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "LEDA"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "section": "B",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "A",
+          "num": "1",
+          "net": "LEDA"
+        },
+        {
+          "name": "K",
+          "num": "2",
+          "net": "LEDK"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "A",
+      "text": "J1 pin numbers taken from the library symbol TYPE-C16PIN; no datasheet stored, unverified."
+    }
+  ]
+}

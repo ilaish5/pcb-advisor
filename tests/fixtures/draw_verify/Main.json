@@ -1,0 +1,253 @@
+{
+  "id": "Main",
+  "title": "USB-C and 3V3 power",
+  "sections": [
+    {
+      "id": "A",
+      "title": "USB-C"
+    },
+    {
+      "id": "B",
+      "title": "3V3 LDO"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "J1",
+      "section": "A",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "GND",
+          "num": "A1B12",
+          "net": "GND"
+        },
+        {
+          "name": "VBUS",
+          "num": "A4B9",
+          "net": "+5V"
+        },
+        {
+          "name": "CC1",
+          "num": "A5",
+          "net": "CC1"
+        },
+        {
+          "name": "DP1",
+          "num": "A6",
+          "net": "USBC_DP"
+        },
+        {
+          "name": "DN1",
+          "num": "A7",
+          "net": "USBC_DN"
+        },
+        {
+          "name": "SBU1",
+          "num": "A8",
+          "net": "NC"
+        },
+        {
+          "name": "CC2",
+          "num": "B5",
+          "net": "CC2"
+        },
+        {
+          "name": "DP2",
+          "num": "B6",
+          "net": "USBC_DP"
+        },
+        {
+          "name": "DN2",
+          "num": "B7",
+          "net": "USBC_DN"
+        },
+        {
+          "name": "SBU2",
+          "num": "B8",
+          "net": "NC"
+        },
+        {
+          "name": "VBUS",
+          "num": "B4A9",
+          "net": "+5V"
+        },
+        {
+          "name": "GND",
+          "num": "B1A12",
+          "net": "GND"
+        },
+        {
+          "name": "SHELL",
+          "num": "1",
+          "net": "GND"
+        },
+        {
+          "name": "SHELL",
+          "num": "2",
+          "net": "GND"
+        },
+        {
+          "name": "SHELL",
+          "num": "3",
+          "net": "GND"
+        },
+        {
+          "name": "SHELL",
+          "num": "4",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R1",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC1"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R2",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "CC2"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R3",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "USBC_DP"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "USB_DP"
+        }
+      ]
+    },
+    {
+      "ref": "R4",
+      "section": "A",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "USBC_DN"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "USB_DN"
+        }
+      ]
+    },
+    {
+      "ref": "U3",
+      "section": "B",
+      "kind": "ic",
+      "pins_source": "agent",
+      "pins": [
+        {
+          "name": "VIN",
+          "num": "1",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "GND",
+          "num": "2",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "EN",
+          "num": "3",
+          "net": "+5V",
+          "side": "left"
+        },
+        {
+          "name": "NC",
+          "num": "4",
+          "net": "NC",
+          "side": "right"
+        },
+        {
+          "name": "VOUT",
+          "num": "5",
+          "net": "+3V3",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "C15",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+5V"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "C16",
+      "section": "B",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "A",
+      "text": "CC1/CC2 5.1k to GND. SBU No ERC. USB_DP/USB_DN and GND go to sheet Core."
+    },
+    {
+      "section": "B",
+      "text": "EN tied to +5V (LDO always on). +3V3 goes to sheets Core, Clock and Periph."
+    }
+  ]
+}
