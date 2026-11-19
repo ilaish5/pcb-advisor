@@ -102,14 +102,37 @@ def log_ok(rec):
     return not (rec.get("error") or rec.get("problems") or rec.get("restored") or rec.get("failed"))
 
 
+def _sheet_doc_records(project):
+    """({sheet id: SchDoc file name} as recorded, {ids whose record was dropped and not recorded again})."""
+    out, dropped = {}, set()
+    for e in read_jsonl(pdir(project) / "altium-log.jsonl"):
+        for k in e.get("sheet_docs_drop") or []:
+            out.pop(str(k), None)
+            dropped.add(str(k))
+        for k, v in (e.get("sheet_docs") or {}).items():
+            out[str(k)] = str(v)
+            dropped.discard(str(k))
+    return out, dropped
+
+
 def sheet_docs(project):
     """{sheet id: SchDoc file name} as the Altium bridge last recorded it (altium-log.jsonl "sheet_docs": written by add_sheet, the
-    skeleton and the draw, right after Altium drew). A sheet may live in a file not named after it (the empty Main.SchDoc a new
-    project starts with is drawn on by the first sheet)."""
-    out = {}
-    for e in read_jsonl(pdir(project) / "altium-log.jsonl"):
-        out.update({str(k): str(v) for k, v in (e.get("sheet_docs") or {}).items()})
-    return out
+    skeleton and the draw, right after Altium drew), for the sheets the design has now: the record of a removed sheet is not
+    used. A sheet may live in a file not named after it (the empty Main.SchDoc a new project starts with is drawn on by the first
+    sheet)."""
+    live = set(sheet_ids(project))
+    return {k: v for k, v in _sheet_doc_records(project)[0].items() if k in live}
+
+
+def sheet_docs_reset(project):
+    """Sheet ids made anew after a sheet of that id was removed, not drawn since: a file of the old sheet is theirs only when empty."""
+    return _sheet_doc_records(project)[1]
+
+
+def _drop_sheet_doc(project, sid):
+    """A sheet is removed or made anew: its recorded file stops being its file (sheet_docs_reset)."""
+    if (pdir(project) / "altium-log.jsonl").is_file() and str(sid) in _sheet_doc_records(project)[0]:
+        append(project, "altium-log.jsonl", {"ts": now(), "by": "store", "op": "sheet-docs", "sheet_docs_drop": [str(sid)]})
 
 
 def now_ms():
@@ -1425,6 +1448,7 @@ def undo_sheet_write(project, cid, by="student"):
     if ch.get("before") is None:
         with project_guard.writing(path):
             path.unlink(missing_ok=True)
+        _drop_sheet_doc(project, ch["sheet"])
     else:
         _write_text(path, json.dumps(ch["before"], ensure_ascii=False, indent=2))
     append(project, "sheet-log.jsonl", {"id": cid, "ts": now_ms(), "status": "undone", "by": by})
@@ -2779,6 +2803,8 @@ def write_sheet(project, sheet_id, sheet):
     sheet["parts"] = mark_bom_status(project, _mark_pins_source(project, parts))
     d = netlist_dir(project)
     d.mkdir(parents=True, exist_ok=True)
+    if not (d / f"{sheet['id']}.json").exists():
+        _drop_sheet_doc(project, sheet["id"])       # a new sheet with the id of a removed one: the old sheet's file is not its own
     _write_text(d / f"{sheet['id']}.json", json.dumps(sheet, ensure_ascii=False, indent=2))
     return {"ok": True, "sheet": sheet["id"], "warnings": warnings}
 

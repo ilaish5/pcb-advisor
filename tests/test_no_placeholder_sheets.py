@@ -197,6 +197,82 @@ def test_a_title_two_sheets_share_asks_for_the_id(started, monkeypatch):
     assert fake.runs == []
 
 
+def _hand_drawn_on_save(monkeypatch, drawn_on, names):
+    """Altium holds an unsaved hand drawing on `names`: saving them makes them non-empty on disk."""
+    import altium.schdoc
+    hand = set()
+
+    def save(prj, docs):
+        hand.update(pathlib.Path(d).name for d in docs if pathlib.Path(d).name in names)
+        return []
+    monkeypatch.setattr(bridge, "save_open_sheets", save)
+    monkeypatch.setattr(altium.schdoc, "is_blank_sheet", lambda path: pathlib.Path(path).name not in drawn_on | hand)
+    return hand
+
+
+def test_a_bare_id_sheet_blank_only_on_disk_is_saved_first_and_left_alone(started, monkeypatch):
+    project, fake, drawn_on = started
+    prj = bridge._linked(project)
+    fake([("PROJECT", str(prj)), ("SCH", str(prj.parent / "02.SchDoc"))])          # the student's own, unsaved drawing on it
+    hand = _hand_drawn_on_save(monkeypatch, drawn_on, {"02.SchDoc"})
+    bridge.draw_schematic(project, replace=True)
+    assert "02.SchDoc" in hand and drawn_on == {"Main.SchDoc", "02 Logic.SchDoc"}
+
+
+def test_a_bare_id_sheet_taken_over_is_never_drawn_with_replace(started, monkeypatch):
+    project, fake, drawn_on = started
+    prj = bridge._linked(project)
+    fake([("PROJECT", str(prj)), ("SCH", str(prj.parent / "02.SchDoc"))])
+    from altium import draw
+    seen, real = {}, draw.plan_sheet
+    monkeypatch.setattr(draw, "plan_sheet", lambda sh, syms, lib, doc, **kw: (seen.__setitem__(pathlib.Path(doc).name, kw["replace"]),
+                                                                              real(sh, syms, lib, doc, **kw))[1])
+    fake.runs.clear()
+    bridge.draw_schematic(project, replace=True)
+    assert seen == {"Main.SchDoc": False, "02.SchDoc": False}
+    assert sorted(c[2] for c in fake.flat() if c[0] == "DRAWCHECK") == ["0", "0"]
+
+
+def test_the_record_of_a_removed_sheet_is_not_used(started, monkeypatch):
+    import model
+    project, fake, drawn_on = started
+    bridge.draw_schematic(project)
+    (store.netlist_dir(project) / "02.json").unlink()                     # sheet 02 removed from the design
+    assert store.sheet_docs(project) == {"01": "Main.SchDoc"}
+    assert [s["id"] for s in model.sheets(project)] == ["01", "02 Logic"]      # its file is a tab of its own again
+    store.write_sheet(project, "02", SHEET2)                               # a new sheet 02: the old file holds a drawing
+    assert store.sheet_docs(project) == {"01": "Main.SchDoc"} and "02" in store.sheet_docs_reset(project)
+    with pytest.raises(bridge.BridgeError, match="earlier sheet 02"):
+        bridge.draw_schematic(project, replace=True)
+    drawn_on.discard("02 Logic.SchDoc")                                    # emptied in Altium: now it is taken, never wiped
+    from altium import draw
+    seen, real = {}, draw.plan_sheet
+    monkeypatch.setattr(draw, "plan_sheet", lambda sh, syms, lib, doc, **kw: (seen.__setitem__(pathlib.Path(doc).name, kw["replace"]),
+                                                                              real(sh, syms, lib, doc, **kw))[1])
+    bridge.draw_schematic(project, replace=True)
+    assert seen["02 Logic.SchDoc"] is False and store.sheet_docs(project)["02"] == "02 Logic.SchDoc"
+    assert "02" not in store.sheet_docs_reset(project)
+
+
+def test_main_is_saved_only_while_it_could_be_taken(started, monkeypatch):
+    project, fake, drawn_on = started
+    bridge.draw_schematic(project)                    # Main holds sheet 01 now
+    fake.runs.clear()
+    bridge.draw_schematic(project, replace=True)
+    docstate_runs = [run for run in fake.runs if [c[0] for c in run[1:]] == ["DOCSTATE"]]
+    assert docstate_runs == []                         # no one-sheet save probe: Main is not a candidate
+
+
+def test_a_failed_save_of_main_does_not_block(started, monkeypatch):
+    project, fake, drawn_on = started
+
+    def broken(prj, docs):
+        raise bridge.BridgeError("Altium could not save")
+    monkeypatch.setattr(bridge, "save_open_sheets", broken)
+    bridge.draw_schematic(project)
+    assert drawn_on == {"01 Power.SchDoc", "02 Logic.SchDoc"} and "Main.SchDoc" in _sheets(project)
+
+
 def test_the_full_rp2040_route_is_marked_slow():
     import configparser
     ini = configparser.ConfigParser()

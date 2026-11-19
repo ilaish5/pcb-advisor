@@ -479,21 +479,26 @@ def _logged_sheet_docs(project):
     return store.sheet_docs(project)
 
 
-def _save_placeholder(project, prj):
-    """Saves the tool-made Main.SchDoc when Altium holds it with unsaved changes, before _sheet_doc judges it empty: a hand drawing
-    on it that is not saved yet counts, so the sheet is then not empty and never taken over."""
-    ph = _find_doc(prj, PLACEHOLDER_SHEET)
-    if ph is not None and ph.is_file() and PLACEHOLDER_SHEET.lower() in _tool_made_sheets(project):
-        save_open_sheets(prj, [ph])
+def _blank_after_save(prj, doc):
+    """Whether `doc` is an empty sheet once Altium's unsaved changes to it are saved: a hand drawing that is not saved yet counts. A
+    save that fails is a 'no' (the sheet is then not taken over), never an error that stops the action."""
+    from altium.schdoc import is_blank_sheet
+    try:
+        save_open_sheets(prj, [doc])
+    except BridgeError:
+        return False
+    return is_blank_sheet(doc)
 
 
 def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
     """The project SchDoc that holds advisor sheet `sid`, or None (a new one is made then): the one recorded for it (add_sheet,
     skeleton, draw), else the one named after it ('<id> ...'), else a bare '<id>.SchDoc' this tool made or that is empty, else the
     empty placeholder this tool made (Main.SchDoc, made when no sheet was planned yet) when no other sheet uses it: the first sheet is
-    drawn on it instead of leaving it behind empty. A recorded file that is no longer in the project (renamed or removed in Altium) is
-    an error, never a reason to make a second copy of the sheet. `taken`: paths already given to another sheet in the same call;
-    adopt=False: never the placeholder; `how` (a list): "adopted" is appended when the placeholder is given."""
+    drawn on it instead of leaving it behind empty. A sheet that is taken over (a bare '<id>.SchDoc', the placeholder, or the file
+    of a removed sheet of the same id) is saved first when Altium holds unsaved changes to it and is checked empty then; `how` (a
+    list) gets "adopted", and the draw never wipes it. Only a candidate is saved. A recorded file that is no longer in the project
+    (renamed or removed in Altium) is an error, never a reason to make a second copy of the sheet. `taken`: paths already given to
+    another sheet in the same call; adopt=False: nothing is taken over or saved (the file that would hold the sheet, for reports)."""
     from altium.schdoc import is_blank_sheet
     sheets = read_prjpcb(prj)["sheets"]
     in_prj = {pathlib.PureWindowsPath(d).name.lower(): prj.parent / pathlib.Path(d.replace("\\", "/")) for d in sheets}
@@ -509,23 +514,35 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
         raise BridgeError(f"Sheet {sid} was drawn on {name}, which is no longer in the Altium project (renamed or removed there?). "
                           f"Nothing was changed, so that no second copy of sheet {sid} is made: put {name} back in the project, "
                           f"or give the sheet file that now holds it a name that starts with '{sid} ' (e.g. '{sid} <title>.SchDoc').")
+    def take(doc):
+        if how is not None:
+            how.append("adopted")
+        return doc
+
     doc = _find_doc(prj, sid)
     if doc is not None:
-        return doc
+        if not adopt or str(sid) not in store.sheet_docs_reset(project):
+            return doc
+        if doc.is_file() and _blank_after_save(prj, doc):      # the file of a removed sheet with this id: only when empty
+            return take(doc)
+        raise BridgeError(f"{doc.name} belongs to an earlier sheet {sid} that was removed, and it still holds a drawing. Nothing was "
+                          f"changed: rename or remove {doc.name} in Altium (it is not wiped for the new sheet {sid}).")
     made = _tool_made_sheets(project)
     doc = _find_doc(prj, sid, bare=True)
-    if doc is not None and doc.is_file() and (doc.name.lower() in made or is_blank_sheet(doc)):
-        return doc
+    if doc is not None and doc.is_file():
+        if not adopt:
+            if doc.name.lower() in made or is_blank_sheet(doc):
+                return doc
+        elif _blank_after_save(prj, doc) or doc.name.lower() in made:
+            return take(doc)                             # never wiped: a drawing on it stops the draw
     ph = in_prj.get(PLACEHOLDER_SHEET.lower())
     if not adopt or ph is None or ph in taken or not ph.is_file() or PLACEHOLDER_SHEET.lower() not in made:
         return None
     if any(v.lower() == PLACEHOLDER_SHEET.lower() for k, v in logged.items() if k != str(sid)):
         return None                                      # another sheet is drawn on it
-    if not is_blank_sheet(ph):
+    if not _blank_after_save(prj, ph):
         return None
-    if how is not None:
-        how.append("adopted")
-    return ph
+    return take(ph)
 
 
 def _doc_key(prj, rel):
@@ -608,7 +625,6 @@ def add_sheet(project, name):
     planned = _planned_sheet(project, name)
     if planned:
         sid, title, by_title = planned
-        _save_placeholder(project, prj)
         how = []
         have = _sheet_doc(project, prj, sid, how=how)
         if have is not None and not how:
@@ -712,7 +728,6 @@ def skeleton(project, sheet=None):
             raise BridgeError(f"No sheet {sheet} in this project.")
     cmds, todo, existing, new_docs, sheet_docs = [("PROJECT", str(prj))], [], [], [], {}
     if planned:
-        _save_placeholder(project, prj)
         for sid, title, sh in planned:
             doc = _sheet_doc(project, prj, sid, taken=existing)
             if doc is None:
@@ -844,7 +859,6 @@ def draw_schematic(project, sheet=None, replace=False):
     plans, existing, new_docs, adopted = [], [], [], set()
     # one drawn name per net for the whole design (a net on two sheets keeps one name; two names never share one)
     aliases = drawn_names(project)
-    _save_placeholder(project, prj)
     for sid, title, sh in planned:
         errors, _ = store.check_sheet(sh, bom_refs)
         if errors:
