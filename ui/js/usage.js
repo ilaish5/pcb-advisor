@@ -81,6 +81,7 @@
     try {
       var el = e.target && e.target.closest && e.target.closest('button, a, summary, [data-act], [data-tab], [data-key], [role=button], select, input[type=checkbox], input[type=radio]');
       if (!el || el.type === 'password') return;
+      if (el.getAttribute('data-act') === 'newproj') return;        // shell.js logs the creation under the new project
       var cls = typeof el.className === 'string' ? el.className : '';
       var box = el.type === 'checkbox' || el.type === 'radio';
       var lab = box ? (el.closest('label') ? el.closest('label').innerText : '') : '';

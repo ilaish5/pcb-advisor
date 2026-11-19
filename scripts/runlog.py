@@ -375,7 +375,8 @@ def _shift(ts, seconds):
         return ts
 
 
-_PROFILE_RE = re.compile(r"(?i)\b[a-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/)(?!(?:Public|Default|All Users)(?:\\|/|\b))[^\\/\s\"'<>|:*?]+")
+_PROFILE_RE = re.compile(r"(?i)\b[a-z]:(?:\\{1,2}|/)Users(?:\\{1,2}|/)(?!(?:Public|Default|All Users)(?:\\|/|\b))"
+                         r"(?:[^\\/\s\"'<>|:*?]|\s(?=[^\\/\"'<>|:*?]*[\\/]))+")      # a space belongs to the name only when a separator follows
 
 
 def home_paths(text):
@@ -515,8 +516,7 @@ def project_timeline_text(project, run_events=None, rows=None):
     rows = list(rows) if rows is not None else _timeline_rows(project)
     runs = run_events if run_events is not None else _project_run_events(project, *_window(rows))
     steps_ok = steps_bad = steps_stopped = 0
-    steps_partial = sum(1 for _, text, _ in rows if text.startswith("STEP ") and " PARTIAL in " in text)
-    partial_word = f"{steps_partial} partial, " if steps_partial else ""
+    steps_partial = 0
     for r in runs:
         ts = _tsnorm(r.get("ts"))
         kind = r.get("kind")
@@ -524,11 +524,13 @@ def project_timeline_text(project, run_events=None, rows=None):
             if r.get("phase") == "end":
                 stopped = bool(r.get("stopped"))
                 bad = r.get("ok") is False and not stopped
+                part = r.get("ok") is not False and "PARTIAL ROUTE" in str(r.get("summary") or "")
                 if str(r.get("op", "")).startswith("step."):
                     steps_bad += bad
+                    steps_partial += part
                     steps_ok += r.get("ok") is not False
                     steps_stopped += stopped
-                rows.append((ts, f"RUN {r.get('op')} {'STOPPED' if stopped else 'FAILED' if bad else 'ok'} in {r.get('seconds', '?')}s"
+                rows.append((ts, f"RUN {r.get('op')} {'STOPPED' if stopped else 'FAILED' if bad else 'PARTIAL' if part else 'ok'} in {r.get('seconds', '?')}s"
                                  + (f": {_short(r.get('error'), 800)}" if r.get("error") else "")
                                  + (f" summary: {_short(r.get('summary'), 300)}" if r.get("summary") else ""), bad))
         elif kind == "altium":
@@ -550,12 +552,16 @@ def project_timeline_text(project, run_events=None, rows=None):
     rows.sort(key=lambda x: x[0])
     turns = (_jsonl(workspace.projects_dir() / project / "turns-log.1.jsonl") + _jsonl(workspace.projects_dir() / project / "turns-log.jsonl"))
     errs = sum(1 for _, _, e in rows if e)
+    row_partial = sum(1 for _, text, _ in rows if text.startswith("STEP ") and " PARTIAL in " in text)      # the same steps seen in the usage log
+    steps_partial = max(steps_partial, row_partial)
+    steps_ok = max(0, steps_ok - steps_partial)              # partial is neither ok nor failed: the three counts do not overlap
+    partial_word = f"{steps_partial} partial, " if steps_partial else ""
     head = [f"PCB Advisor activity timeline: project {project}",
             f"first record: {rows[0][0] if rows else '-'}   last record: {rows[-1][0] if rows else '-'}",
             f"agent turns: {len(turns)} (failed: {sum(1 for t in turns if not t.get('ok', True))})   "
             f"step buttons: {steps_ok} ok, {partial_word}{steps_bad} failed, {steps_stopped} stopped   records marked as errors (!!): {errs}",
             "Lines starting with '!!' are failures. Times are local to the tester's computer.", "=" * 78]
-    return "\n".join(head + [f"{ts[:23]}  {'!! ' if err else '   '}{text}" for ts, text, err in rows]) + "\n"
+    return home_paths("\n".join(head + [f"{ts[:23]}  {'!! ' if err else '   '}{text}" for ts, text, err in rows]) + "\n")
 
 
 README_TEXT = """PCB Advisor activity report for one project (made locally, nothing was sent).
@@ -578,14 +584,14 @@ state/                  project.json, idea.json, bom.json, netlist/*.json, notes
 
 
 def _add_capped(z, path, arcname, cap=PROJECT_REPORT_MAX_FILE):
+    """A file into the zip (its last `cap` bytes when bigger), the tester's profile folder written as %USERPROFILE%."""
     try:
         size = path.stat().st_size
-        if size <= cap:
-            z.write(path, arcname)
-        else:
-            with open(path, "rb") as fh:
+        with open(path, "rb") as fh:
+            if size > cap:
                 fh.seek(size - cap)
-                z.writestr(arcname, b"[cut: only the last part of this file]\n" + fh.read())
+            data = fh.read()
+        z.writestr(arcname, ("[cut: only the last part of this file]\n" if size > cap else "") + home_paths(data.decode("utf-8", errors="replace")))
     except OSError as exc:
         z.writestr(arcname + ".error.txt", str(exc))
 
@@ -604,7 +610,13 @@ def filter_output(lines, project, since, until):
         others = [p.name for p in workspace.projects_dir().iterdir() if p.is_dir() and p.name != project]
     except OSError:
         others = []
-    other = re.compile("|".join(r"(?:projects[\\/]+|project=|\[)" + re.escape(o) + r"(?=[\\/\]\s&\"',]|$)" for o in others), re.I) if others else None
+    def tok(name):                      # a whole name: "Verify" is not "Verify-RP2040"
+        return r"(?<![\w.-])" + re.escape(name) + r"(?![\w.-])"
+    # another project is named by its folder or ?project=; a project called like a tag ([guard]) never hides the tag lines
+    other = re.compile("|".join(r"(?:projects[\\/]+|project=)" + tok(o) for o in others), re.I) if others else None
+    mine = re.compile(tok(project), re.I)
+    if since.endswith(".999"):
+        since = since[:-4] + ".000"       # second precision: the whole second counts
     out = []
     for line in lines:
         m = re.match(r"(\d{4}-\d\d-\d\dT[\d:.]+) (out|err) (.*)$", line)
@@ -613,7 +625,7 @@ def filter_output(lines, project, since, until):
         ts, body = _tsnorm(m.group(1)), m.group(3)
         if not (since <= ts <= until) or OUTPUT_NOISE.search(body):
             continue
-        if project not in body and other is not None and other.search(body):
+        if other is not None and other.search(body) and not mine.search(body):
             continue                                      # another project's line
         out.append(f"{'!! ' if OUTPUT_ERROR.search(body) else '   '}{m.group(1)} {m.group(2)} {home_paths(body)}")
     return "\n".join(out) + ("\n" if out else "")

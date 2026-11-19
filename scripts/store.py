@@ -97,6 +97,11 @@ def now():
     return dt.datetime.now().isoformat(timespec="seconds")
 
 
+def log_ok(rec):
+    """An altium-log record that ended well: no error, no problems, nothing restored, nothing failed."""
+    return not (rec.get("error") or rec.get("problems") or rec.get("restored") or rec.get("failed"))
+
+
 def now_ms():
     """Log records are ordered against the usage log's clicks (millisecond stamps): a second-precision stamp sorts before the click that caused it."""
     return dt.datetime.now().isoformat(timespec="milliseconds")
@@ -1757,7 +1762,7 @@ def accept_all_proposed(project, accept=True):
                     continue
             else:
                 it["status"] = "confirmed"
-                it["ts"] = now()
+                it["ts"] = now_ms()
         kept.append(it)
     idea["agreed"] = kept
     if idea.get("goal_status") == "proposed":
@@ -1826,7 +1831,7 @@ def propose_idea(project, topic, text, by="agent"):
     if item:
         if by == "agent" and item.get("text") and item["text"] != text:
             item["prev_text"] = item["text"]
-        item.update(text=text, by=by, status=status, ts=now())
+        item.update(text=text, by=by, status=status, ts=now_ms())
     else:
         idea["agreed"].append({"topic": topic, "text": text, "by": by, "status": status, "ts": now_ms()})
     return save_idea_draft(project, idea)
@@ -1854,7 +1859,7 @@ def update_idea_item(project, index=None, old_topic=None, topic=None, text=None)
     item["text"] = text
     item["by"] = "student"
     item["status"] = "confirmed"
-    item["ts"] = now()
+    item["ts"] = now_ms()
     save_idea_draft(project, idea)
     return idea
 
@@ -1881,18 +1886,18 @@ def confirm_idea_item(project, index=None, topic=None):
     agreed = idea.get("agreed", [])
     if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
         agreed[index]["status"] = "confirmed"
-        agreed[index]["ts"] = now()
+        agreed[index]["ts"] = now_ms()
     elif topic:
         item = next((it for it in agreed if it.get("topic") == topic), None)
         if not item:
             raise KeyError(f"no requirement with topic {topic!r}")
         item["status"] = "confirmed"
-        item["ts"] = now()
+        item["ts"] = now_ms()
     else:
         for it in agreed:
             if it.get("status") == "proposed":
                 it["status"] = "confirmed"
-                it["ts"] = now()
+                it["ts"] = now_ms()
     save_idea_draft(project, idea)
     return idea
 

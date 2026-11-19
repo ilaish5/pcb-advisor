@@ -368,8 +368,13 @@ function pvStopBtn() {       // the run stops before its next step; the last ste
 }
 const PV_LOG_OP = {draw: 'draw-schematic', place: 'place-pcb', route: 'route-pcb'};
 function pvLaterOk(n) {        // the same step succeeded after this note was made: the note is stale
-  const t = n.step && S && S.altium_ok && S.altium_ok[PV_LOG_OP[n.step]];
-  return !!(t && n.at && new Date(t).getTime() > n.at);
+  const ok = (S && S.altium_ok) || {}, t = n.step && ok[PV_LOG_OP[n.step]];
+  if (!(t && n.at && new Date(t).getTime() > n.at)) return false;
+  if (n.step !== 'draw') return true;
+  const named = [...String(n.text || '').matchAll(/Sheet (\S+) cannot be drawn/g)].map(m => m[1]);
+  if (!named.length) return true;                  // the note names no sheet: any good draw answers it
+  const drawn = (ok.draw_sheets || []).filter(d => new Date(d.ts).getTime() > n.at).flatMap(d => d.sheets);
+  return named.every(id => drawn.some(st => st === id || st.startsWith(id + ' ')));      // a draw of other sheets leaves it standing
 }
 function pvStepNote(page) {       // under the header: Altium is working, or what the last step answered
   pvResume();

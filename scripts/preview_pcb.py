@@ -146,8 +146,13 @@ def board6_outline(rec: dict) -> list[tuple[float, float]] | None:
     if len(pts) > 4 and all(str(rec.get(f"KIND{k}", "0")).strip() != "1" for k in range(len(pts))):
         xs4, ys4 = sorted({p[0] for p in pts[:4]}), sorted({p[1] for p in pts[:4]})
         if len(xs4) == 2 and len(ys4) == 2 and len(set(pts[:4])) == 4:
-            on_edge = lambda q: (q[0] in xs4 or q[1] in ys4) and xs4[0] <= q[0] <= xs4[1] and ys4[0] <= q[1] <= ys4[1]      # noqa: E731
-            if not any(on_edge(q) for q in pts[4:]):
+            (ax, ay), (bx, by) = pts[3], pts[0]           # the closing edge: a later vertex on it keeps the polygon simple
+            def real(q):
+                inside = xs4[0] <= q[0] <= xs4[1] and ys4[0] <= q[1] <= ys4[1]
+                on_closing = (abs((bx - ax) * (q[1] - ay) - (by - ay) * (q[0] - ax)) < 1e-6
+                              and min(ax, bx) <= q[0] <= max(ax, bx) and min(ay, by) <= q[1] <= max(ay, by))
+                return not inside or on_closing          # on any other edge, or inside, the polygon would cross itself
+            if not all(real(q) for q in pts[4:]):
                 pts = pts[:4]
     if len(pts) < 3 or len({p for p in pts}) < 3:
         return None
