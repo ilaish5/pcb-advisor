@@ -35,13 +35,14 @@ IO_TYPES = {"I", "O", "I/O", "IO", "INPUT", "OUTPUT", "AI", "AO", "B", "I/OD", "
 TYPES = POWER_TYPES | GROUND_TYPES | IO_TYPES | {"NC", "PASSIVE", "—", "-", "–"}
 
 _TYPE_ONLY = {"I", "O", "I/O", "IO", "AI", "AO", "B", "P", "G", "S", "PWR", "—", "-", "–"}     # codes no pin is named
-# A package name is written in capitals (`Connect to GND`, `so that` are words, not TO / SO packages); a size in mils is no
-# pin count, also when two sizes share it (`SOIC 150/208-mil` is SOIC, not SOIC-150)
-_PKG = re.compile(r"\b(?-i:(PDIP|CDIP|DIP|SOIC|TSSOP|VSSOP|SSOP|MSOP|SOP|SOT|SOD|SC|SO|TSOT|DSBGA|WLCSP|FBGA|NFBGA|BGA|UFQFPN|UQFN|VQFN|WQFN|"
+# A package family is read in any case (`Sot-23`, `sot-23-5 package`); the short ones that are also words (`Connect to GND`,
+# `so that`) only in capitals and with a size (TO-220, SC-70, SO-8). A size in mils is no pin count, also when two sizes share
+# it (`SOIC 150/208-mil` is SOIC, not SOIC-150)
+_PKG = re.compile(r"\b((?:PDIP|CDIP|DIP|SOIC|TSSOP|VSSOP|SSOP|MSOP|SOP|SOT|SOD|SC|SO|TSOT|DSBGA|WLCSP|FBGA|NFBGA|BGA|UFQFPN|UQFN|VQFN|WQFN|"
                   r"QFN|WSON|USON|DFN|SON|LQFP|TQFP|LFCSP|QFP|TO|DPAK|SMA|SMB|SMC|PQFN|LGA))"
                   r"(?:[\s-]*(\d{1,3}(?:-\d{1,2})?)(?![\d.]|\s?[x×]|\s?mm|\s?/\s?\d{2,3}\s?-?\s?mil)(?:[\s-]*mil)?)?"
                   r"(?![A-Za-z])", re.I)
-_NEEDS_SIZE = {"TO", "SC"}      # `TO` / `SC` alone is a word of a sentence; TO-220, SC-70 are packages
+_WORDLIKE = {"TO", "SC", "SO"}      # also words of a sentence: a package only as printed, in capitals and with a size
 _EP = re.compile(r"\b(thermal|exposed|power)[\s-]?pad\b|\bepad\b|\bpowerpad\b|^\W*(?:[\d,]+\W+)?(?:ep|pad)\b", re.I)    # an exposed-pad row
 _SIZED = {"tsot", "so", "tssop", "ssop", "vssop", "msop", "dip", "qfn", "dfn", "lqfp", "tqfp", "qfp", "ufqfpn", "bga", "sot"}
 
@@ -176,7 +177,7 @@ def package_labels(text):
         digits = m.group(2) or ""
         if digits and re.search(r"mil", m.group(0), re.I) and int(digits.split("-")[0]) >= 100:
             digits = ""
-        if not digits and m.group(1).upper() in _NEEDS_SIZE:
+        if m.group(1).upper() in _WORDLIKE and (not digits or not m.group(1).isupper()):
             continue
         label = (m.group(1) + ("-" + digits if digits else "")).upper()
         if label not in out:
@@ -240,19 +241,43 @@ _FUNC_COL = re.compile(r"(?<![A-Za-z0-9])(?:F|AF|ALT|FUNC)\s?\d{1,2}(?![A-Za-z0-
 
 def _function_table(header_lines):
     """A function-select (alternate function) table: `GPIO  F1  F2 ... F9`, `AF0 AF1 ...`. Its numbers are GPIO numbers and
-    its cells peripheral functions (SPI0 RX, UART0 TX): it is never the package pinout, whatever its heading says."""
-    return any(len(set(_FUNC_COL.findall(ln))) >= 3 for ln in header_lines)
+    its first cells peripheral functions (SPI0 RX, UART0 TX): never the package pinout, whatever its heading says. A pin table
+    with a name column beside its IO MUX columns (`No.  Name  Type  F0  F1  F2`, ESP32 "Pin Overview") is a pinout: its
+    number and name are read, the function columns are only its description."""
+    funcs = any(len(set(_FUNC_COL.findall(ln))) >= 3 for ln in header_lines)
+    return funcs and not any(re.search(r"\bname\b", ln, re.I) for ln in header_lines)
 
 
-def _repeats_numbers(rows):
-    """A numbering column that gives one number to two rows: a truth table or a register map (`0  0  X`, `0  1  Hardware`),
-    not a pinout, where every pin has one row."""
-    width = max(len(r["nums"]) for r in rows)
-    for i in range(width):
-        nums = [n.upper() for r in rows if len(r["nums"]) == width for n in r["nums"][i]]
+def _modal(rows):
+    """(K, rows): the table's usual number of numbering cells and the rows that have it. A dash at the end may be the pin
+    type (`GND 7 —`) rather than a column."""
+    def bare_size(nums):
+        n = len(nums)
+        while n and not nums[n - 1]:
+            n -= 1
+        return n
+    sizes = [bare_size(r["nums"]) for r in rows]
+    k = max(set(sizes), key=lambda n: (sizes.count(n), n))
+    out = []
+    for r in rows:
+        if len(r["nums"]) == k + 1 and not r["nums"][-1]:        # `GND 7 —`: the dash is the pin type, not a column
+            r = {**r, "nums": r["nums"][:-1], "type": r["type"] or "—"}
+        if len(r["nums"]) == k:
+            out.append(r)
+    return k, out
+
+
+def _repeating_columns(rows):
+    """The numbering columns (of the usual row width) that give one number to two rows. Such a column is not a pin numbering:
+    a truth table (`0  0  X`, `0  1  Hardware`), or a package that bonds several pins to one (an SO8 column of an STM32G0
+    table); the other columns of the table stay."""
+    k, use = _modal(rows)
+    out = set()
+    for i in range(k):
+        nums = [n.upper() for r in use for n in r["nums"][i]]
         if len(nums) != len(set(nums)):
-            return True
-    return False
+            out.add(i)
+    return out, k
 
 
 _CAPTION = re.compile(r"\b(figure|fig\.|top view|bottom view|package drawing)\b", re.I)
@@ -302,7 +327,8 @@ def find_tables(text):
                 k += 1
             if len({tuple(map(tuple, r["nums"])) for r in rows}) >= 2 and _plausible(rows):
                 seen.update(range(h, k))
-                if _function_table(lines[h:j]) or _repeats_numbers(rows):
+                repeating, width = _repeating_columns(rows)
+                if _function_table(lines[h:j]) or len(repeating) == width:
                     break                   # not the pinout; its lines are taken, so a later "pin" line does not find it again
                 # columns are tied to packages only by a column-header row (see _header_labels); the scope of the table is its
                 # heading and header lines, never a figure caption
@@ -319,25 +345,16 @@ def find_tables(text):
 
 def _columns(table):
     """The table's numbering columns: [{"index", "label"}]. A row has the table's usual number of cells (K) or is not used."""
-    def bare_size(nums):                 # a dash at the end may be the pin type (`GND 7 —`) rather than a column
-        n = len(nums)
-        while n and not nums[n - 1]:
-            n -= 1
-        return n
-    sizes = [bare_size(r["nums"]) for r in table["rows"]]
-    k = max(set(sizes), key=lambda n: (sizes.count(n), n))
-    rows = []
-    for r in table["rows"]:
-        if len(r["nums"]) == k + 1 and not r["nums"][-1]:        # `GND 7 —`: the dash is the pin type, not a column
-            r = {**r, "nums": r["nums"][:-1], "type": r["type"] or "—"}
-        if len(r["nums"]) == k:
-            rows.append(r)
+    k, rows = _modal(table["rows"])
+    repeating, _ = _repeating_columns(table["rows"])
     labels, per_line = table["labels"], table.get("label_lines", [])
     # Several columns are tied to package names only when ONE header line names exactly K packages (its text order is the
     # column order); names spread over lines, or a different count, tie nothing: every column stays a candidate
     tied = k > 1 and len(per_line) == 1 and len(per_line[0]) == k
     cols = []
     for i in range(k):
+        if i in repeating:
+            continue                     # one number on two rows: not a pin numbering (see _repeating_columns)
         label = per_line[0][i] if tied else None
         cols.append({"index": i, "label": label, "scope": labels if label is None else [label], "k": k, "rows": rows,
                      "mapped": k == 1 or tied, "heading": table["heading"], "ep_lines": table.get("ep_lines", [])})
@@ -422,14 +439,23 @@ def table_names_of(rows):
 
 def name_matches(name, cell, table_names=None):
     """The netlist's pin name is the table's name for the pin, in the spelling of the table or another (RESET/RST, /CS = CS#,
-    VCC = VDD, GND = VSS). `A` is one of the alternatives of `A/B` (one pin, two functions); a netlist name `A/B` is the
-    table's when its first function A is: `DO/IO1` is the table's `DO (IO1)`, `~{HOLD}/~{RESET}/IO3` its `/HOLD or /RESET`.
+    VCC = VDD, GND = VSS). `A` is one of the alternatives of `A/B` (one pin, two functions). A netlist name of several
+    functions `A/B` is the table's when one of them is the cell's own name (outside its brackets) and every other one is in
+    the cell too or nowhere in the table: `DO/IO1` is `DO (IO1)`, `~{HOLD}/~{RESET}/IO3` is `/HOLD or /RESET` (IO3 is no other
+    row), `USART2_TX/PA2` is `PA2 (USART2_TX)`; `TIM2_CH1/PA5` is never `PA0 (TIM2_CH1)`, nor `USART2_TX/PA3` `PA2 (USART2_TX)`.
     CLK_N is not a plain CLK."""
     cells = _cell_forms(cell)
-    for alt in [name] + _alternatives(name)[:1]:      # the first function: PA5/TIM2_CH1 is never the table's PA0 (TIM2_CH1)
-        if _name_forms(alt, with_bare=not _plain_n(alt, cell), table_names=table_names) & cells:
-            return True
-    return False
+
+    def forms(text):
+        return _name_forms(text, with_bare=not _plain_n(text, cell), table_names=table_names)
+
+    if forms(name) & cells:
+        return True
+    alts = _alternatives(name)
+    primary = _cell_forms(re.sub(r"\([^)]*\)", " ", str(cell)))
+    if not alts or not any(forms(a) & primary for a in alts):
+        return False
+    return all(forms(a) & cells or (table_names is not None and not forms(a) & table_names) for a in alts)
 
 
 def _alternatives(name):
@@ -525,12 +551,50 @@ def _type_note(ref_name, typ):
     return ""
 
 
+_SIDES = {}
+for _group, _sides in {"sign": [("P", "+", "DP", "D+", "POS", "PLUS"), ("N", "-", "DM", "DN", "D-", "NEG", "MINUS")],
+                       "dir": [("I", "IN", "INPUT", "XI"), ("O", "OUT", "OUTPUT", "XO")],
+                       "uart": [("TX", "TXD"), ("RX", "RXD")], "spi": [("MISO",), ("MOSI",)],
+                       "color": [("R", "RED"), ("G", "GREEN"), ("B", "BLUE")], "level": [("H", "HIGH"), ("L", "LOW")]}.items():
+    for _i, _words in enumerate(_sides):
+        for _w in _words:
+            _SIDES.setdefault(_w, set()).add((_group, _i))
+
+
+def _polar_tokens(text):
+    """The words of a name (`USB_D-` -> USB, D-), a trailing sign kept on its word."""
+    first = str(text).split()[0] if str(text).split() else ""
+    return [t for t in re.split(r"[_.~{}/#!]+|-(?=.)", first.upper()) if t]
+
+
+def _sides(token):
+    out = set(_SIDES.get(token, ()))
+    if len(token) > 1 and token[-1] in "+-":
+        out |= _SIDES[token[-1]]
+    return out
+
+
+def _polar(name, cell):
+    """The two names are the two sides of a pair (+/-, P/N, DP/DM, IN/OUT, I/O, TX/RX, MISO/MOSI, R/G/B, H/L, A/B, any two
+    single letters): different pins, never one spelt two ways."""
+    ta, tb = _polar_tokens(name), _polar_tokens(cell)
+    for x in ta:
+        for y in tb:
+            if x != y and ({g for g, _ in _sides(x)} & {g for g, _ in _sides(y)} or (len(x) == 1 and len(y) == 1 and x.isalpha() and y.isalpha())):
+                if not (_sides(x) & _sides(y)):
+                    return True
+    return False
+
+
+_SELECT_WORDS = [{"CS", "CSN", "NCS", "SS", "SSN", "NSS"}]      # a chip select by its other names (near, never a match)
+
+
 def _near(name, cell):
     """Two names that may be one pin spelt two ways: the same numbers, and one is the other with letters left out (VREG_IN /
     VREG_VIN) or both are the same prefix with another last word (QSPI_SS / QSPI_CSn). GPIO3 / GPIO4, RESET / OUT and GND /
     VIN are different pins."""
     a, b = _squash(pinnames.bare(str(name).strip())), _squash(pinnames.bare(str(cell).split()[0] if str(cell).split() else ""))
-    if not a or not b or re.findall(r"\d+", a) != re.findall(r"\d+", b):
+    if not a or not b or re.findall(r"\d+", a) != re.findall(r"\d+", b) or _polar(name, cell):
         return False
     short, long_ = sorted((a, b), key=len)
     it = iter(long_)
@@ -538,7 +602,13 @@ def _near(name, cell):
         return True
     ta = [t for t in re.split(r"[_\-.]", str(name).strip().upper()) if t]
     tb = [t for t in re.split(r"[_\-.]", str(cell).split()[0].upper() if str(cell).split() else "") if t]
-    return len(ta) >= 2 and len(ta) == len(tb) and ta[:-1] == tb[:-1] and len(ta[0]) >= 2
+    if not (len(ta) >= 2 and len(ta) == len(tb) and ta[:-1] == tb[:-1] and len(ta[0]) >= 2):
+        return False
+    x, y = _squash(ta[-1]), _squash(tb[-1])          # the last words: one select name (SS / CSn), or one inside the other
+    short, long_ = sorted((x, y), key=len)
+    it = iter(long_)
+    return (any(x in g and y in g for g in _SELECT_WORDS)
+            or (len(short) >= 2 and short[0] == long_[0] and all(ch in it for ch in short)))
 
 
 def _evaluate(col, pins, pads):
@@ -573,7 +643,8 @@ def _evaluate(col, pins, pads):
                     out["absent"].append(f"pin {num} {name}: exposed pad: the datasheet's table does not say its net")
                 else:
                     out["absent"].append(f"pin {num} {name}: the datasheet does not show the exposed pad on the net {name}")
-            elif complete and num.isdigit() and int(num) in beyond and beyond == list(range(top + 1, top + 1 + len(beyond))):
+            elif (complete and not col.get("pkg_match") and num.isdigit() and int(num) in beyond
+                  and beyond == list(range(top + 1, top + 1 + len(beyond)))):
                 # pins top+1 .. top+k, too many for an exposed pad: the table may be cut short (a page break, a partial list)
                 out["absent"].append(f"pin {num} {name}: the datasheet's pin table lists {len(set(nums))} pins, the part has more "
                                      f"(the table may be cut short)")
@@ -597,8 +668,16 @@ def _evaluate(col, pins, pads):
             else:
                 others = [str(r["nums"][col["index"]][0]) for r in col["rows"]
                           if name_matches(name, r["name"], names) and r["nums"][col["index"]]]
+                # VREG_IN / VREG_VIN, QSPI_SS / QSPI_CSn: a spelling, not proof of a wrong pin; only when the name is near this
+                # one row of the table and no other pin of the part sits crosswise on it (its name near this row, and this
+                # name near the row at its number)
                 near = [r for r in hits if _near(name, r["name"])]
-                if near and not others:        # VREG_IN / VREG_VIN, QSPI_SS / QSPI_CSn: a spelling, not proof of a wrong pin
+                near_all = [r for r in col["rows"] if _near(name, r["name"])]
+                cross = any(n2 != num and _near(nm2, near[0]["name"])
+                            and any(_near(name, r["name"]) for r in col["rows"]
+                                    if n2.upper() in {x.upper() for x in r["nums"][col["index"]]})
+                            for n2, nm2 in pins) if near else False
+                if near and not others and len(near_all) == 1 and not cross:
                     out["absent"].append(f"pin {num} {name}: the datasheet calls pin {num} {near[0]['name']}, which may be "
                                          f"another spelling of {name}")
                     continue
@@ -649,6 +728,7 @@ def _units(tables, package, pads=None):
     for u in units:
         rels = [package_relation(lb, mine) for lb in u["scope"]] if u["scope"] else [None]
         rank.append("exact" if "exact" in rels else "family" if "family" in rels else "any" if rels == [None] else "")
+        u["pkg_match"] = rank[-1] in ("exact", "family")         # the table names this part's package
     for want in ("exact", "family", "any"):
         found = [u for u, r in zip(units, rank) if r == want]
         if found:
@@ -662,9 +742,12 @@ def _units(tables, package, pads=None):
 
 
 def _known(col, pins):
-    """How many of the part's pins the column's table names, at any number."""
+    """How many of the part's pins the column's table names, at any number (a name of several functions counts when one of
+    them is in the table: a swapped `USART2_TX/PA3` still belongs to the table of PA2 and PA3)."""
     names = table_names_of(col["rows"])
-    return sum(1 for _, name in pins if any(name_matches(name, r["name"], names) for r in col["rows"]))
+    return sum(1 for _, name in pins
+               if any(name_matches(name, r["name"], names) for r in col["rows"])
+               or any(_name_forms(a, table_names=names) & names for a in _alternatives(name)))
 
 
 def check(texts, pins, package="", pads=None):
@@ -684,7 +767,8 @@ def check(texts, pins, package="", pads=None):
         if not found:
             reasons.append(why)
             break
-        units = [u for u in found if _known(u, pins) * 2 >= len(pins)]
+        # a complete table of this part's own package is its pin table, however few of its names the symbol uses
+        units = [u for u in found if _known(u, pins) * 2 >= len(pins) or (u.get("pkg_match") and _complete(_numbers(u)))]
         if units:
             split = any(0 < _known(u, pins) for u in found if u not in units)
             break

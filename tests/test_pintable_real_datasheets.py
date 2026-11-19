@@ -74,7 +74,8 @@ def test_a_swapped_flash_pin_pair_is_still_a_mismatch():
 
 def test_a_status_register_truth_table_is_not_a_pin_table():
     status = _text("w25q16jv_status_protect.layout.txt")
-    assert pintable.find_tables(status) == []                # SRL/SRP columns give 0 and 1 to several rows
+    # the SRL and SRP columns give 0 and 1 to several rows: they are no pin numbering
+    assert all(c["index"] == 2 for t in pintable.find_tables(status) for c in pintable._columns(t))
     r = pintable.check([status], W25Q, "SOIC-8", pads=PADS8)
     assert r["verify"] == "unchecked" and not any("exposed pad" in i for i in r["issues"])
 
@@ -142,3 +143,76 @@ def test_the_bme280_pin_table_passes_and_a_swap_conflicts():
     assert pintable.check([text], BME280, "LGA-8(2.5x2.5)", pads=PADS8)["verify"] == "pass"
     r = pintable.check([text], _swap(BME280, "SDI", "SDO"), "LGA-8(2.5x2.5)")
     assert r["verify"] == "mismatch" and len(r["issues"]) == 2
+
+
+# ---------------------------------------------------------------- review of b0d80c6: no new false pass, no hidden swap
+
+def test_a_function_named_first_never_passes_a_swapped_pin():
+    t = "X\nPin Functions\nPIN NAME\n10 PA0 (TIM2_CH1) I/O\n15 PA5 (TIM2_CH1) I/O\n16 GND Ground\n"
+    r = pintable.check([t], [("10", "TIM2_CH1/PA5"), ("15", "TIM2_CH1/PA0"), ("16", "GND")])
+    assert r["verify"] == "mismatch" and len(r["issues"]) == 2
+    t = "X\nPin Functions\nPIN NAME\n1 PA2 (USART2_TX) I/O\n2 PA3 (USART2_RX) I/O\n3 GND Ground\n"
+    r = pintable.check([t], [("1", "USART2_TX/PA3"), ("2", "USART2_RX/PA2"), ("3", "GND")])
+    assert r["verify"] == "mismatch" and len(r["issues"]) == 2
+    assert pintable.check([t], [("1", "USART2_TX/PA2"), ("2", "USART2_RX/PA3"), ("3", "GND")])["verify"] == "pass"
+
+
+def test_the_two_sides_of_a_pair_are_never_one_spelling():
+    for a, b in [("USB_D+", "USB_DM"), ("XTAL_O", "XTAL_IN"), ("LED_R", "LED_G"), ("CS_N", "CS_P"), ("SPI_MISO", "SPI_MOSI"),
+                 ("UART_TX", "UART_RX"), ("SEL_A", "SEL_B"), ("LVL_H", "LVL_L")]:
+        assert not pintable._near(a, b), (a, b)
+    assert pintable._near("VREG_IN", "VREG_VIN") and pintable._near("QSPI_SS", "QSPI_CSn")
+
+
+def test_a_swapped_usb_pair_or_crystal_pair_is_a_mismatch():
+    t = "X\nPin Functions\nPIN NAME\n1 VBUS Supply\n2 USB_DM I/O\n3 USB_DP I/O\n4 GND Ground\n"
+    r = pintable.check([t], [("1", "VBUS"), ("2", "USB_D+"), ("3", "USB_D-"), ("4", "GND")])
+    assert r["verify"] == "mismatch" and len(r["issues"]) == 2
+    t = "X\nPin Functions\nPIN NAME\n1 VDD Supply\n2 XTAL_IN I\n3 XTAL_OUT O\n4 GND Ground\n"
+    r = pintable.check([t], [("1", "VDD"), ("2", "XTAL_O"), ("3", "XTAL_I"), ("4", "GND")])
+    assert r["verify"] == "mismatch" and len(r["issues"]) == 2
+
+
+def test_a_name_near_two_rows_is_no_spelling():
+    t = "X\nPin Functions\nPIN NAME\n1 VDD Supply\n2 VREG_VIN P\n3 VREG_INX P\n4 GND Ground\n"
+    r = pintable.check([t], [("1", "VDD"), ("2", "VREG_IN"), ("4", "GND")])
+    assert r["verify"] == "mismatch"
+
+
+def test_a_column_that_bonds_several_pins_to_one_is_dropped_not_the_table():
+    t = ("X\nPin Functions\nPIN NUMBER  NAME\n"
+         "1  1  1  VDD Supply\n2  2  1  PA0 I/O\n3  3  1  PA1 I/O\n4  4  2  GND Ground\n5  5  3  PA2 I/O\n6  6  4  PA3 I/O\n")
+    tables = pintable.find_tables(t)
+    assert tables and [c["index"] for c in pintable._columns(tables[0])] == [0, 1]
+    pins = [("1", "VDD"), ("2", "PA0"), ("3", "PA1"), ("4", "GND"), ("5", "PA2"), ("6", "PA3")]
+    assert pintable.check([t], pins)["verify"] == "pass"
+
+
+def test_a_pin_overview_with_io_mux_columns_is_a_pinout():
+    t = ("ESP32-C3\nTable 2-1. Pin Overview\n"
+         "No.  Name          Type  F0          F1         F2\n"
+         "1    LNA_IN        I/O\n"
+         "2    VDD3P3        P\n"
+         "3    VDD3P3        P\n"
+         "4    XTAL_32K_P    I/O   GPIO0       GPIO0\n"
+         "5    XTAL_32K_N    I/O   GPIO1       GPIO1\n"
+         "6    GPIO2         I/O   GPIO2       FSPIQ\n")
+    pins = [("1", "LNA_IN"), ("2", "VDD3P3"), ("3", "VDD3P3"), ("4", "XTAL_32K_P"), ("5", "XTAL_32K_N"), ("6", "GPIO2")]
+    assert pintable.check([t], pins)["verify"] == "pass"
+    assert pintable.check([t], _swap(pins, "XTAL_32K_P", "XTAL_32K_N"))["verify"] == "mismatch"
+
+
+def test_a_complete_table_of_the_parts_package_keeps_its_mismatch():
+    t = "X\nPin Configuration SOIC-8\nPIN NAME\n" + "".join(f"{i} P{i} I/O sig\n" for i in range(1, 9))
+    r = pintable.check([t], [(str(i), f"P{i}") for i in range(1, 15)], "SOIC-8")         # 14 symbol pins, 8-pin table
+    assert r["verify"] == "mismatch" and "none is 9" in " ".join(r["issues"])
+    r = pintable.check([t], [("1", "VCC"), ("2", "GND"), ("3", "OUT"), ("4", "P4")], "SOIC-8")   # 1 of 4 names in the table
+    assert r["verify"] == "mismatch"
+
+
+def test_package_families_are_read_in_any_case_but_short_words_only_as_printed():
+    assert pintable.package_labels("Sot-23") == ["SOT-23"]
+    assert pintable.package_labels("sot-23-5 package") == ["SOT-23-5"]
+    assert pintable.package_labels("tssop-20") == ["TSSOP-20"]
+    assert pintable.package_labels("connect to 3 V") == [] and pintable.package_labels("so 8 pins") == []
+    assert pintable.package_labels("SO-8") == ["SO-8"]
