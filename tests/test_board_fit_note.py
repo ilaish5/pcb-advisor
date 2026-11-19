@@ -17,13 +17,26 @@ def test_board_fit_check_reads_the_idea_size_and_the_bom(empty):
     assert not bridge.board_fit_check(empty)["tight"] and bridge.board_fit_check(empty)["text"] == ""
 
 
-def test_the_chat_says_it_once_per_figure(empty, monkeypatch):
+def _fit(text, tight=True, suggest=(60, 45)):
+    return lambda project: {"text": text, "tight": tight, "suggest": suggest}
+
+
+def test_the_chat_says_it_once_per_state_even_when_the_figures_move_and_after_a_restart(empty, monkeypatch):
     said = []
     monkeypatch.setattr(serve, "say", lambda project, sess, msg: said.append(msg["text"]))
-    monkeypatch.setattr(bridge, "board_fit_check", lambda project: {"text": "Too small. Try 60 x 45 mm."})
+    monkeypatch.setattr(bridge, "board_fit_check", _fit("Too small, 43 parts 1000 mm2."))
+    serve.board_fit_note(empty, None)
+    monkeypatch.setattr(bridge, "board_fit_check", _fit("Too small, 44 parts 1010 mm2."))      # another approval: the text moves, the state does not
     serve.board_fit_note(empty, None)
     serve.board_fit_note(empty, None)
     assert len(said) == 1 and "Too small" in said[0]
-    monkeypatch.setattr(bridge, "board_fit_check", lambda project: {"text": ""})
+    assert (store.pdir(empty) / "fit-said.json").is_file()                                     # kept on disk: a restart says nothing new
+    monkeypatch.setattr(bridge, "board_fit_check", _fit("Too small, bigger now.", suggest=(70, 50)))
     serve.board_fit_note(empty, None)
-    assert len(said) == 1
+    assert len(said) == 2                                                                      # another suggested size is news
+    monkeypatch.setattr(bridge, "board_fit_check", lambda project: {"text": "", "tight": False, "suggest": None})
+    serve.board_fit_note(empty, None)
+    assert not (store.pdir(empty) / "fit-said.json").exists() and len(said) == 2
+    monkeypatch.setattr(bridge, "board_fit_check", _fit("Too small again.", suggest=(70, 50)))
+    serve.board_fit_note(empty, None)
+    assert len(said) == 3

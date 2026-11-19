@@ -474,6 +474,8 @@ end;
 procedure AddDocument(Prj: String; Path: String);
 var
     P : IDispatch;
+    i : Integer;
+    Listed : Boolean;
 begin
     P := GetWorkspace.DM_GetProjectFromPath(Prj);
     if (P = nil) then
@@ -481,8 +483,15 @@ begin
         Say('ERR project not open ' + Prj);
         Exit;
     end;
-    P.DM_AddSourceDocument(Path);
-    Log('added to project ' + Path);
+    { a document the project lists already is not added again: that would write a second DocumentN entry }
+    Listed := False;
+    for i := 0 to P.DM_LogicalDocumentCount - 1 do
+        if SameFile(P.DM_LogicalDocuments(i).DM_FullPath, Path) then Listed := True;
+    if (not Listed) then
+    begin
+        P.DM_AddSourceDocument(Path);
+        Log('added to project ' + Path);
+    end;
 end;
 
 { ======================================================================== project library (stage L2) }
