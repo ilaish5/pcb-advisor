@@ -658,7 +658,7 @@ def _consent_one(kind, a, last_user, earlier_turn):
         # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
         if r and replace_re.search(r):
             lu = str(last_user or "")
-            if _HARD_STOP.search(lu):
+            if _HARD_STOP.search(lu) or _hard_no(lu):
                 return f"The student's message says wait or stop. Do not wipe the {wipes}; ask the student what they want first."
             # the rest is read only in the sentences that carry a replace word ("then we move to the PCB", "I don't need the old one" are about other things)
             for sent in (x for x in re.split(r"[.;!?\n]+", lu) if replace_re.search(x)):
@@ -686,6 +686,22 @@ _HARD_STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bne
 _HEDGE_R = re.compile(r"not sure|should i|maybe|perhaps|do you think|or should|or not|i think|i guess|probably|נראה לי|(?<!\w)חושב\w*|לא בטוח|אולי|(?<!\w)או ש|(?<!\w)או לא", re.I)
 _COND_R = re.compile(r"(?<!\w)(?:after|before|until)(?!\w)|(?<!\w)(?<!and )then(?!\w)|(?<!\w)once(?! more)(?!\w)|(?<!\w)(?:אחרי|קודם|לפני|אחר כך)(?!\w)|(?<!\w)עד ש", re.I)
 _IF_R = re.compile(r"(?<!\w)if(?!\w)(?!\s+possible)|(?<!\w)unless(?!\w)|(?<!\w)אם(?!\w)(?!\s+אפשר)|(?<!\w)אלא(?!\w)", re.I)      # "replace only if empty"
+_NO_PHRASE = re.compile(r"(?<!\w)(?:don[’']?t do (?:it|that)|do not do (?:it|that)|actually,? no|no,\s*don[’']?t|אל תעשה(?: את זה)?|לא לעשות|בעצם לא|לא,\s*אל)(?!\w)", re.I)
+_NO_REPLACE = re.compile(r"^(?:(?:and|but|please|no|ו)[,\s]+)*(?:don[’']?t|do not)\s+(?:replace|overwrite|wipe|delete|erase)|^(?:ו)?אל\s+ת(?:חליף|מחק|דרוס)", re.I)
+
+
+def _hard_no(text):
+    """A flat no anywhere in the message ("don't do it", "actually no", a sentence that is only "no", a clause that is itself "don't replace"):
+    it cancels a replace even in a sentence that carries no replace word. A negation of ANOTHER verb ("don't forget") is cut out first."""
+    text = _SOFT.sub(" ", str(text or ""))
+    if _NO_PHRASE.search(text):
+        return True
+    for sent in re.split(r"[.;!?\n]+", text):
+        if sent.strip(" ,\t\"'").lower() in ("no", "nope", "לא"):
+            return True
+    return any(_NO_REPLACE.search(c.strip()) for c in _HARD.split(text) if c)
+
+
 _HARD = re.compile(r"[,;.!?\n]+|\s+(?:but|אבל)\s+", re.I)
 
 

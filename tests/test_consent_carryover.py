@@ -297,6 +297,39 @@ def test_negation_after_the_replace_word_and_stops_refuse(msg):
     assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) != "", msg
 
 
+@pytest.mark.parametrize("msg", [
+    "draw it and overwrite. don't do it",
+    "draw it and overwrite. do not do that",
+    "draw it and overwrite. actually no",
+    "draw it and overwrite. no, don't",
+    "draw it and overwrite. no.",
+    "draw it and overwrite. nope",
+    "תשרטט מחדש. אל תעשה",
+    "תשרטט מחדש. אל תעשה את זה",
+    "תשרטט מחדש. לא לעשות",
+    "תשרטט מחדש. בעצם לא",
+    "תשרטט מחדש. לא, אל",
+    "תשרטט מחדש. לא.",
+    "תשרטט מחדש. אל תחליף את הנגד",
+    "תשרטט מחדש. אל תדרוס",
+    "draw it and overwrite. don't replace the LED",
+    "draw it and overwrite. don't wipe it",
+    "draw it and overwrite. but don't delete 02",
+])
+def test_a_flat_no_anywhere_cancels_replace(msg):
+    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": "overwrite" if msg[0] == "d" else "מחדש"}, msg) != "", msg
+
+
+@pytest.mark.parametrize("msg", [
+    "replace the schematic in Altium, I don't need the old one",
+    "לא משנה לי, תשרטט מחדש",
+    "redraw, don't forget the LED",
+    "תשרטט מחדש. לא, אל תשכח את הנגד",
+])
+def test_soft_negations_still_allow_replace(msg):
+    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) == "", msg
+
+
 def test_a_negated_replace_word_in_the_whole_quote_says_to_send_only_the_replace_sentence():
     msg = "שרטט את הסכמה, אין צורך להתחיל מחדש"
     why = serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg)
