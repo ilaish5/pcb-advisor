@@ -635,8 +635,11 @@ def _consent_one(kind, a, last_user, earlier_turn):
         need = need or EARLIER_NEED[kind]
     norm = lambda t: re.sub(r"\s+", " ", str(t or "").lower()).strip(" .,!?;:()-\"'")
     q, u = norm(a.get("student_said")), norm(last_user)
-    if not _quote_holds(a.get("student_said"), last_user) or len(q) < 0.5 * len(u):
+    if not _quote_holds(a.get("student_said"), last_user):
         return ask
+    if len(q) < 0.5 * len(u):
+        return ask + (" The quote was too short (it must be most of their message): re-send this action with student_said = the student's "
+                      "WHOLE message, copied verbatim, not only the sentence that tells you to " + verb.split()[0] + ".")
     if need is not None and not need.search(u):        # "yes" to the schematic question is not a yes to placing or routing
         return ask
     if earlier_turn and not _instruction(kind, last_user):
@@ -653,22 +656,35 @@ def _consent_one(kind, a, last_user, earlier_turn):
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
         # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
-        if not r or not replace_re.search(r) or not _asked(r, u):
+        if not r or not replace_re.search(r) or not _asked(r, u, replace_re):
             return (f"The {wipes} are only wiped when the student says so: ask whether what is there may be replaced, then run this with "
                     "replace_said = a quote of their words (replace, redo, overwrite, start over / מחדש, תחליף, תמחק).")
     return ""
 
 
-_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|not|without|don[’']?t|do not|אסור|אל|לא)(?!\w)", re.I)
+_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|not|without|don[’']?t|do not|(?:ו)?(?:אסור|אל|לא))(?!\w)", re.I)
 
 
-def _asked(word, u):
-    """True when `word` (a quote, e.g. the replace word) appears in the message in a clause where it is not negated ("don't replace
-    anything", "אל תמחק את מה שיש", "without replacing" ask for the opposite). A Hebrew "ו" before it is the word "and"."""
+def _asked(word, u, replace_re=None):
+    """True when `word` (a quote, e.g. the replace word, or the whole message) is found in the message `u` and is not negated ("don't
+    replace anything", "אל תמחק את מה שיש", "without replacing" ask for the opposite). The quote is located in the whole message: it need
+    not fit inside one clause (a "ו-02" is no break of it). Every replace word in the quote (`replace_re`; the quote itself when None)
+    is checked for a negation in the text before it, within the clause where it stands. A Hebrew "ו" before it is the word "and"."""
+    u = str(u or "")
     pat = re.compile(r"(?<!\w)(?:ו)?" + re.escape(word) + r"(?!\w)")
-    for clause in _CLAUSE.split(str(u or "")):
-        m = pat.search(clause)
-        if m and not _NEGATED.search(clause[:m.start()]):
+    starts = [m.end() for m in _CLAUSE.finditer(u)]
+    for q in pat.finditer(u):
+        qs = q.start()
+        inner = [qs + m.start() for m in replace_re.finditer(q.group(0))] if replace_re else [qs]
+        if not inner:
+            continue
+        ok = True
+        for pos in inner:
+            cs = max([e for e in starts if e <= pos] or [0])
+            if _NEGATED.search(u[cs:pos]):
+                ok = False
+                break
+        if ok:
             return True
     return False
 

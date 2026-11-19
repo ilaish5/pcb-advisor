@@ -222,3 +222,31 @@ def test_a_failing_bom_check_cannot_lose_the_reply_or_the_marker(server, empty, 
     assert call(server, "POST", "/api/chat", empty, {"text": "go"})[0] == 200
     rec = [r for r in session_mod.load_chat(empty, session_mod.current(empty, None)) if r["role"] == "agent"]
     assert rec and rec[-1]["text"] == "done"
+
+
+# ---------------------------------------------------------------- the replace quote is found in the whole message
+
+LIVE = "שרטט מחדש את 01 ו-02 באלטיום"
+
+
+def test_the_live_message_whole_is_accepted_as_the_replace_quote():
+    a = {"student_said": LIVE, "replace": True, "replace_said": LIVE}
+    assert serve._draw_consent(a, LIVE) == ""
+    assert serve._draw_consent({**a, "replace_said": "מחדש"}, LIVE) == ""
+
+
+def test_a_negation_after_the_and_split_still_refuses_replace():
+    msg = "שרטט את 01 ו-02 ואל תמחק כלום"
+    a = {"student_said": msg, "replace": True, "replace_said": "שרטט"}
+    assert serve._draw_consent(a, msg) != ""
+    a["replace_said"] = msg                              # the whole message as the replace quote: its תמחק is negated
+    assert serve._draw_consent(a, msg) != ""
+    for msg in ("תצייר את הסכמה אבל אל תמחק את מה שיש", "draw it but don't replace anything"):
+        assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) != "", msg
+    assert serve._draw_consent({"student_said": "תצייר ותחליף", "replace": True, "replace_said": "ותחליף"}, "תצייר ותחליף") == ""
+
+
+def test_the_too_short_quote_refusal_names_the_fix():
+    msg = "תודה על הרשימה. תצייר את הסכמה באלטיום בבקשה, ואחר כך נמשיך הלאה לשלב הבא של הפרויקט"
+    why = serve._draw_consent({"student_said": "תצייר את הסכמה באלטיום"}, msg)
+    assert why and "student_said" in why and "WHOLE message" in why
