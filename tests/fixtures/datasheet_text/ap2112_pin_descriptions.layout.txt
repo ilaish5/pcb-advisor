@@ -1,0 +1,19 @@
+ Pin Descriptions
+
+                           Pin Number
+                                                                           Pin Name                                            Function
+       SOT25                SOT89-5                  SO-8
+
+          1                     4                      8                       VIN               Input Voltage
+
+          2                     2                     6, 7                    GND                GND
+
+                             3 (R5)
+          3                                            5                       EN                Chip Enable, H – normal work, L – shutdown output
+                             1 (R5A)
+
+                             1 (R5)
+          —                  3 (R5A)                2, 3, 4                    NC                No Connection
+
+          5                     5                      1                      VOUT               Output Voltage
+

@@ -1,0 +1,107 @@
+5.2.2.2. Pin List
+Table 620. GPIO pins Name Number Type Power Domain Reset State Description
+GPIO0 2 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO1 3 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO2 4 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO3 5 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO4 6 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO5 7 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO6 8 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO7 9 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO8 11 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO9 12 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO10 13 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO11 14 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO12 15 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO13 16 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO14 17 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO15 18 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO16 27 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO17 28 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO18 29 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO19 30 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO20 31 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO21 32 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO22 34 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO23 35 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO24 36 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO25 37 Digital IO (FT) IOVDD Pull-Down User IO
+GPIO26 / ADC0 38 Digital IO /
+Analogue
+IOVDD /
+ADC_AVDD
+Pull-Down User IO or ADC
+input
+GPIO27 / ADC1 39 Digital IO /
+Analogue
+IOVDD /
+ADC_AVDD
+Pull-Down User IO or ADC
+input
+GPIO28 / ADC2 40 Digital IO /
+Analogue
+IOVDD /
+ADC_AVDD
+Pull-Down User IO or ADC
+input
+GPIO29 / ADC3 41 Digital IO /
+Analogue
+IOVDD /
+ADC_AVDD
+Pull-Down User IO or ADC
+input
+Table 621. QSPI pins
+RP2040 Datasheet
+5.2. Pinout 629
+Name Number Type Power Domain Reset State Description
+QSPI_SD3 51 Digital IO IOVDD QSPI data
+QSPI_SCLK 52 Digital IO IOVDD Pull-Down QSPI clock
+QSPI_SD0 53 Digital IO IOVDD QSPI data
+QSPI_SD2 54 Digital IO IOVDD QSPI data
+QSPI_SD1 55 Digital IO IOVDD QSPI data
+QSPI_CSn 56 Digital IO IOVDD Pull-Up QSPI chip select
+Table 622. Crystal
+oscillator pins
+Name Number Type Power Domain Description
+XIN 20 Analogue (XOSC) IOVDD Crystal oscillator. XIN
+may also be driven by
+a square wave.
+XOUT 21 Analogue (XOSC) IOVDD Crystal oscillator.
+Table 623. Serial wire
+debug pins
+Name Number Type Power Domain Reset State Description
+SWCLK 24 Digital In (FT) IOVDD Pull-Up Debug clock
+SWD 25 Digital IO (FT) IOVDD Pull-Up Debug data
+Table 624.
+Miscellaneous pins
+Name Number Type Power Domain Reset State Description
+RUN 26 Digital In (FT) IOVDD Pull-Up Chip enable /
+reset
+TESTEN 19 Digital In IOVDD Pull-Down Test enable
+(connect to Gnd)
+Table 625. USB pins Name Number Type Power Domain Description
+USB_DP 47 USB IO USB_VDD USB Data +ve. 27Ω
+series resistor
+required for USB
+operation
+USB_DM 46 USB IO USB_VDD USB Data -ve. 27Ω
+series resistor
+required for USB
+operation
+Table 626. Power
+supply pins
+Name Number(s) Description
+IOVDD 1, 10, 22, 33, 42, 49 IO supply
+DVDD 23, 50 Core supply
+VREG_VIN 44 Voltage regulator input supply
+VREG_VOUT 45 Voltage regulator output
+USB_VDD 48 USB supply
+ADC_AVDD 43 ADC supply
+GND 57 Common ground connection via
+central pad
+RP2040 Datasheet
+5.2. Pinout 630
+5.2.3. Pin Specifications
+The following electrical specifications are obtained from characterisation over the specified temperature and voltage
+ranges, as well as process variation, unless the specification is marked as 'Simulated'. In this case, the data is for
+information purposes only, and is not guaranteed.
