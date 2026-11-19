@@ -502,3 +502,40 @@ def test_a_question_is_still_a_question_but_a_polite_request_is_not():
     a = {"type": "netlist.remove", "sheet": "Main", "student_said": "delete Main"}
     for q in ("do you think we should delete Main", "should I delete Main", "do you want me to delete Main?"):
         assert serve._sheet_edit_consent("netlist.remove", a, q) != "", q
+
+
+# ---------------------------------------------------------------- sixth round: a question or a hedge is no consent
+
+@pytest.mark.parametrize("kind,to,said", [
+    ("netlist.remove", None, "will you delete Main?"),
+    ("netlist.remove", None, "can you delete Main? I'm not sure it's needed"),
+    ("netlist.remove", None, "תוכל למחוק את Main?"),
+    ("netlist.remove", None, "תמחק את Main?"),
+    ("netlist.rename", "01", "can you rename Main to 01?"),
+    ("netlist.remove", None, "could you delete Main?"),
+    ("netlist.remove", None, "will you delete Main"),
+    ("netlist.remove", None, "can you delete Main, I'm not sure"),
+    ("netlist.remove", None, "maybe delete Main"),
+    ("netlist.remove", None, "delete Main, or should I keep it"),
+    ("netlist.remove", None, "אולי למחוק את Main"),
+    ("netlist.remove", None, "תמחק את Main, אני לא בטוח"),
+    ("netlist.remove", None, "תמחק את Main או שנשאיר"),
+])
+def test_a_question_or_a_hedge_is_no_consent_to_change_a_sheet(kind, to, said):
+    a = {"type": kind, "sheet": "Main", "student_said": said.rstrip("?"), **({"to": to} if to else {})}
+    a2 = {**a, "student_said": said}
+    assert serve._sheet_edit_consent(kind, a2, said) != "", said
+
+
+@pytest.mark.parametrize("kind,to,said", [
+    ("netlist.remove", None, "can you delete Main"),
+    ("netlist.remove", None, "could you delete Main"),
+    ("netlist.remove", None, "would you please delete Main"),
+    ("netlist.remove", None, "תוכל למחוק את Main"),
+    ("netlist.remove", None, "אני רוצה שתמחק את Main"),
+    ("netlist.rename", "01", "אני רוצה שתשנה את Main ל-01"),
+    ("netlist.rename", "01", "can you rename Main to 01"),
+])
+def test_a_polite_or_that_form_request_without_a_question_is_accepted(kind, to, said):
+    a = {"type": kind, "sheet": "Main", "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) == "", said

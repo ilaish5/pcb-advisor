@@ -678,9 +678,16 @@ _CONDITION = re.compile(r"(?<!\w)(?:after|then|before|until|once)(?!\w)|(?<!\w)(
 _FILL = r"(?:please|now|just|quickly|entirely|completely|נא|בבקשה|עכשיו|מהר|כבר|גם|לגמרי)"
 _GAP = r"(?:the|sheet|page|schematic|את|ה|ה-|הגיליון|גיליון|הדף|דף|השם|שם|של)"
 _TAILWORD = r"(?:sheet|page|גיליון|דף|from the project|מהפרויקט|" + _FILL + ")"
-_LEADIN = (r"(?:i[’']?d like you to|i would like you to|i want you to|i need you to|you can|you should|can you|could you|would you|will you|"
-           r"ok|okay|yes|כן|תוכל|תוכלי|אני רוצה שתמחק|אני רוצה ש)")
-_POLITE = re.compile(r"^(?:(?:ok|okay|yes|כן)[,\s]+)*(?:(?:can|could|would|will) you\b|תוכל)", re.I)      # "can you delete Main" is a request
+_LEADIN = (r"(?:i[’']?d like you to|i would like you to|i want you to|i need you to|you can|you should|can you|could you|would you|"
+           r"ok|okay|yes|כן|תוכל|תוכלי|אני רוצה|רוצה|אני מבקש|מבקש)")
+_POLITE = re.compile(r"^(?:(?:ok|okay|yes|כן)[,\s]+)*(?:(?:can|could|would) you\b|תוכל)", re.I)      # a polite request, when nothing in the message asks or hedges
+_HEDGE = re.compile(r"not sure|should i|maybe|perhaps|do you think|or should|(?<!\w)or\b|לא בטוח|אולי|(?<!\w)או ש|(?<!\w)או(?!\w)", re.I)
+_WANT_THAT = re.compile(r"(?<!\w)(אני רוצה|רוצה|אני מבקש|מבקש) ש(?=\S)")          # "אני רוצה שתמחק": the ש is "that", not part of the verb
+
+
+def _unthat(clause):
+    """A leading Hebrew "ו" and the "ש" (that) of "אני רוצה שתמחק" taken off, so the verb stands alone."""
+    return _WANT_THAT.sub(r"\1 ", re.sub(r"^\s*ו(?=\S)", "", clause))
 _AFTER = re.compile(r"\s+(?:since|because|כי|מפני ש)\s+.*$", re.I)       # the reason is no part of the instruction
 
 
@@ -696,7 +703,7 @@ def _clause_ok(kind, clause, name, to=""):
     "NAME should/must be deleted / renamed (to X)" also fits. A "'s", a part, a title, a preposition, a second noun anywhere in the clause
     is about something else than the sheet: refused. A leading Hebrew "ו" (and) and a polite lead-in ("I'd like you to", "can you") are fine."""
     clause = _AFTER.sub("", clause.strip(" .!?\"'\t")).strip()
-    clause = re.sub(r"^ו(?=\S)", "", clause)
+    clause = _unthat(clause)
     rename = kind == "netlist.rename"
     verb = (r"(?:renam\w*(?:\s+the\s+name\s+of)?|chang\w*\s+(?:the\s+)?(?:name|id)(?:\s+of)?|(?<!\w)(?:ת?שנה|ת?שני|לשנות|שינוי)(?!\w))"
             if rename else "(?:" + _SHEET_REMOVE.pattern + ")")
@@ -728,16 +735,19 @@ def _sheet_edit_consent(kind, a, last_user):
     names = [sheet] + ([to] if kind == "netlist.rename" else [])
     # the student's whole clauses (not only the quote of them: "delete the Main" is part of "delete the Main LED"); punctuation splits,
     # "and" does not, and a dot between digits ("01.5") is no split
-    verb_clauses = [c for c in re.split(r"[,;!?\n]+|(?<!\d)\.|\.(?!\d)", str(last_user or "")) if word.search(re.sub(r"^\s*ו(?=\S)", "", c))]
+    verb_clauses = [c for c in re.split(r"[,;!?\n]+|(?<!\d)\.|\.(?!\d)", str(last_user or "")) if word.search(_unthat(c))]
     ok = bool(verb_clauses) and all(n.strip() for n in names) and all(_clause_ok(kind, c, sheet, to) for c in verb_clauses)
     if not ok:
         return f"the quote must ask to {what} the sheet {sheet}" + (f" to {to}" if kind == "netlist.rename" else "") + " (the sheet itself, named). Ask the student first."
     if _STOP_ANY.search(last_user):
         return "the student's message says no, wait or stop. Do not change the sheet; ask what they want."
+    if _HEDGE.search(str(last_user or "")):
+        return "the student's message hedges (not sure, maybe, or ...). Do not change the sheet; confirm with them first."
     if _CONDITION.search(str(last_user or "")):
         return "the student's message makes it conditional (after, first, then ...). Do not change the sheet yet; ask what they want."
     for sent in _SENT.findall(str(last_user or "")):
-        if word.search(sent) and _is_question(sent) and not _POLITE.match(sent.strip().lower()):
+        if word.search(_unthat(sent)) and ("?" in sent or (_is_question(sent) and not (_POLITE.match(sent.strip().lower())
+                                                                                   and "?" not in str(last_user) and not _HEDGE.search(str(last_user))))):
             return "the student asked a question about it; it is no instruction. Answer it and ask."
     for clause in _CLAUSE.split(str(last_user or "")):
         m = word.search(clause)
