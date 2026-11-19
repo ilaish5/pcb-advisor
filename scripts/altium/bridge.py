@@ -1116,6 +1116,31 @@ def _netlist_parts(project):
     return draw.alias_parts(parts, drawn_names(project))          # the pads carry the names the schematic was drawn with
 
 
+def board_fit_check(project):
+    """Early check of the board size against the BOM's parts (when the BOM is approved, before Place): the layout.board_fit result for
+    one side of the board, or None when the project has no board size or no parts yet. The real footprints are used when the library
+    is built, the package of each BOM line otherwise. Never changes anything and never raises."""
+    from altium import layout
+    try:
+        size = _board_size(project)
+        manifest = store.library_manifest(project)
+        parts = []
+        for line in store.bom_lines(project):
+            for ref in line.get("refs") or []:
+                parts.append({"ref": ref, "footprint": (manifest.get(line["key"]) or {}).get("footprint") or "",
+                              "package": line.get("package") or "", "description": line.get("description") or ""})
+        fps = {}
+        try:
+            pcblib = library_paths(project)["pcblib"]          # needs a linked Altium project; without one there is no library yet
+            fps = {f["name"]: f for f in read_pcblib(pcblib)["footprints"]} if pcblib.is_file() else {}
+        except (BridgeError, AltiumReadError, OSError, KeyError, ValueError):
+            fps = {}
+        fit = layout.board_fit(parts, size, fps)
+        return dict(fit, size=size, text=layout.fit_text(fit, size)) if fit else None
+    except Exception:                                    # an estimate must never stop a step
+        return None
+
+
 def _board_size(project):
     from altium import layout
     path = store.pdir(project) / "idea.json"
@@ -1331,7 +1356,10 @@ def place_pcb(project, replace=False):
         raise BridgeError("The schematic is not drawn in Altium for " + ", ".join(undrawn[:8]) + (" ..." if len(undrawn) > 8 else "")
                           + ": draw it first (altium.draw_schematic, with the student's agreement). A part placed without the link to its "
                           "schematic symbol is duplicated by the first Update PCB. Nothing was changed.")
+    fit = board_fit_check(project)                       # the same estimate the BOM approval gave; the figures also go in the refusal
     res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace)
+    if fit and fit["text"]:
+        res["warnings"] = [fit["text"]] + list(res["warnings"])
     _log(project, "place-pcb", pcb=str(pcb), parts=len(res["placed"]), outline=res["outline"], replace=bool(replace),
          backup=res["backup"], problems=res["problems"], warnings=res["warnings"])
     res["warnings"] = list(dict.fromkeys(res["warnings"] + [f"drill check: {m}" for m in res["drill_findings"][:6]]

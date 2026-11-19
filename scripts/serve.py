@@ -354,6 +354,25 @@ def _agent_may_set_library(changes):
     return {k: v for k, v in (changes or {}).items() if k in allowed}
 
 
+_FIT_SAID = {}
+
+
+def board_fit_note(project, sess):
+    """After a BOM approval: when the parts clearly do not fit the board size (the idea's size; altium.bridge.board_fit_check), tell the
+    student once per figure, with a size to try. The size is never changed here."""
+    try:
+        from altium import bridge
+        fit = bridge.board_fit_check(project)
+    except Exception:                                  # an estimate must never stop an approval
+        return
+    text = fit["text"] if fit else ""
+    if text and _FIT_SAID.get(project) != text:
+        _FIT_SAID[project] = text
+        say(project, sess, {"ts": now(), "role": "agent", "text": text + " Change it on the Idea page if you agree."})
+    elif not text:
+        _FIT_SAID.pop(project, None)
+
+
 def decide_and_note(project, sess, pid, decision, by="student", note=True, redraw_now=True):
     """Approve or reject one proposal and do what follows (supply re-check, sheet labels, a note the engine
     reads). The click, the batch endpoint and the autonomy setting all come through here, so the logs are
@@ -380,6 +399,7 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
                    prop["line"])
         what = "added to the BOM" if prop.get("new") else "updated in the BOM, on the schematic label and in the library"
         say(project, sess, {"ts": now(), "role": "agent", "text": "Approved. {{ref:" + ref + "}} is " + what + ".", **decided})
+        board_fit_note(project, sess)
     return prop
 
 
@@ -2944,6 +2964,8 @@ class Handler(BaseHTTPRequestHandler):
                 say(proj, sess, {"ts": now(), "role": "agent", "decision": decision, "proposal": done[0],
                                  "text": f"{'Approved' if decision == 'approved' else 'Rejected'} {len(done)} proposals: "
                                          + ", ".join(done)})
+                if decision == "approved":
+                    board_fit_note(proj, sess)
             out = state()
             out["results"] = results
             return self._send(200, out)
