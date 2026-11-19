@@ -1,0 +1,24 @@
+Table 35: Pin description
+
+Pin Name I/O Type      Description                                           Connect to
+
+                          Ground                                     SPI 4W  SPI 3W      I�C
+                        Chip select
+1 GND Supply        Serial data input                                  CSB   GND
+                    Serial clock input                                 SDI
+2 CSB       In      Serial data output                                 SCK   CSB         VDDIO
+                                                                      SDO
+3      SDI  In/Out  Digital / Interface                                      SDI/SDO     SDA
+                           supply
+4 SCK       In            Ground                                             SCK         SCL
+
+5 SDO In/Out          Analog supply                                          DNC         GND for
+                                                                                         default
+                                                                                         address
+
+6 VDDIO Supply                                                               VDDIO
+
+7 GND Supply                                                                 GND
+                                                                             VDD
+8      VDD  Supply
+
