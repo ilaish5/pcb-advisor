@@ -338,3 +338,51 @@ def test_the_title_block_step_checks_the_sheet_exists_before_the_setup():
     seg = PAS[PAS.index("procedure TitleBlock"):]
     seg = seg[:seg.index("\nend;")]
     assert seg.index("(Sch = nil)") < seg.index("SheetSetup(Sch);")
+
+
+# ---------------------------------------------------------------- second review round
+
+PART_OR_SELF = [
+    ("netlist.remove", "Main", None, "remove the LED from sheet Main"),            # a part, not the sheet
+    ("netlist.remove", "Main", None, "delete resistor R3 from Main"),
+    ("netlist.remove", "Main", None, "תסיר את ה-LED מ-Main"),
+    ("netlist.remove", "Main", None, "תמחק את הנגד מהגיליון Main"),
+    ("netlist.remove", "Main", None, "I'll delete Main myself"),
+    ("netlist.remove", "Main", None, "I will delete Main"),
+    ("netlist.remove", "Main", None, "אני אמחק את Main בעצמי"),
+    ("netlist.remove", "Main", None, "אמחק את Main"),
+    ("netlist.rename", "Main", "01", "I'll rename Main to 01 myself"),
+    ("netlist.rename", "Main", "01", "אשנה את Main ל-01"),
+    ("netlist.rename", "Main", "01", "rename Main to 01, don't draw yet"),         # pinned: a stop anywhere in the message refuses (intended)
+]
+
+
+@pytest.mark.parametrize("kind,sheet,to,said", PART_OR_SELF)
+def test_part_removal_and_do_it_myself_are_no_consent_to_change_a_sheet(kind, sheet, to, said):
+    a = {"type": kind, "sheet": sheet, "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) != ""
+
+
+@pytest.mark.parametrize("kind,sheet,to,said", [
+    ("netlist.remove", "Main", None, "delete Main since it is not used"),
+    ("netlist.remove", "Main", None, "תמחק את Main כי הוא לא בשימוש"),
+    ("netlist.remove", "Main", None, "please remove the sheet Main, it is not needed"),
+    ("netlist.rename", "Main", "01", "שנה את Main ל01"),
+    ("netlist.rename", "Main", "01", "שנה את Main ל-01"),
+    ("netlist.rename", "Main", "01", "תשנה את שם הגיליון Main ל01"),
+    ("netlist.remove", "02", None, "delete sheet 02"),
+])
+def test_a_trailing_negation_or_a_hebrew_prefix_does_not_refuse_a_clear_request(kind, sheet, to, said):
+    a = {"type": kind, "sheet": sheet, "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) == ""
+
+
+def test_undoing_a_rename_refuses_when_the_old_file_belongs_to_another_sheet_now(empty):
+    store.write_sheet(empty, "02", {**SHEET, "id": "02", "title": "Logic"})
+    store.append(empty, "altium-log.jsonl", {"ts": store.now(), "by": "test", "op": "sheet-docs", "sheet_docs": {"02": "L.SchDoc"}})
+    res = store.rename_sheet_logged(empty, "02", "01")
+    store.write_sheet(empty, "05", {**SHEET, "id": "05"})
+    store.append(empty, "altium-log.jsonl", {"ts": store.now(), "by": "test", "op": "sheet-docs", "sheet_docs": {"05": "L.SchDoc", "01": "L2.SchDoc"}})
+    with pytest.raises(store.UndoRefused):
+        store.undo(empty, res["change"])
+    assert store.sheet_ids(empty) == ["01", "05"]

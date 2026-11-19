@@ -673,25 +673,52 @@ def _asked(word, u):
     return False
 
 
+_ME = re.compile(r"myself|\bi[’']?ll\b|\bi will\b|בעצמי|(?<!\w)א(?:מחק|סיר|שנה|מחוק)\w*", re.I)
+_FROM = re.compile(r"(?<!\w)from(?!\w)|(?<!\w)(?:מ-|מן|מה)", re.I)
+
+
+def _name_re(name):
+    """The sheet name as a word; one Hebrew prefix letter (ל ב ה ו, optional hyphen) may stand before it ("ל-01", "ל01")."""
+    return re.compile(r"(?<!\w)(?:[לבהו]-?)?" + re.escape(name) + r"(?!\w)", re.I)
+
+
+def _verb_takes_sheet(word, clause, name):
+    """True when the verb of `word` in `clause` takes the sheet `name` as its object: the name is at most three words from the verb and
+    no "from" / "מ-" stands between them ("remove the LED from sheet Main" removes a part)."""
+    for v in word.finditer(clause):
+        for n in _name_re(name).finditer(clause):
+            between = clause[v.end():n.start()] if v.end() <= n.start() else clause[n.end():v.start()]
+            if len(between.split()) <= 3 and not _FROM.search(between):
+                return True
+    return False
+
+
 def _sheet_edit_consent(kind, a, last_user):
-    """'' when the student's own words ask to remove (delete) or rename a netlist sheet, else why not. The quote names the sheet (and for
-    a rename the new id) and has the remove / rename word; a question, a negation ("don't", "never", "shouldn't be", "no need", "אסור"),
-    or a no / wait / stop anywhere in the message is no instruction."""
+    """'' when the student's own words ask to remove (delete) or rename a netlist sheet, else why not. The quote has the remove / rename
+    word with the sheet as its object (and for a rename the new id); a question, a negation before the verb ("don't", "never",
+    "shouldn't be", "no need", "אסור"), a do-it-myself ("I'll delete Main myself"), or a no / wait / stop anywhere in the message is no
+    instruction."""
     said, sheet = str(a.get("student_said") or ""), str(a.get("sheet") or "")
     word = _SHEET_REMOVE if kind == "netlist.remove" else _SHEET_RENAME
     what = "remove" if kind == "netlist.remove" else "rename"
     if not _quote_holds(said, last_user):
         return f"student_said must be a verbatim quote of the student's message that tells you to {what} the sheet. Ask the student first."
-    names = [sheet] + ([str(a.get("to") or "")] if kind == "netlist.rename" else [])
-    if not word.search(said) or any(not n.strip() or re.search(r"(?<!\w)" + re.escape(n) + r"(?!\w)", said, re.I) is None for n in names):
-        return f"the quote must ask to {what} sheet {sheet}" + (f" to {a.get('to')}" if kind == "netlist.rename" else "") + " (name it). Ask the student first."
+    to = str(a.get("to") or "")
+    names = [sheet] + ([to] if kind == "netlist.rename" else [])
+    ok = word.search(said) and all(n.strip() and _name_re(n).search(said) for n in names) \
+        and any(_verb_takes_sheet(word, c, sheet) for c in _CLAUSE.split(said))
+    if not ok:
+        return f"the quote must ask to {what} the sheet {sheet}" + (f" to {to}" if kind == "netlist.rename" else "") + " (the sheet itself, named). Ask the student first."
     if _STOP_ANY.search(last_user):
         return "the student's message says no, wait or stop. Do not change the sheet; ask what they want."
     for sent in _SENT.findall(str(last_user or "")):
         if word.search(sent) and _is_question(sent):
             return "the student asked a question about it; it is no instruction. Answer it and ask."
     for clause in _CLAUSE.split(str(last_user or "")):
-        if word.search(clause) and _NEGATED.search(clause):
+        m = word.search(clause)
+        if m and _ME.search(clause):
+            return "the student said they will do it themselves. Do not change the sheet; help them with the manual steps."
+        if m and _NEGATED.search(clause[:m.start()]):
             return "the student's message is a refusal or a worry about this, not an instruction. Do not change the sheet; ask what they want."
     return ""
 

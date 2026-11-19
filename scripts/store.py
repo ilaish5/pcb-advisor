@@ -1499,6 +1499,8 @@ def undo_sheet_write(project, cid, by="student"):
         old = ch["renamed_from"]
         if old in sheet_ids(project):
             raise UndoRefused(f"sheet {old} exists again: remove or rename it first, then undo the rename")
+        if others:
+            raise UndoRefused(f"{doc} belongs to sheet {', '.join(sorted(others))} now; undo or rename that first")
         with project_guard.writing(path):
             path.unlink(missing_ok=True)
         _drop_sheet_doc(project, ch["sheet"])
