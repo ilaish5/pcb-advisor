@@ -210,7 +210,7 @@ function navHTML() {
   const cur = PROJECTS.find(p => p.name === PROJECT) || {name: PROJECT, title: PROJECT};
   const ptitle = String(cur.title || cur.name || '');
   const switcher = menu({html: `<span class="mk">${esc(initials(ptitle))}</span><span class="nm">${esc(ptitle)}</span>${icon('chev', 's')}`, cls: 'proj', title: ptitle, 'data-nav': 'proj'},
-    [...PROJECTS.map(p => ({label: p.title || p.name, attrs: {proj: p.name}, checked: p.name === PROJECT})), 'sep', {label: 'New project', act: 'newproj', icon: 'plus'}]);
+    [...PROJECTS.map(p => ({label: p.title || p.name, attrs: {proj: p.name}, checked: p.name === PROJECT})), 'sep', {label: 'New project', act: 'newproj', icon: 'plus'}, {label: 'Download activity report (zip)', act: 'report-project', icon: 'file'}]);
   const here = mainView();
   const stage = ([id, label]) => {
     const s = stageStatus(id);

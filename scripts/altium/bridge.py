@@ -279,17 +279,31 @@ def _check_writes_allowed(commands):
                           "library.build, ...); the CLI is read-only for agents. Refused: " + ", ".join(bad) + ". Nothing was changed.")
 
 
+def _cmd_args(commands):
+    """The commands as sent (name and fields), each cut, at most 40 of them: what a debugger needs to replay a batch."""
+    out = []
+    for c in list(commands)[:40]:
+        try:
+            out.append([str(x)[:200] for x in c][:12])
+        except Exception:
+            out.append([repr(c)[:200]])
+    return out
+
+
 def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300):
-    """_run_commands, with one run-log record per batch: the command names, seconds, ok or the full error (it carries the dialog texts)."""
+    """_run_commands, with one run-log record per batch: the commands with their fields, seconds, ok or the full error (it carries the dialog
+    texts), the script's last log lines, and the project it ran for (when the server set one)."""
     t0 = time.time()
     names = [str(c[0]) for c in commands]
+    project = getattr(runlog.ctx, "project", "") or ""
     try:
         log = _run_commands(commands, start_timeout, stall_timeout, total_timeout)
     except BaseException as exc:
-        runlog.event("altium", commands=names, seconds=round(time.time() - t0, 1), ok=False,
+        runlog.event("altium", commands=names, args=_cmd_args(commands), project=project, seconds=round(time.time() - t0, 1), ok=False,
                      error=f"{type(exc).__name__}: {exc}", dialogs=DIALOG_LOG[-10:])
         raise
-    runlog.event("altium", commands=names, seconds=round(time.time() - t0, 1), ok=True)
+    runlog.event("altium", commands=names, args=_cmd_args(commands), project=project, seconds=round(time.time() - t0, 1), ok=True,
+                 result=[str(x)[:300] for x in (log or [])[-15:]] if isinstance(log, (list, tuple)) else "")
     return log
 
 

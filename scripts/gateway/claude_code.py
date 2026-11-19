@@ -52,6 +52,21 @@ def _result_failed(part):
     return bool(m and int(m.group(1)) != 0)
 
 
+MAX_CALLS = events.MAX_CALLS
+CALL_CUT = events.CALL_CUT
+
+
+def _result_text(part):
+    c = part.get("content")
+    if isinstance(c, list):
+        c = " ".join(str(x.get("text", "")) for x in c if isinstance(x, dict))
+    c = str(c or "")
+    return c if len(c) <= CALL_CUT else c[:CALL_CUT] + f"...[+{len(c) - CALL_CUT} chars]"
+
+
+_clip_input = events.clip_input
+
+
 class _Turn:
     """What one streamed turn has shown so far. Fed line by line from the reader thread."""
 
@@ -62,6 +77,8 @@ class _Turn:
         self.steps = []
         self.uses = {}                  # tool_use_id -> (name, input)
         self.runs = []                  # script runs: {"id", "label", "failed"}
+        self.calls_dropped = 0
+        self.calls = []                 # every tool call for the debug record: {"id", "tool", "input", "result", "failed"}
         self.denied = {}                # tool_use_id (or an index key) -> entry
         self.result = None
         self.events = 0                 # JSON event lines seen: tells a stream from plain text
@@ -106,6 +123,10 @@ class _Turn:
                     name, inp = str(part.get("name") or ""), part.get("input") or {}
                     self.uses[part.get("id")] = (name, inp)
                     lab = events.label(name, inp)
+                    if len(self.calls) < MAX_CALLS:
+                        self.calls.append({"id": part.get("id"), "ts": events.now_iso(), "tool": name, "label": lab, "input": _clip_input(inp), "failed": False})
+                    else:
+                        self.calls_dropped += 1
                     self.steps.append(lab)
                     if events.is_script_run(name, inp):
                         self.runs.append({"id": part.get("id"), "label": lab, "failed": False})
@@ -118,6 +139,13 @@ class _Turn:
         elif kind == "user":
             content = (ev.get("message") or {}).get("content")
             for part in content if isinstance(content, list) else []:
+                if isinstance(part, dict) and part.get("type") == "tool_result":
+                    for call in self.calls:
+                        if call["id"] == part.get("tool_use_id"):
+                            call["result"] = _result_text(part)
+                            call["failed"] = _result_failed(part)
+                            call["error"] = bool(part.get("is_error"))      # the tool said it failed (a non-zero exit alone is not that)
+                            call["result_ts"] = events.now_iso()
                 if isinstance(part, dict) and part.get("type") == "tool_result" and _result_failed(part):
                     for run in self.runs:
                         if run["id"] == part.get("tool_use_id"):
@@ -161,6 +189,10 @@ class _Turn:
             meta["stream"] = True      # the engine reports its steps: chips can be taken from them
         if self.runs:
             meta["runs"] = [{"label": r["label"], "failed": r["failed"]} for r in self.runs]
+        if self.calls:
+            meta["calls"] = [{k: v for k, v in c.items() if k != "id"} for c in self.calls]
+            if self.calls_dropped:
+                meta["calls_dropped"] = self.calls_dropped
         den = self.denials()
         if den:
             meta["denied"] = den

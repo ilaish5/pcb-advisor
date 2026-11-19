@@ -25,7 +25,7 @@ pcb-advisor — one entry point for the whole workspace.
     python3 pcb.py outputs [project]    is every exported file still made from the current design
     python3 pcb.py usage [project]      what the agent ran, how long, what it cost
     python3 pcb.py timeline <project> [--full]  what the person saw, clicked, wrote and was answered (usage-log.jsonl)
-    python3 pcb.py report               save logs + doctor result + chats as a zip in logs/ (nothing is sent)
+    python3 pcb.py report [project]     save logs + doctor + chats as a zip in logs/ (nothing is sent); with a project: its activity zip with timeline.txt
     python3 pcb.py update [--check]     update from GitHub (checked at every serve), roll back if it breaks
     python3 pcb.py version              which commit this install is on
 
@@ -92,7 +92,8 @@ def _prog(sub):
 
 def cmd_report(args):
     import runlog
-    path = runlog.make_report()
+    names = [a for a in args if not a.startswith("--")]
+    path = runlog.make_report(project=_existing(names[0]) if names else None)      # pcb.py report <project>: that project only, with timeline.txt
     print(f"Saved {path}")
     print("Contains logs, your chat with the advisor, and what you clicked. No datasheets or Altium files. Nothing was sent. "
           "Attach this file when you report a problem.")

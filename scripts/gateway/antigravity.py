@@ -49,6 +49,11 @@ def list_models(cmd):
         return []
     return parse_models(out)
 
+
+def clip_text(t):
+    t = str(t)
+    return t if len(t) <= events.CALL_CUT else t[:events.CALL_CUT] + f"...[+{len(t) - events.CALL_CUT} chars]"
+
 # what agy accepts for --effort
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
@@ -160,6 +165,95 @@ class AntigravityProvider(Provider):
             return None, "agy returned an empty answer", []
         return str(resp), "", denied
 
+    NAME_KEYS = ("tool", "tool_name", "toolName", "name", "display_name", "displayName", "action", "step", "kind")
+    INPUT_KEYS = ("input", "args", "arguments", "params", "parameters", "command", "cmd")
+    RESULT_KEYS = ("result", "output", "stdout", "response", "content", "text")
+    SKIP_EVENTS = ("assistant", "user", "result", "system", "init", "thinking", "text", "message", "usage")
+
+    @classmethod
+    def _calls(cls, lines, stamps):
+        """(calls, raw_events) from agy's stream-json lines. agy's step events are not documented, so this is tolerant: any
+        JSON event that is not the prompt, the answer text or the final result and that names a tool, action or command is a call;
+        an event whose name says result/output/end/done closes the latest open call of that name. Events it cannot place at all
+        are kept raw (capped) so the debugger still sees them."""
+        calls, raw = [], []
+        for raw_line, ts in zip(lines, stamps):
+            line = raw_line.strip()
+            if not line.startswith("{"):
+                continue
+            try:
+                ev = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(ev, dict):
+                continue
+            kind = str(ev.get("event") or ev.get("type") or "").lower()
+            su = ev.get("step_update")
+            if kind == "step_update" and isinstance(su, dict):
+                # agy's real shape: {"event":"step_update","step_update":{"step_index":2,"state":"ACTIVE"|"DONE",
+                # "step_type":"tool","tool_name":"run_command","tool_info":{"name","parameters","output"}}}
+                if su.get("step_type") != "tool":
+                    continue
+                info = su.get("tool_info") if isinstance(su.get("tool_info"), dict) else {}
+                name = str(su.get("tool_name") or info.get("name") or "tool")
+                inp = info.get("parameters") if isinstance(info.get("parameters"), dict) else {}
+                out = info.get("output")
+                text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str) if out is not None else ""
+                state = str(su.get("state") or "").upper()
+                failed = state in ("ERROR", "FAILED", "CANCELED", "CANCELLED") or bool(su.get("error") or info.get("error"))
+                if failed and not text:
+                    text = str(su.get("error") or info.get("error") or state)
+                idx = su.get("step_index")
+                call = next((c for c in reversed(calls) if c.get("step") == idx and idx is not None), None)
+                if call is None:
+                    if len(calls) >= events.MAX_CALLS:
+                        continue
+                    call = {"ts": ts, "step": idx, "tool": name,
+                            "label": events._clip(f"{name} {json.dumps(inp, ensure_ascii=False, default=str)}"),
+                            "input": events.clip_input(inp), "failed": False, "error": False}
+                    calls.append(call)
+                if text:
+                    call["result"] = clip_text(text)
+                if su.get("duration_seconds") is not None:
+                    call["seconds"] = su["duration_seconds"]
+                if state != "ACTIVE":
+                    call.update(failed=failed, error=failed, result_ts=ts)
+                continue
+            if kind in cls.SKIP_EVENTS:
+                continue
+            body = ev
+            for k in ("tool", "step", "action", "tool_call", "toolCall"):          # {"event": "tool_call", "tool": {"name": ..., "args": ...}}
+                if isinstance(ev.get(k), dict):
+                    body = {**ev, **ev[k]}
+                    break
+            name = next((str(body[k]) for k in cls.NAME_KEYS if isinstance(body.get(k), str) and body[k] and k != "kind"), "")
+            if not name and kind and not any(w in kind for w in ("tool", "step", "action", "command", "run", "exec")):
+                if len(raw) < 30:
+                    raw.append({"ts": ts, "event": clip_text(line)})
+                continue
+            name = name or kind
+            inp = next((body[k] for k in cls.INPUT_KEYS if body.get(k) not in (None, "")), {})
+            inp = inp if isinstance(inp, dict) else {"command": inp}
+            res = next((body[k] for k in cls.RESULT_KEYS if body.get(k) not in (None, "")), None)
+            closing = any(w in kind for w in ("result", "output", "end", "done", "complete", "finish"))
+            failed = bool(body.get("is_error") or body.get("error") or str(body.get("status") or "").upper() in ("ERROR", "FAILED", "FAILURE") or
+                          (isinstance(body.get("exit_code"), int) and body["exit_code"] != 0) or (isinstance(body.get("exitCode"), int) and body["exitCode"] != 0))
+            text = res if isinstance(res, str) else json.dumps(res, ensure_ascii=False, default=str) if res is not None else ""
+            if body.get("error") and not text:
+                text = str(body["error"])
+            if closing:
+                open_ = next((c for c in reversed(calls) if c["tool"] == name and "result" not in c), None)
+                if open_ is not None:
+                    open_.update(result=clip_text(text), failed=failed, error=failed, result_ts=ts)
+                    continue
+            if len(calls) < events.MAX_CALLS:
+                call = {"ts": ts, "tool": name, "label": events._clip(f"{name} {json.dumps(inp, ensure_ascii=False, default=str)}"),
+                        "input": events.clip_input(inp), "failed": failed, "error": failed}
+                if text:
+                    call["result"] = clip_text(text)
+                calls.append(call)
+        return calls, ([] if calls else raw)
+
     @staticmethod
     def _usage(stdout):
         """Token counts from the result event, when agy reports them (the field names vary between versions)."""
@@ -192,11 +286,12 @@ class AntigravityProvider(Provider):
                            "message": {"role": "user", "content": request.prompt}},
                           ensure_ascii=False) + "\n"
 
-        lines, last_text = [], [-1e9]
+        lines, stamps, last_text = [], [], [-1e9]
         on_event = request.options.get("on_event")
 
         def on_line(raw):
             lines.append(raw)
+            stamps.append(events.now_iso())
             # agy's step events are not documented; an assistant event is the one thing we can name
             if on_event and raw.startswith("{") and '"assistant"' in raw and \
                     time.monotonic() - last_text[0] >= 2.0:
@@ -219,6 +314,14 @@ class AntigravityProvider(Provider):
         out, err = "\n".join(lines), (err or "").strip()
         text, problem, denied = self._parse(out)
         usage = self._usage(out)
+        try:
+            calls, raw_events = self._calls(lines, stamps)
+            if calls:
+                meta["calls"] = calls
+            if raw_events:
+                meta["raw_events"] = raw_events
+        except Exception:         # a debug record must never cost the answer
+            pass
         if usage:
             meta["usage"] = usage
         if denied:

@@ -13,6 +13,8 @@ The agent runs this when the student asks about the advisor itself ("what did yo
 "which version are you", "are the outputs up to date") instead of guessing from the conversation.
 """
 import collections
+import datetime as dt
+import os
 import json
 import pathlib
 import re
@@ -23,6 +25,7 @@ import store       # noqa: E402
 import workspace   # noqa: E402
 
 LOG = "turns-log.jsonl"
+ROLL = 5 * 1024 * 1024
 UPDATE_STATUS = "update-status.json"     # the server's last update check, in the workspace
 
 # A number with a unit, or a price: the claims rule 5 of AGENTS.md wants a source for.
@@ -48,12 +51,33 @@ def record(project, session, kind, res, seconds, reply="", applied=0, proposed=0
            "engine_turns": meta.get("turns"), "tools": tools,
            "applied": applied, "proposed": proposed, "refused": refused}
     if res.get("error"):
-        rec["error"] = str(res.get("reply") or res.get("error"))[:300]
+        rec["error"] = str(res.get("reply") or res.get("error"))[:4000]
     if kind == "chat" and reply:
         rec["numbers"] = bool(NUMBER.search(reply))
         rec["sourced"] = "{{src:" in reply or bool(tools)
+    try:
+        import runlog
+        calls = meta.get("calls")
+        if isinstance(calls, list) and calls:          # what the engine ran, with what, and what came back (the debug record)
+            rec["calls"] = runlog.redact(calls)
+            if meta.get("calls_dropped"):
+                rec["calls_dropped"] = meta["calls_dropped"]
+        if meta.get("raw_events"):                     # an engine whose steps could not be read: its raw events
+            rec["raw_events"] = runlog.redact(meta["raw_events"])
+        if meta.get("denied"):
+            rec["denied"] = runlog.redact([{"tool": d.get("tool"), "input": d.get("input"), "reason": d.get("reason")}
+                                           for d in meta["denied"] if isinstance(d, dict)][:40])
+        rec["started"] = (dt.datetime.now() - dt.timedelta(seconds=seconds)).isoformat(timespec="milliseconds")
+    except Exception:
+        pass
     rec = {k: v for k, v in rec.items() if v is not None}
     try:
+        path = store.pdir(project) / LOG
+        try:
+            if path.stat().st_size > ROLL:             # like usage-log.jsonl: one rolled file is kept
+                os.replace(path, path.with_name("turns-log.1.jsonl"))
+        except OSError:
+            pass
         store.append(project, LOG, rec)
     except OSError:
         pass                        # a full disk must not lose the answer the student is waiting for

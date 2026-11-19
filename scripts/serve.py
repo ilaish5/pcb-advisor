@@ -25,7 +25,7 @@ import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -1191,7 +1191,8 @@ def run_step_button(project, sess, step, data):
     runlog.usage(project, "step", op=step, phase="begin", ok=True)
     try:
         try:
-            code, body = _run_step(project, sess, step, data, bridge)
+            with runlog.for_project(project):
+                code, body = _run_step(project, sess, step, data, bridge)
         except Exception as exc:      # after the step itself (its result could not be put into words): still an answer, and the page reads the files again
             code, body = 500, {"error": f"Altium ran the step but its result could not be read ({type(exc).__name__}: {exc}). Look at the file in Altium before trying again."}
             _run_end(project, **body)
@@ -1331,16 +1332,21 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
     wants = any(_uses_altium(a.get("type")) for a in actions or [] if isinstance(a, dict))
     held = wants and STEP_LOCK.acquire(blocking=False)
     try:
-        if not held:
-            return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
-        kinds = [a.get("type") for a in actions if isinstance(a, dict) and _uses_altium(a.get("type"))]
-        with runlog.span("chat.altium-actions", project=project, actions=kinds):
-            res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
-            runlog.event("op", op="chat.altium-actions", phase="result", project=project, refused=res[2])
-            return res
+        with runlog.for_project(project):
+            return _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto)
     finally:
         if held:
             STEP_LOCK.release()
+
+
+def _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto):
+    if not held:
+        return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
+    kinds = [a.get("type") for a in actions if isinstance(a, dict) and _uses_altium(a.get("type"))]
+    with runlog.span("chat.altium-actions", project=project, actions=kinds):
+        res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
+        runlog.event("op", op="chat.altium-actions", phase="result", project=project, refused=res[2])
+        return res
 
 
 def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, altium_free=True, allow_auto=True):
@@ -2127,12 +2133,12 @@ class Handler(BaseHTTPRequestHandler):
         if not make and not name:
             return self._send(405, {"error": "use POST to make a report"})
         if name:
-            if not re.fullmatch(r"pcb-advisor-report-[0-9-]+\.zip", name) or not (runlog.log_dir() / name).is_file():
+            if not re.fullmatch(r"pcb-advisor-report-[\w-]+\.zip", name) or not (runlog.log_dir() / name).is_file():
                 return self._send(404, {"error": "no such report"})
             zpath = runlog.log_dir() / name
         else:
             try:
-                zpath = runlog.make_report()
+                zpath = runlog.make_report(doctor=_cached_doctor())
             except Exception as exc:
                 runlog.exception("exception", exc, where="report")
                 return self._send(500, {"error": f"The report could not be made ({type(exc).__name__}: {exc})"})
@@ -2140,6 +2146,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, zpath.read_bytes(), "application/zip",
                               {"Content-Disposition": f'attachment; filename="{zpath.name}"'})
         return self._send(200, {"path": str(zpath), "name": zpath.name, "size": zpath.stat().st_size})
+
+    def _report_project(self):
+        """GET /api/report/project?project=<name>: make that project's activity zip now (a copy stays in logs/) and send it as a download."""
+        name = self.query("project")
+        site = self.headers.get("Sec-Fetch-Site") or ""
+        if self._cross_origin() or not (site in ("same-origin", "none") or self.headers.get("X-PCB-Report") == "1"):
+            return self._send(403, {"error": "forbidden"})        # a page of another site must not make zips; the page's own fetch sets the header
+        if not runlog.project_ok(name):
+            return self._send(404, {"error": "no such project"})
+        try:
+            zpath = runlog.make_report(project=name, doctor=_cached_doctor())
+            data = zpath.read_bytes()
+        except Exception as exc:
+            runlog.exception("exception", exc, where="report.project", project=name)
+            return self._send(500, {"error": f"The report could not be made ({type(exc).__name__}: {exc})"})
+        found = re.search(r"(\d{8}-\d{6}(?:-\d+)?)$", zpath.stem)
+        stamp = found.group(1) if found else "now"
+        ascii_name = "pcb-advisor-report-" + (re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "project") + "-" + stamp + ".zip"
+        return self._send(200, data, "application/zip", {
+            "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(zpath.name)}"})
 
     def _send_ui_static(self, rel):
         """GET /ui/<rel>: any file under ui_dir with an allowed extension (scripts, styles, images, fonts, json).
@@ -2300,6 +2326,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(422, {"error": str(exc)})
             except Exception as exc:
                 return self._send(422, {"error": str(exc)})
+        if path == "/api/report/project":      # the tester's one button: this project's activity zip, as a download
+            return self._report_project()
         if path == "/api/report":              # downloads one report made earlier; making one is POST only
             return self._report(make=False)
         if path == "/api/doctor":                  # the same list as `pcb.py doctor --json`; ?refresh=1 runs it again
@@ -2714,6 +2742,7 @@ class Handler(BaseHTTPRequestHandler):
                 runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}")
                 _turn_end(tkey, turn)
                 raise
+            res = None
             try:             # _turn_end runs exactly once, whatever fails between the start and the end of apply_actions
                 _eng = gateway.resolve(BACKEND)       # the run log gets counts and seconds, never the text
                 _chat_info = {"project": proj, "engine": _eng, "model": workspace.get(f"agent.providers.{_eng}.model", "")}
@@ -2742,7 +2771,15 @@ class Handler(BaseHTTPRequestHandler):
                         chat=m["chat"])
             except BaseException as exc:
                 runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}", engine=_chat_info["engine"])
-                runlog.event("chat", phase="end", ok=False, seconds=round(time.time() - _chat_t0, 1), error=f"{type(exc).__name__}: {exc}", **_chat_info)
+                runlog.exception("chat", exc, phase="end", ok=False, seconds=round(time.time() - _chat_t0, 1), **_chat_info)
+                try:        # the turn that crashed is the one a debugger needs: its engine calls so far, and the error
+                    import introspect
+                    crashed = dict(res) if isinstance(res, dict) else {}
+                    crashed.setdefault("provider", _chat_info["engine"])
+                    crashed["error"] = f"{type(exc).__name__}: {exc}"
+                    introspect.record(proj, sess, "chat", crashed, time.time() - _chat_t0, reply=crashed["error"])
+                except Exception:
+                    pass
                 raise
             finally:
                 _turn_end(tkey, turn)
@@ -2754,7 +2791,8 @@ class Handler(BaseHTTPRequestHandler):
                 refused.append(project_guard.refusal(data_edited, data_unrestored))
             runlog.event("chat", phase="end", ok=not res.get("error"), seconds=round(time.time() - _chat_t0, 1), applied=len(applied),
                          refused=len(refused), warned=len(warned_map(applied)), proposed=len(proposals), partial=partial,
-                         error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:600]),
+                         actions=[x.get("type") for x in (res.get("actions") or [])[:30] if isinstance(x, dict)], parse_refused=res.get("parse_refused") or [],
+                         error_kind=res.get("error_kind") or "", error=("" if partial or not res.get("error") else str(res.get("reply") or "")[:4000]),
                          **_chat_info)
             if proposals and not partial:
                 try:
@@ -3727,6 +3765,15 @@ EXIT_PORT_TAKEN = 78      # start.bat: not 75 (restart); it stops with the messa
 QUIET_PATHS = ("/api/state", "/api/chat/progress", "/api/log/usage", "/api/log/client", "/api/altium/step-status", "/api/readiness")
 
 
+def _cached_doctor():
+    """The setup check for a report: the cached one (a fresh run is several seconds); a failure is a note in the report, not an error."""
+    try:
+        import doctor
+        return doctor.cached()
+    except Exception as exc:
+        return {"error": f"{type(exc).__name__}: {exc}"}
+
+
 def _log_start(port, engine, available, why):
     """The start record: which version, which machine, what is configured. Looking for Altium only reads the registry; it never starts it."""
     try:
@@ -3822,6 +3869,7 @@ def main(argv=None):
     if cfg["server"].get("open_browser") and not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()
     HTTPD = httpd
+    runlog.tee_output()           # console output also goes (capped) to logs/server-output-<day>.log for the report
     _log_start(port, _engine, ok, why)
     threading.Thread(target=check_updates, daemon=True).start()
     try:

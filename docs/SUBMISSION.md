@@ -185,6 +185,11 @@ Tests (from the repository root, after `pip install -r requirements-dev.txt`):
 ```
 The offline STM32 test takes about half a minute of CPU; do not run it beside another timing-sensitive job.
 
+Field testing: at the end a tester presses **Download activity report (zip)** (project menu or Settings; CLI `pcb.py report <project>`).
+The zip is built locally from the project's logs (`runlog.make_report(project=...)`): `timeline.txt` merges chat, clicks, agent tool calls
+with results, Altium steps and errors in time order; raw JSONL logs, full chats, a small state snapshot and the setup are included.
+It is the only thing a tester sends back; nothing is uploaded by the app.
+
 Walk-through (about 15 minutes): create a project, describe a small board, approve the BOM cards, press Draw in Altium, Place
 parts, Route board, Generate outputs; the README "Try it" section lists the steps.
 
