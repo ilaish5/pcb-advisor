@@ -106,7 +106,7 @@ class AntigravityProvider(Provider):
         dropped = []
         effort = self.config.get("effort")
         if model:
-            # the model name already carries the level (gemini-3.8-flash-high);
+            # the model name already carries the level (gemini-4-hydrogen-high);
             # agy refuses --model together with --effort
             argv += ["--model", model]
             if effort:

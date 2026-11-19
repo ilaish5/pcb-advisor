@@ -113,7 +113,7 @@
           "text",
           "--dangerously-skip-permissions"
         ],
-        "model": "gemini-3.8-flash-high",
+        "model": "gemini-4-hydrogen-high",
         "effort": null
       },
       "openai_api": {

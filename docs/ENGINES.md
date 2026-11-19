@@ -51,7 +51,7 @@ python pcb.py engines                                  # what is installed and r
 python pcb.py config agent.provider antigravity        # or: claude_code
 ```
 
-Model choice. The defaults are the lighter models, Claude `sonnet` and Antigravity `gemini-3.8-flash-high`: the
+Model choice. The defaults are Claude `sonnet` and Antigravity `gemini-4-hydrogen-high` (Gemini 4 Hydrogen): the
 tool is built to work on them. For more accuracy pick a stronger one in Settings > Model (the list comes from
 the engine) or here:
 
