@@ -656,11 +656,18 @@ def _consent_one(kind, a, last_user, earlier_turn):
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
         # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
-        if r and replace_re.search(r) and _STOP_ANY.search(last_user, kind):
-            return f"The student's message says no, wait or stop. Do not wipe the {wipes}; ask the student what they want first."
-        if r and replace_re.search(r) and (_HEDGE.search(str(last_user or "")) or _CONDITION.search(str(last_user or ""))
-                                      or _IF_COND.search(str(last_user or ""))):
-            return f"The student's message hedges or makes the replace conditional (maybe, not sure, only if, after ...). Do not wipe the {wipes}; ask first."
+        if r and replace_re.search(r):
+            lu = str(last_user or "")
+            if _HARD_STOP.search(lu):
+                return f"The student's message says wait or stop. Do not wipe the {wipes}; ask the student what they want first."
+            # the rest is read only in the sentences that carry a replace word ("then we move to the PCB", "I don't need the old one" are about other things)
+            for sent in (x for x in re.split(r"[.;!?\n]+", lu) if replace_re.search(x)):
+                sent = _SOFT.sub(" ", sent)
+                if _STOP_ANY.search(sent, kind):
+                    return f"The student's message says no, wait or stop. Do not wipe the {wipes}; ask the student what they want first."
+                if _HEDGE_R.search(sent) or _COND_R.search(sent) or _IF_R.search(sent):
+                    return (f"The student's message hedges or makes the replace conditional (maybe, not sure, only if, after ...). "
+                            f"Do not wipe the {wipes}; ask first.")
         if r and replace_re.search(r) and not _asked(r, u, replace_re):
             return (f"The {wipes} are only wiped when the student says so, and a replace word of the quote is negated or breaks off. If their "
                     "replace sentence is a plain yes, send just that sentence as replace_said; otherwise ask whether what is there may be replaced.")
@@ -670,9 +677,15 @@ def _consent_one(kind, a, last_user, earlier_turn):
     return ""
 
 
-_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|no reason|not|without|don[’']?t|do not|"
-                      r"(?:ו)?(?:אסור|אל|לא|אין צורך|מבלי|בלי|ללא))(?!\w)", re.I)
-_IF_COND = re.compile(r"(?<!\w)(?:if|only|unless)(?!\w)|(?<!\w)(?:אם|רק|אלא)(?!\w)", re.I)      # "replace only if empty"
+_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|no reason|not|without|avoid|don[’']?t|do not|"
+                      r"(?:ו)?(?:אסור|אל|לא|אין צורך|מבלי|בלי|ללא|תימנע))(?!\w)", re.I)
+_SOFT = re.compile(r"\b(?:don[’']?t|do not)\s+(?:you\s+)?(?:forget|worry|mind|care)\b|\bdon[’']?t need(?! to)\b|\bno (?:problem|worries)\b"
+                   r"|(?<!\w)(?:ו)?אל\s+ת?(?:שכח|דאג)\w*|(?<!\w)לא\s+משנה(?!\w)|(?<!\w)אין\s+בעיה(?!\w)", re.I)      # a negation of ANOTHER verb: no stop, no refusal
+_HARD_STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?mind\b|\bcancel\b"
+                        r"|(?<!\w)(?:חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב|רגע|עוד לא)(?!\w)", re.I)
+_HEDGE_R = re.compile(r"not sure|should i|maybe|perhaps|do you think|or should|or not|i think|i guess|probably|נראה לי|(?<!\w)חושב\w*|לא בטוח|אולי|(?<!\w)או ש|(?<!\w)או לא", re.I)
+_COND_R = re.compile(r"(?<!\w)(?:after|before|until)(?!\w)|(?<!\w)(?<!and )then(?!\w)|(?<!\w)once(?! more)(?!\w)|(?<!\w)(?:אחרי|קודם|לפני|אחר כך)(?!\w)|(?<!\w)עד ש", re.I)
+_IF_R = re.compile(r"(?<!\w)if(?!\w)(?!\s+possible)|(?<!\w)unless(?!\w)|(?<!\w)אם(?!\w)(?!\s+אפשר)|(?<!\w)אלא(?!\w)", re.I)      # "replace only if empty"
 _HARD = re.compile(r"[,;.!?\n]+|\s+(?:but|אבל)\s+", re.I)
 
 
@@ -692,7 +705,13 @@ def _asked(word, u, replace_re=None):
         ok = True
         for pos in inner:
             cs = max([e for e in starts if e <= pos] or [0])
-            if _NEGATED.search(u[cs:pos]):
+            if _NEGATED.search(_SOFT.sub(" ", u[cs:pos])):
+                ok = False
+                break
+        for m in (replace_re.finditer(q.group(0)) if replace_re else ()):       # a negation AFTER the word, in the same clause ("redraw is not needed")
+            end = qs + m.end()
+            ce = min([e.start() for e in _HARD.finditer(u) if e.start() >= end] or [len(u)])
+            if _NEGATED.search(_SOFT.sub(" ", u[end:ce])):
                 ok = False
                 break
         if ok:

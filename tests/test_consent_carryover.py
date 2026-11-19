@@ -266,6 +266,37 @@ def test_replace_is_refused_for_negation_stop_hedge_and_condition(msg, r):
     assert serve._draw_consent(a, msg) != "", msg
 
 
+@pytest.mark.parametrize("msg", [
+    "תחליף רק את 02",
+    "רק תשרטט מחדש את הסכמה",
+    "redraw only sheet 02 of the schematic",
+    "תשרטט מחדש את הסכמה, אם אפשר",
+    "redraw the schematic and then we move to the PCB",
+    "redraw the schematic once more",
+    "overwrite 01 or 02, whatever",
+    "redraw the schematic, don't forget the LED",
+    "תשרטט מחדש את הסכמה ואל תשכח את הנגד",
+    "replace the schematic in Altium, I don't need the old one",
+    "overwrite the schematic, no problem",
+    "לא משנה לי, תשרטט מחדש את הסכמה",
+    "תשרטט מחדש את הסכמה שלא עבדה",
+])
+def test_normal_replace_requests_are_accepted(msg):
+    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) == "", msg
+
+
+@pytest.mark.parametrize("msg", [
+    "redraw is not needed",
+    "מחדש זה לא רעיון טוב",
+    "תימנע מלהתחיל מחדש",
+    "תשרטט מחדש אל",
+    "draw the schematic, overwrite only if it is empty",
+    "draw the schematic, wait. overwrite it",
+])
+def test_negation_after_the_replace_word_and_stops_refuse(msg):
+    assert serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg) != "", msg
+
+
 def test_a_negated_replace_word_in_the_whole_quote_says_to_send_only_the_replace_sentence():
     msg = "שרטט את הסכמה, אין צורך להתחיל מחדש"
     why = serve._draw_consent({"student_said": msg, "replace": True, "replace_said": msg}, msg)
