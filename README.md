@@ -98,7 +98,8 @@ impedance or length-matching rules (other than the USB pair), and a board too bi
 ## Logs and reporting a problem
 
 The app keeps local logs in the `logs/` folder: what ran and what failed, and for each project `usage-log.jsonl` (what you clicked and were answered). Nothing is sent anywhere.
-To report a problem: Settings > **Save diagnostic report** (or `.venv\Scripts\python pcb.py report`). It makes one zip in `logs/`; attach it to your report.
+**Testers: when you finish, open the project and press the project menu (top left) > **Download activity report (zip)** (also in Settings), or run `.venv\Scripts\python pcb.py report <project>`. The browser downloads one zip (a copy stays in `logs/`); email it to the project owner. Nothing is sent by the app. The zip has `timeline.txt` (everything in time order, failures marked `!!`), your clicks, every chat, what the agent ran and the result, each Altium step with its commands and result, server errors with tracebacks, and the setup (version, OS, settings without secrets). No datasheets, PDFs or Altium files.**
+To report a general problem: Settings > **Save diagnostic report** (or `.venv\Scripts\python pcb.py report`). It makes one zip in `logs/`; attach it to your report.
 The zip holds the logs, your chat with the advisor, the setup check and your settings without secrets. No datasheets or Altium files.
 `pcb.py timeline <project>` reads a project's usage log as a timeline.
 

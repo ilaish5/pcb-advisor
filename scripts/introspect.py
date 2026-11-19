@@ -52,6 +52,16 @@ def record(project, session, kind, res, seconds, reply="", applied=0, proposed=0
     if kind == "chat" and reply:
         rec["numbers"] = bool(NUMBER.search(reply))
         rec["sourced"] = "{{src:" in reply or bool(tools)
+    calls = meta.get("calls")
+    if isinstance(calls, list) and calls:          # what the engine ran, with what, and what came back (the debug record)
+        try:
+            import runlog
+            rec["calls"] = runlog.redact(calls)
+        except Exception:
+            pass
+    if meta.get("denied"):
+        rec["denied"] = [{"tool": d.get("tool"), "input": d.get("input"), "reason": d.get("reason")}
+                         for d in meta["denied"] if isinstance(d, dict)][:40]
     rec = {k: v for k, v in rec.items() if v is not None}
     try:
         store.append(project, LOG, rec)

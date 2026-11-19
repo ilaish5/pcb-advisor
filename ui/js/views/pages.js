@@ -233,14 +233,26 @@ function reportNoteHTML() {
 function doctorHTML() {
   const run = btn(PG_DOCTOR_BUSY ? 'Checking…' : 'Run checks', {size: 'sm', act: 'doctor-run', disabled: PG_DOCTOR_BUSY}) + ' ' +
     btn(PG_REPORT_BUSY ? 'Saving…' : 'Save diagnostic report', {size: 'sm', act: 'report-save', disabled: PG_REPORT_BUSY});
-  if (!PG_DOCTOR) return setRow('Setup', run, {saved: false}) + reportNoteHTML();
+  const dl = PROJECT ? setRow('Send to the developer', btn('Download activity report (zip)', {act: 'report-project'}), {saved: false}) +
+    '<div class="set-hint">One zip with everything you did in this project: your clicks, the chat, what the agent ran, Altium steps and every error. ' +
+    'Nothing is sent anywhere; email the downloaded file to the developer.</div>' : '';
+  if (!PG_DOCTOR) return dl + setRow('Setup', run, {saved: false}) + reportNoteHTML();
   const tone = {ok: 'ok-t', warn: 'warn-t', fix: 'bad-t', skip: ''};
   const mark = {ok: '✓', warn: '!', fix: '✗', skip: '–'};
   const rows = PG_DOCTOR.checks.map(c => `<li><span class="${tone[c.status]}">${mark[c.status]}</span> <b>${esc(c.title)}</b>` +
     (c.detail ? ` <span class="muted">${esc(c.detail)}</span>` : '') +
     (c.fix && c.fix.command && c.status !== 'ok' ? `<div class="m">${esc(c.fix.command)} ${btn('Copy', {kind: 'link', size: 'sm', act: 'doctor-copy', cmd: c.fix.command})}</div>` : '') + '</li>').join('');
-  return setRow('Setup', run, {saved: false}) + reportNoteHTML() + `<ul class="doctor-list" aria-live="polite">${rows}</ul>`;
+  return dl + setRow('Setup', run, {saved: false}) + reportNoteHTML() + `<ul class="doctor-list" aria-live="polite">${rows}</ul>`;
 }
+/* one click: the browser downloads this project's activity zip (a copy also stays in logs/) */
+onAct('report-project', () => {
+  if (!PROJECT) return;
+  const a = document.createElement('a');
+  a.href = '/api/report/project?project=' + encodeURIComponent(PROJECT);
+  a.download = '';
+  document.body.appendChild(a); a.click(); a.remove();
+  toast('Preparing the report - the download starts in a moment');
+});
 onAct('report-save', async () => {
   PG_REPORT_BUSY = true; render(true);
   try { PG_REPORT = await api('/api/report', {}); } finally { PG_REPORT_BUSY = false; render(true); }

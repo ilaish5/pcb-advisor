@@ -166,6 +166,17 @@ def exception(kind, exc=None, **fields):
 
 
 @contextlib.contextmanager
+def for_project(project):
+    """While inside, run-log records written by lower layers (the Altium bridge) can say which project they belong to (ctx.project)."""
+    prev = getattr(ctx, "project", "")
+    ctx.project = project or ""
+    try:
+        yield
+    finally:
+        ctx.project = prev
+
+
+@contextlib.contextmanager
 def span(op, **fields):
     """Begin and end records for one operation: the end has seconds, ok and the full error text. Re-raises."""
     t0 = time.time()
@@ -251,18 +262,243 @@ def start_info():
     return info
 
 
-def make_report(doctor=None):
+STATE_FILES = ("project.json", "idea.json", "bom.json", "notes.md", "design-model.json")      # the small state snapshot of a project report
+PROJECT_REPORT_MAX_FILE = 8 * 1024 * 1024       # a log or state file bigger than this is cut to its last part
+
+
+def _read_lines(path):
+    try:
+        return pathlib.Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+
+
+def _jsonl(path):
+    out = []
+    for raw in _read_lines(path):
+        try:
+            r = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(r, dict):
+            out.append(r)
+    return out
+
+
+def _tsnorm(ts):
+    """Sortable form of a record's time: 'YYYY-MM-DD HH:MM:SS.mmm' (records have T or a space, with or without milliseconds)."""
+    t = str(ts or "").replace("T", " ")
+    if not t:
+        return ""
+    return t[:23] if "." in t else t[:19] + ".000"
+
+
+def _short(v, n=300):
+    t = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
+    t = t.replace("\n", " ").strip()
+    return t if len(t) <= n else t[:n] + "..."
+
+
+def _project_run_events(project, since, until):
+    """Run-log records of this project, plus project-less failures (exceptions, crashes, UI errors, Altium batches) inside the window of its own records."""
+    out = []
+    for f in run_files():
+        for r in _jsonl(f):
+            if r.get("project") == project:
+                out.append(r)
+            elif not r.get("project") and since <= _tsnorm(r.get("ts")) <= until and (
+                    r.get("kind") in ("exception", "crash", "ui-error") or (r.get("kind") == "altium" and r.get("ok") is False)):
+                out.append({**r, "window": True})
+    return out
+
+
+def _timeline_rows(project):
+    """[(sortable ts, text, is_error)] from every record source of a project."""
+    import workspace
+    base = workspace.projects_dir() / project
+    rows = []
+
+    def add(r, text, err=False):
+        rows.append((_tsnorm(r.get("ts")), text, bool(err)))
+
+    for name in ("usage-log.1.jsonl", "usage-log.jsonl"):
+        for r in _jsonl(base / name):
+            k = r.get("kind", "?")
+            bad = r.get("ok") is False or k == "ui-error" or bool(r.get("error"))
+            if k == "message":
+                add(r, f"STUDENT SAYS: {_short(r.get('text'), 2000)}" + ("  [not accepted: " + _short(r.get("shown")) + "]" if r.get("ok") is False else ""),
+                    r.get("ok") is False)
+            elif k == "answer":
+                bits = [f"AGENT ANSWERS ({r.get('engine', '')} {r.get('model', '')} {r.get('seconds', '')}s)"]
+                if r.get("text"):
+                    bits.append(_short(r["text"], 2000))
+                for key in ("applied", "refused", "warned"):
+                    if r.get(key):
+                        bits.append(f"{key.upper()}: {_short(r[key], 1500)}")
+                if r.get("error"):
+                    bits.append("ERROR: " + _short(r["error"], 600))
+                add(r, " | ".join(bits), bad)
+            elif k == "step":
+                if r.get("phase") == "begin":
+                    add(r, f"STEP {r.get('op')} begins")
+                else:
+                    notes = "; ".join(f"{x.get('step')}={x.get('state')}" + (f" ({_short(x.get('note'), 160)})" if x.get("note") else "")
+                                      for x in (r.get("steps") or []) if isinstance(x, dict))
+                    add(r, f"STEP {r.get('op')} {'ok' if r.get('ok') else 'FAILED'} in {r.get('seconds', '?')}s: {_short(r.get('shown'), 600)}"
+                           + (f" [{notes}]" if notes else "") + (f" warnings: {_short(r['warnings'], 400)}" if r.get("warnings") else ""),
+                        r.get("ok") is False)
+            elif k == "ui-error":
+                add(r, f"UI ERROR: {_short(r.get('message'), 400)} ({r.get('source', '')}:{r.get('line', '')}) view={r.get('view', '')}", True)
+            else:
+                bits = [f"{key}={_short(r[key], 200)}" for key in ("view", "name", "act", "text", "shown", "choice", "action")
+                        if r.get(key) not in (None, "", [])]
+                add(r, f"{k.upper()}: " + " | ".join(bits) + ("  FAILED" if r.get("ok") is False else ""), r.get("ok") is False)
+    for r in _jsonl(base / "turns-log.jsonl"):
+        head = (f"AGENT TURN ({r.get('kind')}, {r.get('engine')} {r.get('model', '')}, {r.get('seconds')}s, tokens {r.get('tokens_in')}/{r.get('tokens_out')}, "
+                f"applied {r.get('applied')} proposed {r.get('proposed')} refused {r.get('refused')}) "
+                + ("ok" if r.get("ok") else "FAILED " + _short(r.get("error"), 300)))
+        add(r, head, not r.get("ok", True))
+        for c in r.get("calls") or []:
+            if isinstance(c, dict):
+                cmd = c.get("input") or {}
+                cmd = cmd.get("command") or cmd.get("file_path") or cmd.get("pattern") or cmd
+                add(r, f"    tool {c.get('tool')}: {_short(cmd, 400)}  ->  {'FAILED' if c.get('failed') else 'ok'}: {_short(c.get('result'), 400)}",
+                    c.get("failed"))
+        for d in r.get("denied") or []:
+            if isinstance(d, dict):
+                add(r, f"    DENIED tool {d.get('tool')}: {_short(d.get('input'), 300)} ({_short(d.get('reason'), 200)})", True)
+    for f in sorted(base.glob("*-log*.jsonl")) + [base / "proposals.jsonl"]:
+        if f.name.startswith(("usage-log", "turns-log")):
+            continue
+        for r in _jsonl(f):
+            bits = [f"{k}={_short(v, 160)}" for k, v in r.items() if k not in ("ts", "by") and v not in (None, "", [], {})][:8]
+            add(r, f"{f.stem.upper()}: " + " | ".join(bits), r.get("ok") is False or bool(r.get("error")))
+    return rows
+
+
+def project_timeline_text(project, run_events=None):
+    """The readable story of one project: a summary on top, then every record in time order, errors marked '!!'."""
+    import workspace
+    rows = _timeline_rows(project)
+    stamps = [t for t, _, _ in rows if t]
+    since, until = (min(stamps), max(stamps)) if stamps else ("", "9999")
+    runs = run_events if run_events is not None else _project_run_events(project, since, until)
+    steps_ok = steps_bad = 0
+    for r in runs:
+        ts = _tsnorm(r.get("ts"))
+        kind = r.get("kind")
+        if kind == "op":
+            if r.get("phase") == "end":
+                bad = r.get("ok") is False
+                if str(r.get("op", "")).startswith("step."):
+                    steps_bad += bad
+                    steps_ok += not bad
+                rows.append((ts, f"RUN {r.get('op')} {'FAILED' if bad else 'ok'} in {r.get('seconds', '?')}s"
+                                 + (f": {_short(r.get('error'), 800)}" if r.get("error") else "")
+                                 + (f" summary: {_short(r.get('summary'), 300)}" if r.get("summary") else ""), bad))
+        elif kind == "altium":
+            rows.append((ts, f"ALTIUM BRIDGE {','.join(map(str, r.get('commands') or []))} {'ok' if r.get('ok') else 'FAILED'} in {r.get('seconds')}s "
+                             f"args={_short(r.get('args'), 500)}" + (f" error: {_short(r.get('error'), 800)}" if r.get("error") else "")
+                             + (f" log tail: {_short(r.get('result'), 500)}" if r.get("result") else ""), r.get("ok") is False))
+        elif kind in ("exception", "crash"):
+            rows.append((ts, f"EXCEPTION {r.get('where') or r.get('path') or ''}: {_short(r.get('error'), 500)}\n{r.get('traceback', '')}".rstrip()
+                         + ("  (no project on the record; same time window)" if r.get("window") else ""), True))
+        elif kind == "chat" and r.get("phase") in ("end", "followup-end"):
+            acts = r.get("actions") or []
+            rows.append((ts, f"CHAT TURN {r.get('phase')} ok={r.get('ok')} applied={r.get('applied')} refused={r.get('refused')} warned={r.get('warned')} "
+                             f"proposed={r.get('proposed')} actions asked: {_short([a.get('type') for a in acts if isinstance(a, dict)], 300)}"
+                             + (f" error: {_short(r.get('error'), 600)}" if r.get("error") else "")
+                             + (f"\n{r['traceback']}" if r.get("traceback") else ""), r.get("ok") is False))
+        elif kind == "request" and (r.get("status") or 0) >= 400:
+            rows.append((ts, f"HTTP {r.get('method')} {r.get('path')} -> {r.get('status')}: {_short(r.get('error'), 400)}"
+                             + (f"\n{r['traceback']}" if r.get("traceback") else ""), True))
+    rows.sort(key=lambda x: x[0])
+    turns = _jsonl(workspace.projects_dir() / project / "turns-log.jsonl")
+    errs = sum(1 for _, _, e in rows if e)
+    head = [f"PCB Advisor activity timeline: project {project}",
+            f"first record: {rows[0][0] if rows else '-'}   last record: {rows[-1][0] if rows else '-'}",
+            f"agent turns: {len(turns)} (failed: {sum(1 for t in turns if not t.get('ok', True))})   "
+            f"step buttons: {steps_ok} ok, {steps_bad} failed   records marked as errors (!!): {errs}",
+            "Lines starting with '!!' are failures. Times are local to the tester's computer.", "=" * 78]
+    return "\n".join(head + [f"{ts[:23]}  {'!! ' if err else '   '}{text}" for ts, text, err in rows]) + "\n"
+
+
+README_TEXT = """PCB Advisor activity report for one project (made locally, nothing was sent).
+
+timeline.txt            start here: everything in time order, failures marked '!!', summary on top
+about.json              version/commit, OS, python
+doctor.json             setup checks as the tester's machine saw them
+config.json             settings with secrets hidden
+logs/run-project.jsonl  server records of this project (steps, Altium batches with commands/results, exceptions with tracebacks,
+                        failed requests) plus project-less exceptions from the same time window
+logs/install-*.log      installer logs, if any
+project/*-log*.jsonl    per-project logs: usage (clicks, views, messages, answers, steps), turns (agent tool calls and results),
+                        altium, bom, library, sheet, supply, lineage; rotated files too
+project/proposals.jsonl proposals the agent made and what was decided
+project/chats/          full chat transcripts
+state/                  project.json, idea.json, bom.json, netlist/*.json, notes.md, design-model.json (no datasheets, PDFs or Altium files)
+"""
+
+
+def _add_capped(z, path, arcname):
+    try:
+        size = path.stat().st_size
+        if size <= PROJECT_REPORT_MAX_FILE:
+            z.write(path, arcname)
+        else:
+            with open(path, "rb") as fh:
+                fh.seek(size - PROJECT_REPORT_MAX_FILE)
+                z.writestr(arcname, b"[cut: only the last part of this file]\n" + fh.read())
+    except OSError as exc:
+        z.writestr(arcname + ".error.txt", str(exc))
+
+
+def _fill_project_report(z, project):
+    import workspace
+    base = workspace.projects_dir() / project
+    stamps = [t for t, _, _ in _timeline_rows(project) if t]
+    since, until = (min(stamps), max(stamps)) if stamps else ("", "9999")
+    runs = _project_run_events(project, since, until)
+    z.writestr("README.txt", README_TEXT)
+    try:
+        z.writestr("timeline.txt", project_timeline_text(project, run_events=runs))
+    except Exception as exc:         # the raw files below still tell the story
+        z.writestr("timeline.txt", f"The timeline could not be built ({type(exc).__name__}: {exc}). Read the raw files.\n{tb(exc)}")
+    z.writestr("logs/run-project.jsonl", "".join(json.dumps(r, ensure_ascii=False, default=str) + "\n" for r in runs))
+    for f in install_files():
+        z.write(f, f"logs/{f.name}")
+    if not base.is_dir():
+        z.writestr("project-error.txt", f"no project folder named {project}")
+        return
+    for f in sorted([*base.glob("*-log*.jsonl"), base / "proposals.jsonl"]):
+        if f.is_file():
+            _add_capped(z, f, f"project/{f.name}")
+    if (base / "chats").is_dir():
+        for f in sorted((base / "chats").rglob("*")):
+            if f.is_file():
+                _add_capped(z, f, f"project/chats/{f.relative_to(base / 'chats').as_posix()}")
+    for name in STATE_FILES:
+        if (base / name).is_file():
+            _add_capped(z, base / name, f"state/{name}")
+    if (base / "netlist").is_dir():
+        for f in sorted((base / "netlist").glob("*.json")):
+            _add_capped(z, f, f"state/netlist/{f.name}")
+
+
+def make_report(doctor=None, project=None):
     """Zip the run logs, install logs, the doctor result, the config without secrets and, per project, its *-log.jsonl files
-    (usage-log.jsonl among them) and its chats. Never sources, datasheets or Altium files. Returns the path of the zip."""
+    (usage-log.jsonl among them) and its chats. Never sources, datasheets or Altium files. Returns the path of the zip.
+    With project=<name>: only that project, with timeline.txt, README.txt, its run-log lines and a small JSON/text state snapshot."""
     import workspace
     d = log_dir()
     d.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    out = d / f"pcb-advisor-report-{stamp}.zip"
+    prefix = f"pcb-advisor-report-{workspace.safe_name(project)}-" if project else "pcb-advisor-report-"
+    out = d / f"{prefix}{stamp}.zip"
     n = 1
     while out.exists():
         n += 1
-        out = d / f"pcb-advisor-report-{stamp}-{n}.zip"
+        out = d / f"{prefix}{stamp}-{n}.zip"
     if doctor is None:
         try:
             import doctor as doctor_mod
@@ -277,19 +513,22 @@ def make_report(doctor=None):
         z.writestr("about.json", json.dumps(start_info(), indent=2))
         z.writestr("doctor.json", json.dumps(redact(doctor), indent=2, ensure_ascii=False, default=str))
         z.writestr("config.json", json.dumps(cfg, indent=2, ensure_ascii=False, default=str))
-        for f in run_files() + install_files():
-            z.write(f, f"logs/{f.name}")
-        try:
-            pdir = workspace.projects_dir()
-            for p in sorted(pdir.iterdir()) if pdir.is_dir() else []:
-                for f in sorted([*p.glob("*-log.jsonl"), *p.glob("usage-log.1.jsonl")]):          # includes usage-log.jsonl
-                    z.write(f, f"projects/{p.name}/{f.name}")
-                for f in sorted((p / "chats").rglob("*")) if (p / "chats").is_dir() else []:     # the conversation: needed to follow the usage log
-                    if f.is_file():
-                        z.write(f, f"projects/{p.name}/chats/{f.relative_to(p / 'chats').as_posix()}")
-        except OSError as exc:
-            z.writestr("projects-error.txt", str(exc))
-    event("report", path=str(out))
+        if project:
+            _fill_project_report(z, project)
+        else:
+            for f in run_files() + install_files():
+                z.write(f, f"logs/{f.name}")
+            try:
+                pdir = workspace.projects_dir()
+                for p in sorted(pdir.iterdir()) if pdir.is_dir() else []:
+                    for f in sorted([*p.glob("*-log.jsonl"), *p.glob("usage-log.1.jsonl")]):          # includes usage-log.jsonl
+                        z.write(f, f"projects/{p.name}/{f.name}")
+                    for f in sorted((p / "chats").rglob("*")) if (p / "chats").is_dir() else []:     # the conversation: needed to follow the usage log
+                        if f.is_file():
+                            z.write(f, f"projects/{p.name}/chats/{f.relative_to(p / 'chats').as_posix()}")
+            except OSError as exc:
+                z.writestr("projects-error.txt", str(exc))
+    event("report", path=str(out), project=project or "")
     for old in sorted(d.glob("pcb-advisor-report-*.zip"), key=lambda f: f.stat().st_mtime)[:-KEEP_REPORTS]:      # only the last few are kept
         try:
             old.unlink()
