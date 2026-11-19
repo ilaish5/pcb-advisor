@@ -1,0 +1,214 @@
+{
+  "id": "Periph",
+  "title": "Flash, LED, buttons, SWD",
+  "sections": [
+    {
+      "id": "A",
+      "title": "QSPI flash"
+    },
+    {
+      "id": "B",
+      "title": "LED and buttons"
+    },
+    {
+      "id": "C",
+      "title": "SWD"
+    }
+  ],
+  "parts": [
+    {
+      "ref": "U2",
+      "section": "A",
+      "kind": "ic",
+      "pins_source": "agent",
+      "pins": [
+        {
+          "name": "~{CS}",
+          "num": "1",
+          "net": "QSPI_SS",
+          "side": "left"
+        },
+        {
+          "name": "DO/IO1",
+          "num": "2",
+          "net": "QSPI_SD1",
+          "side": "left"
+        },
+        {
+          "name": "~{WP}/IO2",
+          "num": "3",
+          "net": "QSPI_SD2",
+          "side": "left"
+        },
+        {
+          "name": "GND",
+          "num": "4",
+          "net": "GND",
+          "side": "left"
+        },
+        {
+          "name": "DI/IO0",
+          "num": "5",
+          "net": "QSPI_SD0",
+          "side": "right"
+        },
+        {
+          "name": "CLK",
+          "num": "6",
+          "net": "QSPI_SCLK",
+          "side": "right"
+        },
+        {
+          "name": "~{HOLD}/~{RESET}/IO3",
+          "num": "7",
+          "net": "QSPI_SD3",
+          "side": "right"
+        },
+        {
+          "name": "VCC",
+          "num": "8",
+          "net": "+3V3",
+          "side": "right"
+        }
+      ]
+    },
+    {
+      "ref": "C14",
+      "section": "A",
+      "kind": "cap",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "+3V3"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R5",
+      "section": "B",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "GPIO25"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "LED_A"
+        }
+      ]
+    },
+    {
+      "ref": "D1",
+      "section": "B",
+      "kind": "diode",
+      "pins": [
+        {
+          "name": "2",
+          "num": "2",
+          "net": "LED_A"
+        },
+        {
+          "name": "1",
+          "num": "1",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "R6",
+      "section": "B",
+      "kind": "res",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "QSPI_SS"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "BOOT_BTN"
+        }
+      ]
+    },
+    {
+      "ref": "SW1",
+      "section": "B",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "BOOT_BTN"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "SW2",
+      "section": "B",
+      "kind": "ic",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "RUN"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "GND"
+        }
+      ]
+    },
+    {
+      "ref": "J2",
+      "section": "C",
+      "kind": "conn",
+      "pins": [
+        {
+          "name": "1",
+          "num": "1",
+          "net": "SWCLK"
+        },
+        {
+          "name": "2",
+          "num": "2",
+          "net": "SWDIO"
+        },
+        {
+          "name": "3",
+          "num": "3",
+          "net": "GND"
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "section": "A",
+      "text": "W25Q16 flash with C14 decoupling. QSPI_* and +3V3 link to U1 on sheet Core."
+    },
+    {
+      "section": "B",
+      "text": "BOOTSEL: hold SW1 at power-up (QSPI_SS to GND through 1k). RESET: SW2 pulls RUN to GND. GPIO25 drives the LED through R5."
+    },
+    {
+      "section": "C",
+      "text": "3-pin SWD header: SWCLK, SWDIO, GND, linked to sheet Core."
+    }
+  ]
+}

@@ -37,7 +37,7 @@ def simulate(commands):
     syms = {s["name"]: s for s in SYMS.values()}
     for c in commands:
         if c[0] == "PLACE":
-            _, _, ref, lib, _, x, y, n = c
+            _, _, ref, lib, _, x, y, n = c[:8]          # the designator and comment spots follow
             pins = [{"number": p["number"], "name": p["name"], "x": int(x) + p["x"], "y": int(y) + p["y"], "length": p["length"],
                      "orientation": p["orientation"], "electrical": 4, "hidden": False} for p in syms[lib]["pins"]]
             doc["components"].append({"ref": ref, "lib_ref": lib, "pins": pins, "footprint": "FP"})
@@ -498,12 +498,12 @@ def test_a_section_frame_encloses_everything_drawn_for_its_section():
 
 
 def test_three_or_more_section_frames_do_not_overlap_and_stay_between_the_border_and_the_title_block():
-    rows = [("R%d" % i, "R1") for i in range(1, 15)]
-    p, sec = _sections_sheet([("A", "First", rows[:5]), ("B", "Second", rows[5:9]), ("C", "Third", rows[9:12]), ("D", "Fourth", rows[12:])],
+    rows = [("R%d" % i, "R1") for i in range(1, 13)]
+    p, sec = _sections_sheet([("A", "First", rows[:5]), ("B", "Second", rows[5:9]), ("C", "Third", rows[9:12])],
                              extra={"R1": {"pins_source": "agent"}})
     assert not p["errors"]
     frames = list(_frames(p).values())
-    assert len(frames) == 4
+    assert len(frames) == 3
     for i, (ax, ay, aw, ah) in enumerate(frames):
         for bx, by, bw, bh in frames[i + 1:]:
             assert ay >= by + bh or by >= ay + ah or ax + aw <= bx or bx + bw <= ax

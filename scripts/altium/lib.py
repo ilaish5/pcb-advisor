@@ -8,6 +8,7 @@ import re
 import struct
 
 from .ole import AltiumReadError, kv, open_doc, stream
+from .schdoc import _num, _points
 
 PIN_TYPES = {0: "Input", 1: "IO", 2: "Output", 3: "OpenCollector", 4: "Passive", 5: "HiZ", 6: "OpenEmitter", 7: "Power"}
 MIL = 10000.0            # PCB internal unit per mil
@@ -47,6 +48,39 @@ def _binary_pin(body):
             "part_id": owner, "formal": formal}
 
 
+def symbol_graphics(text, pins):
+    """(body, joined) of a symbol from its text records (a list of kv dicts). body: (x0, y0, x1, y1) in mils, the box of its
+    drawing (rectangles, polylines, polygons; the pins are not in it), or None when it has none. joined: [[pin number, ...]] groups
+    of pins whose bases a drawn straight line connects (a 4-pad tactile switch: A-B on one rail, C-D on the other), the symbol
+    saying those pads are one terminal. Only a line from one pin base to another counts, and only for small symbols of passive
+    pins (the box outline of an IC may touch pin bases and means nothing)."""
+    xs, ys, segs = [], [], []
+    for r in text:
+        rec = r.get("RECORD")
+        if rec == "14":
+            for kx, ky in (("LOCATION.X", "LOCATION.Y"), ("CORNER.X", "CORNER.Y")):
+                xs.append(_num(r, kx) * 10)
+                ys.append(_num(r, ky) * 10)
+        elif rec in ("6", "7"):
+            pts = [(x * 10, y * 10) for x, y in _points(r)]
+            xs += [q[0] for q in pts]
+            ys += [q[1] for q in pts]
+            if rec == "6" and len(pts) == 2:
+                segs.append(pts)
+    body = (min(xs), min(ys), max(xs), max(ys)) if xs else None
+    joined = []
+    if len(pins) <= 8 and all(str(p.get("electrical")) == "Passive" for p in pins):
+        at = {}
+        for p in pins:
+            at.setdefault((p["x"], p["y"]), []).append(str(p["number"]))
+        for a, b in segs:
+            ka = next((k for k in at if abs(k[0] - a[0]) <= 10 and abs(k[1] - a[1]) <= 10), None)
+            kb = next((k for k in at if abs(k[0] - b[0]) <= 10 and abs(k[1] - b[1]) <= 10), None)
+            if ka and kb and ka != kb and len(at[ka]) == 1 and len(at[kb]) == 1:
+                joined.append(sorted(at[ka] + at[kb]))
+    return body, joined
+
+
 def read_schlib(path):
     """{"file", "symbols": [{name, description, designator, comment, params, pins, footprints, pinned_paths}]}"""
     p = pathlib.Path(path)
@@ -70,8 +104,10 @@ def read_schlib(path):
             params = {r["NAME"]: r.get("TEXT", "") for _, r in text if r.get("RECORD") == "41" and r.get("NAME")}
             des = next((r.get("TEXT", "") for _, r in text if r.get("RECORD") == "34"), "")
             impls = [r for _, r in text if r.get("RECORD") == "45" and r.get("MODELTYPE", "").upper() == "PCBLIB"]
+            body, joined = symbol_graphics([r for _, r in text], pins)
             symbols.append({
                 "name": comp.get("LIBREFERENCE", entry[0]),
+                "body": body, "joined": joined,
                 "description": comp.get("COMPONENTDESCRIPTION", ""),
                 "designator": des,
                 "comment": params.get("Comment", ""),

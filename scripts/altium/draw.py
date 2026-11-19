@@ -18,6 +18,7 @@ import unicodedata
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import pinnames  # noqa: E402
+from partlib_convert import NAME_CHAR, NAME_HEIGHT, NUMBER_RAISE  # noqa: E402
 
 TAG = "[advisor]"                      # the same first word the skeleton frames carry
 GRID = 100                             # mils: everything is placed on the 100 mil grid
@@ -28,6 +29,10 @@ GAP = 200                              # between two parts, on top of their own 
 MARGIN = 200                           # room kept around a part for its power symbols and labels
 CHAR = 70                              # width of one label character in mils (the default 10 pt font)
 POWER_STUB = 200
+NUM_CHAR = NAME_CHAR                   # width of one pin number character (the same metric partlib_convert uses for symbol text)
+TEXT_H = 100                           # height of one text line (the designator, the comment, a label)
+TEXT_PITCH = 150                       # line to line of the designator and the comment
+TEXT_GAP = 50                          # between the body (or other ink) and the part's texts
 GROUND_STYLE, RAIL_STYLE = 5, 2        # Altium: power port styles "Signal ground" and "Bar"
 
 _GROUND = re.compile(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", re.I)
@@ -82,6 +87,9 @@ def pin_nets(part, symbol):
             unnumbered.append(p)
     lib_nums = {str(lp["number"]) for lp in symbol["pins"]}
     out, warn = [], []
+    joined = {n: g for g in symbol.get("joined") or [] for n in g}      # pins the symbol's drawing joins: one terminal (a tactile switch)
+    twice = (not joined and 0 < len(by_num) and len(symbol["pins"]) == 2 * len(by_num) <= 8
+             and all(str(q.get("electrical")) == "Passive" for q in symbol["pins"]))
     for p in unnumbered:        # a pin with no number cannot be wired: say that, not "pin  has no pin in the symbol"
         nm = str(p.get("name") or "").strip()
         errors.append(f"{ref}: netlist pin {nm or '(no name)'} has no pin number" + (
@@ -94,7 +102,21 @@ def pin_nets(part, symbol):
         num = str(lp["number"])
         np_ = by_num.get(num)
         if np_ is None:
-            warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is not in the netlist; left unconnected")
+            mates = [m for m in joined.get(num, ()) if m != num and m in by_num]
+            nets = {str(by_num[m].get("net") or "").strip() for m in mates}
+            if len(nets) == 1 and next(iter(nets)) and not is_nc(next(iter(nets))):
+                # the symbol itself joins this pad to a listed one (internally paired pads): same net, like the real part
+                out.append((lp, next(iter(nets))))
+                warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is joined to pin {mates[0]} inside the symbol (one terminal); "
+                            f"drawn on the same net {next(iter(nets))}")
+            elif num in joined or twice:
+                why = (f"the symbol joins it with pin {', '.join(m for m in joined[num] if m != num)}" if num in joined
+                       else "the symbol has twice the pins of the netlist, so it is probably a duplicate pad of the same terminal")
+                out.append((lp, "NC"))
+                warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is not in the netlist; {why}: marked No ERC, "
+                            "check the datasheet pad table")
+            else:
+                warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is not in the netlist; left unconnected")
             continue
         nname = str(np_.get("name") or "").strip()
         two = len(symbol["pins"]) == 2 and len(by_num) == 2
@@ -111,26 +133,44 @@ def pin_nets(part, symbol):
                 errors.append(f"{ref}: pin {num} is {nname} in the netlist, but {nname} is pin {other[0]['number']} of library symbol "
                               f"{symbol['name']} (pin {num} is {lp.get('name')})")
                 continue
-            warn.append(f"{ref}: pin {num} is called {nname} in the netlist and {lp.get('name')} in the library (matched by number)")
+            if nname != num:        # the netlist only repeats the pad number (1, 2 against A, B): no name to disagree about
+                warn.append(f"{ref}: pin {num} is called {nname} in the netlist and {lp.get('name')} in the library (matched by number)")
         net = str(np_.get("net") or "").strip()
         if is_hidden(lp):
             if net and not is_nc(net) and not same_name(net, lp.get("name")):
                 warn.append(f"{ref}: hidden pin {num} ({lp.get('name')}) connects to net {lp.get('name')} by itself, the netlist says {net}")
             continue
         out.append((lp, net))
+    for g in symbol.get("joined") or []:        # joined inside the symbol but on different nets in the netlist: say so
+        nets = sorted({str(by_num[m].get("net") or "").strip() for m in g if m in by_num} - {""})
+        if len(nets) > 1:
+            warn.append(f"{ref}: pins {' and '.join(g)} are one terminal in library symbol {symbol['name']} (a line joins them) but the "
+                        f"netlist puts them on different nets ({', '.join(nets)}): check the pin map against the datasheet")
     return out, warn, errors
 
 
-def stub_length(net):
-    kind = net_kind(net)
+def number_lead(lp):
+    """How far (mils) the pin's number text runs out past the stub's first end, along the stub: a long number (A1B12) is longer than
+    a 100 mil pin, so its tail lies over the start of the stub where the net label would be. 0 when it fits on the pin."""
+    if not lp.get("show_number", True):
+        return 0
+    over = len(str(lp.get("number") or "")) * NUM_CHAR - int(lp.get("length", 0))
+    return over + 50 if over > 0 else 0
+
+
+def stub_length(net, lead=0, extra=0, label=False):
+    """Length of a stub in mils. label: the net is drawn as a label even when it is a ground or supply net (a crowded or upside-down
+    power symbol is replaced by a label), so the stub has to hold the whole name."""
+    kind = "label" if label else net_kind(net)
     if kind != "label":
-        return POWER_STUB
-    n = int(math.ceil((len(str(net)) * CHAR + 100) / GRID)) * GRID
-    return max(300, min(n, 1500))
+        return max(POWER_STUB, _snap_up(lead + 100)) if lead else POWER_STUB
+    n = int(math.ceil((max(lead, 0) + len(str(net)) * CHAR + 100) / GRID)) * GRID
+    return max(300, min(n, 1500)) + extra
 
 
-def _stub(lp, net, dense=False):
-    """What goes at one pin, in symbol coordinates: {"tip", "end", "kind", "rot"...} (kind 'nc', 'power' or 'label')."""
+def _stub(lp, net, dense=False, lead=0, extra=0):
+    """What goes at one pin, in symbol coordinates: {"tip", "end", "kind", "rot"...} (kind 'nc', 'power' or 'label').
+    lead: the part of the stub the pin number's text covers; extra: a longer stub (a staggered label), both in mils."""
     ori = int(lp.get("orientation", 0)) & 3
     dx, dy = DIRECTION[ori]
     tx, ty = tip(lp)
@@ -140,17 +180,18 @@ def _stub(lp, net, dense=False):
     if kind == "gnd" and dy > 0 or kind == "rail" and dy < 0 or dense:
         kind = "label"                  # a ground symbol would hang upside down, and power symbols on pins 100 mil apart sit on
                                         # top of each other: a label reads better
-    n = stub_length(net) if kind == "label" else POWER_STUB
+    n = stub_length(net, lead, extra, True) if kind == "label" else stub_length(net, lead)
     ex, ey = tx + dx * n, ty + dy * n
     out = {"kind": "power" if kind != "label" else "label", "tip": (tx, ty), "end": (ex, ey), "net": net, "ori": ori}
     if kind == "label":
-        # the text runs along the stub, so it stays off the neighbours; rotated for a vertical stub
+        # the text runs along the stub, so it stays off the neighbours; rotated for a vertical stub; it starts after the pin number
+        start = max(100, lead) + extra
         if dx > 0:
-            out["at"], out["rot"] = (tx + 100, ty), 0
+            out["at"], out["rot"] = (tx + start, ty), 0
         elif dx < 0:
             out["at"], out["rot"] = (ex, ey), 0
         elif dy > 0:
-            out["at"], out["rot"] = (tx, ty + 100), 1
+            out["at"], out["rot"] = (tx, ty + start), 1
         else:
             out["at"], out["rot"] = (ex, ey), 1
     else:
@@ -159,9 +200,130 @@ def _stub(lp, net, dense=False):
     return out
 
 
+def label_width(net):
+    return len(str(net)) * CHAR
+
+
+def ink_rects(s, lp=None):
+    """The rectangles (x0, y0, x1, y1, symbol coordinates) a stub's drawing covers: the wire, the net label text or the power port
+    and its name, and (with the library pin) the pin's number text. Conservative on purpose: text boxes use CHAR per character."""
+    out = []
+    (tx, ty), (ex, ey) = s["tip"], s["end"]
+    if s["kind"] != "nc":
+        out.append((min(tx, ex) - 10, min(ty, ey) - 10, max(tx, ex) + 10, max(ty, ey) + 10))
+    if s["kind"] == "label":
+        ax, ay = s["at"]
+        w = label_width(s["net"])
+        out.append((ax, ay - 10, ax + w, ay + TEXT_H + 10) if s["rot"] == 0 else (ax - TEXT_H - 10, ay, ax + 10, ay + w))
+    elif s["kind"] == "power":
+        half = max(100, label_width(s["net"]) // 2)
+        out.append((ex - half, ey - 150, ex + half, ey + 150))
+    if lp is not None and lp.get("show_number", True) and str(lp.get("number") or ""):
+        w = len(str(lp["number"])) * NUM_CHAR
+        dx, dy = DIRECTION[int(lp.get("orientation", 0)) & 3]
+        x, y = lp["x"], lp["y"]
+        if dy == 0:
+            lo, hi = sorted((x, x + dx * w))
+            out.append((lo, y + NUMBER_RAISE, hi, y + NUMBER_RAISE + NAME_HEIGHT))
+        else:
+            lo, hi = sorted((y, y + dy * w))
+            out.append((x - NUMBER_RAISE - NAME_HEIGHT, lo, x - NUMBER_RAISE, hi))
+    return out
+
+
+def _hit(a, b, slack=0):
+    return a[0] < b[2] + slack and b[0] < a[2] + slack and a[1] < b[3] + slack and b[1] < a[3] + slack
+
+
+def _body(symbol):
+    """The symbol body's box (x0, y0, x1, y1): its drawing when the reader found one, else what the pins bound (a pin on the left
+    or right is taken to have the body 100 mil beyond it, up and down)."""
+    pins = symbol["pins"]
+    xs = [p["x"] for p in pins] or [0]
+    ys = [p["y"] for p in pins] or [0]
+    horiz = [p for p in pins if (int(p.get("orientation", 0)) & 3) in (0, 2)]
+    box = [min(xs), min(ys) - (100 if horiz else 0), max(xs), max(ys) + (100 if horiz else 0)]
+    b = symbol.get("body")
+    if b:
+        box = [min(box[0], b[0]), min(box[1], b[1]), max(box[2], b[2]), max(box[3], b[3])]
+    return tuple(box)
+
+
+def part_texts(ref, comment, body, ink):
+    """Where the designator and the comment go: (designator, comment) as (x, y, width) or None, symbol coordinates, the lower left
+    corner of each text (Altium anchors a text there). Both are left aligned in two lines above the body (comment next to it,
+    designator above), at the body's left edge; if a stub, label or power port is in the way there, aligned to the body's right
+    edge; if that is no better, above everything the part draws. Deterministic: same part, same spots."""
+    items = [("des", str(ref or ""))] + ([("com", str(comment))] if str(comment or "").strip() else [])
+    wid = {k: len(t) * CHAR for k, t in items}
+    top = body[3] + TEXT_GAP
+
+    def put(x, y):
+        rows = {}
+        for i, (k, _) in enumerate(reversed(items)):          # the last item (comment) lowest, the designator above it
+            rows[k] = (x, y + i * TEXT_PITCH, wid[k])
+        return rows
+
+    def clash(rows):
+        return any(_hit((x, y, x + w, y + TEXT_H), r, 20) for x, y, w in rows.values() for r in ink)
+    y0 = _snap_up(top) if top % 50 else top
+    w = max(wid.values())
+    for x in (body[0], body[2] - w):
+        rows = put(int(x), y0)
+        if not clash(rows):
+            return rows
+    y1 = max([y0] + [r[3] + TEXT_GAP for r in ink])
+    return put(int(body[0]), _snap_up(y1) if y1 % 50 else y1)
+
+
+def _build_run(run, extra=0):
+    """The stubs of a run of pins ([lp, net, dense, stub] entries, left to right on one top or bottom edge, one net, 100 mil
+    apart): the first pin carries the port or label, the others are plain wires of the same length, joined at their ends by short
+    wires, so one name serves the whole run (twelve IOVDD pins are one +3V3, not twelve stacked labels)."""
+    lp0, net, dense = run[0][0], run[0][1], run[0][2]
+    s0 = _stub(lp0, net, dense if len(run) == 1 else False, max(number_lead(t[0]) for t in run), extra)
+    run[0][3] = s0
+    if len(run) > 1:
+        dx, dy = DIRECTION[s0["ori"]]
+        n = abs(s0["end"][0] - s0["tip"][0]) + abs(s0["end"][1] - s0["tip"][1])
+        ends = [s0["end"]]
+        for t in run[1:]:
+            tx, ty = tip(t[0])
+            ends.append((tx + dx * n, ty + dy * n))
+            t[3] = {"kind": "wire", "tip": (tx, ty), "end": ends[-1], "net": net, "ori": s0["ori"]}
+        s0["links"] = list(zip(ends, ends[1:]))
+
+
+def _crowded_edges(todo):
+    """Pins 100 mil apart on a top or bottom edge are text columns that touch. Same-net neighbours become one run with one label or
+    port (_build_run); neighbours of different nets are staggered: every second label starts past the end of its neighbours' labels."""
+    side = sorted((t for t in todo if t[3]["kind"] in ("label", "power") and t[3]["ori"] in (1, 3)),
+                  key=lambda t: (t[3]["ori"], t[0]["x"]))
+    runs = []
+    for t in side:
+        last = runs[-1][-1] if runs else None
+        if last and last[3]["ori"] == t[3]["ori"] and last[1] == t[1] and t[0]["x"] - last[0]["x"] <= GRID:
+            runs[-1].append(t)
+        else:
+            runs.append([t])
+    for r in runs:
+        if len(r) > 1:
+            _build_run(r)
+    items = [(r[0][3]["ori"], r[0][0]["x"], r[-1][0]["x"], r) for r in runs if r[0][3]["kind"] == "label"]
+    tier = []
+    for i, (ori, xa, xb, r) in enumerate(items):
+        prev = items[i - 1] if i else None
+        tier.append(1 - tier[-1] if prev and prev[0] == ori and xa - prev[2] <= GRID else 0)
+    for i, (ori, xa, xb, r) in enumerate(items):
+        if tier[i]:
+            near = [items[k] for k in (i - 1, i + 1) if 0 <= k < len(items) and tier[k] == 0 and items[k][0] == ori
+                    and (xa - items[k][2] <= GRID if k < i else items[k][1] - xb <= GRID)]
+            _build_run(r, _snap_up(max([label_width(n[3][0][1]) for n in near] + [0]) + 100))
+
+
 def part_cell(part, symbol):
-    """Everything about one part before it has a place: its pin stubs and the box (minx, miny, maxx, maxy, relative to the
-    symbol origin) that holds the symbol, its stubs and their margin."""
+    """Everything about one part before it has a place: its pin stubs, where its designator and comment go, and the box (minx, miny,
+    maxx, maxy, relative to the symbol origin) that holds the symbol, its stubs, its texts and their margin."""
     pins, warn, errors = pin_nets(part, symbol)
     ids = {int(p.get("part_id", 1)) for p in symbol["pins"]} - {0, -1}
     if ids - {1}:
@@ -172,17 +334,33 @@ def part_cell(part, symbol):
         xs += [lp["x"], tip(lp)[0]]
         ys += [lp["y"], tip(lp)[1]]
     wired = [(lp, net) for lp, net in pins if net and not is_nc(net)]
+    todo = []
     for lp, net in pins:
         if net:
             side = int(lp.get("orientation", 0)) & 3
             across = lp["y"] if side in (0, 2) else lp["x"]
             dense = any(o is not lp and (int(o.get("orientation", 0)) & 3) == side
                         and abs((o["y"] if side in (0, 2) else o["x"]) - across) < 3 * GRID for o, _ in wired)
-            s = _stub(lp, net, dense)
-            s["pin"] = str(lp["number"])
-            stubs.append(s)
-            xs.append(s["end"][0])
-            ys.append(s["end"][1])
+            s = _stub(lp, net, dense, number_lead(lp))
+            todo.append([lp, net, dense, s])
+    _crowded_edges(todo)
+    for lp, net, dense, s in todo:
+        s["pin"] = str(lp["number"])
+        stubs.append(s)
+        xs.append(s["end"][0])
+        ys.append(s["end"][1])
+    ink = []
+    for s in stubs:
+        ink += ink_rects(s, next(t[0] for t in todo if t[3] is s))
+        ink += [(min(a[0], b[0]) - 10, min(a[1], b[1]) - 10, max(a[0], b[0]) + 10, max(a[1], b[1]) + 10) for a, b in s.get("links", ())]
+    for lp in symbol["pins"]:                      # the number of a pin that has no stub is drawn too
+        if not any(t[0] is lp for t in todo):
+            ink += ink_rects({"kind": "nc", "tip": tip(lp), "end": tip(lp), "net": ""}, lp)
+    comment = str(symbol.get("comment") or "").strip() or str(symbol.get("name") or "")
+    texts = part_texts(part["ref"], comment, _body(symbol), ink)
+    for x, y, w in texts.values():
+        xs += [x, x + w]
+        ys += [y, y + TEXT_H]
     pad = MARGIN
     box = (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
     open_pins = [f"{part['ref']}.{lp.get('name') or lp['number']}" for lp, net in pins if not net]
@@ -193,7 +371,7 @@ def part_cell(part, symbol):
             if v:
                 warn.append(f"{part['ref']}.{s['pin']}: the library pin is off the {GRID} mil grid")
                 break
-    return {"ref": part["ref"], "symbol": symbol["name"], "stubs": stubs, "box": box,
+    return {"ref": part["ref"], "symbol": symbol["name"], "stubs": stubs, "box": box, "texts": texts, "ink": ink,
             "pins": len(symbol["pins"]), "warnings": warn, "errors": errors, "pin_nets": pins}
 
 
@@ -459,32 +637,91 @@ def split_groups(cells, sections, area=AREA, texts=None):
     return groups, too_big
 
 
-def _too_big_message(cells, sections, texts=None):
-    groups, too_big = split_groups(cells, sections, texts=texts)
-    nets = {}
-    for sid, c in cells:
-        nets.setdefault(sid, set()).update(s["net"] for s in c["stubs"] if s["kind"] != "nc")
-    shared = sorted(n for n in {x for v in nets.values() for x in v}
-                    if n and net_kind(n) == "label" and sum(1 for g in groups if any(n in nets.get(sid, ()) for sid in g)) > 1)
+def suggest_sheets(cells, sections, area=AREA, texts=None):
+    """How the design could be spread over several sheets so that EVERY sheet fits: ([sheet], [ref that does not fit alone]); a sheet
+    is [(section id, [refs] or None for the whole section)]. Every candidate sheet goes through layout(), the very check plan_sheet
+    makes (cell boxes with their stubs, labels and the part texts, the frames and their title strips, the sheet border), so a
+    suggested sheet is never refused when it is drawn. Whole sections are kept together and in order; a section that is too big alone
+    is cut by parts (in the netlist's order), each piece a sheet or the start of the next."""
+    sec = {s["id"]: s for s in sections}
+    have = {sid for sid, _ in cells}
+    order = [i for i in ([s["id"] for s in sections] or [""]) if i in have]
 
+    def fits(items):
+        sel = [(sid, c) for sid, c in cells if any(sid == i and (r is None or c["ref"] in r) for i, r in items)]
+        sids = []
+        for sid, _ in sel:
+            if sid not in sids:
+                sids.append(sid)
+        return bool(sel) and not layout(sel, [sec.get(i, {"id": i}) for i in sids], area, texts)[2]
+    sheets, hopeless, cur = [], [], []
+    for sid in order:
+        if cur and fits(cur + [(sid, None)]):
+            cur = cur + [(sid, None)]
+            continue
+        if fits([(sid, None)]):
+            if cur:
+                sheets.append(cur)
+            cur = [(sid, None)]
+            continue
+        if cur:
+            sheets.append(cur)
+        cur, piece = [], []
+        for c in [c for s_, c in cells if s_ == sid]:
+            if fits([(sid, piece + [c["ref"]])]):
+                piece.append(c["ref"])
+                continue
+            if piece:
+                sheets.append([(sid, piece)])
+            piece = [c["ref"]] if fits([(sid, [c["ref"]])]) else []
+            if not piece:
+                hopeless.append(c["ref"])
+        if piece:
+            cur = [(sid, piece)]
+    if cur:
+        sheets.append(cur)
+    return sheets, hopeless
+
+
+def _too_big_message(cells, sections, texts=None):
+    sheets, hopeless = suggest_sheets(cells, sections, texts=texts)
     titles = {s["id"]: str(s.get("title") or "").strip() for s in sections}
     refs = {}
     for sid, c in cells:
         refs.setdefault(sid, []).append(str(c.get("ref") or ""))
 
-    def label(sid):
+    def label(sid, only=None):
         """What the student sees for a section: its title and the parts in it (never the internal section letter alone)."""
         if not sid:
             return "the design"
-        r = [x for x in refs.get(sid, []) if x]
+        r = [x for x in (only or refs.get(sid, [])) if x]
         shown = ", ".join(r[:6]) + (" ..." if len(r) > 6 else "")
         return (titles.get(sid) or f"section {sid}") + (f" ({shown})" if shown else "")
-    msg = (f"the design does not fit on one A4 sheet. It needs about {len(groups)} sheets: "
-           + "; ".join(f"sheet {i}: {', '.join(label(x) for x in g)}" for i, g in enumerate(groups, 1)) + ". ")
-    if too_big:
-        msg += f"Section {', '.join(label(x) for x in too_big)} is too big even for a sheet of its own (split it in the netlist). "
-    msg += ("The tool does not yet draw the nets that run between sheets (that needs ports), so write the netlist as separate sheets "
-            "(one per group above) and draw them one by one"
+    nets = {}
+    for sid, c in cells:
+        for sh_i, sh in enumerate(sheets):
+            if any(sid == i and (r is None or c["ref"] in r) for i, r in sh):
+                nets.setdefault(c["ref"], set()).add(sh_i)
+    by_net = {}
+    for sid, c in cells:
+        for s_ in c["stubs"]:
+            if s_["kind"] != "nc" and s_["net"] and net_kind(s_["net"]) == "label":
+                by_net.setdefault(s_["net"], set()).update(nets.get(c["ref"], ()))
+    shared = sorted(n for n, where in by_net.items() if len(where) > 1)
+    cut = [sid for sid in dict.fromkeys(s_ for s_, _ in cells) if sum(1 for sh in sheets for i, r in sh if i == sid and r is not None)]
+    if hopeless:
+        return (f"the design does not fit on one A4 sheet, and {', '.join(hopeless[:6])} does not fit on a sheet even by itself "
+                "(too many pins or too long net names): split the part's connections differently or draw it by hand.")
+    if len(sheets) <= 1:       # one sheet is all there is and it is still refused: there is nothing to move to a second sheet
+        return (f"the design does not fit on one A4 sheet, and it is a single section ({', '.join(label(i) for i, _ in (sheets[0] if sheets else []))}) "
+                "that is too big for a sheet by itself: it must be split into several sections (and sheets) in the netlist. "
+                "The tool does not yet draw the nets that run between sheets (that needs ports), so each sheet is a netlist sheet of its own.")
+    msg = (f"the design does not fit on one A4 sheet. It needs about {len(sheets)} sheets (each one checked to fit): "
+           + "; ".join(f"sheet {k}: {', '.join(label(i, r) for i, r in sh)}" for k, sh in enumerate(sheets, 1)) + ". ")
+    if cut:
+        msg += f"Section {', '.join(label(x) for x in cut)} is too big for one sheet, so it is cut by parts above. "
+    msg += ("The tool does not yet draw the nets that run between sheets (that needs ports), so write the netlist as separate "
+            "sheets (one per group above) and draw them one by one"
             + (f". Nets that would cross: {', '.join(shared[:8])}" if shared else "") + ".")
     return msg
 
@@ -562,7 +799,11 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
             cmds.append(("FRAME", d, str(fx), str(fy), str(fw), str(fh), texts[sid]))
     for _, c in cells:
         ox, oy = pos[c["ref"]]
-        cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"])))
+        spots = []              # the designator and the comment text go to the free spots part_cell found (sheet coordinates)
+        for k in ("des", "com"):
+            t = c["texts"].get(k)
+            spots += [str(ox + t[0]), str(oy + t[1])] if t else ["", ""]
+        cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"]), *spots))
         out["parts"].append({"ref": c["ref"], "symbol": c["symbol"], "pins": c["pins"], "x": ox, "y": oy})
         for s in c["stubs"]:
             tx, ty = ox + s["tip"][0], oy + s["tip"][1]
@@ -573,9 +814,11 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
                 continue
             ex, ey = ox + s["end"][0], oy + s["end"][1]
             cmds.append(("WIRE", d, str(tx), str(ty), str(ex), str(ey)))
+            for (a1, b1), (a2, b2) in s.get("links", ()):       # the wires that join a run of same-net stubs at their ends
+                cmds.append(("WIRE", d, str(ox + a1), str(oy + b1), str(ox + a2), str(oy + b2)))
             if s["kind"] == "power":
                 cmds.append(("POWER", d, str(ex), str(ey), str(s["rot"]), str(s["style"]), s["net"]))
-            else:
+            elif s["kind"] == "label":
                 ax, ay = ox + s["at"][0], oy + s["at"][1]
                 cmds.append(("NETLABEL", d, str(ax), str(ay), str(s["rot"]), s["net"]))
             out["expected"].setdefault(s["net"], []).append(tag)

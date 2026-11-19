@@ -21,7 +21,7 @@
              SYMPARAMS schlib paramsfile | HIDEPINS schlib hidefile | ATTACH3D spec | SAVELIB path kind
              COMPILE libpkg intlib | CHECKINST intlib
 
-  Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace | PLACE path ref libref schlib x y pins
+  Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace | PLACE path ref libref schlib x y pins [desx desy comx comy]
              WIRE path x1 y1 x2 y2 | NETLABEL path x y rot text | POWER path x y rot style text | NOERC path x y
 
   The create-footprints-batch and create-symbols-batch code below (LibFootprintsBatch, LibMakeSymbol,
@@ -1677,8 +1677,12 @@ begin
 end;
 
 { PLACE path ref libref schlib x y pins: the component comes from the SchLib FILE (an IntLib name or path gives nil, and a
-  part placed any other way has no pins). It must have the pin count the library symbol has, or the run stops. }
-procedure PlacePart(Path: String; Ref: String; LibRef: String; SchLib: String; X, Y, Pins: Integer);
+  part placed any other way has no pins). It must have the pin count the library symbol has, or the run stops.
+  Optional DesX DesY ComX ComY (mils, sheet coordinates, '' = leave where the library symbol has it): the lower left corner of the
+  designator text and of the comment text, so draw.py puts both clear of every pin, label and power port (the library symbol's own
+  spots sit on top of them). }
+procedure PlacePart(Path: String; Ref: String; LibRef: String; SchLib: String; X, Y, Pins: Integer;
+                    DesX, DesY, ComX, ComY: String);
 var
     Sch  : IDispatch;
     C    : ISch_Component;
@@ -1704,6 +1708,16 @@ begin
     begin
         Say('ERR ' + Ref + ' (' + LibRef + ') was placed with ' + IntToStr(Got) + ' pins, the library symbol has ' + IntToStr(Pins));
         Exit;
+    end;
+    if (DesX <> '') and (DesY <> '') then
+    begin
+        C.Designator.Orientation := eRotate0;
+        C.Designator.Location := Point(MilsToCoord(StrToInt(DesX)), MilsToCoord(StrToInt(DesY)));
+    end;
+    if (ComX <> '') and (ComY <> '') then
+    begin
+        C.Comment.Orientation := eRotate0;
+        C.Comment.Location := Point(MilsToCoord(StrToInt(ComX)), MilsToCoord(StrToInt(ComY)));
     end;
     Log('placed ' + Ref + ' ' + LibRef + ' pins=' + IntToStr(Got));
 end;
@@ -2437,7 +2451,7 @@ begin
     else if (Cmd = 'DRAWBEGIN') then DrawBegin(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'PLACE') then
         PlacePart(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), StrToInt(Field(Line, 5)),
-                  StrToInt(Field(Line, 6)), StrToInt(Field(Line, 7)))
+                  StrToInt(Field(Line, 6)), StrToInt(Field(Line, 7)), Field(Line, 8), Field(Line, 9), Field(Line, 10), Field(Line, 11))
     else if (Cmd = 'WIRE') then
         DrawWire(Field(Line, 1), StrToInt(Field(Line, 2)), StrToInt(Field(Line, 3)), StrToInt(Field(Line, 4)), StrToInt(Field(Line, 5)))
     else if (Cmd = 'NETLABEL') then
