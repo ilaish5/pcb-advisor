@@ -454,9 +454,10 @@ def _sch_name(sid, title):
     return f"{sid} {_file_name(title, 'Sheet')}.SchDoc"
 
 
-def _find_doc(prj_file, name_or_id, kind=".schdoc", bare=False):
+def _find_doc(prj_file, name_or_id, kind=".schdoc", bare=False, skip=()):
     """The project's document that belongs to a sheet id (its name starts with '<id> ') or has exactly that name. bare: only the one
-    named by the bare id ('02.SchDoc'; _sheet_doc takes it only when this tool made it or it is empty)."""
+    named by the bare id ('02.SchDoc'; _sheet_doc takes it only when this tool made it or it is empty). skip: lower-cased file names
+    that another sheet owns: they are passed over and the search goes on."""
     summary = read_prjpcb(prj_file)
     for d in summary["documents"]:
         base = pathlib.PureWindowsPath(d).name
@@ -466,9 +467,23 @@ def _find_doc(prj_file, name_or_id, kind=".schdoc", bare=False):
             hit = base[:-len(kind)].lower() == str(name_or_id).lower()
         else:
             hit = base.lower() == str(name_or_id).lower() or base.startswith(f"{name_or_id} ")
-        if hit:
+        if hit and base.lower() not in skip:
             return prj_file.parent / pathlib.Path(d.replace("\\", "/"))
     return None
+
+
+def _fresh_doc(project, prj, sid, title, used=()):
+    """The path of a SchDoc made for sheet `sid` ('<id> <title>.SchDoc'). It must be new: a file that exists, is a document of the
+    project, or is the file of another sheet (the record, or `used` in this call) is an error, never overwritten or shared."""
+    target = prj.parent / _sch_name(sid, title)
+    low = target.name.lower()
+    owner = [k for k, v in _logged_sheet_docs(project).items() if v.lower() == low and k != str(sid)]
+    in_prj = {pathlib.PureWindowsPath(d).name.lower() for d in read_prjpcb(prj)["documents"]}
+    if target.exists() or low in in_prj or low in {pathlib.Path(u).name.lower() for u in used} or owner:
+        raise BridgeError(f"{target.name} is taken already" + (f" (it holds sheet {owner[0]})" if owner else "") + f", so sheet {sid} cannot "
+                          "get a new file with that name. Nothing was changed: rename or remove that file in Altium, or give sheet "
+                          f"{sid} another title.")
+    return target
 
 
 PLACEHOLDER_SHEET = "Main.SchDoc"       # the sheet new_project makes when no sheet is planned yet
@@ -503,11 +518,17 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
     sheets = read_prjpcb(prj)["sheets"]
     in_prj = {pathlib.PureWindowsPath(d).name.lower(): prj.parent / pathlib.Path(d.replace("\\", "/")) for d in sheets}
     logged = _logged_sheet_docs(project)
+    claimed = {v.lower() for k, v in logged.items() if k != str(sid)}          # one file, one sheet: what another sheet is drawn on is not free
+    claimed |= {pathlib.Path(t).name.lower() for t in taken}
+
     name = logged.get(str(sid))
     if name:
+        if name.lower() in claimed:
+            raise BridgeError(f"Sheet {sid} and another sheet are both recorded on {name}. Nothing was changed: one file holds one sheet; "
+                              "give one of them its own file (rename the sheet's file in Altium to start with its id).")
         if name.lower() in in_prj:
             return in_prj[name.lower()]
-        moved = _find_doc(prj, sid)          # renamed in Altium to a name that starts with the sheet id: that file holds it now
+        moved = _find_doc(prj, sid, skip=claimed)          # renamed in Altium to a name that starts with the sheet id: that file holds it now
         if moved is not None:
             _log(project, "sheet-docs", sheet_docs={str(sid): moved.name}, was=name)
             return moved
@@ -519,7 +540,7 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
             how.append("adopted")
         return doc
 
-    doc = _find_doc(prj, sid)
+    doc = _find_doc(prj, sid, skip=claimed)
     if doc is not None:
         if not adopt or str(sid) not in store.sheet_docs_reset(project):
             return doc
@@ -528,7 +549,7 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
         raise BridgeError(f"{doc.name} belongs to an earlier sheet {sid} that was removed, and it still holds a drawing. Nothing was "
                           f"changed: rename or remove {doc.name} in Altium (it is not wiped for the new sheet {sid}).")
     made = _tool_made_sheets(project)
-    doc = _find_doc(prj, sid, bare=True)
+    doc = _find_doc(prj, sid, bare=True, skip=claimed)       # a plan sheet whose id is the file's name owns that file before the placeholder rule below
     if doc is not None and doc.is_file():
         if not adopt:
             if doc.name.lower() in made or is_blank_sheet(doc):
@@ -538,8 +559,11 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
     ph = in_prj.get(PLACEHOLDER_SHEET.lower())
     if not adopt or ph is None or ph in taken or not ph.is_file() or PLACEHOLDER_SHEET.lower() not in made:
         return None
-    if any(v.lower() == PLACEHOLDER_SHEET.lower() for k, v in logged.items() if k != str(sid)):
+    if PLACEHOLDER_SHEET.lower() in claimed:
         return None                                      # another sheet is drawn on it
+    stem = PLACEHOLDER_SHEET[:-len(".SchDoc")].lower()
+    if any(str(o).lower() == stem for o in store.sheet_ids(project) if str(o) != str(sid)):
+        return None                                      # a planned sheet is named after it (id Main): that sheet owns it, not the first other sheet
     if not _blank_after_save(prj, ph):
         return None
     return take(ph)
@@ -662,7 +686,7 @@ def add_sheet(project, name):
     fname = _file_name(name, "Sheet")
     fname = fname if fname.lower().endswith(".schdoc") else fname + ".SchDoc"
     target = prj.parent / fname
-    if target.exists():
+    if target.exists() or fname.lower() in {v.lower() for v in _logged_sheet_docs(project).values()}:
         raise BridgeError(f"{fname} already exists in the Altium project.")
     backup = _backup(prj, [prj])
     run_commands([("PROJECT", str(prj)), ("SCH", str(target)), ("SAVEPRJ", str(prj))])
@@ -755,7 +779,7 @@ def skeleton(project, sheet=None):
         for sid, title, sh in planned:
             doc = _sheet_doc(project, prj, sid, taken=existing)
             if doc is None:
-                doc = prj.parent / _sch_name(sid, title)
+                doc = _fresh_doc(project, prj, sid, title, existing + new_docs)
                 new_docs.append(doc)
             else:
                 existing.append(doc)
@@ -892,7 +916,7 @@ def draw_schematic(project, sheet=None, replace=False):
         if how:
             adopted.add(doc)
         if doc is None:
-            doc = prj.parent / _sch_name(sid, title)
+            doc = _fresh_doc(project, prj, sid, title, existing + new_docs)
             new_docs.append(doc)
         elif doc.is_file():
             existing.append(doc)

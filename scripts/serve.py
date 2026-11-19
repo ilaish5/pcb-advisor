@@ -516,16 +516,27 @@ _STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?
 _STOP_BARE = re.compile(r"^(?:no|nope|לא)(?!\w)", re.I)      # "no" is a stop only as a short reply or at the start of a clause
 
 
+_OTHER_VERB = re.compile(r"(?<!\w)(?:delet\w*|remov\w*|renam\w*|erase\w*)|(?<!\w)(?:ת?מחק\w*|ת?מחוק|ת?סיר\w*|למחוק|להסיר)(?!\w)", re.I)
+_SHEET_REMOVE = _OTHER_VERB            # the words that remove a sheet
+_SHEET_RENAME = re.compile(r"renam\w*|chang\w*\s+(?:the\s+)?(?:name|id)|(?<!\w)(?:ת?שנה|ת?שני|לשנות|שינוי)(?!\w)", re.I)
+_NEG = r"(?:don[’']?t|do not|never|אל)"
+_NEG_OTHER = re.compile(_NEG + r"\s+(?:\S+\s+){0,2}?(?:" + _OTHER_VERB.pattern + ")", re.I)
+
+
 class _Stops:
     """The student's words that say no, wait or stop. The unambiguous words (stop, wait, don't, עצור ...) count anywhere; a bare
     "no"/"לא" only as a short reply (the clause is at most three words: "no", "no thanks", "לא עכשיו"), never inside a sentence
-    such as "so that no signal net runs between the sheets"."""
+    such as "so that no signal net runs between the sheets". With `kind` (draw / place / route) a negation that directly governs a
+    delete / remove / rename verb ("don't delete Main", "אל תמחק את Main") is cut out of its clause first: it forbids ANOTHER action,
+    so it is no stop for this one. The rest of the clause is still read ("wait until I delete the old parts" stops)."""
     @staticmethod
-    def search(text):
+    def search(text, kind=None):
         text = str(text or "")
-        if _STOP.search(text):
-            return True
         for clause in _CLAUSE.split(text):
+            if kind:
+                clause = _NEG_OTHER.sub(lambda m: m.group(0) if _ACTION_ANY[kind].search(m.group(0)) else " ", clause)
+            if _STOP.search(clause):
+                return True
             words = clause.strip().split()
             if words and len(words) <= 3 and _STOP_BARE.match(words[0]):
                 return True
@@ -602,7 +613,7 @@ def _consent(kind, a, last_user, earlier=()):
     verdict = _self_verdict(kind, last_user)
     if verdict:
         return _self_text(kind, verdict)
-    if _STOP_ANY.search(last_user):
+    if _STOP_ANY.search(last_user, kind):
         return f"The student's last message says no, wait or stop. Do not {verb}; ask the student what they want first."
     for u in earlier:
         w = _consent_one(kind, a, u, True)
@@ -613,7 +624,7 @@ def _consent(kind, a, last_user, earlier=()):
         verdict = _self_verdict(kind, u)
         if verdict:
             return _self_text(kind, verdict)
-        if _STOP_ANY.search(u):
+        if _STOP_ANY.search(u, kind):
             return f"The student said no, wait or stop after that. Do not {verb}; ask the student what they want first."
     return why
 
@@ -641,10 +652,110 @@ def _consent_one(kind, a, last_user, earlier_turn):
         return _self_text(kind, verdict)
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
-        # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here
-        if not r or not replace_re.search(r) or re.search(r"(?<!\w)" + re.escape(r) + r"(?!\w)", u) is None:
+        # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
+        if not r or not replace_re.search(r) or not _asked(r, u):
             return (f"The {wipes} are only wiped when the student says so: ask whether what is there may be replaced, then run this with "
                     "replace_said = a quote of their words (replace, redo, overwrite, start over / מחדש, תחליף, תמחק).")
+    return ""
+
+
+_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|not|without|don[’']?t|do not|אסור|אל|לא)(?!\w)", re.I)
+
+
+def _asked(word, u):
+    """True when `word` (a quote, e.g. the replace word) appears in the message in a clause where it is not negated ("don't replace
+    anything", "אל תמחק את מה שיש", "without replacing" ask for the opposite). A Hebrew "ו" before it is the word "and"."""
+    pat = re.compile(r"(?<!\w)(?:ו)?" + re.escape(word) + r"(?!\w)")
+    for clause in _CLAUSE.split(str(u or "")):
+        m = pat.search(clause)
+        if m and not _NEGATED.search(clause[:m.start()]):
+            return True
+    return False
+
+
+_ME = re.compile(r"myself|\bi[’']?ll\b|\bi will\b|בעצמי|(?<!\w)א(?:מחק|סיר|שנה|מחוק)\w*", re.I)
+_CONDITION = re.compile(r"(?<!\w)(?:after|then|before|until|once)(?!\w)|(?<!\w)(?:אחרי|קודם|לפני|אחר כך)(?!\w)|(?<!\w)עד ש", re.I)
+_FILL = r"(?:please|now|just|quickly|entirely|completely|נא|בבקשה|עכשיו|מהר|כבר|גם|לגמרי)"
+_GAP = r"(?:the|sheet|page|schematic|את|ה|ה-|הגיליון|גיליון|הדף|דף|השם|שם|של)"
+_TAILWORD = r"(?:sheet|page|גיליון|דף|from the project|מהפרויקט|" + _FILL + ")"
+_LEADIN = (r"(?:i[’']?d like you to|i would like you to|i want you to|i need you to|you can|you should|can you|could you|would you|"
+           r"ok|okay|yes|כן|תוכל|תוכלי)")
+_POLITE = re.compile(r"^(?:(?:ok|okay|yes|כן)[,\s]+)*(?:(?:can|could|would) you\b|תוכל)", re.I)      # a polite request, when nothing in the message asks or hedges
+_HEDGE = re.compile(r"not sure|should i|maybe|perhaps|do you think|or should|i think|i guess|probably|נראה לי|(?<!\w)חושב\w*|(?<!\w)or\b|לא בטוח|אולי|(?<!\w)או ש|(?<!\w)או(?!\w)", re.I)
+_WANT_THAT = re.compile(r"(?<!\w)(אני רוצה|רוצה|אני מבקש|מבקש) ש(?=\S)")          # "אני רוצה שתמחק": the ש is "that", not part of the verb
+
+
+def _unthat(clause):
+    """A leading Hebrew "ו" and the "אני רוצה ש" of "אני רוצה שתמחק" (want that you delete) turned into "please": only that form is a request; "אני רוצה למחוק"
+    (I want to delete) is the student's own wish and has no lead-in."""
+    return _WANT_THAT.sub("please ", re.sub(r"^\s*ו(?=\S)", "", clause))
+_AFTER = re.compile(r"\s+(?:since|because|כי|מפני ש)\s+.*$", re.I)       # the reason is no part of the instruction
+
+
+def _name_pat(name):
+    """The sheet name (any case: the rest of the clause is strict, so "the power LED" fails on "LED"), with one Hebrew prefix letter
+    (ל ב ה ו, optional hyphen) allowed."""
+    return r"(?:[לבהו]-?)?(?i:" + re.escape(name) + r")(?!\w)"
+
+
+def _clause_ok(kind, clause, name, to=""):
+    """True when the whole `clause` has the shape  [filler]* VERB [filler / article / sheet words]* NAME [tail]  with nothing else: the
+    tail is nothing, sheet / page / גיליון, filler, "from the project" (for a rename: "to <new id>" / "ל<new id>" first). The passive
+    "NAME should/must be deleted / renamed (to X)" also fits. A "'s", a part, a title, a preposition, a second noun anywhere in the clause
+    is about something else than the sheet: refused. A leading Hebrew "ו" (and) and a polite lead-in ("I'd like you to", "can you") are fine."""
+    clause = _AFTER.sub("", clause.strip(" .!?\"'\t")).strip()
+    clause = _unthat(clause)
+    rename = kind == "netlist.rename"
+    verb = (r"(?:renam\w*(?:\s+the\s+name\s+of)?|chang\w*\s+(?:the\s+)?(?:name|id)(?:\s+of)?|(?<!\w)(?:ת?שנה|ת?שני|לשנות|שינוי)(?!\w))"
+            if rename else "(?:" + _SHEET_REMOVE.pattern + ")")
+    nm = _name_pat(name)
+    to_pat = r"(?:to\s+|ל-?)" + _name_pat(to).replace("(?:[לבהו]-?)?", "", 1) if rename and to else None
+    tail = r"(?:\s+" + _TAILWORD + ")*"
+    if rename:
+        if not to_pat:
+            return False
+        tail = tail + r"\s+" + to_pat + tail
+    lead = r"(?:(?:" + _FILL + "|" + _LEADIN + r")\s+)*"
+    act = re.compile("^" + lead + verb + r"\s+(?:(?:" + _FILL + "|" + _GAP + r")\s+)*" + nm + tail + "$", re.I)
+    passive = re.compile(r"^(?:the\s+)?(?:(?:sheet|page)\s+)?" + nm + r"\s+(?:should|must)\s+be\s+(?:" + _FILL + r"\s+)*(?:" +
+                         (r"renam\w*" if rename else _SHEET_REMOVE.pattern) + ")" + tail + "$", re.I)
+    return bool(act.match(clause) or passive.match(clause))
+
+
+def _sheet_edit_consent(kind, a, last_user):
+    """'' when the student's own words ask to remove (delete) or rename a netlist sheet, else why not. The quote has the remove / rename
+    word with the sheet as its object (and for a rename the new id); a question, a negation before the verb ("don't", "never",
+    "shouldn't be", "no need", "אסור"), a do-it-myself ("I'll delete Main myself"), or a no / wait / stop anywhere in the message is no
+    instruction."""
+    said, sheet = str(a.get("student_said") or ""), str(a.get("sheet") or "")
+    word = _SHEET_REMOVE if kind == "netlist.remove" else _SHEET_RENAME
+    what = "remove" if kind == "netlist.remove" else "rename"
+    if not _quote_holds(said, last_user):
+        return f"student_said must be a verbatim quote of the student's message that tells you to {what} the sheet. Ask the student first."
+    to = str(a.get("to") or "")
+    names = [sheet] + ([to] if kind == "netlist.rename" else [])
+    # the student's whole clauses (not only the quote of them: "delete the Main" is part of "delete the Main LED"); punctuation splits,
+    # "and" does not, and a dot between digits ("01.5") is no split
+    verb_clauses = [c for c in re.split(r"[,;!?\n]+|(?<!\d)\.|\.(?!\d)", str(last_user or "")) if word.search(_unthat(c))]
+    ok = bool(verb_clauses) and all(n.strip() for n in names) and all(_clause_ok(kind, c, sheet, to) for c in verb_clauses)
+    if not ok:
+        return f"the quote must ask to {what} the sheet {sheet}" + (f" to {to}" if kind == "netlist.rename" else "") + " (the sheet itself, named). Ask the student first."
+    if _STOP_ANY.search(last_user):
+        return "the student's message says no, wait or stop. Do not change the sheet; ask what they want."
+    if _HEDGE.search(str(last_user or "")):
+        return "the student's message hedges (not sure, maybe, or ...). Do not change the sheet; confirm with them first."
+    if _CONDITION.search(str(last_user or "")):
+        return "the student's message makes it conditional (after, first, then ...). Do not change the sheet yet; ask what they want."
+    for sent in _SENT.findall(str(last_user or "")):
+        if word.search(_unthat(sent)) and ("?" in sent or (_is_question(sent) and not (_POLITE.match(sent.strip().lower())
+                                                                                   and "?" not in str(last_user) and not _HEDGE.search(str(last_user))))):
+            return "the student asked a question about it; it is no instruction. Answer it and ask."
+    for clause in _CLAUSE.split(str(last_user or "")):
+        m = word.search(clause)
+        if m and _ME.search(clause):
+            return "the student said they will do it themselves. Do not change the sheet; help them with the manual steps."
+        if m and _NEGATED.search(clause[:m.start()]):
+            return "the student's message is a refusal or a worry about this, not an instruction. Do not change the sheet; ask what they want."
     return ""
 
 
@@ -1504,6 +1615,20 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(f"netlist.write:{res['sheet']}{note}")
                 else:
                     refused.append(f"netlist.write:{a['sheet']} refused: " + "; ".join(res["errors"][:8]))
+            elif kind in ("netlist.remove", "netlist.rename") and a.get("sheet"):
+                why = _sheet_edit_consent(kind, a, last_user)
+                if why:
+                    refused.append(f"{kind}:{a['sheet']} refused: {why}")
+                else:
+                    if kind == "netlist.remove":
+                        res = store.remove_sheet_logged(project, a["sheet"])
+                    else:
+                        res = store.rename_sheet_logged(project, a["sheet"], a.get("to") or "")
+                    if res["ok"]:
+                        applied.append(f"{kind}:{a['sheet']}" + (f" -> {res['sheet']}" if kind == "netlist.rename" else "")
+                                       + " (the SchDoc in Altium is not touched: remove or keep it there)")
+                    else:
+                        refused.append(f"{kind}:{a['sheet']} refused: " + "; ".join(res["errors"][:4]))
             elif kind == "library.add" and a.get("line"):
                 if a["line"] not in {l["key"] for l in store.bom_lines(project)}:
                     refused.append(f"library.add: no BOM line {a['line']}")

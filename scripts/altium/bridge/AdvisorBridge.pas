@@ -202,6 +202,20 @@ begin
     end;
 end;
 
+{ The sheet the drawing code (draw.py: SHEET_STYLE, AREA, GRID) assumes: A4 (SheetStyle 0) on a 100 mil snap and visible grid. A new
+  sheet keeps Altium's default (Letter, a 5 mm snap grid), so every object placed on the 100 mil grid was reported off grid and frames
+  crossed the border. Set when a sheet is drawn (DRAWBEGIN) and when its skeleton is made (TITLEBLOCK). }
+procedure SheetSetup(Sch: IDispatch);
+begin
+    Sch.UseCustomSheet := False;
+    Sch.SheetStyle := 0;
+    Sch.SnapGridSize := MilsToCoord(100);
+    Sch.VisibleGridSize := MilsToCoord(100);
+    Sch.SnapGridOn := True;
+    Sch.VisibleGridOn := True;
+    Log('sheet A4, 100 mil grid');
+end;
+
 { Removes every text frame whose text starts with the advisor tag (one at a time, an iterator does not survive a removal) }
 procedure ClearFrames(Path: String);
 var
@@ -279,6 +293,12 @@ var
     Sch : IDispatch;
 begin
     Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    SheetSetup(Sch);
     Sch.TitleBlockOn := True;
     Log('title block on');
 end;
@@ -1672,6 +1692,7 @@ begin
         RemoveKind(Sch, eJunction);
         RemoveKind(Sch, ePort);
     end;
+    SheetSetup(Sch);
     ClearFrames(Path);
     Log('drawbegin ' + IntToStr(n) + ' objects removed');
 end;
