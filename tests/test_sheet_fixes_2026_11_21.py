@@ -160,8 +160,8 @@ def test_a_later_explicit_request_overrides_an_earlier_refusal():
     refusal = ["אל תמחק את Main", "חכה, אל תשרטט"]
     assert _consent(DRAW_ALL, "המשך", [DRAW_ALL, *refusal]) == ""
     assert _consent(DRAW_ALL_EN, "go on", [DRAW_ALL_EN, "wait", "stop"]) == ""
-    assert _consent(DRAW_ALL, DRAW_ALL, refusal, replace=True, replace_said="תחליף") == ""         # asked in this very message
-    assert _consent(DRAW_ALL_EN, DRAW_ALL_EN, ["stop"], replace=True, replace_said="replace") == ""
+    assert _consent(DRAW_ALL, DRAW_ALL, refusal, replace=True, replace_said="תחליף") != ""         # a long message never grants replace
+    assert _consent(DRAW_ALL_EN, DRAW_ALL_EN, ["stop"], replace=True, replace_said="replace") != ""
 
 
 # ---------------------------------------------------------------- 4/5. the sheet the drawing code assumes

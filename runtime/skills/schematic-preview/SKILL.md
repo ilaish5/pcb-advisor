@@ -63,9 +63,10 @@ Never split it over turns, never say "I'll write the netlist next turn" or tell 
       saved file back to compare every net with the
       netlist. Report the result in the student's words: parts placed, nets, warnings (open pins, pins not in the library).
     - It refuses (and tells you why) when the sheet already has anything on it, or is open in Altium with unsaved changes: the student's
-      drawing is never wiped. Only when the student says to replace the old drawing, ask them, then add `"replace": true` and
-      `"replace_said"` = their words (replace, redraw, overwrite, start over, מחדש, תחליף, תמחק); the old file is copied to
-      `.advisor-backup` first. Pins are matched by number: a different name is a warning (tell the student), a name that is
+      drawing is never wiped. `"replace": true` is granted only when the student's LAST message is a short (8 words or fewer) clear
+      replace (`"yes, replace"`, `"תשרטט מחדש"`) or a bare yes right after you asked `"Replace the drawing on sheet 01? This wipes
+      what is there (a backup is kept). Answer yes/no."`; a longer message never grants it (the old file is copied to `.advisor-backup`
+      first). Pins are matched by number: a different name is a warning (tell the student), a name that is
       another library pin's is a swap and refused. Hebrew headings are drawn as "Section N". Multi-part symbols are not
       drawn: say which, and fix the netlist or draw that part by hand. A refusal because the library lacks a symbol, a pin count
       differs, or the sheet does not fit one A4 page: say what is missing and fix that (library, netlist, a second sheet),
