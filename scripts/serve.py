@@ -466,7 +466,11 @@ def _quote_holds(said, last_user) -> bool:
 
 SELF_DRAW = re.compile(r"myself|\bi[\u2019']?ll draw|i will draw|\bi draw|בעצמי|אני אשרטט|אני אצייר|אשרטט אני"
                        r"|\bdon[’']?t draw|\bdo not draw|אל תשרטט|אל תצייר|לא לשרטט|לא תשרטט|אני לא רוצה ש", re.I)
-REDRAW_WORD = re.compile(r"replace|redraw|re-draw|overwrite|start over|מחדש|תחליף|תמחק|להחליף", re.I)
+REDRAW_WORD = re.compile(
+    r"\b(?:replace|re-?draw|re-?do|overwrite|start\s+over)\b"
+    r"|(?<!\w)(?:[וש])?(?:מחדש|תחליף|תחליפי|החלף|להחליף|תמחק|תמחקי|תדרוס|תדרוסי|דרוס|לדרוס)(?!\w)",
+    re.I,
+)
 QUOTE_MISSING = ("student_said must be a verbatim quote (most of it) of ONE student message of this conversation since the last time "
                  "this ran, and that message must tell you to {verb}; no such quote was found. If they already said so, send the quote; ")
 ASK_FIRST = QUOTE_MISSING.format(verb="draw the schematic") + "only if they never said who draws: Ask the student first, draw it themselves in Altium or should you draw it? Run this only after their answer."
@@ -476,7 +480,11 @@ SELF_PLACE = re.compile(r"myself|\bi[\u2019']?ll place|i will place|\bi place|\b
                         r"|\bdon[\u2019']?t place|\bdo not place|אל תמקם|לא למקם|לא תמקם|אני לא רוצה ש", re.I)
 SELF_ROUTE = re.compile(r"myself|\bi[\u2019']?ll route|i will route|\bi route|\bi[\u2019']?ll do the routing|בעצמי|אני אנתב|אנתב אני"
                         r"|\bdon[\u2019']?t route|\bdo not route|אל תנתב|לא לנתב|לא תנתב|אני לא רוצה ש", re.I)
-REPLACE_WORD = re.compile(r"replace|redo|overwrite|start over|re-?place|re-?route|מחדש|תחליף|תמחק|להחליף|תמקם מחדש|תנתב מחדש", re.I)
+REPLACE_WORD = re.compile(
+    r"\b(?:re-?place|re-?do|re-?route|overwrite|start\s+over)\b"
+    r"|(?<!\w)(?:[וש])?(?:מחדש|תחליף|תחליפי|החלף|להחליף|תמחק|תמחקי|תדרוס|תדרוסי|דרוס|לדרוס|תמקם מחדש|תנתב מחדש)(?!\w)",
+    re.I,
+)
 ASK_PLACE = (QUOTE_MISSING.format(verb="place the parts (the message needs a place word)") + "only if they never said who places: Ask the student first, place the parts "
              "on the board themselves in Altium or should you place them? Run this only after their answer.")
 ASK_ROUTE = (QUOTE_MISSING.format(verb="route the board (the message needs a route word)") + "only if they never said who routes: Ask the student first, route the board "
@@ -597,12 +605,22 @@ def _self_text(kind, verdict):
             f"ask the student who {_WHO[kind]}: they themselves in Altium or should you? Run this only after their answer.")
 
 
+def _norm_quote(t):
+    return re.sub(r"\s+", " ", str(t or "").lower()).strip(" .,!?;:()-\"'")
+
+
 def _consent(kind, a, last_user, earlier=(), prev_agent=""):
     """The action's consent (`_consent_base`); then, for replace, `_replace_consent`: only a short, unambiguous replace or yes of the
     CURRENT message grants it (never a longer message, never an earlier one)."""
     why = _consent_base(kind, a, last_user, earlier)
-    if why or not _truthy(a.get("replace")):
+    if not _truthy(a.get("replace")):
         return why
+    if why:
+        q, u = _norm_quote(a.get("student_said")), _norm_quote(last_user)
+        if not (CONSENT[kind][5] is not None and _asked_replace(kind, prev_agent)
+                and _quote_holds(a.get("student_said"), last_user) and len(q) >= 0.5 * len(u)
+                and not _self_verdict(kind, last_user)):
+            return why
     return _replace_consent(kind, a, last_user, prev_agent)
 
 
@@ -668,41 +686,144 @@ def _consent_one(kind, a, last_user, earlier_turn):
 _NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|not|without|don[’']?t|do not|אסור|אל|לא)(?!\w)", re.I)
 _HARD_STOP = re.compile(r"(?<!\w)(?:not yet|wait|stop|hold (?:on|off)|never ?mind|cancel|no|nope)(?!\w)"
                         r"|(?<!\w)(?:חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב|רגע|עוד לא|לא)(?!\w)", re.I)
-_NEG_MORE = re.compile(r"(?<!\w)(?:no reason|avoid|never|(?:ו)?(?:אין|מבלי|בלי|ללא|תימנע|אסור|לא))(?!\w)", re.I)      # more negations, used for replace only
-_IF_WORD = re.compile(r"(?<!\w)(?:if|unless|only|אם|אלא|רק)(?!\w)", re.I)
-_YES = re.compile(r"(?<!\w)(?:yes|yeah|yep|sure|ok|okay|go ahead|כן|אוקיי|אוקי|בסדר)(?!\w)", re.I)
-_REPLACE_ASKED = re.compile(r"replac|overwrit|redraw|re-draw|wipe|start over|מחדש|להחליף|תחליף|לדרוס|למחוק|תמחק", re.I)
+_REPLACE_NEG = re.compile(
+    r"\b\w+n[’']t\b"
+    r"|\b(?:cannot|dont|cant|wont|shouldnt|wouldnt|couldnt|didnt|doesnt|isnt|arent|nah|naw|negative|nothing|none|no\s+reason|avoid|never)\b"
+    r"|(?<!\w)(?:וש|ו|ש)?(?:לא|אל|אין|אינ(?:י|ני|ו|ה|ם|ן|נו)|בלי|מבלי|ללא|אסור|תי?מנעי?|מ?להי?מנע|הי?מנעי?|נמנע(?:ת|ים|ות)?|מיותר(?:ת|ים|ות)?|חבל|בשום)(?!\w)",
+    re.I,
+)
+_REPLACE_REVERSAL = re.compile(
+    r"\b(?:keep(?:ing)?|leav(?:e|ing)|preserv(?:e|ing)|retain(?:ing)?|sav(?:e|ing)|back\s*up|scratch\s+that|forget(?:ting)?|ignor(?:e|ing)"
+    r"|skip(?:ping)?|abort(?:ing)?|paus(?:e|ing)|hang\s+on|second\s+thought|chang(?:ed|ing)\s+my\s+mind|change\s+of\s+mind"
+    r"|actually|instead|rather|but|however|though|although|except|bad\s+idea|unnecessary)\b"
+    r"|(?<!\w)(?:וש|ו|ש)?(?:תשאיר|תשאירי|להשאיר|השאר|השאירי|נשאיר|שמור|שמרי|תשמור|תשמרי|לשמור|אשמור|נשמור|גיבוי|לגבות|תגבה"
+    r"|תוותר|תוותרי|וותר|וותרי|לוותר|נוותר|שכח|שכחי|תשכח|תשכחי|לשכוח|בעצם|במקום|עדיף|אבל|אך|חוץ|מלבד"
+    r"|הפסק|הפסיקי|תפסיק|תפסיקי|להפסיק|חכה|חכי|תחכה|תחכי|לחכות|עצור|עצרי|תעצור|תעצרי|לעצור"
+    r"|בטל|בטלי|תבטל|תבטלי|ביטול|לבטל|עזוב|עזבי|תעזוב|תעזבי|לעזוב|דלג|תדלג|תדלגי|לדלג|התחרטתי|מתחרט|מתחרטת|רגע|עוד\s+לא)(?!\w)",
+    re.I,
+)
+_REPLACE_HEDGE_COND = re.compile(
+    r"\b(?:first|when|whenever|while|later|soon|might|may|could|would|should|shall|unsure|uncertain|guess|suppose|wonder(?:ing)?"
+    r"|possibly|potentially|likely|pending|assuming|provided|if|unless|only)\b"
+    r"|(?<!\w)(?:וש|ו|ש)?(?:כדאי|אפשר|אפשרי|אז|כאשר|בהמשך|בינתיים|עדיין|כרגע|שנייה|שניה|מאוחר\s+יותר|אחר[\s\-–]+כך|אח[\"״]כ"
+    r"|בתנאי|תלוי|תלויה|ב?ספק|כנראה|יי?תכן|לדעתי|מתלבט|מתלבטת|מתלבטים|אם|אלא|רק|אולי|אחרי|קודם|לפני|לאחר|במידה|במקרה|עד\s+ש)(?!\w)"
+    r"|(?<!\w)ו?כש",
+    re.I,
+)
+_REPLACE_SELF = re.compile(
+    r"\b(?:myself|on\s+my\s+own|i[’']?ll|i\s+will|i[’']?m\s+going\s+to|i\s+am\s+going\s+to|i\s+(?:want|need|plan|prefer|intend|have)\s+to"
+    r"|i[’']?d\s+like\s+to|i\s+would\s+like\s+to|let\s+me)\b"
+    r"|\bi\s+(?:re-?place|re-?draw|re-?do|re-?route|overwrit\w*|start\s+over)\b"
+    r"|(?<!\w)(?:ו)?(?:בעצמי|א(?:חליף|דרוס|מחק|מחוק|שרטט|צייר|מקם|נתב|עשה))(?!\w)"
+    r"|(?<!\w)(?:אני\s+)?(?:רוצה|צריך|צריכה|מעדיף|מעדיפה|מתכוון|מתכוונת|הולך|הולכת)\s+ל\S+"
+    r"|(?<!\w)אני\s+(?:מחליף|מחליפה|דורס|דורסת|מוחק|מוחקת|משרטט|משרטטת|מצייר|מציירת|ממקם|ממקמת|מנתב|מנתבת|עושה|מתחיל|מתחילה|לבד)(?!\w)",
+    re.I,
+)
+_YES = re.compile(r"(?<!\w)(?:yes|yeah|yep|yup|sure|ok|okay|go ahead|כן|אוקיי|אוקי|בסדר|סבבה|מאשר|מאשרת|בהחלט)(?!\w)", re.I)
+_YES_TOKEN = (
+    r"(?:yes|yeah|yep|yup|sure|ok|okay|alright|all\s+right|fine|go\s+ahead|do\s+it|proceed|confirm(?:ed)?|approv(?:e|ed)|please|thanks|thank\s+you"
+    r"|כן|אוקיי|אוקי|בסדר|טוב|סבבה|יאללה|קדימה|תמשיך|המשך|בבקשה|תודה|מאשר|מאשרת|מאושר|בהחלט|לגמרי|תעשה\s+את\s+זה|לך\s+על\s+זה)"
+)
+_BARE_YES = re.compile(r"^[\s,.!]*?" + _YES_TOKEN + r"(?:[\s,.!]+" + _YES_TOKEN + r")*[\s,.!]*$", re.I)
+_URL_RE = re.compile(r"https?://\S+", re.I)
+_NOT_APPLIED_TAIL = re.compile(r"(?:^|\n\n)\(Not applied:.*$", re.S)
+_REPLACE_ASKED_MANUAL = re.compile(
+    r"\b(?:by\s+hand|yourself|yourselves|manually|on\s+your\s+own|or\s+should\s+i|will\s+you\s+(?:re-?draw|re-?place|re-?do|re-?route|draw|place|route|overwrite))\b"
+    r"|(?<!\w)(?:ו)?(?:ביד|בעצמך|בעצמכם|ידנית|לבדך)(?!\w)",
+    re.I,
+)
+_REPLACE_ASKED_VERB = re.compile(
+    r"\b(?:replac(?:e|ing)|overwrit(?:e|ing)|re-?draw(?:ing)?|re-?do(?:ing)?|re-?plac(?:e|ing)|re-?rout(?:e|ing)|wip(?:e|ing)|start\s+over)\b"
+    r"|(?<!\w)(?:[ולש])?(?:מחדש|להחליף|תחליף|אחליף|לדרוס|תדרוס|אדרוס)(?!\w)",
+    re.I,
+)
+_REPLACE_ASKED_DEL = re.compile(r"(?<!\w)(?:[ולש])?(?:למחוק|תמחק|אמחק)(?!\w)", re.I)
+_REPLACE_ASKED_DEL_CTX = re.compile(
+    r"(?<!\w)(?:ו?[בלמהש]|ו)?(?:ציור|שרטוט|לשרטט|לצייר|קיים|קיימ(?:ת|ים|ות)|הישן|הישנה|הישנים|נחושת|מסלולים)(?!\w)|מה שיש",
+    re.I,
+)
+_REPLACE_SPECIFIC = {
+    "draw": re.compile(
+        r"\b(?:sheets?|schematics?|draw(?:ing)?|re-?draw(?:ing)?)\b"
+        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:גיליון|גליון|סכמה|סכימה|ציור|שרטוט|לשרטט|לצייר|תשרטט|תצייר)(?!\w)",
+        re.I,
+    ),
+    "place": re.compile(
+        r"\b(?:re-plac(?:e|ing)|plac(?:e|ing|ement)|parts|components|copper)\b"
+        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:רכיבים|השמה|מיקום|נחושת|למקם|תמקם)(?!\w)",
+        re.I,
+    ),
+    "route": re.compile(
+        r"\b(?:re-?rout(?:e|ing)|rout(?:e|ing)|tracks|traces)\b"
+        r"|(?<!\w)(?:ו?[בלמהש]|ו)?(?:מסלולים|ניתוב|לנתב|תנתב)(?!\w)",
+        re.I,
+    ),
+}
+_REPLACE_SHARED = {
+    "draw": re.compile(r"\bexisting\b|(?<!\w)(?:ו?[בלמהש]|ו)?(?:קיים|קיימ(?:ת|ים|ות))(?!\w)|מה שיש", re.I),
+    "place": re.compile(r"\b(?:board|pcb)\b|(?<!\w)(?:ו?[בלמהש]|ו)?לוח(?!\w)|מה שיש", re.I),
+    "route": re.compile(r"\b(?:board|pcb)\b|(?<!\w)(?:ו?[בלמהש]|ו)?לוח(?!\w)|מה שיש", re.I),
+}
 REPLACE_MAX_WORDS = 8
 
 
 def previous_agent_text(chat, last_user=""):
     """The agent's message right before the student's current one ('' when there is none)."""
     recs = list(chat or [])
-    if recs and recs[-1].get("role") == "user" and recs[-1].get("text") == last_user:
+    if recs and recs[-1].get("role") == "user" and str(recs[-1].get("text") or "").strip() == str(last_user or "").strip():
         recs = recs[:-1]
     for r in reversed(recs):
         if r.get("role") == "agent":
-            return str(r.get("text") or "")
-        if r.get("role") == "user" and not r.get("generated"):
+            if r.get("error"):
+                continue
+            return _NOT_APPLIED_TAIL.sub("", str(r.get("text") or "")).strip()
+        if r.get("role") == "user":
             return ""
     return ""
 
 
+def _asked_replace(kind, prev_agent):
+    """True when a question sentence of `prev_agent` asked whether the agent may replace the existing work of `kind`."""
+    cleaned = _URL_RE.sub("", str(prev_agent or ""))
+    for sent in _SENT.findall(cleaned):
+        if "?" not in sent or _REPLACE_ASKED_MANUAL.search(sent):
+            continue
+        has_verb = bool(_REPLACE_ASKED_VERB.search(sent)) or (
+            bool(_REPLACE_ASKED_DEL.search(sent)) and bool(_REPLACE_ASKED_DEL_CTX.search(sent))
+        )
+        if not has_verb:
+            continue
+        spec = bool(_REPLACE_SPECIFIC[kind].search(sent))
+        if not spec and not _REPLACE_SHARED[kind].search(sent):
+            continue
+        if not spec and any(_REPLACE_SPECIFIC[k].search(sent) for k in _REPLACE_SPECIFIC if k != kind):
+            continue
+        return True
+    return False
+
+
 def _replace_consent(kind, a, last_user, prev_agent=""):
     """'' when the student's last message is a short, unambiguous replace or yes, else why not. Simple by construction: at most 8 words,
-    a replace word (or a bare yes right after the agent asked about replacing), and no negation, hedge, condition, question or stop word
-    anywhere in it. A longer message never grants replace, however it is worded: the agent asks a yes/no question instead."""
+    a replace word (or a bare yes right after the agent asked about replacing), and no negation, reversal, hedge, condition, question,
+    self-do or stop word anywhere in it. A longer message never grants replace, however it is worded: the agent asks a yes/no question instead."""
     wipes, replace_re = CONSENT[kind][3], CONSENT[kind][1]
     text = str(last_user or "")
     words = re.findall(r"[\w’'\-]+", text)
-    asked_yes = bool(_YES.search(text)) and "?" in str(prev_agent) and bool(_REPLACE_ASKED.search(str(prev_agent)))
-    clean = (len(words) <= REPLACE_MAX_WORDS and "?" not in text and not _NEGATED.search(text) and not _NEG_MORE.search(text) and not _HEDGE.search(text)
-             and not _CONDITION.search(text) and not _IF_WORD.search(text) and not _STOP_ANY.search(text) and not _HARD_STOP.search(text))
+    asked_yes = bool(_YES.search(text)) and bool(_BARE_YES.match(text.strip())) and _asked_replace(kind, prev_agent)
+    has_q = "?" in text or (not asked_yes and (any(_is_question(s) for s in _SENT.findall(text))
+                                               or any(_is_question(c) for c in _CLAUSE.split(text) if c.strip())))
+    clean = (len(words) <= REPLACE_MAX_WORDS and not has_q
+             and not _NEGATED.search(text) and not _REPLACE_NEG.search(text)
+             and not _REPLACE_REVERSAL.search(text)
+             and not _HEDGE.search(text) and not _CONDITION.search(text) and not _REPLACE_HEDGE_COND.search(text)
+             and not _REPLACE_SELF.search(text)
+             and not _STOP_ANY.search(text) and not _HARD_STOP.search(text))
     if clean and (replace_re.search(text) or asked_yes):
         return ""
     sheet = str(a.get("sheet") or "").strip()
     what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
-    return (f"The {wipes} are only wiped on a short, clear yes from the student (a long message never grants replace). Ask a yes/no "
+    be = "is" if wipes == "sheet" else "are"
+    return (f"The {wipes} {be} only wiped on a short, clear yes from the student (a long message never grants replace). Ask a yes/no "
             f"question: \"Replace {what}? This wipes what is there (a backup is kept). Answer yes/no.\" Run this again only after their "
             "short answer (such as \"yes, replace\").")
 

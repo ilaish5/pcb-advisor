@@ -18,7 +18,8 @@ Stop and wait. On their answer or their earlier instruction: "you" = run `{"type
 (refused when they say they do it themselves, or the quote is a fragment). It places the netlist parts from the project library
 with their nets, creates the board outline from the idea's board size when the PcbDoc has none (an existing outline is kept),
 saves, and reads the file back against the netlist. Needs `library.build` and Altium open, no unsaved changes in the PcbDoc. Refuses a
-board that already has parts or tracks; `"replace": true` only with `"replace_said"` = their words (replace/redo/מחדש). Routing is a
+board that already has parts or tracks; `"replace": true` only when their LAST message is a short (8 words) clear replace or a
+bare yes right after you asked the replace yes/no question (a longer message never grants it). Routing is a
 separate question, asked after the parts are placed: "route the board yourself, press Route board on the Layout page, or should I?"
 Only when they said who routes, now or earlier (a route word in their
 quote; ask only if they never said) run `{"type": "altium.route_pcb", "student_said": "<their words>"}`. Run `altium.import_rules` before it (routing is
@@ -26,7 +27,8 @@ refused on Altium's default rules). It uses its own router (2 layers, widths, cl
 tracks and vias, saves, reads the file back and runs Altium's design rule check:
 it counts as done only with 0 open nets and no new clearance/short/width errors. When a net cannot be routed nothing is drawn and
 you tell the student which nets and why (tighter rules, more room, a third layer); `"partial": true` + `"partial_said"` only when they agree to
-keep a partial result. Existing tracks: refused unless `"replace": true` + `"replace_said"`. Never say the board is routed when it reports a
+keep a partial result. Existing tracks: refused unless `"replace": true` (same short-clear-replace or yes-after-question rule).
+Never say the board is routed when it reports a
 failure. Then use board-review.
 Track width follows the current of each net (IPC-2221, 1 oz, 10 C rise). Before routing, propose the current of every supply net the idea
 or a datasheet states (regulator output, USB VBUS 0.5 A, a motor) with `{"type": "net.set_current", "net": "+5V", "amps": 0.5, "sources": [...]}`
