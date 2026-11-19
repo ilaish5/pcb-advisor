@@ -454,54 +454,66 @@ def _sch_name(sid, title):
     return f"{sid} {_file_name(title, 'Sheet')}.SchDoc"
 
 
-def _find_doc(prj_file, name_or_id, kind=".schdoc"):
-    """The project's document that belongs to a sheet id (its name starts with '<id> ') or has exactly that name; else the one named
-    by the bare id ('02.SchDoc', what altium.add_sheet with the name '02' made)."""
+def _find_doc(prj_file, name_or_id, kind=".schdoc", bare=False):
+    """The project's document that belongs to a sheet id (its name starts with '<id> ') or has exactly that name. bare: only the one
+    named by the bare id ('02.SchDoc'; _sheet_doc takes it only when this tool made it or it is empty)."""
     summary = read_prjpcb(prj_file)
-    bare = None
     for d in summary["documents"]:
         base = pathlib.PureWindowsPath(d).name
         if not base.lower().endswith(kind):
             continue
-        if base.lower() == str(name_or_id).lower() or base.startswith(f"{name_or_id} "):
+        if bare:
+            hit = base[:-len(kind)].lower() == str(name_or_id).lower()
+        else:
+            hit = base.lower() == str(name_or_id).lower() or base.startswith(f"{name_or_id} ")
+        if hit:
             return prj_file.parent / pathlib.Path(d.replace("\\", "/"))
-        if bare is None and base[:-len(kind)].lower() == str(name_or_id).lower():
-            bare = prj_file.parent / pathlib.Path(d.replace("\\", "/"))
-    return bare
+    return None
 
 
 PLACEHOLDER_SHEET = "Main.SchDoc"       # the sheet new_project makes when no sheet is planned yet
 
 
 def _logged_sheet_docs(project):
-    """{sheet id: SchDoc file name} as the latest draw / skeleton recorded it (altium-log.jsonl "sheet_docs")."""
-    out = {}
-    for e in store.read_jsonl(store.pdir(project) / "altium-log.jsonl"):
-        out.update({str(k): str(v) for k, v in (e.get("sheet_docs") or {}).items()})
-    return out
+    """{sheet id: SchDoc file name} as recorded in altium-log.jsonl (store.sheet_docs)."""
+    return store.sheet_docs(project)
 
 
-def _sheet_doc(project, prj, sid, taken=(), adopt=True):
-    """The project SchDoc that holds advisor sheet `sid`, or None (a new one is made then): the one a draw / skeleton used for it
-    before (logged), else the one named after it (_find_doc), else the empty placeholder this tool made (Main.SchDoc, made when no
-    sheet was planned yet) when no other sheet uses it: the first sheet is drawn on it instead of leaving it behind empty.
-    `taken`: placeholder paths already given to another sheet in the same call; adopt=False: never the placeholder."""
+def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
+    """The project SchDoc that holds advisor sheet `sid`, or None (a new one is made then): the one recorded for it (add_sheet,
+    skeleton, draw), else the one named after it ('<id> ...'), else a bare '<id>.SchDoc' this tool made or that is empty, else the
+    empty placeholder this tool made (Main.SchDoc, made when no sheet was planned yet) when no other sheet uses it: the first sheet is
+    drawn on it instead of leaving it behind empty. A recorded file that is no longer in the project (renamed or removed in Altium) is
+    an error, never a reason to make a second copy of the sheet. `taken`: paths already given to another sheet in the same call;
+    adopt=False: never the placeholder; `how` (a list): "adopted" is appended when the placeholder is given."""
     from altium.schdoc import is_blank_sheet
     sheets = read_prjpcb(prj)["sheets"]
     in_prj = {pathlib.PureWindowsPath(d).name.lower(): prj.parent / pathlib.Path(d.replace("\\", "/")) for d in sheets}
     logged = _logged_sheet_docs(project)
     name = logged.get(str(sid))
-    if name and name.lower() in in_prj:
-        return in_prj[name.lower()]
+    if name:
+        if name.lower() in in_prj:
+            return in_prj[name.lower()]
+        raise BridgeError(f"Sheet {sid} was drawn on {name}, which is no longer in the Altium project (renamed or removed there?). "
+                          f"Nothing was changed, so that no second copy of sheet {sid} is made: put {name} back in the project, "
+                          "or tell me which sheet file now holds it.")
     doc = _find_doc(prj, sid)
     if doc is not None:
         return doc
+    made = _tool_made_sheets(project)
+    doc = _find_doc(prj, sid, bare=True)
+    if doc is not None and doc.is_file() and (doc.name.lower() in made or is_blank_sheet(doc)):
+        return doc
     ph = in_prj.get(PLACEHOLDER_SHEET.lower())
-    if not adopt or ph is None or ph in taken or not ph.is_file() or PLACEHOLDER_SHEET.lower() not in _tool_made_sheets(project):
+    if not adopt or ph is None or ph in taken or not ph.is_file() or PLACEHOLDER_SHEET.lower() not in made:
         return None
     if any(v.lower() == PLACEHOLDER_SHEET.lower() for k, v in logged.items() if k != str(sid)):
         return None                                      # another sheet is drawn on it
-    return ph if is_blank_sheet(ph) else None
+    if not is_blank_sheet(ph):
+        return None
+    if how is not None:
+        how.append("adopted")
+    return ph
 
 
 def _doc_key(prj, rel):
@@ -560,24 +572,41 @@ def new_project(project):
 
 
 def _planned_sheet(project, name):
-    """(id, title) of the advisor sheet `name` means (its id, '<id> <title>' or its title), else None."""
+    """(id, title, by_title) of the advisor sheet `name` means: by its id ('02', '02 Logic', '02 Logic.SchDoc'; by_title False) or,
+    when no id matches, by its title alone (by_title True; a title two sheets share is an error asking for the id). None: no plan sheet."""
     key = str(name or "").strip().lower()
-    for sid, title, _sh in _sheets(project):
-        if key and key in (str(sid).lower(), str(title).lower(), f"{sid} {title}".lower(), _sch_name(sid, title).lower()):
-            return sid, title
-    return None
+    if not key:
+        return None
+    sheets = _sheets(project)
+    for sid, title, _sh in sheets:
+        if key in (str(sid).lower(), f"{sid} {title}".lower(), _sch_name(sid, title).lower()):
+            return sid, title, False
+    by_title = [(sid, title) for sid, title, _sh in sheets if str(title).lower() == key]
+    if len(by_title) > 1:
+        raise BridgeError(f"'{name}' is the title of sheets {', '.join(s for s, _ in by_title)}: name the sheet by its id. Nothing was added.")
+    return (by_title[0][0], by_title[0][1], True) if by_title else None
 
 
 def add_sheet(project, name):
     """A new SchDoc in the Altium project. A planned sheet (named by its id or title) gets the file the draw and skeleton steps use
-    for it (<id> <title>.SchDoc), and when it has one already nothing is made: no empty look-alike is left next to the drawn sheet."""
+    for it: the empty Main.SchDoc the project started with when no sheet uses it yet, else <id> <title>.SchDoc; when it has a file
+    already nothing is made (by its id: that file is returned; by its title alone: an error that names the file). No empty look-alike
+    is left next to the drawn sheet. The file is recorded for the sheet (sheet_docs)."""
     prj = _linked(project)
     planned = _planned_sheet(project, name)
     if planned:
-        have = _sheet_doc(project, prj, planned[0], adopt=False)
-        if have is not None:
+        sid, title, by_title = planned
+        how = []
+        have = _sheet_doc(project, prj, sid, how=how)
+        if have is not None and not how:
+            if by_title:
+                raise BridgeError(f"'{name}' is the title of planned sheet {sid}, which has its file already ({have.name}); nothing was "
+                                  "added. Give a separate sheet another name, or name the planned sheet by its id.")
             return {"file": str(have), "backup": "", "existing": True}
-        name = _sch_name(*planned)
+        if have is not None:              # the empty Main.SchDoc: this sheet's file from now on, nothing new is made
+            _log(project, "add-sheet", file=str(have), adopted=True, sheet_docs={sid: have.name})
+            return {"file": str(have), "backup": "", "adopted": True}
+        name = _sch_name(sid, title)
     fname = _file_name(name, "Sheet")
     fname = fname if fname.lower().endswith(".schdoc") else fname + ".SchDoc"
     target = prj.parent / fname
@@ -587,7 +616,7 @@ def add_sheet(project, name):
     run_commands([("PROJECT", str(prj)), ("SCH", str(target)), ("SAVEPRJ", str(prj))])
     if not target.is_file():
         raise BridgeError("Altium ran the script but did not write the sheet. Check Altium for a dialog box.")
-    _log(project, "add-sheet", file=str(target), backup=backup)
+    _log(project, "add-sheet", file=str(target), backup=backup, **({"sheet_docs": {planned[0]: target.name}} if planned else {}))
     return {"file": str(target), "backup": backup}
 
 
@@ -798,14 +827,20 @@ def draw_schematic(project, sheet=None, replace=False):
     lib_symbols = {s["name"]: s for s in read_schlib(lp["schlib"])["symbols"]}
     manifest = store.library_manifest(project)
     key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
-    plans, existing, new_docs = [], [], []
+    plans, existing, new_docs, adopted = [], [], [], set()
     # one drawn name per net for the whole design (a net on two sheets keeps one name; two names never share one)
     aliases = drawn_names(project)
+    ph = _find_doc(prj, PLACEHOLDER_SHEET)
+    if ph is not None and ph.is_file() and PLACEHOLDER_SHEET.lower() in _tool_made_sheets(project):
+        save_open_sheets(prj, [ph])     # a hand drawing on it that is not saved yet counts: it is then no longer empty, never adopted
     for sid, title, sh in planned:
         errors, _ = store.check_sheet(sh, bom_refs)
         if errors:
             raise BridgeError(f"Sheet {sid} cannot be drawn: " + "; ".join(errors[:6]))
-        doc = _sheet_doc(project, prj, sid, taken=existing)
+        how = []
+        doc = _sheet_doc(project, prj, sid, taken=existing, how=how)
+        if how:
+            adopted.add(doc)
         if doc is None:
             doc = prj.parent / _sch_name(sid, title)
             new_docs.append(doc)
@@ -815,7 +850,8 @@ def draw_schematic(project, sheet=None, replace=False):
             if have and not replace:
                 raise BridgeError(f"{doc.name} already has {have} objects (parts, wires, labels). I never wipe a drawing: say so if it "
                                   "should be redrawn (replace), the old file is kept in .advisor-backup.")
-        plan = draw.plan_sheet(sh, _sheet_symbols(project, sh, lib_symbols), lp["schlib"], doc, replace=replace, aliases=aliases)
+        plan = draw.plan_sheet(sh, _sheet_symbols(project, sh, lib_symbols), lp["schlib"], doc, replace=replace and doc not in adopted,
+                               aliases=aliases)      # a sheet taken over as empty is never wiped: anything on it stops the draw
         if plan["errors"]:
             raise BridgeError(f"Sheet {sid} cannot be drawn: " + "; ".join(plan["errors"][:8]))
         plans.append((sid, doc, plan, {r: (manifest.get(key.get(r)) or {}).get("footprint") for r in key}))
@@ -823,7 +859,7 @@ def draw_schematic(project, sheet=None, replace=False):
     backup = _backup(prj, existing + ([prj] if new_docs else []))
     if existing:        # Altium's own view first: anything on the sheet stops the run before it touches anything
         try:
-            run_commands([("PROJECT", str(prj))] + [("DRAWCHECK", str(d), "1" if replace else "0") for d in existing])
+            run_commands([("PROJECT", str(prj))] + [("DRAWCHECK", str(d), "1" if replace and d not in adopted else "0") for d in existing])
         except BridgeError as exc:
             if "unsaved changes" in str(exc):
                 raise BridgeError((f"I saved {', '.join(saved_first)}, but Altium reports new unsaved changes in a sheet. "
@@ -850,6 +886,9 @@ def draw_schematic(project, sheet=None, replace=False):
         except BridgeError:
             closed = " Close the sheet in Altium WITHOUT saving: it is half drawn."
         raise BridgeError(str(exc) + closed) from exc
+    # the sheets are in the Altium project now: their files are recorded before anything below can fail, so a later run never
+    # makes a second copy of a sheet whose check broke off
+    _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans})
     problems, warnings, parts, nets = [], [], 0, set()
     for sid, doc, plan, fps in plans:
         warnings += plan["warnings"] + circular_pin_warnings(project, [p["ref"] for p in plan["parts"] if isinstance(p, dict) and p.get("ref")])

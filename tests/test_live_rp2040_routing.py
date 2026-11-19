@@ -34,6 +34,7 @@ def test_the_rails_route_at_their_width_when_alone():
         assert route.violations(doc, res["items"], rules, box) == []
 
 
+@pytest.mark.slow
 @pytest.mark.xfail(strict=True, reason="known gap: +3V3, +1V1, +5V are shut in at the QFN by the greedy order (see the module doc)")
 def test_the_rp2040_board_routes_every_net_with_no_violation():
     doc, box, rules = placed.load("live_rp2040_placed")

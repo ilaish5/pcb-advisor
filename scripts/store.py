@@ -102,6 +102,16 @@ def log_ok(rec):
     return not (rec.get("error") or rec.get("problems") or rec.get("restored") or rec.get("failed"))
 
 
+def sheet_docs(project):
+    """{sheet id: SchDoc file name} as the Altium bridge last recorded it (altium-log.jsonl "sheet_docs": written by add_sheet, the
+    skeleton and the draw, right after Altium drew). A sheet may live in a file not named after it (the empty Main.SchDoc a new
+    project starts with is drawn on by the first sheet)."""
+    out = {}
+    for e in read_jsonl(pdir(project) / "altium-log.jsonl"):
+        out.update({str(k): str(v) for k, v in (e.get("sheet_docs") or {}).items()})
+    return out
+
+
 def now_ms():
     """Log records are ordered against the usage log's clicks (millisecond stamps): a second-precision stamp sorts before the click that caused it."""
     return dt.datetime.now().isoformat(timespec="milliseconds")

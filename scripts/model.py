@@ -166,7 +166,8 @@ def altium_ok(project):
             if r.get("op") in ("draw-schematic", "place-pcb", "route-pcb") and store.log_ok(r) and r.get("ts"):
                 out[r["op"]] = r["ts"]
                 if r["op"] == "draw-schematic":
-                    draws.append({"ts": r["ts"], "sheets": [pathlib.Path(str(x).replace("\\", "/")).stem for x in r.get("sheets") or []]})
+                    ids = [str(k) for k in (r.get("sheet_docs") or {})]      # sheet ids, so a draw on Main.SchDoc clears sheet 01's note
+                    draws.append({"ts": r["ts"], "sheets": ids + [pathlib.Path(str(x).replace("\\", "/")).stem for x in r.get("sheets") or []]})
     except Exception:
         pass
     out["draw_sheets"] = draws[-20:]
@@ -189,9 +190,12 @@ def sheets(project):
             try:
                 from altium.prjpcb import read_prjpcb
                 prj_info = read_prjpcb(pf)
+                drawn_on = {v.lower() for v in store.sheet_docs(project).values()}      # files that hold a plan sheet (Main.SchDoc)
                 for s in prj_info.get("sheets", []):
                     s_name = pathlib.Path(s.replace("\\", "/")).name
                     s_stem = pathlib.Path(s.replace("\\", "/")).stem
+                    if s_name.lower() in drawn_on:
+                        continue
                     if not any(x["id"] in (s_name, s_stem) or s_stem.startswith(x["id"] + " ") for x in out if not x.get("altium")):      # plan "02" is file "02 RP2040.SchDoc"
                         out.append({"id": s_stem, "title": s_stem, "sections": [], "parts": {}, "altium": True, "file": s_name})
             except Exception:
