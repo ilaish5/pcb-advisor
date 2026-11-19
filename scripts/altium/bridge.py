@@ -570,6 +570,28 @@ def add_intlib_to_project(prj, intlib):
         return False
 
 
+def ensure_sheets_in_project(prj, files):
+    """Every SchDoc in `files` must be a document of the saved PrjPcb. Altium's own add can miss a new sheet (it lands in the project
+    that has the focus), so a missing one is added by hand once (ADDDOC + SAVEPRJ) and the PrjPcb read again; a sheet still missing
+    then is an error that names it. Returns the files that had to be added by hand."""
+    prj = pathlib.Path(prj)
+    files = [pathlib.Path(f) for f in files]
+
+    def missing():
+        have = {_doc_key(prj, d) for d in read_prjpcb(prj)["documents"]}
+        return [f for f in files if _doc_key(prj, f) not in have]
+
+    lost = missing()
+    if lost:
+        cmds = [("PROJECT", str(prj))] + [("ADDDOC", str(prj), str(f)) for f in lost if f.is_file()] + [("SAVEPRJ", str(prj))]
+        run_commands(cmds)
+        still = missing()
+        if still:
+            raise BridgeError(f"The sheet file(s) {', '.join(f.name for f in still)} are not in the Altium project {prj.name} "
+                              "(Altium did not add them). Add them by hand: right-click the project > Add Existing to Project, then File > Save All.")
+    return lost
+
+
 def new_project(project):
     """Create the Altium project for an advisor project: PrjPcb, one PcbDoc, one SchDoc per sheet. Links it."""
     meta = project_mod.load_meta(project)
@@ -587,6 +609,7 @@ def new_project(project):
     cmds += [("SCH", str(folder / f)) for f in sch_files]
     cmds += [("PCB", str(pcb)), ("SAVEPRJ", str(prj))]
     run_commands(cmds)
+    ensure_sheets_in_project(prj, [folder / f for f in sch_files])
     summary = read_prjpcb(prj)
     if not pcb.is_file() or len(summary["sheets"]) != len(sch_files):
         raise BridgeError("Altium ran the script but the project does not list all its documents: "
@@ -645,6 +668,7 @@ def add_sheet(project, name):
     run_commands([("PROJECT", str(prj)), ("SCH", str(target)), ("SAVEPRJ", str(prj))])
     if not target.is_file():
         raise BridgeError("Altium ran the script but did not write the sheet. Check Altium for a dialog box.")
+    ensure_sheets_in_project(prj, [target])
     _log(project, "add-sheet", file=str(target), backup=backup, **({"sheet_docs": {planned[0]: target.name}} if planned else {}))
     return {"file": str(target), "backup": backup}
 
@@ -915,6 +939,8 @@ def draw_schematic(project, sheet=None, replace=False):
     # the sheets are in the Altium project now: their files are recorded before anything below can fail, so a later run never
     # makes a second copy of a sheet whose check broke off
     _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans}, created=[str(d) for d in new_docs])
+    if new_docs:
+        ensure_sheets_in_project(prj, new_docs)      # every new sheet, not only the first one, must be in the saved project
     problems, warnings, parts, nets = [], [], 0, set()
     for sid, doc, plan, fps in plans:
         warnings += plan["warnings"] + circular_pin_warnings(project, [p["ref"] for p in plan["parts"] if isinstance(p, dict) and p.get("ref")])
@@ -1059,7 +1085,10 @@ def drc_line(res):
     "unchecked" when the report is missing or was not read in full."""
     if not isinstance(res, dict) or not res.get("rules"):
         return "unchecked (no readable design rule check report)"
-    body = ", ".join(f"{_drc_short(k)} {v}" for k, v in res["rules"].items())
+    shown = {}                                   # two rules of one kind (other scope or value) are one name: their counts add up
+    for k, v in res["rules"].items():
+        shown[_drc_short(k)] = shown.get(_drc_short(k), 0) + v
+    body = ", ".join(f"{k} {v}" for k, v in shown.items())
     if not res.get("complete"):
         return f"unchecked (the report was not read in full; read so far: {body}, total {res.get('total', 0)})"
     return f"{body}, total {res['total']}" + (" (clean)" if drc_clean(res) else "")
@@ -1085,6 +1114,31 @@ def _netlist_parts(project):
                           "bom_role": line.get("role") or ""})
     from altium import draw
     return draw.alias_parts(parts, drawn_names(project))          # the pads carry the names the schematic was drawn with
+
+
+def board_fit_check(project):
+    """Early check of the board size against the BOM's parts (when the BOM is approved, before Place): the layout.board_fit result for
+    one side of the board, or None when the project has no board size or no parts yet. The real footprints are used when the library
+    is built, the package of each BOM line otherwise. Never changes anything and never raises."""
+    from altium import layout
+    try:
+        size = _board_size(project)
+        manifest = store.library_manifest(project)
+        parts = []
+        for line in store.bom_lines(project):
+            for ref in line.get("refs") or []:
+                parts.append({"ref": ref, "footprint": (manifest.get(line["key"]) or {}).get("footprint") or "",
+                              "package": line.get("package") or "", "description": line.get("description") or ""})
+        fps = {}
+        try:
+            pcblib = library_paths(project)["pcblib"]          # needs a linked Altium project; without one there is no library yet
+            fps = {f["name"]: f for f in read_pcblib(pcblib)["footprints"]} if pcblib.is_file() else {}
+        except (BridgeError, AltiumReadError, OSError, KeyError, ValueError):
+            fps = {}
+        fit = layout.board_fit(parts, size, fps)
+        return dict(fit, size=size, text=layout.fit_text(fit, size)) if fit else None
+    except Exception:                                    # an estimate must never stop a step
+        return None
 
 
 def _board_size(project):
@@ -1302,7 +1356,10 @@ def place_pcb(project, replace=False):
         raise BridgeError("The schematic is not drawn in Altium for " + ", ".join(undrawn[:8]) + (" ..." if len(undrawn) > 8 else "")
                           + ": draw it first (altium.draw_schematic, with the student's agreement). A part placed without the link to its "
                           "schematic symbol is duplicated by the first Update PCB. Nothing was changed.")
+    fit = board_fit_check(project)                       # the same estimate the BOM approval gave; the figures also go in the refusal
     res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace)
+    if fit and fit["text"]:
+        res["warnings"] = [fit["text"]] + list(res["warnings"])
     _log(project, "place-pcb", pcb=str(pcb), parts=len(res["placed"]), outline=res["outline"], replace=bool(replace),
          backup=res["backup"], problems=res["problems"], warnings=res["warnings"])
     res["warnings"] = list(dict.fromkeys(res["warnings"] + [f"drill check: {m}" for m in res["drill_findings"][:6]]

@@ -211,6 +211,103 @@ def plan_outline(size, origin=(0.0, 0.0)):
     return [origin[0], origin[1], origin[0] + w, origin[1] + h]
 
 
+# ---- board size against the parts (an early estimate: the student is told before Place, the size is never changed here) ----
+TIGHT_FILL = 0.5          # part area / board area (one side) above which the board is called clearly too tight (Place refuses above MAX_FILL)
+SOFT_FILL = 0.4           # from here a board whose part sizes are only estimated is called "may be tight" (a soft warning)
+LOW_FILL = 0.3            # below this a failed placement is not about area
+TARGET_FILL = 0.4         # the board size suggested leaves this share covered by parts
+_PASSIVE_MM2 = (("0201", 1.6), ("0402", 3.0), ("0603", 5.0), ("0805", 7.5), ("1206", 12.0), ("1210", 17.0), ("2512", 40.0))
+_REF_MM2 = {"R": 5.0, "C": 5.0, "L": 8.0, "FB": 5.0, "F": 8.0, "D": 6.0, "LED": 5.0, "Q": 9.0, "U": 40.0, "IC": 40.0, "J": 26.0, "P": 30.0,
+            "CN": 40.0, "USB": 40.0, "SW": 42.0, "S": 42.0, "Y": 20.0, "X": 20.0, "TP": 4.0, "BT": 80.0, "K": 60.0}
+
+
+def package_area_mm2(text="", ref=""):
+    """Typical courtyard area (mm2) of a part from its footprint/package name (or, with no name, from its designator letters). A rough
+    figure for the time before the library is built; the real footprint is used once it exists. The pin count is the number that is
+    attached to the package family ('SOP-8', 'QFN-56'), never a dimension or a pitch ('150mil', 'P1.27'); the body size
+    ('L4.9-W3.9', with 'LS6.0' the lead span) is used when the name has it."""
+    t = str(text or "").lower()
+    for key, a in _PASSIVE_MM2:
+        if re.search(r"(?<!\d)" + key + r"(?!\d)", t):
+            return a
+    if re.search(r"sot-?223", t):
+        return 45.0
+    if re.search(r"sot-?23|sot-?323|sot-?363|sc-?70|sod-?323", t):
+        return 9.0
+    fam = re.search(r"(lqfp|tqfp|qfp|qfn|dfn|wson|son|tssop|vssop|ssop|msop|soic|sop|bga|lga|so)[-_ ]?(\d{1,3})(?!\d|\.|mil)", t)
+    pins = int(fam.group(2)) if fam else 0
+    if fam and pins >= 3:
+        f = fam.group(1)
+        body = re.search(r"l(\d+(?:\.\d+)?)-w(\d+(?:\.\d+)?)", t)
+        span = re.search(r"ls(\d+(?:\.\d+)?)", t)
+        if body and f in ("soic", "sop", "so", "tssop", "ssop", "msop", "vssop", "qfn", "dfn", "wson", "son", "lqfp", "tqfp", "qfp"):
+            width = float(span.group(1)) if span else float(body.group(2))
+            return (float(body.group(1)) + 1.0) * (width + 1.0)
+        if f in ("qfn", "dfn", "wson", "son"):
+            return 1.1 * pins + 8
+        if f in ("lqfp", "tqfp", "qfp"):
+            return 2.0 * pins + 20
+        if f in ("tssop", "ssop", "msop", "vssop"):
+            return 3.5 * pins + 6
+        if f in ("soic", "sop", "so"):
+            return 5.5 * pins + 6
+        if f == "lga":
+            return 1.0 * pins + 4          # LGA-8 (BME280, 2.5 x 2.5 mm body): about 12
+        return 0.9 * pins + 10             # bga
+    hdr = re.search(r"(?:header|pin|socket)\D*(\d+)\s*x\s*(\d+)|(\d+)\s*x\s*(\d+)\D*(?:header|pin|socket)", t)
+    if hdr:
+        n = int(hdr.group(1) or hdr.group(3)) * int(hdr.group(2) or hdr.group(4))
+        return (n * 2.54 + 1.0) * (2.54 + 1.0)
+    if re.search(r"usb", t):
+        return 60.0
+    letters = re.match(r"[A-Za-z]+", str(ref or ""))
+    return _REF_MM2.get(letters.group(0).upper(), 20.0) if letters else 20.0
+
+
+def board_fit(parts, size, footprints=None, sides=1):
+    """The courtyard area the parts need against the board, per side. parts: [{ref, footprint (name), package/description (optional)}];
+    size: (w, h) mm; footprints: {name: footprint} of the built library (the real courtyard is used for the parts it has; the others
+    are estimated from their package). Returns {"area", "board", "fill", "tight", "from_library", "estimated", "parts", "suggest"}
+    (suggest: a (w, h) in whole 5 mm steps with the same proportions, or None when the board is not too tight) or None (no size or no parts)."""
+    if not size or not parts or not (size[0] > 0 and size[1] > 0):
+        return None
+    sides = max(1, int(sides or 1))
+    area, lib, est = 0.0, 0, 0
+    for p in parts:
+        fp = (footprints or {}).get(p.get("footprint"))
+        box = footprint_box(fp) if fp else None
+        if box is not None:
+            area += (box[2] - box[0]) * (box[3] - box[1])
+            lib += 1
+        else:
+            area += package_area_mm2(" ".join(str(p.get(k) or "") for k in ("footprint", "package", "description")), p.get("ref") or "")
+            est += 1
+    area /= sides
+    board = float(size[0]) * float(size[1])
+    fill = area / board
+    tight = fill > TIGHT_FILL
+    soft = not tight and est > 0 and fill > SOFT_FILL        # estimated sizes can be 20% off: a possible problem, said more gently
+    suggest = None
+    if tight or soft:
+        k = max(1.0, math.sqrt(area / TARGET_FILL / board))
+        suggest = (5 * math.ceil(size[0] * k / 5), 5 * math.ceil(size[1] * k / 5))
+    return {"area": area, "board": board, "fill": fill, "tight": tight, "soft": soft, "from_library": lib, "estimated": est, "parts": len(parts),
+            "suggest": suggest}
+
+
+def fit_text(fit, size):
+    """One plain sentence for a board_fit result that is tight (the figures and a size to try); '' when the board is fine."""
+    if not fit or not (fit["tight"] or fit["soft"]):
+        return ""
+    how = ("from the library footprints" if not fit["estimated"] else
+           "estimated from typical package sizes" if not fit["from_library"] else "from the library footprints and typical package sizes")
+    sw, sh = fit["suggest"]
+    return (f"The {fit['parts']} parts need about {fit['area']:.0f} mm2 of board on one side ({how}); the {size[0]:g} x {size[1]:g} mm board "
+            f"has {fit['board']:.0f} mm2, so {100 * fit['fill']:.0f}% would be covered and "
+            + ("little is left for tracks" if fit["tight"] else "it may be tight (the sizes are estimates)") + f". Try about "
+            f"{sw:g} x {sh:g} mm ({sw * sh:.0f} mm2). The board size was not changed.")
+
+
 def _pad_rect(p):
     """[x0, y0, x1, y1] of a read_pcblib pad (mil units in, mm out), relative to the footprint origin; a pad turned 90 or 270
     degrees swaps its sides, any other angle takes the square that holds it."""
@@ -401,6 +498,13 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         return {"places": [], "warnings": warnings, "errors": errors}
     area = sum((i["box"][2] - i["box"][0]) * (i["box"][3] - i["box"][1]) for i in info.values())
     board = (outline[2] - outline[0]) * (outline[3] - outline[1])
+    k = max(1.0, math.sqrt(area / TARGET_FILL / board)) if board > 0 else 1.0
+    if board > 0 and area / board < LOW_FILL:          # plenty of area: a bigger board is not the answer, the shape or a keep-out is
+        figures = (f" (the {len(info)} parts need only about {area:.0f} mm2 of the {board:.0f} mm2 board, {100 * area / board:.0f}%: "
+                   "the area is enough, so the cause is the shape of the board or a keep-out, not its size)")
+    else:
+        figures = (f" (the {len(info)} parts need about {area:.0f} mm2 of the {board:.0f} mm2 board, {100 * area / board:.0f}%; try about "
+                   f"{5 * math.ceil((outline[2] - outline[0]) * k / 5):g} x {5 * math.ceil((outline[3] - outline[1]) * k / 5):g} mm)")
     if area > MAX_FILL * board:
         return {"places": [], "warnings": warnings, "errors": [
             f"the parts need {area:.0f} mm2 (pads, silkscreen, 3D body) and the board is {board:.0f} mm2 ({100 * area / board:.0f}%): "
@@ -758,7 +862,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                 tgt = (sum(t[1][0] for t in targets) / len(targets), sum(t[1][1] for t in targets) / len(targets))
                 hit = find(yref, *tgt)
             if hit is None:
-                errors.append(f"{yref}: no free place inside the board; make the board bigger")
+                errors.append(f"{yref}: no free place inside the board; make the board bigger{figures}")
                 continue
             commit(yref, *hit[:3], side=hit[3])
             record_crystal(yref, links)
@@ -925,7 +1029,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                 if h is None:
                     h = find(c, *pad_xy(yref, ypad))
                 if h is None:
-                    errors.append(f"{c}: no free place inside the board; make the board bigger")
+                    errors.append(f"{c}: no free place inside the board; make the board bigger{figures}")
                     continue
                 commit(c, *h[:3], side=h[3])
 
@@ -1051,7 +1155,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             halos.clear()
             hit = find(ref, *tgt, edge=EDGE_MM + 0.5)
         if hit is None:
-            errors.append(f"{ref}: no free place inside the board")
+            errors.append(f"{ref}: no free place inside the board; make the board bigger{figures}")
             continue
         settle_best(ref, tgt, hit)
         if checked_ic(ref) and any(is_rail(n) and pin_ok(ref, pad) and info[ref]["names"].get(pad, "").strip()
@@ -1071,7 +1175,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             continue
         owner, hit = place_cap(ref)
         if hit is None:
-            errors.append(f"{ref}: no free place inside the board; make the board bigger")
+            errors.append(f"{ref}: no free place inside the board; make the board bigger{figures}")
             continue
         commit(ref, *hit[:3], side=hit[3])
         if owner:
@@ -1133,7 +1237,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             bands = []
             hit = find(ref, *tgt)
         if hit is None:
-            errors.append(f"{ref}: no free place inside the board; make the board bigger")
+            errors.append(f"{ref}: no free place inside the board; make the board bigger{figures}")
             continue
         commit(ref, *hit[:3], side=hit[3])
     for ref in placed:

@@ -159,10 +159,17 @@ begin
     Log('project ' + Path);
 end;
 
+function SameFile(A: String; B: String): Boolean;
+begin
+    Result := (UpperCase(A) = UpperCase(B));
+end;
+
 { A new document is created in the focused project, renamed and written to Path }
 procedure NewDocument(Kind: String; Path: String);
 var
     D, P : IDispatch;
+    i    : Integer;
+    Listed : Boolean;
 begin
     GetWorkspace.DM_CreateNewDocument(Kind);
     D := Client.CurrentView.OwnerDocument;
@@ -170,11 +177,18 @@ begin
     Log('renamed ' + Path);
     SaveByPath(Path);
     P := GetWorkspace.DM_GetProjectFromPath(CurPrj);
-    if (Kind = 'PCB') and (P <> nil) then
+    if (P <> nil) then
     begin
-        { a new PCB lands in Free Documents: add it to the project }
-        P.DM_AddSourceDocument(Path);
-        Log('added to project ' + Path);
+        { a new PCB lands in Free Documents; a new sheet lands in whatever project has the focus, which is no longer this one
+          after the first new sheet: add it to the project unless the project lists it already }
+        Listed := False;
+        for i := 0 to P.DM_LogicalDocumentCount - 1 do
+            if SameFile(P.DM_LogicalDocuments(i).DM_FullPath, Path) then Listed := True;
+        if (not Listed) then
+        begin
+            P.DM_AddSourceDocument(Path);
+            Log('added to project ' + Path);
+        end;
     end;
 end;
 
@@ -461,6 +475,8 @@ end;
 procedure AddDocument(Prj: String; Path: String);
 var
     P : IDispatch;
+    i : Integer;
+    Listed : Boolean;
 begin
     P := GetWorkspace.DM_GetProjectFromPath(Prj);
     if (P = nil) then
@@ -468,8 +484,15 @@ begin
         Say('ERR project not open ' + Prj);
         Exit;
     end;
-    P.DM_AddSourceDocument(Path);
-    Log('added to project ' + Path);
+    { a document the project lists already is not added again: that would write a second DocumentN entry }
+    Listed := False;
+    for i := 0 to P.DM_LogicalDocumentCount - 1 do
+        if SameFile(P.DM_LogicalDocuments(i).DM_FullPath, Path) then Listed := True;
+    if (not Listed) then
+    begin
+        P.DM_AddSourceDocument(Path);
+        Log('added to project ' + Path);
+    end;
 end;
 
 { ======================================================================== project library (stage L2) }
@@ -510,11 +533,6 @@ begin
     end;
     S := StringReplace(S, '.', DecimalSeparator, REPLACEALL);
     Result := StrToFloat(S);
-end;
-
-function SameFile(A: String; B: String): Boolean;
-begin
-    Result := (UpperCase(A) = UpperCase(B));
 end;
 
 { Opens (or finds) a library document, brings it to the front and checks that the FOCUSED document is the one

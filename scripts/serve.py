@@ -354,6 +354,34 @@ def _agent_may_set_library(changes):
     return {k: v for k, v in (changes or {}).items() if k in allowed}
 
 
+def board_fit_note(project, sess):
+    """After a BOM approval: when the parts clearly do not fit the board size (the idea's size; altium.bridge.board_fit_check), tell the
+    student once per (tight or may be tight, suggested size), with a size to try. What was said is kept in the project folder
+    (fit-said.json), so a restart or one more approval does not say it again; a board that fits again forgets it. The size is never
+    changed here."""
+    try:
+        from altium import bridge
+        fit = bridge.board_fit_check(project)
+        mark = fit_mark = None
+        if fit and fit["text"]:
+            fit_mark = [bool(fit["tight"]), list(fit["suggest"] or [])]
+        path = store.pdir(project) / "fit-said.json"
+        try:
+            mark = json.loads(path.read_text(encoding="utf-8")).get("said")
+        except (OSError, ValueError, AttributeError):
+            mark = None
+        if fit_mark is None:
+            if mark is not None:
+                path.unlink(missing_ok=True)
+            return
+        if mark == fit_mark:
+            return
+        path.write_text(json.dumps({"said": fit_mark}), encoding="utf-8")
+    except Exception:                                  # an estimate must never stop an approval
+        return
+    say(project, sess, {"ts": now(), "role": "agent", "text": fit["text"] + " Change it on the Idea page if you agree."})
+
+
 def decide_and_note(project, sess, pid, decision, by="student", note=True, redraw_now=True):
     """Approve or reject one proposal and do what follows (supply re-check, sheet labels, a note the engine
     reads). The click, the batch endpoint and the autonomy setting all come through here, so the logs are
@@ -380,6 +408,7 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
                    prop["line"])
         what = "added to the BOM" if prop.get("new") else "updated in the BOM, on the schematic label and in the library"
         say(project, sess, {"ts": now(), "role": "agent", "text": "Approved. {{ref:" + ref + "}} is " + what + ".", **decided})
+        board_fit_note(project, sess)
     return prop
 
 
@@ -2944,6 +2973,8 @@ class Handler(BaseHTTPRequestHandler):
                 say(proj, sess, {"ts": now(), "role": "agent", "decision": decision, "proposal": done[0],
                                  "text": f"{'Approved' if decision == 'approved' else 'Rejected'} {len(done)} proposals: "
                                          + ", ".join(done)})
+                if decision == "approved":
+                    board_fit_note(proj, sess)
             out = state()
             out["results"] = results
             return self._send(200, out)
