@@ -31,7 +31,7 @@ import zipfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import sources  # noqa: E402
 import store  # noqa: E402
-from partlib_convert import clean, convert_footprint, convert_symbols, safe_name  # noqa: E402
+from partlib_convert import clean, convert_footprint, convert_symbols, names_fit, safe_name  # noqa: E402
 from partlib_kicad import fetch_kicad, kicad_footprint  # noqa: E402
 from partlib_generate import PASSIVE_PREFIX, POWER_NAME, footprint_for, package_key, symbol_for  # noqa: E402
 
@@ -434,7 +434,7 @@ def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None
             "comment": clean(line.get("value") or mpn, 60) if prefix in RATING_PREFIX else clean(mpn, 60),
             "params": {"MPN": clean(line.get("mpn") or mpn, 80), "Manufacturer": clean(line.get("manufacturer"), 80),
                        "LCSC": lcsc, "Description": _description(line)},
-            "hide_pin_names": len(pins) == 2}
+            "hide_pin_names": len(pins) == 2 or (e.get("symbol_from") != "netlist" and not names_fit(pins, gfx))}     # a generated body is sized to its names
         e["symbol"], e["footprint"] = name, fpname
         if build.footprints[fpname]["steps"]:
             e["step"] = build.footprints[fpname]["steps"][0].relative_to(lib).as_posix()

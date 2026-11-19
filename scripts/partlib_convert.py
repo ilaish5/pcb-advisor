@@ -391,3 +391,96 @@ def kicad_model(text, tht):
     k = [float(rot.group(i)) for i in (1, 2, 3)] if rot else [0.0, 0.0, 0.0]
     return {"file": mm.group(1), "rx": (-k[0]) % 360, "ry": (-k[1]) % 360, "rz": (-k[2]) % 360,
             "dx": round(dx, 3), "dy": round(dy, 3), "seat": 0 if tht else 1}
+
+
+# ---------------------------------------------------------------- pin names that do not fit the symbol body
+
+NAME_CHAR = 60                      # mil per character of a pin name or number (Altium default 10 pt, a little generous)
+NAME_MARGIN = 50                    # mil between the body edge and the first letter of a pin name (Altium draws it a little in)
+NAME_HEIGHT = 80                    # mil: the part of a text line that is ink (pins 100 mil apart do not touch)
+NUMBER_RAISE = 45                   # mil: a pin number sits this far above its pin line
+OVERLAP_OK = 30                     # mil two turned (top or bottom) names may overlap before they count as on top of each other
+INK_SLACK = 5                       # mil: a drawing line may graze a name box this much
+
+
+def _text_box(p, text, inside):
+    """Rectangle (x0, y0, x1, y1) in mil that a pin's name (inside the body, a margin in from the pin's body end) or number (along
+    the pin, from the body edge outwards, beside it) takes. On a pin at the top or bottom the text is turned to run along the pin."""
+    dx, dy = DIRS.get(p.get("orient"), (1, 0))
+    w = max(1, len(str(text))) * NAME_CHAR
+    x, y = float(p["x"]), float(p["y"])
+    h = NAME_HEIGHT / 2
+    a, b = (-NAME_MARGIN, -NAME_MARGIN - w) if inside else (0.0, w)       # the name runs into the body, the number out along the pin
+    if dy == 0:
+        lo, hi = sorted((x + dx * a, x + dx * b))
+        return (lo, y - h, hi, y + h) if inside else (lo, y + NUMBER_RAISE, hi, y + NUMBER_RAISE + NAME_HEIGHT)
+    lo, hi = sorted((y + dy * a, y + dy * b))
+    return (x - h, lo, x + h, hi) if inside else (x - NUMBER_RAISE - NAME_HEIGHT, lo, x - NUMBER_RAISE, hi)
+
+
+def _segment_hits(box, x1, y1, x2, y2):
+    """Does the segment cross the rectangle (Liang-Barsky)?"""
+    t0, t1 = 0.0, 1.0
+    for d, lo, hi, o in ((x2 - x1, box[0], box[2], x1), (y2 - y1, box[1], box[3], y1)):
+        if d == 0:
+            if o < lo or o > hi:
+                return False
+            continue
+        ta, tb = (lo - o) / d, (hi - o) / d
+        if ta > tb:
+            ta, tb = tb, ta
+        t0, t1 = max(t0, ta), min(t1, tb)
+        if t0 > t1:
+            return False
+    return True
+
+
+def _obstacles(gfx):
+    """Segments and boxes of the drawing inside the body that a pin name must not be drawn over: polylines, polygons and every
+    rectangle but the body outline (the biggest one). gfx lines are as the spec has them (numbers may be text)."""
+    segs, boxes, rects = [], [], []
+    for g in gfx or []:
+        try:
+            if g[0] == "rectangle":
+                x0, y0, x1, y1 = (float(v) for v in g[4:8])
+                rects.append((abs((x1 - x0) * (y1 - y0)), (min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))))
+            elif g[0] in ("polyline", "polygon"):
+                xy = [float(v) for v in g[4:]] if g[0] == "polygon" else [float(v) for v in g[3:]]
+                pts = list(zip(xy[0::2], xy[1::2]))
+                segs += [(*a, *b) for a, b in zip(pts, pts[1:])]
+                if g[0] == "polygon" and pts:
+                    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+                    boxes.append((min(xs), min(ys), max(xs), max(ys)))
+        except (ValueError, IndexError):
+            continue
+    for _, (x0, y0, x1, y1) in sorted(rects, key=lambda r: -r[0])[1:]:
+        segs += [(x0, y0, x1, y0), (x1, y0, x1, y1), (x1, y1, x0, y1), (x0, y1, x0, y0)]
+    return segs, boxes
+
+
+def names_fit(pins, gfx=None):
+    """False when pin names would be drawn on top of each other inside the body (a small body whose pins face each other: a 4-pin
+    crystal), on top of the symbol's own drawing (gfx: lines, polygons, inner rectangles), or two pin numbers on top of each other
+    outside it. A name is never compared with a number: the name is inside the body, the number outside it, along the pin. Such a
+    symbol gets its pin names hidden; the numbers stay."""
+    for kind in (True, False):
+        boxes = [(_text_box(p, p.get("name") if kind else p.get("num"), kind), DIRS.get(p.get("orient"), (1, 0))[1] != 0) for p in pins
+                 if (p.get("name") if kind else p.get("num")) not in (None, "", "~")]
+        for i, (a, va) in enumerate(boxes):
+            for b, vb in boxes[i + 1:]:
+                # parallel texts only (a top pin's name crossing a side name is not judged). Names that run along the same row, facing
+                # each other (a crystal's two sides), are judged strictly; two turned names on pins 200 mil apart may touch a little
+                ok = OVERLAP_OK if va else 0
+                if va == vb and a[0] + ok < b[2] and b[0] + ok < a[2] and a[1] + ok < b[3] and b[1] + ok < a[3]:
+                    return False
+    segs, solid = _obstacles(gfx)
+    if segs or solid:
+        for p in pins:
+            if p.get("name") in (None, "", "~"):
+                continue
+            x0, y0, x1, y1 = _text_box(p, p["name"], True)
+            box = (x0 + INK_SLACK, y0 + INK_SLACK, x1 - INK_SLACK, y1 - INK_SLACK)
+            if any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3] for b in solid) or \
+                    any(_segment_hits(box, *sg) for sg in segs):
+                return False
+    return True

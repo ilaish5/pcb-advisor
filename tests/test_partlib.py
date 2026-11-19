@@ -263,7 +263,7 @@ def test_build_specs_and_part_fixes(proj, home):
     assert r1["hide_pin_names"] is True and r1["prefix"] == "R" and r1["comment"] == "10k"
     assert r1["params"]["LCSC"] == "C100" and "LCSC C100" in r1["params"]["Description"]
     assert r1["params"]["Manufacturer"] == "ACME"
-    assert parts["symbols"]["LDO33"]["comment"] == "LDO33" and parts["symbols"]["LDO33"]["hide_pin_names"] is False
+    assert parts["symbols"]["LDO33"]["comment"] == "LDO33" and parts["symbols"]["LDO33"]["hide_pin_names"] is True   # VIN and VOUT face each other on one row of a 400 mil body
     # passives' pins are Passive (the EasyEDA resistor came with Input pins), power pins Power
     r1_pins = [ln for ln in sy.splitlines() if ln.startswith("PIN|") and ln.split("|")[2] in ("1", "2")][:2]
     assert all("eElectricPassive" in ln for ln in r1_pins)
@@ -493,3 +493,71 @@ def test_silk_clearance_covers_the_mask_expansion_and_the_silk_to_mask_rule_of_t
     gap = float(rules["SilkToSolderMaskClearance"]["MINSILKSCREENTOMASKGAP"].replace("mil", ""))
     assert conv.MASK_EXPANSION_MIL == exp and conv.SILK_TO_MASK_MIL == gap
     assert conv.SILK_TO_COPPER_MIL >= exp + gap
+
+
+# ---------------------------------------------------------------- pin names that do not fit a small body
+
+def _sym_pin(num, name, orient, x, y, ln=100):
+    return {"num": num, "name": name, "type": "Passive", "orient": orient, "x": x, "y": y, "len": ln}
+
+
+def test_pin_names_that_would_overlap_inside_a_small_body_are_hidden():
+    # a 4-pad crystal: two pins facing each other 200 mil apart, the grounds above and below
+    xtal = [_sym_pin("1", "XIN", "eRotate180", -100, 0), _sym_pin("3", "XOUT", "eRotate0", 100, 0),
+            _sym_pin("2", "GND", "eRotate270", 0, -100), _sym_pin("4", "GND", "eRotate90", 0, 100)]
+    assert conv.names_fit(xtal) is False
+    big = [_sym_pin("1", "XIN", "eRotate180", -400, 0), _sym_pin("3", "XOUT", "eRotate0", 400, 0),
+           _sym_pin("2", "GND", "eRotate270", 0, -400), _sym_pin("4", "GND", "eRotate90", 0, 400)]
+    assert conv.names_fit(big) is True
+
+
+def test_a_normal_ic_symbol_keeps_its_pin_names():
+    ic = [_sym_pin(str(i + 1), f"PIN{i}", "eRotate180", -600, 300 - 100 * i, 200) for i in range(4)] +          [_sym_pin(str(i + 5), f"IO{i}", "eRotate0", 600, 300 - 100 * i, 200) for i in range(4)]
+    assert conv.names_fit(ic) is True
+
+
+REAL = FIX / "real"          # symbols exactly as EasyEDA delivered them
+
+
+def _real(code):
+    (sym,) = conv.convert_symbols((REAL / code / "lib.kicad_sym").read_text(encoding="utf-8"))
+    return sym["pins"], sym["gfx"]
+
+
+def test_real_symbols_keep_their_pin_names():
+    for code, count in (("C393939", 16), ("C8734", 48), ("C7593", 8), ("C6186", 4), ("C84104", 3)):   # USB-C, STM32F103, NE555, AMS1117, MMBT3904
+        pins, gfx = _real(code)
+        assert len(pins) >= count - 8 and conv.names_fit(pins, gfx) is True, code
+
+
+def test_the_real_crystal_c9002_has_its_pin_names_hidden():
+    # the Y1 of the live run: OSC1 and GND share a row across a 400 mil body, with the crystal drawing and lead lines in between
+    (sym,) = partlib._spec_symbols(REAL / "C9002_symbols_spec.txt").values()
+    assert len(sym["pins"]) == 4
+    assert conv.names_fit(sym["pins"], sym["gfx"]) is False
+    assert conv.names_fit(sym["pins"]) is False               # the facing names on the same row collide even without the drawing
+
+
+def test_a_name_drawn_over_the_symbols_own_lines_is_not_fitting():
+    pins = [_sym_pin("1", "OUT", "eRotate180", -300, 0), _sym_pin("2", "IN", "eRotate0", 300, 100)]
+    assert conv.names_fit(pins, [["rectangle", "1", "1", "0", -300, 200, 300, -200]]) is True
+    assert conv.names_fit(pins, [["rectangle", "1", "1", "0", -300, 200, 300, -200], ["polyline", "1", "1", -250, 0, -100, 0]]) is False
+
+
+def test_the_real_four_pin_crystal_c5181477_is_judged_by_its_geometry():
+    pins, gfx = _real("C5181477")
+    assert len(pins) == 4 and conv.names_fit(pins) is True       # 400 mil body: the names do not meet each other
+    squeezed = [{**p, "x": p["x"] // 2} for p in pins]            # the same pins on a 200 mil body: the GND names collide
+    assert conv.names_fit(squeezed) is False
+
+
+def test_a_long_pin_number_on_a_100_mil_pin_is_not_a_reason_to_hide_names():
+    pins = [_sym_pin(f"A{10 + i}", f"P{i}", "eRotate180", -400, 100 * i) for i in range(5)]
+    assert conv.names_fit(pins) is True
+
+
+def test_a_generated_box_symbol_is_sized_so_its_names_fit():
+    pins, gfx, _ = gen.box_symbol("U", [{"num": "1", "name": "VIN"}, {"num": "2", "name": "GND"}, {"num": "3", "name": "VOUT"}], [])
+    assert conv.names_fit(pins, gfx) is True
+    x0, y0, x1, y1 = gfx[0][4:8]
+    assert y1 - y0 > 200                         # the old 3-pin box was 200 mil high: VIN (top) and GND (bottom) overlapped

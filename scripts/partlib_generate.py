@@ -11,7 +11,7 @@ Footprints are built in mm with y up (Altium axes) and written in mil, relative 
 import math
 import re
 
-from partlib_convert import MM, MIN_SILK, SILK_TO_PAD, SILK_TO_COPPER_MIL, snap_symbol  # noqa: F401  (SILK_TO_PAD, snap_symbol: re-exported for callers and tests)
+from partlib_convert import MM, MIN_SILK, SILK_TO_PAD, SILK_TO_COPPER_MIL, names_fit, snap_symbol  # noqa: F401  (SILK_TO_PAD, snap_symbol: re-exported for callers and tests)
 
 # chip body width, body height -- mm
 CHIPS = {"0402": (1.0, 0.5), "0603": (1.6, 0.8), "0805": (2.0, 1.25), "1206": (3.2, 1.6)}
@@ -334,20 +334,25 @@ def box_symbol(prefix, pins, issues):
     maxl = max([len(p["name"]) for p in left] or [0])
     maxr = max([len(p["name"]) for p in right] or [0])
     width = max(600, math.ceil(((maxl + maxr) * 60 + 200) / 100) * 100)
-    half = max(math.ceil(width / 200) * 100, 100 * (max(len(top), len(bottom)) // 2 + 1))
-    ymax, ymin = 100, -100 * ndots
-    out = []
+    half0 = max(math.ceil(width / 200) * 100, 100 * (max(len(top), len(bottom)) // 2 + 1))
+    # a generated symbol is ours to size: grow the body, a step at a time, until no two pin names are drawn on top of each other
+    for grow in range(0, 40):
+        half = half0 + 100 * (grow // 2)
+        ymax, ymin = 100, -100 * ndots - 100 * ((grow + 1) // 2)
+        out = []
 
-    def pin(pn, orient, x, y):
-        out.append(_pin(pn["num"], pn["name"], pin_type(pn["name"], prefix), orient, x, y, 200))
-    for i, pn in enumerate(left):
-        pin(pn, "eRotate180", -half, -100 * i)
-    for i, pn in enumerate(right):
-        pin(pn, "eRotate0", half, -100 * i)
-    for grp, orient, y in ((top, "eRotate90", ymax), (bottom, "eRotate270", ymin)):
-        start = -100 * ((len(grp) - 1) // 2)
-        for i, pn in enumerate(grp):
-            pin(pn, orient, start + 100 * i, y)
+        def pin(pn, orient, x, y):
+            out.append(_pin(pn["num"], pn["name"], pin_type(pn["name"], prefix), orient, x, y, 200))
+        for i, pn in enumerate(left):
+            pin(pn, "eRotate180", -half, -100 * i)
+        for i, pn in enumerate(right):
+            pin(pn, "eRotate0", half, -100 * i)
+        for grp, orient, y in ((top, "eRotate90", ymax), (bottom, "eRotate270", ymin)):
+            start = -100 * ((len(grp) - 1) // 2)
+            for i, pn in enumerate(grp):
+                pin(pn, orient, start + 100 * i, y)
+        if names_fit(out):
+            break
     gfx = [["rectangle", "1", "1", "0", -half, ymin, half, ymax]]
     return out, gfx, issues
 
