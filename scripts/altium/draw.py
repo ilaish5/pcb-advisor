@@ -36,7 +36,6 @@ TEXT_GAP = 50                          # between the body (or other ink) and the
 TEXT_CHAR = 65                         # width of one character of the designator and the comment (partlib uses 60; a little over)
 TEXT_SPACE = 100                       # between the designator and the comment on one row
 ONE_ROW = 800                          # designator and comment share a row up to this width (or the body's width)
-MAX_COMMENT = 16                       # a longer comment is displayed cut (the library parameter keeps the whole value)
 GROUND_STYLE, RAIL_STYLE = 5, 2        # Altium: power port styles "Signal ground" and "Bar"
 
 _GROUND = re.compile(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", re.I)
@@ -267,9 +266,8 @@ def _body(symbol):
 
 
 def shown_comment(comment):
-    """The comment as displayed: a long one is cut with '...' (the full value stays in the library parameter)."""
-    c = str(comment or "").strip()
-    return c if len(c) <= MAX_COMMENT else c[:MAX_COMMENT - 3] + "..."
+    """The comment as displayed: always the whole value (the instance comment feeds the BOM and the PCB, it is never changed)."""
+    return str(comment or "").strip()
 
 
 def part_texts(ref, comment, body, ink):
@@ -300,8 +298,10 @@ def part_texts(ref, comment, body, ink):
     cands = []
     if len(items) == 1 or one <= max(body[2] - body[0], ONE_ROW):
         cands += [row(body[0], y0), row(body[2] - one, y0)]
+    y_low = _snap50(min([body[1]] + [r[1] for r in ink]) - TEXT_GAP - 2 * TEXT_PITCH)
     cands += [rows(body[0], y0), rows(body[2] - w, y0),
-              rows(body[2] + TEXT_GAP + 100, mid), rows(body[0] - TEXT_GAP - 100 - w, mid)]
+              rows(body[2] + TEXT_GAP + 100, mid), rows(body[0] - TEXT_GAP - 100 - w, mid),
+              rows(body[0], y_low), rows(body[2] - w, y_low)]
     for c in cands:
         if not clash(c):
             return c
@@ -411,7 +411,7 @@ def part_cell(part, symbol):
             if v:
                 warn.append(f"{part['ref']}.{s['pin']}: the library pin is off the {GRID} mil grid")
                 break
-    return {"ref": part["ref"], "symbol": symbol["name"], "stubs": stubs, "box": box, "texts": texts, "comment": comment, "comment_cut": comment != str(symbol.get("comment") or "").strip() and bool(str(symbol.get("comment") or "").strip()), "ink": ink,
+    return {"ref": part["ref"], "symbol": symbol["name"], "stubs": stubs, "box": box, "texts": texts, "comment": comment, "ink": ink,
             "pins": len(symbol["pins"]), "warnings": warn, "errors": errors, "pin_nets": pins}
 
 
@@ -662,6 +662,35 @@ def _tie(c, members):
     return got
 
 
+def _nets(c):
+    return {x["net"] for x in c["stubs"] if x["kind"] != "nc" and x["net"]}
+
+
+def own_parts(seed, todo):
+    """The small parts (up to 4 pins) that belong to an IC: decoupling capacitors on its supply, a crystal with its resistor and
+    capacitors, pull-ups. A small part belongs to it when it shares a net with the IC (or with a part already found) and none of its
+    signal nets reaches another large part. Returned in a stable order: parts with the fewest signal nets first (decoupling
+    capacitors), then by tie."""
+    if seed["pins"] <= 4:
+        return []
+    others = set()
+    for c in todo:
+        if c["pins"] > 4 and c is not seed:
+            others |= {n for n in _nets(c) if net_kind(n) == "label"}
+    got, nets = [], set(_nets(seed))
+    more = True
+    while more:
+        more = False
+        for c in sorted((c for c in todo if c["pins"] <= 4 and c not in got),
+                        key=lambda c: (len([n for n in _nets(c) if net_kind(n) == "label"]), -_tie(c, [seed]), todo.index(c))):
+            mine = _nets(c)
+            if mine & nets and not any(n in others for n in mine if net_kind(n) == "label"):
+                got.append(c)
+                nets |= mine - {n for n in mine if net_kind(n) != "label"}      # a part's signal nets (not GND or a supply) extend the group
+                more = True
+    return got
+
+
 def _join(a, b):
     out = list(a)
     for sid, refs in b:
@@ -711,6 +740,11 @@ def suggest_sheets(cells, sections, area=AREA, texts=None):
                 hopeless.append(seed["ref"])
                 continue
             piece, members = [seed["ref"]], [seed]
+            for c in own_parts(seed, todo):
+                if fits([(sid, piece + [c["ref"]])]):          # its own decoupling capacitors, crystal and pull-ups first
+                    piece.append(c["ref"])
+                    members.append(c)
+            todo = [c for c in todo if c["ref"] not in piece]
             while True:
                 best = sorted((c for c in todo if _tie(c, members) > 0), key=lambda c: (-_tie(c, members), todo.index(c)))
                 add = next((c for c in best if fits([(sid, piece + [c["ref"]])])), None)
@@ -852,7 +886,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
         for k in ("des", "com"):
             t = c["texts"].get(k)
             spots += [str(ox + t[0]), str(oy + t[1])] if t else ["", ""]
-        cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"]), *spots, c["comment"] if c["comment_cut"] else ""))
+        cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"]), *spots))
         out["parts"].append({"ref": c["ref"], "symbol": c["symbol"], "pins": c["pins"], "x": ox, "y": oy})
         for s in c["stubs"]:
             tx, ty = ox + s["tip"][0], oy + s["tip"][1]

@@ -192,7 +192,7 @@ def test_labels_on_adjacent_top_pins_are_staggered_not_crammed():
 def test_every_part_gets_both_text_spots_from_the_plan_not_the_library_symbol():
     p, sh = planned("Clock")
     places = [c for c in p["commands"] if c[0] == "PLACE"]
-    assert places and all(len(c) == 13 and all(v != "" for v in c[8:12]) for c in places)
+    assert places and all(len(c) == 12 and all(v != "" for v in c[8:12]) for c in places)
 
 
 def test_the_cell_box_and_so_the_frame_enclose_the_part_texts():
@@ -430,3 +430,25 @@ def test_a_crystals_ground_pins_are_never_marked_no_erc_for_not_being_listed():
         assert [w for w in warn if "left unconnected" in w and w.startswith("Y1")] and not any("No ERC" in w for w in warn)
     p = draw.plan_sheet({"parts": [{**part, "section": ""}], "sections": []}, {"Y1": {**xt, "joined": None}}, "l", "d")
     assert p["no_erc"] == []
+
+
+def test_one_section_of_the_evidence_sheets_keeps_the_mcu_with_its_own_caps_crystal_and_pullups():
+    # Clock + Core + Periph merged into ONE section: U1's decoupling caps are tied to it only by +3V3 / GND, U2 (QSPI flash) shares
+    # signal nets with it. The caps and the crystal still belong on U1's sheet, not on a later one.
+    parts, lib = [], {}
+    for n in ("Clock", "Core", "Periph"):
+        sh = sheet(n)
+        lib.update(_lib_for(sh))
+        parts += [{**p, "section": "A"} for p in sh["parts"]]
+    cells = [("A", draw.part_cell(p, lib[p["ref"]])) for p in parts]
+    sheets, hopeless = draw.suggest_sheets(cells, [{"id": "A", "title": "All"}])
+    assert hopeless == [] and len(sheets) >= 2                       # one section does not fit one sheet
+    by = {c["ref"]: c for _, c in cells}
+    mine = [c["ref"] for c in draw.own_parts(by["U1"], [c for r, c in by.items() if r != "U1"])]
+    assert {"Y1", "C3", "C4", "C13"} <= set(mine) and len(mine) >= 8  # the crystal and the caps tied to U1 only by +3V3 / GND
+    first = next(sh for sh in sheets if any("U1" in rs for _, rs in sh))
+    on = {r for _, rs in first for r in rs}
+    assert on - {"U1"} <= set(mine), on                               # U1's sheet holds its own parts, never U2 or the LED first
+    assert [r for r in mine if r.startswith("C") and r in on][:3] == ["C3", "C4", "C5"]   # decoupling first, as many as fit
+    left = [r for r in mine if r not in on]                           # an own part left behind really does not fit that sheet
+    assert left and draw.layout([("A", c) for _, c in cells if c["ref"] in on | {left[0]}], [{"id": "A"}], draw.AREA, None)[2]

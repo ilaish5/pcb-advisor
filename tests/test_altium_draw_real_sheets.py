@@ -58,19 +58,29 @@ def test_a_two_pin_part_grows_little_for_its_texts():
             assert b[3] - b[1] <= 600, (p["ref"], b)
 
 
-def test_a_long_comment_is_cut_for_display_and_the_cell_stays_narrow():
-    found = None
+def test_a_long_comment_is_never_changed_and_its_full_width_is_reserved():
+    long_seen = 0
     for proj, name in SHEETS:
         sheet = json.loads((ROOT / proj / name).read_text(encoding="utf-8"))
         lib = lib_for(proj, sheet)
+        plan = draw.plan_sheet(sheet, lib, "l", "d")
         for p in sheet["parts"]:
-            if len(lib[p["ref"]]["comment"]) > draw.MAX_COMMENT:
-                found = found or (sheet, lib, p)
-    assert found, "the fixtures hold no long comment"
-    sheet, lib, part = found
-    c = draw.part_cell(part, lib[part["ref"]])
-    assert len(c["comment"]) <= draw.MAX_COMMENT and c["comment"].endswith("...") and c["comment_cut"]
-    plan = draw.plan_sheet(sheet, lib, "l", "d")
-    place = next(x for x in plan["commands"] if x[0] == "PLACE" and x[2] == part["ref"])
-    assert place[12] == c["comment"]                         # the shortened text is sent; an uncut comment sends nothing
-    assert all(x[12] == "" for x in plan["commands"] if x[0] == "PLACE" and len(lib[x[2]]["comment"]) <= draw.MAX_COMMENT)
+            com = lib[p["ref"]]["comment"].strip()
+            c = draw.part_cell(p, lib[p["ref"]])
+            assert c["comment"] == com                               # whole text, no "..."
+            if len(com) > 16:
+                long_seen += 1
+                x, y, w = c["texts"]["com"]
+                assert w == len(com) * draw.TEXT_CHAR and c["box"][0] <= x and x + w <= c["box"][2]
+        for x in plan["commands"]:
+            if x[0] == "PLACE":
+                assert len(x) == 12                                  # no text field: the comment of the instance is never written
+    assert long_seen
+
+
+def test_the_bridge_never_assigns_the_comment_text():
+    import re
+    src = (pathlib.Path(__file__).parent.parent / "scripts" / "altium" / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
+    body = src[src.index("procedure PlacePart("):]
+    body = body[:body.index("\nend;")]                    # the placing of an instance: its comment (BOM, PCB) is never assigned
+    assert not re.search(r"Comment\s*\.\s*Text\s*:=", body, re.I) and "ComText" not in src
