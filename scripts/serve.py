@@ -516,20 +516,25 @@ _STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?
 _STOP_BARE = re.compile(r"^(?:no|nope|לא)(?!\w)", re.I)      # "no" is a stop only as a short reply or at the start of a clause
 
 
-_OTHER_VERB = re.compile(r"\b(?:delet\w*|remov\w*|renam\w*|erase\w*)\b|(?<!\w)(?:ת?מחק\w*|ת?מחוק|ת?סיר\w*|ת?שנה|ת?שני|למחוק|להסיר|לשנות)(?!\w)", re.I)
+_OTHER_VERB = re.compile(r"(?<!\w)(?:delet\w*|remov\w*|renam\w*|erase\w*)|(?<!\w)(?:ת?מחק\w*|ת?מחוק|ת?סיר\w*|למחוק|להסיר)(?!\w)", re.I)
+_SHEET_REMOVE = _OTHER_VERB            # the words that remove a sheet
+_SHEET_RENAME = re.compile(r"renam\w*|chang\w*\s+(?:the\s+)?(?:name|id)|(?<!\w)(?:ת?שנה|ת?שני|לשנות|שינוי)(?!\w)", re.I)
+_NEG = r"(?:don[’']?t|do not|never|אל)"
+_NEG_OTHER = re.compile(_NEG + r"\s+(?:\S+\s+){0,2}?(?:" + _OTHER_VERB.pattern + ")", re.I)
 
 
 class _Stops:
     """The student's words that say no, wait or stop. The unambiguous words (stop, wait, don't, עצור ...) count anywhere; a bare
     "no"/"לא" only as a short reply (the clause is at most three words: "no", "no thanks", "לא עכשיו"), never inside a sentence
-    such as "so that no signal net runs between the sheets". With `kind` (draw / place / route) a clause that forbids ANOTHER
-    action ("don't delete Main", "אל תמחק את Main": a delete / remove / rename verb, and no word of this action) is not a stop for it."""
+    such as "so that no signal net runs between the sheets". With `kind` (draw / place / route) a negation that directly governs a
+    delete / remove / rename verb ("don't delete Main", "אל תמחק את Main") is cut out of its clause first: it forbids ANOTHER action,
+    so it is no stop for this one. The rest of the clause is still read ("wait until I delete the old parts" stops)."""
     @staticmethod
     def search(text, kind=None):
         text = str(text or "")
         for clause in _CLAUSE.split(text):
-            if kind and _OTHER_VERB.search(clause) and not _ACTION_ANY[kind].search(clause):
-                continue
+            if kind:
+                clause = _NEG_OTHER.sub(lambda m: m.group(0) if _ACTION_ANY[kind].search(m.group(0)) else " ", clause)
             if _STOP.search(clause):
                 return True
             words = clause.strip().split()
@@ -648,24 +653,46 @@ def _consent_one(kind, a, last_user, earlier_turn):
     if _truthy(a.get("replace")):
         r = norm(a.get("replace_said"))
         # the replace word itself is a short quote ("מחדש"): whole words of their message are enough here (a Hebrew "ו" before it is the word "and": "ותחליף")
-        if not r or not replace_re.search(r) or re.search(r"(?<!\w)(?:ו)?" + re.escape(r) + r"(?!\w)", u) is None:
+        if not r or not replace_re.search(r) or not _asked(r, u):
             return (f"The {wipes} are only wiped when the student says so: ask whether what is there may be replaced, then run this with "
                     "replace_said = a quote of their words (replace, redo, overwrite, start over / מחדש, תחליף, תמחק).")
     return ""
 
 
+_NEGATED = re.compile(r"(?<!\w)(?:never|shouldn[’']?t|should not|no need|not|without|don[’']?t|do not|אסור|אל|לא)(?!\w)", re.I)
+
+
+def _asked(word, u):
+    """True when `word` (a quote, e.g. the replace word) appears in the message in a clause where it is not negated ("don't replace
+    anything", "אל תמחק את מה שיש", "without replacing" ask for the opposite). A Hebrew "ו" before it is the word "and"."""
+    pat = re.compile(r"(?<!\w)(?:ו)?" + re.escape(word) + r"(?!\w)")
+    for clause in _CLAUSE.split(str(u or "")):
+        m = pat.search(clause)
+        if m and not _NEGATED.search(clause[:m.start()]):
+            return True
+    return False
+
+
 def _sheet_edit_consent(kind, a, last_user):
-    """'' when the student's own words ask to remove (delete) or rename a netlist sheet, else why not. A quote of their message with a
-    delete / remove / rename word that is not negated ("don't delete Main" / "אל תמחק את Main" never removes anything)."""
-    said = a.get("student_said")
+    """'' when the student's own words ask to remove (delete) or rename a netlist sheet, else why not. The quote names the sheet (and for
+    a rename the new id) and has the remove / rename word; a question, a negation ("don't", "never", "shouldn't be", "no need", "אסור"),
+    or a no / wait / stop anywhere in the message is no instruction."""
+    said, sheet = str(a.get("student_said") or ""), str(a.get("sheet") or "")
+    word = _SHEET_REMOVE if kind == "netlist.remove" else _SHEET_RENAME
+    what = "remove" if kind == "netlist.remove" else "rename"
     if not _quote_holds(said, last_user):
-        return "student_said must be a verbatim quote of the student's message that tells you to " + ("remove" if kind == "netlist.remove" else "rename") + " the sheet. Ask the student first."
-    if not _OTHER_VERB.search(said):
-        return "the student's words do not ask to remove or rename a sheet. Ask the student first."
-    if any(_OTHER_VERB.search(c) and _STOP_ANY.search(c) for c in _CLAUSE.split(str(last_user or ""))):      # "don't delete Main"; "rename X, don't draw yet" is fine
-        return "the student's message says no, wait or stop about this. Do not change the sheet; ask what they want."
-    if kind == "netlist.rename" and not str(a.get("to") or "").strip():
-        return "to (the new sheet id) is missing."
+        return f"student_said must be a verbatim quote of the student's message that tells you to {what} the sheet. Ask the student first."
+    names = [sheet] + ([str(a.get("to") or "")] if kind == "netlist.rename" else [])
+    if not word.search(said) or any(not n.strip() or re.search(r"(?<!\w)" + re.escape(n) + r"(?!\w)", said, re.I) is None for n in names):
+        return f"the quote must ask to {what} sheet {sheet}" + (f" to {a.get('to')}" if kind == "netlist.rename" else "") + " (name it). Ask the student first."
+    if _STOP_ANY.search(last_user):
+        return "the student's message says no, wait or stop. Do not change the sheet; ask what they want."
+    for sent in _SENT.findall(str(last_user or "")):
+        if word.search(sent) and _is_question(sent):
+            return "the student asked a question about it; it is no instruction. Answer it and ask."
+    for clause in _CLAUSE.split(str(last_user or "")):
+        if word.search(clause) and _NEGATED.search(clause):
+            return "the student's message is a refusal or a worry about this, not an instruction. Do not change the sheet; ask what they want."
     return ""
 
 

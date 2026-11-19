@@ -223,3 +223,118 @@ def test_every_power_port_and_label_sits_on_a_wire_and_no_wire_net_has_two_names
                 assert any(pt in (segs[i][0], segs[i][1]) for i in hit), (c, "a power port must sit at a wire end")
             names.setdefault(find(hit[0]), set()).add(c[-1])
     assert all(len(v) == 1 for v in names.values()), [v for v in names.values() if len(v) > 1]
+
+
+# ---------------------------------------------------------------- review round: stops, questions, negations, overwrites, atomic rename
+
+@pytest.mark.parametrize("deny", ["wait until I delete the old parts", "not yet - I'm still removing parts", "אל תשנה כלום עדיין",
+                                  "wait, I will rename the sheets first", "אל תשרטט, אני מוחק קודם"])
+def test_a_stop_in_a_clause_with_a_delete_or_change_verb_still_stops(deny):
+    assert serve._STOP_ANY.search(deny, "draw")
+    assert _consent(DRAW_ALL, "המשך", [deny, DRAW_ALL]) != ""
+    assert _consent(DRAW_ALL_EN, "go on", [deny, DRAW_ALL_EN]) != ""
+
+
+def test_only_the_negation_of_the_other_verb_is_cut_out():
+    assert not serve._STOP_ANY.search("don't delete Main", "draw") and not serve._STOP_ANY.search("אל תמחק את Main", "draw")
+    assert not serve._STOP_ANY.search("never remove the old sheet", "draw")
+    assert serve._STOP_ANY.search("don't draw or delete anything", "draw")
+    assert serve._STOP_ANY.search("don't delete Main, wait", "draw")
+
+
+EDIT_REFUSED = [
+    ("netlist.remove", "Main", None, "should I delete Main?"),
+    ("netlist.rename", "Main", "01", "how do I rename the sheet Main to 01?"),
+    ("netlist.remove", "Main", None, "delete Main. wait, actually no"),
+    ("netlist.remove", "Main", None, "remove Main, no wait"),
+    ("netlist.remove", "Main", None, "never delete Main"),
+    ("netlist.remove", "Main", None, "Main shouldn't be deleted"),
+    ("netlist.remove", "Main", None, "no need to delete Main"),
+    ("netlist.remove", "Main", None, "אסור למחוק את Main"),
+    ("netlist.remove", "Main", None, "לא למחוק את Main"),
+    ("netlist.remove", "Main", None, "אל תמחק את Main"),
+    ("netlist.rename", "Main", "01", "אל תשנה את Main ל-01"),
+    ("netlist.remove", "Main", None, "rename 02 to Power"),                     # the quote is about another sheet and another verb
+    ("netlist.rename", "Main", "01", "delete Main"),                              # a remove word is no rename
+    ("netlist.rename", "Main", "01", "rename Main"),                              # no new id in the quote
+]
+
+
+@pytest.mark.parametrize("kind,sheet,to,said", EDIT_REFUSED)
+def test_a_sheet_is_never_changed_on_a_refusal_question_or_wrong_quote(kind, sheet, to, said):
+    a = {"type": kind, "sheet": sheet, "student_said": said, **({"to": to} if to else {})}
+    assert serve._sheet_edit_consent(kind, a, said) != ""
+
+
+def test_a_clear_instruction_still_changes_a_sheet():
+    for kind, sheet, to, said in (("netlist.remove", "Main", None, "please delete the sheet Main"), ("netlist.remove", "Main", None, "תמחק את Main"),
+                                  ("netlist.rename", "Main", "01", "rename Main to 01"), ("netlist.rename", "Main", "01", "שנה את Main ל-01")):
+        a = {"type": kind, "sheet": sheet, "student_said": said, **({"to": to} if to else {})}
+        assert serve._sheet_edit_consent(kind, a, said) == "", said
+
+
+@pytest.mark.parametrize("said,word", [("תצייר את הסכמה אבל אל תמחק את מה שיש", "תמחק"), ("draw the schematic, don't replace anything", "replace"),
+                                       ("draw the schematic without replacing what is there", "replacing"),
+                                       ("draw the schematic but never overwrite the sheet", "overwrite")])
+def test_a_negated_replace_word_does_not_allow_a_wipe(said, word):
+    assert _consent(said, said, replace=True, replace_said=word) != ""
+    assert _consent(said, said) == ""                                           # the draw itself is still asked for
+
+
+def test_a_replace_word_that_is_asked_for_still_works():
+    for said, word in (("תצייר את הסכמה ותחליף את מה שיש", "תחליף"), ("draw the schematic and replace what is there", "replace"),
+                       ("תצייר את הסכמה מחדש", "מחדש")):
+        assert _consent(said, said, replace=True, replace_said=word) == "", said
+
+
+def test_a_new_sheet_never_overwrites_the_file_another_sheet_is_drawn_on(started):  # noqa: F811
+    project, fake, drawn_on = started
+    prj = bridge._linked(project)
+    bridge.draw_schematic(project)                                    # 01 on Main.SchDoc, 02 on "02 Logic.SchDoc"
+    assert store.remove_sheet_logged(project, "01")["ok"]
+    assert store.rename_sheet_logged(project, "02", "01")["ok"]       # sheet 01 (Logic) now owns "02 Logic.SchDoc"
+    store.write_sheet(project, "02", {**SHEET2, "id": "02"})          # a new sheet 02 with the same title
+    assert store.sheet_docs(project)["01"] == "02 Logic.SchDoc"
+    for call in (lambda: bridge.draw_schematic(project, replace=True), lambda: bridge.skeleton(project)):
+        with pytest.raises(bridge.BridgeError, match="taken already"):
+            call()
+    assert bridge._sheet_doc(project, prj, "01", adopt=False).name == "02 Logic.SchDoc"
+
+
+def test_two_sheets_recorded_on_one_file_are_an_error_not_a_shared_file(started):  # noqa: F811
+    project, fake, drawn_on = started
+    prj = bridge._linked(project)
+    store.append(project, "altium-log.jsonl", {"ts": store.now(), "by": "test", "op": "sheet-docs", "sheet_docs": {"01": "X.SchDoc", "02": "X.SchDoc"}})
+    with pytest.raises(bridge.BridgeError, match="both recorded"):
+        bridge._sheet_doc(project, prj, "02")
+
+
+def test_a_rename_is_one_change_and_its_undo_leaves_one_sheet_on_the_file(empty):
+    store.write_sheet(empty, "02", {**SHEET, "id": "02", "title": "Logic"})
+    store.append(empty, "altium-log.jsonl", {"ts": store.now(), "by": "test", "op": "sheet-docs", "sheet_docs": {"02": "02 Logic.SchDoc"}})
+    res = store.rename_sheet_logged(empty, "02", "01")
+    assert len(res["changes"]) == 1 and store.sheet_ids(empty) == ["01"] and store.sheet_docs(empty) == {"01": "02 Logic.SchDoc"}
+    store.undo(empty, res["change"])
+    assert store.sheet_ids(empty) == ["02"] and store.sheet_docs(empty) == {"02": "02 Logic.SchDoc"}
+    res = store.rename_sheet_logged(empty, "02", "01")
+    store.write_sheet(empty, "02", {**SHEET, "id": "02"})            # the old id is taken again
+    with pytest.raises(store.UndoRefused):
+        store.undo(empty, res["change"])
+    assert store.sheet_ids(empty) == ["01", "02"] and store.sheet_docs(empty) == {"01": "02 Logic.SchDoc"}
+
+
+def test_undoing_a_removal_refuses_when_its_file_belongs_to_another_sheet_now(empty):
+    store.write_sheet(empty, "01", SHEET)
+    store.write_sheet(empty, "02", {**SHEET, "id": "02"})
+    store.append(empty, "altium-log.jsonl", {"ts": store.now(), "by": "test", "op": "sheet-docs", "sheet_docs": {"01": "A.SchDoc"}})
+    res = store.remove_sheet_logged(empty, "01")
+    store.append(empty, "altium-log.jsonl", {"ts": store.now(), "by": "test", "op": "sheet-docs", "sheet_docs": {"02": "A.SchDoc"}})
+    with pytest.raises(store.UndoRefused):
+        store.undo(empty, res["change"])
+    assert store.sheet_ids(empty) == ["02"]
+
+
+def test_the_title_block_step_checks_the_sheet_exists_before_the_setup():
+    seg = PAS[PAS.index("procedure TitleBlock"):]
+    seg = seg[:seg.index("\nend;")]
+    assert seg.index("(Sch = nil)") < seg.index("SheetSetup(Sch);")

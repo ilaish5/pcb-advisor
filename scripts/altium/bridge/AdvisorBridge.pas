@@ -293,6 +293,11 @@ var
     Sch : IDispatch;
 begin
     Sch := SchOf(Path);
+    if (Sch = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
     SheetSetup(Sch);
     Sch.TitleBlockOn := True;
     Log('title block on');

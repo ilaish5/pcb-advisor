@@ -1447,8 +1447,8 @@ def remove_sheet_logged(project, sheet_id, by="agent"):
 
 def rename_sheet_logged(project, old, new, by="agent"):
     """Rename a netlist sheet: the new id gets the sheet (title and parts as they are) and the SchDoc recorded for the old id, the old
-    id is removed, so no duplicate is left. Refuses a missing sheet and a new id that is taken. Two undoable changes (the new sheet, then
-    the removal of the old one): the result's "changes"."""
+    id is removed, so no duplicate is left. Refuses a missing sheet and a new id that is taken. ONE undoable change (the undo puts the
+    old sheet and its SchDoc record back and removes the new id together: never two sheets on one SchDoc)."""
     o, n = workspace.safe_name(old), workspace.safe_name(new)
     before = load_sheet(project, o)
     if not before:
@@ -1458,14 +1458,17 @@ def rename_sheet_logged(project, old, new, by="agent"):
     if n in sheet_ids(project):
         return {"ok": False, "errors": [f"sheet {n} exists already: remove it first or pick another id"]}
     doc = sheet_docs(project).get(o)
-    res = write_sheet_logged(project, n, {k: v for k, v in before.items() if k != "id"}, by)
+    res = write_sheet(project, n, {k: v for k, v in before.items() if k != "id"})
     if not res.get("ok"):
         return res
-    gone = remove_sheet_logged(project, o, by)
+    old_path = netlist_dir(project) / f"{o}.json"
+    with project_guard.writing(old_path):
+        old_path.unlink(missing_ok=True)
+    _drop_sheet_doc(project, o)
     if doc:
         append(project, "altium-log.jsonl", {"ts": now(), "by": "store", "op": "sheet-docs", "sheet_docs": {n: doc}, "was": doc})
-    return {"ok": True, "sheet": n, "was": o, "doc": doc, "changes": [c for c in (res.get("change"), gone.get("change")) if c],
-            "warnings": res.get("warnings") or []}
+    cid = _log_sheet_change(project, n, None, load_sheet(project, n), by, renamed_from=o, old_before=before, **({"doc": doc} if doc else {}))
+    return {"ok": True, "sheet": n, "was": o, "doc": doc, "change": cid, "changes": [cid], "warnings": res.get("warnings") or []}
 
 
 def _sheet_changes(project):
@@ -1490,14 +1493,28 @@ def undo_sheet_write(project, cid, by="student"):
     path = netlist_dir(project) / f"{ch['sheet']}.json"
     if _sheet_hash(load_sheet(project, ch["sheet"])) != ch["after_hash"]:
         raise UndoRefused(f"sheet {ch['sheet']} was written again after this; undo that later change first")
-    if ch.get("before") is None:
+    doc = ch.get("doc")
+    others = {k for k, v in sheet_docs(project).items() if v == doc and k != ch["sheet"]} if doc else set()
+    if ch.get("renamed_from"):           # a rename: the new id goes, the old sheet and its record come back, together
+        old = ch["renamed_from"]
+        if old in sheet_ids(project):
+            raise UndoRefused(f"sheet {old} exists again: remove or rename it first, then undo the rename")
+        with project_guard.writing(path):
+            path.unlink(missing_ok=True)
+        _drop_sheet_doc(project, ch["sheet"])
+        _write_text(netlist_dir(project) / f"{old}.json", json.dumps(ch["old_before"], ensure_ascii=False, indent=2))
+        if doc:
+            append(project, "altium-log.jsonl", {"ts": now(), "by": "store", "op": "sheet-docs", "sheet_docs": {old: doc}})
+    elif ch.get("before") is None:
         with project_guard.writing(path):
             path.unlink(missing_ok=True)
         _drop_sheet_doc(project, ch["sheet"])
     else:
+        if others:                       # the SchDoc of the removed sheet went to another sheet meanwhile: never two sheets on one file
+            raise UndoRefused(f"{doc} belongs to sheet {', '.join(sorted(others))} now; undo or rename that first")
         _write_text(path, json.dumps(ch["before"], ensure_ascii=False, indent=2))
-        if ch.get("doc"):          # an undone removal: the sheet gets its SchDoc record back
-            append(project, "altium-log.jsonl", {"ts": now(), "by": "store", "op": "sheet-docs", "sheet_docs": {ch["sheet"]: ch["doc"]}})
+        if doc:          # an undone removal: the sheet gets its SchDoc record back
+            append(project, "altium-log.jsonl", {"ts": now(), "by": "store", "op": "sheet-docs", "sheet_docs": {ch["sheet"]: doc}})
     append(project, "sheet-log.jsonl", {"id": cid, "ts": now_ms(), "status": "undone", "by": by})
     return ch
 
