@@ -609,6 +609,17 @@ def _norm_quote(t):
     return re.sub(r"\s+", " ", str(t or "").lower()).strip(" .,!?;:()-\"'")
 
 
+def _valid_replace_quote(kind, said, sources):
+    """True when `said` verbatim-quotes at least half of some message in `sources` that is neither self-do nor a stop for `kind`."""
+    q = _norm_quote(said)
+    for src in sources:
+        u = _norm_quote(src)
+        if (u and _quote_holds(said, src) and len(q) >= 0.5 * len(u)
+                and not _self_verdict(kind, src) and not _STOP_ANY.search(src, kind)):
+            return True
+    return False
+
+
 def _consent(kind, a, last_user, earlier=(), prev_agent=""):
     """The action's consent (`_consent_base`); then, for replace, `_replace_consent`: only a short, unambiguous replace or yes of the
     CURRENT message grants it (never a longer message, never an earlier one)."""
@@ -616,10 +627,10 @@ def _consent(kind, a, last_user, earlier=(), prev_agent=""):
     if not _truthy(a.get("replace")):
         return why
     if why:
-        q, u = _norm_quote(a.get("student_said")), _norm_quote(last_user)
-        if not (CONSENT[kind][5] is not None and _asked_replace(kind, prev_agent)
-                and _quote_holds(a.get("student_said"), last_user) and len(q) >= 0.5 * len(u)
-                and not _self_verdict(kind, last_user)):
+        if not (_asked_replace(kind, prev_agent)
+                and not _self_verdict(kind, last_user)
+                and not _STOP_ANY.search(last_user, kind)
+                and _valid_replace_quote(kind, a.get("student_said"), (last_user, *earlier))):
             return why
     return _replace_consent(kind, a, last_user, prev_agent)
 

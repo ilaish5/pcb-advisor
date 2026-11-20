@@ -445,3 +445,73 @@ def test_the_too_short_quote_refusal_names_the_fix():
     msg = "תודה על הרשימה. תצייר את הסכמה באלטיום בבקשה, ואחר כך נמשיך הלאה לשלב הבא של הפרויקט"
     why = serve._draw_consent({"student_said": "תצייר את הסכמה באלטיום"}, msg)
     assert why and "student_said" in why and "WHOLE message" in why
+
+
+LIVE_LONG_T1 = "תשרטט את גיליון 01 מחדש בבקשה עכשיו ותודה רבה על כל העזרה"
+LIVE_ASKED_HE = 'להחליף את השרטוט בגיליון 01? זה מוחק את מה שמצויר שם עכשיו (נשמר גיבוי). ענה כן/לא.\n\nאחרי "כן" אשרטט אותו מחדש ב-Altium.'
+
+
+def test_live_repro_yes_after_replace_question_with_turn1_quote_grants_draw(empty, spy):
+    # Direct consent check: Turn 1 uses Hebrew "גיליון" (outside _OBJECT["draw"]), Turn 2 is "כן", agent quotes Turn 1
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True, "sheet": "01"}, "כן", [LIVE_LONG_T1], LIVE_ASKED_HE) == ""
+    assert serve._draw_consent({"student_said": "כן", "replace": True, "sheet": "01"}, "כן", [LIVE_LONG_T1], LIVE_ASKED_HE) == ""
+    # End-to-end via apply_actions
+    chat = [U(LIVE_LONG_T1), A(LIVE_ASKED_HE), U("כן")]
+    applied, _, refused = serve.apply_actions(
+        empty, [{"type": "altium.draw_schematic", "student_said": LIVE_LONG_T1, "replace": True, "sheet": "01"}],
+        last_user="כן", chat=chat,
+    )
+    assert applied and not refused and spy == [True]
+
+
+def test_place_and_route_yes_after_replace_question_accept_turn1_or_yes_quote(empty, monkeypatch):
+    placed, routed = [], []
+    monkeypatch.setattr(bridge, "place_pcb", lambda p, replace=False: placed.append(replace) or {"placed": ["U1"], "outline_created": False, "warnings": []})
+    monkeypatch.setattr(bridge, "route_pcb", lambda p, replace=False, keep_partial=False: routed.append(replace) or {"summary": "ok", "warnings": []})
+    place_t1 = "תמקם את הכל מחדש בבקשה עכשיו ותודה רבה על כל העזרה"
+    route_t1 = "תנתב את הכל מחדש בבקשה עכשיו ותודה רבה על כל העזרה"
+    for said in (place_t1, "כן"):
+        assert serve._consent("place", {"student_said": said, "replace": True}, "כן", [place_t1], ASKED_PLACE) == "", said
+    for said in (route_t1, "כן"):
+        assert serve._consent("route", {"student_said": said, "replace": True}, "כן", [route_t1], ASKED_ROUTE) == "", said
+    applied, _, refused = serve.apply_actions(
+        empty, [{"type": "altium.place_pcb", "student_said": place_t1, "replace": True}],
+        last_user="כן", chat=[U(place_t1), A(ASKED_PLACE), U("כן")],
+    )
+    assert applied and not refused and placed == [True]
+    applied, _, refused = serve.apply_actions(
+        empty, [{"type": "altium.route_pcb", "student_said": route_t1, "replace": True}],
+        last_user="כן", chat=[U(route_t1), A(ASKED_ROUTE), U("כן")],
+    )
+    assert applied and not refused and routed == [True]
+
+
+def test_replace_after_question_bypass_blocks_adversarial_and_non_replace_cases(empty, spy):
+    # Fabricated student_said
+    assert serve._draw_consent({"student_said": "yes replace sheet 01", "replace": True}, "כן", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    # student_said too short (<50% of Turn 1)
+    assert serve._draw_consent({"student_said": "תשרטט את גיליון 01", "replace": True}, "כן", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    # Quoting a self-do earlier message
+    self_msg = "אני אצייר בעצמי"
+    assert serve._draw_consent({"student_said": self_msg, "replace": True}, "כן", [self_msg], LIVE_ASKED_HE) != ""
+    # Quoting a stop/refusal earlier message
+    assert serve._draw_consent({"student_said": "לא, אל תשרטט", "replace": True}, "כן", ["לא, אל תשרטט"], LIVE_ASKED_HE) != ""
+    # Non-replace prev_agent
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True}, "כן", [LIVE_LONG_T1], "Shall I add the LED?") != ""
+    # Wrong-kind replace prev_agent
+    assert serve._consent("place", {"student_said": LIVE_LONG_T1, "replace": True}, "כן", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    assert serve._consent("route", {"student_said": LIVE_LONG_T1, "replace": True}, "כן", [LIVE_LONG_T1], ASKED_PLACE) != ""
+    # Unrelated command or refusal on Turn 2
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True}, "כן, תוסיף נגד", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True}, "לא", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True}, "I'll redraw it", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    # replace=False MUST still refuse (identical to 4744c1d)
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": False}, "כן", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1}, "כן", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    # Generated button message on Turn 2 cannot grant replace even with Turn 1 quote
+    gen_yes = {"role": "user", "text": "כן", "generated": True}
+    _, _, refused = serve.apply_actions(
+        empty, [{"type": "altium.draw_schematic", "student_said": LIVE_LONG_T1, "replace": True, "sheet": "01"}],
+        last_user="כן", chat=[U(LIVE_LONG_T1), A(LIVE_ASKED_HE), gen_yes],
+    )
+    assert refused and not spy
