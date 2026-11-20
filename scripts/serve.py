@@ -609,13 +609,34 @@ def _norm_quote(t):
     return re.sub(r"\s+", " ", str(t or "").lower()).strip(" .,!?;:()-\"'")
 
 
-def _valid_replace_quote(kind, said, sources):
-    """True when `said` verbatim-quotes at least half of some message in `sources` that is neither self-do nor a stop for `kind`."""
+def _bad_replace_earlier(kind, text):
+    """True when an earlier student message refuses, stops, negates, or self-does a replace of `kind`."""
+    return bool(_self_verdict(kind, text) or _REPLACE_SELF.search(text)
+                or _STOP_ANY.search(text) or _NEGATED.search(text) or _REPLACE_NEG.search(text))
+
+
+def _valid_replace_quote(kind, said, last_user, earlier):
+    """True when `said` verbatim-quotes (>=50%) `last_user` (validated by `_replace_consent`), or an `earlier` non-question
+    message for `kind` with no intervening or in-message self-do, stop, or negation."""
     q = _norm_quote(said)
-    for src in sources:
-        u = _norm_quote(src)
-        if (u and _quote_holds(said, src) and len(q) >= 0.5 * len(u)
-                and not _self_verdict(kind, src) and not _STOP_ANY.search(src, kind)):
+    u = _norm_quote(last_user)
+    if u and _quote_holds(said, last_user) and len(q) >= 0.5 * len(u):
+        return True
+    for src in earlier:
+        if _bad_replace_earlier(kind, src):
+            return False
+        su = _norm_quote(src)
+        if not (su and _quote_holds(said, src) and len(q) >= 0.5 * len(su)):
+            continue
+        if kind == "draw" and _BLOCK_DIAGRAM.search(src) and not _OBJECT["draw"].search(src):
+            continue
+        other_kind = (not _REPLACE_SPECIFIC[kind].search(src)
+                      and any(_REPLACE_SPECIFIC[k].search(src) for k in _REPLACE_SPECIFIC if k != kind))
+        if other_kind:
+            continue
+        sents = [s for s in _SENT.findall(str(src or "")) if s.strip()]
+        if any(not _is_question(s) and not _REPLACE_INDIRECT_Q.search(s)
+               and (_ACTION_ANY[kind].search(s) or CONSENT[kind][1].search(s)) for s in sents):
             return True
     return False
 
@@ -629,8 +650,8 @@ def _consent(kind, a, last_user, earlier=(), prev_agent=""):
     if why:
         if not (_asked_replace(kind, prev_agent)
                 and not _self_verdict(kind, last_user)
-                and not _STOP_ANY.search(last_user, kind)
-                and _valid_replace_quote(kind, a.get("student_said"), (last_user, *earlier))):
+                and not _STOP_ANY.search(last_user)
+                and _valid_replace_quote(kind, a.get("student_said"), last_user, earlier)):
             return why
     return _replace_consent(kind, a, last_user, prev_agent)
 

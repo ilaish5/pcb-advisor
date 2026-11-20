@@ -515,3 +515,60 @@ def test_replace_after_question_bypass_blocks_adversarial_and_non_replace_cases(
         last_user="כן", chat=[U(LIVE_LONG_T1), A(LIVE_ASKED_HE), gen_yes],
     )
     assert refused and not spy
+    # Turn 2 reversal ("כן, תשאיר") must still be refused
+    assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True}, "כן, תשאיר", [LIVE_LONG_T1], LIVE_ASKED_HE) != ""
+    # BOM / refdes replace prev_agent must not unlock Turn-1 quote bypass
+    for bom_prev in ("Shall I replace R1 with a 10k resistor?", "להחליף את R1 בגיליון 01?", "Shall I replace the parts in the BOM?"):
+        assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True}, "כן", [LIVE_LONG_T1], bom_prev) != "", bom_prev
+        assert serve._consent("place", {"student_said": "תמקם את הכל מחדש בבקשה עכשיו ותודה רבה על כל העזרה", "replace": True},
+                              "כן", ["תמקם את הכל מחדש בבקשה עכשיו ותודה רבה על כל העזרה"], bom_prev) != "", bom_prev
+    # Server-appended "(Not applied: ...)" in prev_agent must not unlock Turn-1 quote bypass via apply_actions
+    chat_not_applied = [U(LIVE_LONG_T1), A(f"Drawing now.\n\n(Not applied: {ASKED})"), U("כן")]
+    _, _, refused = serve.apply_actions(
+        empty, [{"type": "altium.draw_schematic", "student_said": LIVE_LONG_T1, "replace": True, "sheet": "01"}],
+        last_user="כן", chat=chat_not_applied,
+    )
+    assert refused and not spy
+
+
+def test_replace_after_question_blocks_earlier_self_do_negation_intervening_stop_and_questions():
+    # 1. Earlier replace self-do (caught by _REPLACE_SELF)
+    for kind, ask, msg in (
+        ("draw", LIVE_ASKED_HE, "I'll redraw it"),
+        ("draw", LIVE_ASKED_HE, "I'll replace sheet 01"),
+        ("draw", LIVE_ASKED_HE, "אני אחליף את גיליון 01"),
+        ("draw", LIVE_ASKED_HE, "אני מחליף את גיליון 01"),
+        ("place", ASKED_PLACE, "I'll replace the parts"),
+        ("route", ASKED_ROUTE, "I'll reroute it"),
+    ):
+        assert serve._consent(kind, {"student_said": msg, "replace": True}, "כן", [msg], ask) != "", (kind, msg)
+
+    # 2. Earlier replace stop / negation (including don't delete / אל תמחק / לא להחליף / never replace)
+    for kind, ask, msg in (
+        ("draw", LIVE_ASKED_HE, "don't delete sheet 01"),
+        ("draw", LIVE_ASKED_HE, "אל תמחק את גיליון 01"),
+        ("draw", LIVE_ASKED_HE, "לא להחליף את גיליון 01"),
+        ("draw", LIVE_ASKED_HE, "never replace sheet 01"),
+        ("place", ASKED_PLACE, "don't delete the parts"),
+        ("route", ASKED_ROUTE, "אל תמחק את המסלולים"),
+    ):
+        assert serve._consent(kind, {"student_said": msg, "replace": True}, "כן", [msg], ask) != "", (kind, msg)
+
+    # 3. Intervening stop/self-do in earlier blocks quoting an older Turn 1, while quoting last_user "כן" still works
+    for stopper in ("לא, אל תשרטט", "אני אצייר בעצמי", "I'll redraw it", "don't delete sheet 01"):
+        assert serve._draw_consent({"student_said": LIVE_LONG_T1, "replace": True}, "כן", [stopper, LIVE_LONG_T1], LIVE_ASKED_HE) != "", stopper
+        assert serve._draw_consent({"student_said": "כן", "replace": True}, "כן", [stopper, LIVE_LONG_T1], LIVE_ASKED_HE) == "", stopper
+
+    # 4. Earlier pure question, indirect question, unrelated chat, block diagram, or cross-kind message
+    for kind, ask, msg in (
+        ("draw", LIVE_ASKED_HE, "how do you draw the schematic?"),
+        ("draw", LIVE_ASKED_HE, "איך משרטטים את הסכמה?"),
+        ("draw", LIVE_ASKED_HE, "explain how to redraw sheet 01"),
+        ("draw", LIVE_ASKED_HE, "שלום מה שלומך"),
+        ("draw", LIVE_ASKED_HE, "you draw the block diagram"),
+        ("place", ASKED_PLACE, "איך ממקמים רכיבים?"),
+        ("place", ASKED_PLACE, "תשרטט מחדש את 01"),
+        ("route", ASKED_ROUTE, "how does routing work?"),
+        ("route", ASKED_ROUTE, "תמקם מחדש את הרכיבים"),
+    ):
+        assert serve._consent(kind, {"student_said": msg, "replace": True}, "כן", [msg], ask) != "", (kind, msg)
