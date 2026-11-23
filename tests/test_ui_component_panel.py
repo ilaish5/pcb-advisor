@@ -288,3 +288,14 @@ def test_stage_fit_and_block_diagram_scaling():
 
     # Requirements list has inner scrolling container
     assert "overflow-y:auto" in content or "overflow-y: auto" in content
+
+
+def test_a_datasheet_can_be_chosen_from_the_computer_as_well_as_fetched_by_the_agent():
+    src = _view("inspector.js")
+    ds = _func(src, "inspDatasheetHTML")
+    assert "act: 'get-datasheet'" in ds and "act: 'datasheet-file'" in ds         # both ways stay side by side
+    assert "act: 'datasheet-file'" in src[src.index("function inspPartHTML"):]    # and in the part menu
+    html = (REPO / "ui" / "index.html").read_text(encoding="utf-8")
+    assert 'id="dspick"' in html
+    bom = _view("bom.js")
+    assert "onAct('datasheet-file'" in bom and "'/api/upload'" in bom and "'/api/parts/attach_datasheet'" in bom

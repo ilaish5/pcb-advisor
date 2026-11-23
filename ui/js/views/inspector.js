@@ -206,7 +206,9 @@ function inspDatasheetHTML(l) {
     return inspSec('Datasheet', known ? btn('', {kind: 'link', src: l.datasheet, html: `<span class="m">${esc(l.datasheet)}</span>`})
       : `<span class="m muted" title="Not in Sources">${esc(l.datasheet)}</span>`);
   }
-  return inspSec('Datasheet', '<p class="muted">None stored</p>', btn('Get datasheet', {size: 'sm', kind: 'line', act: 'get-datasheet', line: l.key}));
+  // two ways in: the agent finds and downloads it, or the student picks a file from their computer
+  return inspSec('Datasheet', '<p class="muted">None stored</p>', btn('Get datasheet', {size: 'sm', kind: 'line', act: 'get-datasheet', line: l.key, title: 'Find and download it'}) +
+    btn('Choose file', {size: 'sm', kind: 'line', act: 'datasheet-file', line: l.key, title: 'Pick a datasheet from this computer'}));
 }
 function inspPartHTML(l) {
   const refs = inspRefsOf(l), first = inspFirstRef(l);
@@ -216,7 +218,8 @@ function inspPartHTML(l) {
     {label: 'Alternatives', act: 'alts', attrs: {line: l.key}},
     {label: 'Show on schematic', act: 'show-sch', attrs: {key: l.key}, disabled: !onSheet},
     {label: 'Show on layout', act: 'show-pcb', attrs: {key: l.key}, disabled: !inspHasPcb()},
-    l.datasheet ? {label: 'Open datasheet', attrs: {src: l.datasheet}} : {label: 'Get datasheet', act: 'get-datasheet', attrs: {line: l.key}},
+    ...(l.datasheet ? [{label: 'Open datasheet', attrs: {src: l.datasheet}}]
+      : [{label: 'Get datasheet', act: 'get-datasheet', attrs: {line: l.key}}, {label: 'Choose datasheet file', act: 'datasheet-file', attrs: {line: l.key}}]),
   ];
   const acts = btn('Ask', {kind: 'pri', size: 'sm', act: 'insp-ask', key: l.key}) + menu({icon: 'more', size: 'sm', title: 'More'}, items);
   const field = (name, label, value, ph, mono) => [label, `<input class="in quiet${mono ? ' m' : ''}" data-edit="${name}" data-line="${esc(l.key)}" value="${esc(value || '')}" placeholder="${ph}" aria-label="${label}" autocomplete="off" spellcheck="false">`, true];
