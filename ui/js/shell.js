@@ -145,7 +145,7 @@ document.addEventListener('keydown', e => {
   const first = [...e.target.closest('.menu').querySelectorAll('button[data-proj]')].find(b => !b.hidden);
   if (first) { e.preventDefault(); first.click(); }
 });
-// The fold / unfold button at the foot of the nav. It is drawn by navHTML, so the 4s redraw keeps it and its state.
+// The fold / unfold button at the top of the nav, under the project switcher: the same place folded or not. It is drawn by navHTML, so the 4s redraw keeps it and its state.
 function navToggleHTML() {
   const min = navIsMin(), tip = min ? 'Expand the navigation' : 'Collapse the navigation';
   return `<button type="button" class="nitem nav-tog" data-act="toggle-nav" data-nav="navtog" aria-expanded="${!min}" aria-label="${tip}" title="${tip}">` +
@@ -171,7 +171,7 @@ function navHTML() {
   const pageBtn = (id, ic) => `<button type="button" class="nitem" data-page="${id}" data-nav="${id}"${here === id ? ' aria-current="page"' : ''} title="${PAGE_TITLES[id]}"><span class="no">${icon(ic, 's')}</span><span class="lbl">${PAGE_TITLES[id]}</span></button>`;
   const shown = chatShown();
   const appView = ($('#app') && $('#app').dataset.view) || 'work';
-  return switcher +
+  return switcher + navToggleHTML() +
     `<div class="viewsw seg" role="group" aria-label="Show"><button type="button" data-view="work" aria-pressed="${appView !== 'chat'}">Work</button><button type="button" data-view="chat" aria-pressed="${appView === 'chat'}">Chat</button></div>` +
     `<div class="trace" role="group" aria-label="Design stages">${STAGES.map(stage).join('')}</div>` +
     `<div class="navsp"></div>${pageBtn('library', 'book')}${pageBtn('sources', 'file')}` +
@@ -179,7 +179,6 @@ function navHTML() {
     `<button type="button" class="nitem" data-act="palette" data-nav="search" title="Search (Ctrl K)"><span class="no">${icon('search', 's')}</span><span class="lbl">Search</span><kbd>Ctrl K</kbd></button>` +
     `<button type="button" class="nitem chat-sw" data-act="toggle-chat" data-nav="chat" aria-pressed="${shown}" title="Chat (Ctrl J)"><span class="no">${icon('chat', 's')}</span><span class="lbl">Chat</span><kbd>Ctrl J</kbd></button>` +
     `<button type="button" class="nitem" data-page="settings" data-nav="settings"${here === 'settings' ? ' aria-current="page"' : ''} title="Settings"><span class="no">${icon('gear', 's')}</span><span class="lbl">Settings</span></button>` +
-    navToggleHTML() +
     `</div>`;
 }
 // A late redraw of the nav (rules, triage and update data arrive a moment after the page loads) between the mouse going down and

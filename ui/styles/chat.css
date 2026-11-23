@@ -144,7 +144,8 @@
 
 .chat-followup{font-size:11px;color:var(--ink-3);margin-bottom:2px;letter-spacing:.02em}
 
-.chat-engine{margin-inline-start:8px;font-size:var(--t-sm);font-weight:400;color:var(--ink-4)}
+.chat-engine{padding:4px 4px 0;font-size:var(--t-xs);color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:left}
+.chat-engine:empty{display:none}
 .msg .eng{margin-top:4px;font-size:var(--t-sm);color:var(--ink-4)}
 .runs li .raw{font-family:var(--mono,monospace);word-break:break-all}
 .msg.agent.note{background:none;padding:0}

@@ -14,10 +14,9 @@
 .app.will-hide>.chat{opacity:.4}
 
 /* the restore tab on the right edge: always there while the chat is hidden (wide) or closed (drawer), so it can never be lost */
-.chat-tab{display:none;position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:30;flex-direction:column;align-items:center;gap:8px;
-  padding:12px 5px;border:1px solid var(--line);border-right:0;border-radius:var(--r-md) 0 0 var(--r-md);background:var(--sheet);color:var(--ink-2);box-shadow:var(--float);font-size:var(--t-sm)}
+.chat-tab{display:none;position:fixed;right:10px;top:17px;z-index:30;align-items:center;justify-content:center;
+  width:30px;height:30px;padding:0;border:1px solid var(--line);border-radius:var(--r-md);background:var(--sheet);color:var(--ink-2);box-shadow:var(--float);font-size:var(--t-sm)}
 .chat-tab:hover{background:var(--hover);color:var(--ink)}
-.chat-tab span{writing-mode:vertical-rl;letter-spacing:.04em}
 .app.chat-off>.chat-tab{display:flex}
 
 /* ---------- the sheets ---------- */
@@ -85,7 +84,7 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
 .palette .pe{padding:18px 12px;color:var(--ink-3);font-size:13px}
 
 /* ---------- rail: .nav-min, the nav shows the dots and icons only (every item has a title). shell.js sets it from the toggle
-   in the nav foot, and by default while the window is <=1280px; it is never set in the one-column mode ---------- */
+   at the top of the nav, and by default while the window is <=1280px; it is never set in the one-column mode ---------- */
 .app.nav-min{--nav-w:56px}
 .app.nav-min .nav{padding:6px 8px;align-items:center}
 .app.nav-min .nav .menu-anchor{width:40px}
@@ -106,6 +105,7 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
   .app>.splitter,.app>.chat{display:none}
   .app>.panes{margin-right:36px}
   .app:not(.chat-open)>.chat-tab{display:flex}
+  .chat-tab{right:19px;top:18px}   /* level with the hide button in the open drawer, so hide and show are one spot */
   .app.chat-open>.chat{display:grid;position:fixed;z-index:40;top:8px;right:8px;bottom:8px;width:var(--drawer-w);
     padding:0 10px;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--float);animation:slide .18s var(--ease)}
   /* the open drawer pushes the sheets aside instead of covering them (T17: at 966px it hid Confirm idea and the page), and
@@ -124,7 +124,7 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
   .app[data-view="chat"]>.chat{display:grid;margin:0 8px;padding:0 4px}
   .app[data-view="chat"]>.panes{display:none}
   body .app.chat-off>.chat-tab,body .app:not(.chat-open)>.chat-tab{display:none}   /* the Work / Chat switch does this job here */
-  .navfoot .nav-tog{display:none}
+  .nav .nav-tog{display:none}
   .nav .menu-anchor{width:auto;flex:none}
   .proj{width:auto;padding:0 6px}
   .viewsw{display:inline-flex;flex:none;margin:0 6px}
