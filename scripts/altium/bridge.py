@@ -1471,7 +1471,8 @@ def _partial_ok(problem):
     return problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem
 
 
-def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None):
+def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None,
+             keepout_fn=None):
     """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
     script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
     Altium's batch design rule check (no new clearance / short / width / un-routed violations over the check made before routing).
@@ -1502,6 +1503,10 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     rules = route.rules_from_doc(doc)
     rules.update(net_current=currents or {}, net_estimate=estimates or {}, allow_narrow=bool(keep_partial), **(copper or {}))      # widths by current (netcurrent.py)
     cap_warn = []
+    py_keepouts = []
+    if keepout_fn:          # the keep-outs this program holds itself: obstacles of the router and cut-outs of the pour, whatever Altium keeps
+        py_keepouts = keepout_fn(box, doc)
+        rules["keepout_rects"] = py_keepouts
     refused = route.capability_check(doc, rules, box, pitch, warnings=cap_warn)      # what this router cannot do is said before anything is run or drawn
     if refused:
         return {"routed": [], "failed": [], "tracks": 0, "vias": 0, "stats": {}, "rules": {}, "widths": {}, "backup": "",
@@ -1525,7 +1530,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     res = {"routed": plan["routed"], "failed": plan["failed"], "tracks": plan["stats"]["tracks"], "vias": plan["stats"]["vias"],
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": shown, "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped,
-           "pour_warnings": [], "capability_warnings": cap_warn, "drc_line": "unchecked (not run)", "drc_clean": False}
+           "pour_warnings": [], "capability_warnings": cap_warn, "drc_line": "unchecked (not run)", "drc_clean": False,
+           "keepouts_held": len(py_keepouts)}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
@@ -1557,7 +1563,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
             else:
                 res["shape_fixed"] = [round(v, 3) for v in box]
         run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
-                                                                     edge=rules["edge"], keepouts=_footprint_keepouts(doc)), total_timeout=1500)
+                                                                     edge=rules["edge"], keepouts=_footprint_keepouts(doc) + py_keepouts), total_timeout=1500)
     except BridgeError as exc:
         if str(exc).startswith("The board is open in Altium with unsaved changes"):      # nothing was drawn: leave the student's edits alone
             raise
@@ -1807,7 +1813,11 @@ def route_pcb(project, replace=False, keep_partial=False):
         stale = partlib.converter_stale(project)        # tells the silk-to-mask finding whether "rebuild the library" is true
     except Exception:
         stale = None
-    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, **net_current_inputs(project))
+    caps = capabilities_cached()
+    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, **net_current_inputs(project),
+                   keepout_fn=lambda box, doc: python_keepouts(project, doc, box))
+    if caps is not None and not caps.get("keepout_layer", True) and res.get("keepouts_held"):
+        res.setdefault("capability_warnings", []).append(keepout_notice(caps))
     from altium import netcurrent
     _log(project, "route-pcb", pcb=str(pcb), routed=res["routed"], failed=[n for n, _ in res["failed"]], tracks=res["tracks"],
          vias=res["vias"], replace=bool(replace), keep_partial=bool(keep_partial), backup=res["backup"], problems=res["problems"],
@@ -2389,10 +2399,73 @@ def _capabilities_notice(project):
         caps = capabilities()
     except (BridgeError, AltiumReadError, OSError) as exc:
         return f"Could not check that Altium keeps keep-out and unplated-hole objects in a footprint ({exc}): look at them in the PcbLib."
-    if caps.get("problems"):
-        return ("Altium did not keep these in a footprint (" + "; ".join(caps["problems"]) + "): the keep-outs only work inside this "
-                "program's placer, router and pour, not as objects Altium's own checks know. Look at the PcbLib.")
-    return ""
+    return keepout_notice(caps)
+
+
+def keepout_notice(caps):
+    """What the keep-outs protect, said exactly, from a capabilities() answer: "" when Altium keeps them. When the Keep-Out layer did not
+    take, they are not objects of the PcbLib / PcbDoc: this program's placer, router and ground pour still keep the confirmed
+    keep-out rectangles and a radio module's antenna area clear (they are passed to them directly); Altium's own checks, its
+    autorouter and anything the student draws or moves by hand are not stopped."""
+    out = []
+    if not caps.get("keepout_layer", True):
+        out.append("Altium did not keep objects on the Keep-Out layer in a footprint, so the keep-outs (confirmed constraints, a radio "
+                   "module's antenna area) are not objects of the library or the board. Protected: this program's placer, router and "
+                   "ground pour keep those rectangles clear (checked after the route). Not protected: Altium's own design rule check, "
+                   "its autorouter, and anything moved or routed by hand. Look at the PcbLib.")
+    if not caps.get("npth", True):
+        out.append("Altium did not keep an unplated mounting hole unplated in a footprint: look at the holes in the PcbLib.")
+    if not out and caps.get("problems"):
+        out.append("Altium did not keep these in a footprint (" + "; ".join(caps["problems"]) + "). Look at the PcbLib.")
+    return " ".join(out)
+
+
+def capabilities_cached():
+    """The saved capabilities() answer for this script version, or None (never runs Altium)."""
+    try:
+        got = json.loads(capabilities_path().read_text(encoding="utf-8"))
+        return got if got.get("pas_hash") == _script_hash() else None
+    except (OSError, ValueError):
+        return None
+
+
+def _rotate_box(box, rot, bottom, x, y):
+    """A footprint-frame box [x0, y0, x1, y1] on a component at (x, y) turned `rot` degrees counter-clockwise (mirrored in x when it is
+    on the bottom layer), as a board-frame box."""
+    import math
+    c, s = math.cos(math.radians(rot)), math.sin(math.radians(rot))
+    pts = []
+    for px, py in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])):
+        px = -px if bottom else px
+        pts.append((x + px * c - py * s, y + px * s + py * c))
+    xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+    return [round(min(xs), 3), round(min(ys), 3), round(max(xs), 3), round(max(ys), 3)]
+
+
+def python_keepouts(project, doc, outline):
+    """[[x0, y0, x1, y1]] mm: the keep-out areas this program holds itself, as obstacles for the router and the pour whatever Altium
+    keeps: the student's CONFIRMED keep-out constraints (board mm from the outline) and the antenna keep-out of every radio module on
+    the board (library manifest `rf.keepout_box`, placed with the component's position, rotation and side)."""
+    import constraints
+    rects = []
+    try:
+        items = constraints.confirmed(store.load_idea(project))
+        if items:
+            plan = constraints.plan_for_board(items, outline, *constraints.known_refs(project), size=_board_size(project))
+            rects += [k["rect"] for k in plan["keepouts"]]
+    except Exception:                       # noqa: BLE001 - a constraint that cannot be read is a missing protection, said by the notice
+        pass
+    try:
+        man = store.library_manifest(project)
+        by_ref = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [])}
+        for c in doc.get("components", []):
+            box = ((man.get(by_ref.get(c.get("ref"))) or {}).get("rf") or {}).get("keepout_box")
+            if box:
+                rects.append(_rotate_box(box, float(c.get("rotation") or 0), str(c.get("layer") or "").lower().startswith("bottom"),
+                                         c["x_mm"], c["y_mm"]))
+    except Exception:                       # noqa: BLE001
+        pass
+    return rects
 
 
 def library_paths(project):
