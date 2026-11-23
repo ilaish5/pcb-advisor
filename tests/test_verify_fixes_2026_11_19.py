@@ -19,7 +19,16 @@ def test_name_fields_must_be_text_and_deleting_nothing_is_404(server, empty):
     assert call(server, "POST", "/api/delete_source", empty, {"name": ["x"]})[0] == 400
     assert call(server, "POST", "/api/projects/delete", empty, {"name": "never-made"})[0] == 404
     assert call(server, "POST", "/api/projects/new", empty, {"name": "Doomed"})[0] == 200
-    assert call(server, "POST", "/api/projects/delete", empty, {"name": "Doomed"})[0] == 200
+    # a cross-site page cannot delete; a real delete moves the folder to projects/.trash (not rmtree) and hides it from the list
+    import http.client
+    host, port = server[len("http://"):].split(":")
+    c = http.client.HTTPConnection(host, int(port), timeout=15)
+    c.request("POST", f"/api/projects/delete?project={empty}", json.dumps({"name": "Doomed"}), {"Origin": "https://evil.example", "Content-Type": "application/json"})
+    assert c.getresponse().status == 403
+    assert (workspace.projects_dir() / "Doomed").is_dir()
+    code, body = call(server, "POST", "/api/projects/delete", empty, {"name": "Doomed"})
+    assert code == 200 and "Doomed" not in [p["name"] for p in body["projects"]]
+    assert not (workspace.projects_dir() / "Doomed").exists() and list((workspace.projects_dir() / ".trash").glob("Doomed-*"))
     assert call(server, "POST", "/api/projects/delete", empty, {"name": "Doomed"})[0] == 404
 
 

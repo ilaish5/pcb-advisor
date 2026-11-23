@@ -386,7 +386,8 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
     """Approve or reject one proposal and do what follows (supply re-check, sheet labels, a note the engine
     reads). The click, the batch endpoint and the autonomy setting all come through here, so the logs are
     the same whoever decided; only `by` differs."""
-    store.decide(project, pid, decision, by=by)
+    if store.decide(project, pid, decision, by=by).get("already"):
+        return next(p for p in store.proposals(project) if p["id"] == pid)      # decided that way before: nothing more to do
     project_mod.touch(project)
     prop = next(p for p in store.proposals(project) if p["id"] == pid)
     if decision == "approved" and prop.get("kind") != "idea_diagram":
@@ -1291,6 +1292,7 @@ def needs_replace(exc):
 # Altium runs one script at a time and every operation shares one exchange folder: a second operation started while a draw / place /
 # route is running stops it or reads its files half written. The bridge's own lock only covers a single command batch, so whoever
 # starts an operation (a step button, another Altium button, a chat turn applying its actions) holds this for all of it.
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")     # the only Host names a request may carry (DNS rebinding)
 STEP_LOCK = threading.Lock()
 ALTIUM_BUSY = "Altium is still working on another step; wait for it to finish and try again."
 STEP_NAMES = {"draw": "Drew the schematic", "place": "Placed the parts", "route": "Routed the board",
@@ -2371,6 +2373,9 @@ def apply_update():
     if BUSY["chat"]:
         why = "The agent is answering. Update when it is done."
         return 409, {"ok": False, "reason": why, "error": why}
+    if STEP_LOCK.locked():              # the restart would kill the script that is driving Altium
+        why = "Altium is running a step. Update when it has finished."
+        return 409, {"ok": False, "reason": why, "error": why}
     with UPDATE_LOCK:
         if UPDATE["state"] in ("checking", "applying"):
             why = "An update check is running. Try again in a moment."
@@ -2512,9 +2517,18 @@ class Handler(BaseHTTPRequestHandler):
             raise
 
     def _cross_origin(self):
-        """True when the request names an Origin that is not this server (a browser sends it on cross-site POSTs)."""
+        """True when the request must be refused as not from this machine's own page. Three checks: the Host is a local name (a
+        DNS-rebound page arrives with its own Host; Origin == Host alone would pass it), an Origin if sent is this very server, and
+        Sec-Fetch-Site if sent says same-origin or none. No Origin (CLI, tests, our own callers) is fine on a local Host."""
+        host = (self.headers.get("Host") or "").strip().lower()
+        name = host[:host.index("]") + 1] if host.startswith("[") and "]" in host else host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        if name not in LOCAL_HOSTS:
+            return True
         origin = self.headers.get("Origin")
-        return bool(origin) and urlparse(origin).netloc != (self.headers.get("Host") or "")
+        if origin is not None and urlparse(origin).netloc.lower() != host:
+            return True
+        site = self.headers.get("Sec-Fetch-Site")
+        return site is not None and site not in ("same-origin", "none")
 
     def _report(self, make):
         """POST: make the diagnostic zip (local only) and say where it is. GET ?file=<name>: send one made earlier (strict file name)."""
@@ -2630,6 +2644,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _get(self):
         path = self.path.split("?")[0]
+        if path.startswith("/api/") and self._cross_origin():      # some GETs write logs (e.g. /api/final/unverified); none is for another site
+            return self._send(403, {"error": "forbidden"})
         if path in ("/", "/index.html"):
             return self._send(200, (workspace.ui_dir() / "index.html").read_text(encoding="utf-8"),
                               "text/html; charset=utf-8")
@@ -3037,6 +3053,9 @@ class Handler(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- write
     def _post(self):
         path = self.path.split("?")[0]
+        if self._cross_origin():          # default deny: no state change for a page of another site or a rebound host, whatever the route
+            self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 1 << 20))     # drained, or the reset hides the answer
+            return self._send(403, {"error": "forbidden"})
         proj = self.project()
         sess = self.session(proj)
 
@@ -3055,8 +3074,6 @@ class Handler(BaseHTTPRequestHandler):
             m["followup_running"] = followup_running(proj, sess)
             return m
 
-        if path in ("/api/log/client", "/api/log/usage", "/api/report") and self._cross_origin():
-            return self._send(403, {"error": "forbidden"})        # a page of another site must not write logs or make zips
         if path == "/api/log/client":          # window.onerror / unhandledrejection from the page
             if isinstance(data, dict):
                 f = {k: data.get(k) for k in ("message", "source", "line", "column", "stack", "view", "session")}
@@ -3293,11 +3310,12 @@ class Handler(BaseHTTPRequestHandler):
             results = []
             for pid in ids:
                 try:
+                    prior = next((p["status"] for p in store.proposals(proj) if p["id"] == pid), None)
                     decide_and_note(proj, sess, pid, decision, note=False, redraw_now=False)
-                    results.append({"id": pid, "ok": True})
+                    results.append({"id": pid, "ok": True, **({"already": True} if prior == decision else {})})
                 except (KeyError, ValueError) as exc:
                     results.append({"id": pid, "ok": False, "error": str(exc).strip("'\"")})
-            done = [r["id"] for r in results if r["ok"]]
+            done = [r["id"] for r in results if r["ok"] and not r.get("already")]      # a repeat changed nothing: not announced again
             if done:
                 if decision == "approved":
                     redraw(proj)
@@ -3848,7 +3866,13 @@ class Handler(BaseHTTPRequestHandler):
             proj_dir = model.project_dir(name)
             if not proj_dir.is_dir():
                 return self._send(404, {"error": f"no such project: {name}"})
-            shutil.rmtree(proj_dir)
+            with TURNS_LOCK:
+                answering = any(k[0] == name for k in TURNS)
+            if answering or STEP_LOCK.locked():       # a turn or an Altium step may be writing into that folder right now
+                return self._send(409, {"error": "The project is busy (the agent is answering or Altium is running a step). Delete it when that has finished."})
+            trash = proj_dir.parent / ".trash"        # not removed: moved aside (list_all skips dot-folders), so a mistake can be undone by hand
+            trash.mkdir(exist_ok=True)
+            shutil.move(str(proj_dir), str(trash / f"{proj_dir.name}-{time.strftime('%Y%m%d-%H%M%S')}"))
             projects = model.list_projects()
             default = projects[0]["name"] if projects else "demo"
             return self._send(200, {"deleted": name, "projects": projects, "default": default})
