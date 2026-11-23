@@ -216,11 +216,15 @@ function propRowOf(p, extra) {
 /* pending list: one row per proposal, with its tick */
 function propListHTML(ps, cls) { return proposalTable(ps.map(p => propRowOf(p)), {cls}); }
 /* The same three buttons under every list: Approve selected (N), Reject selected, Approve all. `ids` are the list's proposals. */
+function propUnverifiedIds(ids) {
+  return ids.filter(id => { const p = (S.proposals || []).find(x => x.id === id); return p && propIsUnverified(p); });
+}
 function propActsHTML(ids, lead) {
   const n = ids.filter(propTicked).length;
+  const unv = propUnverifiedIds(ids).length;       // Approve all takes these too, so the button says so
   return `<div class="acts prop-acts">${btn(`Approve selected (${n})`, {kind: lead ? 'pri' : 'line', size: 'sm', act: 'prop-decide', decision: 'approved', scope: 'selected', disabled: !n})}` +
     `${btn('Reject selected', {size: 'sm', act: 'prop-decide', decision: 'rejected', scope: 'selected', disabled: !n})}` +
-    `${btn('Approve all', {kind: 'line', size: 'sm', act: 'prop-decide', decision: 'approved', scope: 'all'})}</div>`;
+    `${btn(unv ? `Approve all (${unv} unverified)` : 'Approve all', {kind: 'line', size: 'sm', act: 'prop-decide', decision: 'approved', scope: 'all'})}</div>`;
 }
 /* after a tick changes: every copy of that tick, and every count and enabled state, follows the one shared state */
 function propSyncUI() {
@@ -239,6 +243,14 @@ onAct('prop-decide', async (el, d) => {
   const all = box ? box.dataset.pids.split(',').filter(Boolean) : [];
   const ids = d.scope === 'all' ? all : all.filter(propTicked);
   if (!ids.length) { toast('Tick at least one change'); return; }
+  // Approve all also approves the parts flagged Unverified (they start unticked): one confirm names them, once
+  const unv = d.scope === 'all' && d.decision === 'approved' ? propUnverifiedIds(ids) : [];
+  if (unv.length) {
+    const list = unv.map(id => { const r = propRowOf((S.proposals || []).find(p => p.id === id)); return `${r.ref}: ${r.mpn || '(no part number)'}`; });
+    const ok = await askChoice({title: `Approve ${unv.length} unverified ${unv.length === 1 ? 'part' : 'parts'}?`,
+      text: 'The agent could not confirm these part numbers. They are approved with the rest.', list, yes: `Approve all ${ids.length}`, no: false});
+    if (ok !== true) return;
+  }
   const r = await api('/api/proposals/batch', {ids, decision: d.decision});
   setState(r); render(true);
   const bad = (r.results || []).filter(x => !x.ok);

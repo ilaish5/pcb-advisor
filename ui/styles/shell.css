@@ -69,6 +69,7 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
 .dlg::backdrop{background:var(--scrim)}
 .dlg h2{font-size:var(--t-lg);margin-bottom:14px}
 .dlg .in{width:100%}
+.dlg-list{margin:8px 0 0;padding-left:18px;max-height:40vh;overflow:auto;line-height:1.5;font-family:var(--mono,monospace);font-size:var(--t-sm,13px)}
 .dlg .acts{justify-content:flex-end;margin-top:18px}
 
 /* ---------- the command palette: rows added to base.css ---------- */

@@ -287,14 +287,15 @@ function askText(o) {
   });
 }
 
-/* A two-way question: resolves true (yes), false (no) or null (cancelled). askChoice({title, text, yes, no}) */
+/* A two-way question: resolves true (yes), false (no) or null (cancelled). askChoice({title, text, list, yes, no})
+   list = lines shown under the text (plain text each); no: false leaves out the No button (Cancel stays). */
 function askChoice(o) {
   return new Promise(resolve => {
     const dlg = document.createElement('dialog');
     dlg.className = 'dlg';
     dlg.setAttribute('aria-labelledby', 'dlg-title');
-    dlg.innerHTML = `<form method="dialog"><h2 id="dlg-title">${esc(o.title || '')}</h2><p>${esc(o.text || '')}</p>
-      <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn" value="no">${esc(o.no || 'No')}</button><button type="submit" class="btn pri" value="yes">${esc(o.yes || 'Yes')}</button></div></form>`;
+    dlg.innerHTML = `<form method="dialog"><h2 id="dlg-title">${esc(o.title || '')}</h2><p>${esc(o.text || '')}</p>${o.list && o.list.length ? `<ul class="dlg-list">${o.list.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button>${o.no === false ? '' : `<button type="submit" class="btn" value="no">${esc(o.no || 'No')}</button>`}<button type="submit" class="btn pri" value="yes">${esc(o.yes || 'Yes')}</button></div></form>`;
     dlg.querySelector('[data-cancel]').addEventListener('click', () => dlg.close('cancel'));
     dlg.addEventListener('close', () => { const v = dlg.returnValue; dlg.remove(); resolve(v === 'yes' ? true : v === 'no' ? false : null); });
     document.body.appendChild(dlg);
@@ -313,6 +314,12 @@ const ACTIONS = Object.create(null);
 function onAct(name, fn) { ACTIONS[name] = fn; }
 const CHANGE_HANDLERS = [];
 function onChange(test, fn) { CHANGE_HANDLERS.push({test, fn}); }
+const BUSY = new Set();     // keys of the button actions that are running now
+function busyKey(el) {
+  const d = Object.keys(el.dataset).sort().map(k => k + '=' + el.dataset[k]).join('&');
+  const box = el.closest('[data-pids]');          // the proposals a list-level button acts on are not in its own data-*
+  return (d || 'text:' + el.textContent.trim()) + (box ? '|' + box.dataset.pids : '');
+}
 document.addEventListener('click', async e => {
   const el = e.target.closest('button, tr[data-key], g.part, g[data-tab], g[data-act], a');
   if (!el) return;
@@ -323,11 +330,15 @@ document.addEventListener('click', async e => {
   if (el.matches('g.part')) { const l = lineOfRef(el.dataset.ref); if (l) select(l.key); return; }
   if (el.matches('tr[data-key]')) { if (e.target.closest('input')) return; if (!e.target.closest('button')) { select(el.dataset.key); return; } }
   const d = el.dataset;
-  // Busy guard, for every button: while its action is still running, a second click on the same button does nothing
-  // (a double click must not approve twice, three quick clicks must not accept three rows).
+  // Busy guard, for every button: while its action is still running, a second click on the same action does nothing
+  // (a double click must not approve twice, three quick clicks must not accept three rows). The guard is keyed by the
+  // action itself (data-act + its arguments and ids), not by the button element: a background render replaces the
+  // button, and the new one is still the same action.
   const guard = el.tagName === 'BUTTON';
+  const busyId = guard ? busyKey(el) : '';
   if (guard) {
-    if (el.getAttribute('aria-busy') === 'true') return;
+    if (BUSY.has(busyId)) return;
+    BUSY.add(busyId);
     el.setAttribute('aria-busy', 'true');
   }
   try {
@@ -350,7 +361,7 @@ document.addEventListener('click', async e => {
     if (d.chat) { openPart(d.chat); return; }
     if (d.sheet) { sheetId = d.sheet; svgCache = {key: '', text: ''}; render(true); return; }
   } catch (err) { /* api() already toasted */ }
-  finally { if (guard) el.removeAttribute('aria-busy'); }
+  finally { if (guard) { BUSY.delete(busyId); el.removeAttribute('aria-busy'); } }
   if (el.classList.contains('sug')) { send(el.textContent); return; }
 });
 document.addEventListener('change', async e => {
