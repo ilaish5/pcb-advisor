@@ -27,6 +27,7 @@ import time
 from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import diagram_route  # noqa: E402
 import project_guard  # noqa: E402
 import workspace  # noqa: E402
 
@@ -2148,9 +2149,15 @@ def undo_diagram(project):
     return valid_diag
 
 
-def _auto_layout(shapes, connectors, frames):
+def _auto_layout(shapes, connectors, frames, report=None):
     """Columns by link depth: sources on the left, the hub in the middle, what it drives on the right.
-    Moves the shapes and frames in place; returns the ids it moved."""
+    Moves the shapes and frames in place; returns the ids it moved.
+
+    The arrangement is checked as a post-condition with the same router the browser draws with
+    (diagram_route.route_problems: no link through a non-endpoint block, no two links on one line, no label on a
+    block). Several arrangements are tried (insertion order, then barycenter order inside each column, then wider
+    gaps) and the first clean one is kept; when none is clean the least bad one is kept and its problems are
+    appended to `report` (a list) so the caller can tell the agent, never silently."""
     touched = set()
     frame_members = {}
     for f in frames:
@@ -2164,37 +2171,36 @@ def _auto_layout(shapes, connectors, frames):
         frame_members[f["id"]] = f_mems
 
     adj = defaultdict(list)
+    radj = defaultdict(list)
     in_deg = {s["id"]: 0 for s in shapes}
     for c in connectors:
         f_id = c["from"]["shape"] if isinstance(c["from"], dict) else c["from"]
         t_id = c["to"]["shape"] if isinstance(c["to"], dict) else c["to"]
         if f_id in in_deg and t_id in in_deg and f_id != t_id:
             adj[f_id].append(t_id)
+            radj[t_id].append(f_id)
             in_deg[t_id] += 1
 
-    ranks = {}
-    queue = [sid for sid, d in in_deg.items() if d == 0]
-    if not queue and shapes:
-        queue = [shapes[0]["id"]]
-    for q in queue:
-        ranks[q] = 0
-
-    visited = set()
-    curr = list(queue)
-    while curr:
-        nxt = []
-        for u in curr:
-            visited.add(u)
-            r_u = ranks.get(u, 0)
-            for v in adj[u]:
-                ranks[v] = max(ranks.get(v, 0), r_u + 1)
-                if v not in visited and v not in nxt:
-                    nxt.append(v)
-        curr = nxt
-
-    for s in shapes:
-        if s["id"] not in ranks:
-            ranks[s["id"]] = 0
+    # longest path from a source, in topological order (a link added late must still push its target right);
+    # a cycle is broken at the first block not yet placed
+    ranks = {s["id"]: 0 for s in shapes}
+    left = dict(in_deg)
+    ready = [sid for sid, d in in_deg.items() if d == 0]
+    done = set()
+    while len(done) < len(shapes):
+        if not ready:
+            ready = [next(s["id"] for s in shapes if s["id"] not in done)]
+        u = ready.pop(0)
+        if u in done:
+            continue
+        done.add(u)
+        for v in adj[u]:
+            if v in done:
+                continue
+            ranks[v] = max(ranks[v], ranks[u] + 1)
+            left[v] -= 1
+            if left[v] <= 0:
+                ready.append(v)
 
     by_rank = defaultdict(list)
     for s in shapes:
@@ -2202,16 +2208,45 @@ def _auto_layout(shapes, connectors, frames):
 
     start_x = 80.0
     start_y = 80.0
-    gap_x = 80.0
-    gap_y = 40.0
-    for r in sorted(by_rank.keys()):
-        group = by_rank[r]
-        max_w = max(s["w"] for s in group)
-        for i, s in enumerate(group):
-            s["x"] = start_x
-            s["y"] = start_y + i * (s["h"] + gap_y)
-            touched.add(s["id"])
-        start_x += max_w + gap_x
+    # room for the widest link label between two columns (the label sits on the link, not on a block)
+    label_w = max((diagram_route.label_width(c["label"]) for c in connectors if c.get("label")), default=0.0)
+    base_gap_x = min(max(80.0, label_w + 40.0), 220.0)
+
+    def arrange(bary, gap_x, gap_y):
+        pos, row_of = {}, {}
+        x = start_x
+        for r in sorted(by_rank.keys()):
+            group = list(by_rank[r])
+            if bary:
+                orig = {s["id"]: i for i, s in enumerate(group)}
+
+                def key(s, orig=orig):
+                    nb = [row_of[n] for n in radj[s["id"]] if n in row_of]
+                    return sum(nb) / len(nb) if nb else orig[s["id"]]
+                group.sort(key=key)
+            for i, s in enumerate(group):
+                pos[s["id"]] = (x, start_y + i * (s["h"] + gap_y))
+                row_of[s["id"]] = i
+            x += max(s["w"] for s in group) + gap_x
+        return pos
+
+    variants = [(False, base_gap_x, 56.0), (True, base_gap_x, 56.0),
+                (True, base_gap_x + 60.0, 80.0), (False, base_gap_x + 60.0, 80.0)]
+    best = None
+    for bary, gx, gy in variants:
+        pos = arrange(bary, gx, gy)
+        for s in shapes:
+            s["x"], s["y"] = pos[s["id"]]
+        problems = diagram_route.route_problems(shapes, connectors)
+        if best is None or len(problems) < len(best[1]):
+            best = (pos, problems)
+        if not problems:
+            break
+    for s in shapes:
+        s["x"], s["y"] = best[0][s["id"]]
+        touched.add(s["id"])
+    if best[1] and report is not None:
+        report.extend(best[1])
 
     for f in frames:
         mems = [s for s in shapes if s["id"] in frame_members.get(f["id"], [])]
@@ -2263,6 +2298,7 @@ def apply_diagram_edit(project, ops):
     frames = [copy.deepcopy(f) for f in cur_diag.get("frames", [])]
 
     touched_ids = set()
+    layout_problems = []
 
     for op in ops:
         if not isinstance(op, dict):
@@ -2694,21 +2730,24 @@ def apply_diagram_edit(project, ops):
             touched_ids.add(fid)
 
         elif op_name == "auto_layout":
-            touched_ids |= _auto_layout(shapes, connectors, frames)
+            touched_ids |= _auto_layout(shapes, connectors, frames, layout_problems)
         else:
             raise ValueError(f"unknown op: {op_name} (ops: add_, update_, delete_ + shape, connector or frame; auto_layout)")
 
     # the agent's own new blocks are laid out again when a link would pass through another block; a block the
     # student placed is never moved by this
     added = {op.get("id") for op in ops if isinstance(op, dict) and (op.get("op") or op.get("type")) == "add_shape"}
-    if added and not any(o.get("op") == "auto_layout" for o in ops if isinstance(o, dict))             and all(sh["id"] in added for sh in shapes) and _hidden_links(shapes, connectors):
-        touched_ids |= _auto_layout(shapes, connectors, frames)
+    if added and not any(o.get("op") == "auto_layout" for o in ops if isinstance(o, dict))             and all(sh["id"] in added for sh in shapes)             and (_hidden_links(shapes, connectors) or diagram_route.route_problems(shapes, connectors)):
+        touched_ids |= _auto_layout(shapes, connectors, frames, layout_problems)
 
     valid_diag = validate_diagram({"shapes": shapes, "connectors": connectors, "frames": frames})
     save_diagram_snapshot(project, cur_diag)
     idea["diagram"] = valid_diag
     save_idea_draft(project, idea)
-    return {"ok": True, "diagram": valid_diag, "touched": list(touched_ids)}
+    res = {"ok": True, "diagram": valid_diag, "touched": list(touched_ids)}
+    if layout_problems:
+        res["layout_warning"] = "layout could not be made clean: " + "; ".join(layout_problems[:4])
+    return res
 
 
 # ---------------------------------------------------------------- netlist
