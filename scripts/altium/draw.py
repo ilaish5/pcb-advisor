@@ -375,6 +375,7 @@ def part_cell(part, symbol):
     """Everything about one part before it has a place: its pin stubs, where its designator and comment go, and the box (minx, miny,
     maxx, maxy, relative to the symbol origin) that holds the symbol, its stubs, its texts and their margin."""
     pins, warn, errors = pin_nets(part, symbol)
+    pin_errors = len(errors)                # the first ones come from the pin comparison: how plan_sheet tells "pins.unmapped" from the rest
     ids = {int(p.get("part_id", 1)) for p in symbol["pins"]} - {0, -1}
     if ids - {1}:
         errors.append(f"{part['ref']}: library symbol {symbol['name']} has several parts (sub-parts {sorted(ids)}); "
@@ -422,7 +423,7 @@ def part_cell(part, symbol):
                 warn.append(f"{part['ref']}.{s['pin']}: the library pin is off the {GRID} mil grid")
                 break
     return {"ref": part["ref"], "symbol": symbol["name"], "stubs": stubs, "box": box, "texts": texts, "comment": comment, "ink": ink,
-            "pins": len(symbol["pins"]), "warnings": warn, "errors": errors, "pin_nets": pins}
+            "pins": len(symbol["pins"]), "warnings": warn, "errors": errors, "pin_errors": pin_errors, "pin_nets": pins}
 
 
 def _snap_up(v):
@@ -868,21 +869,31 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
     ids = {s["id"] for s in sections}
     first = sections[0]["id"] if sections else ""
     errors, warnings, cells = [], [], []
+    why = set()          # which kinds of refusal there are: one mechanical kind (see altium.bridge.NEUTRAL_CODES) is "fix_code", else None
     warnings += [f"net {n!r} drawn as {a!r} (the schematic is plain ASCII; the netlist keeps its name)" for n, a in sorted(renamed.items())]
     for p in parts:
         sym = symbols.get(p["ref"])
         if sym is None:
             errors.append(f"{p['ref']}: no symbol in the project library (run library.build first)")
+            why.add("prereq.library_not_built")
             continue
         c = part_cell(p, sym)
         c["unverified"] = p.get("pins_source") == "agent"
         c["accepted"] = p.get("pins_source") == "student"
         warnings += c["warnings"]
         errors += c["errors"]
+        if c["pin_errors"]:
+            why.add("pins.unmapped")
+        if len(c["errors"]) > c["pin_errors"]:
+            why.add("other")
         cells.append((p.get("section") if p.get("section") in ids else first, c))
-    errors += text_problems(sheet, parts, symbols)
+    texts_bad = text_problems(sheet, parts, symbols)
+    errors += texts_bad
+    if texts_bad:
+        why.add("other")
     out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors, "renamed": renamed}
     if errors:
+        out["fix_code"] = next(iter(why)) if len(why) == 1 and "other" not in why else None
         return out
     titles = {s["id"]: s.get("title") or "" for s in sections}
     head_names = {}
@@ -914,6 +925,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
     pos, heads, problems = layout(cells, sections, texts=texts)
     if problems:
         errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections, texts))
+        out["fix_code"] = "sheet.too_big"
     if errors:
         return out
     d = str(doc)

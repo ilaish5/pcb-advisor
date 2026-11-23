@@ -87,6 +87,22 @@ class BridgeError(ValueError):      # a ValueError, so apply_actions reports it 
     pass
 
 
+# The refusals a retry may fix without asking again (W3): the server assigns the code where it raises, never infers it from the
+# wording. Frozen: a new code is a new consent decision (pinned by test_agent_retry).
+NEUTRAL_CODES = frozenset({"pins.unmapped", "sheet.too_big", "prereq.library_not_built", "prereq.no_project", "prereq.no_netlist",
+                           "prereq.rules_not_imported"})
+
+
+class Fixable(BridgeError):
+    """A refusal with a server-assigned code from NEUTRAL_CODES: the fix changes how the action runs, not what or whether."""
+
+    def __init__(self, code, message):
+        if code not in NEUTRAL_CODES:
+            raise ValueError(f"not a neutral code: {code}")
+        super().__init__(message)
+        self.code = code
+
+
 # ---------------------------------------------------------------- Altium side
 
 def _exe():
@@ -438,7 +454,7 @@ def read_prjpcb(prj):
 def _linked(project):
     prj = project_mod.altium_link(project).get("project_file")
     if not prj or not pathlib.Path(prj).is_file():
-        raise BridgeError("No Altium project is linked to this project yet. Create one first.")
+        raise Fixable("prereq.no_project", "No Altium project is linked to this project yet. Create one first.")
     return pathlib.Path(prj)
 
 
@@ -894,13 +910,13 @@ def draw_schematic(project, sheet=None, replace=False):
     prj = _linked(project)
     lp = library_paths(project)
     if not lp["schlib"].is_file():
-        raise BridgeError("The project library is not built yet: run library.build first, the parts are drawn from it.")
+        raise Fixable("prereq.library_not_built", "The project library is not built yet: run library.build first, the parts are drawn from it.")
     planned = _sheets(project)
     if sheet is not None:
         planned = [s for s in planned if s[0] == str(sheet)]
     if not planned:
-        raise BridgeError("There is no netlist sheet to draw" + (f" (no sheet {sheet})" if sheet is not None else "")
-                          + ": write the netlist first (netlist.write).")
+        raise Fixable("prereq.no_netlist", "There is no netlist sheet to draw" + (f" (no sheet {sheet})" if sheet is not None else "")
+                      + ": write the netlist first (netlist.write).")
     bom_refs = {r for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
     lib_symbols = {s["name"]: s for s in read_schlib(lp["schlib"])["symbols"]}
     manifest = store.library_manifest(project)
@@ -928,7 +944,8 @@ def draw_schematic(project, sheet=None, replace=False):
         plan = draw.plan_sheet(sh, _sheet_symbols(project, sh, lib_symbols), lp["schlib"], doc, replace=replace and doc not in adopted,
                                aliases=aliases)      # a sheet taken over as empty is never wiped: anything on it stops the draw
         if plan["errors"]:
-            raise BridgeError(f"Sheet {sid} cannot be drawn: " + "; ".join(plan["errors"][:8]))
+            msg = f"Sheet {sid} cannot be drawn: " + "; ".join(plan["errors"][:8])
+            raise Fixable(plan["fix_code"], msg) if plan.get("fix_code") in NEUTRAL_CODES else BridgeError(msg)
         plans.append((sid, doc, plan, {r: (manifest.get(key.get(r)) or {}).get("footprint") for r in key}))
     saved_first = save_open_sheets(prj, existing) if existing else []      # before the backup, so the backup holds the student's latest edits
     backup = _backup(prj, existing + ([prj] if new_docs else []))
@@ -1315,16 +1332,16 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     from altium.pcbdoc import read_pcbdoc
     prj, pcb, pcblib = pathlib.Path(prj), pathlib.Path(pcb), pathlib.Path(pcblib)
     if not pcblib.is_file():
-        raise BridgeError("The project library is not built yet: run library.build first, the footprints are placed from it.")
+        raise Fixable("prereq.library_not_built", "The project library is not built yet: run library.build first, the footprints are placed from it.")
     if not parts:
-        raise BridgeError("There are no parts in the netlist to place: write the netlist first (netlist.write).")
+        raise Fixable("prereq.no_netlist", "There are no parts in the netlist to place: write the netlist first (netlist.write).")
     bad = layout.text_problems(parts)
     if bad:
         raise BridgeError("; ".join(bad[:6]))
     fps = {f["name"]: f for f in read_pcblib(pcblib)["footprints"]}
     missing = sorted({p["ref"] for p in parts if p.get("footprint") not in fps})
     if missing:
-        raise BridgeError(f"No footprint in the project library for {', '.join(missing[:8])}: run library.build first.")
+        raise Fixable("prereq.library_not_built", f"No footprint in the project library for {', '.join(missing[:8])}: run library.build first.")
     log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
     info = _pcbcheck_info(log)
     if info is None:
@@ -1801,8 +1818,8 @@ def route_pcb(project, replace=False, keep_partial=False):
     pcb = _project_pcb(project)
     missing = rules_missing(project)      # widths, clearances and vias come from the board rules: Altium's defaults are not JLC's
     if missing:
-        raise BridgeError("Import the JLC rules first (altium.import_rules), then route: the board does not have "
-                          + ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "") + ". Nothing was changed.")
+        raise Fixable("prereq.rules_not_imported", "Import the JLC rules first (altium.import_rules), then route: the board does not have "
+                      + ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "") + ". Nothing was changed.")
     try:
         stale = partlib.converter_stale(project)        # tells the silk-to-mask finding whether "rebuild the library" is true
     except Exception:

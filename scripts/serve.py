@@ -39,6 +39,7 @@ import runlog            # noqa: E402
 import session as session_mod  # noqa: E402
 import sources           # noqa: E402
 import tool_guard        # noqa: E402
+import turn_truth        # noqa: E402
 import project_guard     # noqa: E402
 import store             # noqa: E402
 import workspace         # noqa: E402
@@ -1732,34 +1733,47 @@ def _uses_altium(kind):
     return isinstance(kind, str) and (kind.startswith("altium.") or kind == "library.build")
 
 
-def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, allow_auto=True):
+def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, allow_auto=True,
+                  fixables=None):
     """The server is the only writer: see _apply_actions. A turn whose actions drive Altium holds STEP_LOCK while they run; when
     something else holds it, those actions are refused and the rest still applies."""
     wants = any(_uses_altium(a.get("type")) for a in actions or [] if isinstance(a, dict))
     held = wants and STEP_LOCK.acquire(blocking=False)
     try:
         with runlog.for_project(project):
-            return _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto)
+            return _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables)
     finally:
         if held:
             STEP_LOCK.release()
 
 
-def _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto):
+def _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables=None):
     if not held:
-        return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
+        return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto, fixables=fixables)
     kinds = [a.get("type") for a in actions if isinstance(a, dict) and _uses_altium(a.get("type"))]
     with runlog.span("chat.altium-actions", project=project, actions=kinds):
-        res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto)
+        res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto, fixables=fixables)
         runlog.event("op", op="chat.altium-actions", phase="result", project=project, refused=res[2])
         return res
 
 
-def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, altium_free=True, allow_auto=True):
+def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, altium_free=True, allow_auto=True,
+                   fixables=None):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
-    approved here, by "auto", right after they are recorded (so later actions in the same turn see them)."""
+    approved here, by "auto", right after they are recorded (so later actions in the same turn see them).
+    `fixables` (a list, filled in place): one record per refusal that carries a neutral code (bridge.NEUTRAL_CODES), see retry_kinds."""
     applied, proposals, refused = [], [], []
+
+    def note_fix(kind, why, a):
+        """The server-assigned code of a Fixable refusal (never read from the text); route-only codes only for route."""
+        code = why if isinstance(why, str) else getattr(why, "code", None)
+        from altium import bridge as _b
+        if fixables is None or code not in _b.NEUTRAL_CODES or (code == "prereq.rules_not_imported" and kind != "altium.route_pcb"):
+            return
+        fixables.append({"kind": kind, "code": code, "sheet": a.get("sheet"), "replace": _truthy(a.get("replace")),
+                         "partial": _truthy(a.get("partial"))})
+
     auto_done = []
     # refs this turn names, so a line that gets extra refs for its qty does not take one a later line uses
     reserved = {r for a in actions or [] if isinstance(a, dict) and a.get("type") == "bom.propose"
@@ -1852,6 +1866,8 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(f"netlist.write:{res['sheet']}{note}")
                 else:
                     refused.append(f"netlist.write:{a['sheet']} refused: " + "; ".join(res["errors"][:8]))
+                    if sym_errors:
+                        note_fix("netlist.write", "pins.unmapped", a)
             elif kind in ("netlist.remove", "netlist.rename") and a.get("sheet"):
                 why = _sheet_edit_consent(kind, a, last_user)
                 if why:
@@ -1879,6 +1895,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     res = bridge.build_library(project)
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
+                    note_fix(kind, exc, a)
                     continue
                 applied.append(f"{kind}: " + library_build_summary(project, res))
             elif kind == "part.attach_datasheet" and a.get("ref") and a.get("name"):
@@ -1903,6 +1920,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     res = _drawn(bridge, project, a.get("sheet") or None, _truthy(a.get("replace")))
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
+                    note_fix(kind, exc, a)
                     continue
                 applied.append(f"{kind}: " + draw_summary(res))
             elif kind in ("altium.place_pcb", "altium.route_pcb"):
@@ -1922,6 +1940,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                         res = bridge.route_pcb(project, replace=_truthy(a.get("replace")), keep_partial=keep)
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
+                    note_fix(kind, exc, {**a, "partial": a.get("partial") if step == "route" and keep else False})
                     continue
                 _record_board(project, step, res)
                 applied.append(f"{kind}: " + STEP_SUMMARY[step](res))
@@ -1951,6 +1970,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                         res = bridge.import_rules(project)
                     except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                         refused.append(f"{kind}: {exc}")
+                        note_fix(kind, exc, a)
                         continue
                     applied.append(f"{kind}: " + import_rules_summary(res))
                     continue
@@ -2025,6 +2045,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(res)
         except (ValueError, KeyError) as exc:
             refused.append(f"{kind}: {exc}")
+            note_fix(kind, exc, a)
     if any(x.startswith("netlist") for x in applied) or any(r.get("kind") != "idea_diagram" for r in auto_done):
         redraw(project)
     if auto_done and sess:
@@ -2042,6 +2063,78 @@ FOLLOWUP_WAIT = ("Results of your actions: {applied}; refused: {refused}; warnin
 _FU_REFUSED = re.compile(r"^(netlist\.write|altium\.|library\.|jlc\.|order\.check|bom\.(?!check)|the reply's actions block)")
 _FU_WARNED = re.compile(r"^(netlist\.write|altium\.|library\.|jlc\.|order\.check)")
 _FU_SKIP = ("stopped by the student", "Another step is still running")
+
+
+# ---- W3: a refusal the server can fix mechanically is retried in the follow-up (docs/WAVE2-DESIGN-2026-11-23.md, "consent-neutral refusals").
+# Neutral = consent passed this turn, a server-assigned code (altium.bridge.NEUTRAL_CODES, raised as Fixable), the fix changes how and
+# not what or whether, and the retry cannot wipe or replace anything. One turn = one consent: the retry never asks the student again
+# and never gets more than round 0 was granted.
+FOLLOWUP_MAX_RETRY = 2
+RETRY_WHITELIST = frozenset({"netlist.write", "library.build", "altium.create_project", "altium.import_rules"})      # no consent needed
+RETRY_CONSENT_KINDS = ("altium.draw_schematic", "altium.place_pcb", "altium.route_pcb")      # only when round 0 passed consent for the same kind
+FOLLOWUP_RETRY = ("Results of your actions: {applied}; refused: {refused}. These refusals are mechanical and the student already agreed "
+                  "to the work: {fixes}. Fix only what the refusal names (library.build first, then netlist.write with pin names exactly as "
+                  "the library symbol lists them, split a sheet that is too big, create or import what is missing) and send the refused "
+                  "action again in the SAME actions block, in order; never ask the student again, never replace anything, add nothing "
+                  "else. Start with one short sentence about what you fix, no promise of a later reply. Actions other than "
+                  "{allowed} are not run in this reply")
+
+
+def retry_kinds(fixables):
+    """The neutral refusals of a round: [{kind, code, sheet, replace, partial}], re-filtered against the frozen set."""
+    from altium import bridge
+    return [f for f in fixables or [] if f.get("code") in bridge.NEUTRAL_CODES
+            and (f["code"] != "prereq.rules_not_imported" or f.get("kind") == "altium.route_pcb")]
+
+
+def retry_grants(fixables):
+    """What round 0 passed consent for, from its neutral refusals (consent was checked before any of them was raised):
+    {kind: {"replace": bool, "partial": bool, "sheets": set | None}} (sheets None = any sheet)."""
+    out = {}
+    for f in retry_kinds(fixables):
+        if f["kind"] not in RETRY_CONSENT_KINDS:
+            continue
+        g = out.setdefault(f["kind"], {"replace": False, "partial": False, "sheets": set()})
+        g["replace"] = g["replace"] or bool(f.get("replace"))
+        g["partial"] = g["partial"] or bool(f.get("partial"))
+        if f.get("sheet") in (None, ""):
+            g["sheets"] = None
+        elif g["sheets"] is not None:
+            g["sheets"].add(str(f["sheet"]))
+    return out
+
+
+def retry_filter(actions, grants):
+    """(actions a retry may run, notes for the ones it may not): the whitelist, plus draw / place / route only for a kind round 0
+    passed consent for, never with replace / partial round 0 did not carry, a draw only on the sheets round 0 named."""
+    allowed, notes = [], []
+    for a in actions or []:
+        if not isinstance(a, dict):
+            continue
+        kind = a.get("type")
+        if kind in RETRY_WHITELIST:
+            allowed.append(a)
+        elif kind in RETRY_CONSENT_KINDS:
+            g = grants.get(kind)
+            if g is None:
+                notes.append(f"{kind}: not run in the retry: it was not part of what the student agreed to")
+            elif _truthy(a.get("replace")) and not g["replace"]:
+                notes.append(f"{kind}: not run in the retry: replacing was not agreed")
+            elif _truthy(a.get("partial")) and not g["partial"]:
+                notes.append(f"{kind}: not run in the retry: a partial route was not agreed")
+            elif kind == "altium.draw_schematic" and g["sheets"] is not None and str(a.get("sheet") or "") not in g["sheets"]:
+                notes.append(f"{kind}: not run in the retry: only sheet {', '.join(sorted(g['sheets']))} was agreed")
+            else:
+                allowed.append(a)
+        else:
+            notes.append(f"{kind}: not run in the retry: a retry only repeats the refused action and its preparation")
+    return allowed, notes
+
+
+def retry_expected(rec, fixables, cancelled, rnd):
+    """True when a retry round (number rnd + 1) should follow: a neutral refusal, rounds left, a clean first turn, setting on."""
+    return bool(retry_kinds(fixables)) and rnd < FOLLOWUP_MAX_RETRY and not (
+        cancelled or rec.get("error") or rec.get("partial") or not workspace.get("chat.followup_on_refusal", True))
 
 
 FOLLOWUP_SPLIT = ("These commands were denied because each joined several actions: {cmds}. Run every part again as its own plain "
@@ -2128,18 +2221,26 @@ def followup_expected(rec, applied, refused, cancelled):
                 or not workspace.get("chat.followup_on_refusal", True))
 
 
-def start_followup(proj, sess, tkey, user_text, orig_rec, applied, refused, cancelled):
+def start_followup(proj, sess, tkey, user_text, orig_rec, applied, refused, cancelled, fixables=None, ctx=None):
     """After the reply is stored: ONE more agent turn, TEXT ONLY (its actions are dropped), when a worthwhile action was refused or came
     back with a warning (the reply's text often says "done" before the server's answer is known). True when it started; it runs in
     its own thread and the page shows it from /api/state. Not started: setting off, Stop in between, a failed first turn. It never
-    chains, and a new student message or a step button cancels it."""
-    if not followup_expected(orig_rec, applied, refused, cancelled):
+    chains, and a new student message or a step button cancels it.
+    W3: a neutral refusal (`fixables`, see retry_kinds) starts a RETRY round instead (at most FOLLOWUP_MAX_RETRY in a row, each only after
+    a round that had a neutral refusal), which does run a whitelisted subset of the actions; `ctx` carries round 0's consent inputs."""
+    rnd = (ctx or {}).get("round", 0)
+    retry = ctx is not None and retry_expected(orig_rec, fixables, cancelled, rnd)
+    if not retry and not followup_expected(orig_rec, applied, refused, cancelled):
         return False
     with TURNS_LOCK:          # atomic with a new student message: whoever registers first wins
         if tkey in TURNS or STEP_LOCK.locked():
             return False
         fturn = TURNS[tkey] = _new_turn()
         fturn["followup"] = True
+    if retry:
+        threading.Thread(target=_run_retry, args=(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, fixables, ctx),
+                         daemon=True, name="chat-retry").start()
+        return True
     threading.Thread(target=_run_followup, args=(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, warned_map(applied)),
                      daemon=True, name="chat-followup").start()
     return True
@@ -2231,6 +2332,98 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
             pass
     finally:
         _turn_end(tkey, fturn)
+
+
+def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, fixables, ctx):
+    """One retry round: the agent answers the results, its whitelisted actions run through apply_actions with round 0's consent inputs
+    (the ORIGINAL typed message and the chat before the main record: this prompt is never a consent source), and the round is stored
+    with its own applied list (so a bare "yes" next turn does not redraw). A new message, Stop or a step button cancels it; what already
+    ran is still stored."""
+    t0, notes, nxt = time.time(), [], None
+    rnd = ctx["round"] + 1
+    try:
+        tail = session_mod.load_chat(proj, sess)
+        if not tail or tail[-1].get("ts") != orig_rec["ts"] or tail[-1].get("role") != "agent" or fturn["cancel"].is_set():
+            return
+        runlog.event("chat", phase="retry-begin", project=proj, round=rnd, codes=[f["code"] for f in retry_kinds(fixables)])
+        m = model.build(project=proj, session=sess)
+        guard = tool_guard.begin()
+        pguard = project_guard.begin(proj)
+        BUSY["chat"] += 1
+        try:
+            msg = FOLLOWUP_RETRY.format(applied="; ".join(map(str, applied)) or "none", refused="; ".join(map(str, refused)) or "none",
+                                        fixes=", ".join(dict.fromkeys(f"{f['kind']} -> {f['code']}" for f in retry_kinds(fixables))),
+                                        allowed=", ".join(sorted(RETRY_WHITELIST | set(RETRY_CONSENT_KINDS))))
+            res = agent.respond(m, msg, m["chat"], backend=BACKEND, cancel=fturn["cancel"], typed=user_text, generated=ctx["generated"],
+                                on_event=lambda ev, k=tkey: _turn_event(k, ev))
+        finally:
+            BUSY["chat"] -= 1
+            edited, unrestored = tool_guard.end(guard)
+            data_edited, data_unrestored = project_guard.end(pguard)
+        if edited or unrestored:
+            notes.append(tool_guard.refusal(edited, unrestored))
+        if data_edited or data_unrestored:
+            notes.append(project_guard.refusal(data_edited, data_unrestored))
+        reply = (res.get("reply") or "").strip()
+        if reply == "(no reply)":
+            reply = ""
+        if res.get("error") or res.get("partial") or fturn["cancel"].is_set():     # nothing ran: nothing is stored, round 0's refusals stay
+            runlog.event("chat", phase="retry-end", ok=False, project=proj, round=rnd, seconds=round(time.time() - t0, 1),
+                         error=str(res.get("error_kind") or ("cancelled" if fturn["cancel"].is_set() else "") or "no reply")[:300])
+            _followup_guard_note(proj, sess, notes)
+            return
+        allowed, dropped = retry_filter(res.get("actions"), ctx["grants"])
+        r_fix = []
+        r_applied, r_proposals, r_refused = apply_actions(
+            proj, allowed, sess, last_user=ctx["last_user"], meta={}, turn_start=ctx["turn_start"], cancel=fturn["cancel"],
+            chat=ctx["chat"], allow_auto=False, fixables=r_fix)
+        r_refused = [*(res.get("parse_refused") or []), *dropped, *r_refused, *notes]
+        text = reply
+        if r_refused:
+            text = (text + "\n\n(Not applied: " + "; ".join(r_refused) + ")").strip()
+        retry_next = bool(r_refused) and retry_expected({}, r_fix, fturn["cancel"].is_set(), rnd)
+        lines = turn_truth.closing_lines(reply, r_applied, r_proposals, r_refused, retry_follows=retry_next)
+        text = (text + "".join("\n\n" + x for x in lines)).strip() or "(Retry: nothing to report)"
+        rec = {"ts": now(), "role": "agent", "followup": True, "retry": rnd, "text": text, "applied": r_applied}
+        if warned_map(r_applied):
+            rec["warned"] = warned_map(r_applied)
+        if r_refused:
+            rec["refused"] = r_refused
+        if r_proposals:
+            rec["proposals"] = r_proposals
+        for k in ("tools", "steps"):
+            if res.get(k):
+                rec[k] = res[k]
+        if res.get("seconds") is not None:
+            rec["seconds"] = round(float(res["seconds"]), 1)
+        say(proj, sess, rec)
+        if res.get("provider") != "external":
+            import introspect
+            introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
+                              applied=len(r_applied), proposed=0, refused=len(r_refused))
+        runlog.usage(proj, "answer", text=rec["text"], chat=sess, engine=res.get("provider") or "", model=res.get("model") or "",
+                     seconds=rec.get("seconds"), applied=_usage_applied(r_applied), refused=r_refused, ok=True,
+                     words=len(rec["text"].split()), followup=True, retry=rnd)
+        runlog.event("chat", phase="retry-end", ok=True, project=proj, round=rnd, seconds=round(time.time() - t0, 1),
+                     applied=len(r_applied), refused=len(r_refused))
+        import background
+        background.verify_record_async(proj, sess, rec["ts"], rec["text"])
+        if retry_next:
+            nxt = (rec, r_applied, r_refused, r_fix, {**ctx, "round": rnd})
+    except BaseException as exc:                    # a failed retry stores nothing it did not do: log it, round 0 stays
+        try:
+            runlog.event("chat", phase="retry-end", ok=False, project=proj, round=rnd, seconds=round(time.time() - t0, 1),
+                         error=f"{type(exc).__name__}: {exc}")
+            _followup_guard_note(proj, sess, notes)
+        except Exception:
+            pass
+    finally:
+        _turn_end(tkey, fturn)
+    if nxt and not fturn["cancel"].is_set():        # the next round registers its own turn, so only after this one is released
+        try:
+            start_followup(proj, sess, tkey, user_text, nxt[0], nxt[1], nxt[2], False, fixables=nxt[3], ctx=nxt[4])
+        except Exception as exc:
+            runlog.event("chat", phase="retry-end", ok=False, project=proj, error=f"{type(exc).__name__}: {exc}")
 
 
 def open_part_session(project, ref_or_key):
@@ -3212,13 +3405,14 @@ class Handler(BaseHTTPRequestHandler):
                     print(f"[guard] the agent edited system files: restored {tool_edited}, not restorable {tool_unrestored}", file=sys.stderr, flush=True)
                 chat_meta = {}
                 partial = bool(res.get("partial"))
+                fixables = []    # neutral refusals of this round (W3): what a retry may fix
                 if partial:      # a half-written actions block is not trusted
                     applied, proposals, refused = [], [], []
                 else:            # the turn stays open while the actions run, so the chat shows which step is running
                     applied, proposals, refused = apply_actions(
                         proj, res.get("actions"), sess, last_user=text, meta=chat_meta, turn_start=turn["started"],
                         on_step=lambda label, k=tkey: _turn_event(k, {"label": label}), cancel=turn["cancel"],
-                        chat=m["chat"])
+                        chat=m["chat"], fixables=fixables)
             except BaseException as exc:
                 runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}", engine=_chat_info["engine"])
                 runlog.exception("chat", exc, phase="end", ok=False, seconds=round(time.time() - _chat_t0, 1), **_chat_info)
@@ -3259,6 +3453,9 @@ class Handler(BaseHTTPRequestHandler):
                 reply = res.get("reply") or ""
                 if refused:
                     reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
+                if not partial and not res.get("error"):     # the text was written before the actions ran: the server's records win (ledger 31, 39)
+                    will_retry = retry_expected({}, fixables, turn["cancel"].is_set(), 0)
+                    reply += "".join("\n\n" + x for x in turn_truth.closing_lines(res.get("reply"), applied, proposals, refused, will_retry))
                 rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
                 if warned_map(applied):
                     rec["warned"] = warned_map(applied)
@@ -3305,7 +3502,9 @@ class Handler(BaseHTTPRequestHandler):
                              seconds=res.get("seconds"), applied=_usage_applied(applied), refused=refused, ok=not res.get("error"), words=0)
             if _answered and not partial:
                 try:
-                    start_followup(proj, sess, tkey, text, rec, applied, refused, turn["cancel"].is_set())
+                    start_followup(proj, sess, tkey, text, rec, applied, refused, turn["cancel"].is_set(), fixables=fixables,
+                                   ctx={"round": 0, "last_user": text, "chat": m["chat"], "turn_start": turn["started"],
+                                        "generated": generated, "grants": retry_grants(fixables)})
                 except Exception as exc:       # never costs the reply
                     runlog.event("chat", phase="followup-end", ok=False, project=proj, error=f"{type(exc).__name__}: {exc}")
             recheck_missing(proj)
