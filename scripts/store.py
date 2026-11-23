@@ -3143,22 +3143,135 @@ def recheck_pins(project):
     return {"unverified": rows, "checked": checked, "message": msg}
 
 
+_SPEC_MEMO = {}      # symbols_spec.txt path -> (size, mtime_ns, {symbol: {"pins": [...]}}): the gate is asked on every poll
+
+
+def _built_symbols(project):
+    """{symbol name: {"pins": [{num, name}]}} of the project's built library (symbols_spec.txt), {} when none is built."""
+    import partlib
+    path = partlib.library_dir(project) / "build" / "symbols_spec.txt"
+    try:
+        st = path.stat()
+    except OSError:
+        return {}
+    hit = _SPEC_MEMO.get(str(path))
+    if not hit or hit[:2] != (st.st_size, st.st_mtime_ns):
+        hit = _SPEC_MEMO[str(path)] = (st.st_size, st.st_mtime_ns, partlib._spec_symbols(path))
+    return hit[2]
+
+
+def _pin_num(pin):
+    return str(pin.get("num", pin.get("number", "")) or "").strip()
+
+
+def pin_gaps(project):
+    """Pins of the drawn design that nobody decided: {"open": [{sheet, ref, num, name}], "unlisted": [{sheet, ref, num, name}]}.
+    open: the netlist lists the pin with no net and not NC. unlisted: the part's built library symbol has the pin, the netlist does
+    not list it at all (a symbol the build made from an older MPN / LCSC of the line is not compared). DNP and do-not-buy lines are
+    skipped, like the Unverified parts list. NC (net "NC") is the decision that clears either one."""
+    skip = {r for l in bom_lines(project) if l.get("dnp") or l.get("nobuy") for r in (l.get("refs") or [])}
+    lines = {r: l for l in bom_lines(project) for r in (l.get("refs") or [l["key"]])}
+    man, spec = library_manifest(project), _built_symbols(project)
+    out = {"open": [], "unlisted": []}
+    for sh in sheet_ids(project):
+        for part in load_sheet(project, sh).get("parts", []):
+            ref = part.get("ref")
+            if not ref or ref in skip:
+                continue
+            listed = set()
+            for pin in part.get("pins", []):
+                num = _pin_num(pin)
+                listed.add(num)
+                if not (pin.get("net") or "").strip():
+                    out["open"].append({"sheet": sh, "ref": ref, "num": num, "name": str(pin.get("name") or "")})
+            line = lines.get(ref) or {}
+            entry = man.get(line.get("key")) or {}
+            sym = spec.get(entry.get("symbol") or "")
+            if not sym or any(entry.get(f) and line.get(f) and str(entry[f]).strip().lower() != str(line[f]).strip().lower() for f in ("mpn", "lcsc")):
+                continue
+            for pin in sym["pins"]:
+                if str(pin["num"]).strip() not in listed:
+                    out["unlisted"].append({"sheet": sh, "ref": ref, "num": str(pin["num"]).strip(), "name": pin.get("name", "")})
+    return out
+
+
+def _pin_list(items, limit=30):
+    """"U1 pin 4 (EN), U1 pin 5 ..." for the gate message: every item, cut after `limit` with the count of the rest."""
+    said = [f"{i['ref']} pin {i['num'] or i['name']}" + (f" ({i['name']})" if i.get("name") and i.get("num") and i["name"] != i["num"] else "") for i in items]
+    return ", ".join(said[:limit]) + (f" and {len(said) - limit} more" if len(said) > limit else "")
+
+
+def pin_gap_text(gaps):
+    """The gate's sentence for pin_gaps, "" when there is none: everything at once and the one action that fixes the lot."""
+    said = []
+    if gaps["open"]:
+        said.append(f"{len(gaps['open'])} {'pin has' if len(gaps['open']) == 1 else 'pins have'} no net and no NC mark: {_pin_list(gaps['open'])}")
+    if gaps["unlisted"]:
+        said.append(f"{len(gaps['unlisted'])} {'pin of the built symbol is' if len(gaps['unlisted']) == 1 else 'pins of the built symbols are'} missing from the netlist: {_pin_list(gaps['unlisted'])}")
+    return "; ".join(said)
+
+
+def mark_pins_nc(project, items=None):
+    """Mark pins no-connect (net "NC", the netlist's own NC: the drawing puts a No ERC cross on it): every open and unlisted pin when
+    items is None, else only the {sheet, ref, num} given. An unlisted pin is added to the part's pins with net NC. Returns
+    {"marked": n, "sheets": [...]}. Nothing else in a sheet changes."""
+    gaps = pin_gaps(project)
+    todo = [("open", i) for i in gaps["open"]] + [("unlisted", i) for i in gaps["unlisted"]]
+    if items is not None:
+        want = {(str(i.get("sheet")), str(i.get("ref")), str(i.get("num"))) for i in items}
+        todo = [(k, i) for k, i in todo if (str(i["sheet"]), str(i["ref"]), str(i["num"])) in want]
+    by_sheet = {}
+    for kind, i in todo:
+        by_sheet.setdefault(i["sheet"], []).append((kind, i))
+    marked = 0
+    for sh, rows in by_sheet.items():
+        sheet = load_sheet(project, sh)
+        for kind, i in rows:
+            part = next((p for p in sheet.get("parts", []) if p.get("ref") == i["ref"]), None)
+            if part is None:
+                continue
+            if kind == "open":
+                pin = next((p for p in part.get("pins", []) if _pin_num(p) == i["num"] and not (p.get("net") or "").strip()), None)
+                if pin is None:
+                    continue
+                pin["net"] = "NC"
+            else:
+                part.setdefault("pins", []).append({"num": i["num"], "name": i.get("name", ""), "net": "NC"})
+            marked += 1
+        res = write_sheet(project, sh, sheet)
+        if not res.get("ok"):
+            raise ValueError("; ".join(res.get("errors") or ["the sheet could not be written"]))
+    return {"marked": marked, "sheets": sorted(by_sheet)}
+
+
 def manufacturing_warning(project):
-    """"" when every part on the board has verified or accepted pins; else the refusal that stops the manufacturing outputs (Altium
-    OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list, without DNP / do-not-buy lines).
-    The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins)."""
+    """"" when every part on the board has verified or accepted pins and no pin is left undecided; else the refusal that stops the
+    manufacturing outputs (Altium OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list,
+    without DNP / do-not-buy lines), then the open pins (no net, not NC) and the pins of a built symbol the netlist does not list.
+    The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins);
+    a pin by a net or by NC (mark_pins_nc)."""
     rows = pins_to_resolve(project)
-    if not rows:
+    gaps = pin_gap_text(pin_gaps(project))
+    if not rows and not gaps:
         return ""
+    said = []
     bad = [r for r in rows if r["status"] == "mismatch"]
     refs = lambda rs: [ref for r in rs for ref in (r.get("refs") or [r["line"]])]
     def part(rs, what):
         names = refs(rs)
         return f"{len(names)} {'part has' if len(names) == 1 else 'parts have'} {what}: {', '.join(names[:12])}{' ...' if len(names) > 12 else ''}"
-    said = [part([r for r in rows if r["status"] != "mismatch"], "pins nobody checked against a datasheet")] if len(bad) < len(rows) else []
+    if rows and len(bad) < len(rows):
+        said.append(part([r for r in rows if r["status"] != "mismatch"], "pins nobody checked against a datasheet"))
     if bad:
         said.append(part(bad, "pins that differ from the datasheet"))
-    return ("Not made yet: " + "; ".join(said) + ". Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
+    if gaps:
+        said.append(gaps)
+    tail = []
+    if rows:
+        tail.append("Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
+    if gaps:
+        tail.append("Open Schematic: connect each pin or mark them all NC in one click.")
+    return "Not made yet: " + "; ".join(said) + ". " + " ".join(tail)
 
 
 def accept_pins(project, key):

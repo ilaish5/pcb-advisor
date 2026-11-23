@@ -90,115 +90,25 @@ function syncPageTab() {
   else page = 'file';
 }
 
-/* ---------- stage status: the dot on each stage in the nav. Neutral when we do not know; never invented. ---------- */
+/* ---------- stage status: the dot on each stage in the nav ----------
+   One small mapper over S.stages, which the server derives (scripts/stages.py). Nothing is computed here from partial data:
+   a stage the server did not send, or sent as not started, is neutral. clean = green, blocked = red, otherwise the stage's severity. */
 const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
 function stageStatus(id) {
   const none = {tone: '', title: '', hint: ''};
-  if (!S) return none;
-  try {
-    if (id === 'idea') {
-      return S.idea && S.idea.confirmed ? {tone: 'ok', title: 'Confirmed', hint: ''} : {tone: '', title: 'Not confirmed yet', hint: ''};
-    }
-    if (id === 'bom') {
-      let total = 0, out = 0, wrong = 0, review = 0, unchecked = 0;
-      for (const l of lines()) {
-        const st = status(l);
-        if (st === 'na') continue;
-        total++;
-        if (Object.values(l.supply || {}).some(v => v && v.code_mismatch)) wrong++;
-        else if (st === 'bad') out++;
-        else if (st === 'warn') review++;
-        else if (st === 'pend') unchecked++;
-      }
-      if (!total) return {tone: '', title: 'No parts yet', hint: ''};
-      const bad = out + wrong, warn = review + unchecked;
-      const parts = [];
-      if (out) parts.push(`${out} out of stock`);
-      if (wrong) parts.push(`${wrong} with the wrong LCSC code`);
-      if (review) parts.push(`${review} to review in the library`);
-      if (unchecked) parts.push(`${unchecked} not checked yet`);
-      if (bad) return {tone: 'bad', title: parts.join(', '), hint: String(bad)};   // the number counts what the colour says
-      if (warn) return {tone: 'warn', title: parts.join(', '), hint: String(warn)};
-      return {tone: 'ok', title: `${plural(total, 'part line')}, all in stock`, hint: ''};
-    }
-    if (id === 'sch') {
-      const n = (S.sheets || []).length;
-      return n ? {tone: 'ok', title: plural(n, 'sheet'), hint: ''} : {tone: '', title: 'No schematic yet', hint: ''};
-    }
-    if (id === 'rules') {
-      const rd = RULES_DATA;
-      if (!rd || rd.error) return none;
-      const diff = Array.isArray(rd.diff) ? rd.diff : [];
-      if (!rd.linked_pcb) return {tone: '', title: 'No board linked, so nothing to compare', hint: ''};
-      if (!diff.length) return none;
-      // the Rules view's own count (rules.js), so the nav and the view's header never disagree
-      const sm = typeof rulesSummary === 'function' ? rulesSummary(rd) : null;
-      const below = sm ? sm.below : diff.filter(d => d.verdict === 'below_fab_min').length;
-      const differ = sm ? sm.differ : diff.filter(d => d.status === 'differs' || d.status === 'missing_on_board').length;
-      if (below) return {tone: 'bad', title: `${plural(below, 'rule')} below the JLC minimum` + (differ > (sm ? 0 : below) ? `, ${sm ? differ : differ - below} more differ from the board` : ''), hint: String(below)};
-      if (differ) return {tone: 'warn', title: `${plural(differ, 'rule')} differ from the board`, hint: String(differ)};
-      return {tone: 'ok', title: 'Matches the board', hint: ''};
-    }
-    if (id === 'outputs') {
-      const ex = S.exports || [], n = ex.length;
-      if (!n) return {tone: '', title: 'Nothing generated yet', hint: ''};
-      const old = ex.filter(e => e.lineage && (e.lineage.status === 'stale' || e.lineage.status === 'edited')).length;
-      if (old) return {tone: 'warn', title: `${plural(old, 'file')} out of date with the design: export again`, hint: String(old)};
-      return {tone: 'ok', title: plural(n, 'file'), hint: ''};
-    }
-    if (id === 'checks') {
-      const cs = S.checks || [];
-      if (!cs.length) return {tone: '', title: 'No reports yet', hint: ''};
-      let real = 0, open = 0, known = 0;
-      for (const c of cs) {
-        // the server counts each report's triage (the same numbers the DFM view's header shows)
-        if (c.triage_open != null && c.triage_real != null) { known++; real += c.triage_real; open += c.triage_open; continue; }
-        const rows = triageMap[c.stem] || (c.triage_count === 0 ? [] : null);
-        if (!rows) continue;
-        known++;
-        for (const r of rows) { if (r.verdict === 'real') real++; else if (!r.verdict || r.verdict === 'unknown') open++; }
-      }
-      if (real) return {tone: 'bad', title: plural(real, 'real issue') + (open ? `, ${open} to review` : ''), hint: String(real)};
-      if (known < cs.length) return {tone: '', title: plural(cs.length, 'report'), hint: ''};
-      if (open) return {tone: 'warn', title: `${open} to review`, hint: String(open)};
-      return {tone: 'ok', title: 'All reviewed', hint: ''};
-    }
-  } catch (e) {
-    return none;
-  }
-  return none;
+  const st = S && Array.isArray(S.stages) ? S.stages.find(x => x && x.id === id) : null;
+  if (!st) return none;
+  const tone = st.state === 'clean' ? 'ok' : st.state === 'blocked' ? 'bad' : st.state === 'not_started' ? '' : (st.severity === 'bad' || st.severity === 'warn' ? st.severity : '');
+  return {tone, title: st.reason || '', hint: tone && tone !== 'ok' && st.open > 0 ? String(st.open) : ''};
 }
-// The rules diff and the DFM triage are loaded by their own views. The nav dots need them too, so they load once in the background.
-const navTried = {};
-let navDataSeen = null;
-function scheduleNavData() {
-  const sig = (S.checks || []).map(c => c.stem).join('|');
-  if (sig === navDataSeen) return;
-  navDataSeen = sig;
-  setTimeout(ensureNavData, 700);
+// The stage record of the server, and a page's Next button from stage.next ({label, act: 'go:<stage>'}); the primary stage's button is the filled one.
+const stageOf = id => (S && Array.isArray(S.stages) ? S.stages.find(x => x && x.id === id) : null) || null;
+function stageNextBtn(id) {
+  const st = stageOf(id), n = st && st.next;
+  if (!n || !n.label || !/^go:/.test(n.act || '')) return '';
+  return btn(n.label, {kind: st.primary ? 'pri' : 'line', act: 'stage-next', stage: id, to: n.act.slice(3)});
 }
-async function ensureNavData() {
-  if (!S) return;
-  if (!RULES_DATA && !navTried.rules && typeof loadRules === 'function') {
-    navTried.rules = true;
-    await loadRules();
-    renderNav();
-  }
-  for (const c of S.checks || []) {
-    if (!c.stem || triageMap[c.stem] || triageLoading[c.stem] || navTried['t:' + c.stem] || c.triage_count === 0) continue;
-    navTried['t:' + c.stem] = true;
-    triageLoading[c.stem] = true;
-    try {
-      const r = await api('/api/checks/triage?stem=' + encodeURIComponent(c.stem), undefined, {soft: true});
-      if (r && Array.isArray(r.triage)) triageMap[c.stem] = r.triage;
-    } catch (e) {
-      /* the dot stays neutral */
-    }
-    triageLoading[c.stem] = false;
-    renderNav();
-    if (mainView() === 'checks' || sideView() === 'checks') renderCenter(true);
-  }
-}
+onAct('stage-next', (el, d) => { if (d.to && STAGE_TITLES[d.to]) go('workspace', d.to); });
 
 /* ---------- nav ---------- */
 const initials = t => {
@@ -251,7 +161,6 @@ function renderNav() {
   lastNavHTML = html;
   nav.innerHTML = html;
   if (focused) { const b = nav.querySelector(`[data-nav="${focused}"]`); if (b) b.focus(); }
-  scheduleNavData();
 }
 
 /* ---------- drawing the sheets ---------- */
