@@ -108,9 +108,9 @@ def latest(project):
     """{op: newest record (with "stale")} for the four ops, and "board_check": the newest ok record with a design rule check."""
     recs = records(project)
     out = {}
-    for r in recs:
+    for i, r in enumerate(recs):
         if r.get("op") in OPS:
-            out[r["op"]] = r
+            out[r["op"]] = {**r, "seq": i}       # log order: two steps in the same millisecond still have an order
     out = {k: {**v, "stale": _stale(project, v)} for k, v in out.items()}
     chk = next((r for r in reversed(recs) if r.get("ok") and r.get("drc") and r["drc"].get("total") is not None), None)
     out["board_check"] = {**chk, "stale": _stale(project, chk)} if chk else None

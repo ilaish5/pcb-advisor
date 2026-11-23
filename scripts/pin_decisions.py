@@ -36,16 +36,19 @@ def _line(project, line):
 
 
 def fingerprint(project, line):
-    """What a pin decision was made about: sorted (ref, number, name, net) of the line's parts on the sheets, plus the MPN,
-    the package and the declared LCSC code. Never the whole part dict (a drawn position or a note must not undo a decision)."""
+    """What a pin decision was made about: sorted (ref, number, name) of the line's parts on the sheets, plus the MPN,
+    the package and the declared LCSC code. Never the whole part dict (a drawn position or a note must not undo a decision).
+    Only wired pins count, and only by number and name: the decision is about which number is which pin where it matters.
+    Moving a pin to another net keeps it; marking open pins NC (or adding a built symbol's unlisted pins as NC) keeps it;
+    wiring a pin that was open or NC, or unwiring one, is a change."""
     line = _line(project, line)
     refs = set(line.get("refs") or [])
     rows = []
     for sh in store.sheet_ids(project):
         for part in store.load_sheet(project, sh).get("parts", []):
             if part.get("ref") in refs:
-                rows += [[part["ref"], str(p.get("num", p.get("number", ""))), str(p.get("name") or ""), str(p.get("net") or "")]
-                         for p in part.get("pins", [])]
+                rows += [[part["ref"], str(p.get("num", p.get("number", ""))), str(p.get("name") or "")]
+                         for p in part.get("pins", []) if str(p.get("net") or "").strip().upper() not in ("", "NC")]
     return lineage._digest({"pins": sorted(rows), "mpn": line.get("mpn") or "", "package": line.get("package") or "",
                             "lcsc": line.get("lcsc") or ""})
 

@@ -20,11 +20,15 @@ def _decisions(empty, key="U1"):
     return [e for e in _log(empty) if e.get("line") == key and "pin_decision" in (e.get("changes") or {})]
 
 
-def _redraw(empty, net="+3V3"):
+def _redraw(empty, name="VCC", net=None):
+    """Rename U1's pin 1 (a pin change), or with net= only rewire it (not a pin change)."""
     sheet = store.load_sheet(empty, "01")
     for p in sheet["parts"]:
         if p["ref"] == "U1":
-            p["pins"][0]["net"] = net
+            if net is None:
+                p["pins"][0]["name"] = name
+            else:
+                p["pins"][0]["net"] = net
     store.write_sheet(empty, "01", sheet)
 
 
@@ -52,11 +56,29 @@ def test_double_accept_is_idempotent(empty):
     assert len(_decisions(empty)) == 1
 
 
-def test_a_changed_net_or_mpn_ends_the_decision(empty):
+def test_rewiring_or_marking_nc_keeps_the_decision(empty):
+    _sheet(empty)
+    sheet = store.load_sheet(empty, "01")
+    sheet["parts"][0]["pins"].append({"num": "3", "name": "EN", "net": ""})   # an open pin
+    store.write_sheet(empty, "01", sheet)
+    pin_decisions.accept(empty, "U1")
+    _redraw(empty, net="+5V")                                                # moved to another net
+    assert store.unverified_parts(empty) == []
+    store.mark_pins_nc(empty)                                                # the open pin becomes NC
+    sheet = store.load_sheet(empty, "01")
+    sheet["parts"][0]["pins"].append({"num": "4", "name": "IO9", "net": "NC"})  # an unlisted pin added as NC
+    store.write_sheet(empty, "01", sheet)
+    assert store.unverified_parts(empty) == []
+    sheet["parts"][0]["pins"][-1]["net"] = "+3V3"                              # wiring it is a pin change
+    store.write_sheet(empty, "01", sheet)
+    assert [u["line"] for u in store.unverified_parts(empty)] == ["U1"]
+
+
+def test_a_changed_pin_or_mpn_ends_the_decision(empty):
     _sheet(empty)
     pin_decisions.accept(empty, "U1")
     assert store.unverified_parts(empty) == []
-    _redraw(empty, "+5V")
+    _redraw(empty, "VDD")
     row = store.unverified_parts(empty)[0]
     assert row["status"] == "unverified" and "accepted on" in row["issues"] and "pins changed since" in row["issues"]
     assert store.manufacturing_warning(empty)
@@ -85,7 +107,7 @@ def test_a_legacy_accept_is_grandfathered_until_the_pins_change(empty):
     store.bom(empty)
     assert len(_decisions(empty)) == 1
     assert store.bom(empty)[0]["pin_decision"]["basis"] == "legacy"
-    _redraw(empty, "+5V")
+    _redraw(empty, "VDD")
     assert [u["line"] for u in store.unverified_parts(empty)] == ["U1"]
     assert pin_decisions.revoke(empty, "U1")["changed"] is True
 
@@ -93,8 +115,8 @@ def test_a_legacy_accept_is_grandfathered_until_the_pins_change(empty):
 def test_no_decision_survives_a_pin_change_property(empty):
     _sheet(empty)
     seen = {pin_decisions.fingerprint(empty, "U1")}
-    for i, net in enumerate(["+5V", "VX", "+3V3"]):          # +3V3 is the first one again: same pins, same fingerprint
-        _redraw(empty, net)
+    for i, name in enumerate(["V5", "VX", "VCC"]):          # VCC is the first one again: same pins, same fingerprint
+        _redraw(empty, name)
         seen.add(pin_decisions.fingerprint(empty, "U1"))
     assert len(seen) == 3
     sheet = store.load_sheet(empty, "01")

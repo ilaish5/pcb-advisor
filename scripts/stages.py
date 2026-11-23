@@ -142,7 +142,7 @@ def pcb_stage(project, model, lt):
     place, route = lt.get("place"), lt.get("route")
     placed = bool((place and place.get("ok")) or (route and route.get("ok")) or ok_log.get("place-pcb") or ok_log.get("route-pcb"))
     routed = bool((route and route.get("ok")) or ok_log.get("route-pcb"))
-    if routed and place and place.get("ok") and route and (place.get("ts") or 0) > (route.get("ts") or 0):
+    if routed and place and place.get("ok") and route and place.get("seq", -1) > route.get("seq", -1):
         routed = False         # placed again after the last route: the copper is gone
     if not placed:
         return _stage("pcb", "not_started", "Parts not placed yet", next_={"label": "Place parts", "act": "go:pcb"})
