@@ -46,6 +46,11 @@ def fingerprint(project, line):
     One exception: a diode / LED is decided on polarity and its pins are often named just "1" / "2", so the net names of its
     pins are part of the fingerprint: swapping anode and cathode nets asks again."""
     line = _line(project, line)
+    return store.memoised(("fingerprint", project, line.get("key"), tuple(line.get("refs") or ()), line.get("mpn"), line.get("package"),
+                           line.get("lcsc")), lambda: _fingerprint(project, line))
+
+
+def _fingerprint(project, line):
     refs = set(line.get("refs") or [])
     rows, nets = [], []
     for sh in store.sheet_ids(project):

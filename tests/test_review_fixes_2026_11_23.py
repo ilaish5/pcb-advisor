@@ -82,3 +82,37 @@ def test_diode_fingerprint_follows_the_nets_and_nc_spellings_do_not_matter(empty
     next(p for p in sheet["parts"] if p["ref"] == "J1")["pins"].append({"num": "3", "name": "SH", "net": "N/C"})
     assert store.write_sheet(empty, "01", sheet)["ok"]
     assert pin_decisions.fingerprint(empty, "J1") == j1_before      # N/C is NC like "NC"
+
+
+def test_one_model_build_computes_pin_gaps_and_the_derived_bom_once(empty, monkeypatch):
+    import model
+    _jd_sheet(empty)
+    calls = {"gaps": 0, "bom": 0}
+    real_gaps, real_bom = store._pin_gaps, store._bom
+    monkeypatch.setattr(store, "_pin_gaps", lambda p: calls.__setitem__("gaps", calls["gaps"] + 1) or real_gaps(p))
+    monkeypatch.setattr(store, "_bom", lambda p, w: calls.__setitem__("bom", calls["bom"] + (0 if w else 1)) or real_bom(p, w))
+    m = model.build(empty)
+    assert m["stages"] and calls["gaps"] == 1 and calls["bom"] == 1
+    model.build(empty)
+    assert calls["gaps"] == 2 and calls["bom"] == 2                       # a new build computes again: nothing outlives it
+
+
+def test_a_write_inside_a_build_scope_drops_the_memo(empty):
+    _jd_sheet(empty)
+    with store.build_scope():
+        before = store.pin_gaps(empty)
+        sheet = store.load_sheet(empty, "01")
+        next(p for p in sheet["parts"] if p["ref"] == "J1")["pins"].append({"num": "3", "name": "SH", "net": ""})
+        assert store.write_sheet(empty, "01", sheet)["ok"]
+        after = store.pin_gaps(empty)
+    assert len(after["open"]) == len(before["open"]) + 1
+
+
+def test_the_readiness_rev_ignores_conversation_and_usage_logs(empty):
+    import stages
+    r0 = stages.rev(empty)
+    store.append(empty, "usage-log.jsonl", {"ts": 1})
+    store.append(empty, "threads.jsonl", {"ts": 1})
+    assert stages.rev(empty) == r0
+    store.append(empty, "bom-log.jsonl", {"ts": 1})
+    assert stages.rev(empty) != r0

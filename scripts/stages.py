@@ -13,6 +13,7 @@ Nothing here is a new fact: each rule reads a number the model already holds (or
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -309,13 +310,17 @@ def derive(project, model):
     return stages, board_check_of(lt)
 
 
+_CONVERSATION_LOG = re.compile(r"usage-log|chat|conversation|thread|session", re.I)    # written on every chat line / click: no stage is made from them
+
+
 def rev(project):
     """A digest of what the stages are made from: name, size and mtime_ns of the logs, the idea files, the netlist, the library
     manifest, the rule files, the check reports and the linked PcbDoc. Stat only, never a read: this runs on every poll."""
     pdir = store.pdir(project)
     paths = []
     try:
-        paths += [p for pat in ("*.jsonl", "idea*.json", "rules*.json", "project.json") for p in pdir.glob(pat)]
+        paths += [p for pat in ("*.jsonl", "idea*.json", "rules*.json", "project.json") for p in pdir.glob(pat)
+                  if not _CONVERSATION_LOG.search(p.name)]
         paths += list((pdir / "netlist").glob("*")) + list((pdir / "checks").glob("*/*.json")) + list((pdir / "exports").glob("*"))
         paths.append(pdir / "library" / "manifest.json")
     except OSError:

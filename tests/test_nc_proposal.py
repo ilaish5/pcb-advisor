@@ -87,7 +87,7 @@ def test_ui_has_the_nc_block_note_on_schematic_per_pin_and_posts_the_shown_items
     import pathlib
     ui = pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / "views"
     out, pv = (ui / "outputs.js").read_text(encoding="utf-8"), (ui / "previews.js").read_text(encoding="utf-8")
-    assert "outBlockNote()" in pv[pv.index("title: 'Schematic'"):][:600]            # the same note on the Schematic page
+    assert "outBlockNote()" in pv[pv.rindex("title: 'Schematic'"):][:600]            # the same note on the Schematic page
     assert "'nc-mark-one'" in out and "'nc-approve'" in out and "data-nc-prop" in out
     assert "outGapItems(outGate()).map(ncItem)" in out                               # nc-mark-all sends exactly what the note lists
     assert "/api/nc/mark', {}" not in out

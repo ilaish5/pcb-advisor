@@ -162,13 +162,50 @@ def read_jsonl(path):
     return out
 
 
+# ---- one model build = one computation: the derived BOM, the pin gaps and the pin fingerprints are asked for many times while the model
+# is built (every stage, every page counter). Inside build_scope() each is computed once; any write through this module drops them all.
+_BUILD = threading.local()
+
+
+class build_scope:
+    """`with store.build_scope():` the expensive derived reads below are memoised for the length of the block (this thread only)."""
+    def __enter__(self):
+        self.outer = getattr(_BUILD, "memo", None) is not None
+        if not self.outer:
+            _BUILD.memo = {}
+        return self
+
+    def __exit__(self, *exc):
+        if not self.outer:
+            _BUILD.memo = None
+        return False
+
+
+def memoised(key, compute):
+    """compute() once per build scope for `key` (a copy comes back each time: callers may change what they get); outside a scope, always."""
+    memo = getattr(_BUILD, "memo", None)
+    if memo is None:
+        return compute()
+    if key not in memo:
+        memo[key] = copy.deepcopy(compute())
+    return copy.deepcopy(memo[key])
+
+
+def _forget():
+    memo = getattr(_BUILD, "memo", None)
+    if memo:
+        memo.clear()
+
+
 def _write_text(path, text):
     """write_text for a file the server writes (bom.json, netlist sheets): the project guard is told what was written."""
+    _forget()
     with project_guard.writing(path):
         pathlib.Path(path).write_text(text, encoding="utf-8")
 
 
 def append(project, filename, record):
+    _forget()
     path = pdir(project) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     with project_guard.writing(path):
@@ -367,7 +404,13 @@ def line_availability_and_risk(line, best=None, build_qty=5):
 
 def bom(project, write=True):
     """The derived BOM: lines + supply + library state. Also written to
-    bom.json for any agent that would rather read a file."""
+    bom.json for any agent that would rather read a file. Without write, once per build_scope."""
+    if not write:
+        return memoised(("bom", project), lambda: _bom(project, False))
+    return _bom(project, True)
+
+
+def _bom(project, write):
     lines = bom_lines(project)
     supply = supply_for(project)
     lib = library_parts(project)
@@ -3203,6 +3246,11 @@ def _pin_num(pin):
 
 
 def pin_gaps(project):
+    """Pins of the drawn design nobody decided, {"open": [...], "unlisted": [...]} (see _pin_gaps); computed once per build_scope."""
+    return memoised(("pin_gaps", project), lambda: _pin_gaps(project))
+
+
+def _pin_gaps(project):
     """Pins of the drawn design that nobody decided: {"open": [{sheet, ref, num, name}], "unlisted": [{sheet, ref, num, name}]}.
     open: the netlist lists the pin with no net and not NC. unlisted: the part's built library symbol has the pin, the netlist does
     not list it at all (a symbol the build made from an older MPN / LCSC of the line is not compared). DNP and do-not-buy lines are
