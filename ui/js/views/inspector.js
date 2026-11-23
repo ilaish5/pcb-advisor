@@ -197,11 +197,11 @@ function inspLibHTML(l) {
   const ck = on => on ? `<span class="ok-t">${icon('check', 's')}</span>` : '<span class="muted">none</span>';
   const tone = {ok: 'ok', review: 'warn', missing: 'bad'}[l.library] || '';
   const act = e.verify === 'pass' && !e.accepted ? btn('Accept', {size: 'sm', kind: 'line', accept: l.key})
-    : e.verify !== 'pass' && e.symbol ? btn('Verify', {size: 'sm', kind: 'line', verify: l.key}) : '';
+    : e.verify !== 'pass' && e.symbol && pinsCanVerify(l) ? btn('Verify', {size: 'sm', kind: 'line', verify: l.key}) : '';
   const status = tag(({ok: 'Verified', review: 'To review', missing: 'Missing'})[l.library] || l.library, tone);
   return inspSec('Library',
     `<div class="insp-lib"><span>Symbol ${ck(e.symbol)}</span><span>Footprint ${ck(e.footprint)}</span><span>3D ${e.step ? 'STEP' : '<span class="muted">simple</span>'}</span></div>` +
-    `${e.model_source ? `<p class="insp-foot">Model: ${esc(e.model_source)}</p>` : ''}${e.issues ? `<p class="insp-foot warn-t">${esc(e.issues)}</p>` : ''}`, status + act);
+    `${e.model_source ? `<p class="insp-foot">Model: ${esc(e.model_source)}</p>` : ''}${e.issues ? `<p class="insp-foot warn-t">${esc(e.issues)}</p>` : ''}`, status + act + pinsConfirmBtn(l.key, {size: 'sm', kind: 'line'}));
 }
 function inspDatasheetHTML(l) {
   if (l.datasheet) {
@@ -230,7 +230,7 @@ function inspPartHTML(l) {
     `<div>${kv([field('mpn', 'MPN', l.mpn, 'MPN', true), field('role', 'Role', l.role, 'Add a role'), field('note', 'Note', l.note, 'Add a note'), ['CPL rotation', Number(l.cpl_rotation) ? `+${l.cpl_rotation}° added in the CPL` : null]])}` +
     `${inspDesc(l) ? `<p class="insp-desc">${esc(inspDesc(l))}</p>` : ''}</div>` +
     `<div id="insp-where-h">${dyn.where}</div><div id="insp-nets-h">${dyn.nets}</div>` +
-    inspStockHTML(l) + inspLibHTML(l) + inspDatasheetHTML(l) +
+    inspStockHTML(l) + inspLibHTML(l) + inspDatasheetHTML(l) + (typeof pinsInspHTML === 'function' ? pinsInspHTML(l) : '') +
     `<div id="insp-pins-h">${dyn.pins}</div>` +
     `</div></div>`;
 }

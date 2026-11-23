@@ -1,1 +1,15 @@
-/* Stream B (pin decisions) owns this file. */
+/* Pin decisions (stream B): the confirm dialog, the accepted-risk list */
+.dlg.pins-dlg{width:min(960px,calc(100% - 32px));max-height:calc(100vh - 48px);display:flex;flex-direction:column}
+.pins-dlg form{display:flex;flex-direction:column;min-height:0;gap:12px}
+.pins-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;min-height:0;overflow:auto}
+.pins-doc{display:flex;flex-direction:column;gap:8px;min-width:0}
+.pins-pages{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--t-sm)}
+.pins-frame{width:100%;height:min(60vh,520px);border:1px solid var(--line);border-radius:8px;background:var(--sheet)}
+.pins-nodoc{justify-content:center}
+.pins-tbl-w{overflow:auto;min-width:0}
+.pins-tbl th,.pins-tbl td{padding:4px 8px;text-align:left}
+.pins-wrong{display:inline-flex;gap:4px;align-items:center;color:var(--ink-3);font-size:var(--t-sm);cursor:pointer}
+.pins-note{margin-top:8px}
+.pin-dec .btn{margin-left:4px}
+.pin-risks h3{margin-bottom:6px}
+@media (max-width:720px){.pins-body{grid-template-columns:1fr}}

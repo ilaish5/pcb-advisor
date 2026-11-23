@@ -73,10 +73,12 @@ def test_already_decided_is_not_a_red_toast():
     assert "PROP_ALREADY" in fn(CHAT, "propGroupHTML") or "PROP_ALREADY.test" in CHAT
 
 
-def test_accept_as_is_is_one_at_a_time():
-    h = CHECKS[CHECKS.index("onAct('accept-pins'"):]
-    h = h[:h.index("onAct('recheck-pins'")]
-    assert "pinsAcceptUntil" in h and "Accepted" in h and "Date.now()" in h
+def test_confirming_pins_is_one_part_at_a_time():
+    """A modal dialog per part (views/pins.js), guarded against a second open while the first awaits: no row slides under the pointer."""
+    pins = (UI / "js" / "views" / "pins.js").read_text(encoding="utf-8")
+    h = pins[pins.index("let pinsOpen"):pins.index("onAct('confirm-pins'")]
+    assert "if (pinsOpen) return;" in h and "finally { pinsOpen = false; }" in h and "showModal()" in h
+    assert "accept-pins" not in CHECKS
 
 
 def test_builder_output_has_one_row_per_proposal():

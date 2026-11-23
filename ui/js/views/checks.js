@@ -159,11 +159,11 @@ function dfmUnverifiedHTML() {
   const docs = (S.sources || []).filter(s => s.scope === 'project' && s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
   const item = l => `<li class="unv-row"><span class="m">${esc(refsLabel(l.refs))}</span> ${esc(l.mpn || l.value || '')}
     <span class="unv-why" title="${esc(l.pins_issues || '')}">${l.pins_status === 'mismatch' ? 'Pins conflict with ' + esc(l.datasheet || 'the datasheet') + ': ' + esc(l.pins_issues || '') : esc(l.pins_issues || 'Pins not checked against a datasheet')}</span>
-    ${btn('Accept as is', {kind: 'line', size: 'sm', act: 'accept-pins', line: l.key, title: 'You checked these pins yourself'})}
+    ${btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: l.key, title: 'See the datasheet page next to the pins; one click records your decision'})}
     ${docs.length ? `<select class="in quiet" data-pick-ds="${esc(l.key)}" aria-label="Pick a datasheet for ${esc(refsLabel(l.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}"${d === l.datasheet ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
   return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>
-    <p class="muted">Drop each datasheet in Sources and re-check, or accept the pins as is.</p>
-    <ul>${rows.map(item).join('')}</ul>${btn('Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins'})}</section>`;
+    <p class="muted">Drop each datasheet in Sources and re-check, or confirm the pins yourself (one click, undoable).</p>
+    <ul>${rows.map(item).join('')}</ul>${btn('Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins'})} ${typeof pinsAcceptAllBtn === 'function' ? pinsAcceptAllBtn() : ''}</section>`;
 }
 // A partial schematic is welcome while designing; before ordering, every pin has a net and every part is in the BOM.
 function dfmGaps() {
@@ -194,18 +194,7 @@ onChange(t => t.dataset && t.dataset.pickDs !== undefined, async e => {
   setState(r); render(true);
   toast(attachMsg(r.attached));
 });
-// One row accepted at a time: when a row leaves the list the next row's button slides up under the pointer, so for a moment
-// after each accept (the request, the re-render and a short settle) every Accept as is is ignored. The row shows "Accepted"
-// at once; a failed accept draws the list again.
-let pinsAcceptUntil = 0;
-onAct('accept-pins', async (el, d) => {
-  if (Date.now() < pinsAcceptUntil) return;
-  pinsAcceptUntil = Infinity;
-  el.outerHTML = `<span class="ok-t unv-done">${icon('check', 's')} Accepted</span>`;
-  try { await api('/api/pins/accept', {line: d.line}); await refresh(true); }
-  catch (err) { render(true); }
-  finally { pinsAcceptUntil = Date.now() + 700; }
-});
+// A part's pins are confirmed in a modal dialog (views/pins.js): one part at a time by construction, one click, no reason asked.
 onAct('recheck-pins', async () => { const r = await api('/api/final/unverified'); await refresh(true); if (r && r.message) toast(r.message); });
 function dfmUpload(trigger) {
   if (dfmBusy || dfmLooking) return btn(dfmLooking ? 'Looking…' : 'Uploading…', {kind: trigger.kind, disabled: true});
@@ -399,7 +388,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -418,7 +407,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

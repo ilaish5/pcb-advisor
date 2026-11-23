@@ -78,7 +78,8 @@ function libIssues(r) {
 /* One quiet action: Verify until the part has passed, then Accept. A part with no symbol has nothing to verify. */
 function libAction(r) {
   if (r.verify === 'pass' && !r.accepted) return btn('Accept', {size: 'sm', accept: r.line, title: 'It passed the datasheet check. Accept it for the library.'});
-  if (r.verify !== 'pass' && r.symbol) return btn('Verify', {size: 'sm', verify: r.line, title: 'Compare the pins with the datasheet'});
+  const lb = (S.bom || []).find(b => b.key === r.line);
+  if (r.verify !== 'pass' && r.symbol) return (lb && !pinsCanVerify(lb) ? '' : btn('Verify', {size: 'sm', verify: r.line, title: 'Compare the pins with the datasheet'})) + pinsConfirmBtn(r.line, {size: 'sm'});
   return '';
 }
 function libRow(r) {

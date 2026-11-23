@@ -135,7 +135,7 @@ def test_inspector_library_row_and_its_contextual_action():
     assert "Symbol" in lib and "Footprint" in lib and "3D" in lib and "STEP" in lib
     # Accept once verified and not yet accepted; Verify while it is not verified and a symbol exists; neither otherwise
     assert re.search(r"e\.verify === 'pass' && !e\.accepted\s*\?\s*btn\('Accept'.*accept: l\.key", lib, re.S)
-    assert re.search(r":\s*e\.verify !== 'pass' && e\.symbol\s*\?\s*btn\('Verify'.*verify: l\.key", lib, re.S)
+    assert re.search(r":\s*e\.verify !== 'pass' && e\.symbol[^?]*\?\s*btn\('Verify'.*verify: l\.key", lib, re.S)
     # the generic data-accept / data-verify routes in core.js do the work
     core = (REPO / "ui" / "js" / "core.js").read_text(encoding="utf-8")
     assert "d.accept" in core and "d.verify" in core
