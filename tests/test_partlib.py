@@ -561,3 +561,79 @@ def test_a_generated_box_symbol_is_sized_so_its_names_fit():
     assert conv.names_fit(pins, gfx) is True
     x0, y0, x1, y1 = gfx[0][4:8]
     assert y1 - y0 > 200                         # the old 3-pin box was 200 mil high: VIN (top) and GND (bottom) overlapped
+
+
+# ---------------------------------------------------------------- fail-closed conversion (RCA 2026-11-23)
+
+LOSSY = FIX / "lossy"
+
+
+def _convert(name):
+    return conv.convert_footprint((LOSSY / f"{name}.kicad_mod").read_text())
+
+
+def test_custom_pad_polygon_becomes_real_copper_not_the_anchor():
+    fp = _convert("CUSTOM_POLY")
+    p = pads(fp["lines"])
+    usb = p["A1B12"]
+    assert float(usb[11]) == pytest.approx(0.6 * MM, abs=0.01) and float(usb[12]) == pytest.approx(1.3 * MM, abs=0.01)
+    assert usb[13] == "2"                                                     # was 0.197 mil: the 0.005 mm anchor
+    assert not [n for n in fp["notes"] if "A1B12" in n]                       # a rectangular polygon loses nothing
+    # pad 49: a chamfered polygon off its anchor, turned 90: the pad moves to the polygon's centre, its size is the box
+    c = p["49"]
+    assert float(c[11]) == pytest.approx(1.0 * MM, abs=0.01) and float(c[12]) == pytest.approx(1.0 * MM, abs=0.01)
+    assert float(c[2]) == pytest.approx(0.5 * MM, abs=0.01) and float(c[3]) == pytest.approx(1.0 * MM, abs=0.01)   # centre (1.0, 0.5) turned 90
+    assert float(c[4]) == 90
+    assert any("pad 49" in n and "bounding rectangle" in n for n in fp["notes"])
+    assert fp["errors"] == []
+
+
+def test_unknown_pad_shape_and_unconverted_items_are_reported():
+    fp = _convert("UNKNOWN_SHAPE")
+    assert any("pad 1" in e and "trapezoid" in e for e in fp["errors"])
+    assert any("keep-out" in n for n in fp["notes"]) and any("Edge.Cuts" in n for n in fp["notes"])
+    assert set(pads(fp["lines"])) == {"1", "2"}
+
+
+def test_pad_below_the_fab_minimum_is_found_in_the_spec():
+    assert conv.pad_size_problems(_convert("TINY_PAD")["lines"]) == [("1", 0.05)]
+    assert conv.pad_size_problems(_convert("CUSTOM_POLY")["lines"]) == []
+
+
+def test_check_build_flags_tiny_pads_and_converter_errors_as_problems(tmp_path):
+    fp = _convert("TINY_PAD")
+    (tmp_path / "symbols_spec.txt").write_text("LIBRARY|x\nSYMBOL|A||1\nSYMBOL|B||1\n")
+    (tmp_path / "footprints_spec.txt").write_text("\n".join(["FPLIB|x", "FOOTPRINT|TINY|d"] + fp["lines"] + ["FOOTPRINT|OK|d"]) + "\n")
+    (tmp_path / "links.txt").write_text("A=TINY\nB=OK\n")
+    (tmp_path / "parts.json").write_text(json.dumps({"footprints": {
+        "TINY": {"source": "easyeda", "steps": ["a.step"]},
+        "OK": {"source": "easyeda", "steps": ["b.step"], "errors": ["pad 3: shape trapezoid is not known"]}}}))
+    probs = {p["footprint"]: p["message"] for p in partlib.check_build(tmp_path) if p["level"] == "problem"}
+    assert "pad 1" in probs["TINY"] and "0.05" in probs["TINY"]
+    assert "trapezoid" in probs["OK"]
+
+
+def test_converter_errors_reach_the_manifest_as_an_error_part(proj, home):
+    def fetch(cid, dest):
+        ok, msg = fake_fetch([])(cid, dest)
+        if cid == "C100":                                                     # the resistor's footprint now has an unknown pad shape
+            mod = dest / "lib.pretty" / "R0603_FAKE.kicad_mod"
+            mod.write_text(mod.read_text().replace(" rect ", " trapezoid "))
+        return ok, msg
+    m = prep(proj, fetcher=fetch)
+    assert m["R1"]["status"] == "error" and any("trapezoid" in i for i in m["R1"]["issues"])
+    assert m["U1"]["status"] != "error"
+    b = home / "projects" / proj / "library" / "build"
+    assert json.loads((b / "parts.json").read_text())["footprints"]["R0603_FAKE"]["errors"]
+
+
+@pytest.mark.parametrize("path", [p for p in sorted(FIX.rglob("*.kicad_mod")) if p.parent != LOSSY and "BROKEN" not in p.name],
+                         ids=lambda p: p.stem)
+def test_every_fixture_footprint_keeps_its_copper(path):
+    fp = conv.convert_footprint(path.read_text())
+    assert fp["errors"] == [], path.name
+    assert conv.pad_size_problems(fp["lines"]) == [], path.name
+    src = conv.parse(path.read_text())[0]
+    copper = [it for it in src[2:] if isinstance(it, list) and it and it[0] == "pad"
+              and any(".Cu" in str(v) for v in (conv.one(it, "layers") or [])[1:])]
+    assert len(copper) == sum(1 for ln in fp["lines"] if ln.startswith("PAD|")), path.name
