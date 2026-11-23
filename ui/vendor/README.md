@@ -20,6 +20,10 @@ ce1fa418de16a19495a9f72495580e3015d7745c296d3ce0485897f902ddedfb  three/build/th
 026047366a9bdd0961eb79857fd5d84db204589942193012aabe7e3bee381045  three/examples/jsm/libs/chevrotain.module.min.js
 3fb44ce11d00611f9b3f3c5775d520ebab48930c1f08279b7b1316f05f0d3379  occt/occt-import-js.js
 33391fc9d94ea5c869a6718488bf0a9a464222bac9bdc764dfe1690cef281952  occt/occt-import-js.wasm
+7ffe1954587c77dfba1cf8eb9b2ea743671fa6e63f9e7a2f258119d42e14eefe  occt/license.occt-import-js.txt
+090f8eb6ba63e72887c1f89b009fb1656cfda02d83b6e9805b20468520a5d77f  occt/license.occt.txt
 ```
+
+`.gitattributes` marks `ui/vendor/**` as `-text`, so git keeps these bytes exactly (no line-ending conversion).
 
 To update: replace the files from the new npm tarball, update the importmap only if the path changes, bump this table.
