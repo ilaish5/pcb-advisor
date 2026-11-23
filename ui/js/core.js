@@ -78,6 +78,7 @@ function status(l) {
   if (l.nobuy || l.dnp) return 'na';
   if (l.supply == null) return 'pend';
   if (!best(l)) return 'bad';
+  if (l.library === 'error') return 'bad';
   if (l.library === 'review' || l.library === 'missing') return 'warn';
   return 'ok';
 }
@@ -123,7 +124,7 @@ function refsLabel(refs) {
   const runs = refRuns(refs);
   return runs.length > 3 ? `${runs.slice(0, 3).join(', ')} … (${refs.length})` : runs.join(', ');
 }
-const LIBTXT = {std: 'Altium default', ok: 'In library · verified', review: 'In library · to review', missing: 'Missing'};
+const LIBTXT = {std: 'Altium default', ok: 'In library · verified', review: 'In library · to review', missing: 'Missing', error: 'Footprint error'};
 const FIELD = {mpn: 'MPN', manufacturer: 'Manufacturer', package: 'Package', value: 'Value', description: 'Description',
   note: 'Note', datasheet: 'Datasheet', dnp: 'Not fitted', nobuy: 'Not bought', refs: 'Designators', role: 'Role',
   cpl_rotation: 'CPL rotation (added in pick and place)'};

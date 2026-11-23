@@ -620,6 +620,15 @@ def _locked_part(build, last, key, line, lib):
 
 # ---------------------------------------------------------------- spec files
 
+def footprint_problems(f):
+    """What is wrong with a converted footprint (build.footprints[name]): the converter's own errors and pads below what a fab can make.
+    [] when it is sound."""
+    pads = [ln for ln in f["fp"]["lines"] if ln.startswith("PAD|")]
+    return list(f["fp"].get("errors", [])) + [
+        f"pad {pad} is {side:g} mm wide, below the {MIN_PAD_MM:g} mm a fab can make; the footprint's copper was not converted "
+        "correctly or the part's pad is too small to build" for pad, side in pad_size_problems(pads)]
+
+
 def _write(project, build):
     out = library_dir(project) / "build"
     if out.exists():
@@ -633,7 +642,7 @@ def _write(project, build):
                for p in s["pins"]]
     fp = ["FPLIB|<PCBLIB>"]
     for name, f in build.footprints.items():
-        if any(s["footprint"] == name for s in build.symbols.values()):
+        if any(s["footprint"] == name for s in build.symbols.values()) and not footprint_problems(f):     # fail closed: a footprint in error is never written
             fp.append(f"FOOTPRINT|{name}|{clean(f['fp'].get('desc') or 'EasyEDA/LCSC')}")
             fp += f["fp"]["lines"]
     mech = partlib_mech.mech_specs(project)            # holes / keep-outs of the student's confirmed constraints: footprints, no symbol
@@ -651,7 +660,7 @@ def _write(project, build):
     parts = {"symbols": {n: {k: s[k] for k in ("prefix", "comment", "params", "hide_pin_names", "line", "lines") if k in s}
                          for n, s in build.symbols.items()},
              "footprints": {n: {"source": f["source"], "tht": f["fp"]["tht"], "model": f.get("model"),
-                                "errors": f["fp"].get("errors", []),
+                                "errors": footprint_problems(f),
                                 "steps": [p.relative_to(lib).as_posix() for p in f["steps"]]}
                             for n, f in build.footprints.items()
                             if any(s["footprint"] == n for s in build.symbols.values())}}
@@ -689,13 +698,16 @@ def check_build(build_dir):
             add("problem", f"symbol {s} has no footprint", symbol=s)
         elif re.search(r"[\\/:]|\.pcblib$", fp, re.I):
             add("problem", f"symbol {s} links to a file path, not a footprint name", symbol=s, footprint=fp)
-        elif fp not in fps:
+        elif fp not in fps and not parts.get("footprints", {}).get(fp, {}).get("errors"):    # one left out for its errors is reported as such below
             add("problem", f"symbol {s} links to missing footprint {fp}", symbol=s, footprint=fp)
-    for name in dict.fromkeys(fps):
+    left_out = [n for n, i in parts.get("footprints", {}).items() if i.get("errors") and n not in fps]
+    for name in dict.fromkeys(fps + left_out):
         info = parts.get("footprints", {}).get(name, {})
         n = len(info.get("steps", []))
         for msg in info.get("errors", []):                   # the converter could not keep the source's copper truthfully
             add("problem", f"footprint {name}: {msg}", footprint=name, kind="copper")
+        if name in left_out:
+            continue                                          # not in the spec: nothing more to audit
         for pad, side in pad_size_problems(pad_lines.get(name, [])):
             add("problem", f"footprint {name}: pad {pad} is {side:g} mm wide, below the {MIN_PAD_MM:g} mm a fab can make; "
                            "the footprint's copper was not converted correctly or the part's pad is too small to build",

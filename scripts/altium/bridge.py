@@ -900,6 +900,14 @@ def save_open_sheets(prj, docs):
     return [d.name for d in dirty]
 
 
+def refuse_footprint_errors(project, refs, what):
+    """Fail closed: a part whose library footprint has converter errors (store.footprint_errors) is neither drawn nor placed. One message
+    names every such part, what is wrong and how to fix it. Nothing has been changed when this raises."""
+    msg = store.footprint_error_text(store.footprint_error_parts(project, refs=set(refs)), f"Cannot {what}")
+    if msg:
+        raise BridgeError(msg + " Nothing was changed.")
+
+
 def draw_schematic(project, sheet=None, replace=False):
     """Draw the netlist sheet(s) of the project in Altium: every part from the project SchLib (pin count checked), a wire stub
     on every connected pin ending in a power port or a net label, a No ERC cross on NC pins. Then the saved SchDoc is read back
@@ -917,6 +925,7 @@ def draw_schematic(project, sheet=None, replace=False):
     if not planned:
         raise Fixable("prereq.no_netlist", "There is no netlist sheet to draw" + (f" (no sheet {sheet})" if sheet is not None else "")
                       + ": write the netlist first (netlist.write).")
+    refuse_footprint_errors(project, {p.get("ref") for _s, _t, sh in planned for p in sh.get("parts", []) if isinstance(p, dict)}, "draw")
     bom_refs = {r for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
     lib_symbols = {s["name"]: s for s in read_schlib(lp["schlib"])["symbols"]}
     manifest = store.library_manifest(project)
@@ -1473,6 +1482,7 @@ def place_pcb(project, replace=False):
     pcb = _project_pcb(project)
     lp = library_paths(project)
     parts = _netlist_parts(project)
+    refuse_footprint_errors(project, {p["ref"] for p in parts}, "place")
     links = _sch_links(prj)
     undrawn = sorted({p["ref"] for p in parts if p["ref"] not in links})
     if undrawn:                  # parts placed without their schematic link are added a second time by the first Update PCB
@@ -2695,7 +2705,7 @@ def library_files(project, lp):
     bodies = {}
     for fpn, info in parts["footprints"].items():
         steps = [lib / s for s in info.get("steps", []) if (lib / s).is_file()]
-        if not steps:
+        if not steps or info.get("errors"):         # a footprint in error is not in the spec: no body to attach to it
             continue
         dest = lp["d3"] / f"{_file_name(fpn, 'model')}.step"
         shutil.copyfile(steps[0], dest)

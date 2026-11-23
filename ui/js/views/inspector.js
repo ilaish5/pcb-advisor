@@ -193,10 +193,10 @@ function inspLibHTML(l) {
   if (l.library === 'std') return inspSec('Library', '<p class="muted">Altium default library</p>');
   const e = l.library_entry || {};
   const ck = on => on ? `<span class="ok-t">${icon('check', 's')}</span>` : '<span class="muted">none</span>';
-  const tone = {ok: 'ok', review: 'warn', missing: 'bad'}[l.library] || '';
+  const tone = {ok: 'ok', review: 'warn', missing: 'bad', error: 'bad'}[l.library] || '';
   const act = e.verify === 'pass' && !e.accepted ? btn('Accept', {size: 'sm', kind: 'line', accept: l.key})
     : e.verify !== 'pass' && e.symbol && pinsCanVerify(l) ? btn('Verify', {size: 'sm', kind: 'line', verify: l.key}) : '';
-  const status = tag(({ok: 'Verified', review: 'To review', missing: 'Missing'})[l.library] || l.library, tone);
+  const status = tag(({ok: 'Verified', review: 'To review', missing: 'Missing', error: 'Footprint error'})[l.library] || l.library, tone);
   return inspSec('Library',
     `<div class="insp-lib"><span>Symbol ${ck(e.symbol)}</span><span>Footprint ${ck(e.footprint)}</span><span>3D ${e.step ? 'STEP' : '<span class="muted">simple</span>'}</span></div>` +
     `${e.model_source ? `<p class="insp-foot">Model: ${esc(e.model_source)}</p>` : ''}${e.issues ? `<p class="insp-foot warn-t">${esc(e.issues)}</p>` : ''}`, status + act + pinsConfirmBtn(l.key, {size: 'sm', kind: 'line'}));
