@@ -286,3 +286,35 @@ def test_place_says_each_layout_warning_once_in_the_order_it_was_first_given(tmp
     monkeypatch.setattr(layout, "decap_distance_warnings", lambda doc, parts: [same, "last"])
     res, _ = _place_fakes(monkeypatch, tmp_path, [0.0, 0.0, 30.0, 25.0])
     assert res["warnings"] == ["first", same, "last"]
+
+
+def test_place_on_derives_connector_dirs_so_no_false_270_warning(tmp_path, monkeypatch):
+    """Every connector gets its opening from its footprint (layout.opening_dir) as connector_dirs: the planner then has no reason to
+    say "check the mating face (270 deg)" for it; a connector whose opening cannot be told is left out (still warned about)."""
+    import altium.pcbdoc as pcbdoc
+    from altium import layout
+    lib = tmp_path / "L.PcbLib"
+    lib.write_bytes(b"x")
+    pcb = tmp_path / "B.PcbDoc"
+    pcb.write_bytes(b"pcb")
+    fp = {"name": "FP", "pads": [{"x": 0, "y": 0, "xsize": 40, "ysize": 40, "rotation": 0, "name": "1"}], "extent": {}}
+    monkeypatch.setattr(bridge, "read_pcblib", lambda p: {"footprints": [fp]})
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {})
+    monkeypatch.setattr(bridge, "_backup", lambda prj, files: None)
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: {"pads": [1], "tracks": []})
+    monkeypatch.setattr(layout, "verify_layout", lambda *a, **k: [])
+    monkeypatch.setattr(layout, "opening_dir", lambda f: 90.0)
+    seen = {}
+    real = layout.plan_placement
+
+    def spy(parts, footprints, outline, **kw):
+        seen.update(kw)
+        return real(parts, footprints, outline, **kw)
+    monkeypatch.setattr(layout, "plan_placement", spy)
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: ["pcbcheck rect=1 objects=2 parts=2 tracks=0 outline_pts=4 box_mil=0,0,1181,984"])
+    parts = [{"ref": "J1", "footprint": "FP", "lib_ref": "J", "pins": []}, {"ref": "R1", "footprint": "FP", "lib_ref": "R", "pins": []}]
+    try:
+        bridge.place_on(tmp_path / "P.PrjPcb", pcb, lib, parts, size=(30, 25))
+    except Exception:           # noqa: BLE001  (only the planner's arguments are looked at)
+        pass
+    assert seen["connector_dirs"] == {"J1": 90.0}

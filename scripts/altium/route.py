@@ -1640,9 +1640,41 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
     return best
 
 
-def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3):
+POUR_KEEPOUT_MARGIN_MM = 0.2      # the pour stays this far from a keep-out (the polygon clearance rule adds its own)
+POUR_MIN_PIECE_MM = 1.0           # a leftover piece of the pour smaller than this in either direction is not drawn
+
+
+def _rect_minus(r, k):
+    """[rect] pieces of rect r outside rect k (all [x0, y0, x1, y1])."""
+    if k[0] >= r[2] or k[2] <= r[0] or k[1] >= r[3] or k[3] <= r[1]:
+        return [r]
+    out = []
+    if k[0] > r[0]:
+        out.append([r[0], r[1], k[0], r[3]])
+    if k[2] < r[2]:
+        out.append([k[2], r[1], r[2], r[3]])
+    x0, x1 = max(r[0], k[0]), min(r[2], k[2])
+    if k[1] > r[1]:
+        out.append([x0, r[1], x1, k[1]])
+    if k[3] < r[3]:
+        out.append([x0, k[3], x1, r[3]])
+    return out
+
+
+def pour_rects(box, keepouts=(), edge=0.3):
+    """The rectangles the ground pour is drawn as: the board box less `edge` on each side, less every keep-out rectangle (plus
+    POUR_KEEPOUT_MARGIN_MM): so no pour copper lies in a keep-out (an antenna area). One rectangle when there is no keep-out."""
+    rects = [[box[0] + edge, box[1] + edge, box[2] - edge, box[3] - edge]]
+    for k in keepouts or ():
+        k = [k[0] - POUR_KEEPOUT_MARGIN_MM, k[1] - POUR_KEEPOUT_MARGIN_MM, k[2] + POUR_KEEPOUT_MARGIN_MM, k[3] + POUR_KEEPOUT_MARGIN_MM]
+        rects = [p for r in rects for p in _rect_minus(r, k)]
+    return [r for r in rects if r[2] - r[0] >= POUR_MIN_PIECE_MM and r[3] - r[1] >= POUR_MIN_PIECE_MM]
+
+
+def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3, keepouts=None):
     """Script lines: ROUTEBEGIN doc replace, TRACK doc layer x1 y1 x2 y2 width net, VIA doc x y dia hole net, then, for pour_net, POLY
-    doc layer net x0 y0 x1 y1 (a pour on the bottom layer over the box), PCBSAVE doc."""
+    doc layer net x0 y0 x1 y1 (a pour on the bottom layer over the box; one POLY per rectangle of the box less the `keepouts`,
+    see pour_rects), PCBSAVE doc."""
     d = str(pcb)
     cmds = [("ROUTEBEGIN", d, "1" if replace else "0")]
     for it in items:
@@ -1652,8 +1684,8 @@ def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3)
         else:
             cmds.append(("VIA", d, f"{it['x']:.4f}", f"{it['y']:.4f}", f"{it['dia']:g}", f"{it['hole']:g}", it["net"]))
     if pour_net and box:
-        cmds.append(("POLY", d, "bottom", pour_net, f"{box[0] + edge:.4f}", f"{box[1] + edge:.4f}", f"{box[2] - edge:.4f}",
-                     f"{box[3] - edge:.4f}"))
+        for r in (pour_rects(box, keepouts, edge) if keepouts else [[box[0] + edge, box[1] + edge, box[2] - edge, box[3] - edge]]):
+            cmds.append(("POLY", d, "bottom", pour_net, f"{r[0]:.4f}", f"{r[1]:.4f}", f"{r[2]:.4f}", f"{r[3]:.4f}"))
     cmds.append(("PCBSAVE", d))
     return cmds
 

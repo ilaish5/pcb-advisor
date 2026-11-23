@@ -398,6 +398,11 @@ def _hit(a, b, gap):
     return a[0] < b[2] + gap and b[0] < a[2] + gap and a[1] < b[3] + gap and b[1] < a[3] + gap
 
 
+def _box_gap(a, b):
+    """Distance between two boxes (0 when they touch or overlap)."""
+    return math.hypot(max(b[0] - a[2], a[0] - b[2], 0.0), max(b[1] - a[3], a[1] - b[3], 0.0))
+
+
 def _inside(box, outline, edge):
     return box[0] >= outline[0] + edge and box[1] >= outline[1] + edge and box[2] <= outline[2] - edge and box[3] <= outline[3] - edge
 
@@ -430,7 +435,7 @@ def _label_rect(box, ref, side):
     return [cx - w / 2, box[1] - LABEL_GAP - h, cx + w / 2, box[1] - LABEL_GAP]
 
 
-def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, connector_dirs=None, edge_copper_mm=EDGE_COPPER_MM):
+def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, connector_dirs=None, edge_copper_mm=EDGE_COPPER_MM, rules=None):
     """The placement (see _plan_placement). Connectors go to the edges first and a big one can take the room a regulator needs for its
     caps: when a decoupling cap does not get next to its supply pin, the crystal is farther than XTAL_NEAR_MM from the oscillator pins
     (or a part finds no place), the plan is made again, with the connectors starting on another side of the board (up to three more)
@@ -438,11 +443,19 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
     room beside the MCU). When no plan is free of findings, the same plans are made once more with the MCU (any IC with a crystal or
     caps to place beside it) tried at other places and turns: where the board edge leaves room for them beside its pins (a first place
     that leaves a crystal or a supply pin without room is the usual reason for a finding). The best plan is returned: fewest errors,
-    then caps too far, then crystals too far, then findings; the first one on a tie."""
+    then caps too far, then crystals too far, then findings; the first one on a tie.
+    rules = the student's confirmed physical constraints (constraints.plan_for_board), all keys optional:
+      "fixed"    {ref: (x, y, rot)} parts placed first, where they are (mounting holes: they are in "places" too, unlike `keep`)
+      "keepouts" [[x0, y0, x1, y1]] board areas no part may enter
+      "edge"     {ref: "L"|"R"|"T"|"B"|""} the part goes flush with that edge ("" = any edge), like a connector
+      "apart"    [(ref a, ref b, min mm)] the two parts' boxes keep at least that far apart (a hard filter of every candidate place)
+      "antenna"  {ref: degrees} the way a radio module's antenna faces at rotation 0: the module goes to an edge, antenna outwards"""
+    rules = rules or {}
+    edge_refs = set(rules.get("edge") or {}) | set(rules.get("antenna") or {})
     best, best_key = None, None
     for trials in (False, True):
-        for shift in range(4 if any(is_connector(p["ref"]) for p in parts) else 1):
-            plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, best_key, trials)
+        for shift in range(4 if any(is_connector(p["ref"]) or p["ref"] in edge_refs for p in parts) else 1):
+            plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, best_key, trials, rules)
             if plan is None:                        # cannot beat the best so far
                 continue
             far = sum(1 for f in plan.get("findings", []) if f["level"] == "error")
@@ -459,7 +472,7 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
     return best
 
 
-def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, bound=None, trials=False):
+def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, bound=None, trials=False, rules=None):
     """Places every part inside the outline, by its real extent (pads, silkscreen, courtyard, 3D body) plus the strip its designator
     needs, so no two parts and no designator overlap.
     parts: netlist parts [{ref, footprint, pins: [{num, net}]}]; footprints: {footprint name: read_pcblib footprint};
@@ -480,6 +493,14 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
     errors, warnings, places = [], [], []
     gap = max(GAP_MM, clearance_mm)
     keep = keep or {}
+    rules = rules or {}
+    fixed = rules.get("fixed") or {}
+    edge_pref = dict(rules.get("edge") or {})
+    antenna = dict(rules.get("antenna") or {})
+    apart_of = {}                       # ref -> [(other ref, min mm)], both ways round
+    for a, b, mm in rules.get("apart") or []:
+        apart_of.setdefault(a, []).append((b, mm))
+        apart_of.setdefault(b, []).append((a, mm))
     info = {}
     for p in parts:
         fpname = p.get("footprint") or ""
@@ -551,6 +572,11 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
     for ref, (x, y, rot) in keep.items():
         if ref in info:
             commit(ref, x, y, rot)
+    for ref, (x, y, rot) in fixed.items():          # mounting holes: placed first, kept in the plan's "places"
+        if ref in info:
+            commit(ref, x, y, rot)
+    for kb in rules.get("keepouts") or []:          # a keep-out is walled off like a part; the label strip of nothing is needed
+        add_obstacle([kb[0], kb[1], kb[2], kb[3]])      # blocked() keeps `gap` from every obstacle already
 
     def fit_sides(ref, rot, x, y, edge):
         """The sides of the designator that fit at this place (top, bottom, left, right: a generator; none: the part does not fit).
@@ -564,6 +590,10 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         ox0, oy0, ox1, oy1 = outline[0] + edge, outline[1] + edge, outline[2] - edge, outline[3] - edge
         if bx0 < ox0 or bx1 > ox1 or by0 < oy0 or by1 > oy1 or blocked(bx0, by0, bx1, by1):
             return
+        for other, mm in apart_of.get(ref, ()):      # keep_apart: a hard filter, whichever of the two is placed second
+            o = placed.get(other)
+            if o and _box_gap((bx0, by0, bx1, by1), o["box"]) < mm:
+                return
         for side in ("top", "bottom", "left", "right"):
             if side == "top":
                 lx0, ly0, lx1, ly1 = cx - w / 2, by1 + LABEL_GAP, cx + w / 2, by1 + LABEL_GAP + h
@@ -609,7 +639,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         return placed[ref]["x"] + rx, placed[ref]["y"] + ry
 
     todo = [r for r in info if r not in placed]
-    conns = sorted([r for r in todo if is_connector(r)], key=lambda r: -_area(info[r]))
+    conns = sorted([r for r in todo if is_connector(r) or r in edge_pref or r in antenna], key=lambda r: -_area(info[r]))
     ics = sorted([r for r in todo if r not in conns and re.match(r"^(?:U|IC|Q|M|MOD)\d", r, re.I)], key=lambda r: -_area(info[r]))
     rest = [r for r in todo if r not in conns and r not in ics]
     cx, cy = (outline[0] + outline[2]) / 2, (outline[1] + outline[3]) / 2
@@ -624,9 +654,11 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
     cursor = {}
     for n, ref in enumerate(conns):
         done = False
-        face0 = (connector_dirs or {}).get(ref, info[ref]["open"])
-        for s, face in sides[(n + shift) % 4:] + sides[:(n + shift) % 4]:
-            rot = (face - (face0 or 0)) % 360
+        face0 = antenna.get(ref, (connector_dirs or {}).get(ref, info[ref]["open"]))
+        turned = is_connector(ref) or ref in antenna            # a part that is only asked to sit at an edge keeps its rotation
+        want = edge_pref.get(ref) or ""
+        for s, face in [sf for sf in sides[(n + shift) % 4:] + sides[:(n + shift) % 4] if not want or sf[0] == want]:
+            rot = (face - (face0 or 0)) % 360 if turned else 0
             b = rot_box(info[ref]["box"], rot)
             pb = rot_box(info[ref]["padbox"], rot)
             eb = rot_box(info[ref]["silk"], rot) if info[ref]["silk"] else pb                # no silkscreen: the copper again, nothing more is asked
@@ -1241,7 +1273,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             continue
         commit(ref, *hit[:3], side=hit[3])
     for ref in placed:
-        if ref in keep:
+        if ref in keep and ref not in fixed:
             continue
         i = info[ref]
         lab = placed[ref]["label"]
@@ -1249,6 +1281,8 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                        "rot": placed[ref]["rot"], "label": [round((lab[0] + lab[2]) / 2, 3), round((lab[1] + lab[3]) / 2, 3)],
                        "label_h": LABEL_H, "label_rot": label_rotation(placed[ref]["rot"])})
     for ref in conns:
+        if ref in antenna or not is_connector(ref):
+            continue
         if ref in placed and ref not in (connector_dirs or {}):
             if info[ref]["open"] is None:
                 warnings.append(f"{ref}: cannot tell from its footprint which way the connector opens; it was assumed to open towards +x: "
@@ -1604,7 +1638,8 @@ def verify_layout(doc, plan_parts, outline=None, clearance_mm=0.0, places=None, 
     extra = sorted(set(comps) - {p["ref"] for p in plan_parts})
     if extra:
         problems.append(f"parts on the board that are not in the netlist: {', '.join(extra)}")
-    boxes = real_boxes(doc, footprints)
+    skip = {p["ref"] for p in plan_parts if p.get("mech") == "keepout"}     # a keep-out is an area, not a part: it may lie under others
+    boxes = {r: b for r, b in real_boxes(doc, footprints).items() if r not in skip}
     refs = sorted(boxes)
     gap = clearance_mm if clearance_mm > 0 else 0.0
     for a in range(len(refs)):
@@ -1628,8 +1663,8 @@ def verify_layout(doc, plan_parts, outline=None, clearance_mm=0.0, places=None, 
             d = min(pb[0] - outline[0], pb[1] - outline[1], outline[2] - pb[2], outline[3] - pb[3])
             if d < edge_copper_mm - 0.01:
                 problems.append(f"{p['ref']}-{p['name']} is {d:.2f} mm from the board edge (copper must keep {edge_copper_mm:g} mm)")
-    labels = _designators(doc)
-    for ref in [p["ref"] for p in plan_parts] if "texts" in doc else []:
+    labels = {r: b for r, b in _designators(doc).items() if r not in skip}
+    for ref in [p["ref"] for p in plan_parts if p["ref"] not in skip] if "texts" in doc else []:
         if ref in comps and ref not in labels:
             problems.append(f"{ref}: designator is not shown on the board")
     pad_boxes = [(f"{p['ref']}-{p['name']}", _abs_pad_rect(p)) for p in doc.get("pads", []) if "x_mm" in p and p.get("ref")]

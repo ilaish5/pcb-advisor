@@ -58,6 +58,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 import jlc_upload  # noqa: E402
 import outjob  # noqa: E402
 import partlib  # noqa: E402
+import partlib_mech  # noqa: E402
 import partlib_order  # noqa: E402
 import project as project_mod  # noqa: E402
 import rule_kinds  # noqa: E402
@@ -1135,7 +1136,9 @@ def _netlist_parts(project):
                           "lib_ref": m.get("symbol") or "", "pins": p.get("pins", []),
                           # the BOM line, for the placement rules (cap value, regulator, crystal); not "value": PLACEFP sets that into Altium
                           "bom_value": line.get("value") or "", "bom_description": line.get("description") or "",
-                          "bom_role": line.get("role") or ""})
+                          "bom_role": line.get("role") or "",
+                          # a radio module's antenna side (library manifest rf, a heuristic): the placer puts it at an edge, antenna out
+                          "rf_antenna_deg": partlib_mech.rf_side_degrees(m.get("rf"))})
     from altium import draw
     return draw.alias_parts(parts, drawn_names(project))          # the pads carry the names the schematic was drawn with
 
@@ -1266,7 +1269,43 @@ def _fit_shape(prj, pcb, box):
     return _write_shape(pcb, box)
 
 
-def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3):
+def _mechanical_parts(items, outline, fps, parts, refs_lines=None, size=None):
+    """The mounting holes (H1..) and keep-outs (KO1..) of the student's confirmed constraints for a board outline, as extra parts to
+    place, plus the placement rules the constraints give the planner. Returns (holes, keepouts, rules, warnings): holes and keepouts
+    are part dicts {ref, footprint, pins: [], mech: "hole"|"keepout", x, y}; rules is layout.plan_placement's `rules`.
+    A footprint the project library does not hold yet is a warning (build the library), never a silent skip."""
+    import constraints
+    refs, lines = refs_lines if refs_lines else (None, None)
+    pl = constraints.plan_for_board(items, outline, refs, lines, size=size)
+    warnings = list(pl["findings"])
+    out = {"hole": [], "keepout": []}
+    for kind, lst in (("hole", pl["holes"]), ("keepout", pl["keepouts"])):
+        for m in lst:
+            if m["footprint"] not in fps:
+                warnings.append(f"constraint {m['item']}: the project library has no footprint {m['footprint']} yet, so the {kind} "
+                                "was not placed: run library.build, then place again")
+                continue
+            out[kind].append({"ref": m["ref"], "footprint": m["footprint"], "symbol": "", "lib_ref": "", "pins": [], "mech": kind,
+                              "x": m["x"], "y": m["y"], "rect": m.get("rect")})
+    have = {p["ref"] for p in parts}
+    rules = {"fixed": {h["ref"]: (h["x"], h["y"], 0) for h in out["hole"]}, "keepouts": [k["rect"] for k in out["keepout"]],
+             "edge": {r: s for r, s in pl["edge"].items() if r in have}, "apart": [], "antenna": {}}
+    for r in pl["edge"]:
+        if r not in have:
+            warnings.append(f"constraint: {r} is not in the netlist, so it was not put at an edge")
+    for a, b, mm in pl["apart"]:
+        if a in have and b in have:
+            rules["apart"].append((a, b, mm))
+        else:
+            warnings.append(f"constraint: {a if a not in have else b} is not in the netlist, so the {mm:g} mm distance to it is not enforced")
+    for p in parts:                      # a radio module (library manifest rf) goes to an edge with its antenna outwards
+        if p.get("rf_antenna_deg") is not None:
+            rules["antenna"][p["ref"]] = p["rf_antenna_deg"]
+    return out["hole"], out["keepout"], rules, warnings
+
+
+def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3,
+             constraint_items=None, refs_lines=None):
     """Place `parts` ([{ref, footprint, lib_ref, pins}]) from the PcbLib on the PcbDoc, create the outline from `size` when the board
     only has the placeholder outline of a new PcbDoc (an outline somebody drew is kept), save, and read the file back.
     Refuses a board that already has parts or copper unless replace is true; the PcbDoc is copied to .advisor-backup first.
@@ -1307,11 +1346,19 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     else:
         outline = [round(v * MM_PER_MIL, 3) for v in info["box_mil"]]
         create = False
-    plan = layout.plan_placement(parts, fps, outline, clearance_mm=clearance_mm, connector_dirs=connector_dirs,
-                                 edge_copper_mm=edge_copper_mm)
+    # which way each connector opens: read from its footprint (a connector whose opening cannot be told is still warned about by the
+    # planner); an explicit entry of the caller wins. Without this every connector got the "check the mating face" warning.
+    derived = {p["ref"]: layout.opening_dir(fps[p["footprint"]]) for p in parts if layout.is_connector(p["ref"]) and p.get("footprint") in fps}
+    connector_dirs = {**{r: d for r, d in derived.items() if d is not None}, **(connector_dirs or {})}
+    holes, keepouts, rules, mech_warnings = _mechanical_parts(constraint_items or [], outline, fps, parts, refs_lines, size)
+    plan = layout.plan_placement(parts + holes, fps, outline, clearance_mm=clearance_mm, connector_dirs=connector_dirs,
+                                 edge_copper_mm=edge_copper_mm, rules=rules)
     if plan["errors"]:
         raise BridgeError("The parts cannot be placed: " + "; ".join(plan["errors"][:6]))
-    warnings += plan["warnings"]
+    warnings += mech_warnings + plan["warnings"]
+    plan["places"] = plan["places"] + [{"ref": k["ref"], "footprint": k["footprint"], "x": k["x"], "y": k["y"], "rot": 0,
+                                        "label": [k["x"], k["y"]], "label_h": layout.LABEL_H, "label_rot": 0} for k in keepouts]
+    parts = parts + holes + keepouts
     backup = _backup(prj, [pcb])
     links = _sch_links(prj)
     parts = [dict(p, uid=links[p["ref"]][0], sheet=links[p["ref"]][1]) if p["ref"] in links else p for p in parts]
@@ -1362,9 +1409,11 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     if problems and backup:
         restored = _restore(prj, pcb, backup)
     warnings = list(dict.fromkeys(warnings))             # the planner and the check of the saved board can say the same thing: once, order kept
-    return {"placed": [p["ref"] for p in plan["places"]], "outline": outline, "outline_created": create, "warnings": warnings,
-            "backup": backup, "problems": problems, "pads": len(saved.get("pads", [])), "restored": restored,
-            "places": plan["places"], "drill_findings": drills}
+    mech = {p["ref"] for p in holes + keepouts}
+    return {"placed": [p["ref"] for p in plan["places"] if p["ref"] not in mech], "outline": outline, "outline_created": create,
+            "warnings": warnings, "backup": backup, "problems": problems, "pads": len(saved.get("pads", [])), "restored": restored,
+            "places": plan["places"], "drill_findings": drills,
+            "mechanical": {"holes": [h["ref"] for h in holes], "keepouts": [k["ref"] for k in keepouts]}}
 
 
 def place_pcb(project, replace=False):
@@ -1381,7 +1430,16 @@ def place_pcb(project, replace=False):
                           + ": draw it first (altium.draw_schematic, with the student's agreement). A part placed without the link to its "
                           "schematic symbol is duplicated by the first Update PCB. Nothing was changed.")
     fit = board_fit_check(project)                       # the same estimate the BOM approval gave; the figures also go in the refusal
-    res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace)
+    import constraints
+    items = constraints.confirmed(store.load_idea(project))      # the SAVED idea: only what the student confirmed with Save
+    res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace,
+                   constraint_items=items, refs_lines=constraints.known_refs(project) if items else None)
+    if not res["problems"]:
+        _record_board_facts(project, pcb, outline=res["outline"])
+    if res.get("mechanical", {}).get("holes") or res.get("mechanical", {}).get("keepouts"):
+        res["warnings"] = list(res["warnings"]) + [
+            "Mounting holes / keep-outs (" + ", ".join(res["mechanical"]["holes"] + res["mechanical"]["keepouts"]) + ") are not in the "
+            "schematic: Altium's Update PCB will offer to remove them. Do not accept those removals."]
     if fit and fit["text"]:
         res["warnings"] = [fit["text"]] + list(res["warnings"])
     _log(project, "place-pcb", pcb=str(pcb), parts=len(res["placed"]), outline=res["outline"], replace=bool(replace),
@@ -1499,7 +1557,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
             else:
                 res["shape_fixed"] = [round(v, 3) for v in box]
         run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
-                                                                     edge=rules["edge"]), total_timeout=1500)
+                                                                     edge=rules["edge"], keepouts=_footprint_keepouts(doc)), total_timeout=1500)
     except BridgeError as exc:
         if str(exc).startswith("The board is open in Altium with unsaved changes"):      # nothing was drawn: leave the student's edits alone
             raise
@@ -1572,6 +1630,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                                            + "add a pour in Altium (Place > Polygon Pour) if you want a ground plane")
     res["drc_after"] = after
     res.update(drc_rules=dict(drc.get("rules") or {}), drc_total=drc.get("total"), drc_clean=drc_clean(drc), drc_line=drc_line(drc))
+    res.update(_drc_explained(drc_before_full, drc, saved))
     if not drc.get("complete"):
         probs.append("Altium's design rule check report could not be read in full, so the board is unchecked (not clean): "
                      "run the design rule check in Altium (Tools > Design Rule Check) and look at the list")
@@ -1616,6 +1675,41 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                       f"{res['drc_line']} ({drc_before.get('Clearance Constraint', 0)} clearance before routing)"
                       + ("; " + wl if (wl := _width_line(shown)) else ""))
     return res
+
+
+def _record_board_facts(project, pcb, drc_total=None, outline=None, doc=None):
+    """Measure the saved board against the confirmed constraints and keep it (constraints.record_facts): what the agent may state
+    about the board comes from this and from nothing else. Never raises; returns the facts or None."""
+    try:
+        import constraints
+        from altium import pcbdoc
+        doc = doc or pcbdoc.read_pcbdoc(pcb, geometry=True)
+        outline = outline or pcbdoc.board_shape_box(pcb) or (constraints.load_facts(project) or {}).get("outline")
+        return constraints.record_facts(project, doc, outline, pcb=pcb, drc_total=drc_total, size=_board_size(project))
+    except Exception:                       # noqa: BLE001
+        return None
+
+
+def _footprint_keepouts(doc):
+    """[[x0, y0, x1, y1]] mm keep-out areas that footprints carry (an antenna area, a keep-out of a constraint): the ground pour is
+    drawn around them. [] when the board has none or they cannot be read."""
+    try:
+        from checks import requirements
+        return requirements.component_keepouts(doc)
+    except Exception:                       # noqa: BLE001 - a pour without the cut-out is the old behaviour, never a failed route
+        return []
+
+
+def _drc_explained(before, after, doc=None):
+    """{"drc_origin": table, "new_unwatched": [...]} of the route's design rule check: each rule's violations by origin (footprint,
+    router, placement) with the JLC item it maps to, and the rules the pass criteria (DRC_WATCHED) do not watch that got worse
+    by the route. Never raises: this only explains, it does not decide."""
+    try:
+        from checks import drc_origin
+        return {"drc_origin": drc_origin.table(after, doc),
+                "new_unwatched": drc_origin.new_unwatched((before or {}).get("rules"), (after or {}).get("rules"), DRC_WATCHED)}
+    except Exception:                       # noqa: BLE001
+        return {"drc_origin": [], "new_unwatched": []}
 
 
 def _pour_findings(saved, net):
@@ -1735,6 +1829,8 @@ def route_pcb(project, replace=False, keep_partial=False):
         raise err
     res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"footprint: {m}" for m in res.get("footprint_findings", [])[:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
+    res["warnings"] += [f"not in the route's pass criteria, got worse: {m}" for m in res.get("new_unwatched", [])]
+    _record_board_facts(project, pcb, drc_total=res.get("drc_total"))
     if partial_kept:
         res["open_nets"] = open_nets
         res["summary"] += "; PARTIAL ROUTE, left open: " + ", ".join(f"{n} ({why[n]})" if n in why else n for n in open_nets)
@@ -2206,6 +2302,98 @@ TEMPLATE_SYMBOL = "__ADVISOR_TEMPLATE__"                 # the dummy part each t
 TEMPLATE_FOOTPRINT = "__ADVISOR_TEMPLATE__"
 LIB_INPUTS = ("bom-log.jsonl", "supply-log.jsonl")      # (and netlist/): what partlib.prepare reads
 
+KEEPOUT_LAYER_CODE = 56
+CAPS_SPEC = ["FPLIB|<PCBLIB>", "FOOTPRINT|CAPS_TEST|capability probe of the advisor (scratch library, never installed)",
+             "PAD|1|0|0|0|Top Layer|1|0|0|0|0|40|40|1|",
+             "PAD||200|0|0|Multi-Layer|0|125.984|0|0|0|125.984|125.984|1|",            # an unplated hole (a mounting hole)
+             "PAD||400|0|0|Multi-Layer|0|40|2|120|0|120|80|1|",                        # a slotted unplated hole
+             "REGION|Keep-Out Layer|0|-100|-100|100|-100|100|100|-100|100",
+             "TRACK|-100|-100|100|-100|10|Keep-Out Layer", "TRACK|100|-100|100|100|10|Keep-Out Layer",
+             "TRACK|100|100|-100|100|10|Keep-Out Layer", "TRACK|-100|100|-100|-100|10|Keep-Out Layer"]
+
+
+def _script_hash():
+    import hashlib
+    h = hashlib.sha256()
+    for name in SCRIPT_FILES:
+        f = BRIDGE_DIR / name
+        h.update(name.encode("ascii") + b"\x00" + (f.read_bytes() if f.is_file() else b"") + b"\x00")
+    return h.hexdigest()[:12]
+
+
+def capabilities_path():
+    return stage_root().parent / "capabilities.json"
+
+
+def capabilities(force=False, runner=None, cache=None):
+    """What this Altium and this script can do with the mechanical footprints (holes, keep-outs), found out by a probe, not assumed:
+    a scratch PcbLib with one footprint holding a Keep-Out layer region and tracks, an unplated hole and a slotted hole is made by the
+    existing FPBATCH, saved, and read back with read_pcblib. Cached per script hash in `cache` (default: next to the staged scripts):
+    the probe runs once for a script version, `force` runs it again.
+    Returns {"pas_hash", "checked_at", "keepout_layer": bool, "npth": bool, "slot": None (the reader does not tell a slot: look in
+    Altium), "problems": [str], "cached": bool}. A keepout_layer of False means the Keep-Out layer name did not take: the caller
+    keeps the keep-out in the placer / router / pour only (Python side) and says so. Raises BridgeError when Altium cannot be run."""
+    import tempfile
+    cache = pathlib.Path(cache) if cache else capabilities_path()
+    h = _script_hash()
+    if not force:
+        try:
+            got = json.loads(cache.read_text(encoding="utf-8"))
+            if got.get("pas_hash") == h:
+                return dict(got, cached=True)
+        except (OSError, ValueError):
+            pass
+    run = runner or run_commands
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-caps-"))
+    problems = []
+    try:
+        lib = tmp / "caps.PcbLib"
+        shutil.copyfile(TEMPLATES / "Template.PcbLib", lib)
+        spec = tmp / "caps_spec.txt"
+        _write_ansi(spec, "\r\n".join(CAPS_SPEC).replace("<PCBLIB>", str(lib)) + "\r\n")
+        run([("FPBATCH", str(lib), str(spec)), ("SAVELIB", str(lib), "PcbLib")], stall_timeout=120, total_timeout=300)
+        fp = next((f for f in read_pcblib(lib)["footprints"] if f["name"] == "CAPS_TEST"), None)
+        if fp is None:
+            problems.append("the probe footprint is not in the scratch library")
+            keepout = npth = False
+        else:
+            keepout = fp.get("layers", {}).get(KEEPOUT_LAYER_CODE, 0) >= 5
+            npth = any(p.get("hole", 0) > 0 and p.get("plated") is False for p in fp["pads"])
+            if not keepout:
+                problems.append("objects on 'Keep-Out Layer' did not arrive on the keep-out layer")
+            if not npth:
+                problems.append("an unplated hole did not arrive unplated")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    res = {"pas_hash": h, "checked_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "keepout_layer": keepout, "npth": npth, "slot": None,
+           "problems": problems}
+    try:
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(res, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return dict(res, cached=False)
+
+
+def _capabilities_notice(project):
+    """A line for the library build when the project holds holes / keep-outs (or a radio module's antenna keep-out) and the probe found
+    that Altium does not keep them; "" otherwise. A probe that cannot run is a line too: never assumed fine."""
+    try:
+        needs = bool(partlib_mech.mech_specs(project)) or any((e or {}).get("rf", {}).get("keepout_box")
+                                                              for e in store.library_manifest(project).values())
+    except Exception:                       # noqa: BLE001
+        needs = False
+    if not needs:
+        return ""
+    try:
+        caps = capabilities()
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        return f"Could not check that Altium keeps keep-out and unplated-hole objects in a footprint ({exc}): look at them in the PcbLib."
+    if caps.get("problems"):
+        return ("Altium did not keep these in a footprint (" + "; ".join(caps["problems"]) + "): the keep-outs only work inside this "
+                "program's placer, router and pour, not as objects Altium's own checks know. Look at the PcbLib.")
+    return ""
+
 
 def library_paths(project):
     """Where the project's Altium library goes: <altium project folder>/Library/<Project>-Lib.*"""
@@ -2229,6 +2417,12 @@ def library_stale(project):
             return True
     except OSError:
         return True
+    try:                                    # the holes / keep-outs of the confirmed constraints are part of the library
+        if (lib / "mech.sig").read_text(encoding="utf-8").strip() != partlib_mech.mech_signature(project):
+            return True
+    except OSError:
+        if partlib_mech.mech_specs(project):
+            return True
     pd = store.pdir(project)
     inputs = [pd / n for n in LIB_INPUTS] + (sorted((pd / "netlist").rglob("*")) if (pd / "netlist").is_dir() else [])
     since = man.stat().st_mtime
@@ -2592,7 +2786,8 @@ def build_library(project, fetch=True):
                       "restart Altium and build again).")
     if not installed:
         issues.append("Altium does not list the IntLib as installed.")
-    notices = [f"Another installed library had the same name and was removed from Altium's installed list: "
+    caps_notice = _capabilities_notice(project)
+    notices = ([caps_notice] if caps_notice else []) + [f"Another installed library had the same name and was removed from Altium's installed list: "
                f"{ln[len(SAME_NAME):].strip()} (Altium matches libraries by file name)."
                for ln in log if ln.startswith(SAME_NAME)]
     # the installed list is not what the schematic ECO reads: the IntLib must be a library of the Altium project itself
