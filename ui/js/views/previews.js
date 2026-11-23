@@ -516,7 +516,7 @@ function schHTML(container) {
   const tabs = sheets.length > 1 ? `<div class="pv-tabs" role="tablist" aria-label="Sheets">${sheets.map(s =>
     `<button type="button" role="tab" class="pv-tab" aria-selected="${s.id === sheetId}" tabindex="${s.id === sheetId ? 0 : -1}" data-act="sch-sheet" data-sheet="${esc(s.id)}" title="${esc(pvSheetLabel(s) + (s.altium ? ' (read from Altium)' : ' (plan)'))}">${esc(pvTabLabel(s, sheets))}</button>`).join('')}</div>` : '';
   return `<div class="pv" data-pv="sch">` +
-    viewHeader({title: 'Schematic', meta: metaLine([{n: pvRealSheets(sheets), label: pvRealSheets(sheets) === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + pvStepNote('sch') + tabs +
+    viewHeader({title: 'Schematic', meta: metaLine([{n: pvRealSheets(sheets), label: pvRealSheets(sheets) === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + pvStepNote('sch') + (typeof outBlockNote === 'function' ? outBlockNote() : '') + tabs +
     `<div class="pv-stage"><div class="pv-canvas sch-canvas" id="schwrap" tabindex="0" aria-label="Schematic sheet ${esc(sheetId)}. Scroll to zoom, drag to pan.">${inner}</div>${pvZoomHTML('sch')}</div></div>`;
 }
 const pvSheetKey = () => sheetId + '|' + JSON.stringify(lines().map(l => [l.key, l.mpn, l.value, l.dnp])) + JSON.stringify((S.sheets || []).map(s => Object.keys(s.parts || {}).length));

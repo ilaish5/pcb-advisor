@@ -81,3 +81,13 @@ def test_nc_spellings_are_one_helper():
     from altium import draw
     assert all(pinnames.is_nc_net(n) and draw.is_nc(n) for n in ("NC", "nc", "N/C", " NO_ERC "))
     assert not pinnames.is_nc_net("") and not pinnames.is_nc_net("GND")
+
+
+def test_ui_has_the_nc_block_note_on_schematic_per_pin_and_posts_the_shown_items():
+    import pathlib
+    ui = pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / "views"
+    out, pv = (ui / "outputs.js").read_text(encoding="utf-8"), (ui / "previews.js").read_text(encoding="utf-8")
+    assert "outBlockNote()" in pv[pv.index("title: 'Schematic'"):][:600]            # the same note on the Schematic page
+    assert "'nc-mark-one'" in out and "'nc-approve'" in out and "data-nc-prop" in out
+    assert "outGapItems(outGate()).map(ncItem)" in out                               # nc-mark-all sends exactly what the note lists
+    assert "/api/nc/mark', {}" not in out
