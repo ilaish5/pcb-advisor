@@ -67,6 +67,9 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 - Autorouted tracks can run under a module or antenna. Look at the area under every module on both layers.
 - A pour split on a plane layer breaks the return path of any signal that crosses it, also from the neighbour layer.
 
+## Measured, not remembered
+Hole positions, part-to-edge and part-to-part distances, copper under the antenna: quote `board_facts` (CURRENT STATE) and only if it is not marked stale; with "none measured" say "planned". The `requirements` rows (met, violated, unverifiable) are the checklist of what the student confirmed.
+
 ## Output
 The chat is a narrow side panel: lead with the verdict in one line ("One thing to fix: J1 faces inward"), then only the
 findings that need the student, worst first, one line each: what is wrong, where, the fix, with the evidence as a chip

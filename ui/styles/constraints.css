@@ -1,1 +1,8 @@
-/* Stream C (constraints) owns this file. */
+.idea-cons { padding: 6px 10px; border-top: 1px solid var(--line, #8883); }
+.cons-h { margin: 4px 0; font-size: 12px; font-weight: 600; }
+.cons-list { list-style: none; margin: 0 0 6px; padding: 0; }
+.cons-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.cons-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.cons-add { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cons-add .in { width: 4.5em; }
+.cons-warn { margin: 6px 0 0; font-size: 12px; }

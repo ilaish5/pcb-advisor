@@ -164,6 +164,8 @@ def _footprint_objects(d):
                 pad.update({"x": x / MIL, "y": y / MIL, "xsize": xs / MIL, "ysize": ys / MIL,
                             "hole": struct.unpack("<i", geo[45:49])[0] / MIL,
                             "rotation": round(struct.unpack("<d", geo[52:60])[0], 3)})
+                if len(geo) > 60:
+                    pad["plated"] = bool(geo[60])
             res["pads"].append(pad)
         elif kind in (1, 3, 4, 6, 11, 12):
             (blk,), i = _blocks(d, i, 1)

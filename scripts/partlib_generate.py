@@ -376,3 +376,61 @@ def symbol_for(prefix, hint, sheet_pins, npads):
     if not sp and prefix in ("J", "P", "JP", "H") and n:         # a header: its pins are just numbered
         sp = [{"num": str(i), "name": str(i)} for i in range(1, n + 1)]
     return box_symbol(prefix, sp, issues) if sp else None
+
+
+# ---------------------------------------------------------------- mechanical footprints (mounting holes, keep-outs)
+# Generated for the student's confirmed constraints (constraints.py) and placed like any part by FPBATCH / PLACEFP: the bridge
+# has no hole or keep-out command. A hole is an unplated pad (the hole IS the copper-free pad: pad size = hole size); a keep-out
+# is a REGION plus its four edge TRACKs on the Keep-Out layer. Names start with MECH_ so every consumer can tell them from parts.
+
+MECH_PREFIX = "MECH_"
+KEEPOUT_LAYER_NAME = "Keep-Out Layer"
+HOLE_PAD_SHAPE = 1                      # round
+
+
+def is_mech_footprint(name):
+    return str(name or "").startswith(MECH_PREFIX)
+
+
+def _dia_text(dia):
+    return f"{dia:g}".replace(".", "p")
+
+
+def mounting_hole_name(dia):
+    return f"{MECH_PREFIX}HOLE_{_dia_text(round(float(dia), 3))}"
+
+
+def mounting_hole(dia=3.2):
+    """{"name", "desc", "lines"}: one unplated round hole of `dia` mm at the footprint origin (no copper, no net), a courtyard
+    and a mechanical-layer circle so the views show it. No BOM line: it is not a part."""
+    dia = round(float(dia), 3)
+    if not 0.5 <= dia <= 10:
+        raise ValueError(f"mounting hole diameter {dia:g} mm is outside 0.5 to 10 mm")
+    r = dia / 2
+    c = r + 0.25
+    lines = [f"PAD||{_m(0)}|{_m(0)}|0|Multi-Layer|0|{_m(dia)}|0|0|0|{_m(dia)}|{_m(dia)}|{HOLE_PAD_SHAPE}|",
+             f"ARC|{_m(0)}|{_m(0)}|{_m(r)}|0|360|2|Mechanical Layer 13"]
+    lines += _rect(-c, -c, c, c, "Mechanical Layer 15", 2)
+    return {"name": mounting_hole_name(dia), "desc": f"Mounting hole {dia:g} mm, unplated (generated)", "lines": lines,
+            "w": 2 * c, "h": 2 * c}
+
+
+def keepout_name(item_id):
+    return f"{MECH_PREFIX}KO_{re.sub(r'[^A-Za-z0-9]', '_', str(item_id))[:20]}"
+
+
+def keepout_lines(x0, y0, x1, y1):
+    """Spec lines of a keep-out rectangle (mm, footprint coordinates): the filled REGION and the four edge tracks, on the
+    Keep-Out layer (no copper, no vias, no pour inside it)."""
+    pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    lines = ["REGION|" + KEEPOUT_LAYER_NAME + "|0|" + "|".join(f"{_m(x)}|{_m(y)}" for x, y in pts)]
+    lines += _rect(x0, y0, x1, y1, KEEPOUT_LAYER_NAME, 10)
+    return lines
+
+
+def keepout_box(w, h, name=None):
+    """{"name", "desc", "lines"}: a w x h mm keep-out centred on the footprint origin; it has no pads."""
+    if w <= 0 or h <= 0:
+        raise ValueError("a keep-out needs a positive width and height")
+    return {"name": name or f"{MECH_PREFIX}KO_{_dia_text(w)}x{_dia_text(h)}", "desc": f"Keep-out {w:g} x {h:g} mm, no copper (generated)",
+            "lines": keepout_lines(-w / 2, -h / 2, w / 2, h / 2), "w": w, "h": h}
