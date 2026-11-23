@@ -9,7 +9,9 @@ Branch `claude/friction-audit-e2717f`. Nothing merged, nothing pushed.
 
 `tools/friction_count.py --home <folder with projects/>` builds the model of every project exactly as the page does (`model.build`) and counts
 every place the system waits on the student. It must be pointed at a **copy** (the build stamps legacy accepts and rewrites `bom.json`).
-"Before" ran on unmodified HEAD, "after" on this branch, both on fresh copies of the real projects. Counts per project:
+"Before" ran on unmodified HEAD (`git archive 910740a`), "after" on this branch, each on its own fresh copy of the real projects made back to
+back, so both saw the same project states (an earlier "before" run on an older snapshot differed, e.g. ceramic-controller, and was discarded).
+Counts per project:
 
 | column | what it counts |
 | --- | --- |
@@ -20,8 +22,10 @@ every place the system waits on the student. It must be pointed at a **copy** (t
 | lib buttons | per-row buttons on the Library table (Verify / Accept / Confirm pins) |
 | asks | clicks that clear all of it: pin asks (HEAD: one per part; now: one bulk click plus the own-look rows) + BOM proposals + 1 if there are NC pins + lib buttons |
 
-`asks` is a proxy for effort, not a measure of safety. It is dominated by the Library buttons: at HEAD the table put a **Verify** button on
-every row whose verify state was not "pass", resistors and capacitors included, and a second **Confirm pins** button on every open part.
+`asks` is a proxy for effort, not a measure of safety: the one bulk click still accepts ICs on the student's word (the dialog names them).
+It is dominated by the Library buttons: at HEAD the table put a **Verify** button on every row whose verify state was not "pass", resistors and
+capacitors included, and a second **Confirm pins** button on every open part. The HEAD button count in the script is an emulation of that
+JS; checked against the real HEAD Library page of Blinker-555 served from the HEAD archive: 11 buttons (8 Verify, 3 Confirm pins), the script says 11.
 
 ## 2. Before / after, per project (copies of the real projects)
 
@@ -35,11 +39,11 @@ every row whose verify state was not "pass", resistors and capacitors included, 
 | Verify-Sheets | 5 → 3 | J1, D1 | 12 → 0 | 17 → 1 |
 | UX-E2E-ESP32C3 | 0 | | 12 → 0 | 13 → 1 (26 NC pins) |
 | Regulator-3V3 | 0 | | 7 → 0 | 7 → 0 |
-| ceramic-controller | 0 | | 61 → 2 | 61 → 2 |
+| ceramic-controller | 0 | | 62 → 2 | 62 → 2 |
 | led-chaser | 4 → 4 | | 0 | 4 → 1 |
 | lte-tracker | 3 → 3 (1 mismatch, own look) | | 1 → 1 | 5 → 4 |
 | test | 7 → 7 | | 0 | 7 → 1 |
-| **total** | | | | **203 → 20** |
+| **total** | **39 → 29** | | | **204 → 20** |
 
 The diode and LED rows the student complained about are gone from the pin list wherever a library model exists (Blinker D1, Dark-sensor D1,
 Live-STM32 D1 and D2, T29b/c D1, Verify-Sheets D1). What is left is, in this order: ICs with no datasheet pin check, headers named by
@@ -52,6 +56,9 @@ Browser check (port 8768, copy of Live-STM32): the Library page shows one line, 
 matched their library model · Confirm all (4) · Fetch datasheets", and no pin button on any row. Confirm all asks once, naming the three
 ICs (nothing but the student's word settles them), then toasts "4 parts confirmed · Undo"; the DFM list and the Outputs banner show the same
 line, the outputs gate opens, and Undo revokes all four decisions (4 revoke calls, waiting back to 4). No console errors.
+Also checked in the browser: Blinker-555 Library shows the line plus exactly one **Verify** (U1, an IC with a datasheet linked); lte-tracker
+Library and DFM show "2 parts wait ... Q3, D30 · 1 part needs your own look D31", D31 with its own **Confirm pins** and not in the bulk, and
+the "Pick datasheet" select on the IC row; **Fetch datasheets** ran for real on lte-tracker and Live-STM32 copies (section 6).
 
 ## 3. What now clears by itself, and on what evidence
 
@@ -106,7 +113,11 @@ fingerprint and basis; when one copy's pins change later, only that copy's decis
   `test_accept_all_is_one_confirm_that_lists_the_parts` in `tests/test_ui_pins.py` was rewritten to this contract.
 * Datasheets: `store.fetch_datasheets` downloads every unverified IC's supplier datasheet into the project's `sources/` as `<MPN>.pdf`, links
   it and runs the table check; a failed download is reported and the part waits as before. It runs from "Fetch datasheets"/"Re-check
-  datasheets" only, never from the model or a poll (network). Tested with a mocked getter only; **no real download was run in this audit**.
+  datasheets" only, never from the model or a poll (network). Unit-tested with a mocked getter, **and run for real on copies**: lte-tracker
+  Q3 (2N7002_215.pdf) and Live-STM32 U1-U3 (STM32F103C8T6, AMS1117-3.3, USBLC6-2SC6) were downloaded, linked and checked. **The
+  downloads work, but the pin-table check then verified none of the four** ("... is linked, but its pins could not be checked against it"),
+  so the student no longer has to find a datasheet, yet the parts still wait for the one click. The blocker is now the table check
+  (proposal 1), not the download.
 * The Library "To review / Confirm pins" noise of the complaint is gone: rows no longer carry Verify for resistors, capacitors, diodes or
   connectors.
 
@@ -115,10 +126,12 @@ fingerprint and basis; when one copy's pins change later, only that copy's decis
 Impact is across the measured projects; risk is to board quality. "Student" means the item removes or changes a real engineering check and
 must go through the main session.
 
-1. **ICs with a datasheet linked that stay unverified** (Blinker, T29b/c, test: 8 parts). Impact: high, largest remaining block. Risk: none
+1. **ICs with a datasheet linked that stay unverified** (Blinker, T29b/c, test: 8 parts, plus the 4 ICs the real fetch just linked). Impact:
+   high, the largest remaining block (12 of the 29 open rows). Risk: none
    (it makes the check pass more, it removes nothing). Fix: find out why the table check does not pass (no pin table found, name aliases,
    page selection) per part; improve `pintable` against the 8 real datasheets. Not done: needs reading each datasheet.
-2. **Fetch datasheets automatically, not by button** (8 ICs across 4 projects have a supplier link). Impact: medium to high. Risk: low (a
+2. **Fetch datasheets automatically, not by button** (8 ICs across 4 projects have a supplier link; the real run fetched 4 of 4). Impact:
+   low until proposal 1 is done, since a fetched datasheet does not yet clear the part. Risk: low (a
    failed or wrong document never verifies by itself; the table check must still pass). Fix: call `fetch_datasheets` once after the BOM is
    approved, off the poll path, with the network failure surfaced once. Not done: needs a decision on where network may be called.
 3. **Plain headers named by numbers** (5 parts). Impact: medium. Risk: it would remove a gate, so **student**: no tool can verify a 1x4 header
