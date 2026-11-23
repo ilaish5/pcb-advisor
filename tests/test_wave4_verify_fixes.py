@@ -175,7 +175,8 @@ def test_drc_started_from_rules_shows_the_elapsed_clock():
     pages = set(re.findall(r"\bpage: '(\w+)'", block[:block.index("\n};")]))
     everything = prev + _src("js/views/outputs.js") + rules
     for page in pages:
-        assert f"pvStepNote('{page}')" in everything, page
+        # the schematic and layout pages ask for it through the canvas bar (pvBarHTML), the others call it under their header
+        assert f"pvStepNote('{page}')" in everything or f"pvBarHTML('{page}'" in everything, page
 
 
 # ---------------------------------------------------------------- 5. Restore of an archived project

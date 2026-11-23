@@ -137,15 +137,15 @@ function ideaHeaderHTML() {
     {n: proposed, label: 'proposed', tone: 'warn', title: 'The agent proposed these. Accept all, or one by one.'},
     I.confirmed ? 'confirmed' + (when ? ' ' + when : '') : ''
   ]);
-  let primary;
+  let primary = '', next = '';
   if (I.confirmed) {
-    primary = btn('Next: BOM', {kind: 'pri', act: 'idea-next'});
+    next = btn('Next: BOM', {kind: 'pri', act: 'idea-next'});       // in the header's Next slot, where every other page has its Next
   } else {
     const D = (S && S.idea_draft) || {};
     const why = !items.length ? 'Add a requirement first' : (D.active ? 'Saves the draft and marks the idea as agreed' : 'Mark the idea as agreed');
     primary = btn('Confirm idea', {kind: 'pri', act: 'confirmidea', disabled: !items.length, title: why});
   }
-  return viewHeader({title: 'Idea', meta, primary});
+  return viewHeader({title: 'Idea', meta, primary, next});
 }
 
 // The draft bar: what the agent and you changed since the last save, with Save and Revert; a quiet "Previous version"

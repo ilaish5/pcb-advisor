@@ -179,9 +179,15 @@ select.in{padding-right:28px;appearance:none;background-image:url("data:image/sv
 .check input{accent-color:var(--btn);width:15px;height:15px;margin:0}
 
 /* ---------- view header ---------- */
-.vh{display:flex;align-items:flex-start;gap:16px;padding:18px 24px 14px;flex-wrap:wrap}
-.vh-t{flex:1;min-width:220px;display:grid;gap:4px}
-.vh h1{font-size:var(--t-xl);line-height:1.25}
+/* The view header is two columns: the title with the page's actions (they wrap, and give way first), and the Next slot, which is always the
+   top-right corner of the first row: the same place and the same size on every page. h1 is as tall as a button, so row one is 30px everywhere. */
+.vh{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:16px;padding:12px 24px 10px}
+.vh-main{display:flex;align-items:flex-start;flex-wrap:wrap;gap:6px 16px;min-width:0}
+.vh-t{flex:1 1 220px;min-width:0;display:grid;gap:2px}
+.vh-main>.acts{margin-left:auto;justify-content:flex-end;row-gap:4px}
+.vh-next{grid-column:2;grid-row:1;display:flex;align-self:start;min-height:30px}
+.vh-next .btn{flex:none;padding:0 12px}
+.vh h1{font-size:var(--t-xl);line-height:30px}
 .meta{display:flex;flex-wrap:wrap;column-gap:18px;row-gap:2px;font-size:13px;color:var(--ink-3)}
 .meta b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
 .meta .warn-t b,.meta .warn-t{color:var(--warn)}
