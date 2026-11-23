@@ -31,6 +31,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "skills"))
 import agent             # noqa: E402
+import ext               # noqa: E402
 import gateway           # noqa: E402
 import model             # noqa: E402
 import project as project_mod  # noqa: E402
@@ -41,6 +42,8 @@ import tool_guard        # noqa: E402
 import project_guard     # noqa: E402
 import store             # noqa: E402
 import workspace         # noqa: E402
+
+ext.load()               # the extension modules register their routes, actions and model keys (import errors surface here)
 
 BACKEND = None            # set at startup; None means "whatever config says"
 DEFAULT_PROJECT = None
@@ -1984,7 +1987,14 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 else:
                     applied.append(f"dfm.triage:{a['stem']} ({res['added']} added, {res['updated']} updated)")
             else:
-                refused.append(f"{kind}: not a known action, or fields missing")
+                res = ext.dispatch_action(project, a, {"sess": sess, "last_user": last_user, "meta": meta, "allow_auto": allow_auto})
+                if res is None:
+                    refused.append(f"{kind}: not a known action, or fields missing")
+                elif isinstance(res, tuple):
+                    applied.extend(res[0])
+                    refused.extend(res[1])
+                else:
+                    applied.append(res)
         except (ValueError, KeyError) as exc:
             refused.append(f"{kind}: {exc}")
     if any(x.startswith("netlist") for x in applied) or any(r.get("kind") != "idea_diagram" for r in auto_done):
@@ -3048,6 +3058,10 @@ class Handler(BaseHTTPRequestHandler):
             jlc_pkg = self.query("jlc_pkg")
             import library as lib_mod
             return self._send(200, lib_mod.check_package_variant(bom_pkg, jlc_pkg))
+        if path.startswith("/api/"):                    # extensions (ext.py): only a path no route above matched, after the cross-site guard
+            hit = ext.dispatch_http(ext.GET, self, path, {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()})
+            if hit:
+                return self._send(*hit)
         return self._send(404, {"error": "not found"})
 
     # ---------------------------------------------------------------- write
@@ -4105,6 +4119,9 @@ class Handler(BaseHTTPRequestHandler):
             import library as lib_mod
             return self._send(200, lib_mod.check_package_variant(bom_pkg, jlc_pkg, ds_text))
 
+        hit = ext.dispatch_http(ext.POST, self, path, data)     # extensions (ext.py): a path no route above matched, after the cross-site guard
+        if hit:
+            return self._send(*hit)
         return self._send(404, {"error": "not found"})
 
 

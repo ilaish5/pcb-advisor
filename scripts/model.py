@@ -261,7 +261,7 @@ def build(project=None, session=None):
 
     import preview_pcb
     placement_plan = preview_pcb.load_placement_plan(project)
-    return {
+    out = {
         "project": project,
         "title": meta.get("title") or project,
         "meta": meta,
@@ -292,6 +292,9 @@ def build(project=None, session=None):
             "to_verify": tot["to_verify"], "out_of_stock": tot["out_of_stock"],
         },
     }
+    import ext
+    ext.load()
+    return ext.merge(ext.MODEL, project, out)
 
 
 def write(project=None, session=None):
