@@ -779,7 +779,7 @@ _YES_TOKEN = (
 )
 _BARE_YES = re.compile(r"^[\s,.!]*?" + _YES_TOKEN + r"(?:[\s,.!]+" + _YES_TOKEN + r")*[\s,.!]*$", re.I)
 _URL_RE = re.compile(r"https?://\S+", re.I)
-_NOT_APPLIED_TAIL = re.compile(r"(?:^|\n\n)\(Not applied:.*$", re.S)
+_NOT_APPLIED_TAIL = re.compile(r"(?:^|\n\n)\((?:Not applied|לא הוחל):.*$", re.S)
 _REPLACE_ASKED_MANUAL = re.compile(
     r"\b(?:by\s+hand|yourself|yourselves|manually|on\s+your\s+own|or\s+should\s+i|or\s+will\s+you|or\s+do\s+you"
     r"|will\s+you\s+(?:re-?draw|re-?place|re-?do|re-?route|draw|place|route|overwrite))\b"
@@ -998,6 +998,8 @@ def earlier_student_messages(chat, kind, last_user=""):
     was applied (that run used up what they said). `chat` = the stored records; the current message may be the last of them."""
     recs = list(chat or [])
     if recs and recs[-1].get("role") == "user" and recs[-1].get("text") == last_user:
+        if recs[-1].get("generated"):
+            return []          # a button / auto-list message is never a consent source: not its own words, and no carry-over under it
         recs = recs[:-1]
     out = []
     for r in reversed(recs):
@@ -2128,12 +2130,14 @@ def retry_kinds(fixables):
     """The neutral refusals of a round: [{kind, code, sheet, replace, partial}], re-filtered against the frozen set."""
     from altium import bridge
     return [f for f in fixables or [] if f.get("code") in bridge.NEUTRAL_CODES
-            and (f["code"] != "prereq.rules_not_imported" or f.get("kind") == "altium.route_pcb")]
+            and (f["code"] != "prereq.rules_not_imported" or f.get("kind") == "altium.route_pcb")
+            and (f.get("kind") in RETRY_WHITELIST or f.get("kind") in RETRY_CONSENT_KINDS)]    # a retry can only repeat what it may run
 
 
-def retry_grants(fixables):
+def retry_grants(fixables, project=None):
     """What round 0 passed consent for, from its neutral refusals (consent was checked before any of them was raised):
-    {kind: {"replace": bool, "partial": bool, "sheets": set | None}} (sheets None = any sheet)."""
+    {kind: {"replace": bool, "partial": bool, "sheets": set | None, "parts": {sheet: refs}}} (sheets None = any sheet). `parts` is the
+    content of each consented sheet now: a sheet the retry splits off it may be drawn too, see retry_filter."""
     out = {}
     for f in retry_kinds(fixables):
         if f["kind"] not in RETRY_CONSENT_KINDS:
@@ -2145,16 +2149,35 @@ def retry_grants(fixables):
             g["sheets"] = None
         elif g["sheets"] is not None:
             g["sheets"].add(str(f["sheet"]))
+    if project:
+        for g in out.values():
+            g["parts"] = {sh: _sheet_refs(store.load_sheet(project, sh)) for sh in g["sheets"] or ()}
     return out
+
+
+def _sheet_refs(data):
+    return {str(p.get("ref")) for p in (data or {}).get("parts") or [] if isinstance(p, dict) and p.get("ref")}
+
+
+def _split_of_granted(a, earlier, g):
+    """True when a draw of a sheet round 0 did not name is the SPLIT of one it did: the retry wrote that sheet (netlist.write earlier in
+    its own actions) and every part on it was on one consented sheet already (same content, split because it was too big)."""
+    mine = None
+    for e in earlier:
+        if e.get("type") == "netlist.write" and str(e.get("sheet") or "") == str(a.get("sheet") or "") and isinstance(e.get("data"), dict):
+            mine = _sheet_refs(e["data"])
+    return bool(mine) and any(mine <= refs for refs in (g.get("parts") or {}).values())
 
 
 def retry_filter(actions, grants):
     """(actions a retry may run, notes for the ones it may not): the whitelist, plus draw / place / route only for a kind round 0
     passed consent for, never with replace / partial round 0 did not carry, a draw only on the sheets round 0 named."""
     allowed, notes = [], []
+    earlier = []
     for a in actions or []:
         if not isinstance(a, dict):
             continue
+        earlier.append(a)
         kind = a.get("type")
         if kind in RETRY_WHITELIST:
             allowed.append(a)
@@ -2166,7 +2189,8 @@ def retry_filter(actions, grants):
                 notes.append(f"{kind}: not run in the retry: replacing was not agreed")
             elif _truthy(a.get("partial")) and not g["partial"]:
                 notes.append(f"{kind}: not run in the retry: a partial route was not agreed")
-            elif kind == "altium.draw_schematic" and g["sheets"] is not None and str(a.get("sheet") or "") not in g["sheets"]:
+            elif (kind == "altium.draw_schematic" and g["sheets"] is not None and str(a.get("sheet") or "") not in g["sheets"]
+                  and not _split_of_granted(a, earlier[:-1], g)):
                 notes.append(f"{kind}: not run in the retry: only sheet {', '.join(sorted(g['sheets']))} was agreed")
             else:
                 allowed.append(a)
@@ -2285,19 +2309,40 @@ def start_followup(proj, sess, tkey, user_text, orig_rec, applied, refused, canc
         threading.Thread(target=_run_retry, args=(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, fixables, ctx),
                          daemon=True, name="chat-retry").start()
         return True
-    threading.Thread(target=_run_followup, args=(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, warned_map(applied)),
+    threading.Thread(target=_run_followup, args=(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, warned_map(applied),
+                                                      bool((ctx or {}).get("generated"))),
                      daemon=True, name="chat-followup").start()
     return True
+
+
+def _lang_of(proj, sess, text="", generated=False):
+    """'he' / 'en' for the server's own lines (corrections, stop lines, "Not applied"): the same rule as the agent's reply language."""
+    try:
+        chat = session_mod.load_chat(proj, sess)
+    except Exception:
+        chat = []
+    return agent.language_code(text, chat, generated) or "en"
+
+
+def _stop_note(proj, sess, reply, applied, refused, lang):
+    """The promise of a reply whose retry / follow-up could not start (a new message, a step running): the student is told what ran, what
+    did not and why, in a record of its own; the deferral in the stored text never stands alone."""
+    try:
+        what = turn_truth.msg("no_followup", lang)
+        line = turn_truth.stopped_line([what, *(refused or [])], applied, reply, lang)
+        say(proj, sess, {"ts": now(), "role": "agent", "followup": True, "applied": [], "text": line})
+    except Exception:
+        pass
 
 
 def _followup_guard_note(proj, sess, notes):
     """A discarded follow-up that still edited files: the student hears of it (a record that carries only that refusal)."""
     if notes:
         say(proj, sess, {"ts": now(), "role": "agent", "followup": True, "applied": [], "refused": notes,
-                         "text": "(Not applied: " + "; ".join(notes) + ")"})
+                         "text": turn_truth.msg("not_applied", _lang_of(proj, sess), what="; ".join(notes))})
 
 
-def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, warned):
+def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, warned, generated=False):
     t0 = time.time()
     notes = []
     try:
@@ -2306,12 +2351,13 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
             return                                  # the student wrote again, or pressed Stop, before it began
         runlog.event("chat", phase="followup-begin", project=proj, refused=len(refused), warned=len(warned))
         m = model.build(project=proj, session=sess)
+        lang = agent.language_code(user_text, m["chat"], generated) or "en"
         guard = tool_guard.begin()
         pguard = project_guard.begin(proj)
         BUSY["chat"] += 1
         try:
             res = agent.respond(m, followup_message(applied, refused, warned, orig_rec.get("denied"), orig_rec.get("tools")), m["chat"], backend=BACKEND, cancel=fturn["cancel"],
-                                typed=user_text, generated=False, on_event=lambda ev, k=tkey: _turn_event(k, ev))
+                                typed=user_text, generated=generated, on_event=lambda ev, k=tkey: _turn_event(k, ev))
         finally:
             BUSY["chat"] -= 1
             edited, unrestored = tool_guard.end(guard)
@@ -2340,11 +2386,15 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
         f_refused = list(notes)                     # only the guards' notes: a broken actions block of a text-only reply means nothing
         notes = []
         rec = {"ts": now(), "role": "agent", "followup": True, "text": reply, "applied": []}
+        if res.get("provider") and res.get("provider") != "external":
+            rec["engine"] = res["provider"]
+            if res.get("model"):
+                rec["model"] = res["model"]
         if f_refused:
             rec["refused"] = f_refused
-            rec["text"] += "\n\n(Not applied: " + "; ".join(f_refused) + ")"
+            rec["text"] += "\n\n" + turn_truth.msg("not_applied", lang, what="; ".join(f_refused))
         if dropped:                                 # its text must not pass as a claim that something ran
-            rec["text"] += "\n\n(Not run: follow-up replies do not run actions: " + ", ".join(dict.fromkeys(dropped)) + ")"
+            rec["text"] += "\n\n" + turn_truth.msg("not_run", lang, what=turn_truth.msg("followup_no_actions", lang, what=", ".join(dict.fromkeys(dropped))))
         for k in ("tools", "steps"):
             if res.get(k):
                 rec[k] = res[k]
@@ -2352,7 +2402,7 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
             rec["denied"] = unique_denials(res["denied"])
         if compound_denials(orig_rec.get("denied"), orig_rec.get("tools")) and not any(
                 isinstance(t, dict) and t.get("st") in ("ok", "bad") for t in rec.get("tools") or []):
-            rec["text"] += "\n\n(Not run: the denied command was not run again; no script ran in this reply)"
+            rec["text"] += "\n\n" + turn_truth.msg("not_run", lang, what=turn_truth.msg("denied_not_rerun", lang))
         if res.get("seconds") is not None:
             rec["seconds"] = round(float(res["seconds"]), 1)
         if fturn["cancel"].is_set():                # a cancel at any point before the record is stored: nothing is stored
@@ -2391,6 +2441,7 @@ def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, f
             return
         runlog.event("chat", phase="retry-begin", project=proj, round=rnd, codes=[f["code"] for f in retry_kinds(fixables)])
         m = model.build(project=proj, session=sess)
+        lang = agent.language_code(user_text, m["chat"], ctx["generated"]) or "en"
         guard = tool_guard.begin()
         pguard = project_guard.begin(proj)
         BUSY["chat"] += 1
@@ -2415,6 +2466,8 @@ def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, f
             runlog.event("chat", phase="retry-end", ok=False, project=proj, round=rnd, seconds=round(time.time() - t0, 1),
                          error=str(res.get("error_kind") or ("cancelled" if fturn["cancel"].is_set() else "") or "no reply")[:300])
             _followup_guard_note(proj, sess, notes)
+            if not fturn["cancel"].is_set():        # the engine failed (a Stop or a new message is the student's own doing)
+                _stop_note(proj, sess, orig_rec.get("text"), applied, refused, lang)
             return
         allowed, dropped = retry_filter(res.get("actions"), ctx["grants"])
         r_fix = []
@@ -2424,11 +2477,15 @@ def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, f
         r_refused = [*(res.get("parse_refused") or []), *dropped, *r_refused, *notes]
         text = reply
         if r_refused:
-            text = (text + "\n\n(Not applied: " + "; ".join(r_refused) + ")").strip()
+            text = (text + "\n\n" + turn_truth.msg("not_applied", lang, what="; ".join(r_refused))).strip()
         retry_next = bool(r_refused) and retry_expected({}, r_fix, fturn["cancel"].is_set(), rnd)
-        lines = turn_truth.closing_lines(reply, r_applied, r_proposals, r_refused, retry_follows=retry_next)
+        lines = turn_truth.closing_lines(reply, r_applied, r_proposals, r_refused, retry_follows=retry_next, lang=lang)
         text = (text + "".join("\n\n" + x for x in lines)).strip() or "(Retry: nothing to report)"
         rec = {"ts": now(), "role": "agent", "followup": True, "retry": rnd, "text": text, "applied": r_applied}
+        if res.get("provider") and res.get("provider") != "external":
+            rec["engine"] = res["provider"]
+            if res.get("model"):
+                rec["model"] = res["model"]
         if warned_map(r_applied):
             rec["warned"] = warned_map(r_applied)
         if r_refused:
@@ -2453,7 +2510,7 @@ def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, f
         import background
         background.verify_record_async(proj, sess, rec["ts"], rec["text"])
         if retry_next:
-            nxt = (rec, r_applied, r_refused, r_fix, {**ctx, "round": rnd})
+            nxt = (rec, r_applied, r_refused, r_fix, {**ctx, "round": rnd}, lang)
     except BaseException as exc:                    # a failed retry stores nothing it did not do: log it, round 0 stays
         try:
             runlog.event("chat", phase="retry-end", ok=False, project=proj, round=rnd, seconds=round(time.time() - t0, 1),
@@ -2464,10 +2521,13 @@ def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, f
     finally:
         _turn_end(tkey, fturn)
     if nxt and not fturn["cancel"].is_set():        # the next round registers its own turn, so only after this one is released
+        started = False
         try:
-            start_followup(proj, sess, tkey, user_text, nxt[0], nxt[1], nxt[2], False, fixables=nxt[3], ctx=nxt[4])
+            started = start_followup(proj, sess, tkey, user_text, nxt[0], nxt[1], nxt[2], False, fixables=nxt[3], ctx=nxt[4])
         except Exception as exc:
             runlog.event("chat", phase="retry-end", ok=False, project=proj, error=f"{type(exc).__name__}: {exc}")
+        if not started:
+            _stop_note(proj, sess, nxt[0].get("text"), nxt[1], nxt[2], nxt[5])
 
 
 def open_part_session(project, ref_or_key):
@@ -3483,6 +3543,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 _turn_end(tkey, turn)
             refused.extend(res.get("parse_refused") or [])
+            lang = agent.language_code(text, m["chat"], generated) or "en"        # the server's own lines follow the student's language
             if tool_edited or tool_unrestored:
                 refused.append(tool_guard.refusal(tool_edited, tool_unrestored))
             if data_edited or data_unrestored:
@@ -3504,13 +3565,14 @@ class Handler(BaseHTTPRequestHandler):
                 import introspect
                 introspect.record(proj, sess, "chat", res, res.get("seconds") or 0, reply=res.get("reply") or "",
                                   applied=max(0, len(applied) - _pending(proj, proposals)), proposed=_pending(proj, proposals), refused=len(refused))     # a proposal is not "applied": it waits for the student
+            will_retry = False
             if res.get("reply") or refused or partial or applied:       # an action that ran leaves its marker: it uses up the consent
                 reply = res.get("reply") or ""
                 if refused:
-                    reply += "\n\n(Not applied: " + "; ".join(refused) + ")"
+                    reply += "\n\n" + turn_truth.msg("not_applied", lang, what="; ".join(refused))
                 if not partial and not res.get("error"):     # the text was written before the actions ran: the server's records win (ledger 31, 39)
                     will_retry = retry_expected({}, fixables, turn["cancel"].is_set(), 0)
-                    reply += "".join("\n\n" + x for x in turn_truth.closing_lines(res.get("reply"), applied, proposals, refused, will_retry))
+                    reply += "".join("\n\n" + x for x in turn_truth.closing_lines(res.get("reply"), applied, proposals, refused, will_retry, lang))
                 rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
                 if warned_map(applied):
                     rec["warned"] = warned_map(applied)
@@ -3562,12 +3624,15 @@ class Handler(BaseHTTPRequestHandler):
                 runlog.usage(proj, "answer", text="", chat=sess, engine=res.get("provider") or _chat_info["engine"], model=res.get("model") or "",
                              seconds=res.get("seconds"), applied=_usage_applied(applied), refused=refused, ok=not res.get("error"), words=0)
             if _answered and not partial:
+                started = False
                 try:
-                    start_followup(proj, sess, tkey, text, rec, applied, refused, turn["cancel"].is_set(), fixables=fixables,
-                                   ctx={"round": 0, "last_user": text, "chat": m["chat"], "turn_start": turn["started"],
-                                        "generated": generated, "grants": retry_grants(fixables)})
+                    started = start_followup(proj, sess, tkey, text, rec, applied, refused, turn["cancel"].is_set(), fixables=fixables,
+                                             ctx={"round": 0, "last_user": text, "chat": m["chat"], "turn_start": turn["started"],
+                                                  "generated": generated, "grants": retry_grants(fixables, proj)})
                 except Exception as exc:       # never costs the reply
                     runlog.event("chat", phase="followup-end", ok=False, project=proj, error=f"{type(exc).__name__}: {exc}")
+                if will_retry and not started:      # the closing lines left the promise to the retry: it did not start, so say so now
+                    _stop_note(proj, sess, res.get("reply"), applied, refused, lang)
             recheck_missing(proj)
             compact_async(proj, sess)
             out = state()

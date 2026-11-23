@@ -56,14 +56,24 @@ def outjob_kinds(outjob) -> list[tuple[str, str]]:
     return out
 
 
-def kind_of(name: str) -> str | None:
-    """Which output a file is: pdf, bom, gerber, drill, cpl (by its name and extension), else None."""
+def is_bom_path(path) -> bool:
+    """A BOM file by its own name or by its folder, whatever OutJob wrote it (ours: BOM/<project>.csv, a student's:
+    Assembly/Bill of Materials-X.xlsx). The one classifier: bridge's BOM fallback and kind_of() both ask it."""
+    p = pathlib.PurePath(path)
+    low = p.name.lower()
+    return (p.parent.name.lower() == "bom" or "bom" in re.split(r"[^a-z]+", low) or "bill of materials" in low
+            or "bom_" in low)
+
+
+def kind_of(name) -> str | None:
+    """Which output a file is: pdf, bom, gerber, drill, cpl (by its path and extension), else None. Pass the full path when it is
+    known: a file in a BOM/ folder is a BOM whatever it is called."""
     import jlc_upload
     low = pathlib.PurePath(name).name.lower()
     ext = pathlib.PurePath(name).suffix.lower()
     if ext == ".pdf":
         return "pdf"
-    if "bom" in re.split(r"[^a-z]+", low) or "bill of materials" in low or "bom_" in low:
+    if is_bom_path(name):
         return "bom"
     if "pick" in low and "place" in low or "_cpl" in low or low.endswith("cpl.csv") or "centroid" in low:
         return "cpl"
@@ -91,7 +101,7 @@ def verify(project: str, files, outjob=None, options: dict | None = None, extra=
     absent = sorted({p.name for p in paths if not p.is_file()})
     empty = sorted({p.name for p in paths if p.is_file() and p.stat().st_size == 0})
     good = [p for p in paths if p.is_file() and p.stat().st_size > 0]
-    expected = [{"kind": k, "label": label, "found": sorted({p.name for p in good if kind_of(p.name) == k})} for k, label in wanted]
+    expected = [{"kind": k, "label": label, "found": sorted({p.name for p in good if kind_of(p) == k})} for k, label in wanted]
     missing = [e["label"] for e in expected if not e["found"]]
     warnings = []
     if missing:

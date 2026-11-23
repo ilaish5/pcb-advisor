@@ -1327,7 +1327,7 @@ def _routing_lost(pcb):
     from altium.pcbdoc import read_pcbdoc
     try:
         doc = read_pcbdoc(pathlib.Path(pcb))
-    except (AltiumReadError, OSError):
+    except Exception:          # only wording depends on this: a parse error (struct.error ...) must not abort the chat turn
         return {}
     cu = lambda it: isinstance(it.get("layer"), int) and 1 <= it["layer"] <= 32
     return {"tracks": sum(1 for t in doc.get("tracks", []) if cu(t)), "vias": len(doc.get("vias", [])),
@@ -2348,9 +2348,8 @@ def run_outjob(project):
 
 def _is_bom(path):
     """A BOM file by its own name or folder, whatever OutJob wrote it (ours: BOM/..., a student's: Assembly/Bill of Materials-X.xlsx)."""
-    p = pathlib.Path(path)
-    low = p.name.lower()
-    return p.parent.name.lower() == "bom" or "bom" in re.split(r"[^a-z]+", low) or "bill of materials" in low
+    import outputs_check
+    return outputs_check.is_bom_path(path)       # one classifier for the BOM fallback and the outputs check
 
 
 def _bom_into_outputs(project, roots, written):

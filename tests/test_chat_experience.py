@@ -111,7 +111,8 @@ def test_notes_do_not_use_up_the_window_and_long_turns_are_clipped():
     lines = out.split("\n")
     assert sum(1 for l in lines if l.startswith("note:")) == agent.NOTE_KEEP
     assert sum(1 for l in lines if l.startswith(("user:", "agent:"))) == 8        # all 8 real turns survive 11 notes
-    assert all(len(l) <= agent.CLIP_AGENT + 12 for l in lines)
+    last_agent = max(i for i, l in enumerate(lines) if l.startswith("agent:"))     # the question before the student's message is never clipped
+    assert all(len(l) <= agent.CLIP_AGENT + 12 for i, l in enumerate(lines) if i != last_agent)
     assert "Placed the parts" not in out or out.count("Placed") <= 1
 
 
