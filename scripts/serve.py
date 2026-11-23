@@ -2038,8 +2038,13 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     refused.extend(res[1])
                 else:
                     applied.append(res)
+        except StepStopped:
+            raise
         except (ValueError, KeyError) as exc:
             refused.append(f"{kind}: {exc}")
+        except Exception as exc:        # noqa: BLE001 - one action's bug must not lose the other actions of the turn
+            runlog.event("op", op="chat.action", phase="error", project=project, action=str(kind), error=f"{type(exc).__name__}: {exc}")
+            refused.append(f"{kind}: could not be applied ({type(exc).__name__}: {exc}). The other actions of this turn were not affected")
     if any(x.startswith("netlist") for x in applied) or any(r.get("kind") != "idea_diagram" for r in auto_done):
         redraw(project)
     if auto_done and sess:

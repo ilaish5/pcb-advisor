@@ -60,8 +60,29 @@ def _ref(item, key):
     return v
 
 
+def _coord(v, what):
+    """A finite coordinate in mm as a rounded float, else ValueError (never TypeError for null / text, never NaN or infinity)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float, str)):
+        raise ValueError(f"{what} must be numbers")
+    try:
+        f = float(v)
+    except ValueError:
+        raise ValueError(f"{what} must be numbers") from None
+    if not math.isfinite(f) or abs(f) > 1e5:
+        raise ValueError(f"{what} must be finite numbers within 100 m")
+    return round(f, 3)
+
+
 def validate_item(item):
-    """One clean item (unknown keys dropped, defaults filled in) or ValueError."""
+    """One clean item (unknown keys dropped, defaults filled in) or ValueError, whatever the item holds (null, a list where a name
+    belongs, NaN): never another exception type."""
+    try:
+        return _validate_item(item)
+    except (TypeError, AttributeError, OverflowError) as exc:
+        raise ValueError(f"constraint is malformed ({type(exc).__name__}: {exc})") from None
+
+
+def _validate_item(item):
     if not isinstance(item, dict):
         raise ValueError("a constraint is an object")
     kind = item.get("kind")
@@ -77,7 +98,7 @@ def validate_item(item):
             pts = item["points_mm"]
             if not isinstance(pts, list) or not all(isinstance(p, (list, tuple)) and len(p) == 2 for p in pts) or len(pts) > 12:
                 raise ValueError("mounting_hole: points_mm is a list of [x, y] (at most 12)")
-            out["points_mm"] = [[round(float(p[0]), 3), round(float(p[1]), 3)] for p in pts]
+            out["points_mm"] = [[_coord(p[0], "points_mm"), _coord(p[1], "points_mm")] for p in pts]
         else:
             out["inset_mm"] = _num(item, "inset_mm", DEFAULTS["hole_inset_mm"], 1, 50)
             corners = item.get("corners") or list(CORNERS)
@@ -86,7 +107,7 @@ def validate_item(item):
             out["corners"] = [c for c in CORNERS if c in corners]
     elif kind == "edge":
         out["target"] = _ref(item, "target")
-        out["side"] = item.get("side") if item.get("side") in SIDES else "any"
+        out["side"] = item.get("side") if isinstance(item.get("side"), str) and item.get("side") in SIDES else "any"
     elif kind == "keep_apart":
         out["a"], out["b"] = _ref(item, "a"), _ref(item, "b")
         if out["a"] == out["b"]:
@@ -97,18 +118,18 @@ def validate_item(item):
             r = item["rect_mm"]
             if not isinstance(r, (list, tuple)) or len(r) != 4:
                 raise ValueError("keepout: rect_mm is [x0, y0, x1, y1]")
-            x0, y0, x1, y1 = (round(float(v), 3) for v in r)
+            x0, y0, x1, y1 = (_coord(v, "rect_mm") for v in r)
             if x1 - x0 < 0.5 or y1 - y0 < 0.5:
                 raise ValueError("keepout: rect_mm must be at least 0.5 mm in each direction (x0 < x1, y0 < y1)")
             out["rect_mm"] = [x0, y0, x1, y1]
-        elif item.get("edge") in SIDE_LETTER:
+        elif isinstance(item.get("edge"), str) and item["edge"] in SIDE_LETTER:
             out["edge"] = item["edge"]
             out["depth_mm"] = _num(item, "depth_mm", None, 0.5, 100)
         else:
             raise ValueError("keepout: give rect_mm [x0, y0, x1, y1] or edge (left|right|top|bottom) with depth_mm")
     else:
         out["target"] = _ref(item, "target")
-        if item.get("attr") not in ATTRS:
+        if not isinstance(item.get("attr"), str) or item.get("attr") not in ATTRS:
             raise ValueError(f"attr: attr must be one of {', '.join(ATTRS)}")
         out["attr"] = item["attr"]
     return out

@@ -416,7 +416,10 @@ def mounting_hole(dia=3.2):
 
 
 def keepout_name(item_id):
-    return f"{MECH_PREFIX}KO_{re.sub(r'[^A-Za-z0-9]', '_', str(item_id))[:20]}"
+    """The keep-out footprint of a constraint: a readable start of the id plus a hash of the WHOLE id, so two long ids that agree
+    in their first characters (or differ only in punctuation) never get the same footprint name."""
+    import hashlib
+    return f"{MECH_PREFIX}KO_{re.sub(r'[^A-Za-z0-9]', '_', str(item_id))[:12]}_{hashlib.sha1(str(item_id).encode('utf-8')).hexdigest()[:6]}"
 
 
 def keepout_lines(x0, y0, x1, y1):
