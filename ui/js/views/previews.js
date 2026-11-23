@@ -312,6 +312,8 @@ const PV_STEPS = {
           title: 'Altium places the parts of the netlist on the PcbDoc, and makes the board outline from the board size when there is none. The saved board is checked. The PcbDoc is copied to .advisor-backup first.'},
   route: {url: '/api/altium/route', page: 'pcb', doing: 'Routing', ask: 'Replacing removes the tracks, vias and pours and routes again; the file as it is now is copied to .advisor-backup first.', label: 'Route board', again: 'Replace the existing routes', busy: 'Altium is routing the board. Routing can take a couple of minutes and Altium will flash while it works.',
           title: 'Draws the tracks and vias on the placed board, plus a ground pour when it can, then checks the result with the design rule check. The PcbDoc is copied to .advisor-backup before it draws, and put back if a check fails.'},
+  drc: {url: '/api/altium/drc', page: 'pcb', doing: 'Checking', label: 'Check board', busy: 'Altium is checking the board against every design rule. It may take a minute and flash while it works.',
+         title: 'Runs Altium's design rule check on the PcbDoc and keeps the answer. Nothing on the board is changed.'},
   /* Rules (Rules page) and outputs (Outputs page) run the same machinery: the live list, Stop, and the answer after a reload. They never replace. */
   rules: {url: '/api/altium/import-rules', page: 'rules', doing: 'Applying', label: 'Apply rules in Altium', busy: 'Altium is applying the rules. It may take a minute and flash while it works.',
           title: 'Puts these rules into the linked PcbDoc by name; your own rules stay. The PcbDoc is copied to .advisor-backup first.',
@@ -635,7 +637,7 @@ function pcbHTML(container) {
   const inner = pvPcbErr ? `<div class="pv-note">${errorLine('draw the layout', pvPcbErr, btn('Try again', {size: 'sm', act: 'pcb-retry'}))}</div>` : formatPcbPreview(text);
   const zoom = text || pvPcbErr ? pvZoomHTML('pcb') : '';
   return `<div class="pv" data-pv="pcb">` +
-    viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + seg(layers, Object.keys(pcbLayers).filter(k => pcbLayers[k]), {act: 'toggle-layer', label: 'Layers'})}) + pvStepNote('pcb') +
+    viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + pvStepBtn('drc') + seg(layers, Object.keys(pcbLayers).filter(k => pcbLayers[k]), {act: 'toggle-layer', label: 'Layers'})}) + pvStepNote('pcb') +
     `<div class="pv-stage"><div class="pv-canvas pcb-canvas" id="pcbwrap" tabindex="0" aria-label="PCB layout. Scroll to zoom, drag to pan.">${inner}</div>${zoom}</div></div>`;
 }
 async function loadPcb(container) {

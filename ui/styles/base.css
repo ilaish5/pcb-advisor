@@ -117,7 +117,8 @@ p{margin:0}
 .btn.danger{color:var(--bad)}
 .btn.link{height:auto;padding:0;color:var(--sig);font-weight:500}
 .btn.link:hover{background:none;text-decoration:underline}
-.btn:disabled,.btn[aria-disabled="true"]{opacity:.42;pointer-events:none}
+.btn:disabled{opacity:.42;pointer-events:none}
+.btn[aria-disabled="true"]{opacity:.5;cursor:not-allowed}
 .btn .k{font-family:var(--f-mono);font-size:11px;color:var(--ink-4);font-weight:400}
 .acts{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
 

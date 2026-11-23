@@ -65,6 +65,11 @@ function btn(label, o) {
   const {kind, size, icon: ic, iconAfter, html, cls, ...rest} = o;
   const iconOnly = !label && !html;
   if (iconOnly && rest.title && !rest['aria-label']) rest['aria-label'] = rest.title;
+  if (rest.disabled) {       // not a dead button: it stays focusable and a click says why (data-why, shown by the handler below)
+    rest['aria-disabled'] = 'true';
+    rest.why = rest.why || rest.title || 'Not available right now.';
+    delete rest.disabled;
+  } else delete rest.why;
   const c = ['btn', kind, size, iconOnly ? 'icon' : '', cls].filter(Boolean).join(' ');
   return `<button type="button" class="${c}"${kattrs(rest)}>${ic ? icon(ic) : ''}${html || (label ? `<span>${kesc(label)}</span>` : '')}${iconAfter ? icon(iconAfter, 's') : ''}</button>`;
 }
@@ -91,6 +96,7 @@ function menu(trigger, items, o) {
     if (it === 'sep') return '<hr>';
     if (it.group) return `<div class="lbl">${kesc(it.group)}</div>`;
     const a = Object.assign({act: it.act, disabled: it.disabled, title: it.title}, it.attrs || {});
+    if (a.disabled) { a['aria-disabled'] = 'true'; a.why = it.why || it.title || 'Not available right now.'; delete a.disabled; }      // a click says why (see the handler above)
     const role = it.checked != null ? 'menuitemradio' : 'menuitem';
     return `<button type="button" role="${role}"${it.checked != null ? ` aria-checked="${!!it.checked}"` : ''}${it.danger ? ' class="danger"' : ''}${kattrs(a)}>${it.icon ? icon(it.icon) : ''}<span>${kesc(it.label)}</span>${it.hint ? `<span class="d">${kesc(it.hint)}</span>` : ''}</button>`;
   }).join('');
@@ -115,8 +121,13 @@ function metaLine(items) {
    side:true adds the "Side by side" icon button (data-act="side-open"); the side pane hides it itself. */
 function viewHeader(o) {
   const side = o.side === false ? '' : btn('', {icon: 'side', title: 'Side by side', act: 'side-open', cls: 'side-btn'});
+  // the Next button of a stage's page comes from the server's stages[] (shell.js stageNextBtn); Idea draws its own, a page that is
+  // already where the next step is (go:<itself>) has none
+  const sid = o.stage || (typeof STAGES !== 'undefined' && (STAGES.find(s => s[1] === o.title) || [])[0]);
+  const st = sid && sid !== 'idea' && typeof stageOf === 'function' ? stageOf(sid) : null;
+  const next = st && st.next && st.next.act !== 'go:' + sid && typeof stageNextBtn === 'function' ? stageNextBtn(sid) : '';
   return `<header class="vh"><div class="vh-t"><h1>${kesc(o.title)}</h1>${o.meta ? `<div class="meta">${o.meta}</div>` : ''}</div>` +
-    `<div class="acts">${side}${o.actions || ''}${o.primary || ''}</div></header>`;
+    `<div class="acts">${side}${o.actions || ''}${o.primary || ''}${next}</div></header>`;
 }
 function section(title, body, o) {
   o = o || {};
@@ -189,6 +200,16 @@ function kitMenuOpen(trigger) {
 function uiBusy() {
   return !!kitOpenMenu || !!document.querySelector('.palette-scrim, dialog[open]');
 }
+/* A button that cannot be used now (aria-disabled, from btn({disabled})) is not dead: the click says why and does nothing else.
+   It runs first (capture) so no handler of the app sees the click. */
+document.addEventListener('click', e => {
+  const el = e.target.closest && e.target.closest('[aria-disabled="true"]');
+  if (!el) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (el.closest('.menu') && typeof kitMenuClose === 'function') kitMenuClose();
+  if (typeof toast === 'function') toast(el.dataset.why || el.getAttribute('title') || 'Not available right now.', null, {bad: false});
+}, true);
 document.addEventListener('click', e => {
   const trig = e.target.closest && e.target.closest('[data-menu]');
   if (trig) {

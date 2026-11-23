@@ -974,7 +974,8 @@ def _draw_consent(a, last_user, earlier=(), prev_agent=""):
 
 
 _CONSENT_ACTION = {"draw": "altium.draw_schematic", "place": "altium.place_pcb", "route": "altium.route_pcb",
-                   "rules": "altium.import_rules", "outputs": "altium.run_outjob"}      # rules / outputs: buttons only, the chat asks no words for them
+                   "rules": "altium.import_rules", "outputs": "altium.run_outjob",
+                   "drc": "altium.run_drc"}      # rules / outputs / drc: buttons only, the chat asks no words for them
 
 
 def consent_words(chat, last_user):
@@ -1218,7 +1219,8 @@ STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.s
                "library.build": "Building the project library in Altium", "altium.draw_schematic": "Drawing the schematic in Altium",
                "altium.place_pcb": "Placing the parts on the board", "altium.import_rules": "Importing the JLC rules",
                "altium.route_pcb": "Routing the board", "netlist.write": "Writing the netlist", "altium.add_pcb": "Adding the PcbDoc",
-               "outjob.generate": "Adding the OutJob to the project", "altium.run_outjob": "Generating the outputs in Altium"}
+               "outjob.generate": "Adding the OutJob to the project", "altium.run_outjob": "Generating the outputs in Altium",
+               "altium.run_drc": "Checking the board in Altium"}
 
 
 def _warn_tail(res):
@@ -1281,7 +1283,13 @@ def outputs_summary(res):
     return f"Altium wrote {len(res.get('files') or [])} files" + (" (OutJob added to the project)" if res.get("added") else "")
 
 
-STEP_SUMMARY = {"draw": draw_summary, "place": place_summary, "route": route_summary, "rules": import_rules_summary, "outputs": outputs_summary}
+def drc_summary(res):
+    import board_results
+    return board_results.drc_summary(res)
+
+
+STEP_SUMMARY = {"draw": draw_summary, "place": place_summary, "route": route_summary, "rules": import_rules_summary, "outputs": outputs_summary,
+                "drc": drc_summary}
 NEEDS_REPLACE = re.compile(r"already has \d+ objects \(parts, wires, labels\)"                 # draw: bridge.draw_schematic / DRAWCHECK
                            r"|the board already has \d+ (?:parts or copper objects|tracks, vias or pours)")   # place / route: PCBCHECK
 
@@ -1299,7 +1307,7 @@ LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")     # the only Host names a re
 STEP_LOCK = threading.Lock()
 ALTIUM_BUSY = "Altium is still working on another step; wait for it to finish and try again."
 STEP_NAMES = {"draw": "Drew the schematic", "place": "Placed the parts", "route": "Routed the board",
-              "rules": "Imported the JLC rules", "outputs": "Generated the outputs"}
+              "rules": "Imported the JLC rules", "outputs": "Generated the outputs", "drc": "Checked the board"}
 
 
 def altium_start(project):
@@ -1319,7 +1327,8 @@ PREP_WORDS = {"library.build": ("building the library", "The library was built",
               "altium.import_rules": ("importing the JLC rules", "The JLC rules were imported", "Importing the JLC rules"),
               "outjob.generate": ("adding the OutJob", "The OutJob was added to the project", "Adding the OutJob")}
 STEP_NOT_DONE = {"draw": "The schematic was not drawn.", "place": "The parts were not placed.", "route": "The board was not routed.",
-                 "rules": "The rules were not imported.", "outputs": "The outputs were not generated."}
+                 "rules": "The rules were not imported.", "outputs": "The outputs were not generated.",
+                 "drc": "The board was not checked."}
 STEP_RUNS = {}                # project -> the live list of a button run (see step_plan); kept after the run until the page has the answer
 RUNS_LOCK = threading.Lock()
 
@@ -1578,6 +1587,7 @@ def run_step_button(project, sess, step, data):
             _run_end(project, **body)
             runlog.exception("exception", exc, where=f"step.{step}", project=project)
         _log_step_end(project, step, code, body, t0)
+        _record_board(project, step, body if code == 200 and not body.get("stopped") else None, code, body)
         return code, body, _run_id(project)
     finally:
         with RUNS_LOCK:               # whatever happened above, no record is left saying "running" once the lock is free
@@ -1585,6 +1595,19 @@ def run_step_button(project, sess, step, data):
             if run and run.get("running"):
                 run.update(running=False, error="The step stopped without an answer; look at the file in Altium and at the chat before trying again.")
         STEP_LOCK.release()
+
+
+def _record_board(project, step, res, code=200, body=None):
+    """The one place a step's answer from Altium goes into board-log.jsonl (button steps and the chat's altium.* actions): res is the
+    bridge result of a step that ran, None for one that stopped or failed (then an error record, unless it only refused)."""
+    try:
+        import board_results
+        if res is not None:
+            board_results.record(project, step, res)
+        elif isinstance(body, dict) and body.get("error") and not body.get("needs_replace") and code >= 400 and step in ("place", "route", "drc", "outputs") and code != 409:
+            board_results.record(project, step, {}, ok=False, error=body["error"])
+    except Exception:           # noqa: BLE001 - the log never turns a done step into a failure
+        pass
 
 
 def _log_step_end(project, step, code, body, t0):
@@ -1652,6 +1675,9 @@ def _run_step(project, sess, step, data, bridge):
                 return bridge.import_rules(project)
             if step == "outputs":
                 return bridge.run_outjob(project)
+            if step == "drc":
+                import board_results
+                return board_results.run_drc(project, bridge)
             # keep_partial only from the "Route the rest and leave X open" button (its click is the consent; the agent's chat path asks for words instead)
             return bridge.route_pcb(project, replace=replace, keep_partial=_truthy(data.get("keep_partial")))
         current = final
@@ -1897,6 +1923,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
                     refused.append(f"{kind}: {exc}")
                     continue
+                _record_board(project, step, res)
                 applied.append(f"{kind}: " + STEP_SUMMARY[step](res))
             elif kind in ALTIUM_ACTIONS:
                 from altium import bridge
@@ -1941,6 +1968,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     except (bridge.BridgeError, bridge.AltiumReadError) as exc:
                         refused.append(f"{kind}: {exc}")
                         continue
+                    _record_board(project, "outputs", res)
                     applied.append(f"{kind}: {len(res['files'])} files" + (" (OutJob added to the project)" if res["added"] else "")
                                    + "".join(f". WARNING: {w}" for w in res.get("warnings", [])))
                     continue
@@ -3797,7 +3825,7 @@ class Handler(BaseHTTPRequestHandler):
                 STEP_LOCK.release()
             return self._send(200, {**_altium_state(proj), "warning": res.get("skeleton_error", "")})
 
-        if path in ("/api/altium/draw-schematic", "/api/altium/place", "/api/altium/route", "/api/altium/import-rules", "/api/altium/run-outjob"):
+        if path in ("/api/altium/draw-schematic", "/api/altium/place", "/api/altium/route", "/api/altium/import-rules", "/api/altium/run-outjob", "/api/altium/drc"):
             name = path.rsplit("/", 1)[1]
             step = {"draw-schematic": "draw", "import-rules": "rules", "run-outjob": "outputs"}.get(name, name)
             code, body, run_id = run_step_button(proj, sess, step, data)
@@ -4175,6 +4203,9 @@ def readiness(project):
     if not linked and _past_idea(project):
         problems.append({"id": "link", "title": "This project is not linked to an Altium project, so nothing can be drawn or read from Altium.",
                          "fix": "Open Altium (Settings) and link the .PrjPcb file.", "page": "settings"})
+    import hashlib
+    for p in problems:       # a problem that comes back with other words is a new one: a Dismiss is kept per id and instance, not per id for ever
+        p["instance"] = hashlib.sha1((p["title"] + "|" + p["fix"]).encode("utf-8")).hexdigest()[:8]
     return {"problems": problems}
 
 
