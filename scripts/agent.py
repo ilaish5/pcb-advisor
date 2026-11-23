@@ -496,6 +496,17 @@ def history_lines(history, keep):
     return "\n".join(out)
 
 
+def _server_round_keep(history):
+    """A follow-up or retry round answers the server's report on the last exchange: it needs the student's last message (the
+    `student_said` quote, what was asked) and the agent replies since (what to correct), not the whole window. Consent in a retry is
+    checked against round 0's own inputs on the server, never against this prompt."""
+    turns = [m for m in history if not is_note(m)]
+    for back, m in enumerate(reversed(turns), 1):
+        if m.get("role") == "user":
+            return back
+    return min(len(turns), 2)
+
+
 MIN_LETTERS = 3          # a message with fewer letters of either script ("ok", "R5 100k") says nothing about the language
 
 
@@ -570,7 +581,7 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     keep = int(workspace.get("agent.history_messages", 8))
     # a context card (role "ctx") has no text; the agent gets that context in the message itself
     history = [m for m in history if m.get("text")]
-    convo = history_lines(history, keep)
+    convo = history_lines(history, _server_round_keep(history) if from_server else keep)
 
     try:
         engine_home = runtime_pack.sync()

@@ -227,7 +227,7 @@ def _prompt(lte, monkeypatch, tmp_path, **kw):
         return gateway.Result(text="fine", provider="claude_code")
     monkeypatch.setattr(gateway, "route", route)
     m = model.build(project=lte)
-    agent.respond(m, kw.pop("message", "hello"), m["chat"], backend="claude_code", **kw)
+    agent.respond(m, kw.pop("message", "hello"), kw.pop("history", m["chat"]), backend="claude_code", **kw)
     return seen["req"].prompt
 
 
@@ -266,3 +266,18 @@ def test_rules_reach_the_engine_once(lte, monkeypatch, tmp_path):
     monkeypatch.setattr(gateway.ClaudeCodeProvider, "has_workspace", lambda self: False)
     p = _prompt(lte, monkeypatch, tmp_path)
     assert p.startswith(agent.rules()) and "\n<workspace>\n" not in p
+
+
+def test_a_server_round_sends_the_last_exchange_not_the_whole_conversation(lte, monkeypatch, tmp_path):
+    """P3: a follow-up or retry answers the server's report on the last exchange: the student's last message (the quote) and the
+    agent replies since; older turns stay out. A student turn keeps the full window."""
+    chat = [{"role": "user", "text": f"old question {i}"} if i % 2 == 0 else {"role": "agent", "text": f"old answer {i}"}
+            for i in range(6)]
+    chat += [{"role": "user", "text": "draw it yourself please"}, {"role": "agent", "text": "Drawing sheet 01."},
+             {"role": "agent", "text": "Retry: building the library first."}]
+    p = _prompt(lte, monkeypatch, tmp_path, message="Results of your actions: none", typed="draw it yourself please",
+                from_server=True, history=chat)
+    convo = p.split("\n<conversation>\n")[1].split("\n</conversation>")[0]
+    assert convo.splitlines() == ["user: draw it yourself please", "agent: Drawing sheet 01.", "agent: Retry: building the library first."]
+    p = _prompt(lte, monkeypatch, tmp_path, message="and now?", history=chat)
+    assert "old question 2" in p.split("\n<conversation>\n")[1]
