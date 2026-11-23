@@ -2,7 +2,7 @@
    "Pins match" button and an optional "this pin is wrong" per row. No reason is asked for and no pin has to be ticked; the server
    records the basis itself (scripts/pin_decisions.py). "Accept all remaining" is one confirm for every part still open.
    S.pin_decisions = {accepted: [{line, refs, mpn, basis, ts, reason, evidence}], remaining: [{line, refs, mpn, issues}]}. */
-const PIN_BASIS = {datasheet_page: 'checked against a datasheet page', polarity: 'polarity accepted by you', blind: 'accepted without a datasheet', legacy: 'accepted earlier'};
+const PIN_BASIS = {datasheet_page: 'checked against a datasheet page', polarity: 'polarity accepted by you', blind: 'accepted without a datasheet', legacy: 'accepted earlier', library_model: 'matches the library model of its LCSC part'};
 function pinsWhen(ts) { return ts ? whenText(ts) : ''; }
 
 /* the accepted risks, with Revoke: DFM and Outputs show them so an accepted risk never disappears from view */
@@ -18,6 +18,7 @@ function pinRisksHTML() {
 /* the line of the part panel: what the student decided, and the way back */
 function pinsInspHTML(l) {
   const d = l.pin_decision;
+  if (!d && l.pins_basis === 'library_model') return `<p class="insp-foot pin-dec">Pins ${esc(PIN_BASIS.library_model)}${l.lcsc ? ' (' + esc(l.lcsc) + ')' : ''}: nothing to confirm.</p>`;
   if (!d) return '';
   return `<p class="insp-foot pin-dec">Pins ${esc(PIN_BASIS[d.basis] || d.basis)}${d.ts ? ' on ' + esc(pinsWhen(d.ts)) : ''}. ${btn('Revoke', {kind: 'link', size: 'sm', act: 'revoke-pins', line: l.key})}</p>`;
 }
@@ -39,9 +40,36 @@ function verifyToast(v) {
   const why = String(v.issues || '').split(/;\s|\.\s/)[0].trim();
   return head + (why && v.verify !== 'pass' ? ': ' + why.slice(0, 170) : '') + (v.verify === 'unchecked' ? '. Attach a datasheet or use Confirm pins.' : '');
 }
-function pinsAcceptAllBtn() {
-  const n = ((S.pin_decisions || {}).remaining || []).length;
-  return n > 1 ? btn(`Accept all remaining (${n})`, {kind: 'line', size: 'sm', act: 'accept-all-pins', title: 'One confirm for every part below that has no conflict with its datasheet'}) : '';
+/* The waiting line, on every page that shows the waiting parts (Library, DFM, Outputs): one sentence and one button for everything the
+   server cannot settle itself. S.pin_decisions.waiting = {questions, own_look, auto_verified, fetchable, groups: [{id, lines, refs, mpn,
+   status, issues, kind, blind, own_look, count}], bulk: [line], blind: [ref]} (scripts/pin_decisions.py waiting). Identical parts are one
+   group, so five LEDs read "D1-D5" and count as one question. A mismatch is never in the bulk: its own row has its own button. */
+function pinsWaiting() { return (S.pin_decisions || {}).waiting || null; }
+function pinsBulkGroups() { const w = pinsWaiting(); return w ? (w.groups || []).filter(g => !g.own_look) : []; }
+function pinsConfirmAllBtn(o) {
+  const g = pinsBulkGroups();
+  const n = g.reduce((a, x) => a + (x.count || (x.refs || []).length), 0);
+  return n ? btn(g.length > 1 || n > 1 ? `Confirm all (${n})` : 'Confirm', {kind: 'line', size: 'sm', act: 'accept-all-pins', ...(o || {}),
+    title: 'Accepts the pins of every part named here as they are drawn. Each stays listed as an accepted risk and can be revoked.'}) : '';
+}
+function pinsAcceptAllBtn() { return pinsConfirmAllBtn(); }       // the name the DFM list used
+function pinsWaitingBar() {
+  const w = pinsWaiting();
+  if (!w || !w.questions) return '';
+  const g = pinsBulkGroups(), own = (w.groups || []).filter(x => x.own_look);
+  const n = g.reduce((a, x) => a + (x.count || (x.refs || []).length), 0);
+  const names = g.slice(0, 6).map(x => refsLabel(x.refs)).join(', ') + (g.length > 6 ? ` and ${g.length - 6} more` : '');
+  const head = n ? `<strong>${n} ${n === 1 ? 'part waits' : 'parts wait'} for your confirmation</strong> <span class="m">${esc(names)}</span>` : '';
+  const ownTxt = own.length ? `${n ? ' · ' : ''}<strong>${own.length} ${own.length === 1 ? 'part needs' : 'parts need'} your own look</strong> <span class="m">${esc(own.map(x => refsLabel(x.refs)).join(', '))}</span>` : '';
+  const auto = w.auto_verified ? `<span class="muted"> · ${w.auto_verified} already matched ${w.auto_verified === 1 ? 'its' : 'their'} library model</span>` : '';
+  const fetch = w.fetchable ? btn(dfmRecheckBusyNow() ? 'Fetching…' : 'Fetch datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', title: 'The tool downloads the datasheet itself and checks the pins against it'}) : '';
+  return `<div class="pins-bar" role="status"><span class="pins-bar-t">${head}${ownTxt}${auto}</span>${pinsConfirmAllBtn()}${fetch}</div>`;
+}
+function dfmRecheckBusyNow() { return typeof dfmRecheckBusy !== 'undefined' && dfmRecheckBusy; }
+/* a row that needs its own look (a mismatch): the only per-row pin button on the Library page */
+function pinsOwnLookBtn(key, o) {
+  const l = (S.bom || []).find(b => b.key === key);
+  return l && l.pins_status === 'mismatch' ? btn('Confirm pins', {...o, act: 'confirm-pins', line: key, title: 'Look at the conflict, then one click'}) : '';
 }
 
 function pinsDialogHTML(d, page) {
@@ -97,13 +125,23 @@ async function pinsConfirm(key) {
 }
 onAct('confirm-pins', async (el, d) => { await pinsConfirm(d.line); });
 onAct('revoke-pins', async (el, d) => { await api('/api/pins/revoke', {line: d.line}); await refresh(true); toast('Decision revoked: the pins are unverified again'); });
+/* One click. Only when the line holds a part nothing but the student's word settles (an IC with no datasheet check) is the click
+   asked once more, naming those parts: that is a real engineering check the click would skip. Anything else is done at once, with Undo. */
 onAct('accept-all-pins', async () => {
-  const rows = (S.pin_decisions || {}).remaining || [];
-  if (!rows.length) return;
-  const names = rows.map(r => refsLabel(r.refs)).join(', ');
-  const yes = await askChoice({title: `Accept ${rows.length} parts as they are drawn?`, text: `${names}. No datasheet pin table was checked for these. They stay listed as accepted risks and each can be revoked.`, yes: 'Accept all', no: 'Not now'});
-  if (!yes) return;
-  await api('/api/pins/accept-all', {confirm: true, lines: rows.map(r => r.line)});
+  const w = pinsWaiting();
+  const lines = w ? w.bulk || [] : ((S.pin_decisions || {}).remaining || []).map(r => r.line);
+  if (!lines.length) return;
+  const blind = w ? w.blind || [] : [];
+  if (blind.length) {
+    const yes = await askChoice({title: `Accept ${blind.length === 1 ? blind[0] : blind.length + ' parts'} on your word?`, text: `${blind.join(', ')}: no datasheet pin table was checked for ${blind.length === 1 ? 'this part' : 'these parts'}. ${blind.length === 1 ? 'It stays' : 'They stay'} listed as accepted risks and can be revoked.`, yes: 'Accept all', no: 'Not now'});
+    if (!yes) return;
+  }
+  const r = await api('/api/pins/accept-all', {confirm: true, lines});
   await refresh(true);
-  toast(`${rows.length} parts accepted`);
+  const done = (r && r.accepted) || lines;
+  toast(`${done.length} ${done.length === 1 ? 'part' : 'parts'} confirmed`, {label: 'Undo', onClick: async () => {
+    for (const l of done) await api('/api/pins/revoke', {line: l});
+    await refresh(true);
+    toast('Decisions revoked: the pins are unverified again');
+  }});
 });

@@ -79,7 +79,10 @@ function libIssues(r) {
 function libAction(r) {
   if (r.verify === 'pass' && !r.accepted) return btn('Accept', {size: 'sm', accept: r.line, title: 'It passed the datasheet check. Accept it for the library.'});
   const lb = (S.bom || []).find(b => b.key === r.line);
-  if (r.verify !== 'pass' && r.symbol) return (lb && !pinsCanVerify(lb) ? '' : btn('Verify', {size: 'sm', verify: r.line, title: 'Compare the pins with the datasheet'})) + pinsConfirmBtn(r.line, {size: 'sm'});
+  // Verify only where a datasheet check can decide (an IC with a datasheet linked); the waiting parts are settled by the line on top, so a row
+  // has a pin button of its own only when it needs its own look (a mismatch).
+  const canVerify = lb && (lb.refs || []).some(x => !/^(R|C|L|D|LED|FB|Y|X|XTAL|J|P|H|TP|SW|F|FID|MH)\d/i.test(x)) && lb.datasheet && pinsOpen_(lb);
+  if (r.verify !== 'pass' && r.symbol) return (canVerify ? btn('Verify', {size: 'sm', verify: r.line, title: 'Compare the pins with the datasheet'}) : '') + pinsOwnLookBtn(r.line, {size: 'sm'});
   return '';
 }
 function libRow(r) {
@@ -128,7 +131,7 @@ function libHTML(container) {
     ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr>${head}<th><span class="sr">Action</span></th></tr></thead>
       <tbody>${rows.map(libRow).join('')}</tbody></table></div>`
     : emptyState('No library parts yet', 'Press Build library: every BOM line gets a symbol, a footprint and a 3D model, from EasyEDA, a vendor zip or the generator.');
-  return `${viewHeader({title: 'Library', meta, actions, primary})}<div class="vb">${note}${libExportHTML()}${body}</div>`;
+  return `${viewHeader({title: 'Library', meta, actions, primary})}<div class="vb">${note}${pinsWaitingBar()}${libExportHTML()}${body}</div>`;
 }
 
 /* ================================ Sources ================================ */

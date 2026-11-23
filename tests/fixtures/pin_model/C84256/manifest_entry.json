@@ -1,0 +1,12 @@
+{
+ "symbol": "NCD0805R1",
+ "footprint": "LED0805-RD",
+ "source": "easyeda",
+ "status": "ok",
+ "issues": [],
+ "package": "0805",
+ "lcsc": "C84256",
+ "value": "LED red",
+ "mpn": "NCD0805R1",
+ "built": true
+}

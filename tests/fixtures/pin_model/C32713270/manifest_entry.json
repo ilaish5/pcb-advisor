@@ -1,0 +1,12 @@
+{
+ "symbol": "HX_PZ2.54-1x4P_ZZ",
+ "footprint": "HDR-TH_4P-P2.54-V-M",
+ "source": "easyeda",
+ "status": "ok",
+ "issues": [],
+ "package": "1x4 2.54mm THT",
+ "lcsc": "C32713270",
+ "value": "1x4 header",
+ "mpn": "HX PZ2.54-1x4P ZZ",
+ "built": true
+}

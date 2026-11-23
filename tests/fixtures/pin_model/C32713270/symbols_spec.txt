@@ -1,0 +1,5 @@
+SYMBOL|HX_PZ2.54-1x4P_ZZ|1x4 header LCSC C32713270|1
+PIN|1|1|eElectricPassive|eRotate180|-100|100|1|100
+PIN|2|2|eElectricPassive|eRotate180|-100|0|1|100
+PIN|3|3|eElectricPassive|eRotate180|-100|-100|1|100
+PIN|4|4|eElectricPassive|eRotate180|-100|-200|1|100

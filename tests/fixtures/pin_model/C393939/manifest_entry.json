@@ -1,0 +1,12 @@
+{
+ "symbol": "TYPE-C16PIN",
+ "footprint": "USB-C-SMD_TYPE-C16PIN",
+ "source": "easyeda",
+ "status": "ok",
+ "issues": [],
+ "package": "SMD",
+ "lcsc": "C393939",
+ "value": "",
+ "mpn": "TYPE-C16PIN",
+ "built": true
+}
