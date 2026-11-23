@@ -90,3 +90,19 @@ def empty(home):
     """A project with nothing in it yet."""
     import project
     return project.create("empty", title="Empty")
+
+
+# ------------------------------------------------------------------ platform tests
+# `windows`: needs Windows itself; `altium`: needs a live Altium Designer. Off those machines they are skipped with the reason,
+# never failed. CI runs -m "not windows and not altium"; the Windows PC runs -m "windows or altium" (docs/TESTING.md).
+
+def pytest_collection_modifyitems(config, items):
+    on_windows = os.name == "nt"
+    with_altium = os.environ.get("PCB_ADVISOR_ALTIUM") == "1"
+    skip_windows = pytest.mark.skip(reason="needs Windows (marked `windows`; runs on the Windows PC, os.name == 'nt')")
+    skip_altium = pytest.mark.skip(reason="needs a live Altium Designer (marked `altium`; set PCB_ADVISOR_ALTIUM=1 on the Altium PC)")
+    for item in items:
+        if not on_windows and item.get_closest_marker("windows"):
+            item.add_marker(skip_windows)
+        if not with_altium and item.get_closest_marker("altium"):
+            item.add_marker(skip_altium)

@@ -587,8 +587,9 @@ def _sheet_doc(project, prj, sid, taken=(), adopt=True, how=None):
 
 
 def _doc_key(prj, rel):
-    """A PrjPcb DocumentPath as one comparable string: relative to the PrjPcb folder, slashes and case ignored."""
-    return os.path.normcase(os.path.normpath(str(prj.parent / pathlib.Path(str(rel).replace("\\", "/")))))
+    """A PrjPcb DocumentPath as one comparable string: relative to the PrjPcb folder, slashes and case ignored. A PrjPcb holds
+    Altium (Windows) paths, so case is ignored on every host: os.path.normcase alone keeps the case off Windows."""
+    return os.path.normcase(os.path.normpath(str(prj.parent / pathlib.Path(str(rel).replace("\\", "/"))))).casefold()
 
 
 def intlib_in_project(prj, intlib):

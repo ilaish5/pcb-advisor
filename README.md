@@ -110,6 +110,8 @@ The zip holds the logs, your chat with the advisor, the setup check and your set
 .venv\Scripts\python -m pytest -q        # includes the static gates: JS syntax, ruff, UI file references, AdvisorBridge.pas (tests/test_static_gates.py)
 ```
 
+Tests are split in two ([docs/TESTING.md](docs/TESTING.md)): CI (GitHub Actions, `.github/workflows/tests.yml`) runs everything except the tests marked `windows` or `altium` on every push; run those on the Windows PC with `python -m pytest -q -m "windows or altium" < NUL`.
+
 Code: `scripts/serve.py` (server), `scripts/store.py` (project state), `scripts/agent.py` (agent actions), `ui/index.html` (UI).
 Docs: [submission summary](docs/SUBMISSION.md), [architecture](docs/ARCHITECTURE.md), [engines](docs/ENGINES.md), [product plan](docs/PRODUCT-PLAN.md), [benchmark](docs/BENCHMARK.md), [status](docs/STATUS-2026-11-11.md).
 Windows verification still open: [docs/next-tasks/windows-verification.md](docs/next-tasks/windows-verification.md)

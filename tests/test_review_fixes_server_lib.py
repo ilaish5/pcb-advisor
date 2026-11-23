@@ -83,8 +83,17 @@ def test_delete_busy_check_uses_the_folder_name(server, empty):
     serve.TURNS[("My-Board", "s")] = serve._new_turn()      # TURNS is keyed by the folder, the text typed was "My Board"
     try:
         assert call(server, "POST", "/api/projects/delete", empty, {"name": "My Board"})[0] == 409
-        if os.name == "nt":
-            assert call(server, "POST", "/api/projects/delete", empty, {"name": "my board"})[0] == 409
+    finally:
+        serve.TURNS.pop(("My-Board", "s"))
+    assert folder.is_dir()
+
+
+@pytest.mark.windows        # folder names ignore case only on a Windows file system
+def test_delete_busy_check_ignores_case_on_windows(server, empty):
+    folder = _new(server, empty, "My Board")
+    serve.TURNS[("My-Board", "s")] = serve._new_turn()
+    try:
+        assert call(server, "POST", "/api/projects/delete", empty, {"name": "my board"})[0] == 409
     finally:
         serve.TURNS.pop(("My-Board", "s"))
     assert folder.is_dir()
