@@ -23,7 +23,6 @@ import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import gateway     # noqa: E402
-import oscompat    # noqa: E402
 import runtime_pack  # noqa: E402
 import session     # noqa: E402
 import workspace   # noqa: E402
