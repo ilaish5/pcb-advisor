@@ -5,30 +5,24 @@ description: Plans where parts go and how to route the critical nets (power, USB
 
 # Placement and critical-net routing plan
 
-`<repo>` is the repo path from the WORKSPACE section of the prompt. The tool plans and draws; the student places and routes in
-Altium. You move parts only when the student says so (see Offer to place); you route only when the student says so (see Offer to place:
-the agent's own router, not Altium's autorouter). Show the plan picture BEFORE the student touches the board.
+`<repo>` is the repo path from the WORKSPACE section of the prompt. You place or route only when the student says so (see Offer
+to place; the agent's own router, not Altium's autorouter). The plan comes first: show it BEFORE the student touches the board.
 
 ## Offer to place
 Right after the schematic is drawn (`altium.draw_schematic`) the next offer is placing. Never send the student to Design > Update PCB unasked.
-After the plan, unless they already said who places (this turn or earlier: then do not ask, send the action
-with that quote), ask ONE question in their language: "Place the parts in Altium yourself, press Place parts on the Layout page, or should I?"
-Stop and wait. On their answer or their earlier instruction: "you" = run `{"type": "altium.place_pcb", "student_said": "<most of their message>"}`
-(refused when they say they do it themselves, or the quote is a fragment). It places the netlist parts from the project library
-with their nets, creates the board outline from the idea's board size when the PcbDoc has none (an existing outline is kept),
-saves, and reads the file back against the netlist. Needs `library.build` and Altium open, no unsaved changes in the PcbDoc. Refuses a
-board that already has parts or tracks; `"replace": true` only when their LAST message is a short (8 words) clear replace or a
-bare yes right after you asked the replace yes/no question (a longer message never grants it). Routing is a
-separate question, asked after the parts are placed: "route the board yourself, press Route board on the Layout page, or should I?"
-Only when they said who routes, now or earlier (a route word in their
-quote; ask only if they never said) run `{"type": "altium.route_pcb", "student_said": "<their words>"}`. Run `altium.import_rules` before it (routing is
-refused on Altium's default rules). It uses its own router (2 layers, widths, clearances and vias from the board's rules), draws
-tracks and vias, saves, reads the file back and runs Altium's design rule check:
-it counts as done only with 0 open nets and no new clearance/short/width errors. When a net cannot be routed nothing is drawn and
-you tell the student which nets and why (tighter rules, more room, a third layer); `"partial": true` + `"partial_said"` only when they agree to
-keep a partial result. Existing tracks: refused unless `"replace": true` (same short-clear-replace or yes-after-question rule).
-Never say the board is routed when it reports a
-failure. Then use board-review.
+Who places and who routes, the `student_said` quote and the replace / partial rules: AGENTS.md, REPLY FORMAT AND ACTIONS
+(`{"type": "altium.place_pcb", "student_said": "<most of their message>"}`, then
+`{"type": "altium.route_pcb", "student_said": "<their words>"}`). After the plan, unless they already said who places, ask ONE question in their language:
+"Place the parts in Altium yourself, press Place parts on the Layout page, or should I?" Then stop and wait.
+`altium.place_pcb` places the netlist parts from the project library with their nets, creates the board outline from the idea's
+board size when the PcbDoc has none (an existing outline is kept), saves, and reads the file back against the netlist. It needs
+`library.build` and Altium open, with no unsaved changes in the PcbDoc. Routing is a separate question, asked after the parts are
+placed: "route the board yourself, press Route board on the Layout page, or should I?" Send `altium.import_rules` before
+`altium.route_pcb` (routing is refused on Altium's default rules). The router (2 layers; widths, clearances and vias from the
+board's rules) draws tracks and vias, saves, reads the file back and runs Altium's design rule check: it counts as done only
+with 0 open nets and no new clearance/short/width errors. When a net cannot be routed nothing is drawn: tell the student which
+nets and why (tighter rules, more room, a third layer); a partial result only when they agree to keep it. Never say the board
+is routed when it reports a failure. Then use board-review.
 Track width follows the current of each net (IPC-2221, 1 oz, 10 C rise). Before routing, propose the current of every supply net the idea
 or a datasheet states (regulator output, USB VBUS 0.5 A, a motor) with `{"type": "net.set_current", "net": "+5V", "amps": 0.5, "sources": [...]}`
 and cite the source; no source, no guess: the net keeps 0.3 mm and the result says "rail default". The route result lists "track widths"
@@ -50,14 +44,14 @@ per supply net: tell the student which nets were drawn narrower than wanted or a
    Then the parts that must be close to a pin, then everything else next to the pad it connects to.
 4. Connectors: the opening where the cable or plug enters must face OUT, at the board edge. Pads of a 2-pin terminal block are
    almost symmetric, so check the real orientation in the 3D view (press 3 in the PCB editor, then tilt the view) and tell the student to do the same.
-5. Decoupling: one cap per supply pin, on the same side as the IC, pad-to-pin about 2-3 mm, smallest value closest, the cap's
-   path to the pin before the plane via. A pin with a special cap (core regulator, reference, bootstrap) goes first.
+5. Decoupling: one cap per supply pin, on the same side as the IC, aim for 2-3 mm from the pin (`checks/board.py` flags above 5 mm),
+   smallest value closest, the cap's path to the pin before the plane via. A pin with a special cap (core regulator, reference, bootstrap) goes first.
 6. Crystal: two load caps and the crystal touching the oscillator pins, short and equal traces, ground under, no other track
    nearby. Antenna or RF module: keep-out for copper and parts under and around the antenna as the module datasheet says.
 7. Thermal: regulators, power stages and any part the datasheet marks need copper area and vias; keep heat sources away from
    sensitive analog parts and from electrolytic caps. Cite the datasheet page for the thermal pad layout.
-8. Produce the placement picture (to scale: outline, holes, zone rectangles, every part with its designator) and the table of
-   anchors with edge and rotation. Wait for the student's OK before moving to the routing plan.
+8. Render the board with `preview_pcb.py` (outline, holes, every part with its designator) and give the zones and the table of
+   anchors with edge and rotation in the reply (you cannot write a plan file). Wait for the student's OK before the routing plan.
 9. Routing plan, in this order, each as one row: (1) critical short loops (switcher hot loop, RF line), (2) power and ground
    (widths from `rules-and-calcs`), (3) differential pair, (4) crystal and clocks, (5) sensitive analog, (6) the rest. State layer,
    width, spacing, via count and the ground return path for each critical net.
@@ -65,7 +59,8 @@ per supply net: tell the student which nets were drawn narrower than wanted or a
     layer-changing signal via. Pour polygons last (course m22).
 
 ## Scripts
-- `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project> [--plan <plan.json>]` - renders PcbDoc with placement plan overlays to SVG.
+- `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project>` - renders the PcbDoc to SVG, with the project's saved placement plan
+  overlay when there is one (you do not write plan files).
 - `python <repo>/scripts/trace_width.py <amps> --layer external --oz 1` - width for a power net (IPC-2221).
 
 ## References
@@ -105,7 +100,7 @@ a keep-out under an antenna: propose each with `idea.constrain` instead of only 
 Antenna module: edge, antenna facing out, no copper under it.
 
 ## Output
-- The picture path (top view), then the plan in the order the student will do it, one line per zone or anchor: what goes
+- The preview path (top view) when you rendered it, then the plan in the order the student will do it, one line per zone or anchor: what goes
   where (mm from lower-left, edge, rotation) and the reason in a few words. A table (`Parts | Position | Why`) only for
   five or more zones.
 - Routing plan: only the nets that need care (power, clock, USB, sensitive), one line each: net, layer, width, what to

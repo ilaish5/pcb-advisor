@@ -37,7 +37,7 @@ description: Finds and checks the symbol, footprint and 3D model of a part and s
 ## Scripts
 - `python <repo>/scripts/library.py search <MPN>` - model search links across LCSC/EasyEDA, Ultra Librarian, and SnapEDA (link-and-return).
 - `python <repo>/scripts/library.py check-package <BOM_package> <JLC_package>` - package-variant check between BOM and manufacturer part.
-- `python <repo>/scripts/skills/verify_part.py <project> <line>` - exists today. Compares the pin numbers and names of the part with its
+- `python <repo>/scripts/skills/verify_part.py <project> <line>` - compares the pin numbers and names of the part with its
   datasheet text; lists what it cannot find. Result `pass` does not mean accepted.
 - `python <repo>/scripts/sources.py get <project> <url> [name]` - fetches a datasheet, records url and sha256.
   `python <repo>/scripts/sources.py list` lists what is stored.

@@ -35,16 +35,13 @@ description: Keeps the project folder in order, logs decisions, lists what else 
    the project folder as one zip; Gerber zip; BOM, CPL; schematic PDF; DFM report and screenshots; the log.
 
 ## Scripts
-- `python <repo>/scripts/altium/dump.py <file> [--full]` reads a SchDoc/PcbDoc/PrjPcb/.RUL of the linked Altium project
-  (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/model.py <project>` prints the project state.
 - `python <repo>/scripts/project.py ...` project folder helpers (see its usage text).
-- `python <repo>/scripts/keeping.py <project> log|decisions|impact|report` - decision log, change impact list, file organization.
+- `python <repo>/scripts/keeping.py <project> log "<decision>" [--who W] [--why W] [--source S]` appends a decision;
+  `decisions` lists them; `impact <designator or net>` lists what a change touches; `report` checks the file organization.
 - Submission itself is out of scope: only the file organization.
 
 ## References
-- `<repo>/docs/PRODUCT-PLAN.md` (section 7, decisions on order and out-of-scope submission)
-- `<repo>/docs/ARCHITECTURE.md` (data layout of a project folder)
 - `<repo>/shared/reference/course/ad20-essentials/m02-first-project.en.md` (project and file structure in Altium)
 
 ## Pitfalls

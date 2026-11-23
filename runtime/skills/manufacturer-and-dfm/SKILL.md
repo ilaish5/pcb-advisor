@@ -59,18 +59,11 @@ description: Prepares the JLC manufacturing package (OutJob, Gerber zip, BOM, CP
    datasheet, not with a guess.
 8. Fix at the source: copper or silk in the board; rotation via the BOM line's `cpl_rotation` (bom.propose, multiple of 90); LCSC number
    in the BOM. Regenerate and re-upload. A re-uploaded CPL may be ignored by the preview: upload the Gerber zip again too.
-
-9. The order step, after the Gerber zip and a clean DFM: action `order.check` (`"recheck": true` asks JLC again first).
-   Its line says, per bought line, ok, swap_free, design_change or no_alternative. Design and ordering are separate: the
-   design fixes value, package and pins and the library is built from it; at ordering the MPN or LCSC code may change
-   FREELY when the new part has the same footprint (same land pattern and pins), with no schematic, library or board
-   change. For a swap_free line propose `bom.propose` with `changes` `{mpn, lcsc, manufacturer, footprint_lock}` (the
-   footprint name from the Order check panel), reason "order-only swap: same footprint". The server re-proves the
-   footprint AND the pin functions (or value and kind of a plain passive) and drops the lock otherwise; the student still
-   approves. After a swap Altium's own part parameters still show the old MPN/code until the next library build: the JLC
-   BOM comes from the advisor's `export_bom`, never from Altium's BOM (order.check lists such lines in `params_stale`).
-   A design_change line (other or unproven footprint)
-   needs a library rebuild and a PCB update in Altium: say so, never present it as a plain swap. Export the BOM again after.
+9. The order step, after the Gerber zip and a clean DFM: action `order.check` (`"recheck": true` asks JLC again first); the
+   swap rules (same footprint, `footprint_lock`, `match`) are in `parts-and-stock`, step 11. After a swap Altium's own part
+   parameters still show the old MPN/code until the next library build: the JLC BOM comes from the advisor's `export_bom`,
+   never from Altium's BOM (order.check lists such lines in `params_stale`). A design_change line needs a library rebuild
+   and a PCB update in Altium: say so, never present it as a plain swap. Export the BOM again after.
 
 ## Scripts
 - `python <repo>/scripts/order_check.py <project> [--recheck]` per line: stock class and up to 3 alternatives with the footprint match.
@@ -84,12 +77,10 @@ description: Prepares the JLC manufacturing package (OutJob, Gerber zip, BOM, CP
 - `python <repo>/scripts/dfm.py gerber-zip <project>` builds the Gerber + drill zip from the linked Altium outputs (read only); prints the files and gaps.
 - `python <repo>/scripts/dfm.py pickup <project> [--kind pcb|smt|both] [--name FILE]` adds the new JLCDFM report PDFs from Downloads.
 - `python <repo>/scripts/dfm.py ingest <project> <pdf_path> [--kind pcb|smt|both|auto]` ingests a PDF the student gave you by path.
-- Never run Altium, never log in to JLC and never ask for the student's password.
 
 ## References
 - `<repo>/shared/reference/course/ad20-essentials/m25-fabrication-files.en.md` (OutJob, BOM, Gerber setup)
 - `<repo>/shared/reference/course/altium-education/unit3-pcb-layout.en.md` ([03] process, [06] Preparing for Manufacturing)
-- `<repo>/docs/PRODUCT-PLAN.md` (section 8, export rules)
 - `references/jlcdfm-report.md` - layout of the JLCDFM report PDF and how to triage its SMT section.
 - `references/jlcdfm-smt.md` - JLCDFM SMT assembly DFM checks, common findings, fixes, and triage.
 - `<repo>/shared/reference/jlc/files-and-formats.en.md` - JLC's Gerber/drill/BOM/CPL rules, rotation, rejections; order steps: `ordering-workflow.en.md`.

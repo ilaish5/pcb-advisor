@@ -25,24 +25,23 @@ description: Explains the one project library (symbols linked to footprints and 
    by the MPN in its file name (or the student drops it in Sources). Then run `library.build` again. Do not try to get around the log-in.
 5. After the build read the table again: counts of built lines against BOM lines, and each remaining issue. Report differences honestly.
 6. Give the check: the IntLib is under Libraries in the Projects panel (Altium's installed list alone does not feed Update PCB), and one
-   dragged part shows its footprint and 3D in the PCB panel. Then Update PCB: expect no "Footprint Not Found". Cite the AD20 manual.
+   dragged part shows its footprint and 3D in the PCB panel. Cite the AD20 manual. The next step is drawing the schematic
+   (student's choice: by hand or the agent, schematic-preview). Never send the student to Update PCB unasked: it comes after the
+   schematic is drawn, and `altium.place_pcb` refuses before that (placing first would add the parts twice).
 7. When a part changes later, run `library.build` again; the tool rebuilds only when the BOM, a netlist sheet or a vendor zip changed.
    Remind the student to run Update From Libraries for placed parts.
 8. Record what exists with `library.add` per non-standard part. Never mark parts verified or accepted.
 
 ## Scripts
 - `python <repo>/scripts/partlib.py status <project>` - the per-line library table; `prepare <project> [--no-fetch] [--refresh]` makes the data without Altium.
-- `python <repo>/scripts/skills/verify_part.py <project> <line>` - exists today; pins against the datasheet text for one part.
-- `python <repo>/scripts/skills/export_bom.py <project> jlc` - exists today; the BOM with the LCSC column. Shows which lines lack the code.
-- (planned, stage I8) a library check that reports links to missing footprints, symbols with no footprint, duplicate footprint names,
-  footprints without exactly one 3D body, and footprint links pinned to a file path. Until then check by reading the manifest.
+- `python <repo>/scripts/skills/verify_part.py <project> <line>` - pins against the datasheet text for one part.
+- `python <repo>/scripts/skills/export_bom.py <project> jlc` - the BOM with the LCSC column. Shows which lines lack the code.
 
 ## References
 - `<repo>/shared/reference/course/ad20-essentials/m26-schematic-library.en.md` through `m29-integrated-library.en.md` - SchLib, PcbLib,
   link footprint to symbol, create and use an integrated library (29.3 and 29.4).
 - `<repo>/shared/reference/course/altium-education/unit1-intro.en.md` - lesson [09] libraries.
 - `<repo>/shared/reference/AGENTS.md` - topic "Libraries: schematic symbol, footprint, 3D, IntLib, LibPkg".
-- `<repo>/docs/PRODUCT-PLAN.md` - decision 15 (one script the student runs) and section 1 K1 (parts imported one by one cost hours).
 
 ## Pitfalls
 - One library, not one per part. Many small libraries, duplicate footprint names across libraries: the compiler silently takes the first,
