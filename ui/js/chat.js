@@ -84,7 +84,7 @@ function chatWhen(iso) {
   if (isNaN(d)) return '';
   return d.toDateString() === new Date().toDateString()
     ? d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'})
-    : d.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'});
+    : whenText(iso);          // the one date rule (kit/core): the year is always there
 }
 const chatDir = html => html.replace(/<(p|ul|ol)>/g, '<$1 dir="auto">');    // each paragraph picks its own direction
 function currentRow() { return (S.sessions || []).find(r => r.id === S.session) || {}; }
@@ -519,10 +519,32 @@ const CHAT_PROMPTS = {
   library: ['Which parts still need models?', 'Which models should I verify first?'],
   sources: ['Which parts have no datasheet?'],
 };
-function chatSuggestions() {
-  if (currentRow().anchor) return ['Why did we pick this part?', 'Find an in-stock alternative', 'What should I check in the datasheet?'];
-  return (CHAT_PROMPTS[chatStage()] || ['What is still open?', 'Check stock for the whole BOM', 'Compare supplier prices']).slice(0, 3);
+/* The chips come from the project's state: the server's stages[] (the stage where the work goes on: its open issues, or its next step),
+   then the page's own starter questions. When the agent's last turn asked a yes/no (its structured `ask`), the two answers come first
+   as one-click quick replies. [{text, label, quick}] */
+const CHAT_STAGE_NAMES = {idea: 'the idea', bom: 'the BOM', sch: 'the schematic', pcb: 'the layout', rules: 'the rules', outputs: 'the outputs', checks: 'DFM'};
+function chatNextText(n) { return String(n && n.label || '').replace(/^Next:\s*/i, '').trim(); }
+function chatSuggestionItems() {
+  const items = [];
+  const last = S.chat.at(-1);
+  if (last && last.role === 'agent' && last.ask && last.ask.question) {
+    items.push({text: last.ask.yes || 'Yes', quick: true}, {text: last.ask.no || 'No', quick: true});
+  }
+  if (currentRow().anchor) {
+    items.push(...['Why did we pick this part?', 'Find an in-stock alternative', 'What should I check in the datasheet?'].map(text => ({text})));
+    return items.slice(0, items.some(i => i.quick) ? 4 : 3);
+  }
+  const stages = Array.isArray(S.stages) ? S.stages : [];
+  const here = stages.find(x => x && x.primary) || stages.find(x => x && x.state && x.state !== 'clean');
+  const name = here && (CHAT_STAGE_NAMES[here.id] || here.id);
+  if (here && here.state === 'issues') items.push({text: `What is wrong in ${name}${here.open ? ` (${here.open} open)` : ''}, and how do I fix it?`});
+  const nxt = chatNextText(here && here.next);
+  if (nxt) items.push({text: `Help me with the next step: ${nxt}`});
+  items.push(...(CHAT_PROMPTS[chatStage()] || CHAT_PROMPTS.checks).map(text => ({text})));
+  const seen = new Set();
+  return items.filter(i => !seen.has(i.text) && seen.add(i.text)).slice(0, items.some(i => i.quick) ? 4 : 3);
 }
+const chatSuggestions = () => chatSuggestionItems().map(i => i.text);
 function chatAnnounce(text) {
   const live = $('#chat-live');
   if (!live) return;
@@ -613,7 +635,7 @@ function chatSugs() {
   if (!sugs || !S) return;
   const last = S.chat.at(-1);
   const show = !pending && !chatCurrentError() && !(inp && inp.value.trim()) && !chatChip() && (!last || last.role === 'agent' || last.role === 'ctx');
-  const html = show ? chatSuggestions().map(s => `<button type="button" class="sug" data-act="suggest" data-text="${esc(s)}">${esc(s)}</button>`).join('') : '';
+  const html = show ? chatSuggestionItems().map(s => `<button type="button" class="sug${s.quick ? ' quick' : ''}" data-act="suggest" data-text="${esc(s.text)}">${esc(s.text)}</button>`).join('') : '';
   if (sugs.dataset.html !== html) { sugs.innerHTML = html; sugs.dataset.html = html; }
 }
 /* the local time a usage limit lifts: a clock time today, else the date too */
@@ -621,7 +643,7 @@ function chatResetAt(iso) {
   const d = new Date(iso);
   if (!iso || isNaN(d)) return '';
   const t = d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit'});
-  return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString('en-GB', {day: 'numeric', month: 'short'}) + ' ' + t;
+  return d.toDateString() === new Date().toDateString() ? t : whenText(iso, true);
 }
 /* One friendly card for an engine failure the server named; '' for any other kind, which keeps the plain error line. */
 function chatErrorCard(err) {

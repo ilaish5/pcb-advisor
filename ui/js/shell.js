@@ -116,11 +116,36 @@ const initials = t => {
   return (w.length > 1 ? w[0][0] + w[1][0] : (w[0] || '?').slice(0, 2)).toUpperCase();
 };
 let lastNavHTML = '';
+let PROJECTS_ARCHIVED = [];             // [{name, title}] from /api/projects (projects/.archive): listed under a collapsed group, restored with one click
+function projArchivedHTML() {
+  return `<details class="arch"><summary>Archived (${PROJECTS_ARCHIVED.length})</summary>` + PROJECTS_ARCHIVED.map(p =>
+    `<button type="button" role="menuitem" data-act="unarchive-project" data-name="${esc(p.name)}" title="Restore ${esc(p.title || p.name)}"><span>${esc(p.title || p.name)}</span><span class="d">Restore</span></button>`).join('') + '</details>';
+}
+/* filter as you type: the project items and the archived ones whose title does not contain the text are hidden */
+document.addEventListener('input', e => {
+  const box = e.target.closest && e.target.closest('[data-menu-search]');
+  if (!box) return;
+  const q = box.value.trim().toLowerCase();
+  const menuEl = box.closest('.menu');
+  for (const b of menuEl.querySelectorAll('button[data-proj], button[data-act="unarchive-project"]')) b.hidden = !!q && !b.textContent.toLowerCase().includes(q);
+  const arch = menuEl.querySelector('details.arch');
+  if (arch) { const hit = [...arch.querySelectorAll('button')].some(b => !b.hidden); arch.hidden = !hit && !!q; if (q && hit) arch.open = true; }
+});
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || !(e.target.matches && e.target.matches('[data-menu-search]'))) return;
+  const first = [...e.target.closest('.menu').querySelectorAll('button[data-proj]')].find(b => !b.hidden);
+  if (first) { e.preventDefault(); first.click(); }
+});
 function navHTML() {
   const cur = PROJECTS.find(p => p.name === PROJECT) || {name: PROJECT, title: PROJECT};
   const ptitle = String(cur.title || cur.name || '');
   const switcher = menu({html: `<span class="mk">${esc(initials(ptitle))}</span><span class="nm">${esc(ptitle)}</span>${icon('chev', 's')}`, cls: 'proj', title: ptitle, 'data-nav': 'proj'},
-    [...PROJECTS.map(p => ({label: p.title || p.name, attrs: {proj: p.name}, checked: p.name === PROJECT})), 'sep', {label: 'New project', act: 'newproj', icon: 'plus'}, {label: 'Download activity report (zip)', act: 'report-project', icon: 'file'}]);
+    [PROJECTS.length > 5 || PROJECTS_ARCHIVED.length ? {html: `<input type="search" class="menu-search" data-menu-search placeholder="Find a project" aria-label="Find a project" autocomplete="off">`} : null,
+      ...PROJECTS.map(p => ({label: p.title || p.name, attrs: {proj: p.name}, checked: p.name === PROJECT})), 'sep',
+      {label: 'New project', act: 'newproj', icon: 'plus'},
+      PROJECTS.length > 1 ? {label: 'Archive this project', act: 'archive-project', icon: 'file', title: 'Moves it to the Archived group below; nothing is deleted'} : null,
+      {label: 'Download activity report (zip)', act: 'report-project', icon: 'file'},
+      PROJECTS_ARCHIVED.length ? {html: projArchivedHTML()} : null]);
   const here = mainView();
   const stage = ([id, label]) => {
     const s = stageStatus(id);
@@ -556,6 +581,23 @@ onAct('side-close', async () => { closeSide(); });
 onAct('side-swap', async () => { swapSheets(); });
 onAct('side-set', async (el, d) => { const it = itemFromRef(d.item); if (it) openSide(it); });
 onAct('reset-layout', async () => { resetLayout(); toast('Layout reset to default'); });
+async function projGoto(name) {
+  const u = new URL(location.href);
+  if (name) u.searchParams.set('project', name); else u.searchParams.delete('project');
+  u.searchParams.delete('session');
+  location.href = u;
+}
+onAct('archive-project', async () => {          // reversible (Archived group, one click to restore): no confirmation
+  const r = await api('/api/projects/archive', {name: PROJECT}, {soft: true});
+  if (!r || !r.archived) { toast((r && r.error) || 'Could not archive the project', null, {bad: true}); return; }
+  try { sessionStorage.setItem('pcb-new-note', `Archived "${r.archived}". Restore it from the project menu, under Archived.`); } catch (e) { /* only the note is lost */ }
+  await projGoto(r.default);
+});
+onAct('unarchive-project', async (el, d) => {
+  const r = await api('/api/projects/unarchive', {name: d.name}, {soft: true});
+  if (!r || !r.restored) { toast((r && r.error) || 'Could not restore the project', null, {bad: true}); return; }
+  await projGoto(r.restored);
+});
 onAct('newproj', async () => {
   const n = await askText({title: 'New project', label: 'Project name', placeholder: 'Temperature controller', confirm: 'Create'});
   if (!n) return;

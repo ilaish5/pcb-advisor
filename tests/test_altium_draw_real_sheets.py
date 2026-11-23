@@ -84,3 +84,24 @@ def test_the_bridge_never_assigns_the_comment_text():
     body = src[src.index("procedure PlacePart("):]
     body = body[:body.index("\nend;")]                    # the placing of an instance: its comment (BOM, PCB) is never assigned
     assert not re.search(r"Comment\s*\.\s*Text\s*:=", body, re.I) and "ComText" not in src
+
+
+def _label_rect(c):
+    x, y, rot, net = int(c[2]), int(c[3]), int(c[4]), c[5]
+    w = draw.label_width(net)
+    return (x, y, x + w, y + draw.TEXT_H) if rot == 0 else (x - draw.TEXT_H, y, x, y + w)
+
+
+@pytest.mark.parametrize("proj,name", SHEETS)
+def test_no_two_labels_overlap_and_no_wire_crosses_a_label(proj, name):
+    sheet = json.loads((ROOT / proj / name).read_text(encoding="utf-8"))
+    cmds = draw.plan_sheet(sheet, lib_for(proj, sheet), "l", "d")["commands"]
+    labels = [(c, _label_rect(c)) for c in cmds if c[0] == "NETLABEL"]
+    wires = [(min(int(c[2]), int(c[4])), min(int(c[3]), int(c[5])), max(int(c[2]), int(c[4])), max(int(c[3]), int(c[5])))
+             for c in cmds if c[0] == "WIRE"]
+    hit = lambda a, b: a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]      # noqa: E731
+    for i, (c1, r1) in enumerate(labels):
+        for c2, r2 in labels[i + 1:]:
+            assert not hit(r1, r2), f"{proj}/{name}: labels {c1[5]} and {c2[5]} overlap"
+        for w in wires:
+            assert not hit(r1, w), f"{proj}/{name}: a wire crosses the label {c1[5]}"

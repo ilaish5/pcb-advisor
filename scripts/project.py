@@ -254,6 +254,54 @@ def list_all():
     return out
 
 
+# ---------------------------------------------------------------- archive (reversible: a folder move, nothing is deleted)
+
+def archive_root():
+    return workspace.projects_dir() / ".archive"
+
+
+def list_archived():
+    """The archived projects, newest folder first: [{name, title}] (list_all skips dot-folders, so these never show as projects)."""
+    root = archive_root()
+    if not root.is_dir():
+        return []
+    out = []
+    for d in sorted((x for x in root.iterdir() if x.is_dir()), key=lambda x: x.stat().st_mtime, reverse=True):
+        title = d.name
+        try:
+            title = json.loads((d / "project.json").read_text(encoding="utf-8")).get("title") or d.name
+        except (OSError, ValueError, AttributeError):
+            pass
+        out.append({"name": d.name, "title": str(title)})
+    return out
+
+
+def move_to_archive(name):
+    """projects/<name> -> projects/.archive/<name> (a time stamp is added when that name is taken there). Returns the archived name."""
+    src = workspace.project_dir(name)
+    root = archive_root()
+    root.mkdir(parents=True, exist_ok=True)
+    dest = root / src.name
+    if dest.exists():
+        dest = root / f"{src.name}-{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    shutil.move(str(src), str(dest))
+    return dest.name
+
+
+def restore_from_archive(name):
+    """projects/.archive/<name> -> projects/<name>. Returns the restored name; raises FileExistsError when a live project has that name."""
+    if not name or name != pathlib.PureWindowsPath(name).name or name.startswith("."):      # a folder name, never a path
+        raise FileNotFoundError(name)
+    src = archive_root() / name
+    if not src.is_dir():
+        raise FileNotFoundError(name)
+    dest = workspace.projects_dir() / src.name
+    if dest.exists():
+        raise FileExistsError(src.name)
+    shutil.move(str(src), str(dest))
+    return dest.name
+
+
 # ---------------------------------------------------------------- reset
 
 def reset(name):

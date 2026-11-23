@@ -95,6 +95,7 @@ function menu(trigger, items, o) {
   const body = items.filter(Boolean).map(it => {
     if (it === 'sep') return '<hr>';
     if (it.group) return `<div class="lbl">${kesc(it.group)}</div>`;
+    if (it.html) return it.html;                  // a block the caller built (a search box, a collapsed group): kit-escaped by the caller
     const a = Object.assign({act: it.act, disabled: it.disabled, title: it.title}, it.attrs || {});
     if (a.disabled) { a['aria-disabled'] = 'true'; a.why = it.why || it.title || 'Not available right now.'; delete a.disabled; }      // a click says why (see the handler above)
     const role = it.checked != null ? 'menuitemradio' : 'menuitem';
@@ -207,6 +208,8 @@ function kitMenuOpen(trigger) {
   m.style.left = left + 'px';
   m.style.top = top + 'px';
   kitOpenMenu = {menu: m, trigger};
+  const search = m.querySelector('[data-menu-search]');
+  if (search) { search.value = ''; search.dispatchEvent(new Event('input', {bubbles: true})); search.focus(); return; }
   const first = m.querySelector('button:not([disabled])');
   if (first) first.focus();
 }
@@ -240,7 +243,8 @@ document.addEventListener('click', e => {
 }, true);
 document.addEventListener('keydown', e => {
   if (!kitOpenMenu) return;
-  const items = [...kitOpenMenu.menu.querySelectorAll('button:not([disabled])')];
+  const items = [...kitOpenMenu.menu.querySelectorAll('button:not([disabled])')].filter(b => b.offsetParent !== null);       // not the filtered-out or the collapsed
+  if (document.activeElement && document.activeElement.matches('[data-menu-search]') && ['Home', 'End', 'ArrowUp'].includes(e.key)) { if (e.key === 'ArrowUp') e.preventDefault(); return; }       // the box keeps its own cursor keys
   const i = items.indexOf(document.activeElement);
   if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); kitMenuClose(true); }
   else if (e.key === 'ArrowDown') { e.preventDefault(); (items[i + 1] || items[0]).focus(); }
