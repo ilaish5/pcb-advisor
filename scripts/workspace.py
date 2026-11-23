@@ -167,6 +167,53 @@ def _dir(key):
     return (REPO if key in _REPO_DIRS else home()) / p
 
 
+def _shell_downloads():
+    """The Downloads folder Windows itself points to (it can be moved or redirected, e.g. to a network share), asked of the
+    Known Folder API; the User Shell Folders registry value when the API is not there. None elsewhere or when it is not set."""
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("a", wintypes.DWORD), ("b", wintypes.WORD), ("c", wintypes.WORD), ("d", ctypes.c_ubyte * 8)]
+        g = GUID(0x374DE290, 0x123F, 0x4565, (ctypes.c_ubyte * 8)(0x91, 0x64, 0x39, 0xC4, 0x92, 0x5E, 0x46, 0x7B))
+        out = ctypes.c_wchar_p()
+        fn = ctypes.windll.shell32.SHGetKnownFolderPath
+        fn.argtypes = [ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE, ctypes.POINTER(ctypes.c_wchar_p)]
+        try:
+            if fn(ctypes.byref(g), 0, None, ctypes.byref(out)) == 0 and out.value:
+                return pathlib.Path(out.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(out)
+    except (OSError, AttributeError, ImportError):
+        pass
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
+            shell = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
+        return pathlib.Path(os.path.expandvars(str(shell))) if shell else None
+    except OSError:
+        return None
+
+
+def downloads_dir():
+    """THE Downloads folder, for every part of the system that looks for a download (DFM reports, vendor zips):
+    `workspace.downloads_dir` of config.json, else the folder Windows points to, else <home>/Downloads."""
+    raw = get("workspace.downloads_dir") or ""
+    if raw:
+        return pathlib.Path(os.path.expandvars(str(raw))).expanduser()
+    shell = _shell_downloads()
+    try:
+        if shell and shell.is_dir():
+            return shell
+    except OSError:
+        pass
+    return pathlib.Path.home() / "Downloads"
+
+
 def projects_dir():
     return _dir("projects_dir")
 

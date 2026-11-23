@@ -307,6 +307,18 @@ def triage_sig(rows: list[dict[str, Any]]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
 
 
+def accept_suggestion(project: str, stem: str, idx: int) -> list[dict[str, Any]]:
+    """The student takes the agent's proposed verdict of one finding as their own."""
+    table = load_triage(project, stem)
+    if not 0 <= idx < len(table):
+        raise ValueError("no such finding")
+    sug = _suggestion(table[idx].get("suggested_verdict"))
+    if not sug:
+        raise ValueError("the agent proposed no verdict for this finding")
+    table[idx]["verdict"] = sug
+    return save_triage(project, stem, table)
+
+
 def triage_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """What the DFM header needs from a table without loading it: findings still to review, real issues, the fingerprint."""
     verdicts = [verdict_of(r) for r in rows]
@@ -336,6 +348,12 @@ def load_triage(project: str, stem: str) -> list[dict[str, Any]]:
     return json.loads(triage_file.read_text(encoding="utf-8"))
 
 
+def _suggestion(v: Any) -> str:
+    """The verdict the agent proposed for a finding ('' for none): kept beside the verdict, never in place of it."""
+    v = str(v or "").strip().lower()
+    return v if v in ALLOWED_VERDICTS - {"unknown"} else ""
+
+
 def validate_triage_row(row: dict[str, Any]) -> dict[str, Any]:
     """Validate and normalize a triage table row."""
     verdict = str(row.get("verdict", "unknown")).strip().lower()
@@ -351,6 +369,7 @@ def validate_triage_row(row: dict[str, Any]) -> dict[str, Any]:
         "good": int(row.get("good", 0)),
         "layer": str(row.get("layer", "")),
         "verdict": verdict,
+        "suggested_verdict": _suggestion(row.get("suggested_verdict")),
         "fix": str(row.get("fix", "")),
         "evidence": str(row.get("evidence", "")),
     }
@@ -369,7 +388,8 @@ def save_triage(project: str, stem: str, rows: list[dict[str, Any]]) -> list[dic
 def merge_triage(project: str, stem: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
     """The agent lists findings it read from the slices. A row is added, or updated when the table already has one with the
     same section, check and layer. A verdict is the student's: a new row starts 'unknown', an existing row keeps its own,
-    and a fix or evidence the student already wrote is not replaced."""
+    and a fix or evidence the student already wrote is not replaced. What the agent judged (`verdict` or
+    `suggested_verdict` in its row) is kept as `suggested_verdict`, so its analysis is not lost; the student accepts it."""
     load_index(project, stem)                                       # the report must exist
     table = load_triage(project, stem)
     key = lambda r: tuple(str(r.get(k, "")).strip().lower() for k in ("section", "check", "layer"))
@@ -378,7 +398,8 @@ def merge_triage(project: str, stem: str, rows: list[dict[str, Any]]) -> dict[st
     for raw in rows:
         if not isinstance(raw, dict) or not str(raw.get("check", "")).strip():
             raise ValueError("every row needs a check name")
-        new = validate_triage_row({**raw, "verdict": "unknown"})
+        proposed = _suggestion(raw.get("suggested_verdict") or raw.get("verdict"))
+        new = validate_triage_row({**raw, "verdict": "unknown", "suggested_verdict": proposed})
         old = by_key.get(key(new))
         if old is None:
             table.append(new)
@@ -388,6 +409,8 @@ def merge_triage(project: str, stem: str, rows: list[dict[str, Any]]) -> dict[st
         for f in ("worst", "level", "danger", "warning", "good"):
             if f in raw:
                 old[f] = new[f]
+        if proposed:
+            old["suggested_verdict"] = proposed
         for f in ("fix", "evidence"):
             if not str(old.get(f, "")).strip():
                 old[f] = new[f]

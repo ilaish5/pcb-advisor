@@ -2891,8 +2891,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, order_check.order_check(self.project()))      # read only: a recheck is a POST
             except Exception as exc:
                 return self._send(500, {"error": str(exc)})
-        if path == "/api/final/unverified":
-            return self._send(200, store.recheck_pins(self.project()))
+        if path == "/api/final/unverified":          # read only: the list as it stands; a re-check (links documents, verifies, writes logs) is the POST
+            rows = store.pins_to_resolve(self.project())
+            return self._send(200, {"unverified": rows, "checked": [], "message": ""})
+        if path == "/api/jlc/downloads":             # the folder the DFM report is looked for in, known before the first look
+            import jlc_upload
+            d = jlc_upload.downloads_dir()
+            return self._send(200, {"folder": str(d), "folder_exists": d.is_dir()})
         if path == "/api/final/incomplete":
             return self._send(200, store.sheet_gaps(self.project()))
         if path == "/api/checks":
@@ -3464,6 +3469,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "datasheet": meta["name"], "state": state()})
             except Exception as exc:
                 return self._send(200, {"error": str(exc), "url": url})
+
+        if path == "/api/final/unverified":     # Re-check datasheets: links a document that arrived, verifies the parts, writes logs
+            return self._send(200, store.recheck_pins(proj))
+
+        if path == "/api/checks/accept-suggestion":     # the student takes the agent's proposed verdict of one finding
+            import dfm
+            try:
+                saved = dfm.accept_suggestion(proj, str(data.get("stem") or ""), int(data.get("idx")))
+                return self._send(200, {"ok": True, "triage": saved, "sig": dfm.triage_sig(saved)})
+            except (ValueError, TypeError, FileNotFoundError) as exc:
+                return self._send(400, {"error": str(exc)})
 
         if path == "/api/order/check":          # asks the suppliers again: it writes the supply log, so it is not a GET
             import order_check

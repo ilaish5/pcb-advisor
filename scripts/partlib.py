@@ -31,6 +31,7 @@ import zipfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import sources  # noqa: E402
 import store  # noqa: E402
+import workspace  # noqa: E402
 from partlib_convert import MIN_PAD_MM, clean, convert_footprint, convert_symbols, names_fit, pad_size_problems, safe_name  # noqa: E402
 from partlib_kicad import fetch_kicad, kicad_footprint  # noqa: E402
 from partlib_generate import PASSIVE_PREFIX, POWER_NAME, footprint_for, package_key, symbol_for  # noqa: E402
@@ -232,7 +233,7 @@ def _recent_downloads():
     """Zips in the user's Downloads folder changed within DOWNLOADS_DAYS, newest first."""
     cutoff, out = time.time() - DOWNLOADS_DAYS * 86400, []
     try:
-        out = [f for f in (pathlib.Path.home() / "Downloads").glob("*.zip") if f.is_file() and f.stat().st_mtime >= cutoff]
+        out = [f for f in workspace.downloads_dir().glob("*.zip") if f.is_file() and f.stat().st_mtime >= cutoff]
     except OSError:
         pass
     return sorted(out, key=lambda f: f.stat().st_mtime, reverse=True)
