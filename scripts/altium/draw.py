@@ -876,6 +876,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
             continue
         c = part_cell(p, sym)
         c["unverified"] = p.get("pins_source") == "agent"
+        c["accepted"] = p.get("pins_source") == "student"
         warnings += c["warnings"]
         errors += c["errors"]
         cells.append((p.get("section") if p.get("section") in ids else first, c))
@@ -897,10 +898,18 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
         if c.get("unverified"):
             unverified.setdefault(sid, []).append(c["ref"])
     out["unverified"] = sorted(r for refs in unverified.values() for r in refs)
+    accepted = {}
+    for sid, c in cells:                        # pins the student accepted without a datasheet pin table: still marked on the sheet
+        if c.get("accepted"):
+            accepted.setdefault(sid, []).append(c["ref"])
+    out["accepted_pins"] = sorted(r for refs in accepted.values() for r in refs)
     texts = {}
     for sid in ids:
         refs = unverified.get(sid) or []         # the title strip wraps; a long list is cut, the advisor has all of it
         note = f" | pins not checked against a datasheet: {', '.join(refs[:6])}" + (f" +{len(refs) - 6}" if len(refs) > 6 else "") if refs else ""
+        acc = accepted.get(sid) or []
+        if acc:
+            note += f" | pins accepted by student, not verified: {', '.join(acc[:6])}" + (f" +{len(acc) - 6}" if len(acc) > 6 else "")
         texts[sid] = frame_text(head_names.get(sid, sid), titles.get(sid, ""), note)
     pos, heads, problems = layout(cells, sections, texts=texts)
     if problems:

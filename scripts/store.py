@@ -2923,7 +2923,13 @@ def write_sheet(project, sheet_id, sheet):
         part = dict(part)
         part["pins"] = [{**pin, "net": (pin.get("net") or "").strip()} for pin in part["pins"]]
         parts.append(part)
+    before = {p.get("ref"): p.get("pins") for p in load_sheet(project, sheet["id"]).get("parts", [])}
     sheet["parts"] = mark_bom_status(project, _mark_pins_source(project, parts))
+    guess = [p["ref"] for p in sheet["parts"] if p.get("pins_source") == "agent" and before.get(p["ref"]) != p["pins"]]
+    if guess:       # ledger 20: a pinout the agent wrote from memory is drawn; it is never a silent fact
+        warnings = warnings + [f"pins of {', '.join(guess[:8])}{' ...' if len(guess) > 8 else ''} "
+                               f"{'is' if len(guess) == 1 else 'are'} a guess, not from a datasheet: confirm against the datasheet page "
+                               "(DFM > Unverified parts > Confirm pins)"]
     d = netlist_dir(project)
     d.mkdir(parents=True, exist_ok=True)
     if not (d / f"{sheet['id']}.json").exists():

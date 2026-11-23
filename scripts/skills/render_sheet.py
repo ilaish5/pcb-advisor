@@ -250,6 +250,10 @@ def render_part(p, line, bom_line, bom_status=None):
         svg += (f'<g class="unv"><title>Pins not checked against a datasheet yet: DFM > Unverified parts says why</title>'
                 f'<text x="{max(w - 4, 0):g}" y="-2" text-anchor="end" font-size="9" fill="#b7791f" '
                 f'font-style="italic">unverified</text></g>')
+    elif p.get("pins_source") == "student":
+        svg += (f'<g class="unv acc"><title>Pins accepted by you, not verified against a datasheet: DFM > Unverified parts can undo it</title>'
+                f'<text x="{max(w - 4, 0):g}" y="-2" text-anchor="end" font-size="9" fill="#6b7280" '
+                f'font-style="italic">accepted, not verified</text></g>')
     if bom_status:
         what = "waits for approval" if bom_status == "pending" else "not in the BOM yet"
         svg = (f'<g class="pend"><title>{esc(ref)}: {what}</title>{svg}'

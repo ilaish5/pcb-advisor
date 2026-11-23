@@ -205,6 +205,33 @@ def risks(project):
     return out
 
 
+def write_manifest(project):
+    """exports/<project>_order_manifest.json: {accepted_risks, unverified, board_check, generated}, beside the Gerber zip, never inside it.
+    Written when there is anything to say (or an older one to keep current); the JLC BOM CSV is not touched."""
+    import json
+
+    import workspace
+    path = store.pdir(project) / "exports" / f"{workspace.safe_name(project)}_order_manifest.json"
+    acc, unv = risks(project), store.pins_to_resolve(project)
+    if not (acc or unv or path.exists()):
+        return None
+    try:
+        import board_results             # stream A's record of the last Altium check; absent or empty, the manifest says null
+        board = getattr(board_results, "latest", lambda p: None)(project)
+    except Exception:
+        board = None
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+        same = old.get("accepted_risks") == acc and old.get("unverified") == unv
+    except (OSError, ValueError):
+        same = False
+    if not same:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc = {"accepted_risks": acc, "unverified": unv, "board_check": board, "generated": store.now()}
+        store._write_text(path, json.dumps(doc, ensure_ascii=False, indent=2, default=str))
+    return str(path)
+
+
 @ext.register("model")
 def _model(project, out):
     return {"pin_decisions": {"accepted": risks(project), "remaining": remaining(project)}}
