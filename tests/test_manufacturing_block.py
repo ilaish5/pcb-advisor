@@ -92,7 +92,8 @@ def test_the_unverified_list_has_a_confirm_button_per_part():
     pins = (REPO / "ui" / "js" / "views" / "pins.js").read_text(encoding="utf-8")
     assert "act: 'confirm-pins', line: l.key" in js and "'/api/pins/confirm', {line: key" in pins
     code = re.sub(r"/\*.*?\*/|//[^\n]*", "", pins, flags=re.S).lower()   # comments may describe the record shape
-    assert "reason" not in code.replace("no reason", "")      # no reason field anywhere in the flow
+    # low friction: no reason input and no length rule anywhere in the flow (showing an old note is fine)
+    assert not re.search(r"<(input|textarea)[^>]*reason|reason[^\n]{0,40}\.length|reason\s*\.\s*trim", code)
     assert "rows.map(item)" in js     # every row, a mismatch included, comes from the one template that holds the button
 
 
