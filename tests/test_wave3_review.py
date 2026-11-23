@@ -194,7 +194,7 @@ def test_one_failing_action_is_refused_and_the_turn_goes_on(empty, monkeypatch):
     acts = [{"type": "idea.propose", "topic": "bad", "text": "x"}, {"type": "idea.propose", "topic": "good", "text": "y"}]
     applied, _, refused = serve.apply_actions(empty, acts, last_user="hi", chat=[{"role": "user", "text": "hi"}])
     assert applied == ["idea.propose:good"]
-    assert len(refused) == 1 and refused[0].startswith("idea.propose: failed unexpectedly (error: ")
+    assert len(refused) == 1 and refused[0].startswith("idea.propose: could not be applied (error: ")
 
 
 # ---- 10: strict booleans -------------------------------------------------------------------------------------------------

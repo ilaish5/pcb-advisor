@@ -41,7 +41,7 @@ def test_the_ui_contracts():
     assert "dfm-zip-why" in js                                                       # the disabled zip button says why in text
     assert "READY_ALTIUM_IDS" in js and "readyShow" in js
     assert re.search(r"placeholder=\"e\.g\. 30\"", js)
-    assert "chatResume" in js and "Ran ${items.length} steps" in js
+    assert "chatResume" in js and "Worked: ${items.length} step" in js
     assert "askChoice" in js and "allow_copy" in js
 
 
