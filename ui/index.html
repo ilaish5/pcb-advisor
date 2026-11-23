@@ -7,9 +7,8 @@
 <!-- first paint: the frame colour before any stylesheet or script arrives (no white flash on load or when the theme is dark); keep in step with --frame in base.css -->
 <meta name="color-scheme" content="light dark">
 <style id="first-paint">html{background:#F2F2F0}@media (prefers-color-scheme:dark){html:not([data-theme="light"]){background:#151517}}html[data-theme="dark"]{background:#151517}</style>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500;600&family=Atkinson+Hyperlegible+Next:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/ui/vendor/fonts/fonts.css">
+<script type="importmap">{"imports":{"three":"/ui/vendor/three/build/three.module.js"}}</script>
 <script src="/ui/js/theme-boot.js"></script>
 <script src="/ui/diagram.js"></script>
 <link rel="stylesheet" href="/ui/styles/base.css">
@@ -26,6 +25,7 @@
 <link rel="stylesheet" href="/ui/styles/pins.css">
 <link rel="stylesheet" href="/ui/styles/constraints.css">
 <link rel="stylesheet" href="/ui/styles/pages.css">
+<link rel="stylesheet" href="/ui/styles/modelpreview.css">
 <link rel="stylesheet" href="/ui/styles/viewer.css">
 </head>
 <body>
@@ -84,6 +84,7 @@
 <div class="toast" id="toast" role="status" hidden></div>
 <input type="file" id="filepick" hidden>
 <input type="file" id="dfmpick" accept=".pdf" hidden>
+<input type="file" id="dspick" accept=".pdf,.txt,.html,.htm" hidden>
 
 <script src="/ui/js/kit.js"></script>
 <script src="/ui/js/core.js"></script>
@@ -99,6 +100,8 @@
 <script src="/ui/js/views/outputs.js"></script>
 <script src="/ui/js/views/pages.js"></script>
 <script src="/ui/js/views/pins.js"></script>
+<script src="/ui/js/views/model3d.js"></script>
+<script src="/ui/js/views/modelpreview.js"></script>
 <script src="/ui/js/views/constraints.js"></script>
 <script src="/ui/js/update.js"></script>
 <script src="/ui/js/ready.js"></script>

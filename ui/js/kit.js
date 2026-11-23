@@ -38,6 +38,11 @@ const KIT_ICONS = {
   alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17v.5"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
+  /* Library model icons. Drawn inline, nothing is loaded from the network. 'chip' (footprint) is above; box and list-check follow the
+     Tabler Icons (MIT, v3) shapes, redrawn in this 24px stroke grid; the symbol glyph is our own. */
+  'model-symbol': '<rect x="7" y="5" width="10" height="14" rx="1.5"/><path d="M3 9h4M3 15h4M17 9h4M17 15h4"/>',
+  'model-3d': '<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
+  'model-pins': '<path d="M3.5 5.5l1.5 1.5 2.5-2.5M3.5 11.5l1.5 1.5 2.5-2.5M3.5 17.5l1.5 1.5 2.5-2.5"/><path d="M11 6h9M11 12h9M11 18h9"/>',
   chip: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
 };
 

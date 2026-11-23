@@ -1,0 +1,8 @@
+{
+  "U1": {"symbol": "NE555DR", "footprint": "SOIC-8_L4.9-W3.9-P1.27-LS6.0-BL",
+         "step": "easyeda/C7593/lib.3dshapes/SOIC-8_L4.9-W3.9-H1.7-LS6.0-P1.27.step", "source": "easyeda", "status": "ok", "lcsc": "C7593", "built": true},
+  "R1": {"symbol": "10k", "footprint": "R_0805_2012Metric", "step": "kicad/Resistor_SMD/R_0805_2012Metric.step", "source": "kicad", "status": "ok", "lcsc": "", "built": true},
+  "D1": {"symbol": "NCD0805R1", "footprint": "LED0805-RD", "step": "", "source": "generated", "status": "ok", "lcsc": "", "built": false},
+  "EVIL": {"symbol": "10k", "footprint": "R_0805_2012Metric", "step": "../project.json", "source": "easyeda", "status": "ok", "lcsc": "C7593", "built": false},
+  "EVIL2": {"symbol": "10k", "footprint": "R_0805_2012Metric", "step": "easyeda/../../secret.step", "source": "easyeda", "status": "ok", "lcsc": "../..", "built": false}
+}

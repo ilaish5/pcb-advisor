@@ -192,13 +192,12 @@ function inspDesc(l) {
 function inspLibHTML(l) {
   if (l.library === 'std') return inspSec('Library', '<p class="muted">Altium default library</p>');
   const e = l.library_entry || {};
-  const ck = on => on ? `<span class="ok-t">${icon('check', 's')}</span>` : '<span class="muted">none</span>';
   const tone = {ok: 'ok', review: 'warn', missing: 'bad', error: 'bad'}[l.library] || '';
   const act = e.verify === 'pass' && !e.accepted ? btn('Accept', {size: 'sm', kind: 'line', accept: l.key})
     : e.verify !== 'pass' && e.symbol && pinsCanVerify(l) ? btn('Verify', {size: 'sm', kind: 'line', verify: l.key}) : '';
   const status = tag(({ok: 'Verified', review: 'To review', missing: 'Missing', error: 'Footprint error'})[l.library] || l.library, tone);
   return inspSec('Library',
-    `<div class="insp-lib"><span>Symbol ${ck(e.symbol)}</span><span>Footprint ${ck(e.footprint)}</span><span>3D ${e.step ? 'STEP' : '<span class="muted">simple</span>'}</span></div>` +
+    `<div class="insp-lib">${libIconsHTML(libRowOf(l))}</div>` +
     `${e.model_source ? `<p class="insp-foot">Model: ${esc(e.model_source)}</p>` : ''}${e.issues ? `<p class="insp-foot warn-t">${esc(e.issues)}</p>` : ''}`, status + act + pinsConfirmBtn(l.key, {size: 'sm', kind: 'line'}));
 }
 function inspDatasheetHTML(l) {
@@ -207,7 +206,9 @@ function inspDatasheetHTML(l) {
     return inspSec('Datasheet', known ? btn('', {kind: 'link', src: l.datasheet, html: `<span class="m">${esc(l.datasheet)}</span>`})
       : `<span class="m muted" title="Not in Sources">${esc(l.datasheet)}</span>`);
   }
-  return inspSec('Datasheet', '<p class="muted">None stored</p>', btn('Get datasheet', {size: 'sm', kind: 'line', act: 'get-datasheet', line: l.key}));
+  // two ways in: the agent finds and downloads it, or the student picks a file from their computer
+  return inspSec('Datasheet', '<p class="muted">None stored</p>', btn('Get datasheet', {size: 'sm', kind: 'line', act: 'get-datasheet', line: l.key, title: 'Find and download it'}) +
+    btn('Choose file', {size: 'sm', kind: 'line', act: 'datasheet-file', line: l.key, title: 'Pick a datasheet from this computer'}));
 }
 function inspPartHTML(l) {
   const refs = inspRefsOf(l), first = inspFirstRef(l);
@@ -217,7 +218,8 @@ function inspPartHTML(l) {
     {label: 'Alternatives', act: 'alts', attrs: {line: l.key}},
     {label: 'Show on schematic', act: 'show-sch', attrs: {key: l.key}, disabled: !onSheet},
     {label: 'Show on layout', act: 'show-pcb', attrs: {key: l.key}, disabled: !inspHasPcb()},
-    l.datasheet ? {label: 'Open datasheet', attrs: {src: l.datasheet}} : {label: 'Get datasheet', act: 'get-datasheet', attrs: {line: l.key}},
+    ...(l.datasheet ? [{label: 'Open datasheet', attrs: {src: l.datasheet}}]
+      : [{label: 'Get datasheet', act: 'get-datasheet', attrs: {line: l.key}}, {label: 'Choose datasheet file', act: 'datasheet-file', attrs: {line: l.key}}]),
   ];
   const acts = btn('Ask', {kind: 'pri', size: 'sm', act: 'insp-ask', key: l.key}) + menu({icon: 'more', size: 'sm', title: 'More'}, items);
   const field = (name, label, value, ph, mono) => [label, `<input class="in quiet${mono ? ' m' : ''}" data-edit="${name}" data-line="${esc(l.key)}" value="${esc(value || '')}" placeholder="${ph}" aria-label="${label}" autocomplete="off" spellcheck="false">`, true];

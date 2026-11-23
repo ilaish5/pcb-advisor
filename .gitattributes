@@ -15,3 +15,6 @@
 *.bat text eol=crlf
 *.pas text eol=crlf
 *.PrjScr text eol=crlf
+
+# Vendored third-party code: byte-exact, so the SHA-256 list in ui/vendor/README.md holds for every checkout
+ui/vendor/** -text

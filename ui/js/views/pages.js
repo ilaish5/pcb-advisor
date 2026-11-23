@@ -48,21 +48,54 @@ async function loadConfig() {
 const PG_LIB = {ok: ['Verified', 'ok'], review: ['To review', 'warn'], missing: ['Missing', 'bad'], error: ['Footprint error', 'bad']};
 
 const PG_SOURCE = {easyeda: 'EasyEDA', vendor: 'Vendor zip', kicad: 'KiCad', generated: 'Generated', missing: 'Missing'};
-function libModels(r) {
-  const one = (cls, ic, label, title) => `<span class="mdl ${cls}" title="${esc(title)}">${icon(ic, 's')}${esc(label)}</span>`;
-  return `<div class="mdls">` +
-    one(r.symbol ? 'ok' : 'no', r.symbol ? 'check' : 'x', 'Symbol', r.symbol ? 'Symbol is in the library' : 'No symbol yet') +
-    one(r.footprint ? 'ok' : 'no', r.footprint ? 'check' : 'x', 'Footprint', r.footprint ? 'Footprint is in the library' : 'No footprint yet') +
-    (r.step ? one('ok', 'check', '3D', '3D model from a STEP file') : one('dim', 'check', '3D simple', 'A simple 3D body, not a STEP model')) +
-    (r.build_status ? (r.built ? one('ok', 'check', 'Built', 'In the compiled IntLib') : one('dim', 'x', 'Not built', 'Not in the IntLib yet: build the library')) : '') +
-    libPins(r) + '</div>';
+/* The four model icons of a library line: Symbol, Footprint, 3D, Pins. One state each, said in words in the title and the aria-label:
+     ok = present and fine (green glyph), no = missing (grey glyph), bad = needs fixing (red glyph: pins unverified or conflicting,
+     a footprint error). The glyph itself carries the colour: no frame, no background. A generated body or footprint counts as present
+     (green) and says "basic, generated" in its title and aria-label only.
+   libModelStates(r) is the one place that decides; the Library table and the part panel both draw from it (libIconsHTML).
+   A click opens the quick preview (views/modelpreview.js). */
+const MIC_ICON = {symbol: 'model-symbol', footprint: 'chip', model: 'model-3d', pins: 'model-pins'};      // glyphs: KIT_ICONS in kit.js
+const MIC_WORD = {ok: 'present', no: 'missing', bad: 'needs attention'};
+const MIC_NAME = {symbol: 'Symbol', footprint: 'Footprint', model: '3D', pins: 'Pins'};
+/* the part panel and the table read the same row: the Library row of the line, else what its library entry says */
+function libRowOf(l) {
+  const row = (S.library || []).find(r => r.line === l.key);
+  if (row) return row;
+  const e = l.library_entry || {};
+  return {line: l.key, symbol: !!e.symbol, footprint: !!e.footprint, step: !!e.step, source: '', build_status: '', built: false, issues: e.issues || ''};
 }
-/* the pins' state, as the BOM and the sheet show it: a line on a sheet whose pins came from the agent says so here too */
-function libPins(r) {
+function libPinsState(r) {
   const l = (S.bom || []).find(b => b.key === r.line), st = l && l.pins_status;
-  if (st === 'unverified') return `<span class="mdl no" title="${esc(l.pins_issues || 'Pins not checked against a datasheet')}: Verify, or accept them">${icon('x', 's')}Pins unverified</span>`;
-  if (st === 'mismatch') return `<span class="mdl no" title="${esc('Pins differ from the datasheet: ' + (l.pins_issues || ''))}">${icon('x', 's')}Pins conflict</span>`;
-  return '';
+  if (!r.symbol) return ['no', 'Pins: no symbol yet, so no pins to check'];
+  if (st === 'unverified') return ['bad', 'Pins unverified: ' + (l.pins_issues || 'not checked against a datasheet') + ' Verify them or accept them.'];
+  if (st === 'mismatch') return ['bad', 'Pins conflict with the datasheet: ' + (l.pins_issues || '')];
+  if (st === 'accepted') return ['ok', 'Pins accepted by you (no datasheet pin table checked them)'];
+  if (st === 'verified') return ['ok', 'Pins verified against the datasheet pin table'];
+  return ['ok', 'Pins: nothing to verify for this part'];
+}
+function libModelStates(r) {
+  const fpErr = r.build_status === 'error';
+  const sym = r.symbol ? ['ok', 'Symbol is in the library'] : ['no', 'Symbol: missing'];
+  const fp = fpErr ? ['bad', 'Footprint error: ' + (r.issues || 'the converter could not keep it truthfully')]
+    : !r.footprint ? ['no', 'Footprint: missing']
+    : r.source === 'generated' ? ['ok', 'Footprint is basic, generated (no vendor footprint)'] : ['ok', 'Footprint is in the library'];
+  const m3 = r.step ? ['ok', '3D model from a STEP file']
+    : (r.symbol || r.footprint) ? ['ok', '3D is basic, generated (no vendor STEP)'] : ['no', '3D: no model'];
+  return [['symbol', ...sym], ['footprint', ...fp], ['model', ...m3], ['pins', ...libPinsState(r)]];
+}
+function libIconsHTML(r) {
+  const icons = libModelStates(r).map(([kind, state, text]) => {
+    const name = MIC_NAME[kind], say = `${text}. ${MIC_WORD[state]}. Click for a quick preview`;
+    return `<button type="button" class="mic ${state}" data-act="lib-preview" data-line="${esc(r.line)}" data-kind="${kind}" title="${esc(say)}" aria-label="${esc(name + ': ' + say)}">` +
+      `${icon(MIC_ICON[kind], 'mic-g')}</button>`;
+  }).join('');
+  const built = r.build_status ? (r.built ? `<span class="mic-built ok" title="In the compiled IntLib">Built</span>`
+    : `<span class="mic-built" title="Not in the IntLib yet: build the library">Not built</span>`) : '';
+  return `<div class="mdls" role="group" aria-label="Models of ${esc(r.line)}">${icons}${built}</div>`;
+}
+function libLegendHTML() {
+  const k = (cls, t) => `<span class="mic-key"><i class="mic ${cls}" aria-hidden="true"><svg class="mic-g" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/></svg></i>${t}</span>`;
+  return `<p class="lib-legend" id="lib-legend">Icons, left to right: Symbol, Footprint, 3D, Pins. ${k('ok', 'present')}${k('no', 'missing')}${k('bad', 'needs fixing')} Click an icon for a quick preview.</p>`;
 }
 /* a line the build pipeline knows: what the build made of it, in words */
 function libBuildTag(r) {
@@ -89,7 +122,7 @@ function libRow(r) {
   return `<tr data-key="${esc(r.line)}" tabindex="0" class="${sel === r.line ? 'sel' : ''}"${r.model_source ? ` title="${esc('Model from ' + r.model_source)}"` : ''}>
     <td title="${esc(refs.join(', '))}"><span class="ref">${esc(refsLabel(refs) || r.line)}</span>${r.mpn ? `<span class="sub m">${esc(r.mpn)}</span>` : ''}</td>
     ${known ? `<td title="${esc(r.vendor_zip ? 'From ' + r.vendor_zip : '')}">${esc(PG_SOURCE[r.source] || r.source)}</td>` : ''}
-    <td>${libModels(r)}</td>
+    <td>${libIconsHTML(r)}</td>
     <td${known ? ' class="lib-issues"' : ''}>${tag(text, tone, known ? '' : (r.issues || LIBTXT[r.status] || ''))}${known ? libIssues(r) : ''}</td>
     <td class="act">${libAction(r)}</td></tr>`;
 }
@@ -128,7 +161,7 @@ function libHTML(container) {
     ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr>${head}<th><span class="sr">Action</span></th></tr></thead>
       <tbody>${rows.map(libRow).join('')}</tbody></table></div>`
     : emptyState('No library parts yet', 'Press Build library: every BOM line gets a symbol, a footprint and a 3D model, from EasyEDA, a vendor zip or the generator.');
-  return `${viewHeader({title: 'Library', meta, actions, primary})}<div class="vb">${note}${libExportHTML()}${body}</div>`;
+  return `${viewHeader({title: 'Library', meta, actions, primary})}<div class="vb">${note}${libExportHTML()}${rows.length ? libLegendHTML() : ''}${body}</div>`;
 }
 
 /* ================================ Sources ================================ */

@@ -502,3 +502,27 @@ onChange(t => t.closest && t.closest('input[data-edit]'), async e => {
     if (field === 'mpn') { toast(`MPN updated. Checking stock for ${val}…`); setTimeout(() => refresh(), 6000); }
   } catch (err) { /* toasted */ }
 });
+
+/* A datasheet picked from the computer: it is uploaded like any source, then linked to this line and its pins are checked.
+   Get datasheet (above) is the other way in: the agent finds and downloads it. */
+let dsPickLine = '';
+onAct('datasheet-file', (el) => {
+  dsPickLine = el.dataset.line || '';
+  $('#dspick').click();
+});
+onChange(t => t.id === 'dspick', async e => {
+  const f = e.target.files[0], line = dsPickLine;
+  e.target.value = '';
+  if (!f || !line) return;
+  toast(`Adding ${f.name}…`);
+  try {
+    const buf = new Uint8Array(await f.arrayBuffer()); let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    await api('/api/upload', {name: f.name, data_b64: btoa(bin)});
+    const name = f.name.replace(/^.*[\/]/, '').replace(/[<>:"|?*\x00-\x1f]/g, '_');      // the name the server saved it under
+    const r = await api('/api/parts/attach_datasheet', {line, name});
+    setState(r);
+    render(true);
+    toast(attachMsg(r.attached));
+  } catch (err) { /* api() has already said what went wrong */ }
+});
