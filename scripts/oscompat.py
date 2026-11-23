@@ -134,7 +134,7 @@ def command_path(path):
     if " " in posix:
         short = _short_path(path)
         if short and " " not in short:
-            return pathlib.PurePath(short).as_posix()
+            return pathlib.PureWindowsPath(short).as_posix()      # a Windows API answer: its backslashes are separators on any host
     return posix
 
 

@@ -255,7 +255,7 @@ def test_which_finds_the_installer_folder_when_path_is_stale(tmp_path, monkeypat
     assert oscompat.which("agy") is None
     assert oscompat.resolve("agy") == "agy"
     agy = (tmp_path / "local" / "agy" / "bin" / "agy.exe") if oscompat.WINDOWS else (tmp_path / ".local" / "bin" / "agy")
-    agy.parent.mkdir(parents=True)
+    agy.parent.mkdir(parents=True, exist_ok=True)              # off Windows it is claude's folder, made above
     agy.write_text("")
     assert oscompat.which("agy") == str(agy)                 # agy's installer folder, for a stale PATH
 

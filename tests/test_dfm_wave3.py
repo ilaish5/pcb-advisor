@@ -30,7 +30,7 @@ def test_partlib_and_the_dfm_pickup_use_the_same_downloads_folder(home, monkeypa
     assert jlc_upload.downloads_dir() == home / "cfg" and partlib._recent_downloads() == []
 
 
-@pytest.mark.skipif(not hasattr(__import__("os"), "name") or __import__("os").name != "nt", reason="Windows Known Folder API")
+@pytest.mark.windows       # the Windows Known Folder API (shell32 SHGetKnownFolderPath)
 def test_the_known_folder_api_answers_on_windows():
     got = workspace.__dict__["_shell_downloads"]()
     assert got is None or isinstance(got, pathlib.Path)           # live value depends on the machine; it must not raise
