@@ -126,6 +126,9 @@ def accept(project, key, evidence=None, reason="", wrong=None, basis=None, group
 def _accept(project, key, evidence=None, reason="", wrong=None, basis=None):
     line = store._line_of(project, key)
     key = line["key"]
+    if not store.has_wired_pins(project, line):
+        # nothing is wired: an accept would record a decision about no pins, and later wiring would look confirmed
+        return {"ok": False, "line": key, "decision": None, "changed": False, "why": "no pin of this part is wired yet: there is nothing to confirm"}
     if wrong:
         pins = ", ".join(str(w) for w in wrong)
         store.add_library(project, key, {"verify": "mismatch", "method": "", "evidence": "", "accepted": False,
@@ -344,7 +347,8 @@ def confirm_data(project, key):
                      "candidate_pages": candidate_pages(text, line.get("package") or ""), "quality": sources.quality(text)})
     st = next((l for l in store.bom(project, write=False) if l["key"] == line["key"]), {})
     return {"line": line["key"], "refs": line.get("refs", []), "mpn": line.get("mpn") or "", "package": line.get("package") or "",
-            "pins": _pins_of(project, line), "docs": docs, "status": st.get("pins_status", ""), "issues": st.get("pins_issues", ""),
+            "pins": _pins_of(project, line), "wired": store.has_wired_pins(project, line), "docs": docs,
+            "status": st.get("pins_status", ""), "issues": st.get("pins_issues", ""),
             "polarised": store._polarised_only(line), "group_refs": [r for g in [group_lines(project, line["key"])] for k in g
                                                                       for r in (store._line_of(project, k).get("refs") or [k])]}
 

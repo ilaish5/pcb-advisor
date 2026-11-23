@@ -166,3 +166,50 @@ must go through the main session.
   run (the main session runs it once).
 * Changed: `scripts/pin_model.py` (new), `scripts/store.py`, `scripts/pin_decisions.py`, `ui/js/views/{pins,checks,pages,outputs}.js`,
   `ui/styles/checks.css`, `tools/friction_count.py` (new). `libModels` / `libPins` in `pages.js` were not touched (the model-icons session).
+
+## 9. A second friction point: the "Confirm pins" window with nothing in it (found later, fixed)
+
+The student's words: the window "Confirm pins of U7 TPS3823-33DBVR" showed nothing to confirm (an empty Part / Pin / Name / Net table and the
+sentence "TPS3823-33DBVR.pdf is linked, but its pins could not be checked against it: no pins of this part on a sheet to check"), and the
+datasheet in it was unreadable.
+
+**Why the part counted as waiting.** `store._bom` marks a BOM line `on_sheet` when its designator is on any sheet, whether or not the part has a
+wired pin there (a sheet read from Altium can hold a part with an empty `pins` list; a part can also be placed with every pin still on no net).
+`pins_status` looked only at the datasheet / decision state, so such an IC came out `unverified` with the reason `verify_part` writes when it
+finds no pins (`no pins of this part on a sheet to check`). From there everything followed: `unverified_parts` -> `pins_to_resolve` (the DFM list
+and the manufacturing gate), `pin_decisions.questions` / `waiting` (the waiting line, "Confirm all"), `row_buttons`, and the Confirm pins
+button, whose dialog is built from the same empty pin list. Reproduced on a copy of Blinker-555 with a U7 placed on the sheet with no pins and the
+datasheet linked: the old rule returns exactly the student's sentence.
+
+**The fix (generic, no per-board code).** A part with no wired pin on any sheet has nothing to decide:
+* `store.pins_status` returns `('', '')` for a line none of whose parts has a wired pin (wired = a net that is not a no-connect spelling, the same
+  rule as the fingerprint: `store.pin_wired`, `wired_refs`, `has_wired_pins`). So it is not in the DFM list, not in the waiting line or the bulk
+  Confirm, has no Library / part-panel / DFM button, and does not block the manufacturing outputs.
+* `pin_decisions.accept` (and with it a group accept, "Confirm all" and the legacy accept route) refuses such a line (`ok: false`, "no pin of this
+  part is wired yet: there is nothing to confirm") and records nothing, so an empty decision can never later pass as a confirmation of pins that
+  are wired afterwards. The moment a pin is wired the part is `unverified` like any other and asks once. A decision made while pins were wired
+  keeps its fingerprint: the same pins wired again stand, other pins ask again.
+* The sheet mark `pins_source` is not set on a part with nothing wired (it comes with the first wired pin; the "pins are a guess" warning then
+  fires on that save as before). `confirm_data` carries `wired`, and the dialog refuses to open on a part with none (a toast says why).
+* Unchanged on purpose: the open-pin gate. A part whose pins are listed but on no net and not NC (U8 in the test) still blocks the outputs
+  through `pin_gaps`, exactly as the binding decision says; only the datasheet-pin question disappeared for it.
+
+**The datasheet is readable.** The dialog is now nearly the whole window (`calc(100vw - 32px)` by `calc(100vh - 32px)`), the PDF frame takes all
+the height that is left, and the pin table sits beside it (a column of about a quarter of the width, in sheet order) so each row is compared with
+the page one by one. The frame opens the exact pin page with the PDF open parameters
+`#page=N&zoom=page-width&view=FitH&pagemode=none&navpanes=0` (width fit, viewer sidebar closed), the page buttons switch pages, and "Open in a new
+tab" opens the same page in the browser's own viewer. No server-side page image: PyMuPDF is not a dependency (only `pypdf`).
+
+**Verified how.** Targeted tests (below) and the browser on port 8768 on a copy of Blinker-555 with U1 (NE555, wired, datasheet linked and
+undecided) and U7 (placed, no pins, datasheet linked): U7 is not in the waiting line (it names U1 and J1), has no Library button
+(`lib_buttons.U7 = 0`), is absent from DFM and Outputs and from the gate text, and `pinsConfirm('U7')` opens nothing and says why. U1's dialog
+opens at 992 x 736 in a 1024 x 768 window, the frame 622 x 579 beside the pin table, with the sidebar closed. **Not verified:** how the PDF
+page itself is fitted. The in-app browser cannot paint a PDF (it showed the viewer with the sidebar closed and an empty page area, and refuses to
+navigate to a PDF), and the student's Chrome is another machine that cannot reach this server. `zoom=page-width` is honoured by some viewers and
+`view=FitH` by Chrome's; both are sent, an unknown one is ignored. The student should look once at a real datasheet in their Chrome and say whether
+the text is readable at first open.
+
+Tests: `tests/test_pin_waiting.py` (+5: not waiting and blocks nothing; only-empty parts leave the gate; accept refuses and a later wiring
+asks; a decision lapses with other pins and an unwired part is no accepted risk; the dialog is not opened for an empty part) and
+`tests/test_ui_pins.py` (+1: open parameters, near-full-window CSS, frame fills the height).
+

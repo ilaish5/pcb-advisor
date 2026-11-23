@@ -1,15 +1,17 @@
 /* Pin decisions (stream B): the confirm dialog, the accepted-risk list */
-.dlg.pins-dlg{width:min(960px,calc(100% - 32px));max-height:calc(100vh - 48px);display:flex;flex-direction:column}
-.pins-dlg form{display:flex;flex-direction:column;min-height:0;gap:12px}
-.pins-body{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:16px;min-height:0;overflow:auto}
-.pins-doc{display:flex;flex-direction:column;gap:8px;min-width:0}
+.dlg.pins-dlg{width:calc(100vw - 32px);max-width:none;height:calc(100vh - 32px);max-height:none;display:flex;flex-direction:column;padding:16px}
+.dlg.pins-dlg h2{margin-bottom:0}
+.pins-dlg form{display:flex;flex-direction:column;min-height:0;flex:1;gap:10px}
+.pins-body{display:grid;grid-template-columns:minmax(0,1fr) minmax(320px,26%);gap:16px;min-height:0;flex:1}
+.pins-doc{display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
 .pins-pages{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--t-sm)}
-.pins-frame{width:100%;height:min(60vh,520px);border:1px solid var(--line);border-radius:8px;background:var(--sheet)}
+.pins-frame{width:100%;flex:1;min-height:0;border:1px solid var(--line);border-radius:8px;background:var(--sheet)}
+.pins-open{margin-left:auto;font-size:var(--t-sm)}
 .pins-nodoc{justify-content:center}
-.pins-tbl-w{overflow:auto;min-width:0}
+.pins-tbl-w{overflow:auto;min-width:0;min-height:0}
 .pins-tbl th,.pins-tbl td{padding:4px 8px;text-align:left}
 .pins-wrong{display:inline-flex;gap:4px;align-items:center;color:var(--ink-3);font-size:var(--t-sm);cursor:pointer}
 .pins-note{margin-top:8px}
 .pin-dec .btn{margin-left:4px}
 .pin-risks h3{margin-bottom:6px}
-@media (max-width:720px){.pins-body{grid-template-columns:1fr}}
+@media (max-width:900px){.pins-body{grid-template-columns:1fr;overflow:auto}.pins-frame{min-height:60vh}}

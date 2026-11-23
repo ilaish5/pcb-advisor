@@ -207,3 +207,87 @@ def test_the_count_script_counts_a_project_the_way_the_page_shows_it(empty, tmp_
     out = tmp_path / "counts.json"
     assert friction_count.main(["--home", str(tmp_path / "nowhere"), "--out", str(out)]) == 0      # no projects folder: nothing to count
     assert not out.exists()
+
+
+# ---------------------------------------------------------------- a part with no wired pin has nothing to decide
+
+def _ics(empty, wired):
+    """U1 wired to nets, U7 placed with no pins drawn at all, U8 with its pins listed but on no net, U9 with its pins on NC only."""
+    for ref, mpn in (("U1", "ABCD1234"), ("U7", "TPS3823-33DBVR"), ("U8", "EFGH5678"), ("U9", "IJKL9012")):
+        store.propose_bom(empty, ref, {"mpn": mpn, "refs": [ref]}, new=True)
+        store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
+    pins = lambda *nets: [{"num": str(i + 1), "name": f"P{i + 1}", "net": n} for i, n in enumerate(nets)]
+    sheet = {"sections": [{"id": "A", "title": "T"}], "parts": [
+        {"ref": "U1", "section": "A", "pins": pins("+3V3", "GND") if wired else []},
+        {"ref": "U7", "section": "A", "pins": []},
+        {"ref": "U8", "section": "A", "pins": pins("", "")},
+        {"ref": "U9", "section": "A", "pins": pins("NC", "N/C")}]}
+    _put(empty, sheet)
+
+
+def _put(empty, sheet):
+    """The sheet file as an importer writes it: write_sheet refuses a part with no pins, a sheet read from Altium can hold one."""
+    path = store.netlist_dir(empty) / "01.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({**sheet, "id": "01"}), encoding="utf-8")
+    store.refresh_pins_source(empty)
+
+
+def test_a_part_with_no_wired_pin_is_not_waiting_and_blocks_nothing(empty):
+    _ics(empty, wired=True)
+    lines = {l["key"]: l for l in store.bom(empty)}
+    assert lines["U1"]["pins_status"] == "unverified"
+    for key in ("U7", "U8", "U9"):
+        assert lines[key]["pins_status"] == "" and lines[key]["on_sheet"]       # on a sheet, but nothing wired: nothing to decide
+    assert [r["line"] for r in store.pins_to_resolve(empty)] == ["U1"]
+    w = pin_decisions.waiting(empty)
+    assert w["questions"] == 1 and w["groups"][0]["refs"] == ["U1"] and w["bulk"] == ["U1"] and w["blind"] == ["U1"]
+    assert [r["line"] for r in pin_decisions.remaining(empty)] == ["U1"]
+    assert all(w["lib_buttons"].get(k, 0) == 0 for k in ("U7", "U8", "U9"))
+    msg = store.manufacturing_warning(empty)
+    assert "pins nobody checked against a datasheet: U1;" in msg and "U7" not in msg and "U9" not in msg
+    assert "U8 pin 1" in msg              # its listed pins are open (no net, no NC): that is the open-pin gate, which stays
+
+
+def test_only_empty_parts_leave_the_gate_open_and_nothing_to_confirm(empty):
+    _ics(empty, wired=False)
+    assert store.pins_to_resolve(empty) == [] and pin_decisions.waiting(empty)["questions"] == 0
+    assert "pins nobody checked" not in store.manufacturing_warning(empty)
+    assert pin_decisions.accept_all(empty)["accepted"] == []
+
+
+def test_an_empty_part_can_not_be_confirmed_and_wiring_it_later_asks_like_any_other(empty):
+    _ics(empty, wired=True)
+    r = pin_decisions.accept(empty, "U7", group=True)
+    assert r["ok"] is False and r["decision"] is None and "nothing to confirm" in r["why"]
+    assert pin_decisions.accept(empty, "U8", wrong=["1"])["ok"] is False
+    assert "U7" not in _decisions(empty) and "U8" not in _decisions(empty)
+    assert pin_decisions.confirm_data(empty, "U7")["wired"] is False and pin_decisions.confirm_data(empty, "U1")["wired"] is True
+    sheet = store.load_sheet(empty, "01")                              # U7 gets wired afterwards
+    for p in sheet["parts"]:
+        if p["ref"] == "U7":
+            p["pins"] = [{"num": "1", "name": "VDD", "net": "+3V3"}, {"num": "2", "name": "GND", "net": "GND"}]
+    assert store.write_sheet(empty, "01", sheet)["ok"]            # the agent draws the sheet again, now with U7's pins
+    assert sorted(r["line"] for r in store.pins_to_resolve(empty)) == ["U1", "U7"]       # asked, with nothing recorded about the empty past
+    assert store.load_sheet(empty, "01")["parts"][1]["pins_source"] == "agent"
+
+
+def test_a_decision_made_with_wired_pins_lapses_when_the_pins_change_and_an_unwired_part_is_not_a_risk(empty):
+    _ics(empty, wired=True)
+    assert pin_decisions.accept(empty, "U1")["ok"]
+    assert [r["line"] for r in pin_decisions.risks(empty)] == ["U1"]
+    sheet = store.load_sheet(empty, "01")
+    sheet["parts"][0]["pins"] = [{"num": "1", "name": "P1", "net": ""}, {"num": "2", "name": "P2", "net": ""}]    # all unwired now
+    _put(empty, sheet)
+    assert pin_decisions.risks(empty) == [] and store.pins_to_resolve(empty) == []
+    sheet["parts"][0]["pins"] = [{"num": "1", "name": "P1", "net": "+3V3"}, {"num": "2", "name": "P2", "net": "X"}]  # the same pins wired again
+    _put(empty, sheet)
+    assert [r["line"] for r in pin_decisions.risks(empty)] == ["U1"]       # the decision was about these pins: it stands, as for any net change
+    sheet["parts"][0]["pins"] = [{"num": "1", "name": "Q1", "net": "+3V3"}, {"num": "2", "name": "Q2", "net": "X"}]  # other pins
+    _put(empty, sheet)
+    assert [r["line"] for r in store.pins_to_resolve(empty)] == ["U1"] and pin_decisions.risks(empty) == []
+
+
+def test_the_confirm_dialog_is_not_opened_for_a_part_with_nothing_wired():
+    src = (UI / "pins.js").read_text(encoding="utf-8")
+    assert "if (!d.wired)" in src and src.index("if (!d.wired)") < src.index("showModal()")

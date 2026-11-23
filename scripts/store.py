@@ -417,10 +417,12 @@ def _bom(project, write):
     supply = supply_for(project)
     lib = library_parts(project)
     man = library_manifest(project)
-    sheets = {}
+    sheets, wired = {}, set()
     for sh in sheet_ids(project):
         for part in load_sheet(project, sh).get("parts", []):
             sheets.setdefault(part["ref"], (sh, part.get("section")))
+            if any(pin_wired(p) for p in part.get("pins", [])):
+                wired.add(part["ref"])
     import order_options
     build_qty = order_options.boards(project)         # the project's own N, else the config default
     if write:
@@ -437,7 +439,7 @@ def _bom(project, write):
         entry = lib.get(l["key"])
         l["library"] = manifest_status(library_status(l, entry), man.get(l["key"]))
         l["library_entry"] = ui_entry(entry)
-        l["pins_status"], l["pins_issues"] = pins_status(l, entry, project)
+        l["pins_status"], l["pins_issues"] = pins_status(l, entry, project, wired=wired)
         l["pins_basis"] = pins_basis(project, l, entry, l["pins_status"])
         l["pin_decision"] = _decision_view(project, l, entry) if l["pins_status"] == "accepted" else None
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
@@ -3092,13 +3094,38 @@ def _decision_view(project, line, entry):
     return {k: dec.get(k) for k in ("basis", "ts", "reason", "evidence")} if dec else None
 
 
-def pins_status(line, entry, project=None):
+def pin_wired(pin):
+    """A pin on a net that is not a no-connect spelling: the pins a pin decision is about (the same rule as pin_decisions.fingerprint)."""
+    net = str(pin.get("net") or "").strip()
+    return bool(net) and not pinnames.is_nc_net(net)
+
+
+def wired_refs(project):
+    """The designators with at least one wired pin on a sheet: a part with none has nothing to decide yet."""
+    def build():
+        return sorted({part.get("ref") for sh in sheet_ids(project) for part in load_sheet(project, sh).get("parts", [])
+                       if any(pin_wired(p) for p in part.get("pins", []))})
+    return set(memoised(("wired_refs", project), build))
+
+
+def has_wired_pins(project, line):
+    """True when any part of the BOM line has a wired pin on a sheet."""
+    return bool(set(line.get("refs") or []) & wired_refs(project))
+
+
+def pins_status(line, entry, project=None, wired=None, check_wired=True):
     """('', '') for a simple part or one not on a sheet yet; else ('verified'|'accepted'|'unverified'|'mismatch', issues).
     Simple parts (R, C, L ...) are '' too, except a connector (J, P) with no datasheet and a diode/LED (D, LED) whose
     polarity no datasheet confirms: those are 'unverified' (the Unverified list), with the reason in issues.
     "accepted" is the student's pin decision (scripts/pin_decisions.py) while it stands; one made against pins that have
-    changed since is no decision: the part is unverified again and the reason says so."""
+    changed since is no decision: the part is unverified again and the reason says so.
+    A part with no wired pin on any sheet (placed but not connected yet, or no pins drawn) is '' too: there is nothing to decide, so it
+    is never asked about, never blocks, and no decision can be made about it; the moment a pin is wired it is asked like any other.
+    `wired`: the designators with a wired pin, when the caller has them already (the BOM build); `check_wired=False` leaves the rule
+    to the caller (the sheet marking, which has the parts being saved in hand while the disk still has the old ones)."""
     import pin_decisions
+    if check_wired and project and line.get("refs") and not (set(line["refs"]) & (wired_refs(project) if wired is None else wired)):
+        return "", ""
     acc, note = pin_decisions.state(project, line, entry)
     st, why = _pins_status(line, entry, project, bool(acc))
     if note and st in ("unverified", "mismatch"):
@@ -3174,9 +3201,11 @@ def _mark_pins_source(project, parts):
         ref = part.get("ref")
         if is_simple_ref(ref) and _prefix_of(ref) not in CONNECTOR_PREFIXES + POLARISED_PREFIXES:
             part.pop("pins_source", None)
+        elif not any(pin_wired(p) for p in part.get("pins", [])):
+            part.pop("pins_source", None)          # nothing wired, nothing to mark: the mark comes with the first wired pin
         else:
             ln = by_ref.get(ref)
-            st = pins_status(ln, lib.get(ln["key"]), project)[0] if ln else "unverified"
+            st = pins_status(ln, lib.get(ln["key"]), project, check_wired=False)[0] if ln else "unverified"
             if not st and ln:
                 st = "verified"          # a connector / diode the checker passed without a decision: nothing to mark
             if st in ("verified", "accepted"):

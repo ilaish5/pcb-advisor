@@ -72,14 +72,20 @@ function pinsOwnLookBtn(key, o) {
   return l && l.pins_status === 'mismatch' ? btn('Confirm pins', {...o, act: 'confirm-pins', line: key, title: 'Look at the conflict, then one click'}) : '';
 }
 
+/* The datasheet opens at the pin page, fitted to the width of the frame with the viewer's own sidebar closed (PDF open parameters), in a
+   dialog that takes nearly the whole window: the page is readable without a click or a scroll. The pin table sits beside it in sheet
+   order, so each row can be compared with the page one after the other. */
+const PINS_PDF_PARAMS = 'zoom=page-width&view=FitH&pagemode=none&navpanes=0';
+function pinsDocUrl(doc, page) { return `/api/source/${encodeURIComponent(doc.name)}?${q()}#page=${page || 1}&${PINS_PDF_PARAMS}`; }
 function pinsDialogHTML(d, page) {
   const doc = (d.docs || [])[0];
   const pages = doc ? doc.candidate_pages : [];
   const bad = doc && doc.quality && doc.quality.state !== 'good'
     ? `<p class="warn-t pins-note">${esc(doc.quality.why || 'The text of this datasheet cannot be read by the tool')}. Look at the page yourself.</p>` : '';
   const left = doc
-    ? `<div class="pins-doc"><div class="pins-pages">${pages.length ? 'Pin pages: ' + pages.map(p => `<button type="button" class="btn sm${p === page ? ' pri' : ''}" data-pins-page="${p}">p.${p}</button>`).join(' ') : '<span class="muted">No pin page found by text: scroll the datasheet.</span>'}</div>
-       <iframe class="pins-frame" title="${esc(doc.name)}" src="/api/source/${encodeURIComponent(doc.name)}?${q()}#page=${page || 1}"></iframe></div>`
+    ? `<div class="pins-doc"><div class="pins-pages">${pages.length ? 'Pin pages: ' + pages.map(p => `<button type="button" class="btn sm${p === page ? ' pri' : ''}" data-pins-page="${p}">p.${p}</button>`).join(' ') : '<span class="muted">No pin page found by text: scroll the datasheet.</span>'}
+       <a class="pins-open" href="${pinsDocUrl(doc, page)}" target="_blank" rel="noopener">Open in a new tab</a></div>
+       <iframe class="pins-frame" title="${esc(doc.name)}" src="${pinsDocUrl(doc, page)}"></iframe></div>`
     : `<div class="pins-doc pins-nodoc"><p class="muted">No datasheet is linked to this part, so there is no page to compare with.</p>
        <p class="muted">Pins match accepts the pins as they are drawn. It is kept as an accepted risk and can be revoked.</p></div>`;
   const rows = (d.pins || []).map(p => `<tr><td class="m">${esc(p.ref)}</td><td class="m">${esc(p.num)}</td><td class="m">${esc(p.name)}</td><td>${p.net ? `<span class="m">${esc(p.net)}</span>` : '<span class="muted">—</span>'}</td>
@@ -95,6 +101,7 @@ async function pinsConfirm(key) {
   pinsOpen = true;
   try {
     const d = await api('/api/pins/confirm-data?line=' + encodeURIComponent(key));
+    if (!d.wired) { toast(`Nothing to confirm yet: no pin of ${refsLabel(d.refs)} is wired. It is asked about once a pin is connected.`); return; }
     const doc = (d.docs || [])[0];
     let page = doc && doc.candidate_pages.length ? doc.candidate_pages[0] : 1;
     const dlg = document.createElement('dialog');
