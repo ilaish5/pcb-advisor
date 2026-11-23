@@ -46,7 +46,7 @@ chars/4 is a rough token estimate (Hebrew and JSON run denser). Calibration: the
 
 ### Not sent at all (the model builds it, the agent never sees it)
 Only `constraints.py` registers an `ext.SUMMARY`; `stages`, `pin_decisions`, `board_results` are MODEL-only. So the agent does not see:
-`stages` (the six stage states, the gate reason, the next step), `pin_decisions` (parts whose pins wait for the student),
+`stages` (the seven stage states idea, bom, sch, pcb, rules, outputs, checks; the gate reason, the next step), `pin_decisions` (parts whose pins wait for the student),
 `sheet_gaps` (open pins), `altium_ok` (what was drawn/placed/routed), `autonomy`, `requirements`, `board` settings.
 On the measured project the Outputs stage was blocked by 26 open pins, and the agent had no way to know it without running `model.py`.
 
@@ -128,8 +128,8 @@ Verified against the files before fixing; the rest is listed for a later pass.
 | AGENTS.md loaded by the engine | 29194 | 30149 | +955 |
 | net per turn (and per follow-up/retry round) | | | about -4600 chars, ~-1150 tokens |
 
-CURRENT STATE after: diagram once; `agreed` rows {topic, text, by, status}; `stages` [{id, state, why (<=240), next, blocked, current}];
-`pins_waiting` when parts wait; project sources by name + one `reference_library` pointer line; DFM slices as folder + file names; compact JSON.
+CURRENT STATE after: diagram once; `agreed` rows {topic, text, by, status}; `stages` (7 rows) [{id, state, why (<=240, head and tail), next, blocked, current}];
+`pins_waiting` [{line, refs, status unverified|mismatch}] = `store.pins_to_resolve`, what the manufacturing gate waits on; project sources by name + one `reference_library` pointer line; DFM slices as folder + file names; compact JSON.
 P1 (rules once) would take another ~7500 tokens a turn.
 
 ## 8. Tests

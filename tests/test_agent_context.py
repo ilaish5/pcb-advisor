@@ -17,7 +17,6 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 AGENTS = REPO / "runtime" / "AGENTS.md"
 SKILLS = REPO / "runtime" / "skills"
-EXT_MODULES = ("stages", "board_results", "pin_decisions", "constraints")
 FILE_EXT = re.compile(r"\.(?:py|md|json|jsonl|pdf|txt|RUL|zip|csv|svg|jpg|SchDoc|PcbDoc|PrjPcb|OutJob)$", re.I)
 
 
@@ -52,11 +51,17 @@ def server_kinds():
                     kinds.update(_str_consts(comp))
                     if isinstance(comp, ast.Name):
                         kinds.update(consts.get(comp.id, []))
-    for mod in EXT_MODULES:
-        for node in ast.walk(ast.parse((REPO / "scripts" / f"{mod}.py").read_text(encoding="utf-8"))):
+    import ext
+    for mod in ext.MODULES:
+        src = (REPO / "scripts" / f"{mod}.py").read_text(encoding="utf-8")
+        found = set()
+        for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.Compare) and _is_type_get(node.left):
                 for comp in node.comparators:
-                    kinds.update(_str_consts(comp))
+                    found.update(_str_consts(comp))
+        # a module that registers an action handler must name its kind the way this reads it, or the parity check is blind to it
+        assert found or '@ext.register("action")' not in src, f"{mod}: action handler with no action.get(\"type\") kind"
+        kinds |= found
     return {k for k in kinds if "." in k}
 
 
@@ -98,6 +103,20 @@ def test_every_documented_action_exists_on_the_server():
         if bad:
             unknown[name] = bad
     assert not unknown, f"documented action kinds the server does not accept: {unknown}"
+
+
+def test_documented_idea_constrain_examples_are_valid():
+    """The idea.constrain examples the agent copies (AGENTS.md, the placement skill) pass the server's own validation."""
+    import constraints
+    texts = [AGENTS.read_text(encoding="utf-8"), (SKILLS / "placement-and-routing-plan" / "SKILL.md").read_text(encoding="utf-8")]
+    found = 0
+    for text in texts:
+        for raw in re.findall(r'`(\{"type": "idea\.constrain".*?\}\})`', text):
+            a = json.loads(raw)
+            assert a["op"] in ("add", "update", "remove")
+            constraints.validate_item(a["item"])
+            found += 1
+    assert found == 2
 
 
 def test_idea_constrain_fields_are_documented():
@@ -149,7 +168,8 @@ def test_state_says_where_the_project_stands_once(lte):
     import model
     s = json.loads(agent._summary(model.build(project=lte)))
     assert s["stages"] and {"id", "state"} <= set(s["stages"][0])
-    assert [r["id"] for r in s["stages"]][:2] == ["idea", "bom"]
+    import stages
+    assert [r["id"] for r in s["stages"]] == list(stages.ORDER)
     assert "diagram" in s and "diagram" not in s["idea"]
     for a in s["idea"].get("agreed") or []:
         assert not ({"ts", "prev_text"} & set(a))
@@ -159,7 +179,7 @@ def test_stage_reason_is_clipped_and_gate_marked():
     import agent
     rows = agent._stages({"stages": [{"id": "outputs", "state": "blocked", "reason": "x" * 1000, "primary": True,
                                       "gate": {"blocked": True, "why": "x"}, "next": {"label": "Fix the schematic", "act": "go:sch"}}]})
-    assert len(rows[0]["why"]) == agent.STAGE_REASON_CUT
+    assert len(rows[0]["why"]) == agent.STAGE_REASON_CUT and "…" in rows[0]["why"]
     assert rows[0]["blocked"] and rows[0]["current"] and rows[0]["next"] == "Fix the schematic"
 
 
@@ -168,8 +188,17 @@ def test_waiting_pins_and_reference_pointer():
     m = {"project": "", "stages": [], "pin_decisions": {"remaining": [{"line": "U1", "refs": ["U1"], "mpn": "X", "issues": ""}]},
          "sources": [{"name": "course/a.en.md", "origin": "Reference library"}, {"name": "U1.pdf", "origin": "lcsc.com"}]}
     s = json.loads(agent._summary(m))
-    assert s["pins_waiting"] == [{"line": "U1", "refs": ["U1"], "mpn": "X"}]
+    assert s["pins_waiting"] == [{"line": "U1", "refs": ["U1"], "status": "unverified"}]
     assert s["sources"] == ["U1.pdf"] and "1 course" in s["reference_library"]
+
+
+def test_waiting_pins_are_what_the_manufacturing_gate_holds(lte, monkeypatch):
+    """pins_waiting is store.pins_to_resolve (unverified and mismatch), the list store.manufacturing_warning refuses on."""
+    import agent
+    import store
+    rows = [{"line": "U1", "refs": ["U1"], "status": "mismatch", "mpn": "X"}, {"line": "U2", "refs": ["U2"], "status": "unverified"}]
+    monkeypatch.setattr(store, "pins_to_resolve", lambda project, **kw: rows)
+    assert [r["status"] for r in agent._pins_waiting({"project": lte})] == ["mismatch", "unverified"]
 
 
 def test_workspace_text_agrees_with_the_rules(lte):

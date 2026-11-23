@@ -19,7 +19,7 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
    enters, any antenna or module with a datasheet keep-out. If the student gives only a screenshot, review the screenshot
    and say what you cannot see (bottom side, inner layers).
 2. Connectors. Run `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`
-   (the PcbDoc path: `bridge.py status`) to verify opening orientation against the nearest board edge normal. For each connector,
+   (the PcbDoc path: the linked Altium project line in WORKSPACE) to verify opening orientation against the nearest board edge normal. For each connector,
    the opening must face outward toward the board edge and be free of obstructing parts. Ask for a tilted 3D screenshot
    (View > 3D layout mode, tilt, look from the edge) to verify symmetric footprints that may hide a 180° rotation.
 3. Decoupling. The same `checks/board.py` run measures distance from each decoupling cap to its IC power pin on the same net.

@@ -138,10 +138,10 @@ def _summary(model):
     if reference:
         s["reference_library"] = (f"{len(reference)} course, JLC and IPC files in <repo>/shared/reference/, citable by their path "
                                   "there; open its AGENTS.md (the topic index) to find one")
-    waiting = ((model.get("pin_decisions") or {}).get("remaining")) or []
+    waiting = _pins_waiting(model)
     if waiting:
-        # the student accepts these in DFM > Unverified parts; the Gerber zip and the OutJob wait for it (rule 7, rule 11)
-        s["pins_waiting"] = [{"line": r.get("line"), "refs": r.get("refs"), "mpn": r.get("mpn")} for r in waiting]
+        # the DFM page's Unverified parts: the Gerber zip and the OutJob wait until the student resolves each (rule 7, rule 11)
+        s["pins_waiting"] = waiting
     checks_summary = []
     for c in model.get("checks", []):
         stem = c.get("stem")
@@ -160,9 +160,24 @@ def _summary(model):
 STAGE_REASON_CUT = 240
 
 
+def _pins_waiting(model):
+    """The parts the manufacturing gate waits on (store.pins_to_resolve: unverified AND conflicting with the datasheet, DNP left out),
+    with their status; without a project, the model's pin_decisions.remaining (unverified only)."""
+    rows = None
+    if model.get("project"):
+        try:
+            import store
+            rows = store.pins_to_resolve(model["project"])
+        except Exception:           # noqa: BLE001 - the state must always build
+            rows = None
+    if rows is None:
+        rows = [dict(r, status="unverified") for r in ((model.get("pin_decisions") or {}).get("remaining") or [])]
+    return [{"line": r.get("line"), "refs": r.get("refs"), "status": r.get("status")} for r in rows]
+
+
 def _stages(model):
-    """Where the project stands, one row per stage (idea, bom, sch, pcb, rules, outputs): its state, why, and the next step the page
-    offers; a gate that holds the stage says so. Without it the agent could not name the student's next step (HOW TO ANSWER)."""
+    """Where the project stands, one row per stage (stages.ORDER: idea, bom, sch, pcb, rules, outputs, checks): its state, why, and the
+    next step the pages offer; a gate that holds the stage says so. Without it the agent could not name the student's next step."""
     out = []
     for st in model.get("stages") or []:
         if not isinstance(st, dict):
@@ -170,7 +185,7 @@ def _stages(model):
         row = {"id": st.get("id"), "state": st.get("state")}
         reason = str(st.get("reason") or "")
         if reason:
-            row["why"] = reason if len(reason) <= STAGE_REASON_CUT else reason[:STAGE_REASON_CUT - 1].rstrip() + "…"
+            row["why"] = _clip(reason, STAGE_REASON_CUT)          # head and tail: a gate reason ends with what to do
         nxt = (st.get("next") or {}).get("label")
         if nxt:
             row["next"] = nxt

@@ -14,9 +14,10 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - Not for: DRC and layout review (board-review), how a menu works in Altium (altium-help), ordering (the student does it).
 
 ## Steps
-1. The board passed DRC: the route result carries it, else run `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`
-   (board-review). Every fitted BOM line has an LCSC number. Pins still unverified (`pins_waiting` in CURRENT STATE) hold the
-   OutJob and the Gerber zip: say so first. Run `python <repo>/scripts/lineage.py <project> status` before files go out.
+1. The board passed DRC: `drc_total` in `board_facts` or the route result says so, else ask the student (board-review; the
+   physical checks are `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`). Every fitted BOM line has an LCSC number.
+   Parts in `pins_waiting` (CURRENT STATE) hold the OutJob and the Gerber zip: say so first.
+   Run `python <repo>/scripts/lineage.py <project> status` before files go out.
 2. OutJob. With a linked Altium project send `altium.run_outjob` (adds the OutJob and generates Gerber, NC Drill, Pick and Place,
    BOM). Without one run `python <repo>/scripts/outjob.py <project>` (writes `projects/<project>/exports/`; the student copies it
    into the Altium project and clicks Generate content), or the manual recipe {{src:m25-fabrication-files.en.md|25.4 Output Job File}}.
