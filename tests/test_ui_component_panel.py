@@ -132,7 +132,7 @@ def test_inspector_role_note_and_mpn_are_edited_in_place_and_saved_by_the_bom_ha
 def test_inspector_library_row_and_its_contextual_action():
     src = _view("inspector.js")
     lib = _func(src, "inspLibHTML")
-    assert "Symbol" in lib and "Footprint" in lib and "3D" in lib and "STEP" in lib
+    assert "libIconsHTML(libRowOf(l))" in lib      # Symbol, Footprint, 3D and Pins are the four icons now (see test_ui_model_icons.py)
     # Accept once verified and not yet accepted; Verify while it is not verified and a symbol exists; neither otherwise
     assert re.search(r"e\.verify === 'pass' && !e\.accepted\s*\?\s*btn\('Accept'.*accept: l\.key", lib, re.S)
     assert re.search(r":\s*e\.verify !== 'pass' && e\.symbol[^?]*\?\s*btn\('Verify'.*verify: l\.key", lib, re.S)

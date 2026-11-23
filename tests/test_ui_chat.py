@@ -149,5 +149,5 @@ def test_the_library_page_marks_a_line_whose_pins_are_unverified():
     # spec phase 1: "unverified" on the sheet, in the BOM and on the Library page
     from ui_source import ui_js
     js = ui_js()
-    assert "function libPins(r)" in js and "libPins(r) + '</div>'" in js
+    assert "function libPinsState(r)" in js and "libPinsState(r)" in js and "libIconsHTML(r)" in js   # the Pins icon carries it now
     assert "Pins unverified" in js and "Pins conflict" in js

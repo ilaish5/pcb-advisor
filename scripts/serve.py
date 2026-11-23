@@ -2820,6 +2820,7 @@ UI_STATIC_TYPES = {
     ".png": "image/png",
     ".woff2": "font/woff2",
     ".json": "application/json",
+    ".wasm": "application/wasm",              # ui/vendor/occt (the STEP reader of the 3D preview)
 }
 
 
@@ -2956,6 +2957,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, zpath.read_bytes(), "application/zip",
                               {"Content-Disposition": f'attachment; filename="{zpath.name}"'})
         return self._send(200, {"path": str(zpath), "name": zpath.name, "size": zpath.stat().st_size})
+
+    def _library_preview(self, path):
+        """GET /api/library/preview?line=&kind=symbol|footprint|model: the geometry of one library line, as JSON.
+        GET /api/library/model?line=&format=wrl|step: that line's 3D file. Read-only. The client names only the line: every path
+        comes from the project's library/manifest.json and must resolve inside its library/ folder (scripts/model_preview.py)."""
+        import model_preview
+        proj = self.project()
+        if not project_mod.exists(proj):
+            return self._send(404, {"error": f"no such project: {proj}"})
+        lib = store.pdir(proj) / "library"
+        manifest = store.library_manifest(proj)
+        try:
+            if path == "/api/library/model":
+                entry = manifest.get(self.query("line") or "")
+                if not isinstance(entry, dict):
+                    return self._send(404, {"error": "This line is not in the library yet. Build the library."})
+                data, ctype, name = model_preview.model_file(lib, entry, self.query("format") or "")
+                return self._send(200, data, ctype, {"Content-Disposition": f'inline; filename="{name}"'})
+            return self._send(200, model_preview.preview(lib, manifest, self.query("line") or "", self.query("kind") or ""))
+        except model_preview.PreviewError as exc:
+            return self._send(exc.code, {"error": str(exc)})
+        except (OSError, ValueError, KeyError, IndexError, TypeError, UnicodeError, RecursionError) as exc:
+            runlog.exception("exception", exc, where="library.preview", project=proj)
+            return self._send(500, {"error": "The preview could not be made from this part's files. Build the library again."})
 
     def _report_project(self):
         """GET /api/report/project?project=<name>: make that project's activity zip now (a copy stays in logs/) and send it as a download."""
@@ -3455,6 +3480,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, res)
             except Exception as exc:
                 return self._send(400, {"error": str(exc)})
+        if path in ("/api/library/preview", "/api/library/model"):
+            return self._library_preview(path)
         if path == "/api/library/search":
             mpn = self.query("mpn")
             if not mpn:
