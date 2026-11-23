@@ -96,7 +96,8 @@ function rulesDrcRow(linked) {
   if (!linked) return '';
   const c = S && S.board_check;
   const {tone, text} = drcSummary(c);
-  return `<div class="rules-drc meta" role="status"><span class="${tone ? tone + '-t' : ''}">${esc(text)}</span> ${pvStepBtn('drc', {kind: 'link'})}</div>`;
+  return `<div class="rules-drc meta" role="status"><span class="${tone ? tone + '-t' : ''}">${esc(text)}</span> ${pvStepBtn('drc', {kind: 'link'})}</div>` +
+    (pvBusy === 'drc' ? pvStepNote('pcb', true) : '');      // the live line with the m:ss clock and Stop, as on the Layout page (the step is Layout's)
 }
 
 /* ---------- the diff ---------- */

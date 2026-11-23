@@ -77,6 +77,11 @@ function syncIdeaCanvas() {
   if (!prev) ideaPreviewPid = '';
   for (const ed of ideaEditors) ed.setPreview(prev);
 }
+// Revert: every editor shows the diagram the server now has (the saved one) and drops its unsaved drags and pending save.
+function ideaResetCanvas() {
+  const d = ideaDiagram();
+  for (const ed of ideaEditors) if (typeof ed.resetData === 'function') ed.resetData(d);
+}
 function mountDiagramEditor(container) {
   const mountEl = (container || document).querySelector('.diagram-mount-point');
   if (!mountEl) return;
@@ -643,6 +648,7 @@ onAct('draft-revert', async () => {
   const res = await ideaPost('/api/idea/draft/revert', {});
   if (!res) return;
   ideaRedraw();
+  ideaResetCanvas();          // the editor still holds the dragged positions: it takes the saved diagram, and saves nothing
   toast('Back to your last saved version');
 });
 onAct('idea-restore', async (el, d) => {

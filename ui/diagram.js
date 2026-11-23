@@ -1406,6 +1406,24 @@
       if (this.options.onPreview) this.options.onPreview(false);
     }
 
+    /** Put the server's diagram in place of everything shown, even when it equals the last one the server sent (Revert: the draft the
+     *  student's drags made is gone on the server, so the editor must not keep them). A pending save is dropped, never sent. */
+    resetData(newData) {
+      if (!newData || this.destroyed) return;
+      if (this.previewing) this.endPreview();
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = null;
+      this.isDirty = false;
+      this.data = sanitizeModel(newData);
+      this.serverSnapshot = JSON.stringify(this.data);
+      this.history = [JSON.stringify(this.data)];
+      this.historyIndex = 0;
+      this.updateUndoRedoButtons();
+      this.render();
+      this.updateEmptyState();
+      if (!this.userHasPannedOrZoomed) this.fitContent();
+    }
+
     updateData(newData, touchedIds = []) {
       if (!newData || this.destroyed) return;
       const cleanServer = sanitizeModel(newData);

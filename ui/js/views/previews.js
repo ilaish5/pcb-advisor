@@ -435,13 +435,13 @@ function pvLaterOk(n) {        // the same step succeeded after this note was ma
   const drawn = (ok.draw_sheets || []).filter(d => new Date(d.ts).getTime() > n.at).flatMap(d => d.sheets);
   return named.every(id => drawn.some(st => st === id || st.startsWith(id + ' ')));      // a draw of other sheets leaves it standing
 }
-function pvStepNote(page) {       // under the header: Altium is working, or what the last step answered
+function pvStepNote(page, busyOnly) {       // under the header: Altium is working, or what the last step answered
   pvResume();
   const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
   const busy = pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${esc(PV_STEPS[pvBusy].busy)} ${pvElapsedHTML()}</div>`}<div class="acts">${pvStopBtn()}</div></div>` : '';
   if (pvNote[page] && pvNote[page].kind !== 'ok' && pvLaterOk(pvNote[page])) delete pvNote[page];
   const n = pvNote[page] || pvSeedNote(page);
-  if (busy || !n) return busy;
+  if (busy || !n || busyOnly) return busy;
   const acts = (n.partial ? btn('Route the rest and leave ' + n.partial.join(', ') + ' open', {size: 'sm', kind: 'line', act: 'altium-step', step: 'route', partial: '1', disabled: pvBusy ? true : undefined,
       title: 'Routes every net that can be routed, keeps those tracks, and leaves ' + n.partial.join(', ') + ' unrouted for you to finish in Altium'}) : '') +
     (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
