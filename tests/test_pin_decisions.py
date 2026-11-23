@@ -214,7 +214,11 @@ def test_a_chinese_datasheet_is_never_a_verification(empty):
     assert row["status"] == "unverified" and "mostly Chinese" in row["issues"]
 
 
-def test_an_empty_extraction_is_not_cached_and_the_list_says_not_read(empty, tmp_path):
+def test_an_empty_extraction_is_not_cached_and_the_list_says_not_read(empty, tmp_path, monkeypatch):
+    import subprocess
+    # pypdf cannot read this file; pdftotext (when installed) reads a scan as no text. Stubbed, so the test does not depend on
+    # poppler being on the machine (a missing pdftotext raises instead: tests/test_sources.py)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="", stderr=""))
     folder = sources.folder_of(empty)
     folder.mkdir(parents=True, exist_ok=True)
     pdf = folder / "scan.pdf"
