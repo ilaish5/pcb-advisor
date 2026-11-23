@@ -75,7 +75,7 @@ def test_add_outjob_after_a_failed_add_works_on_the_next_click_and_is_idempotent
 def test_stop_is_held_on_the_last_step_and_a_stopped_run_is_logged_as_stopped(empty, world, monkeypatch):
     js = ui_js()
     stop = js[js.index("function pvStopBtn"):js.index("function pvStepNote")]
-    assert "This step finishes as one Altium operation" in stop and "pvStopping || last" in stop
+    assert "This step cannot be cut short" in stop and "last && !pvStopping" in stop     # no dead Stop on the last operation: a line says why
     logged = []
     monkeypatch.setattr(serve.runlog, "event", lambda *a, **k: logged.append(k))
     world.update(schlib=False)

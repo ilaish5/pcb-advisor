@@ -79,7 +79,9 @@ def test_followup_messages_allow_tools_only_when_a_split_is_asked():
     plain = serve.followup_message([], ["altium.draw_schematic: no"], {}, [])
     assert "This is a text-only reply: no actions will run" in plain and "tool calls" not in plain
     src = (REPO / "scripts" / "serve.py").read_text(encoding="utf-8")
-    assert "(Not run: the denied command was not run again" in src and 'rec["split_retry"] = True' in src
+    import turn_truth
+    assert turn_truth.msg("not_run", "en", what=turn_truth.msg("denied_not_rerun", "en")).startswith("(Not run: the denied command was not run again")
+    assert 'turn_truth.msg("denied_not_rerun", lang)' in src and 'rec["split_retry"] = True' in src
 
 
 def test_empty_states_state_the_limits():

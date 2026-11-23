@@ -349,7 +349,8 @@ const PV_STEPS = {
 /* The board's own design rule check as one sentence and one tone, from S.board_check (the server keeps it): the Rules header and the
    Layout page's note both say it, so a reload or a dismissed note does not lose it. */
 function drcSummary(c) {
-  const when = c && c.ts && typeof outAgo === 'function' ? outAgo(new Date(Number(c.ts)).toISOString()) : '';
+  // the server stamps records with an ISO time (store.now_ms); a bare number is epoch ms. outAgo says '' for anything it cannot read.
+  const when = c && c.ts && typeof outAgo === 'function' ? outAgo(/^\d+$/.test(String(c.ts)) ? new Date(Number(c.ts)).toISOString() : String(c.ts)) : '';
   let tone = '', text;
   if (!c) text = 'Board DRC: not run yet';
   else if (c.complete === false) { tone = 'warn'; text = 'Board DRC: the report was incomplete, run it again'; }
