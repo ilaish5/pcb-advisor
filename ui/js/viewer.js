@@ -67,8 +67,11 @@ function docSourceSub(name, where) {
     if (s.url && /^https?:\/\//i.test(s.url)) parts.push(`<a href="${esc(s.url)}" target="_blank" rel="noopener" title="${esc(s.url)}">${esc(docHost(s.url))}</a>`);
     else if (s.origin) parts.push(`<span>${esc(s.origin)}</span>`);
     if (s.sha256 && s.sha256 !== '—') parts.push(`<span title="The start of the file's sha256">sha256 <span class="m">${esc(s.sha256)}</span></span>`);
-    if (s.text) parts.push('<span>Text extracted</span>');
-    else if (docExt(name) === '.pdf') parts.push('<span class="warn-t" title="The agent cannot quote this document">No text extracted</span>');
+    const ts = s.text_state || (s.text ? 'good' : docExt(name) === '.pdf' ? 'not_read' : '');
+    if (ts === 'good') parts.push('<span>Text extracted</span>');
+    else if (ts === 'poor') parts.push('<span class="warn-t" title="Mostly Chinese or a scan: pin tables in it cannot be matched. Look at the page yourself, or attach an English datasheet.">Text hard to read</span>');
+    else if (ts === 'none') parts.push('<span class="warn-t" title="Nothing could be extracted (a scan or an image-only file): the agent cannot quote it">No text in this file</span>');
+    else if (ts === 'not_read') parts.push('<span title="The text is read the first time the agent or a check needs it">Text not read yet</span>');
   }
   if (where) parts.push(`<span>${esc(where)}</span>`);
   return parts.join('');

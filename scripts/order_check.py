@@ -91,17 +91,25 @@ def order_check(project, recheck=False):
             alts.sort(key=lambda a: a["match"] != "same")
         cls = classify(l, alts, need)
         counts[cls] = counts.get(cls, 0) + 1
+        if l.get("pin_decision"):
+            counts["accepted_risk"] = counts.get("accepted_risk", 0) + 1
         stock = lcsc_stock(l)
         out.append({"line": l["key"], "refs": l.get("refs", []), "mpn": l.get("mpn"), "lcsc": l.get("lcsc") or l.get("code") or "",
                     "package": l.get("package"), "qty": q, "need": need, "availability": l.get("availability"),
                     "stock": stock, "risk": l.get("risk") or [], "class": cls, "alternatives": alts,
+                    "pin_decision": l.get("pin_decision"),
                     "warnings": ["low stock"] if cls == "ok" and stock < need * LOW_FACTOR else []})
+    try:
+        import pin_decisions
+        pin_decisions.write_manifest(project)            # the accepted risks travel with the order, beside the Gerber zip
+    except OSError:
+        pass
     return {"lines": out, "counts": counts, "params_stale": partlib_order.params_notices(project), "checked_at": store.now()}
 
 
 def summary(res):
     """A few words for the agent's action result."""
-    c = res["counts"]
+    c = {k: v for k, v in res["counts"].items() if k != "accepted_risk"}
     todo = [f"{l['line']} {l['class']}" for l in res["lines"] if l["class"] in ("swap_free", "design_change", "no_alternative")]
     return (f"{len(res['lines'])} lines, " + ", ".join(f"{n} {k}" for k, n in sorted(c.items()))
             + (": " + "; ".join(todo[:6]) + (f" +{len(todo) - 6}" if len(todo) > 6 else "") if todo else "")

@@ -337,7 +337,7 @@ document.addEventListener('click', async e => {
     if (fn) { await fn(el, d, e); return; }
     if (d.decide) { setState(await api('/api/proposal', {id: d.pid, decision: d.decide})); render(true); return; }      // the proposal card shows the decision; no toast
     if (d.accept) { setState(await api('/api/library/accept', {line: d.accept})); render(true); toast('Accepted'); return; }
-    if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast('Result: ' + r.result.verify); return; }
+    if (d.verify) { toast('Verifying…'); const r = await api('/api/skill', {name: 'verify', args: [d.verify]}); setState(r.state); render(true); toast(verifyToast(r.result)); return; }
     if (d.thread !== undefined && el.dataset.thread !== undefined) { if (d.thread) switchSession(d.thread); return; }
     if (d.proj) { ALTIUM_DATA = null; const u = new URL(location.href); u.searchParams.set('project', d.proj); u.searchParams.delete('session'); location.href = u; return; }
     if (d.tab) { go('workspace', d.tab); return; }

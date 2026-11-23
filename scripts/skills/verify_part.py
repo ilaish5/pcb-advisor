@@ -47,7 +47,10 @@ def _judge(project, line, ds):
     except FileNotFoundError:
         return {"verify": "unchecked", "issues": f"{ds} is not in the library; run scripts/sources.py restore"}
     if not text.strip():
-        return {"verify": "unchecked", "issues": f"{ds} has no text to read (a scan?)"}
+        return {"verify": "unchecked", "issues": f"{ds} has no text to read (a scan?): confirm the pins against the page instead"}
+    quality = sources.quality(text)
+    if quality["state"] == "poor":      # a table in Chinese or a bad scan reads as noise: no pass, no conflict, the student looks
+        return {"verify": "unchecked", "issues": f"{ds}: {quality['why']}; confirm the pins against the datasheet page, or attach an English datasheet"}
     names = [m for m in (line.get("mpn"), line.get("value")) if m and str(m).strip() not in _NO_MPN]
     if not names:
         return {"verify": "unchecked", "issues": "the BOM line has no MPN to match the datasheet to"}
@@ -102,6 +105,7 @@ def verify(project, key):
         changes["evidence"] = ""
     if result["verify"] == "mismatch":
         changes["pins_accepted"] = False     # new conflicting pins: the student decides again
+        changes["pin_decision"] = None
     store.add_library(project, key, changes, by="verify_part")
     store.refresh_pins_source(project)       # clears the "unverified" mark on the sheet parts, or leaves it
     return {"line": key, **result}

@@ -209,7 +209,8 @@ def fetch(url, name=None, timeout=45, project=None):
     # bytes, not write_text: on Windows that turns every "\n" into "\r\n", and the
     # tracked sidecars are LF, so git would show a change that is only line endings
     _meta_path(path).write_bytes((json.dumps(meta, indent=2) + "\n").encode("utf-8"))
-    return meta
+    _record_quality(path)
+    return _read_meta(path) or meta
 
 
 def text_of(name, folder=None):
@@ -242,8 +243,68 @@ def text_of(name, folder=None):
                                   errors="replace").stdout
     else:
         text = path.read_text(encoding="utf-8", errors="replace")
-    txt_path.write_text(text, encoding="utf-8")
+    if text.strip():                # an empty extraction is not cached: it would stay "no text" after a better extractor is installed
+        txt_path.write_text(text, encoding="utf-8")
     return text
+
+
+_CJK = re.compile(r"[぀-ヿ㐀-䶿一-鿿가-힯]")
+_PIN_HEADING = re.compile(r"pin\s*(?:configuration|description|assignment|definition|function)s?|pinout|terminal\s*(?:function|assignment)", re.I)
+
+
+def quality(text):
+    """How readable a document's extracted text is: {pages, chars_per_page, cjk_ratio, lang, has_pin_heading, state, why, score}.
+    state "none" (nothing extracted), "poor" (mostly CJK, or a few characters a page: a scan or an image-only file) or "good".
+    Cheap and pure, so it can run on the text at fetch, upload and adopt."""
+    text = text or ""
+    letters = re.sub(r"\s", "", text)
+    pages = max(1, len([p for p in text.split("\f") if p.strip()])) if letters else 0
+    cjk = len(_CJK.findall(letters)) / len(letters) if letters else 0.0
+    cpp = round(len(letters) / pages) if pages else 0
+    lang = "zh" if cjk > 0.2 else ("en" if letters else "")
+    state, why = "good", ""
+    if not letters:
+        state, why = "none", "no text could be extracted (a scan or an image-only file)"
+    elif cjk > 0.2:
+        state, why = "poor", "the text is mostly Chinese/Japanese/Korean, so a pin table in it cannot be matched"
+    elif cpp < 150 and pages >= 3:
+        state, why = "poor", f"only about {cpp} characters a page could be read (a scan?)"
+    return {"pages": pages, "chars_per_page": cpp, "cjk_ratio": round(cjk, 3), "lang": lang,
+            "has_pin_heading": bool(_PIN_HEADING.search(text)), "state": state, "why": why,
+            "score": 0 if state == "none" else (0.3 if state == "poor" else 1.0)}
+
+
+def _record_quality(path):
+    """Write text_quality into a document's sidecar the first time it is read (fetch, upload, adopt). Never rewrites a sidecar that has it."""
+    meta = _read_meta(path)
+    if not meta or "text_quality" in meta or path.suffix.lower() != ".pdf":
+        return
+    try:
+        meta["text_quality"] = quality(text_of(path.name, path.parent))
+        _meta_path(path).write_bytes((json.dumps(meta, indent=2) + "\n").encode("utf-8"))
+    except Exception:
+        pass            # a document nobody can read keeps no record; the list says "not read"
+
+
+_quality_memo = {}
+
+
+def text_state(path):
+    """not_read | good | poor | none for a document of the list: from its sidecar, else from the text cached beside it. A PDF is
+    never extracted here (the list is polled): one with neither is "not_read"."""
+    if path.suffix.lower() != ".pdf":
+        return "good" if path.suffix.lower() in (".md", ".txt") else "not_read"
+    q = _read_meta(path).get("text_quality")
+    if isinstance(q, dict) and q.get("state"):
+        return q["state"]
+    txt = path.with_suffix(path.suffix + ".txt")
+    if not txt.exists():
+        return "not_read"
+    st = txt.stat()
+    key = (str(txt), st.st_size, st.st_mtime_ns)
+    if key not in _quality_memo:
+        _quality_memo[key] = quality(txt.read_text(encoding="utf-8", errors="replace"))["state"]
+    return _quality_memo[key]
 
 
 HEAD_PAGES = 3
@@ -385,6 +446,7 @@ def adopt(project):
         meta = {"name": f.name, "url": None, "sha256": file_sha256(f), "bytes": f.stat().st_size,
                 "origin": "added by the student"}
         _meta_path(f).write_bytes((json.dumps(meta, indent=2) + "\n").encode("utf-8"))
+        _record_quality(f)
         added.append(f.name)
     return added
 

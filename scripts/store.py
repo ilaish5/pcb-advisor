@@ -272,7 +272,7 @@ def _legacy_pass(entry):
     """verify == "pass" without the pin-table method and not accepted by the student: it must be verified again."""
     entry = entry or {}
     return (entry.get("verify") == "pass" and entry.get("method") != "pin-table"
-            and not (entry.get("accepted") or entry.get("pins_accepted")))
+            and not (entry.get("accepted") or entry.get("pins_accepted") or (entry.get("pin_decision") or {}).get("status") == "accepted"))
 
 
 def ui_entry(entry):
@@ -376,12 +376,16 @@ def bom(project, write=True):
         for part in load_sheet(project, sh).get("parts", []):
             sheets.setdefault(part["ref"], (sh, part.get("section")))
     build_qty = int(workspace.get("jlc.build_qty", 5))
+    if write:
+        import pin_decisions
+        pin_decisions.stamp_legacy(project, lines, lib)       # a legacy "accepted as is" gets the fingerprint it lasts against
     for l in lines:
         l["supply"] = supply.get(l["key"])
         entry = lib.get(l["key"])
         l["library"] = manifest_status(library_status(l, entry), man.get(l["key"]))
         l["library_entry"] = ui_entry(entry)
         l["pins_status"], l["pins_issues"] = pins_status(l, entry, project)
+        l["pin_decision"] = _decision_view(project, l, entry) if l["pins_status"] == "accepted" else None
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
         l["role"] = l.get("role") or ""
 
@@ -2919,7 +2923,13 @@ def write_sheet(project, sheet_id, sheet):
         part = dict(part)
         part["pins"] = [{**pin, "net": (pin.get("net") or "").strip()} for pin in part["pins"]]
         parts.append(part)
+    before = {p.get("ref"): p.get("pins") for p in load_sheet(project, sheet["id"]).get("parts", [])}
     sheet["parts"] = mark_bom_status(project, _mark_pins_source(project, parts))
+    guess = [p["ref"] for p in sheet["parts"] if p.get("pins_source") == "agent" and before.get(p["ref"]) != p["pins"]]
+    if guess:       # ledger 20: a pinout the agent wrote from memory is drawn; it is never a silent fact
+        warnings = warnings + [f"pins of {', '.join(guess[:8])}{' ...' if len(guess) > 8 else ''} "
+                               f"{'is' if len(guess) == 1 else 'are'} a guess, not from a datasheet: confirm against the datasheet page "
+                               "(DFM > Unverified parts > Confirm pins)"]
     d = netlist_dir(project)
     d.mkdir(parents=True, exist_ok=True)
     if not (d / f"{sheet['id']}.json").exists():
@@ -2979,7 +2989,28 @@ def _polarity_note(project, line):
     return base
 
 
+def _decision_view(project, line, entry):
+    """The standing pin decision as the BOM line carries it (basis, when, why, evidence): what "Accepted risk" shows."""
+    import pin_decisions
+    dec = pin_decisions.state(project, line, entry)[0]
+    return {k: dec.get(k) for k in ("basis", "ts", "reason", "evidence")} if dec else None
+
+
 def pins_status(line, entry, project=None):
+    """('', '') for a simple part or one not on a sheet yet; else ('verified'|'accepted'|'unverified'|'mismatch', issues).
+    Simple parts (R, C, L ...) are '' too, except a connector (J, P) with no datasheet and a diode/LED (D, LED) whose
+    polarity no datasheet confirms: those are 'unverified' (the Unverified list), with the reason in issues.
+    "accepted" is the student's pin decision (scripts/pin_decisions.py) while it stands; one made against pins that have
+    changed since is no decision: the part is unverified again and the reason says so."""
+    import pin_decisions
+    acc, note = pin_decisions.state(project, line, entry)
+    st, why = _pins_status(line, entry, project, bool(acc))
+    if note and st in ("unverified", "mismatch"):
+        why = f"{note}: {why}" if why else note
+    return st, why
+
+
+def _pins_status(line, entry, project, acc):
     """('', '') for a simple part or one not on a sheet yet; else ('verified'|'accepted'|'unverified'|'mismatch', issues).
     Simple parts (R, C, L ...) are '' too, except a connector (J, P) with no datasheet and a diode/LED (D, LED) whose
     polarity no datasheet confirms: those are 'unverified' (the Unverified list), with the reason in issues."""
@@ -2990,7 +3021,7 @@ def pins_status(line, entry, project=None):
     if all(is_simple_ref(r) for r in refs):
         kinds = {_prefix_of(r) for r in refs}
         conn, pol = kinds & set(CONNECTOR_PREFIXES), kinds & set(POLARISED_PREFIXES)
-        if not (conn or pol) or entry.get("pins_accepted") or passed_by_table(entry) \
+        if not (conn or pol) or acc or passed_by_table(entry) \
                 or (entry.get("accepted") and entry.get("verify") == "pass"):
             return "", ""
         if entry.get("verify") == "mismatch":
@@ -3005,12 +3036,12 @@ def pins_status(line, entry, project=None):
     if passed_by_table(entry):
         return "verified", ""
     if entry.get("verify") == "pass":            # a pass without the pin-table method (older text matching): not a verification
-        if entry.get("pins_accepted") or entry.get("accepted"):
+        if acc or entry.get("accepted"):
             return "accepted", ""
         return "unverified", "an earlier check passed this part by text matching; verify it again against the datasheet's pin table"
     if entry.get("verify") == "mismatch":
-        return ("accepted" if entry.get("pins_accepted") else "mismatch"), entry.get("issues", "")
-    if entry.get("pins_accepted"):
+        return ("accepted" if acc else "mismatch"), entry.get("issues", "")
+    if acc:
         return "accepted", ""
     if entry.get("verify") == "unchecked" and entry.get("issues"):
         return "unverified", _unchecked_reason(line, entry)
@@ -3039,11 +3070,13 @@ def _mark_pins_source(project, parts):
     for part in parts:
         part = dict(part)
         ref = part.get("ref")
-        if is_simple_ref(ref):
+        if is_simple_ref(ref) and _prefix_of(ref) not in CONNECTOR_PREFIXES + POLARISED_PREFIXES:
             part.pop("pins_source", None)
         else:
             ln = by_ref.get(ref)
-            st = pins_status(ln, lib.get(ln["key"]))[0] if ln else "unverified"
+            st = pins_status(ln, lib.get(ln["key"]), project)[0] if ln else "unverified"
+            if not st and ln:
+                st = "verified"          # a connector / diode the checker passed without a decision: nothing to mark
             if st in ("verified", "accepted"):
                 part["pins_source"] = "datasheet" if st == "verified" else "student"
             else:
@@ -3107,8 +3140,8 @@ def _checked_outcome(line, entry):
     if passed_by_table(entry):
         out = ("verified", "pins verified")
     elif entry.get("verify") == "mismatch":
-        out = ("accepted", "conflicts with the datasheet, your accept stands") if entry.get("pins_accepted") else ("mismatch", "pins conflict")
-    elif st == "accepted" or entry.get("pins_accepted") or entry.get("accepted"):
+        out = ("accepted", "conflicts with the datasheet, your accept stands") if st == "accepted" else ("mismatch", "pins conflict")
+    elif st == "accepted" or entry.get("accepted"):
         out = ("accepted", "not verified by the datasheet, your accept stands")
     else:
         out = ("unverified", "still unverified")
@@ -3162,9 +3195,9 @@ def manufacturing_warning(project):
 
 
 def accept_pins(project, key):
-    """The student accepts the agent's pins as is."""
-    add_library(project, key, {"pins_accepted": True}, by="student")
-    refresh_pins_source(project)
+    """The student accepts the agent's pins as is: a pin decision with no datasheet page (basis polarity / blind), idempotent."""
+    import pin_decisions
+    pin_decisions.accept(project, key)
 
 
 # ---------------------------------------------------------------- datasheet link

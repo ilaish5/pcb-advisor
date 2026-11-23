@@ -136,6 +136,7 @@ def list_sources(project):
                 "origin": meta.get("origin") or _host(meta.get("url")) or "uploaded",
                 "url": meta.get("url"), "sha256": sha[:8] if sha else "—",
                 "text": (d / (name + ".txt")).exists() or (path.suffix in (".md", ".txt") and present),
+                "text_state": sources.text_state(path) if present else "not_read",
                 "used_for": _used_for(used),
             })
     # shared datasheets, then the shared reference library, then the project's own documents

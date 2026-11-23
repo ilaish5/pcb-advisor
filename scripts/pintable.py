@@ -27,6 +27,7 @@ _NUMBER = r"(?:[A-Za-z]{1,2}[1-9]\d{0,2}|[1-9]\d{0,2}|0)"
 _CELL = re.compile(rf"^{_NUMBER}(?:,{_NUMBER})*$")
 _RANGE = re.compile(r"^([1-9]\d{0,2})[-–]([1-9]\d{0,2})$")
 _ANNOT = re.compile(r"^\(\w{1,4}\)$")
+_VOLTAGE_NAME = re.compile(r"^[1-9][Vv][0-9]\w*$")          # a supply pin named by its voltage: 3V3, 1V8, 5V0
 _NAMEFIRST = re.compile(r"^[A-Za-z~/#_+-][A-Za-z0-9_/#~+\-]*$")
 
 POWER_TYPES = {"P", "PWR", "POWER", "S", "SUPPLY", "PI", "PO"}
@@ -61,10 +62,22 @@ def _cell(tok):
         return []
     if _CELL.match(t.rstrip(",")):
         return t.rstrip(",").split(",")
+    if "," in t and "-" in t:             # a list that holds ranges: `1,2,11,14,36-53` (each part a number or a range, nothing else)
+        out = []
+        for piece in t.rstrip(",").split(","):
+            one = _cell(piece) if not _is_mixed(piece) else None
+            if not one:
+                return None
+            out += one
+        return out
     m = _RANGE.match(t)
     if m and 0 < int(m.group(2)) - int(m.group(1)) <= 64:
         return [str(n) for n in range(int(m.group(1)), int(m.group(2)) + 1)]
     return None
+
+
+def _is_mixed(piece):
+    return "," in piece
 
 
 def _is_alnum_cell(cell):
@@ -103,7 +116,7 @@ def _name_cell(toks):
 
 def _row(nums, rest):
     name = _name_cell(rest)
-    if not name or not re.match(r"[~/#_+-]*[A-Za-z]", name[0]) or (name[0].islower() and len(name[0]) > 2 and name[0].isalpha()):
+    if not name or not re.match(r"[~/#_+-]*(?:[A-Za-z]|[1-9][Vv][0-9]\w*$)", name[0]) or (name[0].islower() and len(name[0]) > 2 and name[0].isalpha()):
         return None
     after = [t for t, _ in rest[len(name):len(name) + 1]]
     typ = after[0].upper() if after and after[0].upper() in TYPES else ""
@@ -139,7 +152,7 @@ def parse_name_first(line):
     if re.search(r"\.{4,}", line):
         return None
     toks = _tokens(re.sub(r"(?<=\d)\s*,\s+(?=\d)", ",", line))
-    if len(toks) < 2 or not _NAMEFIRST.match(toks[0][0]) or not re.search(r"[A-Za-z]", toks[0][0]):
+    if len(toks) < 2 or not (_NAMEFIRST.match(toks[0][0]) or _VOLTAGE_NAME.match(toks[0][0])) or not re.search(r"[A-Za-z]", toks[0][0]):
         return None
     cells, i = [], 1
     while i < len(toks):

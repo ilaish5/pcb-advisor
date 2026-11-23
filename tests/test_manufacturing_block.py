@@ -86,9 +86,11 @@ def test_the_agent_cannot_accept_on_the_students_behalf(empty):
     assert store.manufacturing_warning(empty)
 
 
-def test_the_unverified_list_has_an_accept_button_per_part():
+def test_the_unverified_list_has_a_confirm_button_per_part():
     js = (REPO / "ui" / "js" / "views" / "checks.js").read_text(encoding="utf-8")
-    assert "act: 'accept-pins', line: l.key" in js and "'/api/pins/accept', {line: d.line}" in js
+    pins = (REPO / "ui" / "js" / "views" / "pins.js").read_text(encoding="utf-8")
+    assert "act: 'confirm-pins', line: l.key" in js and "'/api/pins/confirm', {line: key" in pins
+    assert "reason" not in pins.lower().replace("no reason", "")      # no mandatory reason field anywhere in the flow
     assert "rows.map(item)" in js     # every row, a mismatch included, comes from the one template that holds the button
 
 
