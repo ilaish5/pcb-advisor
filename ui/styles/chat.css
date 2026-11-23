@@ -28,6 +28,9 @@
 /* ---------- the thread ---------- */
 .msgs{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:16px;padding:10px 4px 14px 6px}
 .msgs>*{flex:none}
+/* the thread, then the turn in flight (or a status note), then the starter chips: one scrolling list above the composer */
+.chat-thread{display:flex;flex-direction:column;gap:16px}
+.chat-thread>*{flex:none}
 .msgs .hint{color:var(--ink-3)}
 .thread-h{display:flex;align-items:center;gap:6px;min-width:0;font-size:var(--t-sm);color:var(--ink-3);white-space:nowrap;overflow:hidden}
 .thread-h>*+*::before{content:"\00b7";margin-right:6px}
@@ -84,9 +87,16 @@
 .prop-done{display:flex;align-items:center;gap:6px;font-size:var(--t-sm);color:var(--ink-3)}
 
 /* ---------- composer ---------- */
-.composer{padding:6px 2px 0}
+/* Fixed: the box and the engine line, nothing else. Progress, notes and chips live in the thread above, so they never move it. */
+.composer{position:relative;flex:none;padding:6px 2px 0}
 .sugs{display:flex;gap:6px;flex-wrap:wrap}
-.sugs:not(:empty){padding:0 2px 8px}
+.sugs:empty{display:none}
+/* "Jump to latest": floats over the end of the thread while the student has scrolled up; it takes no room */
+.chat-jump{position:absolute;z-index:2;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);display:inline-flex;align-items:center;gap:4px;
+  height:26px;padding:0 10px 0 8px;border-radius:999px;border:1px solid var(--line-2);background:var(--sheet);box-shadow:var(--float);
+  font-size:var(--t-xs);color:var(--ink-2);white-space:nowrap;animation:pop .12s var(--ease)}
+.chat-jump:hover{color:var(--ink);border-color:var(--ink-4)}
+.chat-jump[hidden]{display:none}
 .sug{min-height:28px;padding:3px 11px;border-radius:999px;border:1px solid var(--line-2);background:var(--sheet);
   font-size:var(--t-sm);color:var(--ink-2);text-align:left}
 .sug:hover{color:var(--ink);border-color:var(--ink-4)}
@@ -109,7 +119,9 @@
   background:var(--btn);color:var(--btn-ink);transition:background .12s}
 .send:hover{background:var(--btn-hover)}
 .send:disabled{opacity:.35;pointer-events:none}
-.chat-status{min-height:26px;padding:4px 4px 6px;display:flex;align-items:center;gap:8px;font-size:var(--t-sm);color:var(--ink-3)}
+/* the last item of the thread: the turn in flight, the follow-up round, or what went wrong */
+.chat-status{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--t-sm);color:var(--ink-3)}
+.chat-status:empty{display:none}
 .chat-status .note{flex:1;padding:6px 10px;font-size:var(--t-sm)}
 
 /* ---------- grouped proposals and auto-applied lines ---------- */
@@ -122,10 +134,11 @@
 .chat-work{flex:1;min-width:0;display:grid;gap:4px}
 .chat-line{display:flex;align-items:center;gap:8px;min-width:0}
 .chat-line #chat-clock{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chat-steps>summary{cursor:pointer;width:fit-content;list-style:none}
+.chat-steps[hidden]{display:none}
+.chat-steps>summary{cursor:pointer;width:fit-content;list-style:none;padding-left:22px}
 .chat-steps>summary::-webkit-details-marker{display:none}
 .chat-steps>summary:hover{color:var(--ink)}
-.chat-steps ul{list-style:none;margin:4px 0 0;padding:0;display:grid;gap:2px;font-size:var(--t-xs);color:var(--ink-3)}
+.chat-steps ul{list-style:none;margin:4px 0 0;padding:0 0 0 22px;display:grid;gap:2px;font-size:var(--t-xs);color:var(--ink-3)}
 .chat-steps li{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-stopped{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;font-size:var(--t-sm);color:var(--ink-3)}
 .chat-stopped .acts{display:flex;gap:6px}
@@ -144,8 +157,8 @@
 
 .chat-followup{font-size:11px;color:var(--ink-3);margin-bottom:2px;letter-spacing:.02em}
 
-.chat-engine{padding:4px 4px 0;font-size:var(--t-xs);color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:left}
-.chat-engine:empty{display:none}
+/* one line of fixed height, empty or not, so the composer is the same height before and after the settings load */
+.chat-engine{height:22px;padding:4px 4px 0;line-height:18px;font-size:var(--t-xs);color:var(--ink-4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:left}
 .msg .eng{margin-top:4px;font-size:var(--t-sm);color:var(--ink-4)}
 .runs li .raw{font-family:var(--mono,monospace);word-break:break-all}
 .msg.agent.note{background:none;padding:0}

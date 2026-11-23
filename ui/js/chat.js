@@ -19,7 +19,8 @@ let askCtx = null;                        // the chip in the composer: {kind, id
 let chatError = null;                     // a send that never reached an answer: {message, text, ctx, session}
 let chatTimer = null, chatSince = 0;      // the "Working… 12 s" clock
 let chatPoller = null, chatPolling = false, chatProg = null;   // GET /api/chat/progress, once a second while pending: {current, steps, ...}
-let chatStopping = false, chatStepsOpen = false;               // Stop was pressed; the steps list under the working line is open
+let chatStopping = false, chatStepsOpen = false;               // Stop was pressed; the turn's "Steps (n)" list is open (closed at each new turn)
+let chatAtEnd = true;                     // the student is at the end of the thread: new content keeps it in view
 let chatQueue = [], chatQid = 0;          // typed while the agent works: [{id, text, ctx, session}], sent as one message when the turn ends
 let chatTail = null;                      // while the thread is drawn: the newest agent record, the only one whose cards have buttons
 let chatSeen = {session: null, count: 0}; // what the thread showed last, so only really new messages are announced
@@ -352,6 +353,7 @@ function chatEnqueue(text) {
   const ctx = chatChip();
   if (ctx) chatSetChip(null);
   chatQueue = [...chatQueue, {id: ++chatQid, text, ctx, session: S.session}];
+  chatAtEnd = true;                     // the student's own words: show them
   renderThread(true);
 }
 /* how a turn ended, for the queue: 'ok', 'stopped' (the student pressed Stop) or 'error' (nothing is sent) */
@@ -551,8 +553,23 @@ function chatAnnounce(text) {
   live.textContent = '';
   setTimeout(() => { live.textContent = text; }, 40);
 }
+/* The thread follows its end only while the student is there. Scrolled up, they keep their place and "Jump to latest" shows. */
+function chatFollow() {
+  const sc = $('#msgs');
+  if (!sc) return;
+  if (chatAtEnd && sc.scrollHeight - sc.scrollTop - sc.clientHeight > 1) sc.scrollTop = sc.scrollHeight;
+  const j = $('#chat-jump');
+  if (j && j.hidden !== chatAtEnd) j.hidden = chatAtEnd;
+}
+function chatJump() {
+  const sc = $('#msgs'), j = $('#chat-jump');
+  const hadFocus = j && document.activeElement === j;
+  chatAtEnd = true;
+  chatFollow();
+  if (hadFocus && sc) sc.focus({preventScroll: true});      // the button hides: focus stays in the chat
+}
 function renderThread(force) {
-  const box = $('#msgs');
+  const box = $('#chat-thread');
   if (!box) return;
   const key = JSON.stringify([S.session, S.chat.length, S.chat.at(-1)?.ts, S.proposals.map(p => p.status), (S.sources || []).length, chatQueueOf(S.session).map(q => q.id),
     S.chat.filter(m => m.cites).map(m => [m.ts, m.cites.state, Object.values(m.cites.items || {}).map(i => i.status)])]);
@@ -569,19 +586,13 @@ function renderThread(force) {
   const html = (S.chat.length ? S.chat.map(m => msgHTML(m, undoTs)).join('') : '<p class="hint">Ask about parts, nets or rules. Routine changes are done for you and can be undone; important ones (parts, Altium, ordering) wait for your approval.</p>') + chatQueueHTML();
   chatLead = null;
   chatTail = null;
-  const grew = chatSeen.session !== S.session || S.chat.length !== chatSeen.count;
-  const nearEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  // another conversation, or the student's own new message: show the end. An answer that arrives while they read above does not move them.
+  if (chatSeen.session !== S.session || (S.chat.length > chatSeen.count && S.chat.at(-1).role === 'user')) chatAtEnd = true;
   if (html !== chatHtml) {
-    const top = box.scrollTop;
     box.innerHTML = html;
     chatHtml = html;
-    box.scrollTop = grew || nearEnd ? box.scrollHeight : top;
-    // fonts and the suggestion row settle after this: stay at the end, or the last reply's chips sit below the fold
-    if (grew || nearEnd) {
-      const stick = () => { box.scrollTop = box.scrollHeight; };
-      requestAnimationFrame(stick);
-      document.fonts?.ready.then(stick);
-    }
+    chatFollow();
+    document.fonts?.ready.then(chatFollow);      // fonts settle after this: still at the end, or the last reply's chips sit below the fold
   }
   if (chatSeen.session === S.session && S.chat.length > chatSeen.count) {       // announce only what arrived, never a re-render
     const fresh = S.chat.slice(chatSeen.count).filter(m => m.role === 'agent' && m.text && !m.error && !m.decision);
@@ -663,23 +674,40 @@ function chatErrorCard(err) {
 }
 function renderComposer() {
   const err = chatCurrentError();
+  // the last item of the thread, right above the composer: the turn in flight, the follow-up round, or what went wrong
   const st = $('#chat-status');
   if (st) {
     const steps = chatProg && Array.isArray(chatProg.steps) ? chatProg.steps.map(chatStepName).filter(Boolean) : [];
     const fu = !pending && S && S.followup_running;       // the server's second turn checks the results of the actions (text only)
-    const k = pending ? 'work:' + steps.join('|') : fu ? 'followup' : err ? 'err:' + err.what + err.message + (err.kind || '') + (err.retry_at || '') : '';
+    const k = pending ? 'work' : fu ? 'followup' : err ? 'err:' + err.what + err.message + (err.kind || '') + (err.retry_at || '') : '';
     if (st.dataset.k !== k) {
       st.dataset.k = k;
-      st.innerHTML = pending
-        ? `<div class="chat-work"><div class="chat-line"><span class="spin" aria-hidden="true"></span><span id="chat-clock">Working…</span></div>` +
-          (steps.length ? `<details class="chat-steps"${chatStepsOpen ? ' open' : ''}><summary>Steps (${steps.length})</summary><ul>${steps.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : '') + '</div>'
+      st.innerHTML = pending ? chatWorkHTML()
         : fu ? `<div class="chat-work chat-followup-run"><div class="chat-line"><span class="spin" aria-hidden="true"></span><span>Checking the results…</span>${btn('Stop', {size: 'sm', act: 'chat-followup-stop'})}</div></div>`
         : err ? (chatErrorCard(err) || errorLine(err.what, err.message, err.text ? btn('Retry', {size: 'sm', act: 'retry'}) : '')) : '';
     }
+    if (pending) chatStepsSync(st, steps);
+    chatFollow();
   }
   chatUpdateSend();
   renderChatChip();
   if (pending) chatTick();
+}
+/* The turn in flight, drawn once per turn and then patched, so an open list, the focus and the hover survive each poll:
+   "Talking to Altium · 17 s" on one line, and under it "Steps (n)", closed until the student opens it. */
+function chatWorkHTML() {
+  return `<div class="chat-work live"><div class="chat-line"><span class="spin" aria-hidden="true"></span><span id="chat-clock">Working…</span></div>` +
+    `<details class="chat-steps"${chatStepsOpen ? ' open' : ''} hidden><summary>Steps (<span class="n">0</span>)</summary><ul></ul></details></div>`;
+}
+function chatStepsSync(st, steps) {
+  const d = st.querySelector('.chat-steps');
+  if (!d) return;
+  const k = steps.join('\n');
+  if (d.dataset.k === k) return;
+  d.dataset.k = k;
+  d.hidden = !steps.length;
+  d.querySelector('.n').textContent = steps.length;
+  d.querySelector('ul').innerHTML = steps.map(x => `<li dir="auto" title="${esc(x)}">${esc(x)}</li>`).join('');
 }
 function chatTick() {
   const el = $('#chat-clock');
@@ -713,6 +741,7 @@ async function chatResume() {
   chatFails = 0;
   chatProg = p;
   chatStopping = false;
+  chatStepsOpen = false;
   clearInterval(chatTimer); chatTimer = setInterval(chatTick, 1000);
   clearInterval(chatPoller); chatPoller = setInterval(chatPoll, 1000);
   renderChat(true);
@@ -782,6 +811,7 @@ async function send(text, opts) {
   chatSince = Date.now();
   chatProg = null;
   chatStopping = false;
+  chatStepsOpen = false;                // each turn's steps start closed
   const turnSession = S.session;
   let outcome = 'ok';
   clearInterval(chatTimer);
@@ -843,7 +873,15 @@ async function switchSession(id) { SESSION = id; convsOpen = false; await refres
 
 /* ---------- events ---------- */
 $('#form').addEventListener('submit', e => { e.preventDefault(); if (pending) chatStop(); else chatSubmit(); });      // the button is Stop while the agent works
-$('#chat-status').addEventListener('toggle', e => { if (e.target.matches('.chat-steps')) chatStepsOpen = e.target.open; }, true);
+$('#chat-status').addEventListener('toggle', e => { if (e.target.matches('.chat-steps')) { chatStepsOpen = e.target.open; chatFollow(); } }, true);
+$('#msgs').addEventListener('scroll', e => {
+  const sc = e.currentTarget;
+  chatAtEnd = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 48;
+  const j = $('#chat-jump');
+  if (j && j.hidden !== chatAtEnd) j.hidden = chatAtEnd;
+}, {passive: true});
+// anything that changes the height of the thread or of the box (a reply, an open list, a font, the chat resized): follow the end if the student is there
+if (window.ResizeObserver) { const ro = new ResizeObserver(() => chatFollow()); ['#msgs', '#chat-thread', '#chat-status', '#sugs'].forEach(q => { const el = $(q); if (el) ro.observe(el); }); }
 $('#input').addEventListener('input', () => { chatAutosize(); chatUpdateSend(); });
 $('#input').addEventListener('keydown', e => {
   // Enter sends, Shift+Enter is a new line, and Enter that confirms an IME composition (Hebrew, Chinese, ...) is left alone
@@ -903,6 +941,7 @@ onAct('retry', async (el, d, e) => {
   chatError = null;
   await send(err.text, {ctx: err.ctx || null});
 });
+onAct('chat-jump', async () => chatJump());
 onAct('chat-followup-stop', async () => { try { await api('/api/chat/stop', {}, {soft: true}); } catch (e) { /* it ends on its own */ } });
 onAct('chat-continue', async (el, d, e) => { await send(d.text, {ctx: null}); });
 // Allow the one command the engine refused (the server builds the rule from its own record), then ask again

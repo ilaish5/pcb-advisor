@@ -70,7 +70,7 @@ def test_chat_header_has_hide_button_and_engine_label_lives_in_the_composer():
     head = re.search(r'<header class="chat-h">(.*?)</header>', html, re.S).group(1)
     assert re.search(r'<button[^>]*data-act="toggle-chat"[^>]*aria-label="Hide chat \(Ctrl J\)"', head)
     assert "chat-engine" not in head and "Claude Code" not in head, "the header holds the title only"
-    comp = re.search(r'<div class="composer">(.*?)</div>\s*</section>', html, re.S).group(1)
+    comp = re.search(r'<div class="composer"[^>]*>(.*?)</div>\s*</section>', html, re.S).group(1)
     assert 'id="chat-engine"' in comp
     rule = re.search(r"^\.chat-engine\{([^}]*)\}", CHAT_CSS, re.M).group(1)
     assert "white-space:nowrap" in flat(rule) and "text-overflow:ellipsis" in flat(rule)
