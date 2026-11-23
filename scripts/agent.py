@@ -39,10 +39,6 @@ def rules():
     return runtime_pack.render("AGENTS.md", RULES_FILE.read_bytes()).decode("utf-8").strip()
 
 
-RULES_POINTER = ("Your rules are AGENTS.md in your working folder (loaded at start: HARD RULES, HOW TO ANSWER, REPLY FORMAT AND ACTIONS); "
-                 "they apply to this turn in full.")
-
-
 def _compact_diagram(diag):
     if not isinstance(diag, dict):
         return {"shapes": [], "connectors": [], "frames": []}
@@ -589,11 +585,8 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
         return {"reply": f"[{name}] {exc}", "actions": [], "backend": name, "provider": name,
                 "error": True}
     # Stable first, dynamic last, each section in a named tag the rules refer to; the task and a short reminder close the prompt.
-    # An engine with a workspace already loaded AGENTS.md from its engine home (CLAUDE.md -> @AGENTS.md, agy: AGENTS.md; proven by
-    # `pcb.py probe`), in its cached context: sending it again in the prompt cost ~7.5k tokens a turn. A text-only engine gets it here.
-    has_ws = gateway.provider(name).has_workspace()
-    parts = [RULES_POINTER if has_ws else rules()]
-    if has_ws:
+    parts = [rules()]
+    if gateway.provider(name).has_workspace():
         parts.append(_tag("workspace", _workspace_section(model.get("project"), engine_home)))
     memory = (model.get("memory") or "").strip()
     if memory:
@@ -618,7 +611,7 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     t0 = time.monotonic()
     res = gateway.route(gateway.Request(
         prompt=prompt,
-        system=rules(),
+        system=parts[0],
         history=_request_history(history, keep),
         timeout=int(timeout or workspace.get("agent.timeout_seconds", 900)),
         options=options,

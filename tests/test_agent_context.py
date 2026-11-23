@@ -256,18 +256,6 @@ def test_bom_rows_carry_role_jlc_type_and_price():
     assert row["role"] == "main MCU" and row["jlc_type"] == "Extended" and row["unit_usd"] == 2.5
 
 
-def test_rules_reach_the_engine_once(lte, monkeypatch, tmp_path):
-    """An engine with a workspace loads AGENTS.md itself (pcb.py probe proves it): the prompt carries a pointer, not a second copy.
-    A text-only engine gets the rules in the prompt."""
-    import agent
-    import gateway
-    p = _prompt(lte, monkeypatch, tmp_path)
-    assert "# HARD RULES" not in p and p.startswith(agent.RULES_POINTER)
-    monkeypatch.setattr(gateway.ClaudeCodeProvider, "has_workspace", lambda self: False)
-    p = _prompt(lte, monkeypatch, tmp_path)
-    assert p.startswith(agent.rules()) and "\n<workspace>\n" not in p
-
-
 def test_a_server_round_sends_the_last_exchange_not_the_whole_conversation(lte, monkeypatch, tmp_path):
     """P3: a follow-up or retry answers the server's report on the last exchange: the student's last message (the quote) and the
     agent replies since; older turns stay out. A student turn keeps the full window."""
