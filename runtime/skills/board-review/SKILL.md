@@ -1,6 +1,6 @@
 ---
 name: board-review
-description: Reviews a placed or routed PCB against the layout mistakes that are expensive to find late, and explains DRC messages, giving a findings table with a verdict and a fix per row. Use when the student asks "is my board OK", "check the layout", "which way should the connector face", "are my decoupling caps close enough", "antenna keep-out", "GND pour", "stitching vias", "silkscreen", "what does this DRC violation mean", "3D check" (Hebrew - "לבדוק את הלוח", "כיוון מחבר", "הפרות DRC").
+description: Reviews a placed or routed PCB for expensive late layout mistakes and explains DRC messages. Use when the student asks "is my board OK", "check the layout", "connector direction", "decoupling caps close enough", "antenna keep-out", "GND pour", "what does this DRC violation mean" (Hebrew - "לבדוק את הלוח", "כיוון מחבר", "הפרות DRC").
 ---
 
 # Board review

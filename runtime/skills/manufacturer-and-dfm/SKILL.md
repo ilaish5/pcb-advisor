@@ -1,6 +1,6 @@
 ---
 name: manufacturer-and-dfm
-description: Prepares the manufacturing package for JLC and walks the student through the JLC DFM and assembly preview (Gerber zip, upload at jlcdfm.com, finding the exported report), then triages every red item as real or false alarm with a fix. Use when the student asks for "gerbers", "OutJob", "BOM and CPL for JLC", "pre-upload check", "upload to JLC", "run JLC DFM", "I exported the report", "DFM shows red", "CPL rotation wrong", "pick and place", "files for the factory", "quote" (Hebrew - "קבצי ייצור", "גרברים", "DFM אדום", "סיבוב רכיבים").
+description: Prepares the JLC manufacturing package (OutJob, Gerber zip, BOM, CPL), checks it before upload and triages JLC DFM reports. Use when the student asks for "gerbers", "OutJob", "pick and place", "pre-upload check", "run JLC DFM", "I exported the report", "DFM shows red", "CPL rotation wrong" (Hebrew - "קבצי ייצור", "גרברים", "DFM אדום"). Price and stock quotes belong to parts-and-stock.
 ---
 
 # Manufacturer files and JLC DFM

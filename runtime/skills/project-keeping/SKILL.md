@@ -1,6 +1,6 @@
 ---
 name: project-keeping
-description: Keeps the project folder in order, records who decided what and why, lists what else changes when a part or MCU changes, and prepares the final file organization. Use when the student asks "where should I save this", "log this decision", "what changes if I swap this part", "I changed the MCU, what else", "organize my project folder", "what do I submit", "handoff notes" (Hebrew - "סדר בתיקייה", "יומן החלטות", "מה משתנה אם מחליפים", "ארגון קבצים להגשה").
+description: Keeps the project folder in order, logs decisions, lists what else changes when a part or MCU changes, and prepares the final file organization. Use when the student asks "where should I save this", "log this decision", "what changes if I swap this part", "organize my project folder", "what do I submit" (Hebrew - "סדר בתיקייה", "יומן החלטות", "מה משתנה אם מחליפים").
 ---
 
 # Project keeping

@@ -1,6 +1,6 @@
 ---
 name: schematic-preview
-description: Produces example schematic sheets (SVG) - parts split into readable blocks, every pin a short stub ending in a net label, power port or No-ERC cross - then asks the student whether they redraw it by hand in Altium or the agent draws it there (action altium.draw_schematic). Use when the student asks to see a schematic first, "draw me the sheet", "how should I lay out the schematic", "split the circuit into sheets", "which net labels and power ports", "make the schematic readable" (Hebrew - לשרטט סכמה, תצוגה מקדימה של סכמה, איך לחלק לדפים).
+description: Writes example schematic sheets as readable blocks with short pin stubs, then offers redrawing by hand or drawing it in Altium. Use when the student asks to see or draw a schematic ("draw me the sheet", "draw the schematic", "split the circuit into sheets", "which net labels and power ports"; Hebrew - לשרטט סכמה, תצוגה מקדימה של סכמה, איך לחלק לדפים).
 ---
 
 # Schematic preview (example sheets to redraw)

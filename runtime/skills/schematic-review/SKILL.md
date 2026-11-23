@@ -1,6 +1,6 @@
 ---
 name: schematic-review
-description: Reviews the student's schematic and returns a findings table where every finding cites a datasheet page - pull-ups/pull-downs, open-drain versus push-pull outputs, decoupling per datasheet (including a cap above the MAX value on a regulator pin), abs-max ratings, unconnected pins, MCU-swap fallout, and ERC messages explained. Use when the student asks "check my schematic", "do I need a pull-up here", "is this cap OK", "what does this ERC error mean", "I changed the MCU, what else changes" (Hebrew - לבדוק סכמה, צריך pull-up, שגיאת ERC, החלפתי מעבד).
+description: Reviews a schematic, each finding citing a datasheet page: pull-ups, decoupling, abs-max, unconnected pins, MCU-swap fallout, ERC messages. Use when the student asks "check my schematic", "do I need a pull-up", "is this cap OK", "what does this ERC error mean", "I changed the MCU, what changes in the schematic" (Hebrew - לבדוק סכמה, צריך pull-up, שגיאת ERC, החלפתי מעבד).
 ---
 
 # Schematic review (findings with datasheet citations)

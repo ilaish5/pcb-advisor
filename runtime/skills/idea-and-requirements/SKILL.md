@@ -1,6 +1,6 @@
 ---
 name: idea-and-requirements
-description: Turns a rough project idea into a short list of open requirements questions, the ones students regret not asking early. Use when the student describes a new idea or starts a project ("I want to build...", "what should I decide first", "which MCU", "how do I flash it", "battery or mains", "what connectors"; Hebrew - "יש לי רעיון לפרויקט", "מה צריך להחליט לפני שמתחילים", "איך צורבים").
+description: Turns a rough project idea into a first draft plus the few requirements questions worth asking early. Use when the student describes a new idea or starts a project ("I want to build...", "what should I decide first", "which MCU", "how do I flash it", "battery or mains", "what connectors"; Hebrew - "יש לי רעיון לפרויקט", "איך צורבים").
 ---
 
 # Idea and requirements

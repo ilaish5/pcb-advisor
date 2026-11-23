@@ -1,6 +1,6 @@
 ---
 name: project-library
-description: Plans and explains the single project library (one library with every symbol linked to its footprint and 3D model) that the tool builds itself from the BOM and installs in Altium. Use when the student asks to "put all parts in one library", "create the library", "why Footprint Not Found", "how do I install the library", "update parts from library", "naming of parts", "add parameters" (Hebrew - "ספרייה אחת", "Footprint Not Found", "איך מתקינים את הספרייה").
+description: Explains the one project library (symbols linked to footprints and 3D) that the tool builds from the BOM and installs in Altium. Use when the student asks to "create the library", "put all parts in one library", "why Footprint Not Found", "how do I install the library", "update parts from library" (Hebrew - "ספרייה אחת", "איך מתקינים את הספרייה").
 ---
 
 # Project library

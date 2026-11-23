@@ -1,6 +1,6 @@
 ---
 name: placement-and-routing-plan
-description: Produces a placement plan (order, zones, connector edges, decoupling positions, crystal, antenna keep-out, thermal) as a top-view picture and a table, then a routing plan for the critical nets (power, USB differential pair, crystal, ground return), done by the student in Altium or, on request, by you. Use when the student asks "where do I place the parts", "what do I place first", "which side should the connector face", "how close must the decoupling cap be", "how do I route USB / the crystal / power", "plan my layout" (Hebrew - איפה למקם רכיבים, סדר פלייסמנט, איך לנתב USB, תוכנית ראוטינג).
+description: Plans where parts go and how to route the critical nets (power, USB pair, crystal, ground return), and places or routes the board when the student asks. Use when the student asks "where do I place the parts", "what first", "which side should the connector face", "how do I route USB / the crystal", "plan my layout" (Hebrew - איפה למקם רכיבים, איך לנתב USB, תוכנית ראוטינג).
 ---
 
 # Placement and critical-net routing plan

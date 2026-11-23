@@ -1,6 +1,6 @@
 ---
 name: parts-and-stock
-description: Checks every BOM line against JLC as it is entered and returns a table of stock, price at quantity, Basic/Extended/Preferred, assembly caveats, cost per board, a risk flag and in-stock alternatives. Use when the student adds or changes a part or asks "is it in stock", "how much does the BOM cost", "Basic or Extended", "why Standard only", "find a cheaper or in-stock replacement", "is this part obsolete" (Hebrew - "יש במלאי?", "כמה עולה הלוח", "תמצא חלופה").
+description: Checks BOM lines against JLC: stock, price at quantity, Basic/Extended, cost per board, risk flags, in-stock alternatives. Use when the student adds or changes a part or asks "is it in stock", "how much does the BOM cost", "price quote", "Basic or Extended", "find an in-stock replacement", "is this part obsolete" (Hebrew - "יש במלאי?", "כמה עולה הלוח", "תמצא חלופה").
 ---
 
 # Parts and stock

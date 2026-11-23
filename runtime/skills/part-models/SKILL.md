@@ -1,6 +1,6 @@
 ---
 name: part-models
-description: Finds and checks the symbol, footprint and 3D model of a part, and tells the student which link to open when a file must be downloaded and handed back. Use when a part is missing from the library or its model looks wrong ("find the footprint", "where do I get the symbol", "3D model", "SnapEDA", "Ultra Librarian", "EasyEDA", "is this the right package", "pin 1", "the 3D is rotated"; Hebrew - "תחפש footprint", "תוריד מודל", "ה-3D הפוך", "איפה פין 1").
+description: Finds and checks the symbol, footprint and 3D model of a part and says which link to open when a file must be downloaded. Use when a part is missing from the library or its model looks wrong ("find the footprint", "3D model", "SnapEDA", "is this the right package", "pin 1", "the 3D is rotated"; Hebrew - "תחפש footprint", "ה-3D הפוך", "איפה פין 1").
 ---
 
 # Part models

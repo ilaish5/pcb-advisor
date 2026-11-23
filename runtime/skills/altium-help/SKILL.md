@@ -1,6 +1,6 @@
 ---
 name: altium-help
-description: Answers "how do I do X in Altium Designer" with a short step list and a citation from the AD20 Essentials manual or the course units. Use when the student asks how to do something in Altium - panels, shortcuts, new project, schematic capture, annotate, compile, ERC, ECO or update PCB, layers and stackup, board shape, design rules, placement, routing, polygons, DRC, Gerber and OutJob, schematic or PCB libraries, footprints, 3D models, IntLib - or asks what a menu, dialog or error means (Hebrew - "איך עושים ב-Altium", "איפה התפריט").
+description: Step-by-step "how do I click it" answers for Altium Designer, cited from the AD20 Essentials manual. Use when the student asks how to do something by hand in Altium (menus, panels, shortcuts, compile, ECO / Update PCB, layers, polygons, DRC) or what a dialog or error means (Hebrew - "איך עושים ב-Altium", "איפה התפריט"). Rule values, library building and factory files: other skills.
 ---
 
 # Altium help

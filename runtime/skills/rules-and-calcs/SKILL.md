@@ -1,6 +1,6 @@
 ---
 name: rules-and-calcs
-description: Produces the PCB design-rule table (JLC limits by layer count plus extra rules for current, impedance, noise), one .RUL file to import into Altium once, a read-back diff of the rules in the PcbDoc, and calculations (trace width, impedance, voltage divider) with formula and source for every number. Use when the student asks "which design rules do I set", "JLC minimum clearance / via / hole", "trace width for 2 A", "50 ohm trace width", "resistor divider for the feedback pin", "export the rules", "are my rules still the JLC ones" (Hebrew - חוקי תכנון, רוחב מסלול, מחלק מתח).
+description: Gives the PCB design-rule table (JLC limits plus extra rules), the .RUL file to import into Altium once, a diff against the PcbDoc, and calculations with formula and source. Use when the student asks "which design rules", "JLC minimum clearance / via", "trace width for 2 A", "50 ohm trace", "resistor divider", "export the rules" (Hebrew - חוקי תכנון, רוחב מסלול, מחלק מתח).
 ---
 
 # Rules and calculations
