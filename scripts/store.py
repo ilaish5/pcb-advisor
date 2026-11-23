@@ -3024,9 +3024,10 @@ def _pins_status(line, entry, project, acc):
     if all(is_simple_ref(r) for r in refs):
         kinds = {_prefix_of(r) for r in refs}
         conn, pol = kinds & set(CONNECTOR_PREFIXES), kinds & set(POLARISED_PREFIXES)
-        if not (conn or pol) or acc or passed_by_table(entry) \
-                or (entry.get("accepted") and entry.get("verify") == "pass"):
+        if not (conn or pol) or passed_by_table(entry) or (entry.get("accepted") and entry.get("verify") == "pass"):
             return "", ""
+        if acc:                      # the student's decision stands on no datasheet table: an accepted risk, never "verified"
+            return "accepted", ""
         if entry.get("verify") == "mismatch":
             return "mismatch", entry.get("issues", "")
         if conn:
