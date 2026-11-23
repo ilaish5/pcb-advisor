@@ -4203,6 +4203,9 @@ def readiness(project):
     if not linked and _past_idea(project):
         problems.append({"id": "link", "title": "This project is not linked to an Altium project, so nothing can be drawn or read from Altium.",
                          "fix": "Open Altium (Settings) and link the .PrjPcb file.", "page": "settings"})
+    import hashlib
+    for p in problems:       # a problem that comes back with other words is a new one: a Dismiss is kept per id and instance, not per id for ever
+        p["instance"] = hashlib.sha1((p["title"] + "|" + p["fix"]).encode("utf-8")).hexdigest()[:8]
     return {"problems": problems}
 
 
