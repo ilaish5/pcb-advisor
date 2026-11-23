@@ -2231,6 +2231,12 @@ def run_outjob(project):
         raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
     bom_files, bom_notes = _bom_into_outputs(project, roots, files)
     files += bom_files
+    real = {r for l in store.bom_lines(project) for r in (l.get("refs") or [])}
+    mech_gone = []
+    for f in files:             # the OutJob's Pick Place output has no designator filter: holes and keep-outs are taken out of the CSV here
+        mech_gone += outjob.strip_mechanical_rows(f, real)
+    if mech_gone:
+        bom_notes = list(bom_notes) + [f"Left {', '.join(sorted(set(mech_gone)))} (mounting holes / keep-outs, no parts) out of Altium's pick-and-place file."]
     try:
         missing = rules_missing(project)
     except AliasError as exc:

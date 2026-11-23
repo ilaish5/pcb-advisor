@@ -17,8 +17,11 @@ Based on Altium Designer OutJob format from:
 `tests/fixtures/altium/outjob.OutJob`.
 """
 import argparse
+import csv
+import io
 import json
 import pathlib
+import re
 import sys
 from typing import Any
 
@@ -274,6 +277,43 @@ def generate_outjob(project: str, filename: str | None = None, out_dir: pathlib.
         "outputs": outputs,
         "instruction": instruction,
     }
+
+
+
+_PNP_NAME = re.compile(r"pick|place|pnp|cpl", re.I)
+_MECH_DESIGNATOR = re.compile(r"^(?:H|KO)\d+$")
+
+
+def strip_mechanical_rows(path, real_refs=()):
+    """Remove the mounting holes (H1..) and keep-outs (KO1..) from an Altium pick-and-place CSV, in place: they are footprints with no
+    part (placed by this program for the confirmed constraints), and the OutJob's Pick Place output has no designator filter (only
+    FilterDNP), so they would be listed for the assembler. A designator that is a real part of the design (`real_refs`) stays.
+    Returns the designators removed ([] when none, or when the file is not a CSV with a Designator column)."""
+    p = pathlib.Path(path)
+    if p.suffix.lower() != ".csv" or not _PNP_NAME.search(p.name):
+        return []
+    try:
+        raw = p.read_bytes()
+        text = raw.decode("utf-8-sig") if raw[:3] == b"\xef\xbb\xbf" else raw.decode("cp1252")
+    except (OSError, UnicodeDecodeError):
+        return []
+    rows = list(csv.reader(io.StringIO(text)))
+    col = next((i for i, h in enumerate(rows[0] if rows else []) if h.strip().lower() == "designator"), None)
+    if col is None:
+        return []
+    keep, gone = [rows[0]], []
+    for r in rows[1:]:
+        ref = r[col].strip() if len(r) > col else ""
+        if _MECH_DESIGNATOR.match(ref) and ref not in set(real_refs):
+            gone.append(ref)
+        else:
+            keep.append(r)
+    if gone:
+        out = io.StringIO()
+        quoted = text.lstrip().startswith('"')
+        csv.writer(out, quoting=csv.QUOTE_ALL if quoted else csv.QUOTE_MINIMAL, lineterminator="\r\n").writerows(keep)
+        p.write_bytes(out.getvalue().encode("utf-8-sig") if raw[:3] == b"\xef\xbb\xbf" else out.getvalue().encode("cp1252"))
+    return gone
 
 
 def main(argv=None):

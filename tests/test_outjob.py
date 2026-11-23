@@ -35,3 +35,17 @@ def test_generate_outjob(tmp_path, monkeypatch):
     # Verify instruction message
     assert "read-only" in res["instruction"]
     assert "copy" in res["instruction"]
+
+
+def test_pick_place_csv_loses_mechanical_holes_and_keepouts_but_keeps_real_parts(tmp_path):
+    f = tmp_path / "Pick Place for Demo.csv"
+    f.write_text('"Designator","Comment","Layer","Footprint","Center-X(mm)"\r\n"R1","10k","TopLayer","0603","1.0"\r\n"H1","","TopLayer","MH_3.2","2.0"\r\n'
+                 '"KO1","","TopLayer","KO_a","3.0"\r\n"H2","real header","TopLayer","HDR","4.0"\r\n', encoding="utf-8")
+    gone = outjob.strip_mechanical_rows(f, real_refs={"H2"})
+    assert gone == ["H1", "KO1"]
+    text = f.read_text(encoding="utf-8")
+    assert '"R1"' in text and '"H2"' in text and '"H1"' not in text and '"KO1"' not in text and text.startswith('"Designator"')
+    assert outjob.strip_mechanical_rows(f, real_refs={"H2"}) == []                      # idempotent
+    other = tmp_path / "bom.csv"
+    other.write_text('"Designator"\r\n"H1"\r\n', encoding="utf-8")
+    assert outjob.strip_mechanical_rows(other) == [] and "H1" in other.read_text(encoding="utf-8")        # not a pick-and-place file
