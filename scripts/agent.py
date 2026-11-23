@@ -137,6 +137,9 @@ def _summary(model):
             checks_summary.append({"stem": stem, "slices": slice_paths, "triage_count": c.get("triage_count", 0)})
     if checks_summary:
         s["dfm_checks"] = checks_summary
+    import ext
+    ext.load()
+    ext.merge(ext.SUMMARY, model.get("project") or "", s)
     return json.dumps(s, ensure_ascii=False, indent=1)
 
 
