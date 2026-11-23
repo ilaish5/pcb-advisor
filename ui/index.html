@@ -50,10 +50,10 @@
   <!-- RIGHT: chat -->
   <section class="chat" aria-label="Chat with the agent">
     <header class="chat-h">
-      <button type="button" class="chat-title" data-act="convs" aria-expanded="false" aria-haspopup="true" aria-controls="convs" title="Conversations"><span id="convtitle">Conversation</span><small id="chat-engine" class="chat-engine"></small><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+      <button type="button" class="chat-title" data-act="convs" aria-expanded="false" aria-haspopup="true" aria-controls="convs" title="Conversations"><span id="convtitle">Conversation</span><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
       <button type="button" class="btn icon" data-act="rename" title="Rename this chat" aria-label="Rename this chat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4"/></svg></button>
       <button type="button" class="btn icon" data-act="new" title="New chat" aria-label="New chat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
-      <button type="button" class="btn icon" data-act="toggle-chat" title="Hide chat" aria-label="Hide chat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
+      <button type="button" class="btn icon" data-act="toggle-chat" title="Hide chat (Ctrl J)" aria-label="Hide chat (Ctrl J)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
     </header>
     <div class="convs" id="convs" hidden></div>
     <div class="msgs" id="msgs" role="region" aria-label="Conversation" tabindex="0"></div>
@@ -67,12 +67,13 @@
           <button type="submit" class="send" id="sendbtn" title="Send" aria-label="Send" disabled><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
         </div>
       </form>
+      <div class="chat-engine" id="chat-engine" title="The engine and model used for new answers"></div>
       <div class="chat-status" id="chat-status" role="status"></div>
     </div>
   </section>
 
   <!-- the way back while the chat is hidden (shell.css shows it only then) -->
-  <button type="button" class="chat-tab" data-act="toggle-chat" title="Show chat (Ctrl J)" aria-label="Show chat"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg><span>Chat</span></button>
+  <button type="button" class="chat-tab" data-act="toggle-chat" title="Show chat (Ctrl J)" aria-label="Show chat (Ctrl J)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
 </div>
 <div class="ready" id="ready" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>

@@ -33,7 +33,8 @@ def test_restore_tab_exists_when_the_chat_is_hidden():
     css = flat(SHELL_CSS)
     assert ".app.chat-off>.chat-tab{display:flex}" in css, "wide: the tab shows while the chat is hidden"
     assert ".app:not(.chat-open)>.chat-tab{display:flex}" in css, "drawer: the tab shows while the drawer is closed"
-    assert "position:fixed;right:0" in css
+    assert "position:fixed;right:10px;top:17px" in css, "top right, level with the hide button in the chat header"
+    assert "top:50%" not in re.search(r"\.chat-tab\{[^}]*\}", SHELL_CSS).group(0), "the restore tab is top-anchored"
     assert re.search(r"\.app\.chat-off>\.panes\{margin-right:(3\d|[4-9]\d)px", css), "the sheets leave room for the tab"
     assert "onAct('toggle-chat'" in SHELL_JS and "(e.key === 'j' || e.key === 'J')" in SHELL_JS
 
@@ -51,6 +52,7 @@ def test_nav_toggle_with_state_and_storage():
     for needle in ("aria-expanded", "aria-label", "title=", 'data-act="toggle-nav"', 'data-nav="navtog"'):
         assert needle in fn, needle
     nav = re.search(r"function navHTML\(\)\s*\{(.*?)\n\}", SHELL_JS, re.S).group(1)
+    assert "navToggleHTML()" in nav and nav.index("navToggleHTML()") < nav.index('class="trace"'), "the toggle sits at the top, before the stage list"
     assert "navToggleHTML()" in nav, "the button is drawn by navHTML, so the 4s redraw keeps it and its state"
     assert "onAct('toggle-nav'" in SHELL_JS
     # stored with the other layout state, inside the try/catch helpers
@@ -61,6 +63,17 @@ def test_nav_toggle_with_state_and_storage():
     assert ".app.nav-min{--nav-w:56px}" in css
     assert "(max-width:1280px)" in SHELL_JS, "by default the nav is a rail while the window is <=1280px"
     assert "navMin = null;" in SHELL_JS.split("function resetLayout()")[1].split("}")[0], "reset layout also resets the nav"
+
+
+def test_chat_header_has_hide_button_and_engine_label_lives_in_the_composer():
+    html = ui_html()
+    head = re.search(r'<header class="chat-h">(.*?)</header>', html, re.S).group(1)
+    assert re.search(r'<button[^>]*data-act="toggle-chat"[^>]*aria-label="Hide chat \(Ctrl J\)"', head)
+    assert "chat-engine" not in head and "Claude Code" not in head, "the header holds the title only"
+    comp = re.search(r'<div class="composer">(.*?)</div>\s*</section>', html, re.S).group(1)
+    assert 'id="chat-engine"' in comp
+    rule = re.search(r"^\.chat-engine\{([^}]*)\}", CHAT_CSS, re.M).group(1)
+    assert "white-space:nowrap" in flat(rule) and "text-overflow:ellipsis" in flat(rule)
 
 
 def test_nav_redraw_guard_is_kept():
