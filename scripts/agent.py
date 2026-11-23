@@ -222,18 +222,10 @@ def _workspace_section(project, engine_home=None):
         tag = "write ok" if write is True else ("read only" if write is False else write)
         lines.append(f"  {place['path']}   [{tag}]")
         lines.append(f"      {place['what']}")
-    lines += ["", "Scripts. Prefer these over reasoning it out yourself:"]
-    for sc in w["scripts"]:
-        lines.append(f"  {sc['run']}")
-        lines.append(f"      {sc['what']}")
-    lines += ["",
-              "Reading is free: open a datasheet, grep the sources, check a value. "
-              "Writing is not yours. Never edit the .jsonl logs - they are "
-              "append-only and carry who decided what, and the server appends to "
-              "them when you emit an action. To add a document, "
-              "run " + oscompat.py("python3 {repo}/scripts/sources.py") + " so its sha256 is recorded. To view available "
-              "sources, read the files in the project's sources/ directory. To delete a "
-              "document, run '" + oscompat.py("python3 {repo}/scripts/sources.py unuse <project_name> <document_name>") + "'."]
+    # the script catalog lives once, in AGENTS.md SCRIPTS (with <repo>); listing it here too cost ~1k tokens a turn and drifted
+    lines += ["", f"Scripts: the SCRIPTS list of your rules, with <repo> = {w['repo']}; one plain command per call. "
+                  "Reading is free; writing is not yours: never edit the .jsonl logs (the server appends when you emit an action); "
+                  "add or drop a document only with sources.py get / unuse."]
     return "\n".join(lines)
 
 
