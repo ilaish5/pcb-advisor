@@ -79,14 +79,16 @@ def test_accept_as_is_is_one_at_a_time():
     assert "pinsAcceptUntil" in h and "Accepted" in h and "Date.now()" in h
 
 
-def test_builder_output_has_one_row_per_proposal():
+def test_builder_output_has_one_row_per_proposal(tmp_path):
     node = shutil.which("node")
     if not node:
         pytest.skip("node is not installed")
     rows = [{"id": f"p{i}", "ref": f"R{i}", "mpn": f"M{i}", "checked": i != 1, "unverified": i == 1, "reason": "why <b>"} for i in range(3)]
-    script = ("global.document={addEventListener(){},querySelector(){return null},documentElement:{}};"
+    script = ("global.window=global;global.addEventListener=()=>{};global.document={addEventListener(){},querySelector(){return null},documentElement:{}};"
               + KIT + ";process.stdout.write(JSON.stringify(proposalTable(" + json.dumps(rows) + ",{})));")
-    r = subprocess.run([node, "-e", script], capture_output=True, text=True)
+    js = tmp_path / "builder.js"  # a file, not -e: Windows caps command lines at 8191/32767 chars
+    js.write_text(script, encoding="utf-8")
+    r = subprocess.run([node, str(js)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     html = json.loads(r.stdout)
     body = html[html.index("<tbody>"):]

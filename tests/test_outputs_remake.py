@@ -26,7 +26,11 @@ def _plan(row):
     end = OUTPUTS.index("function outRemakeBtn")
     js = ("const ALTIUM_DATA = null;\n" + OUTPUTS[start:end]
           + "\nconsole.log(JSON.stringify(outRemakePlan(" + json.dumps(row) + ")));")
-    out = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=30)
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:  # a file, not -e: Windows caps command-line length
+        f = pathlib.Path(d) / "plan.js"
+        f.write_text(js, encoding="utf-8")
+        out = subprocess.run([shutil.which("node"), str(f)], capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)
 
