@@ -47,7 +47,7 @@ def test_layout_has_a_state_and_never_clean_beside_violations(empty, pcb):
     assert by_id(empty)[0]["pcb"]["state"] == "not_started"
     board_results.record(empty, "place", {"placed": ["R1"]})
     assert by_id(empty)[0]["pcb"]["state"] == "in_progress"
-    board_results.record(empty, "route", {"routed": ["A"], "failed": [], "tracks": 3, "vias": 0, "drc_rules": {"Clearance Constraint": 21}, "drc_total": 21, "drc_clean": False})
+    board_results.record(empty, "route", {"routed": ["A"], "failed": [], "tracks": 3, "vias": 0, "drc_rules": {"Clearance Constraint": 21}, "drc_total": 21, "drc_clean": False, "drc_complete": True})
     s = by_id(empty)[0]["pcb"]
     assert s["state"] == "issues" and s["severity"] == "bad" and s["open"] == 21 and "21 violations" in s["reason"]
     board_results.record(empty, "drc", {"rules": {"Clearance Constraint": 0}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True})
@@ -57,7 +57,7 @@ def test_layout_has_a_state_and_never_clean_beside_violations(empty, pcb):
 
 def test_a_stale_check_is_never_clean(empty, pcb):
     board_results.record(empty, "place", {"placed": ["R1"]})
-    board_results.record(empty, "route", {"routed": ["A"], "failed": [], "drc_rules": {"Clearance Constraint": 0}, "drc_total": 0, "drc_clean": True})
+    board_results.record(empty, "route", {"routed": ["A"], "failed": [], "drc_rules": {"Clearance Constraint": 0}, "drc_total": 0, "drc_clean": True, "drc_complete": True})
     assert by_id(empty)[0]["pcb"]["state"] == "clean"
     pcb.write_bytes(b"edited in altium")
     s = by_id(empty)[0]["pcb"]
@@ -65,13 +65,13 @@ def test_a_stale_check_is_never_clean(empty, pcb):
 
 
 def test_placing_again_after_a_route_is_not_routed(empty, pcb):
-    board_results.record(empty, "route", {"routed": ["A"], "failed": [], "drc_rules": {}, "drc_total": 0, "drc_clean": True})
+    board_results.record(empty, "route", {"routed": ["A"], "failed": [], "drc_rules": {}, "drc_total": 0, "drc_clean": True, "drc_complete": True})
     board_results.record(empty, "place", {"placed": ["R1"]})
     assert by_id(empty)[0]["pcb"]["state"] == "in_progress"
 
 
 def test_a_partial_route_is_issues(empty, pcb):
-    board_results.record(empty, "route", {"routed": ["A"], "failed": [("B", "no way")], "open_nets": ["B"], "drc_rules": {}, "drc_total": 0, "drc_clean": True})
+    board_results.record(empty, "route", {"routed": ["A"], "failed": [("B", "no way")], "open_nets": ["B"], "drc_rules": {}, "drc_total": 0, "drc_clean": True, "drc_complete": True})
     s = by_id(empty)[0]["pcb"]
     assert s["state"] == "issues" and s["open"] == 1 and "B" in s["reason"]
 

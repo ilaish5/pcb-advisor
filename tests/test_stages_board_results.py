@@ -80,3 +80,11 @@ def test_the_page_has_the_check_board_button():
     from ui_source import ui_js
     js = ui_js()
     assert "url: '/api/altium/drc'" in js and "pvStepBtn('drc')" in js and "'Check board'" in js
+
+
+def test_route_drc_completeness_comes_from_the_result_not_a_constant():
+    import board_results
+    base = {"drc_total": 0, "drc_rules": {}, "drc_clean": False}
+    assert board_results._drc_of("route", {**base, "drc_complete": False})["complete"] is False
+    assert board_results._drc_of("route", {**base, "drc_complete": True})["complete"] is True
+    assert board_results._drc_of("route", base)["complete"] is False       # a result that does not say is not counted as a complete check

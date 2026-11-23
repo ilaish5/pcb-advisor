@@ -13,6 +13,7 @@ Nothing here is a new fact: each rule reads a number the model already holds (or
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -265,6 +266,7 @@ def outputs_stage(project, model):
         gate = {"blocked": True, "why": why, "page": "sch" if has_pins else "checks"}
         if has_pins:
             gate["gaps"] = gaps
+            gate["nc_proposal"] = store.nc_proposal(project)
         return _stage("outputs", "blocked", why, "bad", len(gaps["open"]) + len(gaps["unlisted"]) or 1, gate=gate,
                       next_={"label": "Resolve the blocker", "act": "go:" + gate["page"]})
     ex = model.get("exports") or []
@@ -308,13 +310,17 @@ def derive(project, model):
     return stages, board_check_of(lt)
 
 
+_CONVERSATION_LOG = re.compile(r"usage-log|chat|conversation|thread|session", re.I)    # written on every chat line / click: no stage is made from them
+
+
 def rev(project):
     """A digest of what the stages are made from: name, size and mtime_ns of the logs, the idea files, the netlist, the library
     manifest, the rule files, the check reports and the linked PcbDoc. Stat only, never a read: this runs on every poll."""
     pdir = store.pdir(project)
     paths = []
     try:
-        paths += [p for pat in ("*.jsonl", "idea*.json", "rules*.json", "project.json") for p in pdir.glob(pat)]
+        paths += [p for pat in ("*.jsonl", "idea*.json", "rules*.json", "project.json") for p in pdir.glob(pat)
+                  if not _CONVERSATION_LOG.search(p.name)]
         paths += list((pdir / "netlist").glob("*")) + list((pdir / "checks").glob("*/*.json")) + list((pdir / "exports").glob("*"))
         paths.append(pdir / "library" / "manifest.json")
     except OSError:
@@ -333,20 +339,26 @@ def rev(project):
 @ext.register("model")
 def _model(project, model):
     stages, chk = derive(project, model)
-    return {"rev": rev(project), "stages": stages, "stage_sheets": sheets_counts(model), "board_check": chk}
+    return {"rev": rev(project), "stages": stages, "stage_sheets": sheets_counts(model), "board_check": chk,
+            "nc_proposal": store.nc_proposal(project)}
 
 
 @ext.register("post")
 def _post(handler, path, body):
-    """POST /api/nc/mark {items?: [{sheet, ref, num}]}: mark the open and unlisted pins NC (all of them without items)."""
-    if path != "/api/nc/mark":
+    """POST /api/nc/mark {items?: [{sheet, ref, num}]}: mark the open and unlisted pins NC (all of them without items; the UI always
+    sends the exact list it shows). POST /api/nc/approve {items?}: the student's one click on the agent's NC proposal (items = the
+    ones left ticked; none = all). POST /api/nc/dismiss: drop the proposal."""
+    if path not in ("/api/nc/mark", "/api/nc/approve", "/api/nc/dismiss"):
         return None
     project = handler.project()
     items = body.get("items") if isinstance(body, dict) else None
     if items is not None and not (isinstance(items, list) and all(isinstance(i, dict) for i in items)):
         raise ext.HTTPError(400, "\"items\" must be a list of {sheet, ref, num}")
+    if path == "/api/nc/dismiss":
+        store.clear_nc_proposal(project)
+        return {"ok": True}
     try:
-        res = store.mark_pins_nc(project, items)
+        res = store.approve_nc(project, items) if path == "/api/nc/approve" else store.mark_pins_nc(project, items)
     except ValueError as exc:
         raise ext.HTTPError(400, str(exc))
     return {"ok": True, **res}

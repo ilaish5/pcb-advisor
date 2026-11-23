@@ -223,3 +223,34 @@ def test_an_empty_extraction_is_not_cached_and_the_list_says_not_read(empty, tmp
     assert sources.text_of("scan.pdf", folder) == "" and not (folder / "scan.pdf.txt").exists()
     (folder / "scan.pdf.txt").write_text("", encoding="utf-8")
     assert sources.text_state(pdf) == "none"
+
+
+def test_accepted_connector_and_led_show_as_accepted_risk_never_datasheet(empty):
+    _jd_sheet(empty)
+    pin_decisions.accept_all(empty)
+    lines = {l["key"]: l for l in store.bom(empty)}
+    for k in ("J1", "D1"):
+        assert lines[k]["pins_status"] == "accepted" and lines[k]["pin_decision"]
+    assert {r["line"] for r in pin_decisions.risks(empty)} == {"J1", "D1"}
+    src = {p["ref"]: p.get("pins_source") for p in store.load_sheet(empty, "01")["parts"]}
+    assert src["J1"] == src["D1"] == "student" and src["R1"] is None
+    assert json.loads(open(pin_decisions.write_manifest(empty), encoding="utf-8").read())["accepted_risks"]
+    pin_decisions.revoke(empty, "J1")
+    assert [r["line"] for r in pin_decisions.risks(empty)] == ["D1"]
+
+
+def test_order_manifest_follows_accept_revoke_and_the_board_check(empty, monkeypatch):
+    import board_results
+    _jd_sheet(empty)
+    path = store.pdir(empty) / "exports" / "empty_order_manifest.json"
+    read = lambda: json.loads(path.read_text(encoding="utf-8"))
+    pin_decisions.accept(empty, "J1")
+    assert [r["line"] for r in read()["accepted_risks"]] == ["J1"] and [u["line"] for u in read()["unverified"]] == ["D1"]
+    pin_decisions.revoke(empty, "J1")
+    assert read()["accepted_risks"] == [] and {u["line"] for u in read()["unverified"]} == {"J1", "D1"}
+    monkeypatch.setattr(board_results, "latest", lambda p: {"board_check": {"total": 3, "stale": False}})
+    pin_decisions.write_manifest(empty)
+    assert read()["board_check"]["board_check"]["total"] == 3
+    monkeypatch.setattr(board_results, "latest", lambda p: {"board_check": {"total": 0, "stale": False}})
+    pin_decisions.write_manifest(empty)
+    assert read()["board_check"]["board_check"]["total"] == 0              # only the board check changed: still rewritten

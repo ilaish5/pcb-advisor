@@ -242,6 +242,9 @@ def fixed_shapes(doc, rules):
     for v in doc.get("vias", []):
         out.append({"kind": "copper", "tag": "via", "net": v.get("net"), "layers": (TOP, BOT), "smd": False,
                     "geo": ("circ", (v["x_mm"], v["y_mm"]), (v.get("dia_mm") or 0) / 2)})
+    for k in rules.get("keepout_rects") or ():      # keep-outs the program holds itself (the Altium keep-out layer did not take them)
+        out.append({"kind": "keepout", "tag": "keep-out", "net": None, "layers": (TOP, BOT), "smd": False,
+                    "geo": ("rect", tuple(float(v) for v in k))})
     return out
 
 

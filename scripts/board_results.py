@@ -37,7 +37,7 @@ def _drc_of(op, res):
     if op == "route" and isinstance(res, dict) and res.get("drc_total") is not None:
         rules = dict(res.get("drc_rules") or {})
         return {"rules": rules, "total": _int(res.get("drc_total")), "unrouted": sum(n for k, n in rules.items() if k.startswith("Un-Routed Net")),
-                "clean": bool(res.get("drc_clean")), "complete": True, "violations": []}
+                "clean": bool(res.get("drc_clean")), "complete": bool(res.get("drc_complete")), "violations": []}
     return None
 
 

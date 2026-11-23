@@ -28,6 +28,7 @@ from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import diagram_route  # noqa: E402
+import pinnames  # noqa: E402
 import project_guard  # noqa: E402
 import workspace  # noqa: E402
 
@@ -161,13 +162,50 @@ def read_jsonl(path):
     return out
 
 
+# ---- one model build = one computation: the derived BOM, the pin gaps and the pin fingerprints are asked for many times while the model
+# is built (every stage, every page counter). Inside build_scope() each is computed once; any write through this module drops them all.
+_BUILD = threading.local()
+
+
+class build_scope:
+    """`with store.build_scope():` the expensive derived reads below are memoised for the length of the block (this thread only)."""
+    def __enter__(self):
+        self.outer = getattr(_BUILD, "memo", None) is not None
+        if not self.outer:
+            _BUILD.memo = {}
+        return self
+
+    def __exit__(self, *exc):
+        if not self.outer:
+            _BUILD.memo = None
+        return False
+
+
+def memoised(key, compute):
+    """compute() once per build scope for `key` (a copy comes back each time: callers may change what they get); outside a scope, always."""
+    memo = getattr(_BUILD, "memo", None)
+    if memo is None:
+        return compute()
+    if key not in memo:
+        memo[key] = copy.deepcopy(compute())
+    return copy.deepcopy(memo[key])
+
+
+def _forget():
+    memo = getattr(_BUILD, "memo", None)
+    if memo:
+        memo.clear()
+
+
 def _write_text(path, text):
     """write_text for a file the server writes (bom.json, netlist sheets): the project guard is told what was written."""
+    _forget()
     with project_guard.writing(path):
         pathlib.Path(path).write_text(text, encoding="utf-8")
 
 
 def append(project, filename, record):
+    _forget()
     path = pdir(project) / filename
     path.parent.mkdir(parents=True, exist_ok=True)
     with project_guard.writing(path):
@@ -366,7 +404,13 @@ def line_availability_and_risk(line, best=None, build_qty=5):
 
 def bom(project, write=True):
     """The derived BOM: lines + supply + library state. Also written to
-    bom.json for any agent that would rather read a file."""
+    bom.json for any agent that would rather read a file. Without write, once per build_scope."""
+    if not write:
+        return memoised(("bom", project), lambda: _bom(project, False))
+    return _bom(project, True)
+
+
+def _bom(project, write):
     lines = bom_lines(project)
     supply = supply_for(project)
     lib = library_parts(project)
@@ -3025,9 +3069,10 @@ def _pins_status(line, entry, project, acc):
     if all(is_simple_ref(r) for r in refs):
         kinds = {_prefix_of(r) for r in refs}
         conn, pol = kinds & set(CONNECTOR_PREFIXES), kinds & set(POLARISED_PREFIXES)
-        if not (conn or pol) or acc or passed_by_table(entry) \
-                or (entry.get("accepted") and entry.get("verify") == "pass"):
+        if not (conn or pol) or passed_by_table(entry) or (entry.get("accepted") and entry.get("verify") == "pass"):
             return "", ""
+        if acc:                      # the student's decision stands on no datasheet table: an accepted risk, never "verified"
+            return "accepted", ""
         if entry.get("verify") == "mismatch":
             return "mismatch", entry.get("issues", "")
         if conn:
@@ -3202,6 +3247,11 @@ def _pin_num(pin):
 
 
 def pin_gaps(project):
+    """Pins of the drawn design nobody decided, {"open": [...], "unlisted": [...]} (see _pin_gaps); computed once per build_scope."""
+    return memoised(("pin_gaps", project), lambda: _pin_gaps(project))
+
+
+def _pin_gaps(project):
     """Pins of the drawn design that nobody decided: {"open": [{sheet, ref, num, name}], "unlisted": [{sheet, ref, num, name}]}.
     open: the netlist lists the pin with no net and not NC. unlisted: the part's built library symbol has the pin, the netlist does
     not list it at all (a symbol the build made from an older MPN / LCSC of the line is not compared). DNP and do-not-buy lines are
@@ -3210,17 +3260,29 @@ def pin_gaps(project):
     lines = {r: l for l in bom_lines(project) for r in (l.get("refs") or [l["key"]])}
     man, spec = library_manifest(project), _built_symbols(project)
     out = {"open": [], "unlisted": []}
-    for sh in sheet_ids(project):
-        for part in load_sheet(project, sh).get("parts", []):
+    sheets = {sh: load_sheet(project, sh).get("parts", []) for sh in sheet_ids(project)}
+    listed_all, decided = {}, {}              # per ref across every sheet it is drawn on: pins listed, pins with a net (or NC)
+    for parts in sheets.values():
+        for part in parts:
+            ref = part.get("ref")
+            for pin in part.get("pins", []):
+                listed_all.setdefault(ref, set()).add(_pin_num(pin))
+                if (pin.get("net") or "").strip():
+                    decided.setdefault(ref, set()).add(_pin_num(pin))
+    seen_unlisted = set()
+    for sh, parts in sheets.items():
+        for part in parts:
             ref = part.get("ref")
             if not ref or ref in skip:
                 continue
-            listed = set()
             for pin in part.get("pins", []):
                 num = _pin_num(pin)
-                listed.add(num)
-                if not (pin.get("net") or "").strip():
+                if not (pin.get("net") or "").strip() and num not in decided.get(ref, ()):
                     out["open"].append({"sheet": sh, "ref": ref, "num": num, "name": str(pin.get("name") or "")})
+            if ref in seen_unlisted:
+                continue
+            seen_unlisted.add(ref)
+            listed = listed_all.get(ref, set())
             line = lines.get(ref) or {}
             entry = man.get(line.get("key")) or {}
             sym = spec.get(entry.get("symbol") or "")
@@ -3279,6 +3341,91 @@ def mark_pins_nc(project, items=None):
         if not res.get("ok"):
             raise ValueError("; ".join(res.get("errors") or ["the sheet could not be written"]))
     return {"marked": marked, "sheets": sorted(by_sheet)}
+
+
+# ---- the agent's NC proposal: an open / unlisted pin of the CURRENT netlist the agent turned into NC is not applied silently
+# (that would clear the open-pin gate without the student): it waits as one list the student approves with one click.
+
+def _nc_key(i):
+    return (str(i.get("sheet")), str(i.get("ref")), str(i.get("num")))
+
+
+def hold_nc_marks(project, sheet_id, data):
+    """(data', held): `data` is a sheet the agent is about to write. Every pin it marks NC that is, in the sheet as it stands, an open pin
+    (listed with no net) or an unlisted pin (in the built symbol, not in the netlist) is put back as it was (open / not listed) and
+    returned in `held` as [{sheet, ref, num, name, kind}]. NC on a new part or on a pin that already had a net is not touched."""
+    sid = workspace.safe_name(sheet_id)
+    gaps = pin_gaps(project)
+    want = {(i["ref"], i["num"]): ("open", i) for i in gaps["open"] if i["sheet"] == sid}
+    want.update({(i["ref"], i["num"]): ("unlisted", i) for i in gaps["unlisted"] if i["sheet"] == sid})
+    if not want or not isinstance(data.get("parts"), list):
+        return data, []
+    held, parts = [], []
+    for part in data["parts"]:
+        pins = part.get("pins") if isinstance(part, dict) else None
+        if not isinstance(pins, list):
+            parts.append(part)
+            continue
+        keep = []
+        for pin in pins:
+            hit = want.get((part.get("ref"), _pin_num(pin))) if isinstance(pin, dict) else None
+            if hit and pinnames.is_nc_net(pin.get("net")):
+                held.append({"sheet": sid, "ref": part["ref"], "num": hit[1]["num"], "name": hit[1].get("name", ""), "kind": hit[0]})
+                if hit[0] == "open":
+                    keep.append({**pin, "net": ""})
+                continue                    # an unlisted pin the agent adds as NC: not added
+            keep.append(pin)
+        parts.append({**part, "pins": keep})
+    return {**data, "parts": parts}, held
+
+
+def _nc_path(project):
+    return pdir(project) / "nc-proposal.json"
+
+
+def _nc_stored(project):
+    try:
+        doc = json.loads(_nc_path(project).read_text(encoding="utf-8"))
+        return [i for i in doc.get("items", []) if isinstance(i, dict)]
+    except (OSError, ValueError):
+        return []
+
+
+def propose_nc(project, items):
+    """Add `items` to the pending NC proposal (one list, no duplicates). The student's approval is /api/nc/approve."""
+    have = {_nc_key(i): i for i in _nc_stored(project)}
+    for i in items:
+        have[_nc_key(i)] = i
+    _write_text(_nc_path(project), json.dumps({"ts": now(), "items": list(have.values())}, ensure_ascii=False, indent=2))
+    return len(have)
+
+
+def nc_proposal(project):
+    """The pending NC proposal, [{sheet, ref, num, name, kind}], only the pins that are still open / unlisted ([] when none)."""
+    stored = _nc_stored(project)
+    if not stored:
+        return []
+    gaps = pin_gaps(project)
+    now_open = {_nc_key(i) for i in gaps["open"] + gaps["unlisted"]}
+    return [i for i in stored if _nc_key(i) in now_open]
+
+
+def clear_nc_proposal(project):
+    try:
+        _nc_path(project).unlink()
+    except OSError:
+        pass
+
+
+def approve_nc(project, items=None):
+    """The student's one click: mark the proposed pins NC (all of them, or only the `items` kept ticked) and drop the proposal."""
+    prop = nc_proposal(project)
+    if items is not None:
+        keep = {_nc_key(i) for i in items}
+        prop = [i for i in prop if _nc_key(i) in keep]
+    res = mark_pins_nc(project, prop) if prop else {"marked": 0, "sheets": []}
+    clear_nc_proposal(project)
+    return res
 
 
 def manufacturing_warning(project):

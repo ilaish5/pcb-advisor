@@ -58,7 +58,7 @@ def net_kind(net):
 
 
 def is_nc(net):
-    return str(net or "").strip().upper() in ("NC", "N/C", "NO_ERC")
+    return pinnames.is_nc_net(net)
 
 
 def tip(pin):

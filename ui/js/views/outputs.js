@@ -26,7 +26,20 @@ function outGapItems(g) {
 function outGapRow(i) {
   const what = i.kind === 'open' ? 'has no net and is not marked NC' : 'is in the library symbol but missing from the netlist';
   return `<li><span class="m">${esc(i.ref)}</span> pin ${esc(i.num || i.name)}${i.name && i.num && i.name !== i.num ? ` (${esc(i.name)})` : ''} ${what} ` +
+    btn('Mark NC', {kind: 'link', size: 'sm', act: 'nc-mark-one', sh: i.sheet, ref: i.ref, num: i.num, title: 'Marks just this pin no-connect'}) + ' ' +
     btn('Ask the agent', {kind: 'link', size: 'sm', act: 'nc-ask', ref: i.ref, num: i.num, pname: i.name, why: i.kind}) + '</li>';
+}
+const ncItem = i => ({sheet: i.sheet, ref: i.ref, num: i.num});
+/* The agent's NC proposal: pins it wants NC, held until the student approves. One click for the whole list; untick a pin to leave it out. */
+function outNcProposal(g) {
+  const items = (g && g.nc_proposal) || (typeof S !== 'undefined' && S.nc_proposal) || [];
+  if (!items.length) return '';
+  const rows = items.map(i => `<li><label><input type="checkbox" checked data-nc-sheet="${esc(i.sheet)}" data-nc-ref="${esc(i.ref)}" data-nc-num="${esc(i.num)}"> ` +
+    `<span class="m">${esc(i.ref)}</span> pin ${esc(i.num || i.name)}${i.name && i.name !== i.num ? ` (${esc(i.name)})` : ''}</label></li>`).join('');
+  const text = `The agent proposes marking ${items.length} ${items.length === 1 ? 'pin' : 'pins'} no-connect (NC). Untick any that should be wired.`;
+  const acts = btn(`Approve ${items.length === 1 ? 'the NC mark' : 'all ' + items.length}`, {kind: 'line', size: 'sm', act: 'nc-approve', title: 'Marks the ticked pins NC in one go'}) +
+    btn('Dismiss', {kind: 'link', size: 'sm', act: 'nc-dismiss'});
+  return `<div data-nc-prop="1">${banner({tone: 'info', html: `${esc(text)}<ul>${rows}</ul>`, actions: acts})}</div>`;
 }
 function outBlockNote() {
   const g = outGate();
@@ -35,14 +48,23 @@ function outBlockNote() {
   const acts = (items.length ? btn(`Mark all ${items.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks every one of these pins no-connect in the netlist (a No ERC cross when drawn). Connect any pin that is not meant to be NC first.'}) : '')
     + btn(g.page === 'sch' ? 'Open Schematic' : 'Open DFM', {kind: 'link', page: g.page === 'sch' ? 'sch' : 'checks'});
   const list = items.length ? `<details class="pv-more"><summary>Show the ${items.length} ${items.length === 1 ? 'pin' : 'pins'}</summary><ul>${items.map(outGapRow).join('')}</ul></details>` : '';
-  return banner({tone: 'warn', html: `${esc(g.why)}${list}`, actions: acts});
+  return `${outNcProposal(g)}${banner({tone: 'warn', html: `${esc(g.why)}${list}`, actions: acts})}`;
 }
-onAct('nc-mark-all', async () => {
-  const r = await api('/api/nc/mark', {}, {soft: true});
+async function outNcPost(path, items, said) {
+  const r = await api(path, items ? {items} : {}, {soft: true});
   if (!r || r.error) { toast((r && r.error) || "Couldn't mark the pins NC.", null, {bad: true}); return; }
-  toast(`Marked ${r.marked} ${r.marked === 1 ? 'pin' : 'pins'} NC`);
+  toast(said(r));
   await refresh(true);
+}
+const outMarked = r => `Marked ${r.marked} ${r.marked === 1 ? 'pin' : 'pins'} NC`;
+onAct('nc-mark-all', () => outNcPost('/api/nc/mark', outGapItems(outGate()).map(ncItem), outMarked));     // exactly the pins the note lists
+onAct('nc-mark-one', (el, d) => outNcPost('/api/nc/mark', [{sheet: d.sh, ref: d.ref, num: d.num}], outMarked));
+onAct('nc-approve', el => {
+  const box = el.closest('[data-nc-prop]');
+  const items = [...box.querySelectorAll('input[data-nc-ref]:checked')].map(c => ({sheet: c.dataset.ncSheet, ref: c.dataset.ncRef, num: c.dataset.ncNum}));
+  return outNcPost('/api/nc/approve', items, r => r.marked ? outMarked(r) : 'No pin was ticked: the proposal is dropped');
 });
+onAct('nc-dismiss', () => outNcPost('/api/nc/dismiss', null, () => 'Dropped the NC proposal'));
 onAct('nc-ask', (el, d) => {
   const what = d.why === 'open' ? 'has no net and is not marked NC' : 'is in the library symbol but missing from the netlist';
   askAbout({kind: 'part', id: d.ref, label: d.ref, text: `Pin ${d.num || d.pname} (${d.pname || ''}) of ${d.ref} ${what}. Should it be NC, or connected? If NC, propose the NC list for all such pins in one go.`});

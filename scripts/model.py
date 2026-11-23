@@ -228,6 +228,12 @@ def part_context(project, ref):
 # ---------------------------------------------------------------- build
 
 def build(project=None, session=None):
+    """The model dict. The derived BOM, the pin gaps and the pin fingerprints are each computed once for this build (store.build_scope)."""
+    with store.build_scope():
+        return _build(project, session)
+
+
+def _build(project=None, session=None):
     project = workspace.safe_name(project or workspace.default_project())
     pdir = project_dir(project)
     meta = project_mod.load_meta(project)

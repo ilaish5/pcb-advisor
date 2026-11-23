@@ -436,6 +436,11 @@ def gerber_zip(project: str) -> dict[str, Any]:
                        "gerber_zip", source=res["source"])
     early = lineage.check(project, rec)["reasons"] if rec else []
     res["warnings"] += [w[0].upper() + w[1:] + ": generate the outputs in Altium again." for w in early if "saved after" in w]
+    try:
+        import pin_decisions
+        pin_decisions.write_manifest(project)            # the accepted risks travel with the zip, beside it
+    except Exception:       # noqa: BLE001 - the zip is made; the manifest is its companion
+        pass
     return res
 
 

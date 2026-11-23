@@ -498,10 +498,15 @@ DRAW_WORD = re.compile(r"draw|sketch|schematic|תצייר|תשרטט|צייר|ש
 EARLIER_NEED = {"draw": DRAW_WORD}      # a message from an earlier turn must name the action: a bare "yes" there answered something else
 PLACE_WORD = re.compile(r"\bplac(?:e|ing|ement)\b|\bposition|lay ?out|מקם|תמקם|למקם|אמקם|מיקום|השמה|פלייסמנט", re.I)
 ROUTE_WORD = re.compile(r"\brout(?:e|ing)\b|auto-?rout|נתב|תנתב|לנתב|אנתב|ניתוב|ראוט", re.I)
+SELF_NC = re.compile(r"myself|\bi[\u2019']?ll mark|\bi will mark|בעצמי|אני אסמן|\bdon[\u2019']?t mark|\bdo not mark|אל תסמן|לא לסמן|אני לא רוצה ש", re.I)
+NC_WORD = re.compile(r"\bN/?C\b|no[- ]?connect|not connected|unconnected|לא מחובר|ללא חיבור", re.I)
+ASK_NC = ("The student's message is the only way to mark an open pin NC without their approval: student_said must be a verbatim quote of their "
+          "message telling you to mark pins NC. No such quote: the NC marks wait as ONE proposal the student approves with one click.")
 CONSENT = {   # kind -> (they do it themselves, they say replace, ask text, what replace wipes, what it is, a word their message must have)
     "draw": (SELF_DRAW, REDRAW_WORD, ASK_FIRST, "sheet", "draw it", None),
     "place": (SELF_PLACE, REPLACE_WORD, ASK_PLACE, "board's parts and copper", "place them", PLACE_WORD),
     "route": (SELF_ROUTE, REPLACE_WORD, ASK_ROUTE, "board's tracks", "route it", ROUTE_WORD),
+    "nc": (SELF_NC, re.compile(r"(?!x)x"), ASK_NC, "pins", "mark them NC", NC_WORD),
 }
 
 
@@ -516,13 +521,14 @@ def _partial_consent(a, last_user):
 
 
 SELF_START = "The student said they will"
-_WHO = {"draw": "draws", "place": "places", "route": "routes"}
-_ACTION_ANY = {"draw": DRAW_WORD, "place": PLACE_WORD, "route": ROUTE_WORD}
+_WHO = {"draw": "draws", "place": "places", "route": "routes", "nc": "marks the pins"}
+_ACTION_ANY = {"draw": DRAW_WORD, "place": PLACE_WORD, "route": ROUTE_WORD, "nc": NC_WORD}
 _BOARD_WORD = re.compile(r"\bpcb\b|\bboard\b|לוח|\blayout\b", re.I)
 _OTHER_ACTION = {      # words that name ANOTHER action: a self-do clause with only these leaves this one alone
     "draw": re.compile(PLACE_WORD.pattern + "|" + ROUTE_WORD.pattern + "|" + _BOARD_WORD.pattern, re.I),
     "place": re.compile(DRAW_WORD.pattern + "|" + ROUTE_WORD.pattern, re.I),
-    "route": re.compile(DRAW_WORD.pattern + "|" + PLACE_WORD.pattern, re.I)}
+    "route": re.compile(DRAW_WORD.pattern + "|" + PLACE_WORD.pattern, re.I),
+    "nc": re.compile(DRAW_WORD.pattern + "|" + PLACE_WORD.pattern + "|" + ROUTE_WORD.pattern, re.I)}
 _CLAUSE = re.compile(r"[,;.!?\n]+|\s+(?=ו)|\s+(?:and|but|while|אבל)\s+", re.I)
 _STOP = re.compile(r"\bnot yet\b|\bwait\b|\bstop\b|\bhold (?:on|off)\b|\bnever ?mind\b|\bcancel\b|\bdon[’']?t\b|\bdo not\b"
                    r"|(?<!\w)(?:חכה|חכי|תחכה|עצור|תעצור|עצרי|בטל|ביטול|עזוב)(?!\w)|אל ת\S+", re.I)
@@ -1880,8 +1886,17 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     meta.setdefault("diagram_touched", []).extend(res["touched"])
             elif kind == "netlist.write" and a.get("sheet") and isinstance(a.get("data"), dict):
                 notes = []
-                sym_errors = netlist_symbol_errors(project, a["data"], notes)
-                res = {"ok": False, "errors": sym_errors} if sym_errors else store.write_sheet_logged(project, a["sheet"], a["data"])
+                data, held = a["data"], []
+                if _consent_base("nc", a, consent_words(chat, last_user)):
+                    # NC on an open / unlisted pin of the netlist as it stands clears the manufacturing gate: only the student's own
+                    # words do that directly; otherwise those marks wait as one proposal (one click), the rest of the sheet is written
+                    data, held = store.hold_nc_marks(project, a["sheet"], data)
+                sym_errors = netlist_symbol_errors(project, data, notes)
+                res = {"ok": False, "errors": sym_errors} if sym_errors else store.write_sheet_logged(project, a["sheet"], data)
+                if res["ok"] and held:
+                    store.propose_nc(project, held)
+                    notes.append(f"{len(held)} {'pin' if len(held) == 1 else 'pins'} left open: the NC marks wait as one proposal for the student to approve "
+                                 f"with one click ({', '.join(i['ref'] + ' pin ' + (i['num'] or i['name']) for i in held[:10])}{' ...' if len(held) > 10 else ''})")
                 if res["ok"]:
                     # pin numbers filled from the library symbol are how it is meant to work, not a warning: one short remark, no amber chip
                     filled = [n.split(":")[0] for n in notes if "matched by pin name" in n]
@@ -2067,9 +2082,14 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     refused.extend(res[1])
                 else:
                     applied.append(res)
+        except StepStopped:
+            raise
         except (ValueError, KeyError) as exc:
             refused.append(f"{kind}: {exc}")
             note_fix(kind, exc, a)
+        except Exception as exc:        # noqa: BLE001 - one action's bug must not lose the other actions of the turn
+            runlog.event("op", op="chat.action", phase="error", project=project, action=str(kind), error=f"{type(exc).__name__}: {exc}")
+            refused.append(f"{kind}: could not be applied ({type(exc).__name__}: {exc}). The other actions of this turn were not affected")
     if any(x.startswith("netlist") for x in applied) or any(r.get("kind") != "idea_diagram" for r in auto_done):
         redraw(project)
     if auto_done and sess:

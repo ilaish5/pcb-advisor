@@ -143,4 +143,4 @@ def test_connector_with_datasheet_stays_unverified_until_verified():
     assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == ""
     assert store.pins_status(line, {"verify": "pass"})[0] == "unverified"        # an older pass is not a verification
     assert store.pins_status(line, {"verify": "pass", "accepted": True})[0] == ""   # an accept is never revoked
-    assert store.pins_status(line, {"pins_accepted": True})[0] == ""
+    assert store.pins_status(line, {"pins_accepted": True})[0] == "accepted"

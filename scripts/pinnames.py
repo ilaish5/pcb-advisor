@@ -51,3 +51,12 @@ def forms_among(name, names, two_pin=False):
         return {up}
     return forms(name, two_pin)
 
+
+
+NC_NETS = ("NC", "N/C", "NO_ERC")      # the nets the drawing and the checks treat as "pin deliberately unconnected"
+
+
+def is_nc_net(net):
+    """True for a pin net that means no-connect (NC, N/C, NO_ERC): the one definition draw, the schematic checks, the pin
+    fingerprint and the open-pin gate share."""
+    return str(net or "").strip().upper() in NC_NETS
