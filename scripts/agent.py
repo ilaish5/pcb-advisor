@@ -116,31 +116,70 @@ def _summary(model):
         row["stock_check"] = background.stock_state(model.get("project") or "", l["key"], sup)
         bom.append(row)
     diag_summary = _compact_diagram(model.get("diagram") or (model.get("idea") or {}).get("diagram"))
-    idea_summary = {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "goal_status", "agreed", "confirmed")}
-    idea_summary["diagram"] = diag_summary
+    idea = model.get("idea") or {}
+    idea_summary = {k: v for k, v in idea.items() if k in ("goal", "goal_status", "confirmed")}
+    # an agreed item as the agent needs it: what, about what, who wrote it, confirmed or not (its time and earlier text are history)
+    idea_summary["agreed"] = [{k: a[k] for k in ("topic", "text", "by", "status") if k in a}
+                              for a in idea.get("agreed") or [] if isinstance(a, dict)]
+    sources = model.get("sources", [])
+    reference = [x for x in sources if x.get("origin") == "Reference library"]
     s = {
         "idea": idea_summary,
-        "diagram": diag_summary,
+        "diagram": diag_summary,          # once: the idea's diagram is this one
+        "stages": _stages(model),
         "totals": model.get("totals"),
         "bom": bom,
         "sheets": [{"id": sh["id"], "title": sh["title"], "parts": len(sh["parts"])} for sh in model.get("sheets", [])],
         "pending_proposals": [{"id": p["id"], "line": p["line"], "changes": p["changes"]}
                               for p in model.get("proposals", []) if p["status"] == "pending"],
-        "sources": [x["name"] for x in model.get("sources", [])],
+        # the project's own documents (and shared datasheets) by name; the course/JLC/IPC reference library only as a pointer
+        "sources": [x["name"] for x in sources if x.get("origin") != "Reference library"],
     }
+    if reference:
+        s["reference_library"] = (f"{len(reference)} course, JLC and IPC files in <repo>/shared/reference/, citable by their path "
+                                  "there; open its AGENTS.md (the topic index) to find one")
+    waiting = ((model.get("pin_decisions") or {}).get("remaining")) or []
+    if waiting:
+        # the student accepts these in DFM > Unverified parts; the Gerber zip and the OutJob wait for it (rule 7, rule 11)
+        s["pins_waiting"] = [{"line": r.get("line"), "refs": r.get("refs"), "mpn": r.get("mpn")} for r in waiting]
     checks_summary = []
     for c in model.get("checks", []):
         stem = c.get("stem")
         if stem:
             c_dir = workspace.project_dir(model.get("project")) / "checks" / stem
-            slice_paths = [f.as_posix() for f in sorted(c_dir.glob("slice_*.jpg"))]
-            checks_summary.append({"stem": stem, "slices": slice_paths, "triage_count": c.get("triage_count", 0)})
+            slices = sorted(f.name for f in c_dir.glob("slice_*.jpg"))
+            checks_summary.append({"stem": stem, "folder": c_dir.as_posix(), "slices": slices, "triage_count": c.get("triage_count", 0)})
     if checks_summary:
         s["dfm_checks"] = checks_summary
     import ext
     ext.load()
     ext.merge(ext.SUMMARY, model.get("project") or "", s)
-    return json.dumps(s, ensure_ascii=False, indent=1)
+    return json.dumps(s, ensure_ascii=False, separators=(",", ":"))
+
+
+STAGE_REASON_CUT = 240
+
+
+def _stages(model):
+    """Where the project stands, one row per stage (idea, bom, sch, pcb, rules, outputs): its state, why, and the next step the page
+    offers; a gate that holds the stage says so. Without it the agent could not name the student's next step (HOW TO ANSWER)."""
+    out = []
+    for st in model.get("stages") or []:
+        if not isinstance(st, dict):
+            continue
+        row = {"id": st.get("id"), "state": st.get("state")}
+        reason = str(st.get("reason") or "")
+        if reason:
+            row["why"] = reason if len(reason) <= STAGE_REASON_CUT else reason[:STAGE_REASON_CUT - 1].rstrip() + "…"
+        nxt = (st.get("next") or {}).get("label")
+        if nxt:
+            row["next"] = nxt
+        if (st.get("gate") or {}).get("blocked"):
+            row["blocked"] = True
+        if st.get("primary"):
+            row["current"] = True          # the stage the student's pages lead with now
+        out.append(row)
+    return out
 
 
 def _workspace_section(project, engine_home=None):

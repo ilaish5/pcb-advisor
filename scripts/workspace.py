@@ -359,7 +359,8 @@ def describe(project=None, engine_home=None):
             {"run": oscompat.py("python3 {repo}/scripts/checks/schematic.py <source>"),
              "what": "build netlist and check single-pin nets, unconnected IC power pins, pin-net mismatches"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/check_availability.py <project> [LINE ...]"),
-             "what": "stock and price per supplier, stored with the time. NEVER state stock or price without running this"},
+             "what": "stock and price per supplier, stored with the time. Never state stock or price from memory; the tool runs this "
+                     "in the background, so run it yourself only when a line's stock_check in CURRENT STATE says missing or stale"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/compare_prices.py <project>"),
              "what": "cost per board by supplier, from the stored checks"},
             {"run": oscompat.py("python3 {repo}/scripts/skills/verify_part.py <project> <line>"),
@@ -374,15 +375,16 @@ def describe(project=None, engine_home=None):
              "what": "add a datasheet to this project (it is stored in the project's sources/ only). Use this "
                      "rather than curl - it records the url and sha256, which is what makes it citable"},
             {"run": oscompat.py(f'python3 {crepo}/scripts/sources.py verify <name> "<quote>" {pdir.name}'),
-             "what": "is this quote really in that document? Run it BEFORE you quote"},
-            {"run": oscompat.py("python3 {repo}/scripts/trace_width.py <amps> --oz <copper> --rise <degrees>"),
+             "what": "is this quote really in that document? Only when the student asks: the tool checks every citation after "
+                     "your reply, so do not run it before answering"},
+            {"run": oscompat.py("python3 {repo}/scripts/trace_width.py <amps> --layer external|internal --oz <copper> --rise <degrees>"),
              "what": "IPC-2221 trace width. Run it; never estimate a width yourself"},
             {"run": oscompat.py(f"python3 {crepo}/scripts/lineage.py {pdir.name}"),
              "what": "is each exported file still made from the current design? Run it before anything goes to JLC"},
             {"run": oscompat.py(f"python3 {crepo}/scripts/introspect.py {pdir.name} [summary|turns|errors|version]"),
              "what": "about yourself: what you ran, time and cost per turn, failures, the tool version and updates"},
             {"run": oscompat.py("python3 {repo}/scripts/model.py <project>"),
-             "what": "the full project state, more than the summary above carries"},
+             "what": "the full project state, more than CURRENT STATE carries (long: it includes the chat)"},
         ],
     }
 
