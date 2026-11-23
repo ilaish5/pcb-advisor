@@ -121,12 +121,12 @@ Verified against the files before fixing; the rest is listed for a later pass.
 
 | piece | before chars | after chars | change |
 |---|---|---|---|
-| RULES (AGENTS.md) | 29194 | 30149 | +955 (idea.constrain fields, CURRENT STATE keys) |
+| RULES (AGENTS.md) | 29194 | 30050 | +856 (idea.constrain fields, CURRENT STATE keys) |
 | WORKSPACE | 7546 | 7803 | +257 (corrected script lines) |
-| CURRENT STATE | 13487 | 6708 | **-6779 (-50%)**, now including `stages` (891 chars) |
-| stdin prompt total | 56270 | 50703 | **-5567 (~-1400 tokens)** |
-| AGENTS.md loaded by the engine | 29194 | 30149 | +955 |
-| net per turn (and per follow-up/retry round) | | | about -4600 chars, ~-1150 tokens |
+| CURRENT STATE | 13487 | 6709 | **-6778 (-50%)**, now including `stages` (~900 chars) |
+| stdin prompt total | 56270 | 50605 | **-5665 (~-1400 tokens)** |
+| AGENTS.md loaded by the engine | 29194 | 30050 | +856 |
+| net per turn (and per follow-up/retry round) | | | about -4800 chars, ~-1200 tokens |
 
 CURRENT STATE after: diagram once; `agreed` rows {topic, text, by, status}; `stages` (7 rows) [{id, state, why (<=240, head and tail), next, blocked, current}];
 `pins_waiting` [{line, refs, status unverified|mismatch}] = `store.pins_to_resolve`, what the manufacturing gate waits on; project sources by name + one `reference_library` pointer line; DFM slices as folder + file names; compact JSON.
@@ -140,3 +140,11 @@ P1 (rules once) would take another ~7500 tokens a turn.
   ext shim, constraints, altium settings, wave3 review, docs, evals, memory, pin decisions; `ruff check scripts tests` clean.
   One failure, pre-existing on the unmodified base too: `test_wave3_review.py::test_one_failing_action_is_refused_and_the_turn_goes_on`
   (expects "failed unexpectedly", serve.py says "could not be applied").
+
+## 9. Limits of this pass
+- No live engine turn was run: sizes come from the exact prompt `agent.respond` builds (engine stubbed), not from the engine's token count.
+- The double load of AGENTS.md (finding 4) is read from the code (`runtime_pack` writes `CLAUDE.md` = `@AGENTS.md` in the engine
+  home, the engine's cwd) and the existing probe design; it was not re-measured with `pcb.py probe`.
+- Behaviour change to note: rules-and-calcs and manufacturer-and-dfm now tell the agent to send `altium.import_rules` /
+  `altium.run_outjob` where they used to hand the step to the student. AGENTS.md already said to use these actions (no consent change:
+  both are routine, no-card actions there).
