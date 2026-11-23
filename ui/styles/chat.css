@@ -1,6 +1,8 @@
 /* chat.css: the chat column. It sits on the frame like the navigation: no panel, no border. Tokens only (base.css). */
 
-.chat{display:grid;grid-template-rows:auto minmax(0,1fr) auto;min-height:0;min-width:0;position:relative;overflow:hidden;
+/* the column is minmax(0,1fr), not the implicit auto: an auto track grows to the widest unbreakable line (a status note, a long
+   path) and pushes the composer and the send button past the edge of the column, where overflow:hidden cuts them off */
+.chat{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto;min-height:0;min-width:0;position:relative;overflow:hidden;
   background:none;border:0;border-radius:0;box-shadow:none;padding:0 10px 0 4px}
 
 /* ---------- header ---------- */
