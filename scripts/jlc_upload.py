@@ -442,33 +442,34 @@ def gerber_zip(project: str) -> dict[str, Any]:
 # ---------------------------------------------------------------- 2. the report in Downloads
 
 def downloads_dir() -> pathlib.Path:
-    """Where the browser saves: `workspace.downloads_dir` in config.json, else the user's Downloads folder (on Windows the
-    folder the shell points to: it can be moved or redirected, e.g. to a network share)."""
-    raw = workspace.get("workspace.downloads_dir") or ""
-    if raw:
-        return pathlib.Path(os.path.expandvars(str(raw))).expanduser()
-    shell = _shell_downloads()
-    return shell if shell and shell.is_dir() else pathlib.Path.home() / "Downloads"
-
-
-def _shell_downloads() -> pathlib.Path | None:
-    """The Downloads folder Windows itself points to; None elsewhere or when it is not set."""
-    if os.name != "nt":
-        return None
-    try:
-        import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                            r"Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders") as key:
-            shell = winreg.QueryValueEx(key, "{374DE290-123F-4565-9164-39C4925E467B}")[0]
-        return pathlib.Path(os.path.expandvars(str(shell))) if shell else None
-    except OSError:
-        return None
+    """Where the browser saves. One resolver for the whole system: workspace.downloads_dir()."""
+    return workspace.downloads_dir()
 
 
 def _arrived(st: os.stat_result) -> float:
     """When the file came to this folder. The creation time on Windows, so a browser that stamps the server's
     Last-Modified date on a download does not make a new file look old."""
     return max(st.st_mtime, getattr(st, "st_birthtime", st.st_ctime))
+
+
+def _other_projects(project: str) -> list[str]:
+    """The names of the other projects of the workspace."""
+    try:
+        return sorted(d.name for d in workspace.projects_dir().iterdir()
+                      if d.is_dir() and d.name != project and not d.name.startswith((".", "_")))
+    except OSError:
+        return []
+
+
+def _belongs_elsewhere(project: str, fname: str, others: list[str]) -> str | None:
+    """The other project a report file name points to ("DFM analysis report_<other>_gerbers.pdf"), when it names no
+    word of this project: a report of a neighbour board must not land in this one."""
+    low = fname.lower()
+    mine = project.lower() in low
+    for o in others:
+        if len(o) >= 3 and o.lower() in low and not mine and o.lower() not in project.lower():
+            return o
+    return None
 
 
 def since(project: str) -> dt.datetime:
@@ -523,8 +524,12 @@ def pickup(project: str, kind: str | None = None, name: str | None = None, downl
     # the names of the older ones (newest first): the student can still pick one with `name`
     res["older_files"] = sorted(older, key=lambda o: o["arrived"], reverse=True)[:5]
     known = dfm.ingested_hashes(project)
+    others = _other_projects(project)
     for at, path, fname, size in sorted(cands)[:MAX_PICKUP]:
         item = {"name": fname, "bytes": size, "arrived": at.isoformat(timespec="seconds")}
+        if name is None and (other := _belongs_elsewhere(project, fname, others)):
+            res["skipped"].append({**item, "reason": f"named for the project {other}, not this one (add it by name to take it anyway)"})
+            continue
         if size > MAX_REPORT_MB * 1024 * 1024:
             res["skipped"].append({**item, "reason": f"larger than {MAX_REPORT_MB} MB"})
             continue
@@ -539,6 +544,9 @@ def pickup(project: str, kind: str | None = None, name: str | None = None, downl
         sha = dfm.pdf_sha256(raw)
         if sha in known:
             res["skipped"].append({**item, "reason": "already added", "stem": known[sha]})
+            continue
+        if name is None and (other := next((o for o in others if sha in dfm.ingested_hashes(o)), None)):
+            res["skipped"].append({**item, "reason": f"already added to the project {other} (add it by name to take it anyway)"})
             continue
         try:
             r = dfm.ingest_pdf(raw, project, name=fname, kind=kind or "auto", source="downloads")

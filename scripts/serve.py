@@ -1281,7 +1281,11 @@ def rules_warnings(res):
 
 
 def outputs_summary(res):
-    return f"Altium wrote {len(res.get('files') or [])} files" + (" (OutJob added to the project)" if res.get("added") else "")
+    chk = res.get("outputs_check") or {}
+    said = f"Altium wrote {len(res.get('files') or [])} files" + (" (OutJob added to the project)" if res.get("added") else "")
+    if chk and not chk.get("ok", True):            # a claim the disk does not back is said in the summary itself
+        said += "; NOT made: " + ", ".join(chk.get("missing") or chk.get("absent") or chk.get("empty") or ["see the warnings"])
+    return said
 
 
 def drc_summary(res):
@@ -3084,8 +3088,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, order_check.order_check(self.project()))      # read only: a recheck is a POST
             except Exception as exc:
                 return self._send(500, {"error": str(exc)})
-        if path == "/api/final/unverified":
-            return self._send(200, store.recheck_pins(self.project()))
+        if path == "/api/final/unverified":          # read only: the list as it stands; a re-check (links documents, verifies, writes logs) is the POST
+            rows = store.pins_to_resolve(self.project())
+            return self._send(200, {"unverified": rows, "checked": [], "message": ""})
+        if path == "/api/order/options":             # N boards and assembly (PCBA): the project's choice, else the defaults
+            import order_options
+            return self._send(200, order_options.get(self.project()))
+        if path == "/api/outputs/check":             # what the last outputs step made against what it was set to make
+            import outputs_check
+            return self._send(200, outputs_check.load(self.project()) or {})
+        if path == "/api/jlc/downloads":             # the folder the DFM report is looked for in, known before the first look
+            import jlc_upload
+            d = jlc_upload.downloads_dir()
+            return self._send(200, {"folder": str(d), "folder_exists": d.is_dir()})
         if path == "/api/final/incomplete":
             return self._send(200, store.sheet_gaps(self.project()))
         if path == "/api/checks":
@@ -3667,6 +3682,33 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "datasheet": meta["name"], "state": state()})
             except Exception as exc:
                 return self._send(200, {"error": str(exc), "url": url})
+
+        if path == "/api/order/options":        # the student's own choice: how many boards, with assembly or not
+            import order_options
+            try:
+                res = order_options.set_options(proj, boards=data.get("boards"), assembly=data.get("assembly"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, {**res, "state": state()})
+
+        if path == "/api/design-report":        # the report of what was made (and, with archive, the zip to get this board back)
+            import design_report
+            try:
+                res = design_report.archive(proj) if _truthy(data.get("archive")) else design_report.build(proj)
+            except OSError as exc:
+                return self._send(500, {"error": f"could not write the report: {exc}"})
+            return self._send(200, res)
+
+        if path == "/api/final/unverified":     # Re-check datasheets: links a document that arrived, verifies the parts, writes logs
+            return self._send(200, store.recheck_pins(proj))
+
+        if path == "/api/checks/accept-suggestion":     # the student takes the agent's proposed verdict of one finding
+            import dfm
+            try:
+                saved = dfm.accept_suggestion(proj, str(data.get("stem") or ""), int(data.get("idx")))
+                return self._send(200, {"ok": True, "triage": saved, "sig": dfm.triage_sig(saved)})
+            except (ValueError, TypeError, FileNotFoundError) as exc:
+                return self._send(400, {"error": str(exc)})
 
         if path == "/api/order/check":          # asks the suppliers again: it writes the supply log, so it is not a GET
             import order_check

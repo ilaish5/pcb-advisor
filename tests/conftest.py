@@ -60,6 +60,7 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(pathlib.Path, "home", classmethod(lambda cls: tmp_path / "userhome"))   # no test reads the real Downloads
     import workspace
     workspace.load(reload=True)
+    monkeypatch.setattr(workspace, "_shell_downloads", lambda: None)      # nor the real folder Windows points to
     (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
     yield tmp_path
     # A test may have left a deliberately broken config behind, and reloading it

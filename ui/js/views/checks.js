@@ -35,7 +35,11 @@ let dfmZipAsked = false, dfmZipTried = null, dfmZipLoading = false;
 let dfmLooking = false;      // "Find my report" is running; the look when the window regains focus stays silent
 let dfmFindBusy = false, dfmFindAt = 0;
 let dfmPending = [];         // reports found whose header does not say what they cover: [{name, bytes, arrived}]
-let dfmFolder = '';          // the Downloads folder the last look used
+let dfmFolder = '';          // the Downloads folder the last look used, or the one the server says it will use
+let dfmFolderAsked = null;   // the project the folder was asked for
+let dfmRecheckBusy = false;  // Re-check datasheets is running
+let dfmOrder = null, dfmOrderFor = null;   // {boards, assembly, set}: the order's own choices (N boards, assembly), asked once per project
+const dfmAutoAsked = new Set();   // reports the agent was already asked to list: once each
 const DFM_JLC = 'https://jlcdfm.com';
 const DFM_FOCUS_MS = 4000;   // the look on focus runs at most this often
 
@@ -145,7 +149,8 @@ function dfmHeader(reports) {
     ready && {always: true, label: 'Ready to order', tone: 'ok', title: 'Every finding is judged and none is a real issue'},
     t.known && !t.n && {always: true, label: 'No findings listed yet', title: 'Add the findings of the report, or ask the agent to list them'},
   ]);
-  const more = menu({icon: 'more', title: 'More'}, [{label: dfmGuide ? 'Hide how to check at JLC' : 'How to check at JLC', act: 'dfm-guide'}]);
+  const more = menu({icon: 'more', title: 'More'}, [{label: dfmGuide ? 'Hide how to check at JLC' : 'How to check at JLC', act: 'dfm-guide'},
+    {label: 'Make the design report', act: 'dfm-report', attrs: {archive: '0'}}, {label: 'Make an archive of the project', act: 'dfm-report', attrs: {archive: '1'}}]);
   return viewHeader({title: 'DFM', meta, actions: dfmRemakeAll() + more, primary: dfmUpload({kind: 'pri'})});
 }
 // Parts placed with pins from the agent: the one place the missing datasheet blocks. Resolved by a verified datasheet or an explicit accept.
@@ -163,8 +168,40 @@ function dfmUnverifiedHTML() {
     ${docs.length ? `<select class="in quiet" data-pick-ds="${esc(l.key)}" aria-label="Pick a datasheet for ${esc(refsLabel(l.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}"${d === l.datasheet ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
   return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>
     <p class="muted">Drop each datasheet in Sources and re-check, or confirm the pins yourself (one click, undoable).</p>
-    <ul>${rows.map(item).join('')}</ul>${btn('Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins'})} ${typeof pinsAcceptAllBtn === 'function' ? pinsAcceptAllBtn() : ''}</section>`;
+    <ul>${rows.map(item).join('')}</ul>${btn(dfmRecheckBusy ? 'Checking…' : 'Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy})} ${typeof pinsAcceptAllBtn === 'function' ? pinsAcceptAllBtn() : ''}</section>`;
 }
+// The order: how many boards, and whether JLC assembles them (then the outputs must hold the BOM and the CPL).
+async function dfmOrderLoad() {
+  const p = PROJECT;
+  dfmOrderFor = p;
+  try {
+    const r = await api('/api/order/options', undefined, {soft: true});
+    if (p === PROJECT && r && !r.error) { dfmOrder = r; dfmRepaint(); }
+  } catch (err) { /* the section stays hidden until the server answers */ }
+}
+function dfmOrderHTML() {
+  if (dfmOrderFor !== PROJECT) dfmOrderLoad();
+  if (!dfmOrder) return '';
+  const o = dfmOrder;
+  return `<section class="dfm-order"><h3>Order</h3>
+    <label class="field"><span>Boards</span><input class="in quiet" type="number" min="1" max="100000" step="1" value="${esc(o.boards)}" data-order-boards aria-label="Number of boards"></label>
+    <label class="check"><input type="checkbox" data-order-assembly ${o.assembly ? 'checked' : ''}> <span>JLC assembles the boards (adds the BOM and the CPL to the outputs)</span></label>
+    ${o.set ? '' : '<p class="muted">Not chosen yet: the stock check assumes ' + esc(o.boards) + ' boards, bare.</p>'}</section>`;
+}
+onChange(t => t.dataset && (t.dataset.orderBoards !== undefined || t.dataset.orderAssembly !== undefined), async e => {
+  const body = e.target.dataset.orderAssembly !== undefined ? {assembly: e.target.checked} : {boards: e.target.value};
+  let r = null;
+  try { r = await api('/api/order/options', body, {soft: true}); } catch (err) { dfmFail(err); }
+  if (r && !r.error) { dfmOrder = {boards: r.boards, assembly: r.assembly, set: r.set}; if (r.state) setState(r.state); renderCenter(true); }
+  else { if (r && r.error) toast(r.error, null, {bad: true}); dfmOrderLoad(); }
+});
+onAct('dfm-report', async (el, d) => {
+  let r = null;
+  try { r = await api('/api/design-report', {archive: d.archive === '1'}, {soft: true}); } catch (err) { dfmFail(err); }
+  if (!r || r.error) { toast((r && r.error) || 'The report could not be made.', null, {bad: true}); return; }
+  await refresh(true);
+  toast(r.archive ? `Archive ${r.archive} made (${r.files} files)` : `Design report ${r.file} made` + (r.changed && r.changed.length ? '. Changed since the last one: ' + r.changed.map(c => c.name).join(', ') : ''));
+});
 // A partial schematic is welcome while designing; before ordering, every pin has a net and every part is in the BOM.
 function dfmGaps() {
   const g = S.sheet_gaps || {};
@@ -195,7 +232,16 @@ onChange(t => t.dataset && t.dataset.pickDs !== undefined, async e => {
   toast(attachMsg(r.attached));
 });
 // A part's pins are confirmed in a modal dialog (views/pins.js): one part at a time by construction, one click, no reason asked.
-onAct('recheck-pins', async () => { const r = await api('/api/final/unverified'); await refresh(true); if (r && r.message) toast(r.message); });
+onAct('recheck-pins', async () => {
+  if (dfmRecheckBusy) return;
+  dfmRecheckBusy = true;
+  if (dfmVisible()) renderCenter(true);
+  let r = null;
+  try { r = await api('/api/final/unverified', {}); } catch (err) { dfmFail(err); }      // a POST: it links documents, verifies and writes logs
+  dfmRecheckBusy = false;
+  await refresh(true);
+  if (r && r.message) toast(r.message);
+});
 function dfmUpload(trigger) {
   if (dfmBusy || dfmLooking) return btn(dfmLooking ? 'Looking…' : 'Uploading…', {kind: trigger.kind, disabled: true});
   return menu(Object.assign({label: 'Upload report', icon: 'upload', iconAfter: 'chev', title: 'Add the PDF report from jlcdfm.com'}, trigger), [
@@ -211,7 +257,7 @@ function dfmUpload(trigger) {
 /* ---------- the guide: four steps, the zip, the report ---------- */
 function dfmProjectGuard() {       // the zip and the pending reports belong to one project
   if (dfmFor === PROJECT) return;
-  dfmFor = PROJECT; dfmZip = null; dfmZipErr = ''; dfmZipAsked = false; dfmZipTried = null; dfmPending = []; dfmFolder = ''; dfmGuide = false;
+  dfmFor = PROJECT; dfmZip = null; dfmZipErr = ''; dfmZipAsked = false; dfmZipTried = null; dfmPending = []; dfmFolder = ''; dfmFolderAsked = null; dfmOrder = null; dfmOrderFor = null; dfmGuide = false;
 }
 function dfmZipSet(r) { dfmZip = r; dfmZipErr = ''; dfmZipAsked = true; }
 async function dfmZipLoad() {
@@ -271,8 +317,17 @@ function dfmZipBody() {
 }
 const dfmStep = (title, actions, body) => `<li class="dfm-step"><div class="dfm-step-h"><h3>${esc(title)}</h3>${actions ? `<div class="acts">${actions}</div>` : ''}</div>` +
   `${body ? `<div class="dfm-step-b">${body}</div>` : ''}</li>`;
+async function dfmFolderLoad() {
+  const p = PROJECT;
+  dfmFolderAsked = p;
+  try {
+    const r = await api('/api/jlc/downloads', undefined, {soft: true});
+    if (p === PROJECT && r && r.folder && !dfmFolder) { dfmFolder = r.folder; dfmRepaint(); }
+  } catch (err) { /* the guide says "your Downloads folder" */ }
+}
 function dfmGuideHTML(empty) {
   dfmZipSync();
+  if (dfmFolderAsked !== PROJECT) dfmFolderLoad();
   const folder = dfmFolder ? `<span class="m">${esc(dfmFolder)}</span>` : 'your Downloads folder';
   const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // unverified pins: the server refuses the zip, so the button says why before the click
   const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy || !!held, title: held || undefined});
@@ -322,6 +377,12 @@ function dfmDetailRow(stem, i) {
     <div class="dfm-xf"><span>${esc(facts)}</span>${btn('Remove finding', {kind: 'danger', size: 'sm', icon: 'trash', act: 'del-triage-row', stem, idx: i})}</div>
   </div></td></tr>`;
 }
+// the agent's proposed verdict of a finding nobody judged yet: shown beside the select, one click takes it
+function dfmSuggestion(stem, i, r, v) {
+  const s = String((r && r.suggested_verdict) || '').toLowerCase(), hit = DFM_VERDICTS.find(x => x[0] === s);
+  if (!hit || v !== 'unknown') return '';
+  return `<span class="dfm-sug muted">Agent: ${esc(hit[1])} ${btn('Accept', {kind: 'line', size: 'sm', act: 'dfm-accept', stem, idx: i, title: 'Take the agent\'s verdict as yours'})}</span>`;
+}
 function dfmRow(stem, x) {
   const {r, i} = x, v = dfmVerdict(r), open = dfmOpen === stem + '|' + i;
   const [tone, level] = dfmLevel(r), name = r.check || 'Check ' + (i + 1);
@@ -332,7 +393,7 @@ function dfmRow(stem, x) {
     <td class="ck"><span class="main">${esc(name)}</span></td>
     <td class="ly c-layer" title="${esc(r.layer || '')}">${esc(r.layer || '')}</td>
     ${count(r.danger)}${count(r.warning, 'c-warn')}<td class="num c-good${r.good ? '' : ' z'}">${num(r.good || 0)}</td>
-    <td><select class="in quiet dfm-v ${DFM_VCLASS[v]}" data-triage-field="verdict" data-stem="${esc(stem)}" data-idx="${i}" aria-label="Verdict for ${esc(name)}">${opts}</select></td>
+    <td><select class="in quiet dfm-v ${DFM_VCLASS[v]}" data-triage-field="verdict" data-stem="${esc(stem)}" data-idx="${i}" aria-label="Verdict for ${esc(name)}">${opts}</select>${dfmSuggestion(stem, i, r, v)}</td>
     <td class="c-ask"><div class="row-acts">${btn('', {icon: 'chat', size: 'sm', title: `Ask about ${name}`, act: 'ask-dfm', stem, check: name})}</div></td></tr>${open ? dfmDetailRow(stem, i) : ''}`;
 }
 function dfmFindings(stem, segKind) {
@@ -406,7 +467,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
@@ -429,6 +490,13 @@ onAct('dfm-retry', async (el, d) => {
 onAct('view-slice', async (el, d, e) => {
   openFileAsTab({name: d.slice, path: d.stem + '/' + d.slice, stem: d.stem, slice: d.slice, fileType: 'dfm'});
   return;
+});
+onAct('dfm-accept', async (el, d) => {
+  const stem = d.stem, idx = parseInt(d.idx, 10);
+  let r = null;
+  try { r = await api('/api/checks/accept-suggestion', {stem, idx}, {soft: true}); } catch (err) { dfmFail(err); }
+  if (r && r.triage) { triageMap[stem] = r.triage; dfmSig[stem] = r.sig; renderCenter(true); renderNav(); }
+  else if (r && r.error) toast(r.error, null, {bad: true});
 });
 onAct('ask-dfm', async (el, d, e) => {
   askAbout({kind: 'dfm', id: d.stem + ':' + d.check, label: d.check});
@@ -518,6 +586,16 @@ function dfmAdopt(found) {
   const last = found[found.length - 1];
   if (last && last.kind !== 'both') { dfmSeg = last.kind; dfmSegUser = true; }
   dfmOpen = '';
+  dfmAutoList(found);
+}
+// A report is a picture: its findings are listed by the agent reading the slices. That turn starts by itself for the
+// report that just came in (once per report), so the table is not left at "No findings listed yet".
+function dfmAutoList(found) {
+  const f = found.filter(x => x.stem && !dfmAutoAsked.has(PROJECT + '|' + x.stem)).pop();
+  if (!f || typeof askAbout !== 'function') return;
+  dfmAutoAsked.add(PROJECT + '|' + f.stem);
+  askAbout({kind: 'dfm', id: f.stem, label: f.stem, send: true,
+            text: 'List the findings of this report in the DFM table, then tell me which ones look real.'});
 }
 // pick = {name, kind} adds that one file of Downloads; with nothing, the reports that arrived since the last one.
 // manual: the student asked, so an empty result is said; the look on focus stays quiet unless it finds something.

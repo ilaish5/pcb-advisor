@@ -1321,6 +1321,26 @@ def _mechanical_parts(items, outline, fps, parts, refs_lines=None, size=None):
     return out["hole"], out["keepout"], rules, warnings
 
 
+def _routing_lost(pcb):
+    """{tracks, vias, pours} of copper on the saved PcbDoc: what a new placement deletes. {} when the file cannot be read (the
+    caller then says it without numbers, never guesses them)."""
+    from altium.pcbdoc import read_pcbdoc
+    try:
+        doc = read_pcbdoc(pathlib.Path(pcb))
+    except (AltiumReadError, OSError):
+        return {}
+    cu = lambda it: isinstance(it.get("layer"), int) and 1 <= it["layer"] <= 32
+    return {"tracks": sum(1 for t in doc.get("tracks", []) if cu(t)), "vias": len(doc.get("vias", [])),
+            "pours": len(doc.get("polygons", []))}
+
+
+def _routing_words(lost):
+    """"12 tracks, 3 vias and 1 pour" for the counts of _routing_lost, '' when nothing is there or nothing is known."""
+    bits = [f"{n} {w if n != 1 else w.rstrip('s')}" for w, n in (("tracks", lost.get("tracks", 0)), ("vias", lost.get("vias", 0)),
+                                                                  ("pours", lost.get("pours", 0))) if n]
+    return ", ".join(bits[:-1]) + (" and " if len(bits) > 1 else "") + bits[-1] if bits else ""
+
+
 def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3,
              constraint_items=None, refs_lines=None):
     """Place `parts` ([{ref, footprint, lib_ref, pins}]) from the PcbLib on the PcbDoc, create the outline from `size` when the board
@@ -1342,7 +1362,18 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     missing = sorted({p["ref"] for p in parts if p.get("footprint") not in fps})
     if missing:
         raise Fixable("prereq.library_not_built", f"No footprint in the project library for {', '.join(missing[:8])}: run library.build first.")
-    log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
+    lost = _routing_lost(pcb) if pathlib.Path(pcb).is_file() else {}
+    routed = _routing_words(lost)
+    try:
+        log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
+    except BridgeError as exc:
+        if routed and re.search(r"the board already has \d+ parts or copper objects", str(exc)):
+            # the refusal says what is lost, in numbers: the one confirm (Replace) is then an informed one
+            said = re.sub(r"(the board already has \d+ parts or copper objects)",
+                          rf"\1, among them routing of {routed} that placing again deletes", str(exc), count=1)
+            raise BridgeError(said + ". Replacing deletes that routing and places every part anew; the student's own edits in "
+                                     "Altium are lost with it (the board file is copied to a backup first).") from exc
+        raise
     info = _pcbcheck_info(log)
     if info is None:
         raise BridgeError("Altium did not report the state of the board.")
@@ -1354,6 +1385,8 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
         raise BridgeError("The board outline is not a rectangle, so I cannot tell whether the parts fit inside it. Draw a rectangular "
                           "outline in Altium (or delete the outline so I create one from the board size) and try again.")
     warnings = []
+    if replace and routed:
+        warnings.append(f"Placing again deleted the routing of the board ({routed}); the earlier file is in the backup folder.")
     if placeholder:
         outline = layout.plan_outline(size)
         if outline is None:
@@ -2193,6 +2226,18 @@ def add_outjob(project):
     return {"file": str(target), "backup": backup}
 
 
+def unsaved_documents(prj):
+    """Names of the project's documents that Altium holds open with unsaved changes (DOCSTATE, read only), [] when all are
+    saved. Raises BridgeError when Altium cannot be asked. Outputs made then may not match the files on disk."""
+    summary = read_prjpcb(prj)
+    docs = [prj.parent / pathlib.Path(rel.replace("\\", "/")) for rel in summary["sheets"] + summary["pcbs"]]
+    docs = [d for d in docs if d.is_file()] + [prj]
+    state = [l for l in run_commands([("PROJECT", str(prj))] + [("DOCSTATE", str(d)) for d in docs]) if l.startswith("docstate ")]
+    if len(state) != len(docs):
+        return []                                      # an answer that does not match what was asked says nothing
+    return [d.name for d, l in zip(docs, state) if "modified=1" in l]
+
+
 def run_outjob(project):
     """Run the project's OutJob (ours is added first when it has none). Before the outputs, a board whose outline layer is empty gets
     its rectangular board shape drawn on Mechanical 1 (repair_outline). Returns {outjob, added, containers, files, backup, warnings,
@@ -2219,6 +2264,14 @@ def run_outjob(project):
         if cand.is_file() and outjob_containers(cand):
             target = cand
             break
+    unsaved = []
+    try:                                                 # outputs made from a project with unsaved edits do not match its files
+        unsaved = unsaved_documents(prj)
+    except BridgeError as exc:
+        outline_note.append(f"Could not check whether Altium holds unsaved changes ({exc}).")
+    if unsaved:
+        outline_note.insert(0, f"Altium has unsaved changes in {', '.join(unsaved)}: the outputs may not match the saved files. "
+                               "Save them in Altium (Ctrl+S) and generate the outputs again.")
     cmds = [("PROJECT", str(prj))]
     if target is None:
         target, backup, add_cmds = _new_outjob(project, prj, summary)
@@ -2253,9 +2306,28 @@ def run_outjob(project):
         warnings.append(f"The board does not match the design ({len(design)} problem(s)): " + " | ".join(design[:5])
                         + (" ..." if len(design) > 5 else "") + " Fix this before ordering.")
     warnings += bom_notes                  # the least urgent: last
-    _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing)
+    import order_options
+    import outputs_check
+    opts = order_options.get(project)
+    cpl_files = []
+    if opts["assembly"]:                   # an order with assembly needs the CPL: made here from the placed board, never left to a click
+        try:
+            from skills import export_cpl
+            cpl = export_cpl.export_cpl(project)
+            home = workspace.home()
+            cpl_path = pathlib.Path(cpl["file"])
+            cpl_files = [str(cpl_path if cpl_path.is_absolute() else home / cpl_path)]
+            warnings += cpl.get("warnings", [])
+        except Exception as exc:
+            warnings.append(f"The pick and place file (CPL) could not be made ({type(exc).__name__}: {exc}). Export it on the Outputs page.")
+    check = outputs_check.verify(project, files, outjob=target, options=opts, extra=cpl_files)
+    check["unsaved"] = unsaved
+    outputs_check.save(project, check)
+    warnings = list(check["warnings"]) + warnings          # what is missing comes first: it decides whether the step did its job
+    _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing,
+         missing=check["missing"], empty=check["empty"], unsaved=unsaved)
     return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
-            "warnings": warnings, "outline_drawn": outline_drawn}
+            "warnings": warnings, "outline_drawn": outline_drawn, "outputs_check": check}
 
 
 def _is_bom(path):

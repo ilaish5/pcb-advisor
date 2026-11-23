@@ -153,6 +153,10 @@ def export_cpl(project: str, pcb_path: str | pathlib.Path | None = None) -> dict
         "rotation_offsets": [{k: v for k, v in a.items() if k != "applied"} for a in applied if a["applied"]],
         "warnings": [],
     }
+    res["stub"] = not from_pcb
+    if not from_pcb:                  # all positions are 0: JLC would place every part at the origin
+        res["warnings"].append("No placed PcbDoc is linked, so every position in the CPL is 0.0000mm: it is a stub from the BOM and "
+                               "must not be sent to JLC. Place the parts in Altium, then export the CPL again.")
     bottom = [a["ref"] for a in applied if not a["applied"]]
     if bottom:
         res["warnings"].append(BOTTOM_WARNING.format(refs=", ".join(bottom)))

@@ -239,6 +239,11 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
     tracks = doc.get("tracks", [])
     arcs = doc.get("arcs", [])
     texts = doc.get("texts", [])
+    # A designator Altium draws on the silkscreen is the label: the box's own synthetic label is only for a part whose
+    # designator is not drawn (hidden), so the reference is never twice on the board.
+    drawn_refs = {str(t.get("text", "")).strip() for t in texts
+                  if t.get("kind") == "designator" or (t.get("kind") in (None, "text") and t.get("layer") in (33, 34)
+                                                       and str(t.get("text", "")).strip() in {c.get("ref") for c in components})}
     plan = plan or {}
 
     # Outline
@@ -376,6 +381,12 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
         txt = esc(t.get("text", ""))
         return f'<text x="{px:.1f}" y="{py:.1f}" class="{cls}" font-size="{fs:.1f}px"{transform}>{txt}</text>'
 
+    def comp_label(ref, cx, cy, rot):
+        if ref in drawn_refs:
+            return ""
+        return (f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}" '
+                f'transform="rotate({-rot:.1f} {cx:.1f} {cy + 3:.1f})">{esc(ref)}</text>')
+
     # Copper layers the board really uses (1 = top, 2..31 = inner, 32 = bottom), for the header count
     copper = {it.get("layer") for it in (*tracks, *arcs, *pads) if isinstance(it.get("layer"), int) and 1 <= it["layer"] <= 32}
     n_copper = len(copper)
@@ -496,7 +507,7 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
                 f'<g class="pcb-comp comp-bottom" data-ref="{esc(ref)}" id="pcb-comp-{esc(ref)}" '
                 f'transform="rotate({rot:.1f} {cx:.1f} {cy:.1f})">'
                 f'<rect x="{cx - 16:.1f}" y="{cy - 12:.1f}" width="32" height="24"/>'
-                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}" transform="rotate({-rot:.1f} {cx:.1f} {cy + 3:.1f})">{esc(ref)}</text>'
+                f'{comp_label(ref, cx, cy, rot)}'
                 f'</g>'
             )
     svg.append('</g>')
@@ -598,7 +609,7 @@ def render_pcbdoc(doc_or_path, plan: dict = None, active_layer: str = "all",
                 f'<g class="pcb-comp comp-top" data-ref="{esc(ref)}" id="pcb-comp-{esc(ref)}" '
                 f'transform="rotate({rot:.1f} {cx:.1f} {cy:.1f})">'
                 f'<rect x="{cx - 16:.1f}" y="{cy - 12:.1f}" width="32" height="24"/>'
-                f'<text class="comp-ref" x="{cx:.1f}" y="{cy + 3:.1f}" transform="rotate({-rot:.1f} {cx:.1f} {cy + 3:.1f})">{esc(ref)}</text>'
+                f'{comp_label(ref, cx, cy, rot)}'
                 f'</g>'
             )
     svg.append('</g>')
