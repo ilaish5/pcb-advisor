@@ -49,17 +49,13 @@ const PG_LIB = {ok: ['Verified', 'ok'], review: ['To review', 'warn'], missing: 
 
 const PG_SOURCE = {easyeda: 'EasyEDA', vendor: 'Vendor zip', kicad: 'KiCad', generated: 'Generated', missing: 'Missing'};
 /* The four model icons of a library line: Symbol, Footprint, 3D, Pins. One state each, said in words in the title and the aria-label:
-     ok = present (filled green), basic = a generated body or footprint (dashed green outline), no = missing (grey),
-     bad = needs attention (red: pins unverified or conflicting, a footprint error).
+     ok = present and fine (green glyph), no = missing (grey glyph), bad = needs fixing (red glyph: pins unverified or conflicting,
+     a footprint error). The glyph itself carries the colour: no frame, no background. A generated body or footprint counts as present
+     (green) and says "basic, generated" in its title and aria-label only.
    libModelStates(r) is the one place that decides; the Library table and the part panel both draw from it (libIconsHTML).
    A click opens the quick preview (views/modelpreview.js). */
-const MIC_GLYPH = {
-  symbol: '<rect class="m" x="7" y="5" width="10" height="14" rx="1.5"/><path class="d" d="M3 9h4M3 15h4M17 9h4M17 15h4"/>',
-  footprint: '<rect class="m" x="3" y="8" width="6" height="8" rx="1"/><rect class="m" x="15" y="8" width="6" height="8" rx="1"/><path class="d" d="M11 12h2"/>',
-  model: '<path class="m" d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path class="d" d="M4 7.5l8 4.5 8-4.5M12 12v9"/>',
-  pins: '<rect class="m" x="6" y="6" width="12" height="12" rx="2"/><path class="d" d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
-};
-const MIC_WORD = {ok: 'present', basic: 'basic', no: 'missing', bad: 'needs attention'};
+const MIC_ICON = {symbol: 'model-symbol', footprint: 'chip', model: 'model-3d', pins: 'model-pins'};      // glyphs: KIT_ICONS in kit.js
+const MIC_WORD = {ok: 'present', no: 'missing', bad: 'needs attention'};
 const MIC_NAME = {symbol: 'Symbol', footprint: 'Footprint', model: '3D', pins: 'Pins'};
 /* the part panel and the table read the same row: the Library row of the line, else what its library entry says */
 function libRowOf(l) {
@@ -82,24 +78,24 @@ function libModelStates(r) {
   const sym = r.symbol ? ['ok', 'Symbol is in the library'] : ['no', 'Symbol: missing'];
   const fp = fpErr ? ['bad', 'Footprint error: ' + (r.issues || 'the converter could not keep it truthfully')]
     : !r.footprint ? ['no', 'Footprint: missing']
-    : r.source === 'generated' ? ['basic', 'Footprint is basic: a generated land pattern'] : ['ok', 'Footprint is in the library'];
+    : r.source === 'generated' ? ['ok', 'Footprint is basic, generated (no vendor footprint)'] : ['ok', 'Footprint is in the library'];
   const m3 = r.step ? ['ok', '3D model from a STEP file']
-    : (r.symbol || r.footprint) ? ['basic', '3D is basic: a simple generated body, no STEP model'] : ['no', '3D: no model'];
+    : (r.symbol || r.footprint) ? ['ok', '3D is basic, generated (no vendor STEP)'] : ['no', '3D: no model'];
   return [['symbol', ...sym], ['footprint', ...fp], ['model', ...m3], ['pins', ...libPinsState(r)]];
 }
 function libIconsHTML(r) {
   const icons = libModelStates(r).map(([kind, state, text]) => {
     const name = MIC_NAME[kind], say = `${text}. ${MIC_WORD[state]}. Click for a quick preview`;
     return `<button type="button" class="mic ${state}" data-act="lib-preview" data-line="${esc(r.line)}" data-kind="${kind}" title="${esc(say)}" aria-label="${esc(name + ': ' + say)}">` +
-      `<svg class="mic-g" viewBox="0 0 24 24" aria-hidden="true">${MIC_GLYPH[kind]}</svg></button>`;
+      `${icon(MIC_ICON[kind], 'mic-g')}</button>`;
   }).join('');
   const built = r.build_status ? (r.built ? `<span class="mic-built ok" title="In the compiled IntLib">Built</span>`
     : `<span class="mic-built" title="Not in the IntLib yet: build the library">Not built</span>`) : '';
   return `<div class="mdls" role="group" aria-label="Models of ${esc(r.line)}">${icons}${built}</div>`;
 }
 function libLegendHTML() {
-  const k = (cls, t) => `<span class="mic-key"><i class="mic ${cls}" aria-hidden="true"><svg class="mic-g" viewBox="0 0 24 24"><rect class="m" x="5" y="5" width="14" height="14" rx="3"/></svg></i>${t}</span>`;
-  return `<p class="lib-legend" id="lib-legend">Icons, left to right: Symbol, Footprint, 3D, Pins. ${k('ok', 'present')}${k('basic', 'basic (generated body or footprint)')}${k('no', 'missing')}${k('bad', 'needs attention')} Click an icon for a quick preview.</p>`;
+  const k = (cls, t) => `<span class="mic-key"><i class="mic ${cls}" aria-hidden="true"><svg class="mic-g" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/></svg></i>${t}</span>`;
+  return `<p class="lib-legend" id="lib-legend">Icons, left to right: Symbol, Footprint, 3D, Pins. ${k('ok', 'present')}${k('no', 'missing')}${k('bad', 'needs fixing')} Click an icon for a quick preview.</p>`;
 }
 /* a line the build pipeline knows: what the build made of it, in words */
 function libBuildTag(r) {

@@ -103,7 +103,7 @@ function mpDispose() {
 function mpTabs(row, kind) {
   return `<div class="mp-tabs" role="tablist" aria-label="Models">` + libModelStates(row).map(([k, state, text]) =>
     `<button type="button" role="tab" class="mp-tab ${state}" aria-selected="${k === kind}" data-mp-tab="${k}" title="${esc(text)}">` +
-    `<svg class="mic-g" viewBox="0 0 24 24" aria-hidden="true">${MIC_GLYPH[k]}</svg>${esc(MIC_NAME[k])}</button>`).join('') + '</div>';
+    `${icon(MIC_ICON[k], 'mic-g')}${esc(MIC_NAME[k])}</button>`).join('') + '</div>';
 }
 function mpFrame(row, kind, body) {
   const bom = (S.bom || []).find(b => b.key === row.line) || {};
@@ -119,7 +119,7 @@ function mpPins(row) {
   const l = (S.bom || []).find(b => b.key === row.line) || {};
   const [state, text] = libPinsState(row);
   const st = l.pins_status || '';
-  const head = {bad: 'Needs attention', ok: 'Checked', no: 'Missing', basic: ''}[state];
+  const head = {bad: 'Needs attention', ok: 'Checked', no: 'Missing'}[state];
   const d = l.pin_decision;
   const facts = [
     l.datasheet ? `Datasheet: <span class="m">${esc(l.datasheet)}</span>` : 'No datasheet linked',

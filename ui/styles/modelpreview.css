@@ -1,15 +1,11 @@
-/* Library model icons (Symbol, Footprint, 3D, Pins) and their quick preview. States: ok = solid green line, basic = dashed green line,
-   Line only: no fill and no background behind an icon, the colour is the stroke itself. no = grey, bad = red. The same icons are drawn in the Library table and in the part panel. */
+/* Library model icons (Symbol, Footprint, 3D, Pins) and their quick preview. Three states, carried by the glyph's own colour:
+   ok = green (present and fine), no = grey (missing), bad = red (needs fixing). No frame, no fill, no background. */
 .mdls{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;min-width:132px}
 .mic{display:inline-grid;place-items:center;width:28px;height:28px;padding:0;border:0;border-radius:var(--r-sm);background:transparent;cursor:pointer;color:var(--ink-4)}
 .mic:hover .mic-g{stroke-width:2.2}
 .mic:focus-visible,.mp-tab:focus-visible{outline:2px solid var(--sig);outline-offset:1px}
 .mic-g{width:22px;height:22px;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;fill:none}
-.mic-g .m{fill:none}
 .mic.ok,.mp-tab.ok{color:var(--ok)}
-.mic.basic,.mp-tab.basic{color:var(--ok)}
-.mic.basic .m,.mp-tab.basic .m{stroke-dasharray:2.6 2.2}
-.mic.basic .d,.mp-tab.basic .d{stroke-dasharray:2 2}
 .mic.no,.mp-tab.no{color:var(--ink-4)}
 .mic.bad,.mp-tab.bad{color:var(--bad)}
 .mic-built{margin-left:6px;font-size:var(--t-xs);color:var(--ink-3);white-space:nowrap}
