@@ -105,8 +105,16 @@ function stageStatus(id) {
 const stageOf = id => (S && Array.isArray(S.stages) ? S.stages.find(x => x && x.id === id) : null) || null;
 function stageNextBtn(id) {
   const st = stageOf(id), n = st && st.next;
-  if (!n || !n.label || !/^go:/.test(n.act || '')) return '';
-  return btn(n.label, {kind: st.primary ? 'pri' : 'line', act: 'stage-next', stage: id, to: n.act.slice(3)});
+  // the server's own next step when it leads to another page; when it is on this very page (draw, place, route, review...) or empty, the
+  // page still offers the following stage as an outlined "Next: <stage>" so every stage page has one (the last stage, DFM, has none)
+  if (n && n.label && /^go:/.test(n.act || '') && n.act !== 'go:' + id) return btn(n.label, {kind: st.primary ? 'pri' : 'line', act: 'stage-next', stage: id, to: n.act.slice(3)});
+  const i = STAGES.findIndex(s => s[0] === id), f = i >= 0 ? STAGES[i + 1] : null;
+  return f ? btn('Next: ' + f[1], {kind: 'line', act: 'stage-next', stage: id, to: f[0]}) : '';
+}
+// Library and Sources are not stages: their Next goes to the stage where the work goes on (the server's primary one), else none
+function pageNextBtn() {
+  const p = S && Array.isArray(S.stages) ? S.stages.find(x => x && x.primary) : null;
+  return p && STAGE_TITLES[p.id] ? btn('Next: ' + STAGE_TITLES[p.id], {kind: 'line', act: 'stage-next', stage: p.id, to: p.id}) : '';
 }
 onAct('stage-next', (el, d) => { if (d.to && STAGE_TITLES[d.to]) go('workspace', d.to); });
 
@@ -118,7 +126,8 @@ const initials = t => {
 let lastNavHTML = '';
 let PROJECTS_ARCHIVED = [];             // [{name, title}] from /api/projects (projects/.archive): listed under a collapsed group, restored with one click
 function projArchivedHTML() {
-  return `<details class="arch"><summary>Archived (${PROJECTS_ARCHIVED.length})</summary>` + PROJECTS_ARCHIVED.map(p =>
+  // a few archived projects are listed open (their Restore is one click away, never behind a fold); many stay collapsed under the summary
+  return `<details class="arch"${PROJECTS_ARCHIVED.length <= 3 ? " open" : ""}><summary>Archived (${PROJECTS_ARCHIVED.length})</summary>` + PROJECTS_ARCHIVED.map(p =>
     `<button type="button" role="menuitem" data-act="unarchive-project" data-name="${esc(p.name)}" title="Restore ${esc(p.title || p.name)}"><span>${esc(p.title || p.name)}</span><span class="d">Restore</span></button>`).join('') + '</details>';
 }
 /* filter as you type: the project items and the archived ones whose title does not contain the text are hidden */

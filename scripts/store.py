@@ -1777,6 +1777,22 @@ def load_idea_working(project):
     return load_idea(project)
 
 
+def _diagram_key(x):
+    """A shape / connector / frame as a comparable string: numbers to 0.1 (the editor posts 160 for 160.0 and 80.00000001 for 80),
+    empty values dropped, so the editor handing back the diagram it was given is not a change."""
+    def norm(v):
+        if isinstance(v, bool) or v is None:
+            return v
+        if isinstance(v, (int, float)):
+            return round(float(v), 1)
+        if isinstance(v, dict):
+            return {k: norm(w) for k, w in v.items() if w not in (None, "", [])}
+        if isinstance(v, list):
+            return [norm(w) for w in v]
+        return v
+    return json.dumps(norm(x), sort_keys=True)
+
+
 def idea_changes(saved, draft):
     """How many things differ between the saved idea and the draft: requirements added / removed / changed,
     the description, and diagram shapes / connectors / frames added / removed / changed. Derived, never counted."""
@@ -1791,8 +1807,8 @@ def idea_changes(saved, draft):
         n += 1
     sd, dd = saved.get("diagram") or {}, draft.get("diagram") or {}
     for key in ("shapes", "connectors", "frames"):
-        a = {json.dumps(x, sort_keys=True) for x in sd.get(key, [])}
-        b = {json.dumps(x, sort_keys=True) for x in dd.get(key, [])}
+        a = {_diagram_key(x) for x in sd.get(key, [])}
+        b = {_diagram_key(x) for x in dd.get(key, [])}
         n += max(len(a - b), len(b - a))
     import constraints            # noqa: PLC0415  (constraints imports store)
     return n + constraints.changes(saved, draft)
