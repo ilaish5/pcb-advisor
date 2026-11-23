@@ -154,7 +154,7 @@ def test_the_engine_runs_in_the_engine_home_with_the_repo_and_project_added(lte,
 def test_the_workspace_section_gives_absolute_paths(lte, monkeypatch):
     prompt = _respond(lte, monkeypatch).prompt
     section = prompt.split("<workspace>\n")[1].split("\n</workspace>")[0]
-    assert "<repo> = " in section       # the scripts are AGENTS.md SCRIPTS with <repo>; the section gives the repo path
+    assert workspace.REPO.as_posix() + "/scripts/trace_width.py" in section
     assert workspace.project_dir(lte).as_posix() + "/bom.json" in section
     assert "{repo}" not in section
 
