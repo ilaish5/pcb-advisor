@@ -96,8 +96,8 @@ def _raw_rows(project: str, pcb_path: str | pathlib.Path | None = None) -> list[
         centres = pad_centres(doc)
         for c in doc.get("components", []):
             ref = c.get("ref", "")
-            if not ref:
-                continue
+            if not ref or str(c.get("pattern", "")).startswith("MECH_"):
+                continue            # holes and keep-outs are board objects, not parts to place
             layer = "Top" if "top" in str(c.get("layer", "")).lower() else "Bottom"
             x, y = centres.get(ref, (c.get("x_mm", 0.0), c.get("y_mm", 0.0)))
             rows.append({

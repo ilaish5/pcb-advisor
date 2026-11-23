@@ -243,7 +243,7 @@ function requirementsHTML() {
     ? `<div class="req-bulk">${btn('Accept all', {size: 'sm', icon: 'check', act: 'accept-all', title: 'Agree to everything the agent proposed'})}${btn('Dismiss all', {size: 'sm', act: 'dismiss-all', title: 'Remove everything the agent proposed'})}</div>`
     : '';
   return `<section class="idea-reqs"${cap ? ` style="max-height:${cap}%"` : ''} aria-label="Agreed requirements">
-      <div class="req-scroll">${bulk}${desc}${boardSizeHTML()}${body}</div>
+      <div class="req-scroll">${bulk}${desc}${boardSizeHTML()}${body}${typeof constraintsHTML === 'function' ? constraintsHTML() : ''}</div>
       <div class="req-add-row">
         <button type="button" class="btn sm" data-act="show-add-req">+ Add requirement</button>
         <div class="req-add-form" hidden>

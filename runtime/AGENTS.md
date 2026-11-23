@@ -47,6 +47,8 @@ Your working folder is the engine home, not the repo. Each turn the prompt carri
 - `CURRENT STATE`: idea, BOM with stock, sheets, pending proposals, checklist; newer than anything you remember. Its
   description (`idea.goal`) is the context for every answer, in every skill: what the board is and what it is for.
   Empty or out of date: propose one with `idea.describe`. All of it: `python <repo>/scripts/model.py <project>`.
+- Where a part sits, clearances, holes, antenna: only from `board_facts` or a script run this turn; otherwise say "planned", never "is".
+  Holes, edge parts, distances and keep-outs the board needs: propose them with `idea.constrain` (the student confirms with one Save).
 - Reference routing: open `<repo>/shared/reference/AGENTS.md` first for course, Altium or JLC questions (topic index).
   The AD20 Essentials manual `<repo>/shared/reference/course/ad20-essentials/` is THE guide for "how do I do X in
   Altium". Never read the whole tree.

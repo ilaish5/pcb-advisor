@@ -1745,7 +1745,8 @@ def idea_changes(saved, draft):
         a = {json.dumps(x, sort_keys=True) for x in sd.get(key, [])}
         b = {json.dumps(x, sort_keys=True) for x in dd.get(key, [])}
         n += max(len(a - b), len(b - a))
-    return n
+    import constraints            # noqa: PLC0415  (constraints imports store)
+    return n + constraints.changes(saved, draft)
 
 
 def idea_draft_marks(saved, draft):
@@ -1836,6 +1837,8 @@ def save_idea_from_draft(project, by="student"):
         _push_idea_version(project, saved, "before first save", "the idea as it was before drafts")
     keep = {k: saved[k] for k in ("confirmed", "confirmed_at") if k in saved}
     draft.update(keep)
+    import constraints            # noqa: PLC0415
+    constraints.confirm_all(draft)          # the Save is the one confirmation of what the agent proposed
     board_from_text(draft)
     save_idea(project, draft)
     _push_idea_version(project, draft, by, f"{changes} change{'s' if changes != 1 else ''} saved")
