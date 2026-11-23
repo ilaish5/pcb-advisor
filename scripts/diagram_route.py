@@ -15,6 +15,8 @@ THE SHARED RULES (change both files together; tests/test_diagram_route.py runs t
     touches no block and no earlier label.
 """
 
+import math
+
 STUB = 20.0
 CLEAR = 10.0
 LANES = (24.0, 40.0)
@@ -24,8 +26,25 @@ OVERLAP = 1000.0
 NEAR = 100.0
 LABEL_H = 22.0
 SIDE_DIR = {"left": (-1.0, 0.0), "right": (1.0, 0.0), "top": (0.0, -1.0), "bottom": (0.0, 1.0)}
-_ANCHOR = {"top": (0.5, 0.0), "right": (1.0, 0.5), "bottom": (0.5, 1.0), "left": (0.0, 0.5)}
-_ANCHOR8 = {"top-left": (0.0, 0.0), "top-right": (1.0, 0.0), "bottom-right": (1.0, 1.0), "bottom-left": (0.0, 1.0)}
+_ANCHOR_NAMES = ("top", "right", "bottom", "left", "top-left", "top-right", "bottom-right", "bottom-left")
+_C45 = math.sqrt(0.5)
+# fractions of the box in _ANCHOR_NAMES order for polygon-like shapes (the same table as ANCHOR_FRACTIONS in ui/diagram.js)
+_FRACTIONS = {
+    "rectangle": [(.5, 0), (1, .5), (.5, 1), (0, .5), (0, 0), (1, 0), (1, 1), (0, 1)],
+    "diamond": [(.5, 0), (1, .5), (.5, 1), (0, .5), (.25, .25), (.75, .25), (.75, .75), (.25, .75)],
+    "triangle": [(.5, 0), (.75, .5), (.5, 1), (.25, .5), (.375, .25), (.625, .25), (1, 1), (0, 1)],
+    "parallelogram": [(.6, 0), (.9, .5), (.4, 1), (.1, .5), (.2, 0), (1, 0), (.8, 1), (0, 1)],
+    "hexagon": [(.5, 0), (1, .5), (.5, 1), (0, .5), (.22, 0), (.78, 0), (.78, 1), (.22, 1)],
+    "octagon": [(.5, 0), (1, .5), (.5, 1), (0, .5), (.14, .14), (.86, .14), (.86, .86), (.14, .86)],
+    "arrow_right": [(.5, .25), (1, .5), (.5, .75), (0, .5), (0, .25), (.6, 0), (.6, 1), (0, .75)],
+    "double_arrow": [(.5, .25), (1, .5), (.5, .75), (0, .5), (.28, 0), (.72, 0), (.72, 1), (.28, 1)],
+    "cloud": [(.55, .0925), (.95, .52), (.5, .89), (.08, .5), (.35, .22), (.75, .22), (.8, .8), (.2, .8)],
+    "note_brace": [(.3, 0), (.92, .5), (.3, 1), (0, .5), (.12, .38), (.92, .3), (.92, .7), (.12, .62)],
+}
+_TYPE_ALIAS = {"block": "rectangle", "box": "rectangle", "pill": "rounded_rectangle",
+               "rounded-rectangle": "rounded_rectangle", "arrow-right": "arrow_right", "double-arrow": "double_arrow",
+               "callout": "speech_callout", "speech-callout": "speech_callout", "database": "cylinder",
+               "brace": "note_brace", "note-brace": "note_brace", "note": "note_brace"}
 
 
 def _num(v):
@@ -40,8 +59,14 @@ def _ep(ep):
     return ep if isinstance(ep, dict) else {"shape": ep} if isinstance(ep, str) else {}
 
 
+def _type(s):
+    """normalizeShapeType() of ui/diagram.js."""
+    t = str(s.get("type") or "rectangle").lower()
+    return _TYPE_ALIAS.get(t, t)
+
+
 def _rect_type(s):
-    return str(s.get("type") or "rectangle").lower() in ("rectangle", "block", "box")
+    return _type(s) == "rectangle"
 
 
 def _side(ep):
@@ -52,9 +77,48 @@ def _side(ep):
 
 
 def _anchor(s, name):
-    """Outline point of a rectangle-like shape; other types use the box (the check is about blocks)."""
-    f = _ANCHOR.get(name) or _ANCHOR8.get(name) or _ANCHOR["right"]
-    return {"x": _num(s["x"]) + f[0] * _num(s["w"]), "y": _num(s["y"]) + f[1] * _num(s["h"])}
+    """A point ON the drawn outline of the shape: the twin of anchorPoint() in ui/diagram.js, so the server's verdict
+    is about the routes the browser draws."""
+    x, y, w, h = _num(s.get("x")), _num(s.get("y")), _num(s.get("w")), _num(s.get("h"))
+    t = _type(s)
+    try:
+        idx = _ANCHOR_NAMES.index(name)
+    except ValueError:
+        idx = 1
+    if t == "ellipse":
+        c = _C45
+        fx, fy = [(.5, 0), (1, .5), (.5, 1), (0, .5), (.5 - .5 * c, .5 - .5 * c), (.5 + .5 * c, .5 - .5 * c),
+                  (.5 + .5 * c, .5 + .5 * c), (.5 - .5 * c, .5 + .5 * c)][idx]
+    elif t in ("rounded_rectangle", "speech_callout"):
+        call = t == "speech_callout"
+        bh = 0.76 * h if call else h
+        r = min(6.0, w / 2, bh / 2) if call else min(w, h) / 2
+        d = r * (1 - _C45)
+        if call and idx == 7:
+            return {"x": x + 0.15 * w, "y": y + h}
+        px = [w / 2, w, w / 2, 0, d, w - d, w - d, d][idx]
+        py = [0, bh / 2, bh, bh / 2, d, d, bh - d, bh - d][idx]
+        return {"x": x + px, "y": y + py}
+    elif t == "cylinder":
+        ry = 0.18 * h
+        e = ry * (1 - _C45) / (h or 1)
+        fx, fy = [(.5, 0), (1, .5), (.5, 1), (0, .5), (.5 - .5 * _C45, e), (.5 + .5 * _C45, e),
+                  (.5 + .5 * _C45, 1 - e), (.5 - .5 * _C45, 1 - e)][idx]
+    elif t == "star":
+        rx, ry = w / 2, h / 2
+        irx, iry = rx * 0.42, ry * 0.42
+
+        def tip(a):
+            r = a * math.pi / 180
+            return {"x": x + rx + rx * math.cos(r), "y": y + ry + ry * math.sin(r)}
+
+        def notch(a):
+            r = a * math.pi / 180
+            return {"x": x + rx + irx * math.cos(r), "y": y + ry + iry * math.sin(r)}
+        return [tip(-90), notch(18), notch(90), notch(162), tip(198), tip(-18), tip(54), tip(126)][idx]
+    else:
+        fx, fy = (_FRACTIONS.get(t) or _FRACTIONS["rectangle"])[idx]
+    return {"x": x + fx * w, "y": y + fy * h}
 
 
 def _centre(ep, by_id):
@@ -65,7 +129,7 @@ def _centre(ep, by_id):
 
 
 def label_width(label):
-    return max(len(label) * 7.5 + 16, 32)
+    return max(len(str(label)) * 7.5 + 16, 32)  # code points; the browser counts them the same way
 
 
 def _ports(connectors, by_id):
@@ -167,6 +231,41 @@ def _overlap(a, b, tol):
     return 0.0
 
 
+def _add_used(used, cid, poly):
+    """Index the axis segments of a routed connector: horizontal ones by y, vertical ones by x, in buckets of 16, so a
+    candidate only meets the segments within 8 of its own line."""
+    for u, v in _segs(poly):
+        if u["y"] == v["y"] and u["x"] != v["x"]:
+            used["h"].setdefault(math.floor(u["y"] / 16), []).append((cid, u["y"], min(u["x"], v["x"]), max(u["x"], v["x"])))
+        elif u["x"] == v["x"] and u["y"] != v["y"]:
+            used["v"].setdefault(math.floor(u["x"] / 16), []).append((cid, u["x"], min(u["y"], v["y"]), max(u["y"], v["y"])))
+
+
+def _penalty(poly, used, cid, cost):
+    """`cost` (the geometric one) plus the penalties for lying on (OVERLAP) or beside (NEAR) the segments of the
+    other connectors routed so far: parallel, overlapping by more than 1, within 0.5 / within 8 of each other."""
+    for u, v in _segs(poly):
+        if u["y"] == v["y"] and u["x"] != v["x"]:
+            table, pos, lo, hi = used["h"], u["y"], min(u["x"], v["x"]), max(u["x"], v["x"])
+        elif u["x"] == v["x"] and u["y"] != v["y"]:
+            table, pos, lo, hi = used["v"], u["x"], min(u["y"], v["y"]), max(u["y"], v["y"])
+        else:
+            continue
+        near = over = 0
+        k = math.floor(pos / 16)
+        for kk in (k - 1, k, k + 1):
+            for (oid, opos, olo, ohi) in table.get(kk, ()):
+                d = abs(pos - opos)
+                if oid == cid or d > 8 or min(hi, ohi) - max(lo, olo) <= 1:
+                    continue
+                if d <= 0.5:
+                    over += 1
+                else:
+                    near += 1
+        cost += over * OVERLAP + near * NEAR
+    return cost
+
+
 def _uniq(vals):
     seen, out = set(), []
     for v in vals:
@@ -194,7 +293,7 @@ def route_connectors(shapes, connectors):
     max_x = max((b[3] for b in boxes), default=0.0)
     min_y = min((b[2] for b in boxes), default=0.0)
     max_y = max((b[4] for b in boxes), default=0.0)
-    routes, used = {}, []
+    routes, used = {}, {"h": {}, "v": {}}
 
     for c in connectors:
         e1, e2 = _ep(c.get("from")), _ep(c.get("to"))
@@ -213,7 +312,7 @@ def route_connectors(shapes, connectors):
         if c.get("route") == "straight" or not s1 or not s2 or e1.get("shape") == e2.get("shape"):
             poly = _legacy(c, p1, p2)
             routes[cid] = {"p1": p1, "p2": p2, "points": poly, "ok": True, "label": None}
-            used.extend((cid, sg) for sg in _segs(poly))
+            _add_used(used, cid, poly)
             continue
 
         d1, d2 = SIDE_DIR[s1], SIDE_DIR[s2]
@@ -236,32 +335,45 @@ def route_connectors(shapes, connectors):
         mids += [[{"x": mx, "y": a["y"]}, {"x": mx, "y": b["y"]}] for mx in _uniq(xs)]
         mids += [[{"x": a["x"], "y": ly}, {"x": b["x"], "y": ly}] for ly in _uniq(ys)]
 
-        best = best_any = None
-        for mid in mids:
+        # Candidates in order of their geometric cost (length + bends, a lower bound of the full cost: the penalties
+        # only add), ties by position in `mids`. The cheapest valid one by (cost, position) is the same winner as
+        # scanning in order, but the scan stops as soon as no remaining candidate can beat it.
+        cands = []
+        for pos, mid in enumerate(mids):
             full = [p1, a] + mid + [b, p2]
+            poly = _simplify(full)
+            cands.append((_length(poly) + BEND * (len(poly) - 2), pos, full, poly))
+        cands.sort(key=lambda t: (t[0], t[1]))
+
+        best = best_any = None
+        for geom, pos, full, poly in cands:
+            if best is not None and (geom, pos) >= (best[0], best[2]):
+                if geom > best[0]:
+                    break
+                continue
             segs = [sg for sg in _segs(full) if not (sg[0]["x"] == sg[1]["x"] and sg[0]["y"] == sg[1]["y"])]
             valid = True
             for j, (u, v) in enumerate(segs):
                 if any(_hits(u, v, o) for o in obst) or (0 < j < len(segs) - 1 and any(_hits(u, v, o) for o in own)):
                     valid = False
                     break
-            poly = _simplify(full)
-            cost = _length(poly) + BEND * (len(poly) - 2)
-            for sg in _segs(poly):
-                for (oid, os_) in used:
-                    if oid == cid:
-                        continue
-                    if _overlap(sg, os_, 0.5) > 1:
-                        cost += OVERLAP
-                    elif _overlap(sg, os_, 8) > 1:
-                        cost += NEAR
-            if best_any is None or cost < best_any[0]:
-                best_any = (cost, poly)
-            if valid and (best is None or cost < best[0]):
-                best = (cost, poly)
+            if not valid:
+                continue
+            cost = _penalty(poly, used, cid, geom)
+            if best is None or (cost, pos) < (best[0], best[2]):
+                best = (cost, poly, pos)
+        if best is None:  # nothing is clean: the cheapest by full cost is drawn and flagged
+            for geom, pos, full, poly in cands:
+                if best_any is not None and (geom, pos) >= (best_any[0], best_any[2]):
+                    if geom > best_any[0]:
+                        break
+                    continue
+                cost = _penalty(poly, used, cid, geom)
+                if best_any is None or (cost, pos) < (best_any[0], best_any[2]):
+                    best_any = (cost, poly, pos)
         chosen = best or best_any
         routes[cid] = {"p1": p1, "p2": p2, "points": chosen[1], "ok": best is not None, "label": None}
-        used.extend((cid, sg) for sg in _segs(chosen[1]))
+        _add_used(used, cid, chosen[1])
 
     rects = [(x0 - 2, y0 - 2, x1 + 2, y1 + 2) for (_i, x0, y0, x1, y1) in boxes]
     placed = []

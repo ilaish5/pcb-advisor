@@ -795,8 +795,8 @@ def test_attached_ends_recompute_on_move():
     body = _method_body(js, "getEndpointCoords")
     assert "getShapePortPosition" in body and "ep.point || ep.side" in body
     assert "getEndpointCoords" in _method_body(js, "renderConnectors")
-    assert "this.render()" in _method_body(js, "doDragItems")
-    assert "this.render()" in _method_body(js, "doResize")
+    assert "this.renderDuringDrag(" in _method_body(js, "doDragItems") and "this.render()" in _method_body(js, "renderDuringDrag")
+    assert "this.renderDuringDrag(" in _method_body(js, "doResize")
     assert "buildConnectorPath" in _method_body(js, "renderConnectors")
 
 

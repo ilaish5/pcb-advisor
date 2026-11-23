@@ -4,8 +4,10 @@ follow the same rules; the node tests run the JS on the same geometry and compar
 import json
 import os
 import pathlib
+import random
 import shutil
 import subprocess
+import time
 
 import pytest
 
@@ -175,6 +177,132 @@ def test_js_router_matches_python_on_a_hand_made_row():
 
 def test_the_renderer_uses_the_router_and_keeps_the_label_where_it_is_drawn():
     src = (REPO / "ui" / "diagram.js").read_text(encoding="utf-8")
-    assert "routeConnectors(this.data.shapes, this.data.connectors)" in src
+    assert "routeConnectors(this.data.shapes, this.data.connectors, this._routeOpts)" in src
     assert "routePathD(rt.points)" in src
     assert "rt.label" in src[src.index("connectorLabelPoint(c, p1, p2) {"):][:300]
+
+
+def _close(a, b, tol=1e-9):
+    """Equal up to float noise (sin / cos of the star differ in the last digit between engines)."""
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_close(a[k], b[k], tol) for k in a)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(_close(x, y, tol) for x, y in zip(a, b))
+    if isinstance(a, float) or isinstance(b, float):
+        return abs(a - b) <= tol
+    return a == b
+
+
+def run_js(code, payload):
+    env = dict(os.environ, ELECTRON_RUN_AS_NODE="1")
+    full = "const D=require(process.argv[1]);const i=JSON.parse(require('fs').readFileSync(0,'utf8'));" + code
+    r = subprocess.run([_node(), "-e", full, str(REPO / "ui" / "diagram.js")], input=json.dumps(payload),
+                       capture_output=True, text=True, env=env, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+SHAPE_TYPES = ["rectangle", "block", "rounded_rectangle", "pill", "ellipse", "diamond", "triangle", "parallelogram",
+               "hexagon", "octagon", "arrow_right", "double_arrow", "cloud", "note_brace", "cylinder", "star",
+               "speech_callout", "database", "no_such_shape"]
+POINTS = ["top", "right", "bottom", "left", "top-left", "top-right", "bottom-right", "bottom-left", "nonsense"]
+
+
+def test_python_anchor_is_the_outline_point_the_browser_uses_for_every_shape_and_point():
+    shapes = [{"id": f"s{n}", "type": t, "x": 13.0, "y": 29.0, "w": 150.0, "h": 70.0} for n, t in enumerate(SHAPE_TYPES)]
+    js = run_js("process.stdout.write(JSON.stringify(i.shapes.map(s=>i.points.map(p=>D.anchorPoint(s,p)))));",
+                {"shapes": shapes, "points": POINTS})
+    for s, row in zip(shapes, js):
+        for name, want in zip(POINTS, row):
+            assert _close(diagram_route._anchor(s, name), want), (s["type"], name)
+    # a speech callout's body is 0.76 h tall: its bottom side is not the bottom of the box
+    call = diagram_route._anchor({"type": "speech_callout", "x": 0, "y": 0, "w": 100, "h": 100}, "bottom")
+    assert call["y"] == 76.0
+
+
+def test_js_router_matches_python_on_non_rectangle_shapes():
+    types = ["ellipse", "diamond", "speech_callout", "cylinder", "star", "hexagon", "rounded_rectangle", "rectangle"]
+    shapes = [{"id": f"n{k}", "type": t, "x": 40.0 + 230.0 * (k % 4), "y": 40.0 + 150.0 * (k // 4), "w": 150.0, "h": 70.0}
+              for k, t in enumerate(types)]
+    sides = ["right", "left", "top", "bottom"]
+    pairs = [(0, 1), (1, 2), (2, 7), (4, 6), (5, 3), (0, 5), (3, 7), (6, 1)]
+    conns = [{"id": f"k{k}", "from": {"shape": f"n{a}", "point": sides[k % 4]},
+              "to": {"shape": f"n{b}", "point": sides[(k + 1) % 4 if k % 3 else (k + 2) % 4]}, "label": "bus"}
+             for k, (a, b) in enumerate(pairs)]
+    py = diagram_route.route_connectors(shapes, conns)
+    js = run_js("process.stdout.write(JSON.stringify(D.routeConnectors(i.shapes,i.connectors)));",
+                {"shapes": shapes, "connectors": conns})
+    assert _close(js, _norm(py))
+
+
+def test_label_width_counts_code_points_in_both_routers():
+    label = "LED \U0001F600\U0001F600 bus"  # two emoji: 2 code points, 4 UTF-16 units
+    shapes = [{"id": "a", "type": "block", "x": 0.0, "y": 0.0, "w": 160.0, "h": 68.0},
+              {"id": "b", "type": "block", "x": 400.0, "y": 0.0, "w": 160.0, "h": 68.0}]
+    conns = [{"id": "k", "from": {"shape": "a", "side": "right"}, "to": {"shape": "b", "side": "left"}, "label": label}]
+    py = diagram_route.route_connectors(shapes, conns)
+    assert py["k"]["label"]["w"] == max(len(label) * 7.5 + 16, 32) == diagram_route.label_width(label)
+    assert run_js_router(shapes, conns) == _norm(py)
+
+
+def _big(n, links, seed=1):
+    rnd = random.Random(seed)
+    shapes = [{"id": f"b{i}", "type": "rectangle", "x": 0.0, "y": 0.0, "w": 140.0, "h": 60.0} for i in range(n)]
+    conns = []
+    for j in range(links):
+        a, b = rnd.sample(range(n), 2)
+        conns.append({"id": f"c{j}", "from": {"shape": f"b{a}", "point": "right"},
+                      "to": {"shape": f"b{b}", "point": "left"}, "label": "SPI bus"})
+    return shapes, conns
+
+
+def test_auto_layout_of_a_big_diagram_stays_fast():
+    # was 10 s at 50 blocks / 80 links, inside the HTTP request of the agent's edit
+    shapes, conns = _big(50, 80)
+    t = time.perf_counter()
+    store._auto_layout(shapes, conns, [], [])
+    assert time.perf_counter() - t < 2.0
+    shapes, conns = _big(15, 22)
+    t = time.perf_counter()
+    store._auto_layout(shapes, conns, [], [])
+    assert time.perf_counter() - t < 0.6
+
+
+def test_js_router_of_a_big_diagram_is_fast_enough_to_run_per_frame():
+    shapes = [{"id": f"b{i}", "type": "rectangle", "x": (i % 6) * 240.0 + 80, "y": (i // 6) * 120.0 + 80,
+               "w": 140.0, "h": 60.0} for i in range(50)]
+    rnd = random.Random(3)
+    conns = []
+    for j in range(80):
+        a, b = rnd.sample(range(50), 2)
+        conns.append({"id": f"c{j}", "from": {"shape": f"b{a}", "point": "right"},
+                      "to": {"shape": f"b{b}", "point": "left"}, "label": "SPI bus"})
+    ms = run_js("const t=Date.now();for(let k=0;k<3;k++)D.routeConnectors(i.shapes,i.connectors);"
+                "process.stdout.write(JSON.stringify((Date.now()-t)/3));", {"shapes": shapes, "connectors": conns})
+    assert ms < 400
+
+
+def test_dragging_a_block_routes_again_only_the_links_on_it_and_the_drop_routes_all():
+    shapes, conns = fixture()
+    store._auto_layout(shapes, conns, [], [])
+    moved = [dict(s, y=s["y"] + 15.0) if s["id"] == "sht" else s for s in shapes]
+    res = run_js("const full=D.routeConnectors(i.shapes,i.connectors);"
+                 "const part=D.routeConnectors(i.moved,i.connectors,{only:new Set(['sht']),prev:full});"
+                 "const drop=D.routeConnectors(i.moved,i.connectors);"
+                 "process.stdout.write(JSON.stringify({full,part,drop}));",
+                 {"shapes": shapes, "moved": moved, "connectors": conns})
+    for c in conns:
+        if "sht" in (c["from"]["shape"], c["to"]["shape"]):
+            assert res["part"][c["id"]]["p2"] == res["drop"][c["id"]]["p2"] != res["full"][c["id"]]["p2"]
+        else:
+            assert res["part"][c["id"]]["points"] == res["full"][c["id"]]["points"]
+    assert res["drop"] == _norm(diagram_route.route_connectors(moved, conns))
+
+
+def test_a_drag_redraws_once_per_animation_frame_and_the_drop_cancels_it():
+    src = (REPO / "ui" / "diagram.js").read_text(encoding="utf-8")
+    drag = src[src.index("    doDragItems(pos) {"):src.index("    renderDuringDrag(movedIds) {")]
+    assert "this.renderDuringDrag(" in drag and "this.render();" not in drag
+    assert "requestAnimationFrame" in src[src.index("    renderDuringDrag(movedIds) {"):][:500]
+    up = src[src.index("    onMouseUp(e) {"):][:2200]
+    assert up.count("this.cancelDragRender();") == 2

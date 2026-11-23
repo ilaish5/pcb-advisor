@@ -439,7 +439,8 @@
     const p = ep.point || ep.side || 'right';
     return ROUTE_DIR[p] ? p : null;
   }
-  function routeLabelWidth(label) { return Math.max(String(label).length * 7.5 + 16, 32); }
+  // code points, as the server counts them (an emoji is one, not two UTF-16 units)
+  function routeLabelWidth(label) { return Math.max(Array.from(String(label)).length * 7.5 + 16, 32); }
   function routeCentre(ep, byId) {
     const s = byId[ep.shape];
     if (s) return { x: (Number(s.x) || 0) + (Number(s.w) || 0) / 2, y: (Number(s.y) || 0) + (Number(s.h) || 0) / 2 };
@@ -524,24 +525,47 @@
     return out;
   }
 
-  function routeOverlap(a, b, tol) {
-    if (a[0].y === a[1].y && b[0].y === b[1].y) {
-      if (Math.abs(a[0].y - b[0].y) > tol) return 0;
-      const lo = Math.max(Math.min(a[0].x, a[1].x), Math.min(b[0].x, b[1].x));
-      const hi = Math.min(Math.max(a[0].x, a[1].x), Math.max(b[0].x, b[1].x));
-      return Math.max(0, hi - lo);
-    }
-    if (a[0].x === a[1].x && b[0].x === b[1].x) {
-      if (Math.abs(a[0].x - b[0].x) > tol) return 0;
-      const lo = Math.max(Math.min(a[0].y, a[1].y), Math.min(b[0].y, b[1].y));
-      const hi = Math.min(Math.max(a[0].y, a[1].y), Math.max(b[0].y, b[1].y));
-      return Math.max(0, hi - lo);
-    }
-    return 0;
+  // Segments of the connectors routed so far, indexed in buckets of 16 (horizontal by y, vertical by x): a candidate
+  // only meets the segments within 8 of its own line.
+  function routeAddUsed(used, cid, poly) {
+    routeSegs(poly).forEach(([u, v]) => {
+      if (u.y === v.y && u.x !== v.x) {
+        const k = Math.floor(u.y / 16);
+        (used.h[k] || (used.h[k] = [])).push([cid, u.y, Math.min(u.x, v.x), Math.max(u.x, v.x)]);
+      } else if (u.x === v.x && u.y !== v.y) {
+        const k = Math.floor(u.x / 16);
+        (used.v[k] || (used.v[k] = [])).push([cid, u.x, Math.min(u.y, v.y), Math.max(u.y, v.y)]);
+      }
+    });
   }
 
-  /** {connectorId: {p1, p2, points, ok, label: {x, y, w, h, ok} | null}} for every connector. */
-  function routeConnectors(shapes, connectors) {
+  /** `cost` (the geometric one) plus the OVERLAP / NEAR penalties against the other connectors' segments. */
+  function routePenalty(poly, used, cid, cost) {
+    routeSegs(poly).forEach(([u, v]) => {
+      let table, pos, lo, hi;
+      if (u.y === v.y && u.x !== v.x) { table = used.h; pos = u.y; lo = Math.min(u.x, v.x); hi = Math.max(u.x, v.x); }
+      else if (u.x === v.x && u.y !== v.y) { table = used.v; pos = u.x; lo = Math.min(u.y, v.y); hi = Math.max(u.y, v.y); }
+      else return;
+      let near = 0, over = 0;
+      const k = Math.floor(pos / 16);
+      for (let kk = k - 1; kk <= k + 1; kk++) {
+        const list = table[kk];
+        if (!list) continue;
+        for (let i = 0; i < list.length; i++) {
+          const o = list[i], d = Math.abs(pos - o[1]);
+          if (o[0] === cid || d > 8 || Math.min(hi, o[3]) - Math.max(lo, o[2]) <= 1) continue;
+          if (d <= 0.5) over++; else near++;
+        }
+      }
+      cost += over * ROUTE.OVERLAP + near * ROUTE.NEAR;
+    });
+    return cost;
+  }
+
+  /** {connectorId: {p1, p2, points, ok, label: {x, y, w, h, ok} | null}} for every connector.
+   *  opts (a drag in progress): { only: ids of the shapes being moved, prev: the routes of the last frame } - a connector
+   *  that touches none of them and keeps its end points keeps its previous route; the drop routes everything. */
+  function routeConnectors(shapes, connectors, opts) {
     shapes = shapes || []; connectors = connectors || [];
     const byId = {};
     shapes.forEach(s => { byId[s.id] = s; });
@@ -555,7 +579,8 @@
     const minY = boxes.length ? Math.min(...boxes.map(b => b[2])) : 0;
     const maxY = boxes.length ? Math.max(...boxes.map(b => b[4])) : 0;
     const routes = {};
-    const used = [];
+    const used = { h: {}, v: {} };
+    const only = opts && opts.only, prev = opts && opts.prev;
     const uniq = vals => vals.filter((v, i) => vals.indexOf(v) === i);
 
     connectors.forEach(c => {
@@ -572,7 +597,13 @@
       if (c.route === 'straight' || !s1 || !s2 || e1.shape === e2.shape) {
         const poly = routeLegacy(c, p1, p2);
         routes[cid] = { p1, p2, points: poly, ok: true, label: null };
-        routeSegs(poly).forEach(sg => used.push([cid, sg]));
+        routeAddUsed(used, cid, poly);
+        return;
+      }
+      const pr = only && prev && prev[cid];
+      if (pr && !only.has(e1.shape) && !only.has(e2.shape) && pr.p1.x === p1.x && pr.p1.y === p1.y && pr.p2.x === p2.x && pr.p2.y === p2.y) {
+        routes[cid] = pr;
+        routeAddUsed(used, cid, pr.points);
         return;
       }
       const d1 = ROUTE_DIR[s1], d2 = ROUTE_DIR[s2];
@@ -594,32 +625,40 @@
       uniq(xs).forEach(mx => mids.push([{ x: mx, y: a.y }, { x: mx, y: b.y }]));
       uniq(ys).forEach(ly => mids.push([{ x: a.x, y: ly }, { x: b.x, y: ly }]));
 
-      let best = null, bestAny = null;
-      mids.forEach(mid => {
+      // candidates by geometric cost (a lower bound: penalties only add), ties by position in `mids`; the cheapest
+      // valid one by (cost, position) is the winner of an in-order scan, which stops when none left can beat it
+      const cands = mids.map((mid, pos) => {
         const full = [p1, a, ...mid, b, p2];
-        const segs = routeSegs(full).filter(sg => !(sg[0].x === sg[1].x && sg[0].y === sg[1].y));
+        const poly = routeSimplify(full);
+        let len = 0;
+        routeSegs(poly).forEach(([u, v]) => { len += Math.abs(v.x - u.x) + Math.abs(v.y - u.y); });
+        return { geom: len + ROUTE.BEND * (poly.length - 2), pos, full, poly };
+      });
+      cands.sort((p, q) => (p.geom - q.geom) || (p.pos - q.pos));
+      const beats = (cost, pos, cur) => !cur || cost < cur[0] || (cost === cur[0] && pos < cur[2]);
+      let best = null, bestAny = null;
+      for (const cd of cands) {
+        if (best && !beats(cd.geom, cd.pos, best)) { if (cd.geom > best[0]) break; continue; }
+        const segs = routeSegs(cd.full).filter(sg => !(sg[0].x === sg[1].x && sg[0].y === sg[1].y));
         let valid = true;
         for (let j = 0; j < segs.length && valid; j++) {
           const [u, v] = segs[j];
           if (obst.some(o => routeHits(u, v, o)) || (j > 0 && j < segs.length - 1 && own.some(o => routeHits(u, v, o)))) valid = false;
         }
-        const poly = routeSimplify(full);
-        let len = 0;
-        routeSegs(poly).forEach(([u, v]) => { len += Math.abs(v.x - u.x) + Math.abs(v.y - u.y); });
-        let cost = len + ROUTE.BEND * (poly.length - 2);
-        routeSegs(poly).forEach(sg => {
-          used.forEach(([oid, os]) => {
-            if (oid === cid) return;
-            if (routeOverlap(sg, os, 0.5) > 1) cost += ROUTE.OVERLAP;
-            else if (routeOverlap(sg, os, 8) > 1) cost += ROUTE.NEAR;
-          });
-        });
-        if (!bestAny || cost < bestAny[0]) bestAny = [cost, poly];
-        if (valid && (!best || cost < best[0])) best = [cost, poly];
-      });
+        if (!valid) continue;
+        const cost = routePenalty(cd.poly, used, cid, cd.geom);
+        if (beats(cost, cd.pos, best)) best = [cost, cd.poly, cd.pos];
+      }
+      if (!best) {   // nothing is clean: the cheapest by full cost is drawn and flagged
+        for (const cd of cands) {
+          if (bestAny && !beats(cd.geom, cd.pos, bestAny)) { if (cd.geom > bestAny[0]) break; continue; }
+          const cost = routePenalty(cd.poly, used, cid, cd.geom);
+          if (beats(cost, cd.pos, bestAny)) bestAny = [cost, cd.poly, cd.pos];
+        }
+      }
       const chosen = best || bestAny;
       routes[cid] = { p1, p2, points: chosen[1], ok: !!best, label: null };
-      routeSegs(chosen[1]).forEach(sg => used.push([cid, sg]));
+      routeAddUsed(used, cid, chosen[1]);
     });
 
     const rects = boxes.map(q => [q[1] - 2, q[2] - 2, q[3] + 2, q[4] + 2]);
@@ -2436,6 +2475,7 @@
         this.isResizing = false;
         this.resizeHandle = null;
         this.resizeTargetId = null;
+        this.cancelDragRender();
         this.saveHistory();
         this.triggerAutosave();
         this.render();
@@ -2443,6 +2483,7 @@
 
       if (this.isDraggingItems) {
         this.isDraggingItems = false;
+        this.cancelDragRender();
         this.saveHistory();
         this.triggerAutosave();
         this.render();
@@ -3063,7 +3104,25 @@
         }
       });
 
-      this.render();
+      this.renderDuringDrag(Object.keys(this.dragOrigPositions));
+    }
+
+    /** One redraw per animation frame while a block is dragged or resized, and only the links on the moved blocks are
+     *  routed again; the drop (cancelDragRender + render) routes everything. */
+    renderDuringDrag(movedIds) {
+      this._dragMoved = new Set(movedIds);
+      if (this._dragRaf) return;
+      this._dragRaf = requestAnimationFrame(() => {
+        this._dragRaf = 0;
+        if (!this.alive()) return;
+        this._routeOpts = { only: this._dragMoved, prev: this._routes };
+        try { this.render(); } finally { this._routeOpts = null; }
+      });
+    }
+
+    cancelDragRender() {
+      if (this._dragRaf) cancelAnimationFrame(this._dragRaf);
+      this._dragRaf = 0;
     }
 
     nudgeSelected(dx, dy) {
@@ -3131,7 +3190,7 @@
         item.w = Math.max(30, newW);
         item.h = Math.max(25, newH);
       }
-      this.render();
+      this.renderDuringDrag([this.resizeTargetId]);
     }
 
     getItemById(id, type) {
@@ -3490,7 +3549,7 @@
     renderConnectors() {
       let html = '';
       // every connector is routed together: ports spread along a side, elbows around blocks, labels clear of blocks
-      this._routes = routeConnectors(this.data.shapes, this.data.connectors);
+      this._routes = routeConnectors(this.data.shapes, this.data.connectors, this._routeOpts);
       this.data.connectors.forEach(c => {
         const rt = this._routes[c.id];
         const p1 = rt ? rt.p1 : this.getEndpointCoords(c.from);
@@ -3509,7 +3568,7 @@
         const { x: mx, y: my } = this.connectorLabelPoint(c, p1, p2);
         let labelHtml = '';
         if (c.label) {
-          const lw = Math.max(c.label.length * 7.5 + 16, 32);
+          const lw = routeLabelWidth(c.label);
           labelHtml = `
             <g class="diag-conn-label" transform="translate(${mx}, ${my})">
               <rect class="diag-conn-label-box" x="${-lw / 2}" y="-11" width="${lw}" height="22" rx="5" stroke="${escapeHtml(strokeColor)}" stroke-width="1.2"/>

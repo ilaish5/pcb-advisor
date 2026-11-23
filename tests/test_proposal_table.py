@@ -65,7 +65,7 @@ def test_same_three_buttons_everywhere():
 
 def test_click_delegate_has_a_busy_guard():
     d = CORE[CORE.index("document.addEventListener('click'"):CORE.index("document.addEventListener('change'")]
-    assert "aria-busy" in d and "finally" in d and "return;" in d[d.index("aria-busy"):d.index("aria-busy") + 120]
+    assert "BUSY.has(busyId)) return;" in d and "BUSY.add(busyId)" in d and "finally" in d and "BUSY.delete(busyId)" in d
 
 
 def test_already_decided_is_not_a_red_toast():
@@ -96,3 +96,56 @@ def test_builder_output_has_one_row_per_proposal(tmp_path):
     body = html[html.index("<tbody>"):]
     assert body.count("<tr ") == 3 and body.count('type="checkbox"') == 3
     assert body.count(" checked") == 2 and body.count("Unverified") == 1 and "why &lt;b&gt;" in body
+
+
+def _node():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is not installed")
+    return node
+
+
+def run_node(script):
+    r = subprocess.run([_node(), "-"], input=script, capture_output=True, text=True, encoding="utf-8")
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def test_busy_guard_is_keyed_by_the_action_so_a_replaced_button_is_still_busy():
+    # a background render replaces the button element; the second click lands on a new element of the same action
+    script = (CORE[CORE.index("function busyKey("):CORE.index("document.addEventListener('click'")] + "const BUSY=new Set();"
+              "const mk=(ds,pids)=>({dataset:ds,textContent:'x',closest:()=>pids?{dataset:{pids}}:null});"
+              "const a=mk({act:'prop-decide',scope:'all',decision:'approved'},'p1,p2');"
+              "const a2=mk({decision:'approved',scope:'all',act:'prop-decide'},'p1,p2');"
+              "const other=mk({act:'prop-decide',scope:'all',decision:'approved'},'p3');"
+              "const rej=mk({act:'prop-decide',scope:'all',decision:'rejected'},'p1,p2');"
+              "BUSY.add(busyKey(a));"
+              "process.stdout.write(JSON.stringify([BUSY.has(busyKey(a2)),BUSY.has(busyKey(other)),BUSY.has(busyKey(rej))]));")
+    assert run_node(script) == [True, False, False]
+
+
+def _acts_harness(proposals, tail):
+    return ("const S={proposals:" + json.dumps(proposals) + "};let propTicks={};"
+            "const esc=s=>String(s);const btn=(label,o)=>'<button>'+label+'</button>';"
+            + fn(CHAT, "propIsUnverified") + fn(CHAT, "propTicked") + fn(CHAT, "propUnverifiedIds") + fn(CHAT, "propActsHTML") + tail)
+
+
+def test_approve_all_says_how_many_are_unverified_and_acts_at_once_when_none():
+    props = [{"id": "p1", "changes": {"mpn": "OK1"}}, {"id": "p2", "changes": {"mpn": "XX (unverified)"}},
+             {"id": "p3", "changes": {"mpn": "OK3", "notes": "unverified"}}]
+    out = run_node(_acts_harness(props, "process.stdout.write(JSON.stringify([propActsHTML(['p1','p2','p3'],true),propActsHTML(['p1'],true)]));"))
+    assert "Approve all (2 unverified)" in out[0] and "Approve all (" not in out[1] and "Approve all<" in out[1]
+    h = fn(CHAT, "propActsHTML")
+    assert h.count("Approve all") >= 2
+
+
+def test_approve_all_confirms_the_unverified_rows_once_in_the_apps_dialog():
+    h = CHAT[CHAT.index("onAct('prop-decide'"):]
+    h = h[:h.index("setState(r)")]
+    assert "propUnverifiedIds(ids)" in h and "askChoice(" in h and "window.confirm" not in h and "confirm(" not in h.replace("askChoice", "")
+    assert "r.ref" in h and "r.mpn" in h and "if (ok !== true) return;" in h
+    assert h.count("askChoice(") == 1
+    # only the approve-all scope asks; approving the ticked rows or rejecting never does
+    assert "d.scope === 'all' && d.decision === 'approved'" in h
+    dlg = fn(CORE, "askChoice")
+    assert "o.list" in dlg and "o.no === false" in dlg
