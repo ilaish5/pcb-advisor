@@ -426,6 +426,230 @@
     return { x: x + fx * w, y: y + fy * h };
   }
 
+  /* ---------------- Connector routing (pure) ----------------
+   * Server twin: scripts/diagram_route.py (route_connectors). The rules are documented there and the two are
+   * compared by tests/test_diagram_route.py: keep them identical (same candidate order, same costs).
+   * Ports spread along a rectangle side; elbows go around every non-endpoint block; labels avoid blocks. */
+  const ROUTE = { STUB: 20, CLEAR: 10, LANES: [24, 40], GLOBAL_LANE: 30, BEND: 40, OVERLAP: 1000, NEAR: 100, LABEL_H: 22 };
+  const ROUTE_DIR = { left: [-1, 0], right: [1, 0], top: [0, -1], bottom: [0, 1] };
+
+  function routeEp(ep) { return ep && typeof ep === 'object' ? ep : (typeof ep === 'string' ? { shape: ep } : {}); }
+  function routeSide(ep) {
+    if (!ep.shape) return null;
+    const p = ep.point || ep.side || 'right';
+    return ROUTE_DIR[p] ? p : null;
+  }
+  function routeLabelWidth(label) { return Math.max(String(label).length * 7.5 + 16, 32); }
+  function routeCentre(ep, byId) {
+    const s = byId[ep.shape];
+    if (s) return { x: (Number(s.x) || 0) + (Number(s.w) || 0) / 2, y: (Number(s.y) || 0) + (Number(s.h) || 0) / 2 };
+    return { x: Number(ep.x) || 0, y: Number(ep.y) || 0 };
+  }
+
+  function routePorts(connectors, byId) {
+    const groups = {}, order = [];
+    connectors.forEach(c => {
+      [['from', 'to'], ['to', 'from']].forEach(([k, o]) => {
+        const ep = routeEp(c[k]);
+        const side = routeSide(ep);
+        const s = byId[ep.shape];
+        if (!side || !s || normalizeShapeType(s.type) !== 'rectangle') return;
+        const key = ep.shape + '|' + side;
+        if (!groups[key]) { groups[key] = []; order.push(key); }
+        groups[key].push({ c, k, other: routeCentre(routeEp(c[o]), byId), side });
+      });
+    });
+    const out = {};
+    order.forEach(key => {
+      const arr = groups[key], n = arr.length;
+      if (n < 2) return;
+      const horiz = arr[0].side === 'left' || arr[0].side === 'right';
+      const val = g => (horiz ? g.other.y : g.other.x);
+      arr.sort((p, q) => (val(p) - val(q)) || (String(p.c.id) < String(q.c.id) ? -1 : (String(p.c.id) > String(q.c.id) ? 1 : 0)));
+      const s = byId[key.split('|')[0]];
+      arr.forEach((g, i) => {
+        const base = anchorPoint(s, g.side);
+        out[g.c.id + '|' + g.k] = horiz
+          ? { x: base.x, y: (Number(s.y) || 0) + (Number(s.h) || 0) * (i + 1) / (n + 1) }
+          : { x: (Number(s.x) || 0) + (Number(s.w) || 0) * (i + 1) / (n + 1), y: base.y };
+      });
+    });
+    return out;
+  }
+
+  function routeLegacy(c, p1, p2) {
+    if (c.route === 'straight') return [p1, p2];
+    const dir = ep => {
+      const p = ep.shape ? (ep.point || ep.side) : null;
+      return (p === 'top' || p === 'bottom') ? 'v' : ((p === 'left' || p === 'right') ? 'h' : null);
+    };
+    const d1 = dir(routeEp(c.from)), d2 = dir(routeEp(c.to));
+    if (d1 && d2 && d1 !== d2) {
+      return d1 === 'h' ? [p1, { x: p2.x, y: p1.y }, p2] : [p1, { x: p1.x, y: p2.y }, p2];
+    }
+    const kind = d1 || d2 || (Math.abs(p2.x - p1.x) >= Math.abs(p2.y - p1.y) ? 'h' : 'v');
+    if (kind === 'v') {
+      const my = (p1.y + p2.y) / 2;
+      return [p1, { x: p1.x, y: my }, { x: p2.x, y: my }, p2];
+    }
+    const mx = (p1.x + p2.x) / 2;
+    return [p1, { x: mx, y: p1.y }, { x: mx, y: p2.y }, p2];
+  }
+
+  function routeSimplify(pts) {
+    const out = [];
+    pts.forEach(p => {
+      if (out.length && out[out.length - 1].x === p.x && out[out.length - 1].y === p.y) return;
+      out.push(p);
+    });
+    let i = 1;
+    while (i < out.length - 1) {
+      const a = out[i - 1], b = out[i], c = out[i + 1];
+      if ((a.x === b.x && b.x === c.x) || (a.y === b.y && b.y === c.y)) out.splice(i, 1);
+      else i++;
+    }
+    return out;
+  }
+
+  function routeHits(a, b, box) {
+    const [x0, y0, x1, y1] = box;
+    if (a.y === b.y) return y0 < a.y && a.y < y1 && Math.max(a.x, b.x) > x0 && Math.min(a.x, b.x) < x1;
+    if (a.x === b.x) return x0 < a.x && a.x < x1 && Math.max(a.y, b.y) > y0 && Math.min(a.y, b.y) < y1;
+    return true;
+  }
+
+  function routeSegs(poly) {
+    const out = [];
+    for (let i = 0; i < poly.length - 1; i++) out.push([poly[i], poly[i + 1]]);
+    return out;
+  }
+
+  function routeOverlap(a, b, tol) {
+    if (a[0].y === a[1].y && b[0].y === b[1].y) {
+      if (Math.abs(a[0].y - b[0].y) > tol) return 0;
+      const lo = Math.max(Math.min(a[0].x, a[1].x), Math.min(b[0].x, b[1].x));
+      const hi = Math.min(Math.max(a[0].x, a[1].x), Math.max(b[0].x, b[1].x));
+      return Math.max(0, hi - lo);
+    }
+    if (a[0].x === a[1].x && b[0].x === b[1].x) {
+      if (Math.abs(a[0].x - b[0].x) > tol) return 0;
+      const lo = Math.max(Math.min(a[0].y, a[1].y), Math.min(b[0].y, b[1].y));
+      const hi = Math.min(Math.max(a[0].y, a[1].y), Math.max(b[0].y, b[1].y));
+      return Math.max(0, hi - lo);
+    }
+    return 0;
+  }
+
+  /** {connectorId: {p1, p2, points, ok, label: {x, y, w, h, ok} | null}} for every connector. */
+  function routeConnectors(shapes, connectors) {
+    shapes = shapes || []; connectors = connectors || [];
+    const byId = {};
+    shapes.forEach(s => { byId[s.id] = s; });
+    const ports = routePorts(connectors, byId);
+    const boxes = shapes.map(s => {
+      const x = Number(s.x) || 0, y = Number(s.y) || 0;
+      return [s.id, x, y, x + (Number(s.w) || 0), y + (Number(s.h) || 0)];
+    });
+    const minX = boxes.length ? Math.min(...boxes.map(b => b[1])) : 0;
+    const maxX = boxes.length ? Math.max(...boxes.map(b => b[3])) : 0;
+    const minY = boxes.length ? Math.min(...boxes.map(b => b[2])) : 0;
+    const maxY = boxes.length ? Math.max(...boxes.map(b => b[4])) : 0;
+    const routes = {};
+    const used = [];
+    const uniq = vals => vals.filter((v, i) => vals.indexOf(v) === i);
+
+    connectors.forEach(c => {
+      const e1 = routeEp(c.from), e2 = routeEp(c.to), cid = c.id;
+      const endPt = (ep, k) => {
+        if (ports[cid + '|' + k]) return ports[cid + '|' + k];
+        const s = byId[ep.shape];
+        if (s) return anchorPoint(s, ep.point || ep.side || 'right');
+        return { x: Number(ep.x) || 0, y: Number(ep.y) || 0 };
+      };
+      const p1 = endPt(e1, 'from'), p2 = endPt(e2, 'to');
+      const s1 = byId[e1.shape] ? routeSide(e1) : null;
+      const s2 = byId[e2.shape] ? routeSide(e2) : null;
+      if (c.route === 'straight' || !s1 || !s2 || e1.shape === e2.shape) {
+        const poly = routeLegacy(c, p1, p2);
+        routes[cid] = { p1, p2, points: poly, ok: true, label: null };
+        routeSegs(poly).forEach(sg => used.push([cid, sg]));
+        return;
+      }
+      const d1 = ROUTE_DIR[s1], d2 = ROUTE_DIR[s2];
+      const a = { x: p1.x + d1[0] * ROUTE.STUB, y: p1.y + d1[1] * ROUTE.STUB };
+      const b = { x: p2.x + d2[0] * ROUTE.STUB, y: p2.y + d2[1] * ROUTE.STUB };
+      const obst = boxes.filter(q => q[0] !== e1.shape && q[0] !== e2.shape)
+        .map(q => [q[1] - ROUTE.CLEAR, q[2] - ROUTE.CLEAR, q[3] + ROUTE.CLEAR, q[4] + ROUTE.CLEAR]);
+      const own = boxes.filter(q => q[0] === e1.shape || q[0] === e2.shape).map(q => [q[1], q[2], q[3], q[4]]);
+
+      let xs = [(a.x + b.x) / 2, a.x, b.x];
+      let ys = [(a.y + b.y) / 2, a.y, b.y];
+      boxes.forEach(q => {
+        ROUTE.LANES.forEach(g => { xs.push(q[1] - g, q[3] + g); ys.push(q[2] - g, q[4] + g); });
+      });
+      [ROUTE.GLOBAL_LANE, ROUTE.GLOBAL_LANE + 16].forEach(g => {
+        xs.push(minX - g, maxX + g); ys.push(minY - g, maxY + g);
+      });
+      const mids = [[{ x: b.x, y: a.y }], [{ x: a.x, y: b.y }]];
+      uniq(xs).forEach(mx => mids.push([{ x: mx, y: a.y }, { x: mx, y: b.y }]));
+      uniq(ys).forEach(ly => mids.push([{ x: a.x, y: ly }, { x: b.x, y: ly }]));
+
+      let best = null, bestAny = null;
+      mids.forEach(mid => {
+        const full = [p1, a, ...mid, b, p2];
+        const segs = routeSegs(full).filter(sg => !(sg[0].x === sg[1].x && sg[0].y === sg[1].y));
+        let valid = true;
+        for (let j = 0; j < segs.length && valid; j++) {
+          const [u, v] = segs[j];
+          if (obst.some(o => routeHits(u, v, o)) || (j > 0 && j < segs.length - 1 && own.some(o => routeHits(u, v, o)))) valid = false;
+        }
+        const poly = routeSimplify(full);
+        let len = 0;
+        routeSegs(poly).forEach(([u, v]) => { len += Math.abs(v.x - u.x) + Math.abs(v.y - u.y); });
+        let cost = len + ROUTE.BEND * (poly.length - 2);
+        routeSegs(poly).forEach(sg => {
+          used.forEach(([oid, os]) => {
+            if (oid === cid) return;
+            if (routeOverlap(sg, os, 0.5) > 1) cost += ROUTE.OVERLAP;
+            else if (routeOverlap(sg, os, 8) > 1) cost += ROUTE.NEAR;
+          });
+        });
+        if (!bestAny || cost < bestAny[0]) bestAny = [cost, poly];
+        if (valid && (!best || cost < best[0])) best = [cost, poly];
+      });
+      const chosen = best || bestAny;
+      routes[cid] = { p1, p2, points: chosen[1], ok: !!best, label: null };
+      routeSegs(chosen[1]).forEach(sg => used.push([cid, sg]));
+    });
+
+    const rects = boxes.map(q => [q[1] - 2, q[2] - 2, q[3] + 2, q[4] + 2]);
+    const placed = [];
+    connectors.forEach(c => {
+      const r = routes[c.id];
+      if (!c.label) return;
+      const w = routeLabelWidth(c.label), H = ROUTE.LABEL_H;
+      const segs = routeSegs(r.points);
+      segs.sort((s, t) => (Math.abs(t[1].x - t[0].x) + Math.abs(t[1].y - t[0].y)) - (Math.abs(s[1].x - s[0].x) + Math.abs(s[1].y - s[0].y)));
+      const cands = [];
+      segs.forEach(([u, v]) => [0.5, 0.3, 0.7].forEach(f => cands.push({ x: u.x + (v.x - u.x) * f, y: u.y + (v.y - u.y) * f })));
+      const rectOf = pt => [pt.x - w / 2, pt.y - H / 2, pt.x + w / 2, pt.y + H / 2];
+      const all = rects.concat(placed);
+      let pick = null;
+      for (const pt of cands) {
+        const rc = rectOf(pt);
+        if (!all.some(q => rc[0] < q[2] && rc[2] > q[0] && rc[1] < q[3] && rc[3] > q[1])) { pick = { pt, rc, ok: true }; break; }
+      }
+      if (!pick) { const pt = cands[0] || r.p1; pick = { pt, rc: rectOf(pt), ok: false }; }
+      placed.push(pick.rc);
+      r.label = { x: pick.pt.x, y: pick.pt.y, w, h: H, ok: pick.ok };
+    });
+    return routes;
+  }
+
+  function routePathD(points) {
+    return points.map((p, i) => `${i ? 'L' : 'M'} ${p.x} ${p.y}`).join(' ');
+  }
+
   function sanitizeModel(raw) {
     if (!raw || typeof raw !== 'object') {
       return { shapes: [], connectors: [], frames: [] };
@@ -2776,6 +3000,8 @@
 
     /** Where a connector's label sits: on the path, in the middle of its longest leg for a one-bend route. */
     connectorLabelPoint(c, p1, p2) {
+      const rt = this._routes && this._routes[c.id];
+      if (rt && rt.label) return { x: rt.label.x, y: rt.label.y };   // placed by routeConnectors, clear of blocks
       if (c.route !== 'straight') {
         const k = this.elbowKind(c, p1, p2);
         const dx = Math.abs(p2.x - p1.x), dy = Math.abs(p2.y - p1.y);
@@ -3263,13 +3489,16 @@
 
     renderConnectors() {
       let html = '';
+      // every connector is routed together: ports spread along a side, elbows around blocks, labels clear of blocks
+      this._routes = routeConnectors(this.data.shapes, this.data.connectors);
       this.data.connectors.forEach(c => {
-        const p1 = this.getEndpointCoords(c.from);
-        const p2 = this.getEndpointCoords(c.to);
+        const rt = this._routes[c.id];
+        const p1 = rt ? rt.p1 : this.getEndpointCoords(c.from);
+        const p2 = rt ? rt.p2 : this.getEndpointCoords(c.to);
         const isSel = this.selectedConnectorIds.has(c.id);
         const changed = this.previewing && this.previewChanged.has(c.id);
 
-        const d = this.buildConnectorPath(c, p1, p2);
+        const d = rt ? routePathD(rt.points) : this.buildConnectorPath(c, p1, p2);
 
         const strokeColor = isSel ? 'var(--sig)' : displayStroke(c.stroke || '#64748b', this.dark);
         const strokeWidth = isSel ? 3 : (c.style === 'thick' ? 3.5 : 2);
@@ -3399,7 +3628,8 @@
           const ew = this.pxToDiagram(2);
           let endsSvg = '';
           [['from', c.from], ['to', c.to]].forEach(([end, ep]) => {
-            const pos = this.getEndpointCoords(ep);
+            const rt = this._routes && this._routes[c.id];
+            const pos = rt ? (end === 'from' ? rt.p1 : rt.p2) : this.getEndpointCoords(ep);
             const attached = !!(ep && ep.shape);
             endsSvg += `<circle class="diag-conn-end-handle${attached ? ' is-attached' : ''}" cx="${pos.x}" cy="${pos.y}" r="${er}"
                           stroke-width="${ew}" style="cursor:move"
@@ -3751,6 +3981,7 @@
   }
 
   DiagramEditor.anchorPoint = anchorPoint;
+  DiagramEditor.routeConnectors = routeConnectors;
   DiagramEditor.attachPanHelper = attachPanHelper;
   DiagramEditor.sanitizeModel = sanitizeModel;
   if (typeof window !== 'undefined') {
