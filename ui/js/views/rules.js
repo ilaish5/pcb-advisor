@@ -88,7 +88,22 @@ function rulesHeader(rd) {
   const actions = linked ? pvStepBtn('rules')       // a step button like Draw / Place / Route: live list, Stop, the answer after a reload
     + menu({icon: 'more', title: 'More'}, [{label: 'Preset only (.RUL)', act: 'rules-preset'}]) : '';
   const primary = `<a class="btn pri" href="/api/rules/export?${q()}" download="${esc(PROJECT)}-rules${linked ? '-board' : ''}.RUL" title="${linked ? 'All the rules of your board, with the JLC values filled in' : 'The JLC preset rules'}">${icon('download')}<span>Download .RUL</span></a>`;
-  return viewHeader({title: 'Rules', meta, actions, primary});
+  return viewHeader({title: 'Rules', meta, actions, primary}) + rulesDrcRow(linked);
+}
+/* The second row of the header: the board's own design rule check, kept apart from the rule set above (a matching rule set says nothing about
+   the board). From S.board_check, which the server keeps (board-log.jsonl): the count, when it ran, and whether the board changed since. */
+function rulesDrcRow(linked) {
+  if (!linked) return '';
+  const c = S && S.board_check;
+  const when = c && c.ts && typeof outAgo === 'function' ? outAgo(new Date(Number(c.ts)).toISOString()) : '';
+  let tone = '', text;
+  if (!c) text = 'Board DRC: not run yet';
+  else if (c.complete === false) { tone = 'warn'; text = 'Board DRC: the report was incomplete, run it again'; }
+  else if (c.total) { tone = 'bad'; text = `Board DRC: ${plural(c.total, 'violation')}`; }
+  else { tone = c.stale ? 'warn' : 'ok'; text = 'Board DRC: clean'; }
+  if (c && c.stale) { tone = tone === 'ok' ? 'warn' : tone; text += ', but the board changed since: check it again'; }
+  else if (c && when) text += ', ' + when;
+  return `<div class="rules-drc meta" role="status"><span class="${tone ? tone + '-t' : ''}">${esc(text)}</span> ${pvStepBtn('drc', {kind: 'link'})}</div>`;
 }
 
 /* ---------- the diff ---------- */

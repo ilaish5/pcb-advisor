@@ -10,16 +10,44 @@ const outFlashed = new Set();                 // 'name|written' of the files tha
 
 /* The manufacturing files (Altium's outputs, the Gerber zip) are refused by the server while a part's pins are unverified. The page says so
    before the click: the same parts the DFM page lists (S.bom already carries each line's pins_status, so this asks the server nothing). */
+/* The one gate is the server's: stages[] 'outputs' is blocked exactly when store.manufacturing_warning is not empty (unverified pins, open pins,
+   pins missing from the netlist). Its text lists everything at once; the open pins come with one "Mark all N as NC" and an "Ask the agent" each. */
+function outGate() {
+  const st = typeof stageOf === 'function' ? stageOf('outputs') : null;
+  return st && st.gate && st.gate.blocked ? st.gate : null;
+}
 function outBlockWhy() {
-  const rows = typeof dfmUnverified === 'function' ? dfmUnverified() : [];
-  if (!rows.length) return '';
-  const refs = rows.flatMap(l => l.refs || []);
-  return `${refs.length} ${refs.length === 1 ? 'part has' : 'parts have'} unverified pins${refs.length ? ': ' + refs.slice(0, 8).join(', ') + (refs.length > 8 ? ' ...' : '') : ''}. Verify or accept each in DFM > Unverified parts before making the manufacturing files.`;
+  const g = outGate();
+  return g ? g.why : '';
+}
+function outGapItems(g) {
+  const gaps = (g && g.gaps) || {};
+  return [...(gaps.open || []).map(i => ({...i, kind: 'open'})), ...(gaps.unlisted || []).map(i => ({...i, kind: 'unlisted'}))];
+}
+function outGapRow(i) {
+  const what = i.kind === 'open' ? 'has no net and is not marked NC' : 'is in the library symbol but missing from the netlist';
+  return `<li><span class="m">${esc(i.ref)}</span> pin ${esc(i.num || i.name)}${i.name && i.num && i.name !== i.num ? ` (${esc(i.name)})` : ''} ${what} ` +
+    btn('Ask the agent', {kind: 'link', size: 'sm', act: 'nc-ask', ref: i.ref, num: i.num, pname: i.name, why: i.kind}) + '</li>';
 }
 function outBlockNote() {
-  const why = outBlockWhy();
-  return why ? `<div class="note warn" role="status"><span>${esc(why)}</span><span class="acts">${btn('Open DFM', {kind: 'link', page: 'checks'})}</span></div>` : '';
+  const g = outGate();
+  if (!g) return '';
+  const items = outGapItems(g);
+  const acts = (items.length ? btn(`Mark all ${items.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks every one of these pins no-connect in the netlist (a No ERC cross when drawn). Connect any pin that is not meant to be NC first.'}) : '')
+    + btn(g.page === 'sch' ? 'Open Schematic' : 'Open DFM', {kind: 'link', page: g.page === 'sch' ? 'sch' : 'checks'});
+  const list = items.length ? `<details class="pv-more"><summary>Show the ${items.length} ${items.length === 1 ? 'pin' : 'pins'}</summary><ul>${items.map(outGapRow).join('')}</ul></details>` : '';
+  return `<div class="note warn" role="status"><span>${esc(g.why)}${list}</span><span class="acts">${acts}</span></div>`;
 }
+onAct('nc-mark-all', async () => {
+  const r = await api('/api/nc/mark', {}, {soft: true});
+  if (!r || r.error) { toast((r && r.error) || "Couldn't mark the pins NC.", null, {bad: true}); return; }
+  toast(`Marked ${r.marked} ${r.marked === 1 ? 'pin' : 'pins'} NC`);
+  await refresh(true);
+});
+onAct('nc-ask', (el, d) => {
+  const what = d.why === 'open' ? 'has no net and is not marked NC' : 'is in the library symbol but missing from the netlist';
+  askAbout({kind: 'part', id: d.ref, label: d.ref, text: `Pin ${d.num || d.pname} (${d.pname || ''}) of ${d.ref} ${what}. Should it be NC, or connected? If NC, propose the NC list for all such pins in one go.`});
+});
 
 function outSize(n) {                         // 7467 -> "7.3 KB"
   n = Number(n) || 0;
@@ -169,7 +197,7 @@ const outExportItems = () => [
   {label: BOM_EXPORTS.jlc, act: 'export', attrs: {fmt: 'jlc'}},
   {label: BOM_EXPORTS.generic, act: 'export', attrs: {fmt: 'generic'}},
   {label: 'Pick and place (CPL)', act: 'gen-cpl'},
-  {label: 'Gerber zip for JLC', hint: outBlockWhy() ? 'unverified parts' : 'from Altium', act: 'gen-gerber-zip', disabled: !!outBlockWhy()},
+  {label: 'Gerber zip for JLC', hint: outBlockWhy() ? 'blocked' : 'from Altium', act: 'gen-gerber-zip', disabled: !!outBlockWhy(), why: outBlockWhy()},
 ];
 function outRow(f, showTimes, showLin) {
   const at = f.modified, key = f.name + '|' + at;          // the state lists each file with its size and when it was written (ISO)
