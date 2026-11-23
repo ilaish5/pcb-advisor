@@ -209,29 +209,147 @@ def convert_symbols(text):
     return out
 
 
+MIN_PAD_MM = 0.1                       # smallest copper pad dimension a fab makes (the repo's JLC preset has no pad rule: JLC's trace minimum)
+KNOWN_SHAPES = {"rect": 2, "circle": 1, "oval": 1, "roundrect": 9, "custom": 2}   # KiCad pad shape -> Altium top shape (custom: see _custom_pad)
+AREA_TOL = 0.02                        # a plain pad's copper may differ from its source by this fraction (rounding only)
+CUSTOM_AREA_MAX = 1.30                 # a custom pad drawn as its bounding rectangle may carry up to this much more copper than the source
+CUSTOM_AREA_MIN = 0.95
+ANCHOR_TINY_MM = 0.01                  # EasyEDA's 0.005 mm custom-pad anchor is a placeholder: the copper is the primitives
+# Items of a kicad_mod that carry no copper or drawing, so dropping them loses nothing; any other item that is not converted is noted.
+BENIGN_ITEMS = {"layer", "descr", "tags", "attr", "model", "fp_text", "property", "version", "generator", "generator_version",
+                "tedit", "tstamp", "uuid", "at", "path", "solder_mask_margin", "solder_paste_margin", "solder_paste_ratio",
+                "clearance", "zone_connect", "thermal_width", "thermal_gap", "autoplace_cost90", "autoplace_cost180",
+                "net_tie_pad_groups", "locked", "placed", "embedded_fonts", "sheetname", "sheetfile", "private_layers"}
+BENIGN_LAYERS = {"F.Paste", "F.Mask", "B.Paste", "B.Mask", "Cmts.User", "Dwgs.User", "Eco1.User", "Eco2.User"}
+DRAWN = ("fp_line", "fp_rect", "fp_circle", "fp_arc", "fp_poly")
+
+
+def _area(shape, w, h, ratio=0.0):
+    """Copper area (mm2) of a plain pad: rect, round/oval (a stadium) or rounded rectangle."""
+    lo = min(w, h)
+    if shape == 9:
+        return w * h - (4 - math.pi) * (ratio * lo) ** 2
+    if shape == 1:
+        return w * h - (4 - math.pi) / 4 * lo * lo
+    return w * h
+
+
+def spec_pad_area(fields):
+    """Copper area (mm2) of one split PAD spec line (sizes in mil); 0 for a pad with no copper (unplated, off the top layer)."""
+    if fields[5] not in ("Top Layer", "Multi-Layer") or fields[6] != "1":
+        return 0.0
+    ratio = float(fields[14]) / 200 if len(fields) > 14 and fields[14] else 0.0
+    return _area(int(fields[13]), float(fields[11]) / MM, float(fields[12]) / MM, ratio)
+
+
+def pad_size_problems(lines):
+    """[(pad name, smallest side in mm)] of every copper SMD pad of the spec lines that is below the fab minimum MIN_PAD_MM."""
+    out = []
+    for ln in lines:
+        f = ln.split("|")
+        if f[0] == "PAD" and f[5] == "Top Layer" and f[6] == "1":
+            side = min(float(f[11]), float(f[12])) / MM
+            if side < MIN_PAD_MM - 1e-6:
+                out.append((f[1], round(side, 4)))
+    return out
+
+
+def _shoelace(pts):
+    return abs(sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(pts, pts[1:] + pts[:1]))) / 2
+
+
+def _custom_pad(it, size):
+    """A KiCad custom pad's copper as (min x, min y, max x, max y, source area mm2, problems): its anchor (unless it is the
+    placeholder EasyEDA writes) and its gr_poly / gr_rect / gr_circle / gr_line primitives, in the pad's own frame, KiCad y down."""
+    boxes, area, problems = [], 0.0, []
+    for g in (one(it, "primitives") or [None])[1:]:
+        if not isinstance(g, list) or not g:
+            continue
+        try:
+            if g[0] == "gr_poly":
+                pts = [(float(p[1]), float(p[2])) for p in one(g, "pts")[1:]]
+                boxes.append((min(x for x, _ in pts), min(y for _, y in pts), max(x for x, _ in pts), max(y for _, y in pts)))
+                area += _shoelace(pts)        # the outline's stroke width is not added: EasyEDA's own polygon is the copper
+            elif g[0] == "gr_rect":
+                s, e = one(g, "start"), one(g, "end")
+                x1, y1, x2, y2 = float(s[1]), float(s[2]), float(e[1]), float(e[2])
+                boxes.append((min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)))
+                area += abs(x2 - x1) * abs(y2 - y1)
+            elif g[0] == "gr_circle":
+                c, e = one(g, "center"), one(g, "end")
+                cx, cy, r = float(c[1]), float(c[2]), math.hypot(float(e[1]) - float(c[1]), float(e[2]) - float(c[2]))
+                boxes.append((cx - r, cy - r, cx + r, cy + r))
+                area += math.pi * r * r
+            elif g[0] == "gr_line":
+                s, e, wd = one(g, "start"), one(g, "end"), one(g, "width")
+                x1, y1, x2, y2, h = float(s[1]), float(s[2]), float(e[1]), float(e[2]), float(wd[1]) / 2 if wd else 0.0
+                boxes.append((min(x1, x2) - h, min(y1, y2) - h, max(x1, x2) + h, max(y1, y2) + h))
+                area += math.hypot(x2 - x1, y2 - y1) * 2 * h + math.pi * h * h
+            else:
+                problems.append(f"custom pad primitive {g[0]} is not supported")
+        except (TypeError, IndexError, ValueError):
+            problems.append(f"custom pad primitive {g[0]} could not be read")
+    sw, sh = (float(size[1]), float(size[2])) if size else (0.0, 0.0)
+    if max(sw, sh) > ANCHOR_TINY_MM or not boxes:
+        boxes.append((-sw / 2, -sh / 2, sw / 2, sh / 2))
+        area += sw * sh
+    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    return x0, y0, x1, y1, min(area, (x1 - x0) * (y1 - y0)), problems
+
+
 def convert_footprint(text):
-    """One kicad_mod -> {name, lines, tht, model}; lines are the spec lines after FOOTPRINT, in mil, y up."""
+    """One kicad_mod -> {name, lines, tht, model, notes, errors}; lines are the spec lines after FOOTPRINT, in mil, y up.
+    notes: what was converted with a loss (a warning); errors: what the spec cannot hold truthfully (the part is an error)."""
     m = parse(text)[0]
     X = lambda v: round(float(v) * MM, 3) + 0.0      # + 0.0 turns -0.0 into 0.0
     Y = lambda v: round(-float(v) * MM, 3) + 0.0
-    lines, tht, notes = [], False, []
+    lines, tht, notes, errors, pairs = [], False, [], [], []
     for it in m[2:]:
         if not isinstance(it, list) or not it:
             continue
         k = it[0]
-        lay = LAYERS.get((one(it, "layer") or [None, None])[1])
+        klayer = (one(it, "layer") or [None, None])[1]
+        lay = LAYERS.get(klayer)
         width = one(it, "width") or one(one(it, "stroke") or [], "width")
         w = mil(width[1]) if width else 5
         if lay == "Top Overlay":
             w = max(w, MIN_SILK)
+        if k in ("zone", "keepout"):
+            notes.append("a keep-out zone of the footprint was not converted (the library spec has no keep-out primitive)")
+        elif k != "pad" and k not in DRAWN and k not in BENIGN_ITEMS:
+            notes.append(f"footprint item {k} was not converted")
+        elif k in DRAWN and not lay and klayer and klayer not in BENIGN_LAYERS:
+            notes.append(f"{k} on layer {klayer} was not converted")
         if k == "pad":
             cu = one(it, "layers")
             if cu is not None and not any(".Cu" in str(v) for v in cu[1:]):
                 continue                                        # paste or mask only: no copper
+            if cu is not None and it[2] == "smd" and not any(str(v) in ("F.Cu", "*.Cu") for v in cu[1:]):
+                notes.append(f"pad {it[1]} is on a bottom layer but was placed on the top layer")
             at, size = one(it, "at"), one(it, "size")
             rot = float(at[3]) if len(at) > 3 else 0
-            shape = {"rect": 2, "circle": 1, "oval": 1, "roundrect": 9}.get(it[3], 2)
+            if it[3] not in KNOWN_SHAPES:
+                errors.append(f"pad {it[1]}: shape {it[3]} is not known to the converter, drawn as a rectangle")
+            shape = KNOWN_SHAPES.get(it[3], 2)
             pct = str(round(float(one(it, "roundrect_rratio")[1]) * 200)) if it[3] == "roundrect" else ""
+            ratio = float(pct) / 200 if pct else 0.0
+            px, py = float(at[1]), float(at[2])
+            sx, sy = float(size[1]), float(size[2])
+            src = _area(shape, sx, sy, ratio)
+            if it[3] == "custom":
+                x0, y0, x1, y1, src, problems = _custom_pad(it, size)
+                errors += [f"pad {it[1]}: {p}" for p in problems]
+                sx, sy = x1 - x0, y1 - y0
+                ox, oy = (x0 + x1) / 2, (y0 + y1) / 2
+                th = math.radians(rot)                          # KiCad y is down: a positive angle turns the pad counter-clockwise
+                px += ox * math.cos(th) + oy * math.sin(th)
+                py += -ox * math.sin(th) + oy * math.cos(th)
+                if it[2] != "smd" and math.hypot(ox, oy) > 0.02:
+                    errors.append(f"pad {it[1]}: copper of a drilled custom pad is off its hole and cannot be drawn")
+                if src and sx * sy > src * (1 + AREA_TOL):
+                    notes.append(f"pad {it[1]}: custom copper drawn as its bounding rectangle ({sx:.3f} x {sy:.3f} mm, "
+                                 f"{(sx * sy / src - 1) * 100:.0f}% more copper than the source)")
             drill = one(it, "drill")
             if it[2] in ("thru_hole", "np_thru_hole") and drill:
                 nums = [float(v) for v in drill[1:] if re.fullmatch(r"[-\d.]+", str(v))]
@@ -244,8 +362,9 @@ def convert_footprint(text):
                 tht = True
             else:
                 hole, htype, hw, hrot, layer, plated = 0, 0, 0, 0, "Top Layer", 1
-            lines.append(f"PAD|{clean(it[1], 20)}|{X(at[1])}|{Y(at[2])}|{rot}|{layer}|{plated}|{hole}|{htype}|{hw}|{hrot}|"
-                         f"{mil(size[1])}|{mil(size[2])}|{shape}|{pct}")
+            lines.append(f"PAD|{clean(it[1], 20)}|{X(px)}|{Y(py)}|{rot}|{layer}|{plated}|{hole}|{htype}|{hw}|{hrot}|"
+                         f"{mil(sx)}|{mil(sy)}|{shape}|{pct}")
+            pairs.append((it[1], it[3], src, lines[-1].split("|")))
         elif k == "fp_line" and lay:
             s, e = one(it, "start"), one(it, "end")
             lines.append(f"TRACK|{X(s[1])}|{Y(s[2])}|{X(e[1])}|{Y(e[2])}|{w}|{lay}")
@@ -266,10 +385,20 @@ def convert_footprint(text):
             lo, hi = sorted((a0, a0 - ang))
             lines.append(f"ARC|{X(c[1])}|{Y(c[2])}|{round(r * MM, 3)}|{round(lo % 360, 2)}|"
                          f"{round(lo % 360 + hi - lo, 2)}|{w}|{lay}")
+        elif k == "fp_arc" and lay:
+            notes.append("an arc in start/mid/end form was not converted")
         elif k == "fp_poly" and lay:
             pts = one(it, "pts")[1:]
             lines.append(f"REGION|{lay}|0|" + "|".join(f"{X(p[1])}|{Y(p[2])}" for p in pts))
-    return {"name": m[1], "lines": clip_silk(lines), "tht": tht, "notes": sorted(set(notes)), "model": kicad_model(text, tht)}
+    for name, shape, src, f in pairs:                   # invariant: the copper written is the copper read
+        out = spec_pad_area(f)
+        if not out or not src:
+            continue
+        lo, hi = (CUSTOM_AREA_MIN, CUSTOM_AREA_MAX) if shape == "custom" else (1 - AREA_TOL, 1 + AREA_TOL)
+        if not lo <= out / src <= hi:
+            errors.append(f"pad {name}: copper area {out:.4f} mm2 in the library differs from {src:.4f} mm2 in the source")
+    return {"name": m[1], "lines": clip_silk(lines), "tht": tht, "notes": sorted(set(notes)), "errors": sorted(set(errors)),
+            "model": kicad_model(text, tht)}
 
 
 SILK_TO_PAD = 0.15                     # mm, JLC's silkscreen-to-pad clearance (pcb-capabilities: "Pad to silkscreen")

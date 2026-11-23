@@ -31,7 +31,7 @@ import zipfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import sources  # noqa: E402
 import store  # noqa: E402
-from partlib_convert import clean, convert_footprint, convert_symbols, names_fit, safe_name  # noqa: E402
+from partlib_convert import MIN_PAD_MM, clean, convert_footprint, convert_symbols, names_fit, pad_size_problems, safe_name  # noqa: E402
 from partlib_kicad import fetch_kicad, kicad_footprint  # noqa: E402
 from partlib_generate import PASSIVE_PREFIX, POWER_NAME, footprint_for, package_key, symbol_for  # noqa: E402
 
@@ -643,6 +643,7 @@ def _write(project, build):
     parts = {"symbols": {n: {k: s[k] for k in ("prefix", "comment", "params", "hide_pin_names", "line", "lines") if k in s}
                          for n, s in build.symbols.items()},
              "footprints": {n: {"source": f["source"], "tht": f["fp"]["tht"], "model": f.get("model"),
+                                "errors": f["fp"].get("errors", []),
                                 "steps": [p.relative_to(lib).as_posix() for p in f["steps"]]}
                             for n, f in build.footprints.items()
                             if any(s["footprint"] == n for s in build.symbols.values())}}
@@ -661,6 +662,12 @@ def check_build(build_dir):
     fps = [ln.split("|")[1] for ln in read("footprints_spec.txt") if ln.startswith("FOOTPRINT|")]
     syms = [ln.split("|")[1] for ln in read("symbols_spec.txt") if ln.startswith("SYMBOL|")]
     links = dict(ln.split("=", 1) for ln in read("links.txt") if "=" in ln)
+    pad_lines, cur = {}, None                                # the PAD lines of each footprint, for the pad-size check
+    for ln in read("footprints_spec.txt"):
+        if ln.startswith("FOOTPRINT|"):
+            cur = pad_lines.setdefault(ln.split("|")[1], [])
+        elif ln.startswith("PAD|") and cur is not None:
+            cur.append(ln)
     parts = {}
     if (build_dir / "parts.json").exists():
         parts = json.loads((build_dir / "parts.json").read_text(encoding="utf-8"))
@@ -677,6 +684,12 @@ def check_build(build_dir):
     for name in dict.fromkeys(fps):
         info = parts.get("footprints", {}).get(name, {})
         n = len(info.get("steps", []))
+        for msg in info.get("errors", []):                   # the converter could not keep the source's copper truthfully
+            add("problem", f"footprint {name}: {msg}", footprint=name, kind="copper")
+        for pad, side in pad_size_problems(pad_lines.get(name, [])):
+            add("problem", f"footprint {name}: pad {pad} is {side:g} mm wide, below the {MIN_PAD_MM:g} mm a fab can make; "
+                           "the footprint's copper was not converted correctly or the part's pad is too small to build",
+                footprint=name, kind="copper")
         if n == 0:
             # the board still builds without a body; the student sees the gap and can add a STEP later
             add("warning", f"no 3D model for footprint {name}", footprint=name, kind="3d")
