@@ -97,13 +97,15 @@ def test_a_good_update_schedules_the_restart(server, empty, monkeypatch):  # noq
     monkeypatch.setattr(update, "apply", lambda: {"ok": True, "from": "a", "to": "b", "commits": [],
                                                   "rolled_back": False, "reason": ""})
     monkeypatch.setattr(serve, "HTTPD", object())
+    import threading
+    monkeypatch.setattr(serve, "STEP_LOCK", threading.Lock())   # a real restart never releases it (the process exits); keep it out of later tests
     fired = []
     monkeypatch.setattr(serve, "restart", lambda: fired.append(1))
     code, res = post(server, "/api/update", {}, empty)
     assert code == 200 and res["restarting"] and res["to"] == "b"
     import time
     time.sleep(0.8)
-    assert fired == [1]
+    assert fired == [1] and serve.STEP_LOCK.locked()          # held until the process restarts: no step can start
 
 
 def test_restart_exits_75_for_start_bat_on_windows(monkeypatch):

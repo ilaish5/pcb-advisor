@@ -63,6 +63,11 @@ def home(tmp_path, monkeypatch):
     monkeypatch.setattr(workspace, "_shell_downloads", lambda: None)      # nor the real folder Windows points to
     (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
     yield tmp_path
+    # A chat follow-up or retry runs in its own thread and may outlive its test: stop it while the test's fakes are still in place,
+    # so it never calls the real engine or writes into the next test's project.
+    serve = sys.modules.get("serve")
+    if serve is not None:
+        serve.cancel_followups(lambda k: True, wait=5.0)
     # A test may have left a deliberately broken config behind, and reloading it
     # raises. Teardown must still put the module back to a usable state.
     monkeypatch.undo()
