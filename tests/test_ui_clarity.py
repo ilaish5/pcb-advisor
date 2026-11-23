@@ -110,7 +110,7 @@ def test_the_default_button_looks_like_a_button_and_the_filled_one_is_last():
     assert ".btn.icon,.btn.link{border-color:transparent" in base       # tertiary = bare
     kit = _src("js/kit.js")
     vh = _fn(kit, "viewHeader")
-    assert vh.index("${primary}${next}") > vh.index("${o.actions || ''}")
+    assert vh.index("${next}") > vh.index("${primary}") > vh.index("${o.actions || ''}")      # the actions, the page's own primary, then the Next slot last
     assert "btn pri" in vh                                              # one filled button per header: the page's own steps down when Next is filled
 
 

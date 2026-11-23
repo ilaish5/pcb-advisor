@@ -119,20 +119,22 @@ function metaLine(items) {
     return `<span${cls}${it.title ? ` title="${kesc(it.title)}"` : ''}>${it.n != null && it.n !== '' ? `<b>${kesc(it.n)}</b> ` : ''}${kesc(it.label || '')}</span>`;
   }).join('');
 }
-/* viewHeader({title, meta: metaLine(...) html, actions: html, primary: btn(...) html, side: true})
-   side:true adds the "Side by side" icon button (data-act="side-open"); the side pane hides it itself. */
+/* viewHeader({title, meta: metaLine(...) html, actions: html, primary: btn(...) html, next: btn(...) html, side: true})
+   side:true adds the "Side by side" icon button (data-act="side-open"); the side pane hides it itself.
+   The stage's Next button has ONE place: its own slot (.vh-next), the top-right corner of the header's first row, the same on every page
+   and tab. A page cannot put it anywhere else: `actions` and `primary` are in the block beside the title, which wraps and gives way first. */
 function viewHeader(o) {
   const side = o.side === false ? '' : btn('', {icon: 'side', title: 'Side by side', act: 'side-open', cls: 'side-btn'});
-  // the Next button of a stage's page comes from the server's stages[] (shell.js stageNextBtn); Idea draws its own, a page that is
-  // already where the next step is (go:<itself>) has none
+  // the Next button of a stage's page comes from the server's stages[] (shell.js stageNextBtn); Idea passes its own (o.next: Confirm idea
+  // stays an action until the idea is agreed), a page that is already where the next step is (go:<itself>) has none
   const sid = o.stage || (typeof STAGES !== 'undefined' && (STAGES.find(s => s[1] === o.title) || [])[0]);
-  const next = sid ? (sid !== 'idea' && typeof stageNextBtn === 'function' ? stageNextBtn(sid) : '')
+  const next = o.next != null ? o.next : sid ? (sid !== 'idea' && typeof stageNextBtn === 'function' ? stageNextBtn(sid) : '')
     : (o.title === 'Library' || o.title === 'Sources') && typeof pageNextBtn === 'function' ? pageNextBtn() : '';
   // ONE filled button per header, and it is the last one on the right: when the stage's Next is the filled one, the page's own
   // action steps down to the outlined style (a done stage keeps "Download" or "Check" as a secondary action, not a second call to action)
   const primary = next && /class="btn pri\b/.test(next) && o.primary ? o.primary.replace(/class="btn pri\b/, 'class="btn line') : (o.primary || '');
-  return `<header class="vh"><div class="vh-t"><h1>${kesc(o.title)}</h1>${o.meta ? `<div class="meta">${o.meta}</div>` : ''}</div>` +
-    `<div class="acts">${side}${o.actions || ''}${primary}${next}</div></header>`;
+  return `<header class="vh"><div class="vh-main"><div class="vh-t"><h1>${kesc(o.title)}</h1>${o.meta ? `<div class="meta">${o.meta}</div>` : ''}</div>` +
+    `<div class="acts">${side}${o.actions || ''}${primary}</div></div><div class="vh-next">${next}</div></header>`;
 }
 function section(title, body, o) {
   o = o || {};

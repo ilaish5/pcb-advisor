@@ -5,14 +5,14 @@
 
 /* ---------- frame ---------- */
 .pv{display:flex;flex-direction:column;height:100%;min-height:420px;min-width:0;container-type:inline-size}
-/* the header is ONE row: the title with its meta, then the actions at the right end with the stage's Next last. When the row cannot hold
-   both (a narrow pane, or the inspector open) the actions drop below the title as one block, still right-aligned, Next at its end. */
-.pv>.vh{flex:none;align-items:center;gap:6px 16px;padding:12px 24px 10px}
-.pv>.vh .vh-t{flex:1 1 auto;min-width:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 14px}
-.pv>.vh .acts{flex:0 1 auto;margin-left:auto;justify-content:flex-end;row-gap:4px}
+/* the preview header is ONE row: the title with its meta beside it, then the actions; the Next slot (base.css) is the top-right corner.
+   When the row cannot hold both (a narrow pane, or the inspector open) the actions drop below the title as one block, right-aligned. */
+.pv>.vh{flex:none}
+.pv>.vh .vh-main{align-items:center}
+.pv>.vh .vh-t{flex:1 1 auto;display:flex;flex-wrap:wrap;align-items:baseline;gap:0 14px}
 .pv>.vh .acts{gap:3px}
 .pv>.vh .acts>.btn{flex:none}
-.pv>.vh .acts>.btn:not(.icon){padding:0 9px}      /* four steps and Next fit beside the open inspector (a 380px drawer on a 1270px window) */
+.pv>.vh .acts>.btn:not(.icon){padding:0 9px}      /* the steps stay on one row beside the open inspector (a 380px drawer on a 1270px window) */
 /* the inspector covers the right edge of the sheet: keep the header's controls (side by side, Next) clear of it */
 .work:has(>#detail:not([hidden])) .pv>.vh{padding-right:calc(min(var(--insp-w,380px), 55%) + 24px)}
 .pv-tabs{display:flex;gap:18px;flex:none;margin:-4px 0 10px;padding:0 24px;overflow-x:auto;scrollbar-width:none}
