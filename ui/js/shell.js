@@ -206,6 +206,12 @@ const initials = t => {
   return (w.length > 1 ? w[0][0] + w[1][0] : (w[0] || '?').slice(0, 2)).toUpperCase();
 };
 let lastNavHTML = '';
+// The fold / unfold button at the foot of the nav. It is drawn by navHTML, so the 4s redraw keeps it and its state.
+function navToggleHTML() {
+  const min = navIsMin(), tip = min ? 'Expand the navigation' : 'Collapse the navigation';
+  return `<button type="button" class="nitem nav-tog" data-act="toggle-nav" data-nav="navtog" aria-expanded="${!min}" aria-label="${tip}" title="${tip}">` +
+    `<span class="no">${icon('chev', 's')}</span><span class="lbl">Collapse</span></button>`;
+}
 function navHTML() {
   const cur = PROJECTS.find(p => p.name === PROJECT) || {name: PROJECT, title: PROJECT};
   const ptitle = String(cur.title || cur.name || '');
@@ -229,6 +235,7 @@ function navHTML() {
     `<button type="button" class="nitem" data-act="palette" data-nav="search" title="Search (Ctrl K)"><span class="no">${icon('search', 's')}</span><span class="lbl">Search</span><kbd>Ctrl K</kbd></button>` +
     `<button type="button" class="nitem chat-sw" data-act="toggle-chat" data-nav="chat" aria-pressed="${shown}" title="Chat (Ctrl J)"><span class="no">${icon('chat', 's')}</span><span class="lbl">Chat</span><kbd>Ctrl J</kbd></button>` +
     `<button type="button" class="nitem" data-page="settings" data-nav="settings"${here === 'settings' ? ' aria-current="page"' : ''} title="Settings"><span class="no">${icon('gear', 's')}</span><span class="lbl">Settings</span></button>` +
+    navToggleHTML() +
     `</div>`;
 }
 // A late redraw of the nav (rules, triage and update data arrive a moment after the page loads) between the mouse going down and
@@ -457,9 +464,10 @@ function openFileAsTab(info) {
 
 /* ---------- chat column: right of the sheets. Wide: resizable and collapsible. <=1100px: a drawer. <=860px: Work / Chat. ---------- */
 const LAYOUT_KEY = 'pcb_advisor_shell';
-const CHAT_MIN = 300, CHAT_MAX = 720, CHAT_DEFAULT = 372, CHAT_DROP = 220, PANES_MIN = 420, KEY_STEP = 16;
+const CHAT_MIN = 300, CHAT_MAX = 720, CHAT_DEFAULT = 372, CHAT_DROP = 220, PANES_MIN = 420, KEY_STEP = 16, SPLIT_W = 6;
 let chatWidth = CHAT_DEFAULT, chatHidden = false, chatDrawer = false;
-const MQ_DRAWER = '(max-width:1100px)', MQ_NARROW = '(max-width:860px)';
+let navMin = null;   // the nav rail: true / false once the student chose, null = follow the window (a rail at <=1280px)
+const MQ_DRAWER = '(max-width:1100px)', MQ_NARROW = '(max-width:860px)', MQ_RAIL = '(max-width:1280px)';
 function chatMode() { return matchMedia(MQ_NARROW).matches ? 'narrow' : matchMedia(MQ_DRAWER).matches ? 'drawer' : 'wide'; }
 function chatShown() {
   const m = chatMode(), app = $('#app');
@@ -471,12 +479,19 @@ function loadLayout() {
   if (st && typeof st === 'object') {
     if (typeof st.chatWidth === 'number' && st.chatWidth >= CHAT_MIN && st.chatWidth <= 2000) chatWidth = st.chatWidth;
     chatHidden = !!st.chatHidden;
+    if (typeof st.navMin === 'boolean') navMin = st.navMin;
   }
 }
-function saveLayout() { lsSet(LAYOUT_KEY, JSON.stringify({chatWidth, chatHidden})); }
+function saveLayout() { lsSet(LAYOUT_KEY, JSON.stringify({chatWidth, chatHidden, navMin})); }
+// The one-column mode lays the nav out as a top bar, so the rail never applies there.
+function navIsMin() { return chatMode() === 'narrow' ? false : navMin === null ? matchMedia(MQ_RAIL).matches : navMin; }
+function syncNavMin() { const app = $('#app'); if (app) app.classList.toggle('nav-min', navIsMin()); }
+function toggleNav() { navMin = !navIsMin(); saveLayout(); syncChat(); }
+// What is left of the window after the nav (its current width: the rail or the full column), the splitter and the least the
+// sheets need. The chat never gets more, so it cannot run past the right edge.
 function maxChatWidth() {
   const app = $('#app'), nav = $('#nav');
-  return Math.max(CHAT_MIN, Math.min(CHAT_MAX, (app ? app.clientWidth : 1600) - (nav ? nav.offsetWidth : 232) - PANES_MIN));
+  return Math.max(CHAT_MIN, Math.min(CHAT_MAX, (app ? app.clientWidth : 1600) - (nav ? nav.offsetWidth : 232) - SPLIT_W - PANES_MIN));
 }
 function cssChatWidth(w) {
   const app = $('#app');
@@ -494,6 +509,7 @@ function syncChat() {
   if (!app) return;
   if (chatMode() !== 'drawer') chatDrawer = false;
   app.classList.toggle('chat-off', chatHidden);
+  syncNavMin();      // before the chat width is clamped: the nav width is part of it
   const was = app.classList.contains('chat-open');
   app.classList.toggle('chat-open', chatDrawer);
   // the open drawer pushes the sheets aside (shell.css): their width changed without a window resize, so the views that
@@ -546,6 +562,7 @@ function resetLayout() {
   chatWidth = CHAT_DEFAULT;
   chatHidden = false;
   chatDrawer = false;
+  navMin = null;
   lsDel(LAYOUT_KEY);
   lsDel(SIDE_KEY + PROJECT);
   sideItem = null;
@@ -610,10 +627,11 @@ function initLayout() {
     sp.addEventListener('keydown', onSplitKey);
     sp.addEventListener('dblclick', () => { chatWidth = CHAT_DEFAULT; saveLayout(); syncChat(); });
   }
-  for (const mq of [MQ_DRAWER, MQ_NARROW]) matchMedia(mq).addEventListener('change', () => { syncChat(); syncViewSwitch(); });
-  addEventListener('resize', () => { if (!chatDrag) cssChatWidth(Math.min(chatWidth, maxChatWidth())); });
-  cssChatWidth(Math.min(chatWidth, maxChatWidth()));
+  for (const mq of [MQ_DRAWER, MQ_NARROW, MQ_RAIL]) matchMedia(mq).addEventListener('change', () => { syncChat(); syncViewSwitch(); });
+  addEventListener('resize', () => { if (!chatDrag) { syncNavMin(); cssChatWidth(Math.min(chatWidth, maxChatWidth())); } });
   $('#app').classList.toggle('chat-off', chatHidden);
+  syncNavMin();
+  cssChatWidth(Math.min(chatWidth, maxChatWidth()));
 }
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === 'j' || e.key === 'J')) { e.preventDefault(); toggleChat(); return; }
@@ -622,6 +640,7 @@ document.addEventListener('keydown', e => {
 
 /* ---------- action handlers (dispatched by the delegates in core.js) ---------- */
 onAct('toggle-chat', async () => { toggleChat(); });
+onAct('toggle-nav', async () => { toggleNav(); });
 onAct('side-open', async () => { toggleSide(); });   // "Side by side" in a view header (kit.js viewHeader)
 onAct('side-close', async () => { closeSide(); });
 onAct('side-swap', async () => { swapSheets(); });

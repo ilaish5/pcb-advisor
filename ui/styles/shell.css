@@ -10,8 +10,15 @@
 .app>.chat{grid-column:4}
 .app.chat-off{grid-template-columns:var(--nav-w) minmax(0,1fr)}
 .app.chat-off>.chat,.app.chat-off>.splitter{display:none}
-.app.chat-off>.panes{margin-right:8px}
+.app.chat-off>.panes{margin-right:36px}   /* room for the restore tab */
 .app.will-hide>.chat{opacity:.4}
+
+/* the restore tab on the right edge: always there while the chat is hidden (wide) or closed (drawer), so it can never be lost */
+.chat-tab{display:none;position:fixed;right:0;top:50%;transform:translateY(-50%);z-index:30;flex-direction:column;align-items:center;gap:8px;
+  padding:12px 5px;border:1px solid var(--line);border-right:0;border-radius:var(--r-md) 0 0 var(--r-md);background:var(--sheet);color:var(--ink-2);box-shadow:var(--float);font-size:var(--t-sm)}
+.chat-tab:hover{background:var(--hover);color:var(--ink)}
+.chat-tab span{writing-mode:vertical-rl;letter-spacing:.04em}
+.app.chat-off>.chat-tab{display:flex}
 
 /* ---------- the sheets ---------- */
 .panes{display:flex;gap:8px;position:relative}
@@ -76,25 +83,28 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
 .palette li .pl{flex:none}
 .palette .pe{padding:18px 12px;color:var(--ink-3);font-size:13px}
 
-/* ---------- rail: <=1280px, the nav shows the dots and icons only (every item has a title) ---------- */
-@media (max-width:1280px){
-  .app{--nav-w:56px}
-  .nav{padding:6px 8px;align-items:center}
-  .nav .menu-anchor{width:40px}
-  .proj{width:40px;padding:0;justify-content:center}
-  .proj .nm,.proj .i{display:none}
-  .nitem{width:40px;padding:0;justify-content:center}
-  .nitem .lbl,.nitem .hint,.nitem kbd{display:none}
-  .trace{width:40px}
-  .trace::before{left:19px}
-  .navfoot{justify-items:center}
-}
+/* ---------- rail: .nav-min, the nav shows the dots and icons only (every item has a title). shell.js sets it from the toggle
+   in the nav foot, and by default while the window is <=1280px; it is never set in the one-column mode ---------- */
+.app.nav-min{--nav-w:56px}
+.app.nav-min .nav{padding:6px 8px;align-items:center}
+.app.nav-min .nav .menu-anchor{width:40px}
+.app.nav-min .proj{width:40px;padding:0;justify-content:center}
+.app.nav-min .proj .nm,.app.nav-min .proj .i{display:none}
+.app.nav-min .nitem{width:40px;padding:0;justify-content:center}
+.app.nav-min .nitem .lbl,.app.nav-min .nitem .hint,.app.nav-min .nitem kbd{display:none}
+.app.nav-min .trace{width:40px}
+.app.nav-min .trace::before{left:19px}
+.app.nav-min .navfoot{justify-items:center}
+/* the collapse button: the chevron points where the nav goes (left to fold, right to unfold) */
+.nav-tog .no .i{transform:rotate(90deg);transition:transform .15s}
+.app.nav-min .nav-tog .no .i{transform:rotate(-90deg)}
 
 /* ---------- drawer: <=1100px, the chat opens over the sheets ---------- */
 @media (max-width:1100px){
   .app,.app.chat-off{grid-template-columns:var(--nav-w) minmax(0,1fr)}
   .app>.splitter,.app>.chat{display:none}
-  .app>.panes{margin-right:8px}
+  .app>.panes{margin-right:36px}
+  .app:not(.chat-open)>.chat-tab{display:flex}
   .app.chat-open>.chat{display:grid;position:fixed;z-index:40;top:8px;right:8px;bottom:8px;width:var(--drawer-w);
     padding:0 10px;background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--float);animation:slide .18s var(--ease)}
   /* the open drawer pushes the sheets aside instead of covering them (T17: at 966px it hid Confirm idea and the page), and
@@ -112,6 +122,8 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
   .app>.chat{grid-column:1;grid-row:2}
   .app[data-view="chat"]>.chat{display:grid;margin:0 8px;padding:0 4px}
   .app[data-view="chat"]>.panes{display:none}
+  body .app.chat-off>.chat-tab,body .app:not(.chat-open)>.chat-tab{display:none}   /* the Work / Chat switch does this job here */
+  .navfoot .nav-tog{display:none}
   .nav .menu-anchor{width:auto;flex:none}
   .proj{width:auto;padding:0 6px}
   .viewsw{display:inline-flex;flex:none;margin:0 6px}

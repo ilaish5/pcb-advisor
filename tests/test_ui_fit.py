@@ -94,8 +94,9 @@ def test_nav_scrolls_when_the_window_is_short_and_never_sideways():
 
 
 def test_frame_changes_shape_at_three_widths():
-    rail = media_block(SHELL_CSS, "max-width:1280px").replace(" ", "")
-    assert "--nav-w:56px" in rail, "<=1280px: the nav is a 56px rail"
+    # the rail is the .nav-min class; the script sets it by default while the window is <=1280px (MQ_RAIL), unless the student chose
+    assert ".app.nav-min{--nav-w:56px}" in SHELL_CSS.replace(" ", ""), "the rail is 56px wide"
+    assert "(max-width:1280px)" in SHELL_JS, "<=1280px: the nav is a rail by default"
     drawer = media_block(SHELL_CSS, "max-width:1100px").replace(" ", "")
     assert ".app.chat-open>.chat" in drawer and "position:fixed" in drawer, "<=1100px: the chat is a drawer"
     one = media_block(SHELL_CSS, "max-width:860px").replace(" ", "")

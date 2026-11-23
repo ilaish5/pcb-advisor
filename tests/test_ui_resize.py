@@ -127,9 +127,9 @@ def test_hidden_attribute_always_wins():
 
 
 def test_nav_is_a_56px_rail_at_1280():
-    block = media_block(SHELL_CSS, "max-width:1280px")
-    assert "--nav-w:56px" in block.replace(" ", "")
-    assert re.search(r"\.nitem\s+\.lbl[^{]*\{[^}]*display\s*:\s*none", block), "labels are hidden in the rail"
+    assert "--nav-w:56px" in SHELL_CSS.replace(" ", "")
+    assert "(max-width:1280px)" in SHELL_JS, "the rail is the default at <=1280px"
+    assert re.search(r"\.app\.nav-min\s+\.nitem\s+\.lbl[^{]*\{[^}]*display\s*:\s*none", SHELL_CSS), "labels are hidden in the rail"
     assert "title=" in SHELL_JS and "aria-label=" in SHELL_JS, "every stage button carries its name and state in title and aria-label"
 
 
