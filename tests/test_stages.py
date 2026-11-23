@@ -217,7 +217,7 @@ def test_a_disabled_button_is_aria_disabled_with_a_reason_and_a_click_toasts_it(
 def test_the_rules_header_has_a_board_drc_row_from_board_check():
     src = _src("js/views/rules.js")
     assert "rulesDrcRow" in src and "S.board_check" in src and "pvStepBtn('drc'" in src
-    assert "stale" in src
+    assert "stale" in src + _src("js/views/previews.js")      # drcSummary (previews.js) words it
 
 
 def test_outputs_gate_comes_from_the_stage_and_offers_mark_all_nc_and_ask():

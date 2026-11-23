@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PCB Advisor</title>
+<!-- first paint: the frame colour before any stylesheet or script arrives (no white flash on load or when the theme is dark); keep in step with --frame in base.css -->
+<meta name="color-scheme" content="light dark">
+<style id="first-paint">html{background:#F2F2F0}@media (prefers-color-scheme:dark){html:not([data-theme="light"]){background:#151517}}html[data-theme="dark"]{background:#151517}</style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;500;600&family=Atkinson+Hyperlegible+Next:wght@400;500;600;700&display=swap">

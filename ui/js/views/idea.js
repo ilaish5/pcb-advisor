@@ -23,9 +23,7 @@ function proposalDiagram(p) {
 function ideaDate(iso) {
   const d = iso ? new Date(iso) : null;
   if (!d || isNaN(d)) return '';
-  const o = {day: 'numeric', month: 'short'};
-  if (d.getFullYear() !== new Date().getFullYear()) o.year = 'numeric';
-  return d.toLocaleDateString(undefined, o);
+  return whenText(iso);
 }
 function loadIdeaSplit() {
   try {
@@ -149,9 +147,10 @@ function ideaHeaderHTML() {
 // when nothing is pending but an earlier saved version exists.
 function draftBarHTML() {
   const D = (S && S.idea_draft) || {};
-  if (D.active) {
+  if (D.active && (D.changes || 0) > 0) {        // a draft that differs from nothing is no draft: no bar (it appeared as "Draft · 0/1 change" while the agent worked)
     const n = D.changes || 0;
-    return `<div class="idea-draft is-active" role="status">${dot('warn')}<span class="idea-draft-msg">Draft · ${n} ${n === 1 ? 'change' : 'changes'} since your last save</span>
+    const said = D.first ? `Not saved yet · ${n} ${n === 1 ? 'item' : 'items'} to keep` : `Draft · ${n} ${n === 1 ? 'change' : 'changes'} since your last save`;      // no saved idea to compare with: count what Save would keep
+    return `<div class="idea-draft is-active" role="status">${dot('warn')}<span class="idea-draft-msg">${said}</span>
       <span class="acts">${btn('Save', {size: 'sm', kind: 'line', act: 'draft-save', title: 'Make the draft the idea'})}${btn('Revert', {size: 'sm', act: 'draft-revert', title: 'Throw the draft away and go back to the last saved version'})}</span></div>`;
   }
   const v = D.versions || [];
@@ -619,6 +618,7 @@ onAct('set-board-size', async (el) => {
   if (wi.validity.badInput || hi.validity.badInput) { toast('The board size must be numbers in mm'); showSaved(); return; }   // letters read as empty: not "clear the size"
   if (!w !== !h) { toast('Give both the width and the height in mm'); showSaved(); return; }
   const cur = ((S && S.idea) || {}).board || {};
+  if (!w && !h && !(cur.width_mm || cur.height_mm)) return;       // nothing typed and nothing saved: nothing to clear, so nothing to announce
   // the same numbers again: nothing changes, and a size read from the idea text stays one (it follows the text)
   if (w && cur.width_mm && cur.height_mm && Number(w) === Number(cur.width_mm) && Number(h) === Number(cur.height_mm)) {
     toast('Board size unchanged'); return;

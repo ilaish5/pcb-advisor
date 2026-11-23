@@ -47,7 +47,7 @@ def test_the_table_has_no_inputs_and_no_inline_styles():
 def test_the_table_columns_and_the_row_contract():
     html = _fn("bomHTML")
     assert 'class="tbl rows bom-tbl"' in html
-    assert re.findall(r"<th[^>]*>([^<]+)</th>", html) == ["Ref", "Part", "Package", "Qty", "Stock", "Unit", "Per board"]
+    assert re.findall(r"<th[^>]*>([^<]+)</th>", html) == ["Ref", "Part", "Package", "LCSC", "Qty", "Stock", "Unit", "Per board"]
     row = _fn("bomRow")
     assert 'data-key="${esc(l.key)}"' in row and 'tabindex="0"' in row             # core selects a part by tr[data-key]
     assert "refsLabel(refs)" in row and 'title="${esc(refs.join(\', \'))}"' in row  # a short label, the full list in the title
@@ -139,7 +139,7 @@ def test_the_footer_goes_amber_when_the_prices_are_a_day_old():
     assert ".bom-foot.stale{color:var(--warn)}" in CSS
     stamp = _fn("bomStamp")
     assert "stale: Date.now() - d.getTime() > BOM_STALE_MS" in stamp
-    assert "BOM_MONTHS[d.getMonth()]" in stamp             # "14 Oct 10:20", not an ISO stamp
+    assert "whenText(at, true)" in stamp             # "14 Oct 2026 10:20": the year is always there
 
 
 # ---------------------------------------------------------------- one Check stock

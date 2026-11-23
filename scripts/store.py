@@ -1767,7 +1767,7 @@ def idea_draft_info(project):
     "versions": [{n, ts, by, summary}]}."""
     versions = [{k: v.get(k) for k in ("n", "ts", "by", "summary")} for v in idea_versions(project)]
     info = {"active": False, "changes": 0, "since": None, "marks": {"items": {}, "goal": False},
-            "versions": versions[::-1]}
+            "versions": versions[::-1], "first": not idea_exists(project)}      # first: nothing was ever saved, so the count is "items", not "changes since your last save"
     path = idea_draft_path(project)
     if path.is_file():
         try:

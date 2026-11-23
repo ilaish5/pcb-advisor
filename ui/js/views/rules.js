@@ -95,14 +95,7 @@ function rulesHeader(rd) {
 function rulesDrcRow(linked) {
   if (!linked) return '';
   const c = S && S.board_check;
-  const when = c && c.ts && typeof outAgo === 'function' ? outAgo(new Date(Number(c.ts)).toISOString()) : '';
-  let tone = '', text;
-  if (!c) text = 'Board DRC: not run yet';
-  else if (c.complete === false) { tone = 'warn'; text = 'Board DRC: the report was incomplete, run it again'; }
-  else if (c.total) { tone = 'bad'; text = `Board DRC: ${plural(c.total, 'violation')}`; }
-  else { tone = c.stale ? 'warn' : 'ok'; text = 'Board DRC: clean'; }
-  if (c && c.stale) { tone = tone === 'ok' ? 'warn' : tone; text += ', but the board changed since: check it again'; }
-  else if (c && when) text += ', ' + when;
+  const {tone, text} = drcSummary(c);
   return `<div class="rules-drc meta" role="status"><span class="${tone ? tone + '-t' : ''}">${esc(text)}</span> ${pvStepBtn('drc', {kind: 'link'})}</div>`;
 }
 
@@ -111,7 +104,7 @@ function rulesDiffRow(d) {
   const r = rulesResult(d);
   const name = d.rule || d.Rule || '', kind = d.kind || d.Kind || '';
   const bv = d['board value'] || d.board_value || '', pv = d['preset value'] || d.preset_value || '';
-  const none = v => v && !/^[-–—\s]+$/.test(v) ? v.split(', ').map(esc).join('<br>') : '<span class="muted">—</span>';    // "Min: 5mil, Max: 40mil" on two lines
+  const none = v => v && !/^[-–—\s]+$/.test(v) ? lenText(v).split(', ').map(esc).join('<br>') : '<span class="muted">—</span>';    // "Min: 5mil, Max: 40mil" on two lines
   const gone = r.key === 'missing' && (RULES_DATA && RULES_DATA.missing_in_pcb || []).includes(name);
   if (gone) r.text = 'Missing from the PcbDoc';
   const tagHTML = r.key === 'match' ? `<span class="muted" title="Matches">${icon('check', 's')}<span class="sr">Matches</span></span>` : tag(r.text, r.tone);
@@ -120,7 +113,7 @@ function rulesDiffRow(d) {
     <td><span class="rn">${esc(name)}</span>${kind && kind !== name ? `<span class="sub">${esc(kind)}</span>` : ''}</td>
     <td class="val" data-label="Your board">${none(bv)}</td>
     <td class="val" data-label="JLC preset">${none(pv)}</td>
-    <td class="res" title="${esc(d.detail || '')}">${tagHTML}${inline ? `<span class="why">${esc(d.detail)}</span>` : ''}</td>
+    <td class="res" title="${esc(d.detail || '')}">${tagHTML}${inline ? `<span class="why">${esc(srcTags(d.detail))}</span>` : ''}</td>
     <td><div class="row-acts">${btn('', {icon: 'chat', size: 'sm', title: `Ask about ${name}`, act: 'rules-ask', rule: name})}</div></td></tr>`;
 }
 function rulesDiffSection(rd) {
@@ -213,9 +206,9 @@ function rulesStandardBody(rd) {
   if (rulesStd.error) prev = `<p class="warn-t">${esc(rulesStd.error)}</p>`;
   else if (pv) {
     prev = `<table class="tbl dense rules-tbl"><thead><tr><th>Add</th><th>Rule</th><th>Kind</th><th>Scope</th><th>Value</th><th>Source</th></tr></thead><tbody>
-      ${pv.rules.map(r => `<tr><td><input type="checkbox" data-std-pick="${esc(r.name)}" aria-label="Add ${esc(r.name)}"${rulesStd.off.has(r.name) ? '' : ' checked'}></td><td><span class="rn">${esc(r.name)}</span>${r.note ? `<span class="why">${esc(r.note)}</span>` : ''}</td><td>${esc(r.kind)}</td><td>${esc(r.scope1)}</td>
-        <td class="val">${esc(r.value)}<span class="sub">standard ${+r.standard_mm.toFixed(4)} mm${r.jlc_mm != null ? `, JLC ${+r.jlc_mm.toFixed(4)} mm` : ''}</span></td><td>${chip(pv.source)}</td></tr>`).join('')}</tbody></table>
-      ${(pv.notes || []).map(n => `<p class="muted">${esc(n)}</p>`).join('')}
+      ${pv.rules.map(r => `<tr><td><input type="checkbox" data-std-pick="${esc(r.name)}" aria-label="Add ${esc(r.name)}"${rulesStd.off.has(r.name) ? '' : ' checked'}></td><td><span class="rn">${esc(r.name)}</span>${r.note ? `<span class="why">${esc(srcTags(r.note))}</span>` : ''}</td><td>${esc(r.kind)}</td><td>${esc(r.scope1)}</td>
+        <td class="val">${esc(lenText(r.value))}<span class="sub">standard ${+r.standard_mm.toFixed(4)} mm${r.jlc_mm != null ? `, JLC ${+r.jlc_mm.toFixed(4)} mm` : ''}</span></td><td>${chip(pv.source)}</td></tr>`).join('')}</tbody></table>
+      ${(pv.notes || []).map(n => `<p class="muted">${esc(srcTags(n))}</p>`).join('')}
       <div class="rules-add">${btn('Add the ticked rules', {kind: 'pri', act: 'add-standard-rules'})}${btn('Select all', {kind: 'link', act: 'std-pick', value: 'all'})}${btn('Select none', {kind: 'link', act: 'std-pick', value: 'none'})}</div>`;
   }
   return `<p class="muted">${esc(std.hint)} On top of the fab&rsquo;s limits: a value below the JLC preset is never used, the stricter one is kept. Source: ${chip(std.source)}, checked ${esc(info.checked)}.</p>
@@ -400,7 +393,7 @@ function rulesHTML(container) {
   let body;
   if (segv === 'calc') body = calcsHTML();
   else body = (linked ? rulesDiffSection(rd)
-    : `<div class="note">No board linked. Link a project in ${btn('Settings', {kind: 'link', page: 'settings'})} to compare its rules.</div>`) + rulesDiscs(rd);
+    : banner({tone: 'info', html: `No board linked. Link a project in ${btn('Settings', {kind: 'link', page: 'settings'})} to compare its rules.`})) + rulesDiscs(rd);
   return rulesHeader(rd) + pvStepNote('rules') + `<div class="vb rules-vb">${switcher}${body}</div>`;
 }
 function rulesFocus(sel) {       // a redraw drops the focus; give it back to the control the user just used

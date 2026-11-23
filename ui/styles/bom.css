@@ -25,6 +25,7 @@
 /* a narrow sheet drops the columns that can be read elsewhere (unit price: title of Per board; package: title of Package) */
 @container (max-width:920px){.bom-tbl .c-unit{display:none}}
 @container (max-width:850px){.bom-tbl .c-pkg{display:none}}
+@container (max-width:760px){.bom-tbl .c-lcsc .tag{display:none}}
 
 .bom-foot{flex:none;margin:0;padding:8px 24px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3)}
 .bom-foot.stale{color:var(--warn)}

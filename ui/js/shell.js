@@ -112,7 +112,7 @@ onAct('stage-next', (el, d) => { if (d.to && STAGE_TITLES[d.to]) go('workspace',
 
 /* ---------- nav ---------- */
 const initials = t => {
-  const w = String(t || '').trim().split(/[\s_-]+/).filter(Boolean);
+  const w = String(t || '').trim().split(/[\s_/\\-]+/).filter(Boolean);       // a title like "PCB/Blinker" is two words, not an avatar of "/B"
   return (w.length > 1 ? w[0][0] + w[1][0] : (w[0] || '?').slice(0, 2)).toUpperCase();
 };
 let lastNavHTML = '';
@@ -161,6 +161,16 @@ function renderNav() {
   lastNavHTML = html;
   nav.innerHTML = html;
   if (focused) { const b = nav.querySelector(`[data-nav="${focused}"]`); if (b) b.focus(); }
+}
+
+/* ONE sheet count for every page: the server's stage_sheets {plan, altium, total} (scripts/stages.py sheets_counts). Only when a state
+   without it is on screen (an older server) the same rule is applied to the rows: the plan's sheets, else the ones read from Altium. */
+function sheetCounts(rows) {
+  const c = S && S.stage_sheets;
+  if (c && typeof c.total === 'number') return c;
+  rows = rows || (S && S.sheets) || [];
+  const plan = rows.filter(s => !s.altium).length, altium = rows.filter(s => s.altium).length;
+  return {plan, altium, total: plan || altium};
 }
 
 /* ---------- drawing the sheets ---------- */
@@ -301,8 +311,18 @@ function setMain(item) {
   }
   mainItem = item;
   syncPageTab();
+  saveMain();
   saveSide();
   render(true);
+}
+// The sheet in the main pane is remembered per project, so a reload (or a restart) opens the page you were on; ?page= / ?tab= still win.
+const MAIN_KEY = 'pcb_advisor_main:';
+function saveMain() {
+  if (PROJECT && mainItem && mainItem.kind !== 'file') lsSet(MAIN_KEY + PROJECT, mainItem.id);
+}
+function savedMain() {
+  const it = itemFromRef(lsGet(MAIN_KEY + PROJECT));
+  return it && it.kind !== 'file' ? it : null;
 }
 // go('workspace', 'bom'), go('bom'), go('library'): show a stage or a page in the main sheet
 function go(p, t) {

@@ -81,8 +81,31 @@ function status(l) {
   if (l.library === 'review' || l.library === 'missing') return 'warn';
   return 'ok';
 }
-const money = p => p == null ? '—' : '$' + (p < 0.01 ? p.toFixed(4) : p < 1 ? p.toFixed(3) : p.toFixed(2));
+/* ONE money rule for every page (BOM, fees, drawer, inspector, About): from $1 two decimals; below $1 up to three, never fewer than two
+   ($0.10, $0.125); below a tenth of a cent four, so a 0.0004 part is not shown as $0.000. A fee is shown as the server computed it. */
+function money(p) {
+  if (p == null || p === '' || isNaN(+p)) return '—';
+  const v = +p, a = Math.abs(v);
+  const s = a >= 1 ? a.toFixed(2) : a >= 0.001 ? a.toFixed(3).replace(/(\.\d\d)0$/, '$1') : a.toFixed(4);
+  return (v < 0 ? '-$' : '$') + s;
+}
 const num = n => (n ?? 0).toLocaleString('en-US');
+/* ONE unit rule: lengths are shown in mm (the DFM, the warnings and the JLC page all speak mm); a value Altium hands over in mil
+   ("248.0315mil") is converted, never shown raw. Input fields still take mil or mm. */
+const mmOfMil = n => +(n * 0.0254).toFixed(3);
+const lenText = s => String(s ?? '').replace(/(-?\d+(?:\.\d+)?)\s*mil\b/gi, (m, n) => `${mmOfMil(+n)} mm`);
+/* the server's source tags "[P1, P3]" are page numbers of the JLC reference; said in words they are no riddle */
+const srcTags = s => String(s ?? '').replace(/\s*\[(P\d+(?:\s*,\s*P\d+)*)\]/g, (m, l) => ` (JLC source ${l.replace(/P/g, '').replace(/\s*,\s*/g, ', ')})`);
+/* ONE date rule for every page: "20 Nov 2026", with the time ("20 Nov 2026 14:05") when asked. The year is always there: a date
+   without it ("28 Nov") cannot be told from last year's. An unreadable value is returned as it came. */
+const WHEN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function whenText(iso, withTime) {
+  if (!iso) return '';
+  const d = new Date(String(iso).replace(' ', 'T'));
+  if (isNaN(d)) return String(iso);
+  const p = n => String(n).padStart(2, '0');
+  return `${d.getDate()} ${WHEN_MONTHS[d.getMonth()]} ${d.getFullYear()}` + (withTime ? ` ${p(d.getHours())}:${p(d.getMinutes())}` : '');
+}
 // "C3, C4, C5, C8" -> "C3–C5, C8": only refs that really follow each other become a range
 function refRuns(refs) {
   const split = r => { const m = /^(.*?)(\d+)$/.exec(r); return m ? [m[1], +m[2]] : [r, null]; };
@@ -143,7 +166,7 @@ const unesc = s => s.replace(/&(amp|lt|gt|quot|#39);/g, (m, e) => ({amp: '&', lt
 function inline(t) {
   // t is escaped text. Citations and refs become buttons; **bold** and `code` are the only markup.
   // a chip is a button (inline-block): punctuation after it moves before it, or a wrapped chip leaves "." alone on a line
-  return t
+  return srcTags(t)
     .replace(/(\s*)\{\{src:([^|}]+)(?:\|([^}]*))?\}\}([.,;:!?]*)/g,
              (m, sp, n, w, p) => (p ? p + ' ' : sp) + chip(unesc(n.trim()), unesc((w || '').trim())))
     .replace(/\{\{ref:([^}]+)\}\}/g, (m, r) => `<button class="ref" data-ref="${r}">${r}</button>`)

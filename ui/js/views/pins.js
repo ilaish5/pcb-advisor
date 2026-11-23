@@ -3,7 +3,7 @@
    records the basis itself (scripts/pin_decisions.py). "Accept all remaining" is one confirm for every part still open.
    S.pin_decisions = {accepted: [{line, refs, mpn, basis, ts, reason, evidence}], remaining: [{line, refs, mpn, issues}]}. */
 const PIN_BASIS = {datasheet_page: 'checked against a datasheet page', polarity: 'polarity accepted by you', blind: 'accepted without a datasheet', legacy: 'accepted earlier'};
-function pinsWhen(ts) { return ts ? String(ts).slice(0, 10) : ''; }
+function pinsWhen(ts) { return ts ? whenText(ts) : ''; }
 
 /* the accepted risks, with Revoke: DFM and Outputs show them so an accepted risk never disappears from view */
 function pinRisksHTML() {

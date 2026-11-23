@@ -42,7 +42,7 @@ function updDialog() {
   const more = UPD.behind > (UPD.commits || []).length ? `<li class="muted">and ${UPD.behind - UPD.commits.length} more</li>` : '';
   const why = UPD.can_update
     ? `<p class="muted">The server restarts on the new version; your projects and settings stay as they are. If the new version does not start, it goes back to ${esc(v.commit || 'this one')} by itself.</p>`
-    : `<p class="note warn">${esc(UPD.reason || 'This install cannot update itself.')}</p>`;
+    : banner({tone: 'warn', text: UPD.reason || 'This install cannot update itself.'});
   dlg.innerHTML = `<form method="dialog"><h2 id="upd-title">${plural(UPD.behind, 'new change')}</h2>
     <p class="muted">This install: ${esc(v.commit || '?')}${v.date ? ' (' + esc(v.date.slice(0, 10)) + ')' : ''}. Latest: ${esc(UPD.latest || '?')}.</p>
     <ul class="upd-list">${list}${more}</ul>${why}
@@ -115,7 +115,7 @@ async function aboutLoad() {
   }
   if (mainView() === 'settings' || sideView() === 'settings') renderCenter(true);
 }
-const aboutMoney = x => (x >= 0.01 || x === 0 ? `$${x.toFixed(2)}` : `$${x.toFixed(4)}`);
+const aboutMoney = x => money(x);
 function aboutHTML() {
   if (aboutFor !== PROJECT) { aboutLoad(); return loadingLine('Loading'); }
   if (!ABOUT) return loadingLine('Loading');
