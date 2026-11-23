@@ -1,0 +1,12 @@
+{
+ "symbol": "KT-0603R",
+ "footprint": "LED-SMD_L1.6-W0.8-R-RD",
+ "source": "easyeda",
+ "status": "ok",
+ "issues": [],
+ "package": "0603",
+ "lcsc": "C2286",
+ "value": "LED red",
+ "mpn": "KT-0603R",
+ "built": true
+}

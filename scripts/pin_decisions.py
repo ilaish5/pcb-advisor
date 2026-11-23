@@ -107,11 +107,28 @@ def _refresh_manifest(project):
         pass
 
 
-def accept(project, key, evidence=None, reason="", wrong=None, basis=None):
+def accept(project, key, evidence=None, reason="", wrong=None, basis=None, group=False):
     """The student says the pins match. {ok, line, decision, changed}. Idempotent: a second accept of the same fingerprint
-    writes nothing. `wrong`, a list of pin numbers the student marked wrong, makes it a conflict instead (no decision)."""
+    writes nothing. `wrong`, a list of pin numbers the student marked wrong, makes it a conflict instead (no decision).
+    `group`: the identical parts of the same question (group_lines) are accepted with it, each with its own fingerprint and
+    record; the result lists them in `also`."""
+    sibs = group_lines(project, key) if group and not wrong else []        # before the accept: an accepted line leaves the list
+    res = _accept(project, key, evidence, reason, wrong, basis)
+    if sibs and res.get("ok"):
+        res["also"] = []
+        for other in sibs:
+            if other != res["line"]:
+                _accept(project, other, evidence, reason, None, basis)
+                res["also"].append(other)
+    return res
+
+
+def _accept(project, key, evidence=None, reason="", wrong=None, basis=None):
     line = store._line_of(project, key)
     key = line["key"]
+    if not store.has_wired_pins(project, line):
+        # nothing is wired: an accept would record a decision about no pins, and later wiring would look confirmed
+        return {"ok": False, "line": key, "decision": None, "changed": False, "why": "no pin of this part is wired yet: there is nothing to confirm"}
     if wrong:
         pins = ", ".join(str(w) for w in wrong)
         store.add_library(project, key, {"verify": "mismatch", "method": "", "evidence": "", "accepted": False,
@@ -152,6 +169,121 @@ def remaining(project):
     one by one). [{line, refs, mpn, issues}]."""
     return [{"line": r["line"], "refs": r["refs"], "mpn": r["mpn"], "issues": r["issues"]}
             for r in store.pins_to_resolve(project) if r["status"] == "unverified"]
+
+
+# ---------------------------------------------------------------- one question for identical parts
+
+_NO_MPN = ("", "—", "-", "none")
+
+
+def _kind_of(line):
+    pre = {store._prefix_of(r) for r in line.get("refs") or []}
+    if pre and pre <= set(store.POLARISED_PREFIXES):
+        return "polarised"
+    if pre and pre <= set(store.CONNECTOR_PREFIXES):
+        return "connector"
+    return "ic"
+
+
+def group_key(project, line):
+    """What makes two BOM lines ONE question: the same kind, MPN, footprint, LCSC code and the same pin pattern on every part
+    (pin number, name and whether it is wired or open / NC). Net names are not part of it, so five LEDs on five nets are one question,
+    but a copy with another pin wired, another name or another footprint is not. Each line keeps its own fingerprint and decision:
+    grouping only decides what is asked once, never what is recorded. None (no group: it is asked alone) when the line has no
+    MPN or no footprint to tell it by, or when its own parts differ from each other."""
+    line = line if isinstance(line, dict) else store._line_of(project, line)
+    mpn = str(line.get("mpn") or "").strip().casefold()
+    fp = str((store.library_manifest(project).get(line.get("key")) or {}).get("footprint") or line.get("package") or "").strip().casefold()
+    if mpn in _NO_MPN or not fp or not line.get("refs"):
+        return None
+    pats = {}
+    for sh in store.sheet_ids(project):
+        for part in store.load_sheet(project, sh).get("parts", []):
+            if part.get("ref") in line["refs"]:
+                pats.setdefault(part["ref"], []).extend(
+                    (store._pin_num(p), str(p.get("name") or "").strip().casefold(),
+                     bool(str(p.get("net") or "").strip()) and not pinnames.is_nc_net(str(p.get("net"))))
+                    for p in part.get("pins", []))
+    shapes = {tuple(sorted(v)) for v in pats.values()}
+    if len(pats) != len(line["refs"]) or len(shapes) != 1:
+        return None
+    return (_kind_of(line), mpn, fp, str(line.get("lcsc") or "").strip().casefold(), shapes.pop())
+
+
+def group_lines(project, key):
+    """The BOM lines asked together with this one (itself first): the unverified lines that share its group_key; just itself when it has none."""
+    line = store._line_of(project, key)
+    gk = group_key(project, line)
+    out = [line["key"]]
+    if gk is None:
+        return out
+    for r in store.pins_to_resolve(project):
+        if r["status"] == "unverified" and r["line"] != line["key"]:
+            other = store._line_of(project, r["line"])
+            if group_key(project, other) == gk:
+                out.append(other["key"])
+    return out
+
+
+def questions(project):
+    """What the student is asked, one entry per question: [{id, lines, refs, mpn, status, issues, kind, blind, own_look, count}].
+    A mismatch is always its own question (never grouped, never part of a bulk accept); identical unverified parts are one.
+    `blind`: nothing but the student's word can settle it (an IC with no datasheet check): the bulk confirm names these first."""
+    rows = store.pins_to_resolve(project)
+    bom = {l["key"]: l for l in store.bom(project, write=False)}
+    groups = {}
+    for r in rows:
+        line = bom.get(r["line"]) or store._line_of(project, r["line"])
+        gk = None if r["status"] == "mismatch" else group_key(project, line)
+        gid = ("one", r["line"]) if gk is None else gk
+        g = groups.setdefault(gid, {"id": r["line"], "lines": [], "refs": [], "mpn": r.get("mpn") or "", "status": r["status"],
+                                    "issues": r.get("issues") or "", "kind": _kind_of(line), "datasheet": bool(line.get("datasheet")),
+                                    "fetchable": False})
+        g["lines"].append(r["line"])
+        g["refs"] += list(r.get("refs") or [r["line"]])
+        g["fetchable"] = g["fetchable"] or (g["kind"] == "ic" and not line.get("datasheet") and bool(line.get("datasheet_url")))
+    out = []
+    for g in groups.values():
+        g["count"] = len(g["refs"])
+        g["own_look"] = g["status"] == "mismatch"
+        g["blind"] = g["status"] != "mismatch" and g["kind"] == "ic"
+        out.append(g)
+    return out
+
+
+def row_buttons(row, line):
+    """Buttons the Library table puts on one row, as ui/js/views/pages.js libAction decides: Accept after a datasheet pass, Verify only
+    where a datasheet check can decide (a part that is not a passive / diode / connector, with a datasheet linked and no pass yet), and
+    Confirm pins only on a row that needs its own look (a mismatch). The other rows are settled by the one line on top."""
+    line = line or {}
+    if row.get("verify") == "pass" and not row.get("accepted"):
+        return 1
+    n = 0
+    if row.get("verify") != "pass" and row.get("symbol"):
+        refs = line.get("refs") or []
+        if refs and not all(store.is_simple_ref(r) for r in refs) and line.get("datasheet") and line.get("pins_status") in ("unverified", "mismatch"):
+            n += 1
+        if line.get("pins_status") == "mismatch":
+            n += 1
+    return n
+
+
+def waiting(project):
+    """The one summary every page that shows the waiting parts reads (S.pin_decisions.waiting):
+    {questions, lines, own_look, auto_verified, fetchable, groups, bulk, blind, lib_buttons}.
+      questions       how many things the student is asked (groups: identical parts are one)
+      own_look        of those, how many need their own look (a mismatch): the only rows with their own button
+      bulk            the lines one "Confirm all" settles (every unverified question, no mismatch)
+      blind           the refs among them nothing but the student's word settles (an IC with no datasheet check)
+      auto_verified   lines the library model verified by itself (pin_model)"""
+    qs = questions(project)
+    bom = {l["key"]: l for l in store.bom(project, write=False)}
+    bulk = [ln for q in qs if not q["own_look"] for ln in q["lines"]]
+    return {"questions": len(qs), "lines": sum(len(q["lines"]) for q in qs), "own_look": sum(1 for q in qs if q["own_look"]),
+            "auto_verified": sum(1 for l in bom.values() if l.get("pins_basis") == "library_model"),
+            "fetchable": sum(1 for q in qs if q["fetchable"]), "groups": qs, "bulk": bulk,
+            "blind": [r for q in qs if q["blind"] for r in q["refs"]],
+            "lib_buttons": {r["line"]: row_buttons(r, bom.get(r["line"])) for r in store.library_view(project)}}
 
 
 def accept_all(project, lines=None):
@@ -215,8 +347,10 @@ def confirm_data(project, key):
                      "candidate_pages": candidate_pages(text, line.get("package") or ""), "quality": sources.quality(text)})
     st = next((l for l in store.bom(project, write=False) if l["key"] == line["key"]), {})
     return {"line": line["key"], "refs": line.get("refs", []), "mpn": line.get("mpn") or "", "package": line.get("package") or "",
-            "pins": _pins_of(project, line), "docs": docs, "status": st.get("pins_status", ""), "issues": st.get("pins_issues", ""),
-            "polarised": store._polarised_only(line)}
+            "pins": _pins_of(project, line), "wired": store.has_wired_pins(project, line), "docs": docs,
+            "status": st.get("pins_status", ""), "issues": st.get("pins_issues", ""),
+            "polarised": store._polarised_only(line), "group_refs": [r for g in [group_lines(project, line["key"])] for k in g
+                                                                      for r in (store._line_of(project, k).get("refs") or [k])]}
 
 
 # ---------------------------------------------------------------- what the rest of the app reads
@@ -237,14 +371,19 @@ def risks(project):
 
 
 def write_manifest(project):
-    """exports/<project>_order_manifest.json: {accepted_risks, unverified, board_check, generated}, beside the Gerber zip, never inside it.
+    """exports/<project>_order_manifest.json: {accepted_risks, unverified, verified_by_library_model, board_check, generated}, beside the Gerber zip, never inside it.
     Written when there is anything to say (or an older one to keep current); the JLC BOM CSV is not touched."""
     import json
 
     import workspace
     path = store.pdir(project) / "exports" / f"{workspace.safe_name(project)}_order_manifest.json"
     acc, unv = risks(project), store.pins_to_resolve(project)
-    if not (acc or unv or path.exists()):
+    try:
+        import pin_model
+        lib = pin_model.verified_lines(project)
+    except Exception:       # noqa: BLE001
+        lib = []
+    if not (acc or unv or lib or path.exists()):
         return None
     try:
         import board_results             # stream A's record of the last Altium check; absent or empty, the manifest says null
@@ -253,19 +392,19 @@ def write_manifest(project):
         board = None
     try:
         old = json.loads(path.read_text(encoding="utf-8"))
-        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("board_check") == json.loads(json.dumps(board, default=str))
+        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str))
     except (OSError, ValueError):
         same = False
     if not same:
         path.parent.mkdir(parents=True, exist_ok=True)
-        doc = {"accepted_risks": acc, "unverified": unv, "board_check": board, "generated": store.now()}
+        doc = {"accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
         store._write_text(path, json.dumps(doc, ensure_ascii=False, indent=2, default=str))
     return str(path)
 
 
 @ext.register("model")
 def _model(project, out):
-    return {"pin_decisions": {"accepted": risks(project), "remaining": remaining(project)}}
+    return {"pin_decisions": {"accepted": risks(project), "remaining": remaining(project), "waiting": waiting(project)}}
 
 
 @ext.register("get")
@@ -295,6 +434,6 @@ def _post(handler, path, body):
             raise ext.HTTPError(400, "line required")
         if path == "/api/pins/revoke":
             return revoke(proj, body["line"])
-        return accept(proj, body["line"], evidence=body.get("evidence"), reason=body.get("reason"), wrong=body.get("wrong"))
+        return accept(proj, body["line"], evidence=body.get("evidence"), reason=body.get("reason"), wrong=body.get("wrong"), group=True)
     except KeyError:
         raise ext.HTTPError(404, f"no BOM line {body.get('line')!r}")

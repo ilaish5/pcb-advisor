@@ -46,6 +46,7 @@ function outBlockNote() {
   if (!g) return '';
   const items = outGapItems(g);
   const acts = (items.length ? btn(`Mark all ${items.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks every one of these pins no-connect in the netlist (a No ERC cross when drawn). Connect any pin that is not meant to be NC first.'}) : '')
+    + (typeof pinsConfirmAllBtn === 'function' ? pinsConfirmAllBtn() : '')      // the waiting parts: the same one click as on the Library and DFM pages
     + btn(g.page === 'sch' ? 'Open Schematic' : 'Open DFM', {kind: 'link', page: g.page === 'sch' ? 'sch' : 'checks'});
   const list = items.length ? `<details class="pv-more"><summary>Show the ${items.length} ${items.length === 1 ? 'pin' : 'pins'}</summary><ul>${items.map(outGapRow).join('')}</ul></details>` : '';
   return `${outNcProposal(g)}${banner({tone: 'warn', html: `${esc(g.why)}${list}`, actions: acts})}`;

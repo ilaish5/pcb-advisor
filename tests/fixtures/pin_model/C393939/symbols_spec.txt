@@ -1,0 +1,17 @@
+SYMBOL|TYPE-C16PIN|LCSC C393939|1
+PIN|A1B12|GND|eElectricPassive|eRotate180|-100|700|1|100
+PIN|A4B9|VBUS|eElectricPassive|eRotate180|-100|600|1|100
+PIN|A5|CC1|eElectricPassive|eRotate180|-100|500|1|100
+PIN|A6|DP1|eElectricPassive|eRotate180|-100|400|1|100
+PIN|A7|DN1|eElectricPassive|eRotate180|-100|300|1|100
+PIN|A8|SBU1|eElectricPassive|eRotate180|-100|200|1|100
+PIN|B5|CC2|eElectricPassive|eRotate180|-100|100|1|100
+PIN|B6|DP2|eElectricPassive|eRotate180|-100|0|1|100
+PIN|B7|DN2|eElectricPassive|eRotate180|-100|-100|1|100
+PIN|B8|SBU2|eElectricPassive|eRotate180|-100|-200|1|100
+PIN|B4A9|VBUS|eElectricPassive|eRotate180|-100|-300|1|100
+PIN|B1A12|GND|eElectricPassive|eRotate180|-100|-400|1|100
+PIN|1|SHELL|eElectricPassive|eRotate180|-100|-500|1|100
+PIN|2|SHELL|eElectricPassive|eRotate180|-100|-600|1|100
+PIN|3|SHELL|eElectricPassive|eRotate180|-100|-700|1|100
+PIN|4|SHELL|eElectricPassive|eRotate180|-100|-800|1|100

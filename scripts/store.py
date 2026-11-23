@@ -417,21 +417,30 @@ def _bom(project, write):
     supply = supply_for(project)
     lib = library_parts(project)
     man = library_manifest(project)
-    sheets = {}
+    sheets, wired = {}, set()
     for sh in sheet_ids(project):
         for part in load_sheet(project, sh).get("parts", []):
             sheets.setdefault(part["ref"], (sh, part.get("section")))
+            if any(pin_wired(p) for p in part.get("pins", [])):
+                wired.add(part["ref"])
     import order_options
     build_qty = order_options.boards(project)         # the project's own N, else the config default
     if write:
         import pin_decisions
         pin_decisions.stamp_legacy(project, lines, lib)       # a legacy "accepted as is" gets the fingerprint it lasts against
+        try:
+            import pin_model
+            if MODEL_CHECK:
+                pin_model.stamp(project, lines, lib)           # the audit record of a part the library model verifies
+        except (OSError, KeyError, ValueError, ImportError):
+            pass
     for l in lines:
         l["supply"] = supply.get(l["key"])
         entry = lib.get(l["key"])
         l["library"] = manifest_status(library_status(l, entry), man.get(l["key"]))
         l["library_entry"] = ui_entry(entry)
-        l["pins_status"], l["pins_issues"] = pins_status(l, entry, project)
+        l["pins_status"], l["pins_issues"] = pins_status(l, entry, project, wired=wired)
+        l["pins_basis"] = pins_basis(project, l, entry, l["pins_status"])
         l["pin_decision"] = _decision_view(project, l, entry) if l["pins_status"] == "accepted" else None
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
         l["role"] = l.get("role") or ""
@@ -3057,6 +3066,27 @@ def _polarity_note(project, line):
     return base
 
 
+MODEL_CHECK = True            # the library-model pin check (pin_model.py); False asks about every diode / LED / connector as before (the audit's "before")
+
+
+def _model_verdict(project, line):
+    """pin_model.check for a diode / LED / connector line of a project, or None (switched off, no project, anything unreadable)."""
+    if not (MODEL_CHECK and project and line.get("key")):
+        return None
+    try:
+        import pin_model
+        return pin_model.check(project, line)
+    except (OSError, KeyError, ValueError, ImportError):
+        return None
+
+
+def pins_basis(project, line, entry, status):
+    """What a "verified" pin state stands on: "datasheet" (pin-table pass), "library_model" (pin_model), "" when it is not verified."""
+    if status != "verified":
+        return ""
+    return "datasheet" if passed_by_table(entry) or not all(is_simple_ref(r) for r in line.get("refs") or [""]) else "library_model"
+
+
 def _decision_view(project, line, entry):
     """The standing pin decision as the BOM line carries it (basis, when, why, evidence): what "Accepted risk" shows."""
     import pin_decisions
@@ -3064,13 +3094,38 @@ def _decision_view(project, line, entry):
     return {k: dec.get(k) for k in ("basis", "ts", "reason", "evidence")} if dec else None
 
 
-def pins_status(line, entry, project=None):
+def pin_wired(pin):
+    """A pin on a net that is not a no-connect spelling: the pins a pin decision is about (the same rule as pin_decisions.fingerprint)."""
+    net = str(pin.get("net") or "").strip()
+    return bool(net) and not pinnames.is_nc_net(net)
+
+
+def wired_refs(project):
+    """The designators with at least one wired pin on a sheet: a part with none has nothing to decide yet."""
+    def build():
+        return sorted({part.get("ref") for sh in sheet_ids(project) for part in load_sheet(project, sh).get("parts", [])
+                       if any(pin_wired(p) for p in part.get("pins", []))})
+    return set(memoised(("wired_refs", project), build))
+
+
+def has_wired_pins(project, line):
+    """True when any part of the BOM line has a wired pin on a sheet."""
+    return bool(set(line.get("refs") or []) & wired_refs(project))
+
+
+def pins_status(line, entry, project=None, wired=None, check_wired=True):
     """('', '') for a simple part or one not on a sheet yet; else ('verified'|'accepted'|'unverified'|'mismatch', issues).
     Simple parts (R, C, L ...) are '' too, except a connector (J, P) with no datasheet and a diode/LED (D, LED) whose
     polarity no datasheet confirms: those are 'unverified' (the Unverified list), with the reason in issues.
     "accepted" is the student's pin decision (scripts/pin_decisions.py) while it stands; one made against pins that have
-    changed since is no decision: the part is unverified again and the reason says so."""
+    changed since is no decision: the part is unverified again and the reason says so.
+    A part with no wired pin on any sheet (placed but not connected yet, or no pins drawn) is '' too: there is nothing to decide, so it
+    is never asked about, never blocks, and no decision can be made about it; the moment a pin is wired it is asked like any other.
+    `wired`: the designators with a wired pin, when the caller has them already (the BOM build); `check_wired=False` leaves the rule
+    to the caller (the sheet marking, which has the parts being saved in hand while the disk still has the old ones)."""
     import pin_decisions
+    if check_wired and project and line.get("refs") and not (set(line["refs"]) & (wired_refs(project) if wired is None else wired)):
+        return "", ""
     acc, note = pin_decisions.state(project, line, entry)
     st, why = _pins_status(line, entry, project, bool(acc))
     if note and st in ("unverified", "mismatch"):
@@ -3095,6 +3150,11 @@ def _pins_status(line, entry, project, acc):
             return "accepted", ""
         if entry.get("verify") == "mismatch":
             return "mismatch", entry.get("issues", "")
+        chk = _model_verdict(project, line)          # a part whose sheet pins agree with its library model (pin_model.py) is not asked about
+        if chk and chk["result"] == "agree":
+            return "verified", ""
+        if chk and chk["result"] == "disagree":
+            return "mismatch", chk["reason"]
         if conn:
             if line.get("datasheet") and entry.get("verify") == "unchecked" and entry.get("issues"):
                 return "unverified", _unchecked_reason(line, entry)
@@ -3119,7 +3179,7 @@ def _pins_status(line, entry, project, acc):
     return "unverified", NO_DATASHEET
 
 
-NO_DATASHEET = "no datasheet linked: the pins are from the agent; add the datasheet to verify them"
+NO_DATASHEET = "no datasheet linked yet: the pins are from the agent until the datasheet is fetched and checked, or you confirm them"
 
 
 def _unchecked_reason(line, entry):
@@ -3141,13 +3201,15 @@ def _mark_pins_source(project, parts):
         ref = part.get("ref")
         if is_simple_ref(ref) and _prefix_of(ref) not in CONNECTOR_PREFIXES + POLARISED_PREFIXES:
             part.pop("pins_source", None)
+        elif not any(pin_wired(p) for p in part.get("pins", [])):
+            part.pop("pins_source", None)          # nothing wired, nothing to mark: the mark comes with the first wired pin
         else:
             ln = by_ref.get(ref)
-            st = pins_status(ln, lib.get(ln["key"]), project)[0] if ln else "unverified"
+            st = pins_status(ln, lib.get(ln["key"]), project, check_wired=False)[0] if ln else "unverified"
             if not st and ln:
                 st = "verified"          # a connector / diode the checker passed without a decision: nothing to mark
             if st in ("verified", "accepted"):
-                part["pins_source"] = "datasheet" if st == "verified" else "student"
+                part["pins_source"] = ("library" if pins_basis(project, ln, lib.get(ln["key"]), st) == "library_model" else "datasheet") if st == "verified" else "student"
             else:
                 part["pins_source"] = "agent"
         out.append(part)
@@ -3219,10 +3281,38 @@ def _checked_outcome(line, entry):
     return out
 
 
+def fetch_datasheets(project, getter=None):
+    """The system gets the datasheet itself (agent rule 11), the student never has to: every unverified IC / transistor with no
+    datasheet linked and a datasheet link from the supplier (the LCSC page's `datasheet_url`) is downloaded into the project's sources/
+    as <MPN>.pdf and linked and checked at once. A download that fails (a bot page, no network, another file under that name) is
+    reported, never raised, and the part stays as it was. Network: called from Re-check datasheets only, never from the model or a poll.
+    `getter(project, url, name)` is sources.get unless a test gives another. {fetched: [{line, refs, name, status}], failed: [{line, refs, why}]}"""
+    import sources
+    getter = getter or sources.get
+    out = {"fetched": [], "failed": []}
+    skip = {l["key"] for l in bom(project, write=False) if l.get("dnp") or l.get("nobuy")}
+    for l in bom(project, write=False):
+        refs = l.get("refs") or []
+        url = str(l.get("datasheet_url") or "")
+        if (not refs or l["key"] in skip or l.get("datasheet") or not l.get("on_sheet") or l.get("pins_status") != "unverified"
+                or all(is_simple_ref(r) for r in refs) or not re.match(r"https?://", url)):
+            continue
+        mpn = re.sub(r"[^A-Za-z0-9._-]+", "_", str(l.get("mpn") or l["key"])).strip("_") or l["key"]
+        name = f"{mpn}.pdf"
+        try:
+            meta = getter(project, url, name)
+            res = attach_datasheet(project, l["key"], meta.get("name") or name, by="auto")
+            out["fetched"].append({"line": l["key"], "refs": refs, "name": res["name"], "status": res["status"]})
+        except Exception as exc:       # noqa: BLE001 - SourceError, ValueError, OSError: the reason goes to the student, the part waits
+            out["failed"].append({"line": l["key"], "refs": refs, "why": str(exc)[:200]})
+    return out
+
+
 def recheck_pins(project):
     """Re-check datasheets: a document that arrived is linked, and every part a datasheet is there for is verified again.
     {unverified: the Unverified parts list (pins_to_resolve), checked: [{line, refs, datasheet, status: verified|accepted|unverified|
     mismatch, issues, said}], message}: what was checked and what came of it, in one sentence for the toast."""
+    got = fetch_datasheets(project)                              # a datasheet the system can fetch itself is fetched, linked and checked first
     ran = [{"line": m["line"], "refs": (_line_of(project, m["line"]).get("refs") or [m["ref"]]), "datasheet": m["name"]}
            for m in auto_attach(project)["matched"]]           # a document that arrived by hand: linked and checked first
     rows = pins_to_resolve(project, verify_new=True, checked=ran)
@@ -3242,7 +3332,11 @@ def recheck_pins(project):
         said = [", ".join(c["refs"] or [c["line"]]) + " " + c["said"] for c in checked]
         msg = (f"Checked {len(checked)} against {'its datasheet' if len(checked) == 1 else 'their datasheets'}: " + "; ".join(said)
                + (f". {still}, each with its reason" if rows else ""))
-    return {"unverified": rows, "checked": checked, "message": msg}
+    if got["fetched"]:
+        msg = f"Fetched {len(got['fetched'])} {'datasheet' if len(got['fetched']) == 1 else 'datasheets'} itself. " + msg
+    if got["failed"]:
+        msg += f". No datasheet could be fetched for {', '.join(r for f in got['failed'] for r in f['refs'])}: {got['failed'][0]['why']}"
+    return {"unverified": rows, "checked": checked, "message": msg, "fetched": got["fetched"], "fetch_failed": got["failed"]}
 
 
 _SPEC_MEMO = {}      # symbols_spec.txt path -> (size, mtime_ns, {symbol: {"pins": [...]}}): the gate is asked on every poll

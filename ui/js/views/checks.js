@@ -160,6 +160,8 @@ function dfmUnverified() {
 function dfmUnverifiedHTML() {
   const rows = dfmUnverified();
   if (!rows.length) return '';
+  const w = typeof pinsWaiting === 'function' ? pinsWaiting() : null;
+  if (w && w.groups) return dfmWaitingHTML(w);
   // only this project's own documents: the shared reference library (course material, guides) holds no datasheet of a part
   const docs = (S.sources || []).filter(s => s.scope === 'project' && s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
   const item = l => `<li class="unv-row"><span class="m">${esc(refsLabel(l.refs))}</span> ${esc(l.mpn || l.value || '')}
@@ -169,6 +171,18 @@ function dfmUnverifiedHTML() {
   return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>
     <p class="muted">Drop each datasheet in Sources and re-check, or confirm the pins yourself (one click, undoable).</p>
     <ul>${rows.map(item).join('')}</ul>${btn(dfmRecheckBusy ? 'Checking…' : 'Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy})} ${typeof pinsAcceptAllBtn === 'function' ? pinsAcceptAllBtn() : ''}</section>`;
+}
+// One row per question (identical parts are one): the line on top confirms everything that can be confirmed; a row has its own button
+// only when it needs its own look (a mismatch). A part the library model already verified is not listed at all.
+function dfmWaitingHTML(w) {
+  const docs = (S.sources || []).filter(s => s.scope === 'project' && s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
+  const item = g => `<li class="unv-row"><span class="m">${esc(refsLabel(g.refs))}</span> ${esc(g.mpn || '')}${g.count > 1 ? ` <span class="muted">×${g.count}</span>` : ''}
+    <span class="unv-why" title="${esc(g.issues || '')}">${g.own_look ? 'Pins conflict: ' + esc(g.issues || '') : esc(g.issues || 'Pins not checked against a datasheet')}</span>
+    ${g.own_look ? btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: g.id, title: 'See the conflict next to the pins; one click records your decision'}) : ''}
+    ${g.kind === 'ic' && docs.length ? `<select class="in quiet" data-pick-ds="${esc(g.id)}" aria-label="Pick a datasheet for ${esc(refsLabel(g.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
+  const recheck = btn(dfmRecheckBusy ? 'Checking…' : 'Check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy, title: 'Fetches the datasheets it can find itself and checks the pins against them'});
+  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${w.questions}) to resolve before ordering</span></h3>
+    ${pinsWaitingBar()}<ul>${w.groups.map(item).join('')}</ul>${recheck}</section>`;
 }
 // The order: how many boards, and whether JLC assembles them (then the outputs must hold the BOM and the CPL).
 async function dfmOrderLoad() {

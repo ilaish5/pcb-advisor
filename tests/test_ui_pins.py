@@ -19,14 +19,30 @@ def _fn(name):
 
 def test_the_dialog_shows_the_page_next_to_the_pins_with_one_button_and_an_optional_wrong_mark():
     h = _fn("pinsDialogHTML")
-    assert "/api/source/" in h and "#page=" in h and "pins-frame" in h and "iframe" in h
+    assert "pinsDocUrl(" in h and "pins-frame" in h and "iframe" in h
+    u = _fn("pinsDocUrl")
+    assert "/api/source/" in u and "#page=" in u and "PINS_PDF_PARAMS" in u
     assert h.count('type="submit"') == 1 and "Pins match" in h
     assert "data-pin-wrong" in h and "required" not in h and "<textarea" not in h and 'name="reason"' not in h
 
 
-def test_accept_all_is_one_confirm_that_lists_the_parts():
+def test_the_datasheet_opens_at_the_pin_page_fitted_to_the_width_with_the_viewer_sidebar_closed_in_a_near_full_window():
+    params = re.search(r"PINS_PDF_PARAMS = '([^']+)'", PINS).group(1).split("&")
+    assert "zoom=page-width" in params and "pagemode=none" in params and "navpanes=0" in params and "view=FitH" in params
+    css = (UI / "styles" / "pins.css").read_text(encoding="utf-8")
+    dlg = re.search(r"\.dlg\.pins-dlg\{([^}]*)\}", css).group(1)
+    assert "calc(100vw" in dlg and "calc(100vh" in dlg and "max-width:none" in dlg       # the viewer gets nearly the whole window
+    assert re.search(r"\.pins-frame\{[^}]*flex:1", css)                                  # and the frame takes all the height left
+    assert "Open in a new tab" in _fn("pinsDialogHTML")
+
+
+def test_accept_all_is_one_click_and_asks_again_only_for_parts_nothing_but_the_students_word_settles():
+    """The waiting line names the parts and its button is the one click. The extra confirm is kept only for an IC with no datasheet check
+    (a real engineering check the click would skip), and it names those parts; everything else is done at once, with an Undo."""
     h = PINS[PINS.index("onAct('accept-all-pins'"):]
-    assert h.count("askChoice(") == 1 and "names" in h and "confirm: true" in h
+    assert h.count("askChoice(") == 1 and "blind" in h and "confirm: true" in h
+    assert h.index("if (blind.length)") < h.index("askChoice(") < h.index("/api/pins/accept-all")
+    assert "Undo" in h and "/api/pins/revoke" in h
 
 
 def test_the_flow_is_wired_to_the_server_routes_and_the_dfm_page():

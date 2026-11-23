@@ -83,3 +83,8 @@
 .dfm-unv .unv-row .out-remake, .dfm-unv .unv-row .out-remake-why { flex: none; }
 
 .dfm-sug { display: inline-flex; align-items: center; gap: 6px; margin-inline-start: 8px; font-size: 12px; }
+
+/* the waiting line: one sentence and one button for every part that waits for a confirmation (Library, DFM, Outputs) */
+.pins-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin: 0 0 12px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-sm); }
+.pins-bar .pins-bar-t { flex: 1; min-width: 200px; font-size: var(--t-xs); }
+.pins-bar .m { margin-left: 4px; }
