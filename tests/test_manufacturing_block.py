@@ -1,6 +1,7 @@
 """Unverified pins block the manufacturing outputs (Altium OutJob, Gerber zip) until each part is resolved: a datasheet table pass or
 the student's accept_pins. Previews stay allowed. The bridge and the zip are faked: nothing here touches Altium."""
 import pathlib
+import re
 
 import pytest
 
@@ -90,7 +91,8 @@ def test_the_unverified_list_has_a_confirm_button_per_part():
     js = (REPO / "ui" / "js" / "views" / "checks.js").read_text(encoding="utf-8")
     pins = (REPO / "ui" / "js" / "views" / "pins.js").read_text(encoding="utf-8")
     assert "act: 'confirm-pins', line: l.key" in js and "'/api/pins/confirm', {line: key" in pins
-    assert "reason" not in pins.lower().replace("no reason", "")      # no mandatory reason field anywhere in the flow
+    code = re.sub(r"/\*.*?\*/|//[^\n]*", "", pins, flags=re.S).lower()   # comments may describe the record shape
+    assert "reason" not in code.replace("no reason", "")      # no reason field anywhere in the flow
     assert "rows.map(item)" in js     # every row, a mismatch included, comes from the one template that holds the button
 
 
