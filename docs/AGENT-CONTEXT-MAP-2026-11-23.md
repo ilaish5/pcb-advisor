@@ -138,8 +138,8 @@ P1 (rules once) would take another ~7500 tokens a turn.
   longer contradicts CITING / rule 4.
 - Ran: runtime pack, skills lint, agent guards/retry, chat experience/follow-up/turns, diagram agent, background, idea description,
   ext shim, constraints, altium settings, wave3 review, docs, evals, memory, pin decisions; `ruff check scripts tests` clean.
-  One failure, pre-existing on the unmodified base too: `test_wave3_review.py::test_one_failing_action_is_refused_and_the_turn_goes_on`
-  (expects "failed unexpectedly", serve.py says "could not be applied").
+  Final: the whole suite (`pytest tests`, stdin empty) passes after merging phase0-correctness at 1fb5cdf; the wave3 failure seen
+  earlier was pre-existing and is fixed upstream.
 
 ## 9. Limits of this pass
 - No live engine turn was run: sizes come from the exact prompt `agent.respond` builds (engine stubbed), not from the engine's token count.
