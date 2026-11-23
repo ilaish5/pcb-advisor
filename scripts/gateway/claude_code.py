@@ -130,7 +130,7 @@ class _Turn:
                     self.steps.append(lab)
                     if events.is_script_run(name, inp):
                         self.runs.append({"id": part.get("id"), "label": lab, "failed": False})
-                    self._emit("tool", lab, name)
+                    self._emit("tool", events.human(lab), name)
                 elif part.get("type") == "text" and str(part.get("text") or "").strip():
                     self.texts.append(part["text"])
                     self._soft("text", "Writing the answer")
@@ -157,7 +157,8 @@ class _Turn:
             self.denied[tid] = {"tool": name, "input": inp if isinstance(inp, dict) else {},
                                 "reason": str(ev.get("message") or ""),
                                 "compound": ev.get("decision_reason_type") == "subcommandResults"}
-            self._emit("denied", "Denied: " + events.label(name, inp), name)
+            if not events.is_internal_run(name, inp):      # an internal command is the agent's business; the student sees nothing
+                self._emit("denied", events.human("Denied: " + events.label(name, inp)), name)
         elif kind == "result":
             self.result = ev
 
@@ -177,6 +178,8 @@ class _Turn:
                 out[tid] = {"tool": str(d.get("tool_name") or ""), "input": inp, "reason": "", "compound": False}
             elif not cur["input"]:
                 cur["input"] = inp
+        for d in out.values():      # `python -c`, a heredoc, `ls`: never offered as Allow, never drawn (the agent retries with its script)
+            d["internal"] = events.is_internal_run(d["tool"], d["input"])
         return list(out.values())
 
     def final(self):

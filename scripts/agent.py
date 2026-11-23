@@ -340,7 +340,9 @@ def real_tools(meta, claimed=()):
         lab = r["label"]
         script = re.search(r"([\w.-]+\.py)", lab)
         st = "warn" if lab in denied else "bad" if r.get("failed") else "ok"       # a denied call also reports an error: denied first
-        chip = {"t": lab, "st": st}
+        chip = {"t": events.human(lab), "st": st}      # the student reads "Searching JLC"; the command line stays in "raw", under details
+        if chip["t"] != lab:
+            chip["raw"] = lab
         if script and st == "ok":
             want = _script_stem(script.group(1))
             for c in free:      # each claim once, in order, on the whole script name (check.py is not check_stock.py)
@@ -374,17 +376,72 @@ def _add_dirs(project):
     return out
 
 
-HEBREW = re.compile("[֐-׿]")
+HEBREW = re.compile("[\u0590-\u05ff]")
+LATIN = re.compile("[A-Za-z]{2,}")
+NOTE_KEEP = 2            # server notes (button steps, approvals) kept as context; they never use up the conversation window
+CLIP_USER, CLIP_AGENT, CLIP_NOTE = 600, 900, 220
+
+
+def _clip(text, n):
+    text = str(text or "").strip()
+    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+
+
+def is_note(m):
+    """A record the server wrote for the agent's context (a button step, an approval), not a turn of the conversation."""
+    return m.get("role") == "agent" and bool(m.get("by") or m.get("decision"))
+
+
+def history_lines(history, keep):
+    """The 'conversation so far': the last `keep` real turns, each clipped, plus at most NOTE_KEEP of the latest server
+    notes as one-liners. Notes ("Approved 3 proposals", "Placed the parts ... because the student pressed the button") used to
+    fill the window, so the agent saw its own log and little of what the student said."""
+    history = [m for m in history if m.get("text")]       # a context card (role "ctx") has no text
+    turns = [m for m in history if not is_note(m)]
+    turns = turns[-keep:] if keep > 0 else []
+    if not turns:
+        return ""
+    first = history.index(turns[0])
+    notes = [m for m in history[first:] if is_note(m)][-NOTE_KEEP:]
+    keep_ids = {id(m) for m in turns} | {id(m) for m in notes}
+    out = []
+    for m in history[first:]:
+        if id(m) not in keep_ids:
+            continue
+        if is_note(m):
+            out.append(f"note: {_clip(m['text'], CLIP_NOTE)}")
+        else:
+            out.append(f"{m['role']}: {_clip(m['text'], CLIP_USER if m['role'] == 'user' else CLIP_AGENT)}")
+    return "\n".join(out)
 
 
 def reply_language_line(typed, history=(), generated=False):
-    """'Reply language: Hebrew' when the student's last TYPED message has Hebrew letters, else '' (English is the default).
-    A button-generated prompt (generated=True) is skipped: the language of the last typed message in `history` counts."""
-    text = typed
-    if generated:
-        text = next((m.get("text") for m in reversed(list(history)) if m.get("role") == "user" and not m.get("generated")
-                     and m.get("text")), "")
-    return "Reply language: Hebrew\n" if HEBREW.search(text or "") else ""
+    """The language the reply must be in, always stated (the model drifted when it was left to infer it).
+    Settings > Language: 'he' or 'en' is final. 'auto' (default) follows the student's last TYPED message: Hebrew letters mean
+    Hebrew, otherwise English. A button-generated prompt (generated=True) is skipped: the last typed message in `history` counts.
+    Hebrew replies address the student in the singular, as one person."""
+    setting = str(workspace.get("user.language", "auto") or "auto").lower()
+    if setting in ("he", "hebrew", "iw"):
+        lang = "Hebrew"
+    elif setting in ("en", "english"):
+        lang = "English"
+    else:
+        text = typed
+        if generated:
+            text = next((m.get("text") for m in reversed(list(history)) if m.get("role") == "user" and not m.get("generated")
+                         and m.get("text")), "")
+        if HEBREW.search(text or ""):
+            lang = "Hebrew"
+        elif LATIN.search(text or "") or not generated:
+            lang = "English"
+        else:
+            lang = ""
+    if not lang:
+        return ""
+    line = f"Reply language: {lang}\n"
+    if lang == "Hebrew":
+        line += "Address the student in the singular, as one person (never a plural 'you').\n"
+    return line
 
 
 def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None, typed=None, generated=False):
@@ -397,7 +454,7 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     keep = int(workspace.get("agent.history_messages", 8))
     # a context card (role "ctx") has no text; the agent gets that context in the message itself
     history = [m for m in history if m.get("text")]
-    convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-keep:])
+    convo = history_lines(history, keep)
 
     parts = [rules()]
     memory = (model.get("memory") or "").strip()
@@ -428,7 +485,8 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     res = gateway.route(gateway.Request(
         prompt=prompt,
         system=parts[0],
-        history=[{"role": m.get("role"), "text": m.get("text")} for m in history[-keep:]],
+        history=[{"role": m.get("role"), "text": _clip(m.get("text"), CLIP_USER if m.get("role") == "user" else CLIP_AGENT)}
+                 for m in history if not is_note(m)][-keep:],
         timeout=int(timeout or workspace.get("agent.timeout_seconds", 900)),
         options=options,
     ), name=name)

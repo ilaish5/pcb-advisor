@@ -325,9 +325,14 @@ function chatDeniedLabel(d) {
   return String(d.label || i.command || i.file_path || i.path || i.url || d.tool || 'a command');
 }
 /* One card per command the engine refused. A single command can be allowed for good; a combined one cannot. */
+/* A refused shell command that is not one of the tool's own scripts (`python -c ...`, a heredoc, `ls`) is the agent's business:
+   the server flags it `internal`, and an older record without the flag is judged the same way. Never offered as "Allow", never drawn. */
+const chatDeniedInternal = d => d.internal != null ? !!d.internal
+  : /^(Bash|PowerShell)$/.test(d.tool || '') && !/scripts[\\/]/.test((d.input || {}).command || '') || /(^|\s)(python[\d.]*|py)(\.exe)?\s+-[a-z]*c\b/i.test((d.input || {}).command || '');
 function chatDeniedHTML(m, live) {
   if (!live) return '';
   return (m.denied || []).map((d, k) => {
+    if (chatDeniedInternal(d)) return '';
     const id = d.id ?? k;
     const why = d.reason ? `<p class="why" dir="auto">${esc(d.reason)}</p>` : '';
     const body = d.compound
@@ -381,13 +386,13 @@ function toolMark(t) {
   if (t.st === 'bad') return `<span class="bad-t">${icon('x', 's')}</span>`;
   return t.st === 'warn' ? `<span class="warn-t">${icon('alert', 's')}</span>` : `<span class="ok-t">${icon('check', 's')}</span>`;
 }
+/* "Worked: 3 steps", closed. Inside: each step in plain words; the command line (`raw`) is the last, muted detail. */
 function toolsHTML(items) {
   if (!items || !items.length) return '';
   const mark = toolMark(items.find(t => t.st === 'bad') || items.find(t => t.st === 'warn') || items[0]);
   const tip = items.every(t => t.s === 'claimed') ? ` title="${CLAIMED_TIP}"` : '';
-  if (items.length === 1) return `<div class="runs"${tip}>${mark}<span>${esc([items[0].t, items[0].d].filter(Boolean).join(' · '))}</span></div>`;
-  const step = t => `<li${t.s === 'claimed' ? ` title="${CLAIMED_TIP}"` : ''}>${toolMark(t)}<span>${esc(t.t)}${t.d ? ` <span class="d">${esc(t.d)}</span>` : ''}</span></li>`;
-  return `<details class="runs"${tip}><summary>${mark}<span>Ran ${items.length} steps</span></summary><ul>${items.map(step).join('')}</ul></details>`;
+  const step = t => `<li${t.s === 'claimed' ? ` title="${CLAIMED_TIP}"` : ''}>${toolMark(t)}<span>${esc(t.t)}${t.d ? ` <span class="d">${esc(t.d)}</span>` : ''}${t.raw ? ` <span class="d raw">${esc(t.raw)}</span>` : ''}</span></li>`;
+  return `<details class="runs"${tip}><summary>${mark}<span>Worked: ${items.length} step${items.length > 1 ? 's' : ''}</span></summary><ul>${items.map(step).join('')}</ul></details>`;
 }
 /* The chip under an agent reply, in words: "bom.propose:R1" is "BOM proposal: R1". The server's text after the kind
    (counts, file names) is kept as the detail; an unknown kind is its name, humanised. */
@@ -415,6 +420,16 @@ function chatRefusedHTML(a) {
   if (cut.length < 160) cut = s.slice(0, 220);          // no place to break (a long path): the reason still shows
   return `<details class="chat-act bad" title="Not applied"><summary>${esc(cut)}<span class="more">… more</span></summary>${esc(s.slice(cut.length))}</details>`;
 }
+/* which engine and model wrote an answer: "Claude Code · sonnet", muted under it */
+function chatEngineName(id) {
+  const e = ((CONFIG && CONFIG.engines) || []).find(x => x.id === id);
+  return (e && (e.title || e.name)) || String(id || '').replace(/_/g, ' ');
+}
+function chatEngineLabel(id, model) { return id ? chatEngineName(id) + (model ? ' · ' + model : '') : ''; }
+function chatEngineFoot(m) {
+  const l = chatEngineLabel(m.engine, m.model);
+  return l ? `<div class="eng" title="The engine and model that wrote this answer">${esc(l)}</div>` : '';
+}
 function msgHTML(m, undoTs) {
   if (m.role === 'user') {
     const about = m.source ? `<div class="about">About ${chip(m.source, '')}</div>`
@@ -426,6 +441,12 @@ function msgHTML(m, undoTs) {
     const live = m === chatTail;
     if (chatIsPartial(m)) return toolsHTML(m.tools) + chatPartialHTML(m, live) + propsHTML(m.proposals || (m.proposal ? [m.proposal] : [])) + chatDeniedHTML(m, live);
     if (m.error || m.decision) return '';      // a failed reply becomes Retry under the box; a decision is the proposal card's own state
+    if (m.by === 'button') {                    // the note the server wrote for the agent after a button step: its text is not for the student, the chips are
+      const chips = (m.applied || []).map(a => (m.warned || {})[a]
+        ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(chatActLabel(a.split(/[:( ]/)[0]))} applied with warnings:</b> ${esc(m.warned[a])}</span>`
+        : `<span class="chat-act ok" title="${esc(a)}">${esc(chatActLabel(a))}</span>`).join('');
+      return chips ? `<div class="msg agent note"><div class="acts">${chips}</div></div>` : '';
+    }
     const props = propsHTML(m.proposals || (m.proposal ? [m.proposal] : []));
     const undo = m.ts === undoTs && ((m.applied || []).includes('idea.diagram.edit') || m.diagram_edit)
       ? `<div class="undo">${btn('Undo diagram change', {size: 'sm', icon: 'undo', act: 'undo-diagram', title: 'Undo diagram change'})}</div>` : '';
@@ -446,7 +467,7 @@ function msgHTML(m, undoTs) {
     const nRef = (m.refused || []).length;
     const after = m.followup ? '<div class="chat-followup" role="note">After the results</div>' : '';     // the server's own second turn, written once the actions had answered
     const head = after + (nRef && m.text ? `<div class="acts"><span class="chat-act bad" role="note">Not all of this happened: ${nRef} step${nRef > 1 ? 's' : ''} failed (red, below)</span></div>` : '');
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}</div>` : '') + props + chatDeniedHTML(m, live);
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}${chatEngineFoot(m)}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }
@@ -707,6 +728,8 @@ function renderChat(force) {
   const anc = chatAnchor(row);
   const title = $('#convtitle');
   if (title) title.textContent = (anc ? anc + ' · ' : '') + (row.title || 'New chat');
+  const eng = $('#chat-engine');
+  if (eng && CONFIG) eng.textContent = chatEngineLabel(CONFIG.engine, (CONFIG.agent && CONFIG.agent.model) || '');
   renderThread(force);
   renderConvs();
   renderComposer();
@@ -836,6 +859,14 @@ onAct('new', async (el, d, e) => {
   await refresh(true);
   const inp = $('#input');
   if (inp) inp.focus();
+});
+onAct('rename', async (el, d, e) => {
+  const row = currentRow();
+  const t = (window.prompt('Name this conversation', row.title || '') || '').trim();
+  if (!t || t === row.title) return;
+  const r = await api('/api/sessions/rename', {title: t});
+  if (r && r.sessions) S.sessions = r.sessions;
+  await refresh(true);
 });
 onAct('suggest', async (el, d, e) => { send(d.text); });
 onAct('retry', async (el, d, e) => {

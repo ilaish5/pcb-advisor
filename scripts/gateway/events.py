@@ -115,3 +115,56 @@ def clip_input(inp):
 
 def now_iso():
     return datetime.datetime.now().isoformat(timespec="milliseconds")
+
+
+# ---------------------------------------------------------------- what the student sees
+# One verb phrase per script the agent runs, in the student's words. A script that is not here is "Running a check":
+# the raw command line is for the debug record and the "details" of a step, never the headline.
+SCRIPT_WORDS = {
+    "check_availability.py": "Checking stock and price at JLC", "compare_prices.py": "Comparing prices",
+    "verify_part.py": "Checking the part's pins against its datasheet", "render_sheet.py": "Drawing the sheet preview",
+    "export_bom.py": "Exporting the BOM", "export_cpl.py": "Exporting the placement file", "lint.py": "Checking the project",
+    "jlc.py": "Searching JLC", "library.py": "Checking the library", "partlib.py": "Checking the part library",
+    "sources.py": "Working with the documents", "trace_width.py": "Calculating the trace width", "calc.py": "Calculating",
+    "rules.py": "Checking the rules", "model.py": "Reading the project", "validate_netlist.py": "Checking the netlist",
+    "preview_sch.py": "Drawing the schematic preview", "preview_pcb.py": "Drawing the board preview", "outjob.py": "Preparing the outputs",
+    "dfm.py": "Checking manufacturability", "bridge.py": "Talking to Altium", "dump.py": "Reading the Altium files",
+    "keeping.py": "Noting the decision", "project.py": "Reading the project", "introspect.py": "Looking at earlier runs",
+    "lineage.py": "Tracing where a value came from", "order_check.py": "Checking the order", "verify_sources.py": "Checking the sources",
+    "schematic.py": "Checking the schematic", "board.py": "Checking the board", "idea.py": "Checking the idea",
+    "requirements.py": "Checking the requirements", "drc_origin.py": "Tracing the DRC findings", "drc_jlc_map.py": "Matching the DRC to JLC",
+}
+_FIRST = re.compile(r"^(Denied: Running|Running|Reading|Searching for|Searching the web:|Opening skill|Opening|Editing)\s*(.*)$", re.S)
+
+
+def human(label):
+    """The student's version of a `label()` line: what is being done, not which command. Tool and script names never show
+    (`Running jlc.py search x` is "Searching JLC"); a file name or a search term the student can recognise stays."""
+    lab = str(label or "").strip()
+    m = _FIRST.match(lab)
+    if not m:
+        return lab or "Working"
+    verb, rest = m.group(1), m.group(2).strip()
+    if verb in ("Running", "Denied: Running"):
+        script = re.match(r"([\w.-]+\.py)\b", rest)
+        out = SCRIPT_WORDS.get(script.group(1), "Running a check") if script else "Running a command"
+        return ("Not allowed: " + out[0].lower() + out[1:]) if verb != "Running" else out
+    if verb == "Opening skill":
+        return "Opening instructions"
+    return lab
+
+
+# an interpreter running code typed on the command line: never something to approve, never something to show
+ONE_LINER = re.compile(
+    r"""(?:^|[\s;&|("'])(?:[^\s"']*[/\\])?(?:python[\d.]*|py|node|perl|ruby|pwsh|powershell|cmd|bash|sh)(?:\.exe)?["']?\s+"""
+    r"""(?:-\w*[ce]\b|-command\b|-encodedcommand\b|/c\b|-\s*(?:<<|$)|<<)""", re.I)
+
+
+def is_internal_run(tool_name, tool_input=None):
+    """True for a refused call the student has no business deciding on: a shell command that is not one of the tool's own
+    scripts (`python -c ...`, a heredoc, `ls`, a combined command). The server's allow list is the only authority on shell
+    commands, so these are never offered as "Allow" and never drawn; the agent is told to run its script as one plain command."""
+    name = str(tool_name or "")
+    if name not in ("Bash", "PowerShell"):
+        return False
+    return not is_script_run(name, tool_input) or bool(ONE_LINER.search(str((tool_input or {}).get("command") or "")))

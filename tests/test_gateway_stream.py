@@ -167,8 +167,8 @@ def test_parse_stream_json_lines_with_denials_merged_by_id():
     den = meta["denied"]
     assert len(den) == 2                                      # t1 merged, t2 added from the result
     assert den[0] == {"tool": "Bash", "input": {"command": "ls /tmp && pwd", "description": "d"},
-                      "reason": "needs approval: ls /tmp", "compound": True}
-    assert den[1] == {"tool": "Read", "input": {"file_path": "/x/y.jsonl"}, "reason": "", "compound": False}
+                      "reason": "needs approval: ls /tmp", "compound": True, "internal": True}
+    assert den[1] == {"tool": "Read", "input": {"file_path": "/x/y.jsonl"}, "reason": "", "compound": False, "internal": False}
 
 
 def test_parse_still_takes_the_old_single_object_and_plain_text():
@@ -196,9 +196,10 @@ def test_provider_emits_events_and_sets_meta(home, monkeypatch):
                         name="claude_code")
     assert res.ok and res.text == "Sorry, it needs approval."
     kinds = [e["kind"] for e in evs]
-    assert kinds[:2] == ["thinking", "tool"] and "denied" in kinds and "text" in kinds
+    assert kinds[:2] == ["thinking", "tool"] and "text" in kinds
+    assert "denied" not in kinds                  # `ls /tmp && pwd` is an internal command: the student is never told it was refused
     tool = next(e for e in evs if e["kind"] == "tool")
-    assert tool["tool"] == "Bash" and tool["label"].startswith("Running ls") and isinstance(tool["ts"], float)
+    assert tool["tool"] == "Bash" and tool["label"] == "Running a command" and isinstance(tool["ts"], float)
     assert "error_kind" not in res.meta and "partial" not in res.meta
 
 

@@ -94,7 +94,11 @@ class AntigravityProvider(Provider):
         `--input-format X`, `-p=`) are dropped from it, everything else
         (e.g. `--dangerously-skip-permissions`, `--mode accept-edits`) is kept.
         """
-        extra = list(self.config.get("args") or ["--dangerously-skip-permissions"])
+        extra = list(self.config.get("args") or [])
+        # agy has no one to ask in headless mode: without a permission flag it denies its own tool calls and the student would see
+        # "agy denied ..." for steps that are internal. The project convention is to always run it with the skip flag.
+        if not any(a == "--dangerously-skip-permissions" or a == "--mode" or str(a).startswith("--mode=") for a in extra):
+            extra.append("--dangerously-skip-permissions")
         kept, skip = [], False
         for a in extra:
             if skip:

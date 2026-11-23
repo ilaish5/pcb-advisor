@@ -34,6 +34,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import workspace  # noqa: E402
 
 INDEX = "index.json"
+# the names the tool gives; the first thing the student types replaces any of them (a renamed conversation keeps its name)
+DEFAULT_TITLES = (None, "", "New conversation", "First conversation")
 MEMORY_SUFFIX = ".memory.md"
 
 # Ordered by how much it would hurt to lose. When a memory will not fit even
@@ -224,7 +226,9 @@ def append(project, session, record):
     fields = {}
     # the first thing the student says names the conversation, like a chat app
     row = next((r for r in load_index(project) if r["id"] == session), {})
-    if record.get("role") == "user" and row.get("title") in (None, "", "New conversation"):
+    # a button-made prompt ("List the findings of this report...") is not what the student said: it never names the conversation
+    if (record.get("role") == "user" and not record.get("generated") and row.get("title") in DEFAULT_TITLES
+            and str(record.get("text") or "").strip()):
         fields["title"] = _title_from(record.get("text", ""))
     touch(project, session, **fields)
     return path

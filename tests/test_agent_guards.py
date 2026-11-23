@@ -223,8 +223,9 @@ def test_chips_of_a_streaming_engine_are_its_real_script_runs_with_the_claimed_d
     claimed = [{"t": "Check availability (check_stock)", "d": "18 lines - LCSC", "st": "ok"},
                {"t": "Never ran this", "d": "x", "st": "ok"}]
     chips = agent.real_tools(meta, claimed)
-    assert chips == [{"t": "Running check_stock.py --all", "st": "ok", "d": "18 lines - LCSC"},
-                     {"t": "Running other.py", "st": "warn"}, {"t": "Running crash.py", "st": "bad"}]
+    assert chips == [{"t": "Running a check", "raw": "Running check_stock.py --all", "st": "ok", "d": "18 lines - LCSC"},
+                     {"t": "Running a check", "raw": "Running other.py", "st": "warn"},
+                     {"t": "Running a check", "raw": "Running crash.py", "st": "bad"}]       # the student reads words; the command is `raw`
     assert agent.real_tools({"stream": True}, claimed) == []          # a stream with no script run: the claim is dropped
 
 
@@ -290,8 +291,10 @@ def test_a_denied_call_is_warn_not_bad_and_the_detail_goes_to_the_right_run_once
     claimed = [{"t": "Stock (check_stock.py)", "d": "18 lines"}, {"t": "Boom (boom)", "d": "never"},
                {"t": "Again", "d": "check_stock second"}]
     chips = agent.real_tools(meta, claimed)
-    assert chips[0] == {"t": "Running check.py", "st": "ok"}                  # check.py does not take check_stock's detail
-    assert chips[1] == {"t": "Running check_stock.py", "st": "ok", "d": "18 lines"}
-    assert chips[2] == {"t": "Running check_stock.py", "st": "ok", "d": "check_stock second"}      # a claim is used once, in order
-    assert chips[3] == {"t": "Running boom.py", "st": "bad"}                 # a failed run never takes the model's detail
-    assert chips[4] == {"t": "Running denied.py", "st": "warn"}              # denied wins over the error it comes with
+    raw = lambda c: c["raw"].replace("Running ", "")
+    assert [raw(c) for c in chips] == ["check.py", "check_stock.py", "check_stock.py", "boom.py", "denied.py"]
+    assert chips[0].get("d") is None and chips[0]["st"] == "ok"               # check.py does not take check_stock's detail
+    assert (chips[1]["st"], chips[1]["d"]) == ("ok", "18 lines")
+    assert (chips[2]["st"], chips[2]["d"]) == ("ok", "check_stock second")      # a claim is used once, in order
+    assert (chips[3]["st"], chips[3].get("d")) == ("bad", None)                 # a failed run never takes the model's detail
+    assert (chips[4]["st"], chips[4].get("d")) == ("warn", None)                # denied wins over the error it comes with
