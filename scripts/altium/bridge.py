@@ -1304,6 +1304,26 @@ def _mechanical_parts(items, outline, fps, parts, refs_lines=None, size=None):
     return out["hole"], out["keepout"], rules, warnings
 
 
+def _routing_lost(pcb):
+    """{tracks, vias, pours} of copper on the saved PcbDoc: what a new placement deletes. {} when the file cannot be read (the
+    caller then says it without numbers, never guesses them)."""
+    from altium.pcbdoc import read_pcbdoc
+    try:
+        doc = read_pcbdoc(pathlib.Path(pcb))
+    except (AltiumReadError, OSError):
+        return {}
+    cu = lambda it: isinstance(it.get("layer"), int) and 1 <= it["layer"] <= 32
+    return {"tracks": sum(1 for t in doc.get("tracks", []) if cu(t)), "vias": len(doc.get("vias", [])),
+            "pours": len(doc.get("polygons", []))}
+
+
+def _routing_words(lost):
+    """"12 tracks, 3 vias and 1 pour" for the counts of _routing_lost, '' when nothing is there or nothing is known."""
+    bits = [f"{n} {w if n != 1 else w.rstrip('s')}" for w, n in (("tracks", lost.get("tracks", 0)), ("vias", lost.get("vias", 0)),
+                                                                  ("pours", lost.get("pours", 0))) if n]
+    return ", ".join(bits[:-1]) + (" and " if len(bits) > 1 else "") + bits[-1] if bits else ""
+
+
 def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3,
              constraint_items=None, refs_lines=None):
     """Place `parts` ([{ref, footprint, lib_ref, pins}]) from the PcbLib on the PcbDoc, create the outline from `size` when the board
@@ -1325,7 +1345,18 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     missing = sorted({p["ref"] for p in parts if p.get("footprint") not in fps})
     if missing:
         raise BridgeError(f"No footprint in the project library for {', '.join(missing[:8])}: run library.build first.")
-    log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
+    lost = _routing_lost(pcb) if pathlib.Path(pcb).is_file() else {}
+    routed = _routing_words(lost)
+    try:
+        log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
+    except BridgeError as exc:
+        if routed and re.search(r"the board already has \d+ parts or copper objects", str(exc)):
+            # the refusal says what is lost, in numbers: the one confirm (Replace) is then an informed one
+            said = re.sub(r"(the board already has \d+ parts or copper objects)",
+                          rf"\1, among them routing of {routed} that placing again deletes", str(exc), count=1)
+            raise BridgeError(said + ". Replacing deletes that routing and places every part anew; the student's own edits in "
+                                     "Altium are lost with it (the board file is copied to a backup first).") from exc
+        raise
     info = _pcbcheck_info(log)
     if info is None:
         raise BridgeError("Altium did not report the state of the board.")
@@ -1337,6 +1368,8 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
         raise BridgeError("The board outline is not a rectangle, so I cannot tell whether the parts fit inside it. Draw a rectangular "
                           "outline in Altium (or delete the outline so I create one from the board size) and try again.")
     warnings = []
+    if replace and routed:
+        warnings.append(f"Placing again deleted the routing of the board ({routed}); the earlier file is in the backup folder.")
     if placeholder:
         outline = layout.plan_outline(size)
         if outline is None:

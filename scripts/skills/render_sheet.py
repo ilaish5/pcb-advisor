@@ -15,8 +15,9 @@ netlist/<sheet>.json
      "parts": [{"ref": "U4", "section": "A", "kind": "ic",
                 "pins": [{"name": "VBAT", "num": "55", "net": "+3V8", "side": "left"}]}],
      "notes": [{"section": "A", "text": "Every GND pin gets its own symbol."}]}
-kind: ic | res | cap | tvs | diode (led) | tp | q | conn. Without one it comes from the designator (C cap, D/LED diode, J/P/CN
-conn, TP tp, Q q, R res), else ic for 4+ pins, res for 2, q for 3.
+kind: ic | res | cap | tvs | diode (led) | tp | q | conn | switch (sw, button). A kind this file does not know is
+treated as no kind. Without one it comes from the designator (C cap, D/LED diode, J/P/CN
+conn, SW/S switch, TP tp, Q q, R res), else ic for 4+ pins, res for 2, q for 3.
 Pins of an ic go to "side" left/right, else alternate left/right in order.
 Two-pin parts: pins[0] is the top (or left) end, pins[1] the bottom (or right) end.
 """
@@ -195,6 +196,18 @@ def part_tp(p):
     return s, max(80, 26 + len(net) * CW), 44
 
 
+def part_switch(p, sub):
+    """A two-pin switch (push button): a horizontal contact between its two nets; the reference and the part above."""
+    a, b = p["pins"][0], p["pins"][1]
+    lw, rw = label_w(a["net"]), label_w(b["net"])
+    x = lw + 6
+    s = (L(x - 6, 30, x, 30) + net_end(x - 6, 30, a["net"], -1)
+         + f'<circle cx="{x + 2:g}" cy="30" r="2.2" class="tpc"/><circle cx="{x + 34:g}" cy="30" r="2.2" class="tpc"/>'
+         + L(x + 2, 30, x + 32, 18) + L(x + 36, 30, x + 42, 30) + net_end(x + 42, 30, b["net"], 1)
+         + T(x + 18, 8, p["ref"], "refd", "middle") + T(x + 18, 46, sub or "", "mpn", "middle"))
+    return s, x + 42 + rw + 6, 54
+
+
 def part_conn(p, sub):
     # a connector is a one-sided IC
     pins = [dict(q, side="left") for q in p["pins"]]
@@ -202,7 +215,9 @@ def part_conn(p, sub):
 
 
 _BY_PREFIX = {"C": "cap", "D": "diode", "LED": "diode", "J": "conn", "P": "conn", "CN": "conn", "CON": "conn", "TP": "tp",
-              "Q": "q", "R": "res", "U": "ic", "IC": "ic"}
+              "Q": "q", "R": "res", "U": "ic", "IC": "ic", "SW": "switch", "S": "switch", "BTN": "switch"}
+KINDS = {"ic", "res", "cap", "tvs", "diode", "tp", "q", "conn", "switch"}
+_KIND_ALIAS = {"led": "diode", "sw": "switch", "button": "switch", "btn": "switch", "pushbutton": "switch"}
 _CATHODE, _ANODE = {"K", "C", "-", "CATHODE"}, {"A", "+", "ANODE"}
 
 
@@ -210,10 +225,9 @@ def part_kind(p):
     """The drawing a part gets: its "kind", else the one its designator letters name (a netlist written without kinds drew
     every two-pin part as a resistor), else ic for 4+ pins, res for 2 and q for 3."""
     kind = (p.get("kind") or "").lower()
-    if kind == "led":
-        return "diode"
-    if kind:
-        return kind
+    kind = _KIND_ALIAS.get(kind, kind)
+    if kind in KINDS:
+        return kind                       # an unknown word is no kind: the designator decides (it used to draw as an empty box)
     letters = "".join(ch for ch in str(p.get("ref", "")).upper().split("_")[0] if ch.isalpha())
     n = len(p["pins"])
     by_ref = _BY_PREFIX.get(letters)
@@ -241,6 +255,8 @@ def render_part(p, line, bom_line, bom_status=None):
         body = part_vertical(p, value if kind != "tvs" else (sub or value), kind, up)
     elif kind == "res" and len(p["pins"]) == 2:
         body = part_res_h(p, value)
+    elif kind == "switch" and len(p["pins"]) == 2:
+        body = part_switch(p, sub)
     elif kind == "conn":
         body = part_conn(p, sub)
     else:

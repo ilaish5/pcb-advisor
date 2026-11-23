@@ -318,3 +318,34 @@ def test_place_on_derives_connector_dirs_so_no_false_270_warning(tmp_path, monke
     except Exception:           # noqa: BLE001  (only the planner's arguments are looked at)
         pass
     assert seen["connector_dirs"] == {"J1": 90.0}
+
+# ---------------------------------------------------------------- wave 3: Place on a routed board says what it deletes
+
+def test_routing_words_are_plain_numbers():
+    assert bridge._routing_words({"tracks": 12, "vias": 1, "pours": 2}) == "12 tracks, 1 via and 2 pours"
+    assert bridge._routing_words({"tracks": 1}) == "1 track"
+    assert bridge._routing_words({}) == "" and bridge._routing_words({"tracks": 0, "vias": 0}) == ""
+
+
+def _routed_place(monkeypatch, tmp_path, replace, refuse):
+    pcb, lib = tmp_path / "B.PcbDoc", tmp_path / "L.PcbLib"
+    pcb.write_bytes(b"pcb")
+    lib.write_bytes(b"x")
+    monkeypatch.setattr(bridge, "read_pcblib", lambda p: {"footprints": [{"name": "FP"}]})
+    monkeypatch.setattr(bridge, "_routing_lost", lambda p: {"tracks": 40, "vias": 6, "pours": 1})
+
+    def altium(cmds, **kw):
+        if refuse:
+            raise bridge.BridgeError("Altium refused a step: the board already has 47 parts or copper objects; nothing was changed")
+        return ["pcbcheck rect=1 objects=47 parts=5 tracks=40 outline_pts=4 box_mil=0,0,1181,984"]
+    monkeypatch.setattr(bridge, "run_commands", altium)
+    return bridge.place_on(tmp_path / "P.PrjPcb", pcb, lib, [{"ref": "R1", "footprint": "FP", "lib_ref": "FP", "pins": []}],
+                           size=(30, 25), replace=replace)
+
+
+def test_a_refusal_on_a_routed_board_names_what_a_new_placement_deletes(monkeypatch, tmp_path):
+    with pytest.raises(bridge.BridgeError) as e:
+        _routed_place(monkeypatch, tmp_path, replace=False, refuse=True)
+    msg = str(e.value)
+    assert "47 parts or copper objects, among them routing of 40 tracks, 6 vias and 1 pour that placing again deletes" in msg
+    assert serve.needs_replace(e.value)                       # still the one Replace confirm of the UI, now an informed one
