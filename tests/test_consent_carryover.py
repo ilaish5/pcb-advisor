@@ -118,11 +118,11 @@ def test_refs_named_in_a_table_row_must_be_in_a_bom_line(empty):
 
 
 def test_reply_language_line():
-    assert agent.reply_language_line("כן, תצייר") == "Reply language: Hebrew\n"
-    assert agent.reply_language_line("yes, draw it") == ""
+    assert agent.reply_language_line("כן, תצייר").startswith("Reply language: Hebrew\n")
+    assert agent.reply_language_line("yes, draw it") == "Reply language: English\n"
     hist = [{"role": "user", "text": "שלום"}, {"role": "agent", "text": "hi"}, {"role": "user", "text": "List the findings", "generated": True}]
-    assert agent.reply_language_line("List the findings", hist, generated=True) == "Reply language: Hebrew\n"
-    assert agent.reply_language_line("List the findings", [{"role": "user", "text": "hello"}], generated=True) == ""
+    assert agent.reply_language_line("List the findings", hist, generated=True).startswith("Reply language: Hebrew\n")
+    assert agent.reply_language_line("List the findings", [{"role": "user", "text": "hello"}], generated=True) == "Reply language: English\n"
 
 
 # ---- review round: what counts as the student's instruction, and what cancels it

@@ -3268,6 +3268,10 @@ class Handler(BaseHTTPRequestHandler):
                     rec["error"] = True       # the engine did not answer: the chat offers Retry instead of showing this as a reply
                 if chat_meta.get("diagram_touched"):
                     rec["diagram_touched"] = chat_meta["diagram_touched"]
+                if res.get("provider") and res.get("provider") != "external":      # which engine and model wrote this answer (shown in the chat)
+                    rec["engine"] = res["provider"]
+                    if res.get("model"):
+                        rec["model"] = res["model"]
                 if res.get("tools"):
                     rec["tools"] = res["tools"]
                 if proposals:
