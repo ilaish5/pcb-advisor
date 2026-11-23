@@ -145,3 +145,9 @@ def test_the_dfm_view_wires_the_wave3_behaviour():
     assert "/api/jlc/downloads" in js                                                                  # 27: the folder before the first look
     assert "dfm-accept" in js and "suggested_verdict" in js                                            # 26
     assert "dfmAutoList(found)" in js and "send: true" in js                                           # 25: the listing turn starts by itself
+
+
+def test_the_dfm_view_has_the_order_options_and_the_report():
+    js = (pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / "views" / "checks.js").read_text(encoding="utf-8")
+    assert "/api/order/options" in js and "data-order-boards" in js and "data-order-assembly" in js
+    assert "/api/design-report" in js and "dfm-report" in js

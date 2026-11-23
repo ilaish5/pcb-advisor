@@ -2209,6 +2209,18 @@ def add_outjob(project):
     return {"file": str(target), "backup": backup}
 
 
+def unsaved_documents(prj):
+    """Names of the project's documents that Altium holds open with unsaved changes (DOCSTATE, read only), [] when all are
+    saved. Raises BridgeError when Altium cannot be asked. Outputs made then may not match the files on disk."""
+    summary = read_prjpcb(prj)
+    docs = [prj.parent / pathlib.Path(rel.replace("\\", "/")) for rel in summary["sheets"] + summary["pcbs"]]
+    docs = [d for d in docs if d.is_file()] + [prj]
+    state = [l for l in run_commands([("PROJECT", str(prj))] + [("DOCSTATE", str(d)) for d in docs]) if l.startswith("docstate ")]
+    if len(state) != len(docs):
+        return []                                      # an answer that does not match what was asked says nothing
+    return [d.name for d, l in zip(docs, state) if "modified=1" in l]
+
+
 def run_outjob(project):
     """Run the project's OutJob (ours is added first when it has none). Before the outputs, a board whose outline layer is empty gets
     its rectangular board shape drawn on Mechanical 1 (repair_outline). Returns {outjob, added, containers, files, backup, warnings,
@@ -2235,6 +2247,14 @@ def run_outjob(project):
         if cand.is_file() and outjob_containers(cand):
             target = cand
             break
+    unsaved = []
+    try:                                                 # outputs made from a project with unsaved edits do not match its files
+        unsaved = unsaved_documents(prj)
+    except BridgeError as exc:
+        outline_note.append(f"Could not check whether Altium holds unsaved changes ({exc}).")
+    if unsaved:
+        outline_note.insert(0, f"Altium has unsaved changes in {', '.join(unsaved)}: the outputs may not match the saved files. "
+                               "Save them in Altium (Ctrl+S) and generate the outputs again.")
     cmds = [("PROJECT", str(prj))]
     if target is None:
         target, backup, add_cmds = _new_outjob(project, prj, summary)
@@ -2269,9 +2289,28 @@ def run_outjob(project):
         warnings.append(f"The board does not match the design ({len(design)} problem(s)): " + " | ".join(design[:5])
                         + (" ..." if len(design) > 5 else "") + " Fix this before ordering.")
     warnings += bom_notes                  # the least urgent: last
-    _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing)
+    import order_options
+    import outputs_check
+    opts = order_options.get(project)
+    cpl_files = []
+    if opts["assembly"]:                   # an order with assembly needs the CPL: made here from the placed board, never left to a click
+        try:
+            from skills import export_cpl
+            cpl = export_cpl.export_cpl(project)
+            home = workspace.home()
+            cpl_path = pathlib.Path(cpl["file"])
+            cpl_files = [str(cpl_path if cpl_path.is_absolute() else home / cpl_path)]
+            warnings += cpl.get("warnings", [])
+        except Exception as exc:
+            warnings.append(f"The pick and place file (CPL) could not be made ({type(exc).__name__}: {exc}). Export it on the Outputs page.")
+    check = outputs_check.verify(project, files, outjob=target, options=opts, extra=cpl_files)
+    check["unsaved"] = unsaved
+    outputs_check.save(project, check)
+    warnings = list(check["warnings"]) + warnings          # what is missing comes first: it decides whether the step did its job
+    _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing,
+         missing=check["missing"], empty=check["empty"], unsaved=unsaved)
     return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
-            "warnings": warnings, "outline_drawn": outline_drawn}
+            "warnings": warnings, "outline_drawn": outline_drawn, "outputs_check": check}
 
 
 def _is_bom(path):

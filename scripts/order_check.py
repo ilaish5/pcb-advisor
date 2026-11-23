@@ -73,7 +73,8 @@ def order_check(project, recheck=False):
         import check_availability
         check_availability.check(project)
         partlib_order.restamp_if_same(project)
-    build_qty = int(store.workspace.get("jlc.build_qty", 5))
+    import order_options
+    build_qty = order_options.boards(project)             # the project's own N (Outputs / DFM), else the config default
     out, counts = [], {}
     for l in store.bom(project, write=False):
         q = store.qty(l)

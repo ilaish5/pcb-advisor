@@ -38,6 +38,7 @@ let dfmPending = [];         // reports found whose header does not say what the
 let dfmFolder = '';          // the Downloads folder the last look used, or the one the server says it will use
 let dfmFolderAsked = null;   // the project the folder was asked for
 let dfmRecheckBusy = false;  // Re-check datasheets is running
+let dfmOrder = null, dfmOrderFor = null;   // {boards, assembly, set}: the order's own choices (N boards, assembly), asked once per project
 const dfmAutoAsked = new Set();   // reports the agent was already asked to list: once each
 const DFM_JLC = 'https://jlcdfm.com';
 const DFM_FOCUS_MS = 4000;   // the look on focus runs at most this often
@@ -148,7 +149,8 @@ function dfmHeader(reports) {
     ready && {always: true, label: 'Ready to order', tone: 'ok', title: 'Every finding is judged and none is a real issue'},
     t.known && !t.n && {always: true, label: 'No findings listed yet', title: 'Add the findings of the report, or ask the agent to list them'},
   ]);
-  const more = menu({icon: 'more', title: 'More'}, [{label: dfmGuide ? 'Hide how to check at JLC' : 'How to check at JLC', act: 'dfm-guide'}]);
+  const more = menu({icon: 'more', title: 'More'}, [{label: dfmGuide ? 'Hide how to check at JLC' : 'How to check at JLC', act: 'dfm-guide'},
+    {label: 'Make the design report', act: 'dfm-report', attrs: {archive: '0'}}, {label: 'Make an archive of the project', act: 'dfm-report', attrs: {archive: '1'}}]);
   return viewHeader({title: 'DFM', meta, actions: dfmRemakeAll() + more, primary: dfmUpload({kind: 'pri'})});
 }
 // Parts placed with pins from the agent: the one place the missing datasheet blocks. Resolved by a verified datasheet or an explicit accept.
@@ -168,6 +170,38 @@ function dfmUnverifiedHTML() {
     <p class="muted">Drop each datasheet in Sources and re-check, or confirm the pins yourself (one click, undoable).</p>
     <ul>${rows.map(item).join('')}</ul>${btn(dfmRecheckBusy ? 'Checking…' : 'Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy})} ${typeof pinsAcceptAllBtn === 'function' ? pinsAcceptAllBtn() : ''}</section>`;
 }
+// The order: how many boards, and whether JLC assembles them (then the outputs must hold the BOM and the CPL).
+async function dfmOrderLoad() {
+  const p = PROJECT;
+  dfmOrderFor = p;
+  try {
+    const r = await api('/api/order/options', undefined, {soft: true});
+    if (p === PROJECT && r && !r.error) { dfmOrder = r; dfmRepaint(); }
+  } catch (err) { /* the section stays hidden until the server answers */ }
+}
+function dfmOrderHTML() {
+  if (dfmOrderFor !== PROJECT) dfmOrderLoad();
+  if (!dfmOrder) return '';
+  const o = dfmOrder;
+  return `<section class="dfm-order"><h3>Order</h3>
+    <label class="field"><span>Boards</span><input class="in quiet" type="number" min="1" max="100000" step="1" value="${esc(o.boards)}" data-order-boards aria-label="Number of boards"></label>
+    <label class="check"><input type="checkbox" data-order-assembly ${o.assembly ? 'checked' : ''}> <span>JLC assembles the boards (adds the BOM and the CPL to the outputs)</span></label>
+    ${o.set ? '' : '<p class="muted">Not chosen yet: the stock check assumes ' + esc(o.boards) + ' boards, bare.</p>'}</section>`;
+}
+onChange(t => t.dataset && (t.dataset.orderBoards !== undefined || t.dataset.orderAssembly !== undefined), async e => {
+  const body = e.target.dataset.orderAssembly !== undefined ? {assembly: e.target.checked} : {boards: e.target.value};
+  let r = null;
+  try { r = await api('/api/order/options', body, {soft: true}); } catch (err) { dfmFail(err); }
+  if (r && !r.error) { dfmOrder = {boards: r.boards, assembly: r.assembly, set: r.set}; if (r.state) setState(r.state); renderCenter(true); }
+  else { if (r && r.error) toast(r.error, null, {bad: true}); dfmOrderLoad(); }
+});
+onAct('dfm-report', async (el, d) => {
+  let r = null;
+  try { r = await api('/api/design-report', {archive: d.archive === '1'}, {soft: true}); } catch (err) { dfmFail(err); }
+  if (!r || r.error) { toast((r && r.error) || 'The report could not be made.', null, {bad: true}); return; }
+  await refresh(true);
+  toast(r.archive ? `Archive ${r.archive} made (${r.files} files)` : `Design report ${r.file} made` + (r.changed && r.changed.length ? '. Changed since the last one: ' + r.changed.map(c => c.name).join(', ') : ''));
+});
 // A partial schematic is welcome while designing; before ordering, every pin has a net and every part is in the BOM.
 function dfmGaps() {
   const g = S.sheet_gaps || {};
@@ -223,7 +257,7 @@ function dfmUpload(trigger) {
 /* ---------- the guide: four steps, the zip, the report ---------- */
 function dfmProjectGuard() {       // the zip and the pending reports belong to one project
   if (dfmFor === PROJECT) return;
-  dfmFor = PROJECT; dfmZip = null; dfmZipErr = ''; dfmZipAsked = false; dfmZipTried = null; dfmPending = []; dfmFolder = ''; dfmFolderAsked = null; dfmGuide = false;
+  dfmFor = PROJECT; dfmZip = null; dfmZipErr = ''; dfmZipAsked = false; dfmZipTried = null; dfmPending = []; dfmFolder = ''; dfmFolderAsked = null; dfmOrder = null; dfmOrderFor = null; dfmGuide = false;
 }
 function dfmZipSet(r) { dfmZip = r; dfmZipErr = ''; dfmZipAsked = true; }
 async function dfmZipLoad() {
@@ -434,7 +468,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

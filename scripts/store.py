@@ -375,7 +375,8 @@ def bom(project, write=True):
     for sh in sheet_ids(project):
         for part in load_sheet(project, sh).get("parts", []):
             sheets.setdefault(part["ref"], (sh, part.get("section")))
-    build_qty = int(workspace.get("jlc.build_qty", 5))
+    import order_options
+    build_qty = order_options.boards(project)         # the project's own N, else the config default
     if write:
         import pin_decisions
         pin_decisions.stamp_legacy(project, lines, lib)       # a legacy "accepted as is" gets the fingerprint it lasts against

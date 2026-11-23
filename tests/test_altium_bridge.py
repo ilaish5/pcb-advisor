@@ -23,9 +23,12 @@ class FakeAltium:
     def __init__(self):
         self.runs = []
         self.prj = None
+        self.only_gerbers = False
+        self.unsaved = ()                       # names of documents Altium holds with unsaved changes (DOCSTATE answers)
 
     def __call__(self, commands, **kw):
         self.runs.append(list(commands))
+        out_lines = []
         for c in commands:
             if c[0] == "PROJECT":
                 self.prj = pathlib.Path(c[1])
@@ -38,16 +41,22 @@ class FakeAltium:
                 with open(self.prj, "a", encoding="ascii", newline="") as fh:
                     n = self.prj.read_text(encoding="ascii").count("[Document") + 1
                     fh.write(f"\r\n[Document{n}]\r\nDocumentPath={os.path.relpath(c[2], self.prj.parent)}\r\n")
+            elif c[0] == "DOCSTATE":
+                out_lines.append(f"docstate open modified={1 if pathlib.Path(c[1]).name in self.unsaved else 0}")
             elif c[0] == "OUTJOB":                  # Altium's own folder next to the project: one Gerber per layer
                 out = self.prj.parent / f"Project Outputs for {self.prj.stem}" / "Gerber"
                 out.mkdir(parents=True, exist_ok=True)
                 for ext in ("GTL", "GBL", "GTS", "GBS", "GTO", "GBO", "GTP", "GBP", "GM1"):
                     (out / f"{self.prj.stem}.{ext}").write_text("G04 x*\nM02*\n")
-        return []
+                if not self.only_gerbers:               # the rest of the OutJob's set: schematic PDF, drill, pick and place
+                    (out.parent / f"{self.prj.stem}_Schematics.pdf").write_bytes(b"%PDF-1.4 x")
+                    (out / f"{self.prj.stem}-Plated.TXT").write_text("M48\n")
+                    (out.parent / f"Pick Place for {self.prj.stem}.txt").write_text("Designator\n")
+        return out_lines
 
     def flat(self):
         """every command sent, without the read-only PCBCHECK round trip (own run) that run_outjob makes for an empty outline layer"""
-        return [c for run in self.runs if run[-1][0] != "PCBCHECK" for c in run]
+        return [c for run in self.runs if run[-1][0] not in ("PCBCHECK", "DOCSTATE") for c in run]
 
 
 _REAL_WARNING = store.manufacturing_warning
@@ -480,7 +489,7 @@ def test_rules_never_imported_follows_the_import_log_of_this_pcbdoc(lte, fake):
 def test_run_outjob_warns_when_the_rules_are_gone_from_the_pcbdoc(lte, fake, monkeypatch):
     _linked_with_rules_board(lte, fake)
     res = bridge.run_outjob(lte)
-    assert res["warnings"] and "no longer in the PcbDoc" in res["warnings"][0] and "Altium's defaults" in res["warnings"][0]
+    assert any("no longer in the PcbDoc" in w and "Altium's defaults" in w for w in res["warnings"])
     monkeypatch.setattr(bridge, "rules_missing", lambda project: [])
     monkeypatch.setattr(bridge, "design_problems", lambda project: [])      # (the fixture's sheets are not on its fixture board)
     assert bridge.run_outjob(lte)["warnings"] == []
