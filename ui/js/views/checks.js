@@ -260,8 +260,8 @@ function dfmZipBody() {
   out += `<p class="dfm-zip"><span class="m">${esc(z.zip)}</span><span>${(z.files || []).length} files, written <time datetime="${esc(z.generated)}" title="${esc(outFull(z.generated))}">${esc(outAgo(z.generated))}</time></span>` +
     `<a class="btn icon sm" href="${esc(url)}" download="${esc(z.zip)}" title="Download ${esc(z.zip)}" aria-label="Download ${esc(z.zip)}">${icon('download')}</a></p>`;
   out += dfmNames((z.files || []).map(f => f.name));
-  out += problems.map(m => `<div class="note warn"><span><b>${esc(m.layer)}</b> (<span class="m">${esc(m.ext)}</span>) is missing. ${esc(m.why)}</span></div>`).join('');
-  out += (z.warnings || []).map(w => `<div class="note warn"><span>${esc(w)}</span></div>`).join('');
+  out += problems.map(m => banner({tone: 'warn', html: `<b>${esc(m.layer)}</b> (<span class="m">${esc(m.ext)}</span>) is missing. ${esc(m.why)}`})).join('');
+  out += (z.warnings || []).map(w => banner({tone: 'warn', text: w})).join('');
   if (notes.length) out += `<p class="muted">${notes.map(m => `${esc(m.layer)} (<span class="m">${esc(m.ext)}</span>) is not in the set. ${esc(m.why)}`).join(' ')}</p>`;
   const a = z.assembly || {};
   out += a.bom && a.cpl
@@ -277,7 +277,7 @@ function dfmGuideHTML(empty) {
   const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // unverified pins: the server refuses the zip, so the button says why before the click
   const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy || !!held, title: held || undefined});
   const steps = [
-    dfmStep('Get the Gerber zip', zipBtn, (held ? `<p class="note warn dfm-zip-why" role="status"><span>${esc(held)}</span></p>` : '') + dfmZipBody()),
+    dfmStep('Get the Gerber zip', zipBtn, (held ? banner({tone: 'warn', cls: 'dfm-zip-why', text: held}) : '') + dfmZipBody()),
     dfmStep('Open jlcdfm.com and sign in', `<a class="btn line sm" href="${DFM_JLC}" target="_blank" rel="noopener"><span>Open jlcdfm.com</span>${icon('ext', 's')}</a>`,
       '<p>Use your own JLCPCB account. The advisor never asks for your password.</p>'),
     dfmStep('Upload and run the checks', '', '<p>Upload the zip and run PCB DFM. For assembly, also run SMT DFM with the BOM and CPL. Then export the PDF report.</p>'),
@@ -290,9 +290,8 @@ function dfmGuideHTML(empty) {
   return section('How to check at JLC', `${lead}<ol class="dfm-steps">${steps.join('')}</ol>`, {id: 'dfm-guide', actions: ask + hide});
 }
 function dfmPendingHTML() {        // a report whose header does not say what it covers: ask, never guess
-  return dfmPending.map(p => `<div class="note"><span><span class="m">${esc(p.name)}</span> is in Downloads. What does it cover?</span><span class="acts">` +
-    [['pcb', 'Bare board'], ['smt', 'Assembly'], ['both', 'Both']].map(([k, l]) => btn(l, {kind: 'line', size: 'sm', act: 'dfm-kind', 'data-kind': k, 'data-file': p.name})).join('') +
-    '</span></div>').join('');
+  return dfmPending.map(p => banner({tone: 'info', html: `<span class="m">${esc(p.name)}</span> is in Downloads. What does it cover?`, actions:
+    [['pcb', 'Bare board'], ['smt', 'Assembly'], ['both', 'Both']].map(([k, l]) => btn(l, {kind: 'line', size: 'sm', act: 'dfm-kind', 'data-kind': k, 'data-file': p.name})).join('')})).join('');
 }
 
 /* ---------- findings ---------- */

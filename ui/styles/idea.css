@@ -8,9 +8,9 @@
 .idea-body{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 24px}
 
 /* requirements: a capped list that scrolls inside itself; the add row stays outside the scroll region */
-.idea-reqs{flex:0 1 auto;display:flex;flex-direction:column;min-height:0;max-height:30%}
+.idea-reqs{flex:0 1 auto;display:flex;flex-direction:column;min-height:150px;max-height:36%}
 .idea-reqs:not(:has(.idea-split)){margin-bottom:12px}
-.idea-reqs:has(.req-add-form:not([hidden])),.idea-reqs:has(.req-edit-form:not([hidden])),.idea-reqs:has(.desc-edit-form:not([hidden])){max-height:55%}
+.idea-reqs:has(.req-add-form:not([hidden])),.idea-reqs:has(.req-edit-form:not([hidden])),.idea-reqs:has(.desc-edit-form:not([hidden])){max-height:55%;min-height:260px}
 .req-scroll{flex:0 1 auto;min-height:0;overflow-y:auto;margin:0 -24px;padding:0 24px}
 .req-list{list-style:none;margin:0;padding:0}
 .req-empty{padding:2px 0 4px;font-size:13px;color:var(--ink-3)}

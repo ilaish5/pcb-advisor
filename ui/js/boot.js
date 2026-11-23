@@ -8,6 +8,8 @@ function initialMain() {
   if (p && PAGE_TITLES[p]) return pageItem(p);
   if (p && STAGE_TITLES[p]) return stageItem(p);
   if (t && STAGE_TITLES[t]) return stageItem(t);
+  const saved = savedMain();
+  if (saved) return saved;
   return stageItem(!S.idea.confirmed && !S.bom.length ? 'idea' : 'bom');
 }
 

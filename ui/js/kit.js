@@ -126,8 +126,11 @@ function viewHeader(o) {
   const sid = o.stage || (typeof STAGES !== 'undefined' && (STAGES.find(s => s[1] === o.title) || [])[0]);
   const st = sid && sid !== 'idea' && typeof stageOf === 'function' ? stageOf(sid) : null;
   const next = st && st.next && st.next.act !== 'go:' + sid && typeof stageNextBtn === 'function' ? stageNextBtn(sid) : '';
+  // ONE filled button per header, and it is the last one on the right: when the stage's Next is the filled one, the page's own
+  // action steps down to the outlined style (a done stage keeps "Download" or "Check" as a secondary action, not a second call to action)
+  const primary = next && /class="btn pri\b/.test(next) && o.primary ? o.primary.replace(/class="btn pri\b/, 'class="btn line') : (o.primary || '');
   return `<header class="vh"><div class="vh-t"><h1>${kesc(o.title)}</h1>${o.meta ? `<div class="meta">${o.meta}</div>` : ''}</div>` +
-    `<div class="acts">${side}${o.actions || ''}${o.primary || ''}${next}</div></header>`;
+    `<div class="acts">${side}${o.actions || ''}${primary}${next}</div></header>`;
 }
 function section(title, body, o) {
   o = o || {};
@@ -139,8 +142,19 @@ function emptyState(title, text, actions, limits) {      // limits: one honest l
 function loadingLine(text) {
   return `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${kesc(text || 'Loading')}</div>`;
 }
+/* banner({tone: 'info' | 'ok' | 'warn' | 'bad', text | html, actions, cls, title, role}) -> THE message strip of every page: an icon that
+   says the severity, the message, the buttons on the right. The tone is the caller's structured fact (a failure is bad, an
+   answer with warnings is warn, nothing else is), never guessed from the words. Nothing else draws class="note" (tests/test_ui_clarity.py). */
+const BANNER_ICON = {ok: 'check', warn: 'alert', bad: 'alert', info: 'info'};
+function banner(o) {
+  const tone = BANNER_ICON[o.tone] ? o.tone : 'info';
+  const role = o.role || (tone === 'bad' ? 'alert' : 'status');
+  const c = ['note', tone === 'info' ? '' : tone, o.cls].filter(Boolean).join(' ');
+  return `<div class="${c}" role="${role}"${o.title ? ` title="${kesc(o.title)}"` : ''}>${icon(BANNER_ICON[tone], 'note-i')}` +
+    `<span>${o.html != null ? o.html : kesc(o.text)}</span>${o.actions ? `<span class="acts">${o.actions}</span>` : ''}</div>`;
+}
 function errorLine(what, message, actions) {
-  return `<div class="note bad" role="alert"><span>Couldn't ${kesc(what)}: ${kesc(message)}</span>${actions ? `<span class="acts">${actions}</span>` : ''}</div>`;
+  return banner({tone: 'bad', text: `Couldn't ${what}: ${message}`, actions});
 }
 function kv(pairs) {
   return '<dl class="kv">' + pairs.filter(p => p && p[1] != null && p[1] !== '').map(([k, v, raw]) => `<dt>${kesc(k)}</dt><dd>${raw ? v : kesc(v)}</dd>`).join('') + '</dl>';

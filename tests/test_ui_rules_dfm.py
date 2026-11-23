@@ -41,7 +41,7 @@ def test_the_rules_diff_has_one_result_column_that_escapes_the_detail():
     for label in ("'Below JLC minimum'", "'Stricter'", "'Matches'", "'Tighter than preset'", "'bad'", "'warn'", "'ok'"):
         assert label in RULES_JS, label
     assert "VERDICT[d.verdict] || VERDICT.unknown" in RULES_JS         # a row without a verdict is "not judged"
-    assert "esc(d.detail || '')" in RULES_JS and "esc(d.detail)" in RULES_JS   # the text comes from a board file
+    assert "esc(d.detail || '')" in RULES_JS and "esc(srcTags(d.detail))" in RULES_JS   # the text comes from a board file
     # the detail sits under the tag and wraps: the table cells are nowrap, so the wrapping is pinned in the css
     assert re.search(r"\.rules-tbl \.why\{[^}]*white-space:normal", RULES_CSS)
 

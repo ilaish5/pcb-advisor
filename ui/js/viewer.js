@@ -232,11 +232,11 @@ function docAltiumHTML(path, ext, data) {
     if (pairs.length) out += section('First few', kv(pairs));
   } else if (ext === '.prjpcb') {
     const sheets = data.sheets || [], pcbs = data.pcbs || [], jobs = data.outjobs || [], gone = data.missing || [];
-    meta = metaLine([pl(data.documents, 'document'), pl(sheets.length, 'sheet'), pl(pcbs.length, 'PCB')]);
+    meta = metaLine([pl(data.documents, 'document'), pl(sheetCounts().total || sheets.length, 'sheet'), pl(pcbs.length, 'PCB')]);
     if (sheets.length) out += section('Sheets', `<ul class="doc-list">${sheets.map(fileBtn).join('')}</ul>`);
     if (pcbs.length) out += section('PCBs', `<ul class="doc-list">${pcbs.map(fileBtn).join('')}</ul>`);
     if (jobs.length) out += section('OutJobs', `<ul class="doc-list">${jobs.map(o => `<li class="m">${esc(docBase(o))}</li>`).join('')}</ul>`);
-    if (gone.length) out += `<div class="note warn doc-gone" title="${esc(gone.join('\n'))}"><span>${gone.length === 1 ? '1 document is' : gone.length + ' documents are'} missing: ${esc(gone.slice(0, 3).map(docBase).join(', '))}${gone.length > 3 ? ` and ${gone.length - 3} more` : ''}</span></div>`;
+    if (gone.length) out += banner({tone: 'warn', cls: 'doc-gone', title: gone.join('\n'), text: `${gone.length === 1 ? '1 document is' : gone.length + ' documents are'} missing: ${gone.slice(0, 3).map(docBase).join(', ')}${gone.length > 3 ? ` and ${gone.length - 3} more` : ''}`});
   } else if (ext === '.rul') {
     meta = metaLine([pl(data.rules, 'rule')]);
     const rs = data.rules_sample || [];

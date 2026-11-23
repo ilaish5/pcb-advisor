@@ -105,17 +105,21 @@ p{margin:0}
 /* ---------- buttons ---------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;padding:0 10px;border-radius:var(--r-md);
   color:var(--ink-2);font-size:13px;font-weight:500;white-space:nowrap;transition:background .12s,color .12s,border-color .12s}
-.btn:hover{background:var(--hover);color:var(--ink)}
+/* ONE hierarchy: pri = filled (one per view), a plain .btn = outlined (secondary: it looks like a button, not like text),
+   .link and .icon = bare (tertiary), .danger = outlined in red. kit.js btn() draws all of them. */
+.btn{border:1px solid var(--line-2);background:var(--sheet)}
+.btn:hover{background:var(--hover);color:var(--ink);border-color:var(--ink-4)}
 .btn:active{background:var(--press)}
-.btn.pri{background:var(--btn);color:var(--btn-ink);padding:0 14px;font-weight:600}
-.btn.pri:hover{background:var(--btn-hover)}
-.btn.line{border:1px solid var(--line-2);background:var(--sheet)}
-.btn.line:hover{border-color:var(--ink-4)}
+.btn.pri{background:var(--btn);color:var(--btn-ink);padding:0 14px;font-weight:600;border-color:transparent}
+.btn.pri:hover{background:var(--btn-hover);border-color:transparent}
+.btn.icon,.btn.link{border-color:transparent;background:none}
+.btn.icon:hover{border-color:transparent;background:var(--hover)}
+.btn.danger{border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
 .btn.sm{height:26px;padding:0 8px;font-size:12.5px;border-radius:var(--r-sm)}
 .btn.icon{width:30px;padding:0}
 .btn.icon.sm{width:26px}
 .btn.danger{color:var(--bad)}
-.btn.link{height:auto;padding:0;color:var(--sig);font-weight:500}
+.btn.link{height:auto;padding:0;border:0;color:var(--sig);font-weight:500}
 .btn.link:hover{background:none;text-decoration:underline}
 .btn:disabled{opacity:.42;pointer-events:none}
 .btn[aria-disabled="true"]{opacity:.5;cursor:not-allowed}
@@ -247,7 +251,12 @@ tr.flash td{animation:flash 1.6s ease-out}   /* a row that has just appeared (a 
 .note.bad{background:var(--bad-soft);color:var(--ink)}
 .note.ok{background:var(--ok-soft);color:var(--ink)}
 .note:has(>.acts){align-items:center}   /* actions on the right sit level with the text, not below its first line */
+.note>span:not(.acts){flex:1;min-width:0}
 .note .acts{margin-left:auto}
+.note>.note-i{margin-top:1px;color:var(--ink-3)}
+.note.warn>.note-i{color:var(--warn)}
+.note.bad>.note-i{color:var(--bad)}
+.note.ok>.note-i{color:var(--ok)}
 /* a citation chip (core.js chip(), in the chat, Rules and Library): the document's name in mono, what was cited after it;
    a name that Sources does not list is red. It opens the document in the side sheet. */
 button.src{color:var(--sig);font-size:var(--t-sm);text-align:left;border-radius:3px;text-underline-offset:2px}

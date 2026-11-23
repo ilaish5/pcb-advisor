@@ -120,9 +120,9 @@ function libHTML(container) {
   const actions = btn(libBusy === 'prepare' ? 'Preparing...' : 'Prepare only', {act: 'libprepare', disabled: !!libBusy,
     title: 'Get and convert the models without touching Altium'}) +
     btn('Export', {size: 'sm', act: 'libexport', disabled: !!libBusy || !rows.length, title: 'Write a package of the library files to compile yourself'});
-  const note = libBusy === 'build' ? `<div class="note"><span>Building in Altium. It can take a few minutes and Altium may flash while it works.</span></div>`
-    : libNote ? `<div class="note ${libNote.tone}"><span>${esc(libNote.text)}</span>${/No Altium project is linked/.test(libNote.text)
-      ? `<span class="acts">${btn('Create an Altium project', {size: 'sm', act: 'altium-create', title: 'Altium makes the project, an empty PCB and one sheet per planned sheet, with no components'})}${btn('Link a project', {size: 'sm', act: 'pv-link'})}</span>` : ''}</div>` : '';
+  const note = libBusy === 'build' ? banner({tone: 'info', text: 'Building in Altium. It can take a few minutes and Altium may flash while it works.'})
+    : libNote ? banner({tone: libNote.tone, text: libNote.text, actions: /No Altium project is linked/.test(libNote.text)
+      ? btn('Create an Altium project', {size: 'sm', act: 'altium-create', title: 'Altium makes the project, an empty PCB and one sheet per planned sheet, with no components'}) + btn('Link a project', {size: 'sm', act: 'pv-link'}) : ''}) : '';
   const head = known ? '<th>Part</th><th>Source</th><th>Models</th><th>Status and what to do</th>' : '<th>Part</th><th>Models</th><th>Status</th>';
   const body = rows.length
     ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr>${head}<th><span class="sr">Action</span></th></tr></thead>
@@ -165,7 +165,7 @@ function sourcesHTML(container) {
   const primary = menu({label: 'Add', kind: 'pri', icon: 'plus', iconAfter: 'chev'}, [
     {label: 'Upload file', icon: 'upload', act: 'upload'}, {label: 'From URL', icon: 'ext', act: 'addurl'}]);
   const note = missing
-    ? `<div class="note warn"><span>${pgPl(missing, 'file')} missing. Run <code>${esc(PG_RESTORE)}</code>.</span><span class="acts">${btn('Copy', {size: 'sm', act: 'src-copy', title: 'Copy the command'})}</span></div>` : '';
+    ? banner({tone: 'warn', html: `${esc(pgPl(missing, 'file'))} missing. Run <code>${esc(PG_RESTORE)}</code>.`, actions: btn('Copy', {size: 'sm', act: 'src-copy', title: 'Copy the command'})}) : '';
   // a column that says the same thing on every row is left out: all PDFs need no Type, and no "used for" needs no column
   const cols = {type: shown.some(s => s.kind && s.kind !== 'PDF'), used: shown.some(s => s.used_for && s.used_for !== '—')};
   let body;
@@ -183,7 +183,7 @@ function srcAskHTML() {
   const isIc = l => !/^(R|C|L|D|LED|FB|Y|X|XTAL|J|P|H|TP|SW|F|FID|MH)\d/i.test(l.refs[0]);
   lines.sort((a, b) => isIc(b) - isIc(a));
   const opts = `<option value="">Which part is this for?</option>` + lines.map(l => `<option value="${esc(l.key)}">${esc(refsLabel(l.refs))} ${esc(l.mpn || l.value || '')}</option>`).join('');
-  return names.map(n => `<div class="note"><span><span class="m">${esc(n)}</span> is not linked to a part yet.</span><span class="acts"><select class="in quiet" data-attach-doc="${esc(n)}" aria-label="Part for ${esc(n)}">${opts}</select></span></div>`).join('');
+  return names.map(n => banner({tone: 'info', html: `<span class="m">${esc(n)}</span> is not linked to a part yet.`, actions: `<select class="in quiet" data-attach-doc="${esc(n)}" aria-label="Part for ${esc(n)}">${opts}</select>`})).join('');
 }
 onChange(t => t.dataset && t.dataset.attachDoc !== undefined, async e => {
   if (!e.target.value) return;
@@ -290,6 +290,14 @@ onAct('doctor-copy', async (el, d) => {
   try { await navigator.clipboard.writeText(d.cmd); toast('Copied'); } catch (err) { toast(d.cmd); }
 });
 
+/* The model is a choice from the engine's own list, with "Engine default" first (the engine picks; nothing to type). A name saved
+   earlier that the list lacks stays selectable as it is, so opening Settings never changes it. */
+function setModelSel(c, cur) {
+  const have = (c.agent && c.agent.model) || '', list = (cur && cur.models) || [];
+  const opts = [['', 'Engine default']].concat(list.map(m => [m.id, esc(m.name || m.id)]));
+  if (have && !list.some(m => m.id === have)) opts.push([have, esc(have) + ' (set earlier)']);
+  return setSel('set-model', 'data-set="agent.model" aria-label="Model"', opts, have);
+}
 function setAgentHTML(c) {
   const engines = c.engines || [];
   const cur = engines.find(e => e.active);
@@ -298,8 +306,7 @@ function setAgentHTML(c) {
   return setRow('Engine', setSel('set-provider', 'data-set="agent.provider"', opts, cur ? cur.id : c.engine), {id: 'set-provider'}) +
     (cur && !cur.available ? `<div class="set-hint warn-t">${esc(cur.title || cur.id)} can't run now${cur.reason ? ': ' + esc(cur.reason) : ''}.</div>` : '') +
     // the engine's own list as suggestions; any other name can still be typed
-    setRow('Model', `<input id="set-model" class="in" data-set="agent.model" list="set-model-list" value="${esc((c.agent && c.agent.model) || '')}" placeholder="Engine default" autocomplete="off">`
-      + `<datalist id="set-model-list">${((cur && cur.models) || []).map(m => `<option value="${esc(m.id)}">${esc(m.name || m.id)}</option>`).join('')}</datalist>`, {id: 'set-model'}) +
+    setRow('Model', setModelSel(c, cur), {id: 'set-model'}) +
     setRow('Approvals', setSel('set-autonomy', 'data-set="agent.autonomy"', [
       ['ask', 'Ask me for every change'],
       ['important', 'Ask for anything that changes the design or the build'],
@@ -321,7 +328,7 @@ function altLinkedHTML(a) {
   const abs = rel => (rel.includes(':') || rel.startsWith('/') || !prjDir) ? rel : prjDir + sepc + rel.replace(/[\\/]/g, sepc);
   const dotSep = '<span class="sep" aria-hidden="true">·</span>';
   let out = setRow('Project', `<span class="m set-prj" title="${esc(l.project_file)}">${esc(pgBase(l.project_file))}</span>${dotSep}${altLinkMenu(a, 'Change')}${dotSep}${btn('Unlink', {kind: 'link', act: 'altium-unlink'})}`, {saved: false});
-  if (!l.exists) return out + '<div class="set-hint"><div class="note warn"><span>The project file is not on this machine. Change the link or unlink it.</span></div></div>';
+  if (!l.exists) return out + '<div class="set-hint">' + banner({tone: 'warn', text: 'The project file is not on this machine. Change the link or unlink it.'}) + '</div>';
   if (sum.error) return out + `<div class="set-hint">${errorLine('read the project', sum.error)}</div>`;
 
   const pcbs = sum.pcbs || [];
@@ -337,7 +344,7 @@ function altLinkedHTML(a) {
   const sheets = (l.sheets && l.sheets.length) ? l.sheets : (sum.sheets || []).map(abs);
   if (sheets.length) out += setRow('Sheets', `<div class="set-links">${sheets.map(sh => `<button type="button" class="btn link m" data-altium-path="${esc(sh)}" title="${esc(sh)}">${esc(pgBase(sh))}</button>`).join('')}</div>`, {saved: false});
   const gone = sum.missing || [];
-  if (gone.length) out += `<div class="set-hint"><div class="note warn" title="${esc(gone.join('\n'))}"><span>${gone.length === 1 ? '1 document is' : gone.length + ' documents are'} missing: ${esc(gone.slice(0, 3).map(pgBase).join(', '))}${gone.length > 3 ? ` and ${gone.length - 3} more` : ''}</span></div></div>`;
+  if (gone.length) out += `<div class="set-hint">${banner({tone: 'warn', title: gone.join('\n'), text: `${gone.length === 1 ? '1 document is' : gone.length + ' documents are'} missing: ${gone.slice(0, 3).map(pgBase).join(', ')}${gone.length > 3 ? ` and ${gone.length - 3} more` : ''}`})}</div>`;
   return out;
 }
 function setAltiumHTML(c) {

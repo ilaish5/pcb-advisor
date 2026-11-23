@@ -50,7 +50,7 @@ CONNECTOR_OVERHANG_MM = 1.0   # a connector's body may stick out of the outline 
 _GND = re.compile(r"^(?:[ADPSEC]?GND\w*|VSS\w*|GROUND)$", re.I)
 _RAIL = re.compile(r"^[+-]\d|^\d+V\d*$|^(?:VCC|VDD|VBUS|VBAT|VIN|VSYS|VDDA|VCCA|AVDD|DVDD)\w*$", re.I)
 _Q = "[\"״”“'׳]{1,2}"
-_UNIT = rf"(?:mm|cm|ממ|מ{_Q}מ|ס{_Q}מ|סמ)"      # mm cm מ"מ ממ ס"מ סמ
+_UNIT = rf"(?:mm|cm|ממ|מ{_Q}מ|ס{_Q}מ|סמ|מילימטר(?:ים)?|סנטימטר(?:ים)?)"      # mm cm מ"מ ממ ס"מ סמ מילימטר סנטימטר
 _NUM = r"(\d+(?:[.,]\d+)?)"
 # "30x25", "30 X 25 mm", "30mm × 25mm", "30 על 25 מ\"מ", "3,5 by 2 cm": two numbers with a separator between them
 _SIZE = re.compile(rf"(?<![\w.,]){_NUM}\s*({_UNIT})?\s*(?:[xX×*]|\bby\b|על)\s*{_NUM}\s*({_UNIT})?(?![\w])", re.I)

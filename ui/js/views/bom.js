@@ -5,7 +5,6 @@
 const CODE_RISK = 'LCSC code is another part';    // store.CODE_RISK
 const BOM_EXPORTS = {jlc: 'BOM (JLC)', generic: 'BOM (generic)', pcbway: 'BOM (PCBWay)'};   // the names Outputs uses too
 const BOM_STALE_MS = 24 * 3600 * 1000;
-const BOM_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const BOM_SWAP = '<svg class="i" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4 3 8l4 4M3 8h13M17 20l4-4-4-4M21 16H8"/></svg>';
 let bomDrawer = null;       // the open drawer: {kind: 'alts' | 'compare' | 'import', ...}
 let bomDrawerProject = null;
@@ -32,8 +31,7 @@ const bomLinked = () => !!(impInfo && impInfo.linked);
 function bomStamp(at) {     // "2026-10-14 10:20" -> {text: '14 Oct 10:20', stale: older than 24 h}
   const d = new Date(String(at).replace(' ', 'T'));
   if (isNaN(d)) return {text: String(at), stale: false};
-  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  return {text: `${d.getDate()} ${BOM_MONTHS[d.getMonth()]} ${hm}`, stale: Date.now() - d.getTime() > BOM_STALE_MS};
+  return {text: whenText(at, true), stale: Date.now() - d.getTime() > BOM_STALE_MS};
 }
 /* The problems of one line, worst first. A line that is not fitted or not bought has none. Only a problem gets a tag:
    a healthy line has an empty cell. The library type (Basic, Preferred, Extended) is not a problem: it is in the
@@ -64,6 +62,14 @@ function bomTags(ps) {      // the worst problem; the others are counted, and na
   const rest = ps.slice(1);
   return tag(ps[0].text, ps[0].tone, ps[0].title) + (rest.length ? tag('+' + rest.length, '', `${rest.length} more problem${rest.length === 1 ? '' : 's'} on this line: ` + rest.map(p => p.text).join(', ') + '. Click the row to see them.') : '');
 }
+/* The JLC code and the part type are data of the line, so the table shows them (they were only in a tooltip): the code in mono,
+   then Basic / Preferred / Extended. Extended is the one that costs a fee, so it is the one that gets a tone. */
+const bomLibType = l => l.library_type || (l.supply && l.supply.LCSC && l.supply.LCSC.library_type) || '';
+function bomLcscCell(l) {
+  const code = (l.lcsc || '').trim(), lt = bomLibType(l);
+  if (!code && !lt) return '<span class="muted">·</span>';
+  return (code ? `<span class="m">${esc(code)}</span>` : '') + (lt ? ' ' + tag(lt, /^ext/i.test(lt) ? 'warn' : '', /^ext/i.test(lt) ? 'Extended part: JLC charges a fee for each type, once per order' : '') : '');
+}
 function bomRow(l) {
   const q = qty(l), b = best(l), refs = l.refs || [], label = refsLabel(refs);
   const real = v => (v && !/^[-–—\s]+$/.test(v)) ? v : '';        // "-" and an em dash stand for "none"
@@ -79,6 +85,7 @@ function bomRow(l) {
     <td class="bom-ref" title="${esc(refs.join(', '))}">${esc(label)}</td>
     <td class="c-part" title="${esc([l.description, mpn, maker, l.library_type].filter(Boolean).join(' · '))}"><span class="main">${esc(main)}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</td>
     <td class="c-pkg"><span class="clip" title="${esc(l.package)}">${esc(l.package)}</span></td>
+    <td class="c-lcsc">${bomLcscCell(l)}</td>
     <td class="num">${l.dnp ? 'DNP' : q || '—'}</td>
     <td class="num${noStock ? ' bad-t' : ''}"${b ? ` title="${esc(b.s)}"` : ''}>${stock}</td>
     <td class="num c-unit">${b && q ? money(b.price) : '—'}</td>
@@ -94,8 +101,8 @@ function bomHeader(t) {
     {n: t.parts, label: t.parts === 1 ? 'part' : 'parts', title: 'Parts to place, by quantity. Lines marked DNP are not counted.'},
     {n: cost > 0 ? money(cost) : '', label: (t.checking > 0 || t.in_stock < t.buy) && cost > 0 ? `per board (priced lines only: ${t.in_stock} of ${t.buy})` : 'per board',
       title: t.checking > 0 ? `${t.checking} line${t.checking === 1 ? ' has' : 's have'} no stock answer yet (checked in the background, or press Check stock), so this total is incomplete.` : t.in_stock < t.buy ? 'Lines with no in-stock offer are not in this total.' : ''},
-    fee > 0 && {always: true, label: `plus $${fee.toFixed(2)} extended fees`,
-      title: `Assumes $${CONFIG?.jlc?.extended_fee_usd || 3} for each Extended part type, once per order. The JLC quote has the real fee.`},
+    fee > 0 && {always: true, label: `plus ${money(fee)} extended fees`,
+      title: `Assumes ${money(CONFIG?.jlc?.extended_fee_usd ?? 3.07)} for each Extended part type, once per order. The JLC quote has the real fee.`},
     {n: t.checking, label: 'not checked', tone: 'warn', title: 'Lines with no stock answer yet'},
     {n: t.out_of_stock, label: 'out of stock', tone: 'bad', title: 'Lines no supplier has enough of'},
     {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model nobody has confirmed yet. Open the Library page and accept or fix each one.'},
@@ -117,11 +124,11 @@ function bomPendingBox(pend, cls) {
   return `<div class="bom-pend ${cls || ''}" data-pids="${esc(pend.map(p => p.id).join(','))}">${propListHTML(pend)}${propActsHTML(pend.map(p => p.id), true)}</div>`;
 }
 function bomPendingNote(pend) {
-  return pend.length ? `<div class="pv-note"><div class="note warn bom-pend-note" role="status"><span>${bomPl(pend.length, 'proposed change')} waiting for your approval.</span>${bomPendingBox(pend)}</div></div>` : '';
+  return pend.length ? `<div class="pv-note">${banner({tone: 'info', cls: 'bom-pend-note', html: `${esc(bomPl(pend.length, 'proposed change'))} waiting for your approval.${bomPendingBox(pend)}`})}</div>` : '';
 }
 function bomCountNote() {
   const c = S.bom_count_check;
-  return c && c.message ? `<div class="pv-note"><div class="note warn bom-count-note" role="status"><span>${esc(c.message)}</span></div></div>` : '';
+  return c && c.message ? `<div class="pv-note">${banner({tone: 'warn', cls: 'bom-count-note', text: c.message})}</div>` : '';
 }
 function bomFoot() {
   const at = checkedAt(), st = at ? bomStamp(at) : null;
@@ -142,7 +149,7 @@ function bomHTML(container) {
     body = emptyState('No parts yet', bomLinked() ? 'Import the BOM you exported from Altium, or describe your idea in the chat.' : 'Describe your idea in the chat and the agent will propose parts.',
       bomLinked() ? btn('Import from Altium', {kind: 'pri', act: 'imp-open'}) : '');
   } else {
-    body = `<div class="bom-scroll"><table class="tbl rows bom-tbl"><thead><tr><th>Ref</th><th class="c-part">Part</th><th class="c-pkg">Package</th>
+    body = `<div class="bom-scroll"><table class="tbl rows bom-tbl"><thead><tr><th>Ref</th><th class="c-part">Part</th><th class="c-pkg">Package</th><th class="c-lcsc" title="JLC part code and type (Basic, Preferred, Extended)">LCSC</th>
       <th class="num">Qty</th><th class="num">Stock</th><th class="num c-unit" title="Cheapest offer with enough stock, at qty 10">Unit</th><th class="num">Per board</th>
       <th><span class="sr">Problems</span></th><th><span class="sr">Actions</span></th></tr></thead>
       <tbody>${lines().map(bomRow).join('')}</tbody></table></div>${bomFoot()}`;

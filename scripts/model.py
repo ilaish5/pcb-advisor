@@ -233,6 +233,7 @@ def build(project=None, session=None):
     meta = project_mod.load_meta(project)
     sess = session_mod.current(project, session)
     idea = store.load_idea_working(project)       # the draft when there is one; stages downstream read the saved idea
+    idea = store.board_from_text(dict(idea))      # the Board size fields show the size the idea's text states at once, not only after a Save
     lines = store.bom(project)
     tot = store.totals(lines)
     props = store.proposals(project)

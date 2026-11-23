@@ -2,7 +2,6 @@
    and the actions that write them. The BOM export itself is the `export` act in bom.js (one handler, one toast).
    Names here start with out* because every ui/js file shares one global scope. */
 
-const OUT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const OUT_NEW_MS = 12000;                     // a file written this recently flashes once when it shows up
 const OUT_OUTJOB = 'The OutJob makes Gerber RS-274X, NC drill, BOM, pick and place (CPL) and a schematic PDF.';
 
@@ -36,7 +35,7 @@ function outBlockNote() {
   const acts = (items.length ? btn(`Mark all ${items.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks every one of these pins no-connect in the netlist (a No ERC cross when drawn). Connect any pin that is not meant to be NC first.'}) : '')
     + btn(g.page === 'sch' ? 'Open Schematic' : 'Open DFM', {kind: 'link', page: g.page === 'sch' ? 'sch' : 'checks'});
   const list = items.length ? `<details class="pv-more"><summary>Show the ${items.length} ${items.length === 1 ? 'pin' : 'pins'}</summary><ul>${items.map(outGapRow).join('')}</ul></details>` : '';
-  return `<div class="note warn" role="status"><span>${esc(g.why)}${list}</span><span class="acts">${acts}</span></div>`;
+  return banner({tone: 'warn', html: `${esc(g.why)}${list}`, actions: acts});
 }
 onAct('nc-mark-all', async () => {
   const r = await api('/api/nc/mark', {}, {soft: true});
@@ -63,8 +62,7 @@ function outAgo(iso) {                        // "just now", "5 min ago", "2 h a
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   if (s < 7 * 86400) return `${Math.round(s / 86400)} days ago`;
-  const d = new Date(t);
-  return `${d.getDate()} ${OUT_MONTHS[d.getMonth()]}`;
+  return whenText(new Date(t).toISOString());
 }
 const outFull = iso => (iso || '').replace('T', ' ').slice(0, 16);
 const outUrl = name => `/api/export/${encodeURIComponent(name)}?${q()}`;
@@ -224,10 +222,10 @@ async function outLoadAlt() {
 function outAltHTML() {
   if (outAltFor !== PROJECT) { OUT_ALT = null; outAltNote = null; }
   if (OUT_ALT === null && outAltFor !== PROJECT) outLoadAlt();
-  const note = outAltNote ? `<div class="note ${outAltNote.bad ? 'bad' : 'ok'}" role="${outAltNote.bad ? 'alert' : 'status'}"><span>${esc(outAltNote.text)}</span></div>` : '';
+  const note = outAltNote ? banner({tone: outAltNote.bad ? 'bad' : 'ok', text: outAltNote.text}) : '';
   const a = OUT_ALT;
   if (!a || !a.files) return note;
-  const rows = a.folders.map(f => `<tr><td class="out-n">${esc(f.folder)}</td><td class="num">${f.files}</td><td class="muted" title="${esc(outFull(f.newest))}"><time datetime="${esc(f.newest)}" data-ago>${esc(outAgo(f.newest))}</time></td></tr>`).join('');
+  const rows = a.folders.map(f => `<tr><td class="out-n">${esc(f.folder === '.' ? 'Outputs folder (top level)' : f.folder)}</td><td class="num">${f.files}</td><td class="muted" title="${esc(outFull(f.newest))}"><time datetime="${esc(f.newest)}" data-ago>${esc(outAgo(f.newest))}</time></td></tr>`).join('');
   return note + `<section class="sec"><div class="sec-h"><h2>In Altium's outputs folder</h2><div class="meta"><span><b>${a.files}</b> ${a.files === 1 ? 'file' : 'files'}</span><span title="${esc(outFull(a.newest))}">newest ${esc(outAgo(a.newest))}</span></div></div>
     <p class="muted out-root">${(a.roots && a.roots.length ? a.roots : [a.root]).map(esc).join('<br>')}</p>
     <table class="tbl rows out-tbl"><thead><tr><th>Folder</th><th class="num">Files</th><th>Newest</th></tr></thead><tbody>${rows}</tbody></table></section>`;
@@ -238,17 +236,18 @@ function outLimits(linked) {                  // only the reasons that are true 
   if (typeof dfmUnverified === 'function' && dfmUnverified().length) r.push("The Altium outputs and the Gerber zip are refused while a part's pins are unverified (see above).");
   return r.join(' ');
 }
+const outPinRisks = () => (typeof pinRisksHTML === 'function' ? `<div class="vb out-risks">${pinRisksHTML()}</div>` : '').replace('<div class="vb out-risks"></div>', '');       // the accepted pin risks stay in view where the files are made
 function outputsHTML(container) {
   const files = S.exports || [];
   const alt = outAltHTML();
   if (!files.length) {
     const linked = outLinked();
-    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinRisks() + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
       outLimits(linked));
   }
   const showTimes = files.some(f => f.modified), showLin = files.some(f => f.lineage);
-  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
+  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinRisks()}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
     <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}</tbody></table>${alt}</div>`;
 }
 

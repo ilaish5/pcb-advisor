@@ -55,9 +55,7 @@ function inspectorHTML() {
 
 /* ---------- small pieces ---------- */
 function inspWhen(iso) {
-  const d = new Date(iso);
-  if (isNaN(d)) return '';
-  return d.toLocaleString('en-GB', {day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false}).replace(',', '');
+  return isNaN(new Date(iso)) ? '' : whenText(iso, true);
 }
 const inspPl = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
 function inspSec(title, body, actions, id) {
@@ -227,7 +225,7 @@ function inspPartHTML(l) {
   return `<div class="insp" data-kind="part" data-k="${esc(l.key)}" data-dyn="1">` +
     inspHead(refsLabel(refs) || l.key, sub, acts) +
     `<div class="drawer-b">` +
-    `<div>${kv([field('mpn', 'MPN', l.mpn, 'MPN', true), field('role', 'Role', l.role, 'Add a role'), field('note', 'Note', l.note, 'Add a note'), ['CPL rotation', Number(l.cpl_rotation) ? `+${l.cpl_rotation}° added in the CPL` : null]])}` +
+    `<div>${kv([field('mpn', 'MPN', l.mpn, 'MPN', true), field('role', 'Role', l.role, 'Add a role'), field('note', 'Note', l.note, 'Add a note'), ['LCSC', l.lcsc ? l.lcsc + (bomLibType(l) ? ' · ' + bomLibType(l) : '') : null], ['CPL rotation', Number(l.cpl_rotation) ? `+${l.cpl_rotation}° added in the CPL` : null]])}` +
     `${inspDesc(l) ? `<p class="insp-desc">${esc(inspDesc(l))}</p>` : ''}</div>` +
     `<div id="insp-where-h">${dyn.where}</div><div id="insp-nets-h">${dyn.nets}</div>` +
     inspStockHTML(l) + inspLibHTML(l) + inspDatasheetHTML(l) + (typeof pinsInspHTML === 'function' ? pinsInspHTML(l) : '') +
