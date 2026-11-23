@@ -98,7 +98,10 @@ per supply net: tell the student which nets were drawn narrower than wanted or a
   for the stack-up and compute the width in `rules-and-calcs`.
 
 ## Physical constraints
-Mounting holes (M3: 3.2 mm, 3.5 mm in from the corners), a part that must sit at an edge, a distance between a heat source and a sensor (SHT40 away from the module and regulator), a keep-out under an antenna: propose each with `idea.constrain` instead of only writing it in the plan. Antenna module: edge, antenna facing out, no copper under it.
+Mounting holes (M3: 3.2 mm, 3.5 mm in from the corners),
+a part that must sit at an edge, a distance between a heat source and a sensor (SHT40 away from the module and regulator),
+a keep-out under an antenna: propose each with `idea.constrain` instead of only writing it in the plan.
+Antenna module: edge, antenna facing out, no copper under it.
 
 ## Output
 - The picture path (top view), then the plan in the order the student will do it, one line per zone or anchor: what goes

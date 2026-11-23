@@ -274,14 +274,20 @@ def quality(text):
             "score": 0 if state == "none" else (0.3 if state == "poor" else 1.0)}
 
 
+def _quality_path(path):
+    """Where a document's text quality is kept: <doc>.quality.txt beside the extracted text. Derived data, so it is never
+    in the tracked .json sidecar (the sidecars of general sources must stay byte-identical on every machine); a .txt is
+    untracked and skipped by every document list."""
+    return path.with_suffix(path.suffix + ".quality.txt")
+
+
 def _record_quality(path):
-    """Write text_quality into a document's sidecar the first time it is read (fetch, upload, adopt). Never rewrites a sidecar that has it."""
-    meta = _read_meta(path)
-    if not meta or "text_quality" in meta or path.suffix.lower() != ".pdf":
+    """Write the text quality of a PDF beside it the first time it is read (fetch, upload, adopt). Never rewrites one."""
+    qp = _quality_path(path)
+    if path.suffix.lower() != ".pdf" or qp.exists():
         return
     try:
-        meta["text_quality"] = quality(text_of(path.name, path.parent))
-        _meta_path(path).write_bytes((json.dumps(meta, indent=2) + "\n").encode("utf-8"))
+        qp.write_bytes((json.dumps(quality(text_of(path.name, path.parent)), indent=2) + "\n").encode("utf-8"))
     except Exception:
         pass            # a document nobody can read keeps no record; the list says "not read"
 
@@ -290,13 +296,18 @@ _quality_memo = {}
 
 
 def text_state(path):
-    """not_read | good | poor | none for a document of the list: from its sidecar, else from the text cached beside it. A PDF is
+    """not_read | good | poor | none for a document of the list: from its quality record, else from the text cached beside it. A PDF is
     never extracted here (the list is polled): one with neither is "not_read"."""
     if path.suffix.lower() != ".pdf":
         return "good" if path.suffix.lower() in (".md", ".txt") else "not_read"
-    q = _read_meta(path).get("text_quality")
-    if isinstance(q, dict) and q.get("state"):
-        return q["state"]
+    qp = _quality_path(path)
+    if qp.exists():
+        try:
+            q = json.loads(qp.read_text(encoding="utf-8"))
+            if isinstance(q, dict) and q.get("state"):
+                return q["state"]
+        except (OSError, ValueError):
+            pass
     txt = path.with_suffix(path.suffix + ".txt")
     if not txt.exists():
         return "not_read"
@@ -531,7 +542,7 @@ def unuse(project, name):
     where it came from."""
     target = workspace.project_dir(project) / "sources" / _safe(name)
     removed = []
-    for p in (target, _meta_path(target), target.with_suffix(target.suffix + ".txt")):
+    for p in (target, _meta_path(target), target.with_suffix(target.suffix + ".txt"), _quality_path(target)):
         if p.exists():
             p.unlink()
             removed.append(p.name)

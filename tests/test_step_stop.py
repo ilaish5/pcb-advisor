@@ -224,10 +224,12 @@ def test_outputs_primary_is_the_altium_route_and_the_outjob_is_secondary():
 def test_the_generate_buttons_are_disabled_with_the_reason_while_pins_are_unverified():
     outputs = (REPO / "ui" / "js" / "views" / "outputs.js").read_text(encoding="utf-8")
     checks = (REPO / "ui" / "js" / "views" / "checks.js").read_text(encoding="utf-8")
-    why = outputs[outputs.index("function outBlockWhy"):outputs.index("function outBlockNote")]
-    assert "dfmUnverified()" in why and "DFM > Unverified parts" in why             # the same parts the DFM page lists; no server call, no verify
-    assert "api(" not in why
-    assert "page: 'checks'" in outputs[outputs.index("function outBlockNote"):][:400]      # the link to DFM
+    gate = outputs[outputs.index("function outGate"):outputs.index("function outGapItems")]
+    assert "stageOf('outputs')" in gate and "st.gate.blocked" in gate and "g.why" in gate      # the server's one gate (manufacturing_warning via stages): its text is the reason
+    assert "await" not in gate and "fetch" not in gate                                            # read from the loaded stages: no server call per render
+    assert "page: g.page === 'sch' ? 'sch' : 'checks'" in outputs[outputs.index("function outBlockNote"):][:1200]      # the link to Schematic or DFM
+    stages = (REPO / "scripts" / "stages.py").read_text(encoding="utf-8")
+    assert "store.manufacturing_warning(project)" in stages[stages.index("def outputs_stage"):][:400]
     alt = outputs[outputs.index("function outAltiumBtn"):outputs.index("const outOutjobBtn")]
     assert "disabled: !!why" in alt and "title: why" in alt
     items = outputs[outputs.index("const outExportItems"):]
