@@ -42,6 +42,7 @@ from typing import Any
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO / "scripts"))
 import oscompat  # noqa: E402
+import pinnames  # noqa: E402
 from altium.pcbdoc import pad_net_map, read_pcbdoc  # noqa: E402
 from altium.prjpcb import read_prjpcb  # noqa: E402
 from altium.schdoc import read_schdoc  # noqa: E402
@@ -469,7 +470,7 @@ def _board_findings(cmp: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-_NC_NETS = ("NC", "N/C", "NO_ERC")
+_NC_NETS = pinnames.NC_NETS
 _PIN_TOKEN_RE = re.compile(r"[A-Za-z]+\d+")
 
 
@@ -687,7 +688,7 @@ def build_netlist_sheets_netlist(sheets: list[dict]) -> dict[str, Any]:
                 num = str(pin.get("num") or pin.get("number") or pin.get("name") or "")
                 tag = f"{ref}-{num}"
                 net = str(pin.get("net") or "").strip()
-                nc = net.upper() in ("NC", "N/C", "NO_ERC")
+                nc = pinnames.is_nc_net(net)
                 if not net or nc:
                     net = f"Net{ref}_{num}"
                     auto_nets.append(net)

@@ -8,8 +8,9 @@
 
 The basis is worked out here, never asked for: a datasheet page the student looked at is "datasheet_page", a diode/LED
 without one "polarity", anything else "blind". The decision stands only while the part's pin fingerprint is the one it was
-made against (pins, nets, MPN, package, LCSC code): change a net or the MPN and the part asks again, with the reason
-"accepted on <date>, pins changed since". A legacy `pins_accepted: true` is grandfathered: it is stamped once with the
+made against (the wired pins by number and name, MPN, package, LCSC code; for a diode / LED also the net names of its two
+pins, so swapping anode and cathode asks again): rename a pin, change the MPN or wire a pin that was open and the part asks
+again, with the reason "accepted on <date>, pins changed since". Moving a pin to another net does not (except for D / LED). A legacy `pins_accepted: true` is grandfathered: it is stamped once with the
 current fingerprint (basis "legacy") and then follows the same rule.
 
 The agent can never write any of this (serve._agent_may_set_library drops every key but a few); the routes below are the
@@ -22,6 +23,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import ext  # noqa: E402
 import lineage  # noqa: E402
+import pinnames  # noqa: E402
 import store  # noqa: E402
 
 BASES = ("datasheet_page", "polarity", "blind", "legacy")
@@ -39,18 +41,25 @@ def fingerprint(project, line):
     """What a pin decision was made about: sorted (ref, number, name) of the line's parts on the sheets, plus the MPN,
     the package and the declared LCSC code. Never the whole part dict (a drawn position or a note must not undo a decision).
     Only wired pins count, and only by number and name: the decision is about which number is which pin where it matters.
-    Moving a pin to another net keeps it; marking open pins NC (or adding a built symbol's unlisted pins as NC) keeps it;
-    wiring a pin that was open or NC, or unwiring one, is a change."""
+    Moving a pin to another net keeps it; marking open pins NC (any no-connect spelling, pinnames.is_nc_net) or adding a built
+    symbol's unlisted pins as NC keeps it; wiring a pin that was open or NC, or unwiring one, is a change.
+    One exception: a diode / LED is decided on polarity and its pins are often named just "1" / "2", so the net names of its
+    pins are part of the fingerprint: swapping anode and cathode nets asks again."""
     line = _line(project, line)
     refs = set(line.get("refs") or [])
-    rows = []
+    rows, nets = [], []
     for sh in store.sheet_ids(project):
         for part in store.load_sheet(project, sh).get("parts", []):
             if part.get("ref") in refs:
-                rows += [[part["ref"], str(p.get("num", p.get("number", ""))), str(p.get("name") or "")]
-                         for p in part.get("pins", []) if str(p.get("net") or "").strip().upper() not in ("", "NC")]
-    return lineage._digest({"pins": sorted(rows), "mpn": line.get("mpn") or "", "package": line.get("package") or "",
-                            "lcsc": line.get("lcsc") or ""})
+                for p in part.get("pins", []):
+                    net = str(p.get("net") or "").strip()
+                    if net and not pinnames.is_nc_net(net):
+                        rows.append([part["ref"], str(p.get("num", p.get("number", ""))), str(p.get("name") or "")])
+                    nets.append([part["ref"], str(p.get("num", p.get("number", ""))), "" if pinnames.is_nc_net(net) else net.upper()])
+    doc = {"pins": sorted(rows), "mpn": line.get("mpn") or "", "package": line.get("package") or "", "lcsc": line.get("lcsc") or ""}
+    if store._polarised_only(line):
+        doc["polarity_nets"] = sorted(nets)
+    return lineage._digest(doc)
 
 
 def state(project, line, entry):
