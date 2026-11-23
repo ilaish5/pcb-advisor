@@ -18,6 +18,7 @@ function initialMain() {
   try {
     const p = await (await fetch('/api/projects')).json();
     PROJECTS = p.projects || [];
+    PROJECTS_ARCHIVED = p.archive || [];
     if (!PROJECT) PROJECT = p.default || (PROJECTS[0] && PROJECTS[0].name) || 'demo';
     const st = await api('/api/state'); setState(st);
     const [sk, cfg] = await Promise.all([api('/api/skills', undefined, {soft: true}), api('/api/config', undefined, {soft: true})]);

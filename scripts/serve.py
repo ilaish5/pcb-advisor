@@ -1737,6 +1737,24 @@ def _uses_altium(kind):
     return isinstance(kind, str) and (kind.startswith("altium.") or kind == "library.build")
 
 
+def _project_busy(name):
+    """A chat turn of that project is answering, or an Altium step runs: its folder must not be moved (delete and archive share this)."""
+    with TURNS_LOCK:
+        answering = any(k[0] == name for k in TURNS)
+    return answering or STEP_LOCK.locked()
+
+
+def ask_of(actions):
+    """The yes/no question the agent put to the student this turn, from its structured chat.ask action: {question, yes, no} or None.
+    Nothing is read out of the reply text; the chat shows the two answers as one-click buttons while the question is unanswered."""
+    for a in actions or []:
+        if isinstance(a, dict) and a.get("type") == "chat.ask" and str(a.get("question") or "").strip():
+            def clip(v, d):
+                return str(v).strip()[:80] if isinstance(v, str) and v.strip() else d
+            return {"question": str(a["question"]).strip()[:300], "yes": clip(a.get("yes"), "Yes"), "no": clip(a.get("no"), "No")}
+    return None
+
+
 def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, allow_auto=True,
                   fixables=None):
     """The server is the only writer: see _apply_actions. A turn whose actions drive Altium holds STEP_LOCK while they run; when
@@ -1825,6 +1843,8 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append("idea.ready")
             elif kind == "idea.ready":
                 applied.append("idea.ready")
+            elif kind == "chat.ask":
+                pass                    # no change to the project: the turn record carries it as 'ask' (the chat's one-click answers)
             elif kind == "bom.propose" and a.get("line") and isinstance(a.get("changes"), dict):
                 rec = store.propose_bom(project, a["line"], a["changes"], a.get("reason", ""),
                                         a.get("sources", []), _agent_may_set_library(a.get("library")) or None,
@@ -2889,7 +2909,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/ui/"):
             return self._send_ui_static(path[len("/ui/"):])
         if path == "/api/projects":
-            return self._send(200, {"projects": model.list_projects(),
+            return self._send(200, {"projects": model.list_projects(), "archive": project_mod.list_archived(),
                                     "default": DEFAULT_PROJECT or workspace.default_project()})
         if path == "/api/state":
             proj = self.project()
@@ -3476,6 +3496,8 @@ class Handler(BaseHTTPRequestHandler):
                     rec["warned"] = warned_map(applied)
                 if refused:
                     rec["refused"] = refused
+                if not partial and not res.get("error") and ask_of(res.get("actions")):
+                    rec["ask"] = ask_of(res.get("actions"))
                 if res.get("error"):
                     rec["error"] = True       # the engine did not answer: the chat offers Retry instead of showing this as a reply
                 if chat_meta.get("diagram_touched"):
@@ -4153,9 +4175,7 @@ class Handler(BaseHTTPRequestHandler):
             proj_dir = model.project_dir(name)
             if not proj_dir.is_dir():
                 return self._send(404, {"error": f"no such project: {name}"})
-            with TURNS_LOCK:
-                answering = any(k[0] == name for k in TURNS)
-            if answering or STEP_LOCK.locked():       # a turn or an Altium step may be writing into that folder right now
+            if _project_busy(name):       # a turn or an Altium step may be writing into that folder right now
                 return self._send(409, {"error": "The project is busy (the agent is answering or Altium is running a step). Delete it when that has finished."})
             trash = proj_dir.parent / ".trash"        # not removed: moved aside (list_all skips dot-folders), so a mistake can be undone by hand
             trash.mkdir(exist_ok=True)
@@ -4163,6 +4183,31 @@ class Handler(BaseHTTPRequestHandler):
             projects = model.list_projects()
             default = projects[0]["name"] if projects else "demo"
             return self._send(200, {"deleted": name, "projects": projects, "default": default})
+
+        if path == "/api/projects/archive":       # reversible: the folder moves to projects/.archive (no confirmation needed)
+            name = _text_field(data, "name")
+            if not name:
+                return self._send(400, {"error": "name required"})
+            if not model.project_dir(name).is_dir():
+                return self._send(404, {"error": f"no such project: {name}"})
+            if _project_busy(name):
+                return self._send(409, {"error": "The project is busy (the agent is answering or Altium is running a step). Archive it when that has finished."})
+            project_mod.move_to_archive(name)
+            projects = model.list_projects()
+            return self._send(200, {"archived": name, "projects": projects, "archive": project_mod.list_archived(),
+                                    "default": projects[0]["name"] if projects else "demo"})
+
+        if path == "/api/projects/unarchive":
+            name = _text_field(data, "name")
+            if not name:
+                return self._send(400, {"error": "name required"})
+            try:
+                restored = project_mod.restore_from_archive(name)
+            except FileNotFoundError:
+                return self._send(404, {"error": f"no such archived project: {name}"})
+            except FileExistsError:
+                return self._send(409, {"error": f"A project named \"{name}\" already exists. Rename or archive that one first."})
+            return self._send(200, {"restored": restored, "projects": model.list_projects(), "archive": project_mod.list_archived()})
 
         if path == "/api/project/meta":
             meta = project_mod.load_meta(proj)

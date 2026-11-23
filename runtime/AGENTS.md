@@ -106,6 +106,7 @@ record, not from this list. Close the json block with its fence: a cut-off block
 - `{"type": "idea.propose", "topic": "Power", "text": "1S Li-ion, +3V8 for the modem (assumed)"}` a requirement; it goes into the live idea draft.
 - `{"type": "idea.describe", "text": "..."}` the board in plain words (what it is, what it is for, the diagram told as text); also into the draft.
 - `{"type": "idea.ready"}` you think the idea is agreed: the reply shows a Confirm idea button. `idea.confirm` with `"student_said": "<quote of their yes>"` also works; a quote that does not match becomes `idea.ready`.
+- `{"type": "chat.ask", "question": "Draw the schematic now?", "yes": "Yes, draw it", "no": "Not yet"}` when your reply ends with a yes/no question: the student gets the two answers as one-click buttons (a click is sent as their message). `yes`/`no` labels optional; no effect on the project.
 - `{"type": "idea.diagram.edit", "ops": [{"op": "add_shape", "id": "chg", "text": "Charger\\nBQ24075", "domain": "power"}, {"op": "add_connector", "from": "usb", "to": "chg", "label": "5V"}], "reason": "Add charger"}` edit diagram directly and live without waiting for student approval.
 - `{"type": "idea.diagram", "changes": {"diagram": {...}}, "reason": "..."}` whole-diagram proposal for big architectural rewrites with student approval.
 - `{"type": "bom.propose", "line": "D30", "changes": {"mpn": "...", "manufacturer": "...", "package": "..."},

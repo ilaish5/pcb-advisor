@@ -142,6 +142,10 @@ p{margin:0}
 .menu button[aria-checked="true"]::after{content:"";margin-left:auto;width:8px;height:8px;border-radius:50%;background:var(--ink)}
 .menu .d{margin-left:auto;font-size:12px;color:var(--ink-3)}
 .menu .danger{color:var(--bad)}
+.menu-search{display:block;width:calc(100% - 8px);margin:2px 4px 6px;min-height:30px;padding:4px 10px;border:1px solid var(--line-2);border-radius:6px;background:var(--sheet);color:var(--ink);font:inherit}
+.menu-search:focus{outline:2px solid var(--ink-4);outline-offset:-1px}
+.menu details.arch>summary{padding:6px 10px;font-size:var(--t-xs);color:var(--ink-3);cursor:pointer;list-style-position:inside}
+.menu button[hidden],.menu details[hidden]{display:none}
 .menu hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
 .menu .lbl{padding:6px 10px 2px;font-size:var(--t-xs);color:var(--ink-3)}
 @keyframes pop{from{opacity:0;transform:translateY(-3px) scale(.98)}to{opacity:1;transform:none}}

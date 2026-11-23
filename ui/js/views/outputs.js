@@ -181,13 +181,13 @@ function outAltiumBtn(primary) {
   return pvStepBtn('outputs', {kind: primary ? 'pri' : 'line', disabled: !!why, title: why || undefined});
 }
 const outOutjobBtn = primary => btn('Generate OutJob', {kind: primary ? 'pri' : 'line', act: 'gen-outjob', title: OUT_OUTJOB + ' Copy it into your Altium project folder.'});
-function outHeader(files) {
-  if (!files.length) return viewHeader({title: 'Outputs'});
+function outHeader(files, hasAlt) {
+  if (!files.length && !hasAlt) return viewHeader({title: 'Outputs'});
   const linked = outLinked();
   const actions = (linked ? outOutjobBtn(false) : '') + menu({label: 'Export', iconAfter: 'chev'}, outExportItems());
   const primary = linked ? outAltiumBtn(true) : outOutjobBtn(true);
   const old = outOld(files).length;
-  const meta = metaLine([{n: files.length, label: files.length === 1 ? 'file' : 'files'}, {label: 'in exports/', always: true},
+  const meta = metaLine([...(files.length ? [{n: files.length, label: files.length === 1 ? 'file' : 'files'}, {label: 'in exports/', always: true}] : []),
     {n: old, label: 'out of date', tone: 'warn', title: 'Made from a design that has changed since, or edited by hand: export again before ordering'}]);
   return viewHeader({title: 'Outputs', meta, actions, primary});
 }
@@ -219,16 +219,31 @@ async function outLoadAlt() {
   OUT_ALT = r && !r.error ? r : {root: '', folders: [], files: 0, newest: ''};
   if (mainView() === 'outputs' || sideView() === 'outputs') renderCenter(true);
 }
-function outAltHTML() {
+/* ONE list: the files in exports/ and Altium's own output folders are rows of the same table. A folder row says where it is
+   ("In Altium's outputs folder") in the status column, the file count in the size column; the top-level folder is not called ".". */
+function outAltState() {
   if (outAltFor !== PROJECT) { OUT_ALT = null; outAltNote = null; }
   if (OUT_ALT === null && outAltFor !== PROJECT) outLoadAlt();
-  const note = outAltNote ? banner({tone: outAltNote.bad ? 'bad' : 'ok', text: outAltNote.text}) : '';
-  const a = OUT_ALT;
-  if (!a || !a.files) return note;
-  const rows = a.folders.map(f => `<tr><td class="out-n">${esc(f.folder === '.' ? 'Outputs folder (top level)' : f.folder)}</td><td class="num">${f.files}</td><td class="muted" title="${esc(outFull(f.newest))}"><time datetime="${esc(f.newest)}" data-ago>${esc(outAgo(f.newest))}</time></td></tr>`).join('');
-  return note + `<section class="sec"><div class="sec-h"><h2>In Altium's outputs folder</h2><div class="meta"><span><b>${a.files}</b> ${a.files === 1 ? 'file' : 'files'}</span><span title="${esc(outFull(a.newest))}">newest ${esc(outAgo(a.newest))}</span></div></div>
-    <p class="muted out-root">${(a.roots && a.roots.length ? a.roots : [a.root]).map(esc).join('<br>')}</p>
-    <table class="tbl rows out-tbl"><thead><tr><th>Folder</th><th class="num">Files</th><th>Newest</th></tr></thead><tbody>${rows}</tbody></table></section>`;
+  return OUT_ALT && OUT_ALT.files ? OUT_ALT : null;
+}
+function outAltNoteHTML(files) {
+  // the zip note is about the last run; once a file in the list is out of date it would sit next to "Out of date" and contradict it
+  return outAltNote && !outOld(files || []).length ? banner({tone: outAltNote.bad ? 'bad' : 'ok', text: outAltNote.text}) : '';
+}
+function outAltRows(a, showTimes, showLin) {
+  if (!a) return '';
+  return a.folders.map(f => {
+    const name = f.folder === '.' ? 'Altium outputs (top level)' : f.folder;
+    return `<tr class="out-alt" data-folder="${esc(f.folder)}"><td class="out-n">${esc(name)}</td>`
+      + (showTimes ? `<td class="muted c-mod" title="${esc(outFull(f.newest))}"><time datetime="${esc(f.newest)}" data-ago>${esc(outAgo(f.newest))}</time></td>` : '')
+      + (showLin ? `<td class="c-lin">${tag("In Altium's outputs folder", '', (a.roots && a.roots.length ? a.roots : [a.root]).join('\n'))}</td>` : '')
+      + `<td class="num">${f.files} ${f.files === 1 ? 'file' : 'files'}</td><td></td></tr>`;
+  }).join('');
+}
+function outTable(files, a, timed) {
+  const showTimes = timed || !!a, showLin = files.some(f => f.lineage) || !!a;
+  return `<table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
+    <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}${outAltRows(a, showTimes, showLin)}</tbody></table>`;
 }
 function outLimits(linked) {                  // only the reasons that are true now: no Altium project linked, unverified pins
   const r = [];
@@ -239,16 +254,17 @@ function outLimits(linked) {                  // only the reasons that are true 
 const outPinRisks = () => (typeof pinRisksHTML === 'function' ? `<div class="vb out-risks">${pinRisksHTML()}</div>` : '').replace('<div class="vb out-risks"></div>', '');       // the accepted pin risks stay in view where the files are made
 function outputsHTML(container) {
   const files = S.exports || [];
-  const alt = outAltHTML();
+  const a = outAltState(), note = outAltNoteHTML(files);
+  if (!files.length && a) {
+    return outHeader([], true) + pvStepNote('outputs') + outBlockNote() + outPinRisks() + `<div class="vb">${note}${outTable([], a)}</div>`;
+  }
   if (!files.length) {
     const linked = outLinked();
-    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinRisks() + (alt ? `<div class="vb">${alt}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinRisks() + (note ? `<div class="vb">${note}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
       outLimits(linked));
   }
-  const showTimes = files.some(f => f.modified), showLin = files.some(f => f.lineage);
-  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinRisks()}<div class="vb"><table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
-    <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}</tbody></table>${alt}</div>`;
+  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinRisks()}<div class="vb">${note}${outTable(files, a, files.some(f => f.modified))}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
