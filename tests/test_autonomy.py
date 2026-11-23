@@ -256,7 +256,9 @@ def test_batch_endpoint_applies_in_order_and_reports_each(server, lte):
     assert [r["ok"] for r in st["results"]] == [True, True, True, False]
     assert all(any(x["key"] == f"R8{i}" for x in store.bom_lines(lte)) for i in range(3))
     _, st = post(server, "/api/proposals/batch", {"ids": ids[:1], "decision": "approved"}, lte)
-    assert st["results"][0]["ok"] is False and "already" in st["results"][0]["error"]
+    assert st["results"][0]["ok"] is True and st["results"][0]["already"] is True       # the same decision again is a no-op, not a failure
+    _, st = post(server, "/api/proposals/batch", {"ids": ids[:1], "decision": "rejected"}, lte)
+    assert st["results"][0]["ok"] is False and "already" in st["results"][0]["error"]       # the opposite one still fails
     assert post(server, "/api/proposals/batch", {"ids": [], "decision": "approved"}, lte)[0] == 400
     rid = store.propose_bom(lte, "R85", {"value": "5k"}, new=True)["id"]
     _, st = post(server, "/api/proposals/batch", {"ids": [rid], "decision": "rejected"}, lte)

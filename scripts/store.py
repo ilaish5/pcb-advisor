@@ -1163,15 +1163,29 @@ def _lock_keeps_library(project, line, lock):
     return partlib_order.swap_keeps_library(project, line, lock)
 
 
+_DECIDE_LOCKS, _DECIDE_LOCKS_GUARD = {}, threading.Lock()
+
+
 def decide(project, pid, decision, by="student"):
     """Approve or reject. Approving appends to bom-log.jsonl (and library-log.jsonl) - that is
     the only way an agent-proposed change reaches the BOM. `by` is "student" for a click and
-    "auto" when the autonomy setting let a routine change through (the logs are otherwise identical)."""
+    "auto" when the autonomy setting let a routine change through (the logs are otherwise identical).
+    One decision at a time per project (two clicks or a batch plus a click must not both see "pending").
+    The same decision again changes nothing and returns the proposal marked "already"; the opposite one fails."""
+    with _DECIDE_LOCKS_GUARD:
+        lock = _DECIDE_LOCKS.setdefault(project, threading.RLock())
+    with lock:
+        return _decide(project, pid, decision, by)
+
+
+def _decide(project, pid, decision, by):
     if decision not in ("approved", "rejected"):
         raise ValueError("decision must be approved or rejected")
     prop = next((p for p in proposals(project) if p["id"] == pid), None)
     if not prop:
         raise KeyError(f"no such proposal: {pid}")
+    if prop["status"] == decision:
+        return {**prop, "already": True}
     if prop["status"] != "pending":
         raise ValueError(f"proposal already {prop['status']}")
 
