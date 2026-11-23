@@ -14,13 +14,15 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 - Not for: choosing rules or widths (rules-and-calcs), export files and the JLC DFM site (manufacturer-and-dfm).
 
 ## Steps
-1. Ask for the board facts you cannot read: board outline and mounting holes, which side each connector's cable
+1. Read `board_facts` and `constraints` in CURRENT STATE first; ask only for the
+   board facts neither has: board outline and mounting holes, which side each connector's cable
    enters, any antenna or module with a datasheet keep-out. If the student gives only a screenshot, review the screenshot
    and say what you cannot see (bottom side, inner layers).
-2. Connectors. Run `scripts/checks/board.py` to verify opening orientation against the nearest board edge normal. For each connector,
+2. Connectors. Run `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`
+   (the PcbDoc path: `bridge.py status`) to verify opening orientation against the nearest board edge normal. For each connector,
    the opening must face outward toward the board edge and be free of obstructing parts. Ask for a tilted 3D screenshot
    (View > 3D layout mode, tilt, look from the edge) to verify symmetric footprints that may hide a 180° rotation.
-3. Decoupling. Run `scripts/checks/board.py` to measure distance from each decoupling cap to its IC power pin on the same net.
+3. Decoupling. The same `checks/board.py` run measures distance from each decoupling cap to its IC power pin on the same net.
    Aim at a few mm (roughly 2-5 mm); the small cap sits closer than the bulk cap. One cap per supply pin, not one cap for all.
    Flag a cap whose current path goes through a via first. Datasheet layout advice wins over the rule of thumb; cite its page.
 4. RF and antenna. Use the module datasheet keep-out: no copper, no pour, no parts under or beside the antenna element
@@ -69,7 +71,8 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 
 ## Measured, not remembered
 Hole positions, part-to-edge and part-to-part distances, copper under the antenna: quote `board_facts` (CURRENT STATE)
-and only if it is not marked stale; with "none measured" say "planned". The `requirements` rows (met, violated, unverifiable) are the checklist
+and only if it is not marked stale; with "none measured" say "planned". The `requirements` rows (met, violated, unverifiable;
+`python <repo>/scripts/model.py <project>`) are the checklist
 of what the student confirmed.
 
 ## Output

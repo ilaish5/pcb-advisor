@@ -1,6 +1,6 @@
 ---
 name: placement-and-routing-plan
-description: Produces a placement plan (order, zones, connector edges, decoupling positions, crystal, antenna keep-out, thermal) as a top-view picture and a table, then a routing plan for the critical nets (power, USB differential pair, crystal, ground return), for the student to carry out by hand in Altium. Use when the student asks "where do I place the parts", "what do I place first", "which side should the connector face", "how close must the decoupling cap be", "how do I route USB / the crystal / power", "plan my layout" (Hebrew - איפה למקם רכיבים, סדר פלייסמנט, איך לנתב USB, תוכנית ראוטינג).
+description: Produces a placement plan (order, zones, connector edges, decoupling positions, crystal, antenna keep-out, thermal) as a top-view picture and a table, then a routing plan for the critical nets (power, USB differential pair, crystal, ground return), done by the student in Altium or, on request, by you. Use when the student asks "where do I place the parts", "what do I place first", "which side should the connector face", "how close must the decoupling cap be", "how do I route USB / the crystal / power", "plan my layout" (Hebrew - איפה למקם רכיבים, סדר פלייסמנט, איך לנתב USB, תוכנית ראוטינג).
 ---
 
 # Placement and critical-net routing plan
@@ -10,8 +10,7 @@ Altium. You move parts only when the student says so (see Offer to place); you r
 the agent's own router, not Altium's autorouter). Show the plan picture BEFORE the student touches the board.
 
 ## Offer to place
-Right after the schematic is drawn (`altium.draw_schematic`) the next offer is this one: "Should I place the parts on the board,
-or will you (Update PCB)?" Never send the student to Design > Update PCB unasked.
+Right after the schematic is drawn (`altium.draw_schematic`) the next offer is placing. Never send the student to Design > Update PCB unasked.
 After the plan, unless they already said who places (this turn or earlier: then do not ask, send the action
 with that quote), ask ONE question in their language: "Place the parts in Altium yourself, press Place parts on the Layout page, or should I?"
 Stop and wait. On their answer or their earlier instruction: "you" = run `{"type": "altium.place_pcb", "student_said": "<most of their message>"}`
@@ -100,7 +99,9 @@ per supply net: tell the student which nets were drawn narrower than wanted or a
 ## Physical constraints
 Mounting holes (M3: 3.2 mm, 3.5 mm in from the corners),
 a part that must sit at an edge, a distance between a heat source and a sensor (SHT40 away from the module and regulator),
-a keep-out under an antenna: propose each with `idea.constrain` instead of only writing it in the plan.
+a keep-out under an antenna: propose each with `idea.constrain` instead of only writing it in the plan, for example
+`{"type": "idea.constrain", "op": "add", "item": {"id": "h1", "kind": "mounting_hole", "diameter_mm": 3.2, "inset_mm": 3.5}}`
+(fields per kind: AGENTS.md, REPLY FORMAT AND ACTIONS).
 Antenna module: edge, antenna facing out, no copper under it.
 
 ## Output

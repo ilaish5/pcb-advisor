@@ -31,7 +31,9 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
    up to about 35 A and 10-100 C rise. IPC-2152 is the current standard and is not implemented here.
 6. Build the rule table: `Rule | Scope | Min/Pref/Max | Why | Source`. Specific rules get higher priority than the board default
    (Altium rule priorities: course m19 19.3.2).
-7. Produce the `.RUL` when the tool supports it (see Scripts). Tell the student the import path in Altium (verified AD26): Design > Rules, right-click
+7. With a linked PcbDoc send `altium.import_rules` (the rule set goes into the PcbDoc by name; the student's own rules stay).
+   Only when that is refused or the student imports by hand: produce the `.RUL` (see Scripts) and give the import path
+   (verified AD26): Design > Rules, right-click
    "Default Rule Set" > Import Rules... > pick the file > "Select Design Rules" (leave all ticked) > Import. In "Rule Set Already
    Exists": with a board-aware file (`export --board <PcbDoc>`, carries all the board's rules with JLC values) choose
    "Replace existing rules"; with the plain preset file choose "Merge with existing rules", then open "Priorities..." and raise the

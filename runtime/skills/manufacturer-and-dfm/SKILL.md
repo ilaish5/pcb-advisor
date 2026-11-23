@@ -11,14 +11,15 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - The student asks how to export Gerber, drill, pick and place, BOM from Altium, or for a ready OutJob.
 - Before the student uploads to JLC: a pre-upload check of the files.
 - JLC DFM or the assembly (SMT) preview shows red items and the student asks "is this a problem?".
-- The student wants the stock or price of a part: run the parts script, never answer from memory.
 - Not for: DRC and layout review (board-review), how a menu works in Altium (altium-help), ordering (the student does it).
 
 ## Steps
-1. Confirm the board passed the batch DRC (board-review) and the BOM has an LCSC number on every fitted line.
-2. OutJob. Run `scripts/outjob.py <project>` to write the ready OutJob into `projects/<project>/exports/` (or use the manual recipe
-   from {{src:m25-fabrication-files.en.md|25.4 Output Job File}}): Gerber, NC Drill, Pick and Place, BOM, Schematics.
-   The student copies the OutJob into their Altium project folder and clicks Generate content.
+1. The board passed DRC: the route result carries it, else run `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`
+   (board-review). Every fitted BOM line has an LCSC number. Pins still unverified (`pins_waiting` in CURRENT STATE) hold the
+   OutJob and the Gerber zip: say so first. Run `python <repo>/scripts/lineage.py <project> status` before files go out.
+2. OutJob. With a linked Altium project send `altium.run_outjob` (adds the OutJob and generates Gerber, NC Drill, Pick and Place,
+   BOM). Without one run `python <repo>/scripts/outjob.py <project>` (writes `projects/<project>/exports/`; the student copies it
+   into the Altium project and clicks Generate content), or the manual recipe {{src:m25-fabrication-files.en.md|25.4 Output Job File}}.
 3. Pre-upload check of the generated files (read them, do not trust the dialog):
    a. Outline: the board outline is on its own mechanical layer and appears only in the outline Gerber. It must not be
       in the "add to all plots" list, or every layer gets the outline and JLC reports trace to board edge.
@@ -29,8 +30,9 @@ description: Prepares the manufacturing package for JLC and walks the student th
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
    f. Produce the files before naming them: run export_bom.py (jlc) for the BOM and export_cpl.py for the CPL, then list
       `exports/`. Tell the student to upload only files that exist there, by their real names. No CPL file: say so, never name one.
-4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
-   its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in for the student to approve. Same
+4. Parts: stock, price and Basic/Extended type only from the stored JLC checks, with their time; run
+   `check_availability.py` only for lines whose `stock_check` is `missing` or `stale` (rule 4).
+   Zero or low stock: say the JLC signal, and propose an in-stock drop-in for the student to approve. Same
    package is not enough: at ordering a swap is free only on the same FOOTPRINT (step 9).
 5. The JLC check, done with the student at the end. The account is theirs: never log in, never ask for a password,
    never upload for them. Go one step at a time, as the DFM view lists them (header menu, "How to check at JLC"):
@@ -76,7 +78,7 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - `python <repo>/scripts/skills/export_cpl.py <project> [pcb_file]` writes `exports/<project>_cpl.csv` (JLC pick and place).
   Without a linked PcbDoc the positions are a stub from the BOM: say so.
 - `python <repo>/scripts/skills/check_availability.py ...` stock and price from JLC, with query time. Quote the time.
-- `python <repo>/scripts/outjob.py <project> [output_dir]` writes an Altium OutJob text file (Gerber, NC drill, JLC BOM, CPL, schematic PDF).
+- `python <repo>/scripts/outjob.py <project> [--out <dir>]` writes an Altium OutJob text file (Gerber, NC drill, JLC BOM, CPL, schematic PDF).
 - `python <repo>/scripts/checks/board.py <pcb_file>` checks outline clearances, connector orientation, decap distances, and CPL rotation sanity.
 - `python <repo>/scripts/dfm.py gerber-zip <project>` builds the Gerber + drill zip from the linked Altium outputs (read only); prints the files and gaps.
 - `python <repo>/scripts/dfm.py pickup <project> [--kind pcb|smt|both] [--name FILE]` adds the new JLCDFM report PDFs from Downloads.

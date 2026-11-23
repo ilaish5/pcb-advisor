@@ -19,7 +19,9 @@ A finding without a datasheet page is not a finding; it is a question to the stu
 1. Get the real data, not a screenshot: the SchDoc/PrjPcb in the student's local project, or the PcbDoc netlist after ECO
    (pads carry nets). If you only have an image, say so and mark every finding "from image, unverified".
 2. List the active parts (ICs, regulators, connectors with signals). For each, find its datasheet in the project's `sources/`
-   (general documents are in `<repo>/shared/datasheets/`). No datasheet: ask the student for it (link-and-return) and skip that part; never review from memory.
+   (general documents are in `<repo>/shared/datasheets/`). No datasheet:
+   fetch it yourself (rule 11: `jlc.py part` for its `datasheet_url`, then `sources.py get`); only when no link
+   works, name the missing datasheet and skip that part. Never review from memory.
 3. For each IC read the pin table, the "recommended operating conditions", the "absolute maximum ratings", the typical
    application circuit and the electrical-characteristics rows for the pins you check. Note the page of each.
 4. Run the checks of `references/checklist.md` in order: run `scripts/checks/schematic.py` to flag single-pin nets,
