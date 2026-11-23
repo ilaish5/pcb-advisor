@@ -207,6 +207,34 @@ tr.flash td{animation:flash 1.6s ease-out}   /* a row that has just appeared (a 
 .ref{font-family:var(--f-mono);font-weight:600;color:var(--ink)}
 .netn{font-family:var(--f-mono);color:var(--net)}
 
+/* ---------- proposal table (kit.js proposalTable): one row per proposed part, on the BOM page and in the chat card ---------- */
+.ptbl-wrap{overflow:auto;min-width:0;max-height:min(46vh,340px);border:1px solid var(--line);border-radius:var(--r-md);background:var(--sheet);text-align:left}
+.ptbl-wrap.ptbl-chat{max-height:min(34vh,240px);margin:6px 0}
+.ptbl{font-size:var(--t-sm)}
+.ptbl td,.ptbl tbody th{padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left;white-space:nowrap}
+.ptbl tbody th{position:static;height:auto;background:transparent;font-size:inherit;font-weight:400;color:var(--ink)}
+.ptbl tbody tr:last-child td,.ptbl tbody tr:last-child th{border-bottom:0}
+.ptbl th{padding:0 8px}
+.ptbl .c-tick{width:1%;padding-right:0}
+.ptbl .m{font-family:var(--f-mono)}
+.ptbl .c-role,.ptbl .c-val{white-space:normal;min-width:120px;max-width:220px}
+.ptbl .c-why{white-space:normal;min-width:160px;max-width:260px}
+.ptbl .c-why .tag{margin-bottom:2px}
+.ptr-why>summary{cursor:pointer;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px;list-style:none}
+.ptr-why>summary::-webkit-details-marker{display:none}
+.ptr-why[open]>summary{white-space:normal;overflow:visible;max-width:none;color:var(--ink-2)}
+.ptr.unv td,.ptr.unv th{background:var(--warn-soft)}
+.ptr.struck .c-ref b,.ptr.struck .c-mpn{text-decoration:line-through;color:var(--ink-3)}
+.ptr .t{color:var(--ink-3);font-size:var(--t-xs)}
+.ptbl-chat .c-mfr,.ptbl-chat .c-val,.ptbl-chat .c-role{display:none}     /* the narrow chat column keeps the part's identity; the BOM page shows every field */
+.btn[aria-busy="true"]{opacity:.6;cursor:progress}
+.prop-acts{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bom-pend{display:grid;gap:8px;width:100%;text-align:left}
+.empty:has(.bom-pend-empty){max-width:min(96%,1000px);padding-top:24px;padding-bottom:24px}
+.bom-pend-empty{width:100%}
+.bom-pend-note .bom-pend{margin-top:6px}
+.bom-pend .ptbl-wrap{max-height:min(38vh,300px)}
+
 /* ---------- key/value ---------- */
 .kv{display:grid;grid-template-columns:minmax(90px,max-content) minmax(0,1fr);column-gap:16px;row-gap:7px;font-size:13px}
 .kv dt{color:var(--ink-3)}

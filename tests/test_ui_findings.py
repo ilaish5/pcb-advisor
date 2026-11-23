@@ -31,7 +31,7 @@ def test_empty_bom_pending_state_renders_the_ticked_list():
     js = ui_js()
     i = js.index("waiting for your approval`, 'The agent proposed")
     block = js[i:i + 500]
-    assert "bomPendingList(pend)" in block and "Approve all" not in block
+    assert "bomPendingBox(pend" in block and "Approve all" not in block
 
 
 def test_the_ui_contracts():

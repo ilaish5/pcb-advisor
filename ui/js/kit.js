@@ -135,6 +135,29 @@ function kv(pairs) {
   return '<dl class="kv">' + pairs.filter(p => p && p[1] != null && p[1] !== '').map(([k, v, raw]) => `<dt>${kesc(k)}</dt><dd>${raw ? v : kesc(v)}</dd>`).join('') + '</dl>';
 }
 
+/* proposalTable(rows, {decided, cls}) -> the proposed parts as a real table, ONE ROW PER PROPOSAL, so every checkbox sits
+   beside the one part it belongs to. Used by the chat group card and the BOM page (one component, one look).
+   A row: {id, ref, isNew, mpn, manufacturer, package, lcsc, value, role, reason, checked, unverified, struck, action}.
+   action = html for the last cell of a decided row (Undo). Pending rows get a tick; an unverified row is flagged. */
+const PTBL_COLS = [['mpn', 'MPN', 'c-mpn'], ['manufacturer', 'Manufacturer', 'c-mfr'], ['package', 'Package', 'c-pkg'],
+  ['lcsc', 'LCSC', 'c-lcsc'], ['value', 'Value', 'c-val'], ['role', 'Role', 'c-role']];
+function proposalRow(r, decided) {
+  const cells = PTBL_COLS.map(([k, , c]) => `<td class="${c}" dir="auto">${r[k] ? `<span class="${k === 'mpn' || k === 'lcsc' ? 'm' : ''}">${kesc(r[k])}</span>` : '<span class="muted">·</span>'}</td>`).join('');
+  const flag = r.unverified ? '<span class="tag warn ptr-flag" title="The agent could not confirm this part number. Check it before you approve.">Unverified</span>' : '';
+  const tick = decided ? '' : `<td class="c-tick"><input type="checkbox" data-ptick="${kesc(r.id)}"${r.checked ? ' checked' : ''} aria-label="Include ${kesc(r.ref)}"></td>`;
+  const tail = decided ? `<td class="c-act">${r.action || ''}</td>` : '';
+  const why = r.reason ? `<details class="ptr-why"><summary dir="auto">${kesc(r.reason)}</summary></details>` : '';
+  return `<tr class="ptr${r.unverified ? ' unv' : ''}${r.struck ? ' struck' : ''}" data-pid="${kesc(r.id)}">${tick}` +
+    `<th scope="row" class="c-ref">${r.isNew ? '<span class="t">New</span> ' : ''}<b>${kesc(r.ref)}</b></th>${cells}<td class="c-why">${flag}${why}</td>${tail}</tr>`;
+}
+function proposalTable(rows, o) {
+  o = o || {};
+  const head = (o.decided ? '' : '<th class="c-tick"><span class="sr">Include</span></th>') + '<th class="c-ref">Ref</th>' +
+    PTBL_COLS.map(([, label, c]) => `<th class="${c}">${label}</th>`).join('') + '<th class="c-why">Why</th>' + (o.decided ? '<th class="c-act"><span class="sr">Actions</span></th>' : '');
+  return `<div class="ptbl-wrap${o.cls ? ' ' + kesc(o.cls) : ''}" tabindex="0" role="region" aria-label="Proposed parts"><table class="tbl ptbl"><thead><tr>${head}</tr></thead>` +
+    `<tbody>${rows.map(r => proposalRow(r, o.decided)).join('')}</tbody></table></div>`;
+}
+
 /* ---------- menus: open, place, keyboard, close ---------- */
 let kitOpenMenu = null;
 function kitMenuClose(focusTrigger) {

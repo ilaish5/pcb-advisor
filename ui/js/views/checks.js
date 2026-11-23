@@ -194,7 +194,18 @@ onChange(t => t.dataset && t.dataset.pickDs !== undefined, async e => {
   setState(r); render(true);
   toast(attachMsg(r.attached));
 });
-onAct('accept-pins', async (el, d) => { await api('/api/pins/accept', {line: d.line}); await refresh(true); });
+// One row accepted at a time: when a row leaves the list the next row's button slides up under the pointer, so for a moment
+// after each accept (the request, the re-render and a short settle) every Accept as is is ignored. The row shows "Accepted"
+// at once; a failed accept draws the list again.
+let pinsAcceptUntil = 0;
+onAct('accept-pins', async (el, d) => {
+  if (Date.now() < pinsAcceptUntil) return;
+  pinsAcceptUntil = Infinity;
+  el.outerHTML = `<span class="ok-t unv-done">${icon('check', 's')} Accepted</span>`;
+  try { await api('/api/pins/accept', {line: d.line}); await refresh(true); }
+  catch (err) { render(true); }
+  finally { pinsAcceptUntil = Date.now() + 700; }
+});
 onAct('recheck-pins', async () => { const r = await api('/api/final/unverified'); await refresh(true); if (r && r.message) toast(r.message); });
 function dfmUpload(trigger) {
   if (dfmBusy || dfmLooking) return btn(dfmLooking ? 'Looking…' : 'Uploading…', {kind: trigger.kind, disabled: true});

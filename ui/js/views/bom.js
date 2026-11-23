@@ -110,23 +110,14 @@ function bomHeader(t) {
 }
 // The BOM and the schematic disagree on the parts: the server says which designators differ (only when both sides are known).
 function bomPending() { return (S.proposals || []).filter(p => p.status === 'pending' && p.kind === 'bom'); }
-// The pending BOM proposals as a list, one tick each (all ticked at first): only the ticked ones are approved or rejected.
-function bomPendingList(pend) {
-  return `<div class="bom-pend">${pend.map(p => `<label class="prop-grow"><input type="checkbox" data-bpid="${esc(p.id)}" checked> <span dir="auto">${propSummaryHTML(p)}</span></label>`).join('')}</div>`;
+// The pending BOM proposals: the shared proposal table (chat.js propListHTML), one row and one tick per part, with the
+// same three buttons as the chat card. Ticks are shared with the chat card by proposal id.
+function bomPendingBox(pend, cls) {
+  return `<div class="bom-pend ${cls || ''}" data-pids="${esc(pend.map(p => p.id).join(','))}">${propListHTML(pend)}${propActsHTML(pend.map(p => p.id), true)}</div>`;
 }
 function bomPendingNote(pend) {
-  return pend.length ? `<div class="pv-note"><div class="note warn bom-pend-note" role="status"><span>${bomPl(pend.length, 'proposed change')} waiting for your approval.</span>${bomPendingList(pend)}<div class="acts">${btn('Approve', {kind: 'pri', size: 'sm', act: 'bom-approve-pending'})}${btn('Reject', {size: 'sm', act: 'bom-reject-pending'})}</div></div></div>` : '';
+  return pend.length ? `<div class="pv-note"><div class="note warn bom-pend-note" role="status"><span>${bomPl(pend.length, 'proposed change')} waiting for your approval.</span>${bomPendingBox(pend)}</div></div>` : '';
 }
-async function bomDecidePending(el, decision) {
-  const ids = [...el.closest('.bom-view').querySelectorAll('input[data-bpid]:checked')].map(i => i.dataset.bpid);
-  if (!ids.length) { toast('Tick at least one change'); return; }
-  const r = await api('/api/proposals/batch', {ids, decision});
-  setState(r); render(true);
-  const failed = (r.results || []).filter(x => !x.ok);
-  if (failed.length) toast(`${failed.length} not applied: ${failed[0].error}`, null, {bad: true});
-}
-onAct('bom-approve-pending', el => bomDecidePending(el, 'approved'));
-onAct('bom-reject-pending', el => bomDecidePending(el, 'rejected'));
 function bomCountNote() {
   const c = S.bom_count_check;
   return c && c.message ? `<div class="pv-note"><div class="note warn bom-count-note" role="status"><span>${esc(c.message)}</span></div></div>` : '';
@@ -145,7 +136,7 @@ function bomHTML(container) {
   const pend = bomPending();
   if (!t.lines && pend.length) {
     body = emptyState(`${bomPl(pend.length, 'proposed part')} waiting for your approval`, 'The agent proposed these parts in the chat. Approve them to add them to the BOM.',
-      bomPendingList(pend) + `<div class="acts">${btn('Approve', {kind: 'pri', act: 'bom-approve-pending'})}${btn('Reject', {act: 'bom-reject-pending'})}</div>`);
+      bomPendingBox(pend, 'bom-pend-empty'));
   } else if (!t.lines) {
     body = emptyState('No parts yet', bomLinked() ? 'Import the BOM you exported from Altium, or describe your idea in the chat.' : 'Describe your idea in the chat and the agent will propose parts.',
       bomLinked() ? btn('Import from Altium', {kind: 'pri', act: 'imp-open'}) : '');
