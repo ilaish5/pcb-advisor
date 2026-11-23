@@ -153,7 +153,7 @@ def test_the_engine_runs_in_the_engine_home_with_the_repo_and_project_added(lte,
 
 def test_the_workspace_section_gives_absolute_paths(lte, monkeypatch):
     prompt = _respond(lte, monkeypatch).prompt
-    section = prompt.split("\n--- WORKSPACE ---\n")[1].split("\n--- CURRENT STATE ---")[0]
+    section = prompt.split("<workspace>\n")[1].split("\n</workspace>")[0]
     assert workspace.REPO.as_posix() + "/scripts/trace_width.py" in section
     assert workspace.project_dir(lte).as_posix() + "/bom.json" in section
     assert "{repo}" not in section

@@ -148,3 +148,32 @@ P1 (rules once) would take another ~7500 tokens a turn.
 - Behaviour change to note: rules-and-calcs and manufacturer-and-dfm now tell the agent to send `altium.import_rules` /
   `altium.run_outjob` where they used to hand the step to the student. AGENTS.md already said to use these actions (no consent change:
   both are routine, no-card actions there).
+
+## 10. Scored against Anthropic's "Prompting 101" structure
+
+The talk's recommended order: task context -> tone -> background data that never changes (system prompt, cacheable) -> detailed steps
+(order of analysis) -> examples (gray cases, in XML) -> conversation history -> immediate task + reminder of the critical guidelines ->
+output format (strict where parsed; prefill where possible). Scores: 0 missing, 1 partial, 2 good. "Before" = commit 5094db2,
+"after" = this branch.
+
+| # | point | before | after | what we have / what changed |
+|---|---|---|---|---|
+| 1 | task context (role, purpose) | 2 | 2 | AGENTS.md opens with the role, the course, the student level |
+| 2 | tone context | 2 | 2 | HOW TO ANSWER: short, one person, singular, no lecture; the `Reply language:` line |
+| 3 | background that never changes, first and cacheable | 1 | 1 | AGENTS.md is first in the prompt, but it is ALSO loaded by the engine (CLAUDE.md -> AGENTS.md), and only that copy sits in the cached system context; the prompt copy is uncached and re-sent every turn (P1). WORKSPACE now comes right after the rules, before the dynamic sections |
+| 4 | detailed steps, order of analysis | 1 | 1 | THE THREE STAGES and the skills give procedures; no per-turn "first read X, then Y" for the common turn (read `current` stage -> check facts -> act). The reminder now names the end of that chain (next action of the `current` stage) |
+| 5 | examples, gray cases | 1 | 1 | one bad/good reply example in HOW TO ANSWER; JSON examples per action. No gray-case examples from real failures (proposal P7) |
+| 6 | XML tags that name sections | 0 | 2 | was `--- X ---` headers, and a server follow-up arrived under "STUDENT SAYS". Now `<workspace>`, `<memory>`, `<current_state>`, `<conversation>`, `<student_message>` or `<server_message>`, `<reminder>`; AGENTS.md names them |
+| 7 | stable first, dynamic after | 1 | 2 | memory moved after workspace; state, history, message last |
+| 8 | anti-hallucination: only when confident, cite every fact | 2 | 2 | rules 4, 5, 7, CITING, `board_facts` "planned, never is"; the state now carries stage gates, JLC type and price so the agent need not count or guess (RCA #39) |
+| 9 | immediate task + reminder at the end | 0 | 2 | the language line was the only thing after the message. Now a 5-sentence `<reminder>` (length, facts only from state/scripts/sources, next action of the `current` stage, one closed json block and no later-reply promise, consent on the student's words) + the language line, last |
+| 10 | strict output format for parsed output, prefill | 1 | 1 | one ```json block documented with every kind (parity-tested now); the CLI engines take no prefill, so the reminder anchors it instead |
+| 11 | iterate empirically on real failures | 1 | 1 | `tests/test_evals.py` exists; the failures of RCA ש1 (#31 "next reply" promise, #32 three turns to draw, #39 summary contradicts cards) and ש9 are not prompt-level eval cases yet (P7) |
+
+Changes made from this scoring (commit after `0633315`): tagged sections; `from_server=True` on the two follow-up/retry calls in `serve.py`
+so the server's report is `<server_message>`, not the student's words; the `<reminder>` block; BOM rows with `role`, `jlc_type`, `unit_usd`.
+Prompt after (same project and message): stdin 52403 chars (before 56270), CURRENT STATE 7624 (before 13487) while carrying more.
+
+- **P7 eval cases from real failures**: one case per RCA ש1 #31/#32/#39 and ש9 #37: input state + student message, expected properties of
+  the reply (no "next reply" promise; draw sends library.build, netlist.write, draw_schematic in one block; Extended count equals the cards;
+  no compound shell command). Run against the engine with the `<reminder>` on and off.

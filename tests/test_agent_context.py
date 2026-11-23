@@ -210,3 +210,47 @@ def test_workspace_text_agrees_with_the_rules(lte):
     assert "NEVER state stock or price without running" not in words
     rules = AGENTS.read_text(encoding="utf-8")
     assert "Do not run `sources.py verify` before answering" in rules
+
+
+# ---------------------------------------------------------------- prompt structure (Prompting 101: tagged, stable first, reminder last)
+
+
+def _prompt(lte, monkeypatch, tmp_path, **kw):
+    import agent
+    import gateway
+    import model
+    monkeypatch.setenv("PCB_ADVISOR_ENGINE_HOME", str(tmp_path / "engine"))
+    seen = {}
+
+    def route(req, name=None):
+        seen["req"] = req
+        return gateway.Result(text="fine", provider="claude_code")
+    monkeypatch.setattr(gateway, "route", route)
+    m = model.build(project=lte)
+    agent.respond(m, kw.pop("message", "hello"), m["chat"], backend="claude_code", **kw)
+    return seen["req"].prompt
+
+
+def test_prompt_sections_are_tagged_stable_first_and_end_with_the_reminder(lte, monkeypatch, tmp_path):
+    p = _prompt(lte, monkeypatch, tmp_path)
+    # the rules name the tags too: a section is its tag on a line of its own
+    order = [p.index(f"\n<{t}>\n") for t in ("workspace", "current_state", "conversation", "student_message", "reminder")]
+    assert order == sorted(order)
+    assert p.rstrip().endswith("</reminder>")
+    assert "Reply language: English" in p.split("\n<reminder>\n")[1]
+    assert "\n<server_message>\n" not in p
+
+
+def test_a_follow_up_is_the_servers_message_not_the_students(lte, monkeypatch, tmp_path):
+    p = _prompt(lte, monkeypatch, tmp_path, message="Results of your actions: none", typed="draw it", from_server=True)
+    assert "<server_message>\nResults of your actions: none\n</server_message>" in p
+    assert "\n<student_message>\n" not in p
+
+
+def test_bom_rows_carry_role_jlc_type_and_price():
+    import agent
+    m = {"project": "", "stages": [], "bom": [{"key": "U1", "refs": ["U1"], "value": "MCU", "mpn": "X", "role": "main MCU",
+                                                "supply": {"LCSC": {"stock": 5, "unit_price": 2.5, "library_type": "Extended",
+                                                                    "checked_at": "2026-11-23T10:00:00"}}}]}
+    row = json.loads(agent._summary(m))["bom"][0]
+    assert row["role"] == "main MCU" and row["jlc_type"] == "Extended" and row["unit_usd"] == 2.5

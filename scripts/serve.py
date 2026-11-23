@@ -2357,7 +2357,7 @@ def _run_followup(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused
         BUSY["chat"] += 1
         try:
             res = agent.respond(m, followup_message(applied, refused, warned, orig_rec.get("denied"), orig_rec.get("tools")), m["chat"], backend=BACKEND, cancel=fturn["cancel"],
-                                typed=user_text, generated=generated, on_event=lambda ev, k=tkey: _turn_event(k, ev))
+                                typed=user_text, generated=generated, from_server=True, on_event=lambda ev, k=tkey: _turn_event(k, ev))
         finally:
             BUSY["chat"] -= 1
             edited, unrestored = tool_guard.end(guard)
@@ -2449,7 +2449,7 @@ def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, f
             msg = FOLLOWUP_RETRY.format(applied="; ".join(map(str, applied)) or "none", refused="; ".join(map(str, refused)) or "none",
                                         fixes=", ".join(dict.fromkeys(f"{f['kind']} -> {f['code']}" for f in retry_kinds(fixables))),
                                         allowed=", ".join(sorted(RETRY_WHITELIST | set(RETRY_CONSENT_KINDS))))
-            res = agent.respond(m, msg, m["chat"], backend=BACKEND, cancel=fturn["cancel"], typed=user_text, generated=ctx["generated"],
+            res = agent.respond(m, msg, m["chat"], backend=BACKEND, cancel=fturn["cancel"], typed=user_text, generated=ctx["generated"], from_server=True,
                                 on_event=lambda ev, k=tkey: _turn_event(k, ev))
         finally:
             BUSY["chat"] -= 1

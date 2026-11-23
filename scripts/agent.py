@@ -105,9 +105,17 @@ def _summary(model):
     for l in model.get("bom", []):
         row = {"line": l["key"], "refs": l.get("refs"), "value": l.get("value"), "mpn": l.get("mpn"),
                "library": l.get("library")}
+        if l.get("role"):
+            row["role"] = l["role"]
         if l.get("dnp") or l.get("nobuy"):
             row["not_bought"] = True
         sup = l.get("supply")
+        # the JLC type and unit price the cards show, so a reply's count of Extended parts and cost matches them (RCA #39)
+        jlc = (sup or {}).get("LCSC") or {}
+        if l.get("library_type") or jlc.get("library_type"):
+            row["jlc_type"] = l.get("library_type") or jlc.get("library_type")
+        if jlc.get("unit_price") is not None:
+            row["unit_usd"] = jlc.get("unit_price")
         row["stock"] = ("not checked" if sup is None else
                         {k: v.get("stock") for k, v in sup.items()})
         # a check runs in the background after every BOM change: run the script yourself only when this says
@@ -544,9 +552,22 @@ def reply_language_line(typed, history=(), generated=False):
     return line
 
 
-def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None, typed=None, generated=False):
+REMINDER = (
+    "Before you answer: the answer first, short (40-60 words, 100 at most), to one person. Facts only from <current_state>, a script you "
+    "ran this turn or a cited source; otherwise \"unknown\", and \"planned\" for anything on the board that board_facts did not measure. "
+    "End with the one next action of the `current` stage. Actions go in ONE closed ```json block at the end; say only what that block "
+    "starts, never a promise of a later reply. Draw, place, route and replace only on the student's own words (HARD RULES, REPLY FORMAT).\n")
+
+
+def _tag(name, body, note=""):
+    return f"<{name}{f' note={json.dumps(note)}' if note else ''}>\n{body}\n</{name}>"
+
+
+def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None, typed=None, generated=False,
+            from_server=False):
     """(state, message) -> {reply, actions}. `backend` names an engine; None
-    means whatever `agent.provider` is set to. `typed` = the student's own text without the context the server adds."""
+    means whatever `agent.provider` is set to. `typed` = the student's own text without the context the server adds.
+    `from_server`: the message is the server's follow-up or retry note, not the student's words (tagged so)."""
     name = gateway.resolve(backend)
     if name == "external":
         return {"reply": None, "actions": [], "backend": name, "provider": name}
@@ -556,21 +577,25 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     history = [m for m in history if m.get("text")]
     convo = history_lines(history, keep)
 
-    parts = [rules()]
-    memory = (model.get("memory") or "").strip()
-    if memory:
-        parts.append("--- MEMORY (this conversation, kept small on purpose) ---\n"
-                     + memory)
     try:
         engine_home = runtime_pack.sync()
     except runtime_pack.RuntimePackError as exc:
         return {"reply": f"[{name}] {exc}", "actions": [], "backend": name, "provider": name,
                 "error": True}
+    # Stable first, dynamic last, each section in a named tag the rules refer to; the task and a short reminder close the prompt.
+    parts = [rules()]
     if gateway.provider(name).has_workspace():
-        parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project"), engine_home))
-    parts.append("--- CURRENT STATE ---\n" + _summary(model))
-    parts.append("--- CONVERSATION SO FAR ---\n" + convo)
-    parts.append("--- STUDENT SAYS ---\n" + message + "\n" + reply_language_line(message if typed is None else typed, history, generated))
+        parts.append(_tag("workspace", _workspace_section(model.get("project"), engine_home)))
+    memory = (model.get("memory") or "").strip()
+    if memory:
+        parts.append(_tag("memory", memory, "this conversation, kept small on purpose"))
+    parts.append(_tag("current_state", _summary(model)))
+    parts.append(_tag("conversation", convo))
+    if from_server:      # a follow-up or retry round: the server reports what really happened; the student did not write this
+        parts.append(_tag("server_message", message))
+    else:
+        parts.append(_tag("student_message", message))
+    parts.append(_tag("reminder", REMINDER + reply_language_line(message if typed is None else typed, history, generated).strip()))
     prompt = "\n\n".join(parts)
 
     # The engine lives in its own folder, where only the instructions and skills are (sync() above).
