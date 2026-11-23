@@ -89,9 +89,8 @@ def test_the_four_glyphs_are_inline_icons_in_the_shared_table():
 
 # ------------------------------------------------------------ nothing is fetched from the network at runtime
 
-# Google Fonts is the one thing the page still loads from the network (the type faces; every font stack falls back to a system
-# font offline). Vendoring the Atkinson Hyperlegible files would remove it: delete this set when that is done.
-EXTERNAL_FONT_HOSTS = {"fonts.googleapis.com", "fonts.gstatic.com"}
+# The type faces are self-hosted too (ui/vendor/fonts), so no host is allowed: the page works with no network at all.
+EXTERNAL_FONT_HOSTS = set()
 
 _EXT = r"(?:https?:)?//([A-Za-z0-9.-]+)"
 _Q = r"""["'`]"""
@@ -137,3 +136,16 @@ def test_the_importmap_and_the_3d_code_load_only_from_the_app():
     assert '"three":"/ui/vendor/three/build/three.module.js"' in html.replace(" ", "")
     m3d = (UI / "js" / "views" / "model3d.js").read_text(encoding="utf-8")
     assert "M3D_VENDOR = '/ui/vendor/'" in m3d and "cdn" not in m3d.lower()
+
+
+def test_the_type_faces_are_self_hosted():
+    html = ui_html()
+    assert 'href="/ui/vendor/fonts/fonts.css"' in html and "googleapis" not in html and "gstatic" not in html
+    fonts = UI / "vendor" / "fonts"
+    css = (fonts / "fonts.css").read_text(encoding="utf-8")
+    files = re.findall(r"url\(([^)]+\.woff2)\)", css)
+    assert files and all((fonts / f).is_file() for f in files)
+    for family in ("Atkinson Hyperlegible Next", "Atkinson Hyperlegible Mono"):
+        assert f"font-family:'{family}'" in css
+    assert (fonts / "LICENSE.atkinson-hyperlegible-next.txt").is_file() and (fonts / "LICENSE.atkinson-hyperlegible-mono.txt").is_file()
+    assert "url(http" not in css and "url(//" not in css
