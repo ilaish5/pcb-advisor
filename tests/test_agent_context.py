@@ -254,3 +254,15 @@ def test_bom_rows_carry_role_jlc_type_and_price():
                                                                     "checked_at": "2026-11-23T10:00:00"}}}]}
     row = json.loads(agent._summary(m))["bom"][0]
     assert row["role"] == "main MCU" and row["jlc_type"] == "Extended" and row["unit_usd"] == 2.5
+
+
+def test_rules_reach_the_engine_once(lte, monkeypatch, tmp_path):
+    """An engine with a workspace loads AGENTS.md itself (pcb.py probe proves it): the prompt carries a pointer, not a second copy.
+    A text-only engine gets the rules in the prompt."""
+    import agent
+    import gateway
+    p = _prompt(lte, monkeypatch, tmp_path)
+    assert "# HARD RULES" not in p and p.startswith(agent.RULES_POINTER)
+    monkeypatch.setattr(gateway.ClaudeCodeProvider, "has_workspace", lambda self: False)
+    p = _prompt(lte, monkeypatch, tmp_path)
+    assert p.startswith(agent.rules()) and "\n<workspace>\n" not in p
