@@ -34,6 +34,7 @@ import store  # noqa: E402
 from partlib_convert import MIN_PAD_MM, clean, convert_footprint, convert_symbols, names_fit, pad_size_problems, safe_name  # noqa: E402
 from partlib_kicad import fetch_kicad, kicad_footprint  # noqa: E402
 from partlib_generate import PASSIVE_PREFIX, POWER_NAME, footprint_for, package_key, symbol_for  # noqa: E402
+import partlib_mech  # noqa: E402
 
 LCSC_RE = re.compile(r"^C\d{2,9}$")
 RATING_PREFIX = ("R", "C", "L")                 # these show their value as the comment, the rest their MPN
@@ -381,7 +382,7 @@ def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None
         prev = by_mpn.get(mpn.lower())
         if prev and manifest[prev]["symbol"]:               # the same MPN on another line: one library part
             src = manifest[prev]
-            e.update({k: src[k] for k in ("symbol", "footprint", "step", "source", "status", "vendor_zip") if k in src})
+            e.update({k: src[k] for k in ("symbol", "footprint", "step", "source", "status", "vendor_zip", "rf") if k in src})
             e["issues"] = list(src["issues"])
             build.symbols[src["symbol"]].setdefault("lines", [prev]).append(key)
             continue
@@ -438,6 +439,7 @@ def prepare(project, fetch=True, refresh=False, fetcher=None, kicad_fetcher=None
         e["symbol"], e["footprint"] = name, fpname
         if build.footprints[fpname]["steps"]:
             e["step"] = build.footprints[fpname]["steps"][0].relative_to(lib).as_posix()
+        partlib_mech.annotate(build.footprints[fpname], e, line)         # radio module: antenna keep-out; the 3D body against the pads
         e["status"] = "warn" if e["issues"] else "ok"        # a missing 3D model on a generated part is no warning
     _write(project, build)
     for p in check_build(lib / "build"):
@@ -633,6 +635,11 @@ def _write(project, build):
         if any(s["footprint"] == name for s in build.symbols.values()):
             fp.append(f"FOOTPRINT|{name}|{clean(f['fp'].get('desc') or 'EasyEDA/LCSC')}")
             fp += f["fp"]["lines"]
+    mech = partlib_mech.mech_specs(project)            # holes / keep-outs of the student's confirmed constraints: footprints, no symbol
+    for sp in mech:
+        fp.append(f"FOOTPRINT|{sp['name']}|{clean(sp['desc'])}")
+        fp += sp["lines"]
+    (library_dir(project) / "mech.sig").write_text(partlib_mech.mech_signature(project) + "\n", encoding="utf-8")   # library_stale compares it
     (out / "symbols_spec.txt").write_text("\n".join(sy) + "\n", encoding="cp1252", errors="replace")
     (out / "footprints_spec.txt").write_text("\n".join(fp) + "\n", encoding="cp1252", errors="replace")
     (out / "links.txt").write_text("".join(f"{s['name']}={s['footprint']}\n" for s in build.symbols.values()),
@@ -647,6 +654,8 @@ def _write(project, build):
                                 "steps": [p.relative_to(lib).as_posix() for p in f["steps"]]}
                             for n, f in build.footprints.items()
                             if any(s["footprint"] == n for s in build.symbols.values())}}
+    for sp in mech:
+        parts["footprints"][sp["name"]] = {"source": "generated", "tht": False, "model": None, "errors": [], "steps": [], "mech": True}
     (out / "parts.json").write_text(json.dumps(parts, indent=2) + "\n", encoding="utf-8")
 
 
@@ -690,6 +699,8 @@ def check_build(build_dir):
             add("problem", f"footprint {name}: pad {pad} is {side:g} mm wide, below the {MIN_PAD_MM:g} mm a fab can make; "
                            "the footprint's copper was not converted correctly or the part's pad is too small to build",
                 footprint=name, kind="copper")
+        if info.get("mech"):
+            continue                                         # a hole or a keep-out has no body
         if n == 0:
             # the board still builds without a body; the student sees the gap and can add a STEP later
             add("warning", f"no 3D model for footprint {name}", footprint=name, kind="3d")
