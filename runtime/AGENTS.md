@@ -52,7 +52,7 @@ with the absolute repo path. No `cd`, `&&`, `;`, pipe, `2>&1`, `$env:`: any othe
 - `python <repo>/scripts/rules.py diff <pcbdoc> | export <output.RUL> | preset` JLC preset, diff vs PcbDoc, .RUL export; `standard ipc2221b|ipc_class ...` previews IPC rules
 - `python <repo>/scripts/calc.py trace-width <amps> | divider <vin> <vout> | led <vs> <vf> <ima> | via <drill> | microstrip <w> <h>` calculators (trace width is IPC-2221)
 - `python <repo>/scripts/trace_width.py <amps> --layer external|internal [--rise <C>] [--oz <n>]` IPC-2221 trace width
-- `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project> [--plan <plan.json>]` PcbDoc to SVG with the plan overlay | `python <repo>/scripts/checks/board.py <pcb_file> [--design <project>]` layout checks: connector opening, decap distance, CPL rotation; with `--design`: missing nets, pins with no net, parts not on the board
+- `python <repo>/scripts/preview_pcb.py <pcbdoc_or_project>` PcbDoc to SVG (a saved placement plan is drawn over it) | `python <repo>/scripts/checks/board.py <pcb_file> [--design <project>]` layout checks: connector opening, decap distance, CPL rotation; with `--design`: missing nets, pins with no net, parts not on the board
 - `python <repo>/scripts/skills/export_bom.py <project> jlc` BOM CSV for JLC | `python <repo>/scripts/outjob.py <project> [--out <dir>]` Altium OutJob file
 - `python <repo>/scripts/dfm.py ingest <project> <pdf> [--kind pcb|smt|both|auto]` | `gerber-zip <project>` | `pickup <project> [--kind K]` add a JLCDFM report PDF, make the Gerber zip, add the new report from Downloads
 - `python <repo>/scripts/altium/dump.py <file> [--full] [--net NAME]` read-only inspector for SchDoc, PcbDoc pads+nets+rules, PrjPcb, .RUL
