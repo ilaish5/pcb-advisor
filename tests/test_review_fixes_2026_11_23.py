@@ -116,3 +116,16 @@ def test_the_readiness_rev_ignores_conversation_and_usage_logs(empty):
     assert stages.rev(empty) == r0
     store.append(empty, "bom-log.jsonl", {"ts": 1})
     assert stages.rev(empty) != r0
+
+
+def test_a_diode_decision_made_before_the_polarity_rule_keeps_standing(empty):
+    """Student decision 23/11: old accepts stay as they are. A decision without "fpv" is compared with fingerprint version 1."""
+    _jd_sheet(empty, ("1", "2"))
+    pin_decisions.accept_all(empty)
+    lib = store.library_parts(empty)
+    dec = dict(lib["D1"]["pin_decision"])
+    dec.pop("fpv", None)
+    dec["fingerprint"] = pin_decisions.fingerprint(empty, "D1", 1)
+    store.append(empty, "library-log.jsonl", {"ts": store.now_ms(), "by": "student", "line": "D1", "changes": {"pin_decision": dec}})
+    assert store.unverified_parts(empty) == []          # same pins: no new question
+    assert pin_decisions.fingerprint(empty, "D1", 1) != pin_decisions.fingerprint(empty, "D1")

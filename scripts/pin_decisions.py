@@ -37,20 +37,24 @@ def _line(project, line):
     return line if isinstance(line, dict) else store._line_of(project, line)
 
 
-def fingerprint(project, line):
+FP_VERSION = 2       # 2 added the diode / LED polarity nets; a decision without "fpv" was made against version 1
+
+
+def fingerprint(project, line, version=FP_VERSION):
     """What a pin decision was made about: sorted (ref, number, name) of the line's parts on the sheets, plus the MPN,
     the package and the declared LCSC code. Never the whole part dict (a drawn position or a note must not undo a decision).
     Only wired pins count, and only by number and name: the decision is about which number is which pin where it matters.
     Moving a pin to another net keeps it; marking open pins NC (any no-connect spelling, pinnames.is_nc_net) or adding a built
     symbol's unlisted pins as NC keeps it; wiring a pin that was open or NC, or unwiring one, is a change.
     One exception: a diode / LED is decided on polarity and its pins are often named just "1" / "2", so the net names of its
-    pins are part of the fingerprint: swapping anode and cathode nets asks again."""
+    pins are part of the fingerprint: swapping anode and cathode nets asks again. A decision is compared with the version it
+    was made against, so a change of this rule never asks the student again about pins that did not change."""
     line = _line(project, line)
-    return store.memoised(("fingerprint", project, line.get("key"), tuple(line.get("refs") or ()), line.get("mpn"), line.get("package"),
-                           line.get("lcsc")), lambda: _fingerprint(project, line))
+    return store.memoised(("fingerprint", version, project, line.get("key"), tuple(line.get("refs") or ()), line.get("mpn"),
+                           line.get("package"), line.get("lcsc")), lambda: _fingerprint(project, line, version))
 
 
-def _fingerprint(project, line):
+def _fingerprint(project, line, version=FP_VERSION):
     refs = set(line.get("refs") or [])
     rows, nets = [], []
     for sh in store.sheet_ids(project):
@@ -62,7 +66,7 @@ def _fingerprint(project, line):
                         rows.append([part["ref"], str(p.get("num", p.get("number", ""))), str(p.get("name") or "")])
                     nets.append([part["ref"], str(p.get("num", p.get("number", ""))), "" if pinnames.is_nc_net(net) else net.upper()])
     doc = {"pins": sorted(rows), "mpn": line.get("mpn") or "", "package": line.get("package") or "", "lcsc": line.get("lcsc") or ""}
-    if store._polarised_only(line):
+    if version >= 2 and store._polarised_only(line):
         doc["polarity_nets"] = sorted(nets)
     return lineage._digest(doc)
 
@@ -77,7 +81,7 @@ def state(project, line, entry):
         return ({"status": "accepted", "basis": "legacy", "ts": "", "id": "legacy"}, "") if entry.get("pins_accepted") else (None, "")
     if dec.get("status") != "accepted":
         return None, ""
-    if project and dec.get("fingerprint") and dec["fingerprint"] != fingerprint(project, line):
+    if project and dec.get("fingerprint") and dec["fingerprint"] != fingerprint(project, line, dec.get("fpv", 1)):
         return None, f"accepted on {str(dec.get('ts') or '')[:10] or 'an earlier day'}, pins changed since"
     return dec, ""
 
@@ -122,7 +126,7 @@ def accept(project, key, evidence=None, reason="", wrong=None, basis=None):
     evidence = [{"doc": str(e.get("doc") or ""), "sha256": str(e.get("sha256") or ""), "page": int(e["page"]) if str(e.get("page") or "").isdigit() else 0}
                 for e in (evidence or []) if isinstance(e, dict)]
     dec = {"id": f"pd-{store.now_ms()}", "status": "accepted", "basis": basis if basis in BASES else _basis(line, evidence),
-           "reason": str(reason or "").strip()[:300], "evidence": evidence, "fingerprint": fingerprint(project, line), "ts": store.now()}
+           "reason": str(reason or "").strip()[:300], "evidence": evidence, "fingerprint": fingerprint(project, line), "fpv": FP_VERSION, "ts": store.now()}
     store.add_library(project, key, {"pin_decision": dec, "pins_accepted": False}, by="student")
     store.refresh_pins_source(project)
     _refresh_manifest(project)
@@ -166,7 +170,7 @@ def stamp_legacy(project, lines, lib):
         e = lib.get(l["key"]) or {}
         if e.get("pins_accepted") and not e.get("pin_decision") and l.get("refs"):
             dec = {"id": f"pd-legacy-{l['key']}", "status": "accepted", "basis": "legacy", "reason": "", "evidence": [],
-                   "fingerprint": fingerprint(project, l), "ts": store.now()}
+                   "fingerprint": fingerprint(project, l), "fpv": FP_VERSION, "ts": store.now()}
             store.add_library(project, l["key"], {"pin_decision": dec}, by="system")
             e["pin_decision"] = dec
 
