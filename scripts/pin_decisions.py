@@ -90,6 +90,14 @@ def _basis(line, evidence):
     return "polarity" if store._polarised_only(line) else "blind"
 
 
+def _refresh_manifest(project):
+    """Keep exports/<p>_order_manifest.json current after a decision changes: never a failed accept because the file could not be written."""
+    try:
+        write_manifest(project)
+    except Exception:       # noqa: BLE001
+        pass
+
+
 def accept(project, key, evidence=None, reason="", wrong=None, basis=None):
     """The student says the pins match. {ok, line, decision, changed}. Idempotent: a second accept of the same fingerprint
     writes nothing. `wrong`, a list of pin numbers the student marked wrong, makes it a conflict instead (no decision)."""
@@ -112,6 +120,7 @@ def accept(project, key, evidence=None, reason="", wrong=None, basis=None):
            "reason": str(reason or "").strip()[:300], "evidence": evidence, "fingerprint": fingerprint(project, line), "ts": store.now()}
     store.add_library(project, key, {"pin_decision": dec, "pins_accepted": False}, by="student")
     store.refresh_pins_source(project)
+    _refresh_manifest(project)
     return {"ok": True, "line": key, "decision": dec, "changed": True}
 
 
@@ -125,6 +134,7 @@ def revoke(project, key):
     dec = {**old, "status": "revoked", "revoked_at": store.now()}
     store.add_library(project, line["key"], {"pin_decision": dec, "pins_accepted": False}, by="student")
     store.refresh_pins_source(project)
+    _refresh_manifest(project)
     return {"ok": True, "line": line["key"], "changed": True}
 
 
@@ -234,7 +244,7 @@ def write_manifest(project):
         board = None
     try:
         old = json.loads(path.read_text(encoding="utf-8"))
-        same = old.get("accepted_risks") == acc and old.get("unverified") == unv
+        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("board_check") == json.loads(json.dumps(board, default=str))
     except (OSError, ValueError):
         same = False
     if not same:
