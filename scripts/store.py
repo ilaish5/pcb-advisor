@@ -308,7 +308,9 @@ def manifest_status(status, built):
     """The library state of a line the build pipeline knows: its own verdict unless the student already accepted the part."""
     if status in ("std", "ok") or built is None:
         return status
-    if built.get("status") in ("missing", "error"):
+    if built.get("status") == "error":
+        return "error"                       # a footprint the converter could not keep truthfully: its own state, not "to verify"
+    if built.get("status") == "missing":
         return "missing"
     return "ok" if built.get("built") else "review"
 
@@ -433,7 +435,7 @@ def totals(lines):
     # (page dated Sep 09 2026, read 2026-10-14). Standard assembly charges 1.53 for Basic and Extended alike.
     ext_fee_usd = float(workspace.get("jlc.extended_fee_usd", 3.07))
     t = {"lines": len(lines), "parts": 0, "cost": 0.0, "buy": 0, "in_stock": 0,
-         "out_of_stock": 0, "checking": 0, "to_verify": 0,
+         "out_of_stock": 0, "checking": 0, "to_verify": 0, "library_error": 0,
          "cost_per_board": 0.0, "extended_fee": 0.0}
     extended_parts = set()
     total_cost_per_board = 0.0
@@ -442,6 +444,8 @@ def totals(lines):
         t["parts"] += q
         if l.get("library") in ("review", "missing"):
             t["to_verify"] += 1
+        if l.get("library") == "error":
+            t["library_error"] += 1
         if not q:
             continue
         t["buy"] += 1
@@ -3143,13 +3147,55 @@ def recheck_pins(project):
     return {"unverified": rows, "checked": checked, "message": msg}
 
 
+def footprint_errors(project):
+    """{footprint name: [what is wrong]} of the built library whose converter could not keep the source's copper truthfully (parts.json of the
+    last library prepare). Such a footprint is never written to the spec the library, the drawing and the placement are built from."""
+    try:
+        parts = json.loads((pdir(project) / "library" / "build" / "parts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    fps = parts.get("footprints") if isinstance(parts, dict) else None
+    return {n: list(i["errors"]) for n, i in (fps or {}).items() if isinstance(i, dict) and i.get("errors")}
+
+
+def footprint_error_parts(project, refs=None, buyable=False):
+    """[{line, refs, footprint, errors}] of the BOM lines whose library footprint is in error (footprint_errors). `refs` limits it to lines
+    holding one of those designators; buyable drops DNP / do-not-buy lines."""
+    bad = footprint_errors(project)
+    if not bad:
+        return []
+    man = library_manifest(project)
+    out = []
+    for l in bom_lines(project):
+        fp = (man.get(l["key"]) or {}).get("footprint")
+        if fp not in bad or (buyable and qty(l) == 0):
+            continue
+        mine = [r for r in (l.get("refs") or [l["key"]]) if refs is None or r in refs]
+        if mine:
+            out.append({"line": l["key"], "refs": mine, "footprint": fp, "errors": bad[fp]})
+    return out
+
+
+def footprint_error_text(items, what):
+    """One message naming every part whose footprint is in error, what is wrong and how to fix it; "" when there is none."""
+    if not items:
+        return ""
+    names = [r for i in items for r in i["refs"]]
+    detail = "; ".join(f"{', '.join(i['refs'][:4])}{' ...' if len(i['refs']) > 4 else ''} ({i['footprint']}: {' / '.join(i['errors'][:2])})"
+                       for i in items[:8]) + (" ..." if len(items) > 8 else "")
+    return (f"{what}: {len(names)} {'part has' if len(names) == 1 else 'parts have'} a footprint with errors: {detail}. "
+            "Fix: pick another LCSC code for the part, or clear the LCSC code so the tool generates the footprint from the package, "
+            "then build the library again.")
+
+
 def manufacturing_warning(project):
     """"" when every part on the board has verified or accepted pins; else the refusal that stops the manufacturing outputs (Altium
     OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list, without DNP / do-not-buy lines).
     The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins)."""
+    fp_msg = footprint_error_text(footprint_error_parts(project, buyable=True), "Not made yet")
     rows = pins_to_resolve(project)
     if not rows:
-        return ""
+        return fp_msg
     bad = [r for r in rows if r["status"] == "mismatch"]
     refs = lambda rs: [ref for r in rs for ref in (r.get("refs") or [r["line"]])]
     def part(rs, what):
@@ -3158,7 +3204,8 @@ def manufacturing_warning(project):
     said = [part([r for r in rows if r["status"] != "mismatch"], "pins nobody checked against a datasheet")] if len(bad) < len(rows) else []
     if bad:
         said.append(part(bad, "pins that differ from the datasheet"))
-    return ("Not made yet: " + "; ".join(said) + ". Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
+    return (fp_msg + (" Also: " if fp_msg else "Not made yet: ")
+            + "; ".join(said) + ". Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
 
 
 def accept_pins(project, key):

@@ -93,6 +93,15 @@ def is_active(key):
         return key in _queued or _state["running"] == key
 
 
+def project_active(project):
+    """True while a queued or running job (stock check, citation check) belongs to this project folder (keys are "kind:project:...")."""
+    def mine(key):
+        parts = str(key).split(":", 2)
+        return len(parts) > 1 and parts[1].casefold() == str(project).casefold()
+    with _cv:
+        return any(mine(k) for k in _queued) or (_state["running"] is not None and mine(_state["running"]))
+
+
 def wait_idle(timeout=10.0):
     """Block until nothing is queued or running (tests). True if it got idle in time."""
     end = time.time() + timeout

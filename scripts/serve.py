@@ -12,6 +12,7 @@ engine to route to all come from config.json (see scripts/workspace.py).
 """
 import argparse
 import base64
+import contextlib
 import datetime as dt
 import itertools
 import json
@@ -337,12 +338,37 @@ def _altium_state(proj):
     }
 
 
+PROJECT_BUSY = {}                       # folder name -> how many background writers (sheet redraw) run in it now
+PROJECT_BUSY_LOCK = threading.Lock()
+
+
+@contextlib.contextmanager
+def project_busy(project):
+    """Marks a project folder as being written by a background job: deleting the project is refused meanwhile."""
+    key = workspace.safe_name(project)
+    with PROJECT_BUSY_LOCK:
+        PROJECT_BUSY[key] = PROJECT_BUSY.get(key, 0) + 1
+    try:
+        yield
+    finally:
+        with PROJECT_BUSY_LOCK:
+            PROJECT_BUSY[key] -= 1
+            if not PROJECT_BUSY[key]:
+                del PROJECT_BUSY[key]
+
+
+def project_busy_now(folder):
+    with PROJECT_BUSY_LOCK:
+        return any((k.casefold() == folder.casefold()) if os.name == "nt" else k == folder for k in PROJECT_BUSY)
+
+
 def redraw(project):
     """Sheet pictures are derived; a bad picture must never lose a change."""
     try:
         import render_sheet
-        for sid in store.sheet_ids(project):
-            render_sheet.render(project, sid)
+        with project_busy(project):
+            for sid in store.sheet_ids(project):
+                render_sheet.render(project, sid)
     except Exception as exc:
         print(f"render failed: {exc}")
 
@@ -386,8 +412,9 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
     """Approve or reject one proposal and do what follows (supply re-check, sheet labels, a note the engine
     reads). The click, the batch endpoint and the autonomy setting all come through here, so the logs are
     the same whoever decided; only `by` differs."""
-    if store.decide(project, pid, decision, by=by).get("already"):
-        return next(p for p in store.proposals(project) if p["id"] == pid)      # decided that way before: nothing more to do
+    decided_now = store.decide(project, pid, decision, by=by)
+    if decided_now.get("already"):
+        return {**next(p for p in store.proposals(project) if p["id"] == pid), "already": True}      # decided that way before: nothing more to do
     project_mod.touch(project)
     prop = next(p for p in store.proposals(project) if p["id"] == pid)
     if decision == "approved" and prop.get("kind") != "idea_diagram":
@@ -1292,7 +1319,32 @@ def needs_replace(exc):
 # Altium runs one script at a time and every operation shares one exchange folder: a second operation started while a draw / place /
 # route is running stops it or reads its files half written. The bridge's own lock only covers a single command batch, so whoever
 # starts an operation (a step button, another Altium button, a chat turn applying its actions) holds this for all of it.
-LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")     # the only Host names a request may carry (DNS rebinding)
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")     # the Host names a request may carry (DNS rebinding) ...
+EXTRA_HOSTS = set()                                  # ... plus the ones of a non-loopback server.host (set at start: allowed_hosts)
+
+
+def allowed_hosts(host):
+    """The extra Host names to accept for a configured server.host that is not loopback: the host itself and, for 0.0.0.0 / ::, this
+    machine's own names and addresses. Any other Host stays refused (a DNS-rebound page carries its own)."""
+    host = (host or "").strip().lower()
+    if host in LOCAL_HOSTS or host in ("127.0.0.1", "::1"):
+        return set()
+    names = set()
+    def add(n):
+        n = str(n).strip().lower()
+        if n:
+            names.add(f"[{n}]" if ":" in n and not n.startswith("[") else n)
+    if host in ("", "0.0.0.0", "::", "[::]"):
+        try:
+            add(socket.gethostname())
+            add(socket.getfqdn())
+            for info in socket.getaddrinfo(socket.gethostname(), None):
+                add(info[4][0].split("%")[0])
+        except OSError:
+            pass
+    else:
+        add(host)
+    return names - set(LOCAL_HOSTS)
 STEP_LOCK = threading.Lock()
 ALTIUM_BUSY = "Altium is still working on another step; wait for it to finish and try again."
 STEP_NAMES = {"draw": "Drew the schematic", "place": "Placed the parts", "route": "Routed the board",
@@ -2373,29 +2425,35 @@ def apply_update():
     if BUSY["chat"]:
         why = "The agent is answering. Update when it is done."
         return 409, {"ok": False, "reason": why, "error": why}
-    if STEP_LOCK.locked():              # the restart would kill the script that is driving Altium
+    if not STEP_LOCK.acquire(blocking=False):      # the restart would kill the script that is driving Altium; held below so no step can start mid-update
         why = "Altium is running a step. Update when it has finished."
         return 409, {"ok": False, "reason": why, "error": why}
-    with UPDATE_LOCK:
-        if UPDATE["state"] in ("checking", "applying"):
-            why = "An update check is running. Try again in a moment."
-            return 409, {"ok": False, "reason": why, "error": why}
-        UPDATE["state"] = "applying"
+    keep = False                                   # True: the process is about to restart, so the lock is never released (no step may start before it exits)
     try:
-        res = update.apply()
-    except Exception as exc:                    # apply() reports its own failures; this is the unforeseen one
-        res = {"ok": False, "reason": f"The update failed: {exc}"}
+        with UPDATE_LOCK:
+            if UPDATE["state"] in ("checking", "applying"):
+                why = "An update check is running. Try again in a moment."
+                return 409, {"ok": False, "reason": why, "error": why}
+            UPDATE["state"] = "applying"
+        try:
+            res = update.apply()
+        except Exception as exc:                    # apply() reports its own failures; this is the unforeseen one
+            res = {"ok": False, "reason": f"The update failed: {exc}"}
+        finally:
+            UPDATE["state"] = "done"
+        if res["ok"]:
+            UPDATE["result"] = {**(UPDATE["result"] or {}), "behind": 0, "can_update": False, "current": res["to"],
+                                "commits": [], "reason": "Updated; restarting."}
+            res["restarting"] = HTTPD is not None
+            if HTTPD is not None:
+                keep = True
+                threading.Timer(0.5, restart).start()
+        else:
+            res["error"] = res.get("reason") or "The update failed."     # the UI's toast shows `error`
+        return (200 if res["ok"] else 400), res
     finally:
-        UPDATE["state"] = "done"
-    if res["ok"]:
-        UPDATE["result"] = {**(UPDATE["result"] or {}), "behind": 0, "can_update": False, "current": res["to"],
-                            "commits": [], "reason": "Updated; restarting."}
-        res["restarting"] = HTTPD is not None
-        if HTTPD is not None:
-            threading.Timer(0.5, restart).start()
-    else:
-        res["error"] = res.get("reason") or "The update failed."     # the UI's toast shows `error`
-    return (200 if res["ok"] else 400), res
+        if not keep:
+            STEP_LOCK.release()
 
 
 def restart():
@@ -2522,13 +2580,25 @@ class Handler(BaseHTTPRequestHandler):
         Sec-Fetch-Site if sent says same-origin or none. No Origin (CLI, tests, our own callers) is fine on a local Host."""
         host = (self.headers.get("Host") or "").strip().lower()
         name = host[:host.index("]") + 1] if host.startswith("[") and "]" in host else host.rsplit(":", 1)[0] if host.count(":") == 1 else host
-        if name not in LOCAL_HOSTS:
+        if name not in LOCAL_HOSTS and name not in EXTRA_HOSTS:
             return True
         origin = self.headers.get("Origin")
         if origin is not None and urlparse(origin).netloc.lower() != host:
             return True
         site = self.headers.get("Sec-Fetch-Site")
         return site is not None and site not in ("same-origin", "none")
+
+    def _linger(self, seconds=2.0):
+        """After an answer sent without reading the request body: half-close, then discard what still arrives for a moment, so the close
+        does not turn into a connection reset that hides the answer from the page (a body of any size, not a fixed 1 MiB)."""
+        try:
+            self.connection.shutdown(socket.SHUT_WR)
+            end = time.time() + seconds
+            self.connection.settimeout(0.5)
+            while time.time() < end and self.connection.recv(65536):
+                pass
+        except (OSError, ValueError):
+            pass
 
     def _report(self, make):
         """POST: make the diagnostic zip (local only) and say where it is. GET ?file=<name>: send one made earlier (strict file name)."""
@@ -3054,12 +3124,22 @@ class Handler(BaseHTTPRequestHandler):
     def _post(self):
         path = self.path.split("?")[0]
         if self._cross_origin():          # default deny: no state change for a page of another site or a rebound host, whatever the route
-            self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 1 << 20))     # drained, or the reset hides the answer
-            return self._send(403, {"error": "forbidden"})
+            try:
+                int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return self._send(400, {"error": "bad Content-Length"})
+            code = self._send(403, {"error": "forbidden"}, extra={"Connection": "close"})     # the body is not read: the answer says we close
+            self._linger()
+            return code
         proj = self.project()
         sess = self.session(proj)
 
-        n = int(self.headers.get("Content-Length", 0))
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._send(400, {"error": "bad Content-Length"})
+        if n < 0:
+            return self._send(400, {"error": "bad Content-Length"})
         if n > (runlog.USAGE_MAX_BODY if path == "/api/log/usage" else runlog.MAX_BODY if path == "/api/log/client" else n):
             return self._send(413, {"error": "too large"})       # a report from the page is small; refuse the rest unread
         try:
@@ -3310,9 +3390,8 @@ class Handler(BaseHTTPRequestHandler):
             results = []
             for pid in ids:
                 try:
-                    prior = next((p["status"] for p in store.proposals(proj) if p["id"] == pid), None)
-                    decide_and_note(proj, sess, pid, decision, note=False, redraw_now=False)
-                    results.append({"id": pid, "ok": True, **({"already": True} if prior == decision else {})})
+                    got = decide_and_note(proj, sess, pid, decision, note=False, redraw_now=False)      # store.decide says "already" under its lock
+                    results.append({"id": pid, "ok": True, **({"already": True} if got.get("already") else {})})
                 except (KeyError, ValueError) as exc:
                     results.append({"id": pid, "ok": False, "error": str(exc).strip("'\"")})
             done = [r["id"] for r in results if r["ok"] and not r.get("already")]      # a repeat changed nothing: not announced again
@@ -3862,17 +3941,28 @@ class Handler(BaseHTTPRequestHandler):
             name = _text_field(data, "name")
             if not name:
                 return self._send(400, {"error": "name required"})
-            import shutil
             proj_dir = model.project_dir(name)
             if not proj_dir.is_dir():
                 return self._send(404, {"error": f"no such project: {name}"})
-            with TURNS_LOCK:
-                answering = any(k[0] == name for k in TURNS)
-            if answering or STEP_LOCK.locked():       # a turn or an Altium step may be writing into that folder right now
-                return self._send(409, {"error": "The project is busy (the agent is answering or Altium is running a step). Delete it when that has finished."})
-            trash = proj_dir.parent / ".trash"        # not removed: moved aside (list_all skips dot-folders), so a mistake can be undone by hand
-            trash.mkdir(exist_ok=True)
-            shutil.move(str(proj_dir), str(trash / f"{proj_dir.name}-{time.strftime('%Y%m%d-%H%M%S')}"))
+            folder = proj_dir.name                    # TURNS and the busy registry are keyed by the folder name, not the text typed
+            norm = (lambda n: n.casefold()) if os.name == "nt" else (lambda n: n)
+            import background
+            busy_msg = {"error": "The project is busy (the agent is answering or Altium is running a step). Delete it when that has finished."}
+            if not STEP_LOCK.acquire(blocking=False):   # held to the end: no Altium step (or library build) can start in a folder being moved
+                return self._send(409, busy_msg)
+            try:
+                with TURNS_LOCK:
+                    answering = any(norm(k[0]) == norm(folder) for k in TURNS)
+                if answering or project_busy_now(folder) or background.project_active(folder):
+                    return self._send(409, busy_msg)
+                trash = proj_dir.parent / ".trash"        # not removed: moved aside (list_all skips dot-folders), so a mistake can be undone by hand
+                trash.mkdir(exist_ok=True)
+                try:                                      # one atomic rename (same volume): it either happens or leaves the project intact
+                    os.rename(proj_dir, trash / f"{folder}-{time.strftime('%Y%m%d-%H%M%S')}")
+                except OSError:
+                    return self._send(409, {"error": "A file in the project is open: close it and retry."})
+            finally:
+                STEP_LOCK.release()
             projects = model.list_projects()
             default = projects[0]["name"] if projects else "demo"
             return self._send(200, {"deleted": name, "projects": projects, "default": default})
@@ -4272,11 +4362,16 @@ def main(argv=None):
     redraw(DEFAULT_PROJECT)
 
     url = f"http://{host}:{port}"
+    EXTRA_HOSTS.clear()
+    EXTRA_HOSTS.update(allowed_hosts(host))
     _engine = gateway.resolve(BACKEND)
     ok, why = gateway.provider(_engine).available()
     print(f"pcb-advisor  home={workspace.home()}  project={DEFAULT_PROJECT}")
     print(f"             engine={_engine}" + ("" if ok else f"  (unavailable: {why})"))
     print(f"             {url}")
+    if EXTRA_HOSTS:
+        print("             accepted Host names: " + ", ".join(list(LOCAL_HOSTS) + sorted(EXTRA_HOSTS))
+              + "  (any other Host is refused)")
     if not QUIET:
         print("             logging requests; --quiet turns this off")
 

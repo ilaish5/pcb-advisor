@@ -45,7 +45,7 @@ async function loadConfig() {
 }
 
 /* ================================ Library ================================ */
-const PG_LIB = {ok: ['Verified', 'ok'], review: ['To review', 'warn'], missing: ['Missing', 'bad']};
+const PG_LIB = {ok: ['Verified', 'ok'], review: ['To review', 'warn'], missing: ['Missing', 'bad'], error: ['Footprint error', 'bad']};
 
 const PG_SOURCE = {easyeda: 'EasyEDA', vendor: 'Vendor zip', kicad: 'KiCad', generated: 'Generated', missing: 'Missing'};
 function libModels(r) {

@@ -53,6 +53,7 @@ function bomProblems(l, q, b) {
   if (risks.includes('no exact MPN match')) out.push({rank: 2, text: 'No exact match', tone: 'warn', title: 'No supplier lists exactly this MPN'});
   // A model still to review is the normal state of a new or imported BOM: the meta line counts those, the Library page
   // lists them. Only a missing model is a problem worth a tag on the row.
+  if (l.library === 'error') out.push({rank: 0, text: 'Footprint error', tone: 'bad', title: 'The footprint of this part has errors, so it is not drawn, placed or made. Open the Library page: pick another LCSC code or let the tool generate the footprint.'});
   if (l.library === 'missing') out.push({rank: 4, text: 'No model', tone: 'warn', title: 'No symbol or footprint in your Altium library for this part yet. Open the Library page and add or import one, or ask the agent to.'});
   if (l.pins_status === 'unverified') out.push({rank: 6, text: 'unverified', title: l.pins_issues || 'Pins not checked against a datasheet'});
   if (l.pins_status === 'mismatch') out.push({rank: 3, text: 'pins conflict', tone: 'warn', title: 'Pins differ from the datasheet: ' + (l.pins_issues || '')});
@@ -97,6 +98,7 @@ function bomHeader(t) {
       title: `Assumes $${CONFIG?.jlc?.extended_fee_usd || 3} for each Extended part type, once per order. The JLC quote has the real fee.`},
     {n: t.checking, label: 'not checked', tone: 'warn', title: 'Lines with no stock answer yet'},
     {n: t.out_of_stock, label: 'out of stock', tone: 'bad', title: 'Lines no supplier has enough of'},
+    {n: t.library_error, label: 'footprint error', tone: 'bad', title: 'Parts whose footprint has errors: they are not drawn, placed or made until you pick another LCSC code or let the tool generate the footprint.'},
     {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model nobody has confirmed yet. Open the Library page and accept or fix each one.'},
   ]);
   const actions = menu({label: 'Export', iconAfter: 'chev'}, [
