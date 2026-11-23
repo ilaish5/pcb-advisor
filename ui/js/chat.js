@@ -188,34 +188,78 @@ function propSummary(p) {
   const keys = propChangedKeys(p).filter(k => k !== 'refs' || p.new);
   return `${p.new ? 'New ' : ''}${ref}: ${keys.map(k => propLabel(k).toLowerCase() + ' ' + propShow(p.changes[k], k)).join(', ')}`;
 }
-/* The same summary as fields, for the lists: ref, then each changed field as label and value. */
-function propSummaryHTML(p) {
-  if (p.kind === 'idea_diagram') return esc('Diagram changes');
-  const ref = ((lineByKey(p.line) || {}).refs || [p.line])[0];
-  const keys = propChangedKeys(p).filter(k => k !== 'refs' || p.new);
-  const f = keys.map(k => `<span class="pf"><span class="k">${esc(propLabel(k))}</span> <b>${esc(propShow(p.changes[k], k))}</b></span>`).join(' ');
-  return `${p.new ? '<span class="t">New</span> ' : ''}<b>${esc(ref)}</b> ${f}`;
-}
 function propGroupTitle(ps) {
   const bom = ps.filter(p => p.kind !== 'idea_diagram').length, dia = ps.length - bom;
   return [bom && propPlural(bom, 'BOM line'), dia && propPlural(dia, 'diagram change')].filter(Boolean).join(', ');
 }
-/* Several proposals from one turn: ONE card. Pending: Approve all / Reject all act on the ticked rows (all, at first).
-   Decided together (autonomy): one "Done" line with the list and an Undo per row. */
+/* ---- the proposed parts as ONE list, shared by this card and the BOM page ----
+   Ticks are kept per proposal id, not per place, so unticking a row on the BOM page also unticks it in the chat card.
+   A part whose MPN or notes say "unverified" starts unticked until the student ticks it. */
+const PROP_ALREADY = /already (approved|rejected|undone)/i;       // the server's answer to a second click on the same card
+let propTicks = {};
+function propIsUnverified(p) {
+  const c = p.changes || {};
+  return /unverified/i.test([c.mpn, c.notes, p.notes].filter(Boolean).join(' '));
+}
+function propTicked(id) {
+  if (Object.prototype.hasOwnProperty.call(propTicks, id)) return propTicks[id];
+  const p = (S.proposals || []).find(x => x.id === id);
+  return !(p && propIsUnverified(p));
+}
+function propRowOf(p, extra) {
+  const c = p.changes || {}, f = k => (c[k] === undefined || c[k] === null ? '' : propShow(c[k], k));
+  if (p.kind === 'idea_diagram') return {id: p.id, ref: 'Diagram', role: 'Diagram changes', reason: p.reason, checked: propTicked(p.id), ...extra};
+  const ref = (Array.isArray(c.refs) && c.refs[0]) || ((lineByKey(p.line) || {}).refs || [p.line])[0];
+  return {id: p.id, ref, isNew: !!p.new, mpn: f('mpn'), manufacturer: f('manufacturer'), package: f('package'), lcsc: f('lcsc'), value: f('value'),
+    role: f('role'), reason: p.reason, unverified: propIsUnverified(p), checked: propTicked(p.id), ...extra};
+}
+/* pending list: one row per proposal, with its tick */
+function propListHTML(ps, cls) { return proposalTable(ps.map(p => propRowOf(p)), {cls}); }
+/* The same three buttons under every list: Approve selected (N), Reject selected, Approve all. `ids` are the list's proposals. */
+function propActsHTML(ids, lead) {
+  const n = ids.filter(propTicked).length;
+  return `<div class="acts prop-acts">${btn(`Approve selected (${n})`, {kind: lead ? 'pri' : 'line', size: 'sm', act: 'prop-decide', decision: 'approved', scope: 'selected', disabled: !n})}` +
+    `${btn('Reject selected', {size: 'sm', act: 'prop-decide', decision: 'rejected', scope: 'selected', disabled: !n})}` +
+    `${btn('Approve all', {kind: 'line', size: 'sm', act: 'prop-decide', decision: 'approved', scope: 'all'})}</div>`;
+}
+/* after a tick changes: every copy of that tick, and every count and enabled state, follows the one shared state */
+function propSyncUI() {
+  document.querySelectorAll('input[data-ptick]').forEach(i => { i.checked = propTicked(i.dataset.ptick); });
+  document.querySelectorAll('[data-pids]').forEach(box => {
+    const n = box.dataset.pids.split(',').filter(Boolean).filter(propTicked).length;
+    box.querySelectorAll('button[data-act="prop-decide"][data-scope="selected"]').forEach(b => {
+      b.disabled = !n;
+      if (b.dataset.decision === 'approved') { const sp = b.querySelector('span'); if (sp) sp.textContent = `Approve selected (${n})`; }
+    });
+  });
+}
+onChange(t => t.dataset && t.dataset.ptick !== undefined, async e => { propTicks[e.target.dataset.ptick] = e.target.checked; propSyncUI(); });
+onAct('prop-decide', async (el, d) => {
+  const box = el.closest('[data-pids]');
+  const all = box ? box.dataset.pids.split(',').filter(Boolean) : [];
+  const ids = d.scope === 'all' ? all : all.filter(propTicked);
+  if (!ids.length) { toast('Tick at least one change'); return; }
+  const r = await api('/api/proposals/batch', {ids, decision: d.decision});
+  setState(r); render(true);
+  const bad = (r.results || []).filter(x => !x.ok);
+  const real = bad.filter(x => !PROP_ALREADY.test(x.error || ''));
+  if (real.length) toast(`${real.length} not applied: ${real[0].error}`, null, {bad: true});
+  else if (bad.length) toast('Already decided', null, {bad: false});       // a second click on a card that was just decided: nothing to do
+});
+
+/* Several proposals from one turn: ONE card. Pending: a table, one row per part with its tick; Approve selected / Reject selected
+   / Approve all. Decided together (autonomy): one "Done" line with the table and an Undo per row. */
 function propGroupHTML(ps, pending) {
-  const items = ps.map(p => pending
-    ? `<label class="prop-grow"><input type="checkbox" data-gpid="${esc(p.id)}" checked> <span dir="auto">${propSummaryHTML(p)}</span></label>`
-    : `<div class="prop-grow"><span dir="auto">${p.status === 'undone' ? '<s>' : ''}${propSummaryHTML(p)}${p.status === 'undone' ? '</s>' : ''}</span>` +
-      (p.status === 'approved' ? btn('Undo', {kind: 'link', size: 'sm', icon: 'undo', act: 'undo-change', pid: p.id}) : '<span class="muted">undone</span>') + '</div>').join('');
   if (pending) {
+    const lead = chatLead === null || ps.some(p => p.id === chatLead);
     return `<div class="prop batch" data-pids="${esc(ps.map(p => p.id).join(','))}"><h4>${esc(propGroupTitle(ps))}</h4>` +
-      `<details class="prop-glist"><summary>Show the list</summary>${items}</details>` +
-      `<div class="acts">${btn('Approve all', {kind: chatLead === null || ps.some(p => p.id === chatLead) ? 'pri' : 'line', size: 'sm', act: 'batch-decide', decision: 'approved'})}` +
-      `${btn('Reject all', {size: 'sm', act: 'batch-decide', decision: 'rejected'})}</div></div>`;
+      propListHTML(ps, 'ptbl-chat') + propActsHTML(ps.map(p => p.id), lead) + '</div>';
   }
+  const rows = ps.map(p => propRowOf(p, {struck: p.status === 'undone',
+    action: p.status === 'approved' ? btn('Undo', {kind: 'link', size: 'sm', icon: 'undo', act: 'undo-change', pid: p.id}) : '<span class="muted">undone</span>'}));
   const decidedBy = ps.every(p => p.decided_by === 'auto') ? 'Done' : 'Approved';
   const live = ps.filter(p => p.status === 'approved').length;
-  return `<details class="prop-done ok prop-glist"><summary><span class="ok-t">${icon('check', 's')}</span><span>${decidedBy}: ${esc(propGroupTitle(ps))}${live < ps.length ? ` (${ps.length - live} undone)` : ''}</span></summary>${items}</details>`;
+  return `<details class="prop-done ok prop-glist"><summary><span class="ok-t">${icon('check', 's')}</span><span>${decidedBy}: ${esc(propGroupTitle(ps))}${live < ps.length ? ` (${ps.length - live} undone)` : ''}</span></summary>${proposalTable(rows, {decided: true, cls: 'ptbl-chat'})}</details>`;
 }
 /* The cards under one agent message: decided ones as lines (grouped from two up), pending ones as one group card. */
 function propsHTML(ids) {
@@ -817,13 +861,3 @@ onAct('chat-confirm-idea', async () => { setState(await api('/api/idea/confirm',
 onAct('review-diagram', async (el, d, e) => { go('workspace', 'idea'); });
 // Undo one applied change: the server appends a compensating entry; if later changes depend on it, it says so (409)
 onAct('undo-change', async (el, d, e) => { setState(await api('/api/undo', {id: d.pid})); render(true); toast('Undone'); });
-// Approve all / Reject all on a group card: the ticked rows, applied in order; the server reports each one
-onAct('batch-decide', async (el, d, e) => {
-  const card = el.closest('.batch');
-  const ids = [...card.querySelectorAll('input[data-gpid]:checked')].map(i => i.dataset.gpid);
-  if (!ids.length) { toast('Tick at least one change'); return; }
-  const r = await api('/api/proposals/batch', {ids, decision: d.decision});
-  setState(r); render(true);
-  const failed = (r.results || []).filter(x => !x.ok);
-  if (failed.length) toast(`${failed.length} not applied: ${failed[0].error}`, null, {bad: true});
-});

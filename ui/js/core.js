@@ -30,6 +30,7 @@ const q = (extra = {}) => {
   const p = new URLSearchParams({project: PROJECT, ...(SESSION ? {session: SESSION} : {}), ...extra});
   return p.toString();
 };
+const PROP_ALREADY_DECIDED = /proposal already (approved|rejected|undone)/i;
 async function api(path, body, opts = {}) {
   const sep = path.includes('?') ? '&' : '?';
   const url = path + sep + q();
@@ -39,6 +40,11 @@ async function api(path, body, opts = {}) {
     : await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json', ...sid}, body: JSON.stringify(body)});
   let data = null;
   try { data = await r.json(); } catch (e) { data = {error: 'bad response'}; }
+  if (!r.ok && !opts.soft && PROP_ALREADY_DECIDED.test(String(data.error || ''))) {      // a second click on a decided card: nothing to do, not an error
+    toast('Already ' + String(data.error).match(PROP_ALREADY_DECIDED)[1].toLowerCase(), null, {bad: false});
+    try { setState(await api('/api/state')); render(true); } catch (e) { /* the toast already said it */ }
+    throw new Error(data.error);
+  }
   if (!r.ok && !opts.soft) { toast(data.error || ('Error ' + r.status), null, {bad: true}); throw new Error(data.error || r.status); }
   return data;
 }
@@ -317,6 +323,13 @@ document.addEventListener('click', async e => {
   if (el.matches('g.part')) { const l = lineOfRef(el.dataset.ref); if (l) select(l.key); return; }
   if (el.matches('tr[data-key]')) { if (e.target.closest('input')) return; if (!e.target.closest('button')) { select(el.dataset.key); return; } }
   const d = el.dataset;
+  // Busy guard, for every button: while its action is still running, a second click on the same button does nothing
+  // (a double click must not approve twice, three quick clicks must not accept three rows).
+  const guard = el.tagName === 'BUTTON';
+  if (guard) {
+    if (el.getAttribute('aria-busy') === 'true') return;
+    el.setAttribute('aria-busy', 'true');
+  }
   try {
     // A registered data-act wins over the generic data-* routes below, so a button may carry data-ref / data-src as
     // arguments for its action (btn() in kit.js turns plain keys into data-* attributes).
@@ -337,6 +350,7 @@ document.addEventListener('click', async e => {
     if (d.chat) { openPart(d.chat); return; }
     if (d.sheet) { sheetId = d.sheet; svgCache = {key: '', text: ''}; render(true); return; }
   } catch (err) { /* api() already toasted */ }
+  finally { if (guard) el.removeAttribute('aria-busy'); }
   if (el.classList.contains('sug')) { send(el.textContent); return; }
 });
 document.addEventListener('change', async e => {

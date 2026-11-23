@@ -12,6 +12,7 @@ from ui_source import ui_all, ui_js
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 BOM = (REPO / "ui" / "js" / "views" / "bom.js").read_text(encoding="utf-8")
+KIT_JS = (REPO / "ui" / "js" / "kit.js").read_text(encoding="utf-8")
 CSS = (REPO / "ui" / "styles" / "bom.css").read_text(encoding="utf-8")
 ALL = ui_all()
 JS = ui_js()
@@ -36,9 +37,9 @@ def _handler(act):
 def test_the_table_has_no_inputs_and_no_inline_styles():
     """A part is edited in the inspector. The table is read-only and styled from bom.css."""
     code = re.sub(r"/\*.*?\*/", "", BOM, flags=re.S)
-    table = code.replace(_fn("bomPendingList"), "")     # the pending-change list ticks proposals, not parts
+    table = code        # the pending-change list (shared proposalTable in kit.js) ticks proposals, not parts
     assert "<input" not in table and "<textarea" not in code and "<select" in _fn("importHTML")   # the import picker is the one control
-    assert 'type="checkbox"' in _fn("bomPendingList")
+    assert "propListHTML" in _fn("bomPendingBox") and "type=\"checkbox\"" in KIT_JS
     assert "style=" not in code
     assert "data-edit" not in _fn("bomRow")
 

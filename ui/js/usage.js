@@ -85,7 +85,7 @@
       var cls = typeof el.className === 'string' ? el.className : '';
       var box = el.type === 'checkbox' || el.type === 'radio';
       var lab = box ? (el.closest('label') ? el.closest('label').innerText : '') : '';
-      var key = box ? (el.getAttribute('data-bpid') || el.getAttribute('data-gpid') || el.getAttribute('data-preset-toggle') || el.getAttribute('data-extra-toggle') ||
+      var key = box ? (el.getAttribute('data-ptick') || el.getAttribute('data-preset-toggle') || el.getAttribute('data-extra-toggle') ||
         el.getAttribute('data-std-pick') || '') : '';
       var rec = {text: cut(box ? (lab || el.getAttribute('aria-label') || el.name || key || el.id) : (el.innerText || el.getAttribute('aria-label') || el.title || el.value), 80),
         id: el.id || key, act: el.getAttribute('data-act') || el.getAttribute('data-tab') || '', tag: el.tagName.toLowerCase(), cls: cut(cls, 60)};
