@@ -170,7 +170,7 @@ def test_the_pages_have_the_buttons_and_hit_the_endpoints():
     header = js[js.index("function pvStepBtn"):js.index("function pvStepNote")]
     assert "replace" not in header
     note = js[js.index("function pvStepNote"):js.index("async function pvRunStep")]
-    assert "replace: '1'" in note and "'Keep it'" in note and "pvStepNote('sch')" in js and "pvStepNote('pcb')" in js
+    assert "replace: '1'" in note and "'Keep it'" in note and "pvBarHTML('sch')" in js and "pvBarHTML('pcb'" in js and "pvStepNote('pcb')" in js      # the pages show the step on the canvas bar; the empty Layout page keeps it under its header
     assert "esc(PV_STEPS[pvBusy].busy)" in note and "pvElapsedHTML()" in note      # the working line (with its clock) stays while Altium runs
     assert "disabled: pvBusy || o.disabled ? true : undefined" in header         # no second step while one runs
 

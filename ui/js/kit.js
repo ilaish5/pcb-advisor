@@ -9,6 +9,7 @@ const KIT_ICONS = {
   chev: '<path d="m6 9 6 6 6-6"/>',
   chevr: '<path d="m9 6 6 6-6 6"/>',
   chevl: '<path d="m15 6-6 6 6 6"/>',
+  chevu: '<path d="m18 15-6-6-6 6"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   side: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
   panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',

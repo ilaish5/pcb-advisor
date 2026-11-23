@@ -412,8 +412,11 @@ function pvStepBtn(step, o) {       // o.disabled / o.title: the page can hold t
   o = o || {};
   return pvAltiumLinked() ? btn(pvBusy === step ? c.doing : c.label, {kind: o.kind || 'line', act: 'altium-step', step, title: o.title || c.title, disabled: pvBusy || o.disabled ? true : undefined}) : '';
 }
+function pvStepText(st, i, all) {       // the words of one step of the live list
+  return st.state === 'running' && i === all.length - 1 ? PV_STEPS[pvBusy].busy : st.label + (st.state === 'done' && st.note ? ': ' + st.note : '');
+}
 function pvStepLine(st, i, all) {       // one line of the live list: done, running (spinner) or waiting; the step itself keeps its long hint
-  const text = esc(st.state === 'running' && i === all.length - 1 ? PV_STEPS[pvBusy].busy : st.label + (st.state === 'done' && st.note ? ': ' + st.note : ''));
+  const text = esc(pvStepText(st, i, all));
   if (st.state === 'running') return `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${text} ${pvElapsedHTML()}</div>`;
   return `<div class="loading"><span aria-hidden="true">${st.state === 'done' ? '✓' : '&middot;'}</span>${text}${st.state === 'waiting' ? ' (waiting)' : st.state === 'stopped' ? ' (stopped)' : ''}</div>`;
 }
@@ -435,10 +438,12 @@ function pvLaterOk(n) {        // the same step succeeded after this note was ma
   const drawn = (ok.draw_sheets || []).filter(d => new Date(d.ts).getTime() > n.at).flatMap(d => d.sheets);
   return named.every(id => drawn.some(st => st === id || st.startsWith(id + ' ')));      // a draw of other sheets leaves it standing
 }
-function pvStepNote(page, busyOnly) {       // under the header: Altium is working, or what the last step answered
+/* slim: the schematic and layout pages show this on the canvas (pvBarHTML): the run is ONE status line (pvRunSlim) that opens to the full
+   list, and the answer is a compact banner. Rules and Outputs call it without slim: the full list under their header. */
+function pvStepNote(page, busyOnly, slim) {       // under the header: Altium is working, or what the last step answered
   pvResume();
   const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
-  const busy = pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${esc(PV_STEPS[pvBusy].busy)} ${pvElapsedHTML()}</div>`}<div class="acts">${pvStopBtn()}</div></div>` : '';
+  const busy = pvBusy && PV_STEPS[pvBusy].page === page && slim ? pvRunSlim() : pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${esc(PV_STEPS[pvBusy].busy)} ${pvElapsedHTML()}</div>`}<div class="acts">${pvStopBtn()}</div></div>` : '';
   if (pvNote[page] && pvNote[page].kind !== 'ok' && pvLaterOk(pvNote[page])) delete pvNote[page];
   const n = pvNote[page] || pvSeedNote(page);
   if (busy || !n || busyOnly) return busy;
@@ -452,6 +457,37 @@ function pvStepNote(page, busyOnly) {       // under the header: Altium is worki
   const rest = c.rest ? `<details class="pv-more" data-pvk="${page}:r"${op('r')}><summary>Show details</summary><p>${esc(c.rest)}</p></details>` : '';
   const alerts = c.alerts.map(w => `<br>Warning: ${esc(w)}`).join('');
   return `<div class="pv-note">${banner({tone: n.kind, html: `${esc(c.head)}${alerts}${rest}${more}`, actions: acts})}</div>`;
+}
+let pvRunOpen = false;       // the full list of the run on screen is open under its status line (kept across redraws)
+const pvFirstSentence = t => String(t).split(/(?<=\.)\s/)[0];
+/* The run as ONE status line: what Altium is on now, its clock, "N more" for the steps still waiting, and Stop. Finished steps are not
+   in the line; the toggle opens the whole list (done, running, waiting) under it. The long hint of the step is the tooltip and the list. */
+function pvRunSlim() {
+  const st = pvRun && pvRun.running ? pvRun.steps || [] : [], multi = st.length > 1;
+  let i = multi ? st.findIndex(x => x.state === 'running') : -1;
+  if (multi && i < 0) i = st.findIndex(x => x.state === 'waiting');
+  if (multi && i < 0) i = st.length - 1;
+  const full = multi ? pvStepText(st[i], i, st) : PV_STEPS[pvBusy].busy, waiting = st.filter(x => x.state === 'waiting').length;
+  const done = st.filter(x => x.state === 'done').length;
+  const label = waiting ? waiting + ' more' : multi ? 'All steps' : 'Details';
+  const toggle = btn(label, {size: 'sm', kind: 'link', iconAfter: pvRunOpen ? 'chevu' : 'chev', act: 'pv-run-toggle', 'aria-expanded': String(pvRunOpen),
+    title: multi ? `${plural(waiting, 'step')} waiting${done ? ', ' + done + ' done' : ''}. Show every step of this run.` : 'Show the whole line.'});
+  const body = pvRunOpen ? `<div class="pv-steps">${multi ? st.map(pvStepLine).join('') : `<div class="loading">${esc(full)}</div>`}</div>` : '';
+  return `<div class="pv-note pv-run"><div class="pv-run-line"><div class="loading" role="status" title="${esc(full)}"><span class="spin" aria-hidden="true"></span>` +
+    `<span class="pv-run-txt">${esc(pvFirstSentence(full))}</span> ${pvElapsedHTML()}</div>${toggle}<div class="acts">${pvStopBtn()}</div></div>${body}</div>`;
+}
+/* The floating bar at the top of a canvas: the status of the step and its answer on the left, the layer switches on the right. It sits
+   over the drawing, so the drawing keeps the whole height; its right edge keeps clear of the inspector drawer (previews.css). */
+function pvBarHTML(page, extra) {
+  const note = pvStepNote(page, false, true);
+  return note || extra ? `<div class="pv-bar">${note ? `<div class="pv-bar-main">${note}</div>` : ''}${extra || ''}</div>` : '';
+}
+/* The layer switches: one "Layers" button on the canvas that opens the list (a checkbox look, the same buttons and toggle-layer as ever).
+   The summary says how many are hidden, so a hidden layer is never a mystery. */
+function pvLayersHTML(layers) {
+  const hidden = layers.filter(l => !pcbLayers[l.value]).length, on = layers.filter(l => pcbLayers[l.value]).map(l => l.value);
+  return `<details class="pv-layers" data-pvk="pcb:layers"${pvMoreOpen['pcb:layers'] ? ' open' : ''}><summary title="Show or hide the layers of the board">${icon('layers', 's')}<span>Layers</span>` +
+    `<span class="pv-lhid"${hidden ? '' : ' hidden'}>${hidden} hidden</span></summary>${seg(layers, on, {act: 'toggle-layer', label: 'Layers'})}</details>`;
 }
 const pvMoreOpen = {};       // which "Show ..." toggles of the step notes are open, kept across redraws
 document.addEventListener('toggle', e => { const k = e.target && e.target.dataset && e.target.dataset.pvk; if (k) pvMoreOpen[k] = e.target.open; }, true);
@@ -577,8 +613,8 @@ function schHTML(container) {
   const tabs = sheets.length > 1 ? `<div class="pv-tabs" role="tablist" aria-label="Sheets">${sheets.map(s =>
     `<button type="button" role="tab" class="pv-tab" aria-selected="${s.id === sheetId}" tabindex="${s.id === sheetId ? 0 : -1}" data-act="sch-sheet" data-sheet="${esc(s.id)}" title="${esc(pvSheetLabel(s) + (s.altium ? ' (read from Altium)' : ' (plan)'))}">${esc(pvTabLabel(s, sheets))}</button>`).join('')}</div>` : '';
   return `<div class="pv" data-pv="sch">` +
-    viewHeader({title: 'Schematic', meta: metaLine([{n: pvRealSheets(sheets), label: pvRealSheets(sheets) === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + pvStepNote('sch') + (typeof outBlockNote === 'function' ? outBlockNote() : '') + tabs +
-    `<div class="pv-stage"><div class="pv-canvas sch-canvas" id="schwrap" tabindex="0" aria-label="Schematic sheet ${esc(sheetId)}. Scroll to zoom, drag to pan.">${inner}</div>${pvZoomHTML('sch')}</div></div>`;
+    viewHeader({title: 'Schematic', meta: metaLine([{n: pvRealSheets(sheets), label: pvRealSheets(sheets) === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + (typeof outBlockNote === 'function' ? outBlockNote() : '') + tabs +
+    `<div class="pv-stage"><div class="pv-canvas sch-canvas" id="schwrap" tabindex="0" aria-label="Schematic sheet ${esc(sheetId)}. Scroll to zoom, drag to pan.">${inner}</div>${pvZoomHTML('sch')}${pvBarHTML('sch')}</div></div>`;
 }
 const pvSheetKey = () => sheetId + '|' + JSON.stringify(lines().map(l => [l.key, l.mpn, l.value, l.dnp])) + JSON.stringify((S.sheets || []).map(s => Object.keys(s.parts || {}).length));
 async function loadSheet(container) {
@@ -698,8 +734,8 @@ function pcbHTML(container) {
   const inner = pvPcbErr ? `<div class="pv-note">${errorLine('draw the layout', pvPcbErr, btn('Try again', {size: 'sm', act: 'pcb-retry'}))}</div>` : formatPcbPreview(text);
   const zoom = text || pvPcbErr ? pvZoomHTML('pcb') : '';
   return `<div class="pv" data-pv="pcb">` +
-    viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + pvStepBtn('drc') + seg(layers, Object.keys(pcbLayers).filter(k => pcbLayers[k]), {act: 'toggle-layer', label: 'Layers'})}) + pvStepNote('pcb') +
-    `<div class="pv-stage"><div class="pv-canvas pcb-canvas" id="pcbwrap" tabindex="0" aria-label="PCB layout. Scroll to zoom, drag to pan.">${inner}</div>${zoom}</div></div>`;
+    viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + pvStepBtn('drc')}) +
+    `<div class="pv-stage"><div class="pv-canvas pcb-canvas" id="pcbwrap" tabindex="0" aria-label="PCB layout. Scroll to zoom, drag to pan.">${inner}</div>${zoom}${pvBarHTML('pcb', pvLayersHTML(layers))}</div></div>`;
 }
 async function loadPcb(container) {
   if (!$('.pv[data-pv="pcb"]')) return;
@@ -782,8 +818,27 @@ onAct('toggle-layer', async (el, d, e) => {
   if (!layer || !(layer in pcbLayers)) return;
   pcbLayers[layer] = !pcbLayers[layer];
   el.setAttribute('aria-pressed', String(pcbLayers[layer]));
+  const box = el.closest('.pv-layers'), tag = box && box.querySelector('.pv-lhid');       // "2 hidden" on the closed button follows the clicks
+  if (tag) {
+    const n = box.querySelectorAll('button[aria-pressed="false"]').length;
+    tag.textContent = n + ' hidden';
+    tag.hidden = !n;
+  }
   applyPcbLayers();
   return;
+});
+onAct('pv-run-toggle', async (el, d, e) => {
+  pvRunOpen = !pvRunOpen;
+  renderCenter(true);
+  setTimeout(() => { const b = $('[data-act="pv-run-toggle"]'); if (b) b.focus(); }, 0);      // the redraw must not drop the keyboard
+});
+// the layers list closes with Escape (the focus returns to its button) and with a click outside it
+document.addEventListener('keydown', e => {
+  const box = e.key === 'Escape' && e.target.closest && e.target.closest('.pv-layers[open]');
+  if (box) { box.open = false; const s = box.querySelector('summary'); if (s) s.focus(); }
+});
+document.addEventListener('click', e => {
+  document.querySelectorAll('.pv-layers[open]').forEach(b => { if (!b.contains(e.target)) b.open = false; });
 });
 onAct('pv-link', async (el, d, e) => {
   go('settings'); return;
