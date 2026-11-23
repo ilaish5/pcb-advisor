@@ -256,9 +256,10 @@ def test_a_node_run_of_btn_disabled_markup():
     js = (
         "const src=require('fs').readFileSync(process.argv[2],'utf8');"
         "const m=src.match(/function btn\\([\\s\\S]*?\\n}\\n/);"
-        "if(!m){console.log('NOFN');process.exit(0)}"
+        "const k=src.match(/function kattrs\\([\\s\\S]*?\\n}\\n/);"
+        "if(!m||!k){console.log('NOFN');process.exit(0)}"
         "global.kesc=s=>String(s);global.esc=global.kesc;global.icon=()=>'';"
-        "let f;try{f=new Function(m[0]+';return btn;')()}catch(e){console.log('ERR '+e.message);process.exit(0)}"
+        "let f;try{f=new Function(k[0]+m[0]+';return btn;')()}catch(e){console.log('ERR '+e.message);process.exit(0)}"
         "let h;try{h=f('Go',{disabled:true,why:'Because'})}catch(e){console.log('ERR '+e.message);process.exit(0)}"
         "console.log(h)"
     )
@@ -266,6 +267,5 @@ def test_a_node_run_of_btn_disabled_markup():
         p = pathlib.Path(d) / "t.js"
         p.write_text(js, encoding="utf-8")
         out = subprocess.run([node, str(p), str(UI / "js" / "kit.js")], capture_output=True, text=True).stdout
-    if out.startswith(("NOFN", "ERR")):
-        pytest.skip(out.strip())
+    assert not out.startswith(("NOFN", "ERR")), out      # a harness error is a failure, never a skip
     assert 'aria-disabled="true"' in out and 'why="Because"' in out and " disabled" not in out
