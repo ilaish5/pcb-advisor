@@ -462,7 +462,7 @@ function msgHTML(m, undoTs) {
         (/^(altium|library)\./.test(a) && live ? btn('Retry', {kind: 'link', size: 'sm', act: 'suggest', text: 'Run this again: ' + String(a).slice(0, 300)}) : '')));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
     // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here
-    if ((m.refused || []).length && m.text) m = {...m, text: m.text.replace(/\n*\(Not applied: [\s\S]*\)\s*$/, '')};
+    if ((m.refused || []).length && m.text) m = {...m, text: m.text.replace(/\n*\((?:Not applied|\u05dc\u05d0 \u05d4\u05d5\u05d7\u05dc): [\s\S]*\)\s*$/, '')};
     // the engine writes its text before the actions run, so "placed" may stand above a red chip: say so before the text
     const nRef = (m.refused || []).length;
     const after = m.followup ? '<div class="chat-followup" role="note">After the results</div>' : '';     // the server's own second turn, written once the actions had answered

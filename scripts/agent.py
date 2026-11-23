@@ -383,8 +383,31 @@ CLIP_USER, CLIP_AGENT, CLIP_NOTE = 600, 900, 220
 
 
 def _clip(text, n):
+    """Cut to n characters keeping the HEAD (40%) and the TAIL (60%): the end of an agent message is its question, the end of a long
+    student spec its last requirement; a plain 'keep the start' lost both."""
     text = str(text or "").strip()
-    return text if len(text) <= n else text[:n - 1].rstrip() + "…"
+    if len(text) <= n:
+        return text
+    head = int((n - 1) * 0.4)
+    return text[:head].rstrip() + "…" + text[len(text) - (n - 1 - head):].lstrip()
+
+
+def _last_agent(turns):
+    return turns[-1] if turns and turns[-1].get("role") == "agent" else None
+
+
+def _turn_text(m, last_agent):
+    """A turn's text for the prompt, clipped; the agent message right before the student's latest message is never clipped (it holds
+    the question the student's 'yes' answers)."""
+    if m is last_agent:
+        return str(m.get("text") or "").strip()
+    return _clip(m.get("text"), CLIP_USER if m.get("role") == "user" else CLIP_AGENT)
+
+
+def _request_history(history, keep):
+    turns = [m for m in history if not is_note(m)][-keep:]
+    last_agent = _last_agent(turns)
+    return [{"role": m.get("role"), "text": _turn_text(m, last_agent)} for m in turns]
 
 
 def is_note(m):
@@ -404,6 +427,7 @@ def history_lines(history, keep):
     first = history.index(turns[0])
     notes = [m for m in history[first:] if is_note(m)][-NOTE_KEEP:]
     keep_ids = {id(m) for m in turns} | {id(m) for m in notes}
+    last_agent = _last_agent(turns)
     out = []
     for m in history[first:]:
         if id(m) not in keep_ids:
@@ -411,8 +435,45 @@ def history_lines(history, keep):
         if is_note(m):
             out.append(f"note: {_clip(m['text'], CLIP_NOTE)}")
         else:
-            out.append(f"{m['role']}: {_clip(m['text'], CLIP_USER if m['role'] == 'user' else CLIP_AGENT)}")
+            out.append(f"{m['role']}: {_turn_text(m, last_agent)}")
     return "\n".join(out)
+
+
+MIN_LETTERS = 3          # a message with fewer letters of either script ("ok", "R5 100k") says nothing about the language
+
+
+def _message_language(text):
+    he = len(re.findall("[֐-׿]", text or ""))
+    en = len(re.findall("[A-Za-z]", text or ""))
+    if max(he, en) < MIN_LETTERS:
+        return ""
+    return "he" if he >= en else "en"
+
+
+def student_language(typed, history=(), generated=False):
+    """'he' / 'en' / '' for the student's own words: the last message the student TYPED that has enough letters. A generated message
+    (a button, the DFM auto-list) is skipped, and so is a short one. Nothing found: English for a typed message, '' for a generated one.
+    One rule for the agent's language line and for the server's own lines (corrections, stop lines)."""
+    if not generated:
+        found = _message_language(typed)
+        if found:
+            return found
+    for m in reversed(list(history or [])):
+        if m.get("role") == "user" and not m.get("generated") and m.get("text"):
+            found = _message_language(str(m["text"]))
+            if found:
+                return found
+    return "" if generated else "en"
+
+
+def language_code(typed, history=(), generated=False):
+    """'he' / 'en' / '': Settings > Language when it is set, else student_language()."""
+    setting = str(workspace.get("user.language", "auto") or "auto").lower()
+    if setting in ("he", "hebrew", "iw"):
+        return "he"
+    if setting in ("en", "english"):
+        return "en"
+    return student_language(typed, history, generated)
 
 
 def reply_language_line(typed, history=(), generated=False):
@@ -420,22 +481,7 @@ def reply_language_line(typed, history=(), generated=False):
     Settings > Language: 'he' or 'en' is final. 'auto' (default) follows the student's last TYPED message: Hebrew letters mean
     Hebrew, otherwise English. A button-generated prompt (generated=True) is skipped: the last typed message in `history` counts.
     Hebrew replies address the student in the singular, as one person."""
-    setting = str(workspace.get("user.language", "auto") or "auto").lower()
-    if setting in ("he", "hebrew", "iw"):
-        lang = "Hebrew"
-    elif setting in ("en", "english"):
-        lang = "English"
-    else:
-        text = typed
-        if generated:
-            text = next((m.get("text") for m in reversed(list(history)) if m.get("role") == "user" and not m.get("generated")
-                         and m.get("text")), "")
-        if HEBREW.search(text or ""):
-            lang = "Hebrew"
-        elif LATIN.search(text or "") or not generated:
-            lang = "English"
-        else:
-            lang = ""
+    lang = {"he": "Hebrew", "en": "English"}.get(language_code(typed, history, generated), "")
     if not lang:
         return ""
     line = f"Reply language: {lang}\n"
@@ -485,8 +531,7 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     res = gateway.route(gateway.Request(
         prompt=prompt,
         system=parts[0],
-        history=[{"role": m.get("role"), "text": _clip(m.get("text"), CLIP_USER if m.get("role") == "user" else CLIP_AGENT)}
-                 for m in history if not is_note(m)][-keep:],
+        history=_request_history(history, keep),
         timeout=int(timeout or workspace.get("agent.timeout_seconds", 900)),
         options=options,
     ), name=name)

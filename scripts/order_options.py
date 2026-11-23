@@ -42,6 +42,18 @@ def boards(project: str) -> int:
     return get(project)["boards"]
 
 
+def _strict_bool(v) -> bool:
+    """true / false / 1 / 0 (a JSON bool, the numbers or their text), nothing else: bool("false") is True."""
+    if isinstance(v, bool):
+        return v
+    text = str(v).strip().lower()
+    if text in ("true", "1"):
+        return True
+    if text in ("false", "0"):
+        return False
+    raise ValueError("assembly must be true or false")
+
+
 def set_options(project: str, boards=None, assembly=None) -> dict:
     """Save what is given; raises ValueError for a count that is not a whole number from 1 up."""
     cur = project_mod.load_meta(project).get("order")
@@ -54,7 +66,7 @@ def set_options(project: str, boards=None, assembly=None) -> dict:
             raise ValueError(f"the number of boards must be from 1 to {MAX_BOARDS}")
         cur["boards"] = n
     if assembly is not None:
-        cur["assembly"] = bool(assembly)
+        cur["assembly"] = _strict_bool(assembly)
     meta = project_mod.load_meta(project)
     meta["order"] = cur
     project_mod.save_meta(project, meta)

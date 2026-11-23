@@ -166,7 +166,9 @@ const unesc = s => s.replace(/&(amp|lt|gt|quot|#39);/g, (m, e) => ({amp: '&', lt
 function inline(t) {
   // t is escaped text. Citations and refs become buttons; **bold** and `code` are the only markup.
   // a chip is a button (inline-block): punctuation after it moves before it, or a wrapped chip leaves "." alone on a line
-  return srcTags(t)
+  // the JLC source-tag rewrite is NOT applied here: "[P1, P2]" in free chat text is a connector's designators, not page numbers
+  // (the structured JLC fields do it themselves, see views/rules.js)
+  return String(t)
     .replace(/(\s*)\{\{src:([^|}]+)(?:\|([^}]*))?\}\}([.,;:!?]*)/g,
              (m, sp, n, w, p) => (p ? p + ' ' : sp) + chip(unesc(n.trim()), unesc((w || '').trim())))
     .replace(/\{\{ref:([^}]+)\}\}/g, (m, r) => `<button class="ref" data-ref="${r}">${r}</button>`)
