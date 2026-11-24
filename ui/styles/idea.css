@@ -206,3 +206,4 @@
 .board-size{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:6px 0}
 .board-size-label{color:var(--muted,inherit);font-size:12px}
 .board-size .in{width:84px}
+.board-layers-label{margin-left:12px}.board-size select.in{width:auto}

@@ -27,6 +27,7 @@ import time
 from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import board_layers  # noqa: E402
 import diagram_route  # noqa: E402
 import pinnames  # noqa: E402
 import project_guard  # noqa: E402
@@ -2017,10 +2018,22 @@ def validate_idea_item(topic, text):
     return topic.strip(), text.strip()
 
 
+def sync_layers_from_text(project, topic, text):
+    """A requirement that states the board's layer count sets `board.layers` in project.json (so what the Idea says and what the
+    stack-up, router and outputs build cannot differ, E9). 2 or 4 is stored; any other count raises ValueError (board_layers.refusal)
+    and the requirement is not written. Text that states no count changes nothing. Returns the count or None."""
+    n = board_layers.from_text(topic, text)
+    if n is None:
+        return None
+    import project as project_mod
+    return project_mod.set_layers(project, n)
+
+
 def propose_idea(project, topic, text, by="agent"):
     """A requirement, written into the live draft at once (the student's Save is the gate). 'proposed' only
     survives in projects made before the draft existed; Accept all / Dismiss all clear those."""
     topic, text = validate_idea_item(topic, text)
+    sync_layers_from_text(project, topic, text)
     idea = load_idea_working(project)
     item = next((i for i in idea["agreed"] if i["topic"] == topic), None)
     status = "confirmed"
@@ -2036,6 +2049,7 @@ def propose_idea(project, topic, text, by="agent"):
 def update_idea_item(project, index=None, old_topic=None, topic=None, text=None):
     """Student updates/renames a requirement row. Sets by='student' and status='confirmed'."""
     topic, text = validate_idea_item(topic, text)
+    sync_layers_from_text(project, topic, text)
     idea = load_idea_working(project)
     agreed = idea.get("agreed", [])
     item_idx = None

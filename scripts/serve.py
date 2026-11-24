@@ -32,6 +32,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "skills"))
 import agent             # noqa: E402
+import board_layers      # noqa: E402
 import ext               # noqa: E402
 import gateway           # noqa: E402
 import model             # noqa: E402
@@ -4100,6 +4101,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(exc).strip("'")})
             return self._send(200, state())
 
+        if path == "/api/idea/layers":      # the copper layer count chosen in the Idea: 2 or 4, anything else is refused with the reason
+            try:
+                project_mod.set_layers(proj, data.get("layers"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, state())
+
         if path == "/api/idea/board":      # the board size typed in directly: no confirmed idea needed (validation in the store)
             try:
                 store.set_board_size(proj, data.get("width"), data.get("height"), data.get("unit") or "mm")
@@ -4452,6 +4460,11 @@ class Handler(BaseHTTPRequestHandler):
                 if key in data:
                     meta[key] = data[key]
             if isinstance(data.get("board"), dict):
+                if "layers" in data["board"]:
+                    try:
+                        data["board"] = {**data["board"], "layers": board_layers.check(data["board"]["layers"])}
+                    except ValueError as exc:
+                        return self._send(400, {"error": str(exc)})
                 meta["board"] = {**(meta.get("board") or {}), **data["board"]}
             project_mod.save_meta(proj, meta)
             project_mod.touch(proj)

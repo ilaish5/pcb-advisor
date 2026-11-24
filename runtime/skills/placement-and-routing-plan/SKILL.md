@@ -18,10 +18,11 @@ Who places and who routes, the `student_said` quote and the replace / partial ru
 board size when the PcbDoc has none (an existing outline is kept), saves, and reads the file back against the netlist. It needs
 `library.build` and Altium open, with no unsaved changes in the PcbDoc. Routing is a separate question, asked after the parts are
 placed: "route the board yourself, press Route board on the Layout page, or should I?" Send `altium.import_rules` before
-`altium.route_pcb` (routing is refused on Altium's default rules). The router (2 layers; widths, clearances and vias from the
+`altium.route_pcb` (routing is refused on Altium's default rules). The router (top and bottom for signals; on a 4 layer board, chosen in the Idea, the ground net is a plane on Mid-Layer 1 and the main supply a plane on Mid-Layer 2:
+their pads get a stub and a via, never tracks; the stack-up is set in Altium before placing; widths, clearances and vias from the
 board's rules) draws tracks and vias, saves, reads the file back and runs Altium's design rule check: it counts as done only
 with 0 open nets and no new clearance/short/width errors. When a net cannot be routed nothing is drawn: tell the student which
-nets and why (tighter rules, more room, a third layer); a partial result only when they agree to keep it. Never say the board
+nets and why (tighter rules, more room, or 4 layers in the Idea); a partial result only when they agree to keep it. Never say the board
 is routed when it reports a failure. Then use board-review.
 Track width follows the current of each net (IPC-2221, 1 oz, 10 C rise). Before routing, propose the current of every supply net the idea
 or a datasheet states (regulator output, USB VBUS 0.5 A, a motor) with `{"type": "net.set_current", "net": "+5V", "amps": 0.5, "sources": [...]}`
