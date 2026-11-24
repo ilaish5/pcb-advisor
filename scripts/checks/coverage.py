@@ -24,7 +24,7 @@ import pinnames  # noqa: E402
 
 # ------------------------------------------------------------------ 1. interface pins on NC
 
-_MODEM_RE = re.compile(r"modem|\bLTE\b|\bGSM\b|GPRS|NB-?IoT|Cat[- .]?M1?\b|Cat[- .]?1\b|\b[2345]G\b|cellular|WCDMA|UMTS", re.I)
+_MODEM_RE = re.compile(r"modem|\bLTE\b|\bGSM\b|GPRS|NB-?IoT|Cat[- .]?M1?\b|Cat[- .]?1\b|(?<![.\d])\b[2345]G\b|cellular|WCDMA|UMTS", re.I)
 
 # (key, label, pin-name regex, modem parts only); a name is the pin name, upper case, as the sheet has it
 INTERFACES = (
@@ -86,10 +86,13 @@ def interface_nc(sheets, bom=()):
                     g["nc"].append(str(pin.get("name") or pin.get("num")))
                 elif net:
                     g["wired"].append(str(pin.get("name") or pin.get("num")))
+    _usb = re.compile(r"\bUSB", re.I)
     out = []
     for (ref, key), g in groups.items():
         if not g["nc"]:
             continue
+        if key == "usb" and not any(_usb.search(_line_text(l)) for l in bom or [] if ref not in (l.get("refs") or [])):
+            continue          # an MCU's USB pins left open on a board with no USB part elsewhere: not used, nothing to say
         names = ", ".join(dict.fromkeys(g["nc"]))
         if g["wired"]:
             msg = (f"{ref} {g['label']} interface partly not connected: {names} on NC while "
@@ -125,7 +128,8 @@ KEYWORDS = (
     ("battery", r"\bbattery|\bLi-?(?:ion|po)\b|\bcoin cell", r"battery|\bLi-?(?:ion|po)\b|coin cell|\bCR20\d\d\b"),
     ("rtc", r"\bRTC\b|real[- ]time clock", r"\bRTC\b|real[- ]time clock"),
 )
-_KEYWORDS = tuple((k, re.compile(rq, re.I), re.compile(rb, re.I)) for k, rq, rb in KEYWORDS)
+_KEYWORDS = tuple((k, re.compile(rq, 0 if k == "can" else re.I), re.compile(rb, 0 if k == "can" else re.I))   # CAN in capitals: not the word "can"
+                  for k, rq, rb in KEYWORDS)
 
 
 def requirements_of(idea):

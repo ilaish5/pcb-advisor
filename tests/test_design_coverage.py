@@ -63,7 +63,7 @@ def test_one_pin_of_a_group_nc_is_info_only():
                                         ("SWDIO", "SWD debug"), ("SWCLK", "SWD debug"), ("BOOT0", "BOOT0")])
 def test_other_interfaces_on_nc(name, label):
     part = {"ref": "U1", "value": "STM32", "pins": [{"num": "1", "name": name, "net": "NC"}]}
-    [f] = coverage.interface_nc(_sheets(part), [])
+    [f] = coverage.interface_nc(_sheets(part), [{"refs": ["J1"], "value": "USB-C", "role": "USB connector"}])
     assert f["message"] == f"U1 {label} interface not connected ({name})"
 
 
@@ -163,3 +163,17 @@ def test_pcb_check_prints_the_findings_as_warnings(kiln, capsys):
 def test_dfm_page_has_the_intended_button():
     js = (REPO / "ui/js/views/checks.js").read_text(encoding="utf-8")
     assert "dfmDesignHTML()" in js and "/api/design-findings/intended" in js and "act: 'design-intended'" in js
+
+
+def test_review_false_positives_2026_11_24():
+    """The English word "can", USB pins of an MCU on a board with no USB part, and "2.4G" are not findings."""
+    from checks import coverage
+    idea = {"agreed": [{"text": "The board can run from 24 V"}]}
+    bom = [{"key": "C9", "refs": ["C9"], "value": "100u", "role": "bulk cap, can be DNP"}]
+    assert not [r for r in coverage.requirement_coverage(idea, bom, []) if r.get("topic") == "can" or "can" in str(r).lower().split("'")[1:2]]
+    mcu = [{"id": "02", "parts": [{"ref": "U1", "value": "STM32G030", "pins": [{"name": "USB_DP", "net": "NC"}, {"name": "USB_DM", "net": "NC"}]}]}]
+    assert not coverage.interface_nc(mcu, [{"refs": ["U1"], "value": "STM32G030", "role": "MCU"}])
+    with_usb = [{"refs": ["U1"], "value": "STM32F411", "role": "MCU"}, {"refs": ["J1"], "value": "USB-C", "role": "USB connector"}]
+    assert coverage.interface_nc(mcu, with_usb)
+    assert not coverage._MODEM_RE.search("ESP32 2.4G WiFi module")
+    assert coverage._MODEM_RE.search("4G LTE module")
