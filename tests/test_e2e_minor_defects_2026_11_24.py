@@ -63,7 +63,8 @@ def test_every_page_reads_the_server_count_not_its_own():
     pins, checks, outputs, bom = _js("views/pins.js"), _js("views/checks.js"), _js("views/outputs.js"), _js("views/bom.js")
     assert "pinsCount('to_confirm')" in _fn(pins, "pinsConfirmAllBtn") and "pinsCount('to_confirm')" in pins[pins.index("onAct('accept-all-pins'"):]
     assert "pinsCount('parts')" in checks and "reduce(" not in _fn(pins, "pinsWaitingBar")
-    assert "dfmUnverifiedCount" in outputs and "dfmUnverified()" not in outputs
+    # the Outputs page counts nothing itself: pins are a warning there, its text comes from the server (stage pins_warning)
+    assert "pins_warning" in outputs and "dfmUnverified()" not in outputs
     assert "w.questions" not in checks                                     # the heading no longer prints the number of rows
     assert "to verify (library)" in bom                                           # the BOM counter says what it counts (lines, not parts)
 
