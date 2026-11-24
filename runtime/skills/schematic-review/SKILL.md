@@ -1,6 +1,6 @@
 ---
 name: schematic-review
-description: Reviews the student's schematic and returns a findings table where every finding cites a datasheet page - pull-ups/pull-downs, open-drain versus push-pull outputs, decoupling per datasheet (including a cap above the MAX value on a regulator pin), abs-max ratings, unconnected pins, MCU-swap fallout, and ERC messages explained. Use when the student asks "check my schematic", "do I need a pull-up here", "is this cap OK", "what does this ERC error mean", "I changed the MCU, what else changes" (Hebrew - לבדוק סכמה, צריך pull-up, שגיאת ERC, החלפתי מעבד).
+description: Reviews a schematic, each finding citing a datasheet page: pull-ups, decoupling, abs-max, unconnected pins, MCU-swap fallout, ERC messages. Use when the student asks "check my schematic", "do I need a pull-up", "is this cap OK", "what does this ERC error mean", "I changed the MCU, what changes in the schematic" (Hebrew - לבדוק סכמה, צריך pull-up, שגיאת ERC, החלפתי מעבד).
 ---
 
 # Schematic review (findings with datasheet citations)
@@ -19,7 +19,9 @@ A finding without a datasheet page is not a finding; it is a question to the stu
 1. Get the real data, not a screenshot: the SchDoc/PrjPcb in the student's local project, or the PcbDoc netlist after ECO
    (pads carry nets). If you only have an image, say so and mark every finding "from image, unverified".
 2. List the active parts (ICs, regulators, connectors with signals). For each, find its datasheet in the project's `sources/`
-   (general documents are in `<repo>/shared/datasheets/`). No datasheet: ask the student for it (link-and-return) and skip that part; never review from memory.
+   (general documents are in `<repo>/shared/datasheets/`). No datasheet:
+   fetch it yourself (rule 11: `jlc.py part` for its `datasheet_url`, then `sources.py get`); only when no link
+   works, name the missing datasheet and skip that part. Never review from memory.
 3. For each IC read the pin table, the "recommended operating conditions", the "absolute maximum ratings", the typical
    application circuit and the electrical-characteristics rows for the pins you check. Note the page of each.
 4. Run the checks of `references/checklist.md` in order: run `scripts/checks/schematic.py` to flag single-pin nets,
@@ -36,8 +38,7 @@ A finding without a datasheet page is not a finding; it is a question to the stu
 9. Answer with the table below, worst first. Offer to re-check after the student fixes the top items.
 
 ## Scripts
-- `python <repo>/scripts/altium/dump.py <file> [--full]` reads a SchDoc/PcbDoc/PrjPcb/.RUL of the linked Altium project
-  (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
+- `python <repo>/scripts/altium/dump.py <file> [--full]` read-only inspector (see board-review); use it instead of screenshots.
 - `python <repo>/scripts/skills/verify_part.py <project> <bom-key>` - checks the part's pin numbers against the datasheet text.
 - `python <repo>/scripts/validate_netlist.py <sheet.json> <bom.json>` - sheet refs missing from the BOM, pins without a net.
 - `python <repo>/scripts/checks/schematic.py <project or file>` builds the netlist from the project's sheets

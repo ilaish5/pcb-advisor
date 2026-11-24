@@ -105,9 +105,17 @@ def _summary(model):
     for l in model.get("bom", []):
         row = {"line": l["key"], "refs": l.get("refs"), "value": l.get("value"), "mpn": l.get("mpn"),
                "library": l.get("library")}
+        if l.get("role"):
+            row["role"] = l["role"]
         if l.get("dnp") or l.get("nobuy"):
             row["not_bought"] = True
         sup = l.get("supply")
+        # the JLC type and unit price the cards show, so a reply's count of Extended parts and cost matches them (RCA #39)
+        jlc = (sup or {}).get("LCSC") or {}
+        if l.get("library_type") or jlc.get("library_type"):
+            row["jlc_type"] = l.get("library_type") or jlc.get("library_type")
+        if jlc.get("unit_price") is not None:
+            row["unit_usd"] = jlc.get("unit_price")
         row["stock"] = ("not checked" if sup is None else
                         {k: v.get("stock") for k, v in sup.items()})
         # a check runs in the background after every BOM change: run the script yourself only when this says
@@ -116,31 +124,85 @@ def _summary(model):
         row["stock_check"] = background.stock_state(model.get("project") or "", l["key"], sup)
         bom.append(row)
     diag_summary = _compact_diagram(model.get("diagram") or (model.get("idea") or {}).get("diagram"))
-    idea_summary = {k: v for k, v in (model.get("idea") or {}).items() if k in ("goal", "goal_status", "agreed", "confirmed")}
-    idea_summary["diagram"] = diag_summary
+    idea = model.get("idea") or {}
+    idea_summary = {k: v for k, v in idea.items() if k in ("goal", "goal_status", "confirmed")}
+    # an agreed item as the agent needs it: what, about what, who wrote it, confirmed or not (its time and earlier text are history)
+    idea_summary["agreed"] = [{k: a[k] for k in ("topic", "text", "by", "status") if k in a}
+                              for a in idea.get("agreed") or [] if isinstance(a, dict)]
+    sources = model.get("sources", [])
+    reference = [x for x in sources if x.get("origin") == "Reference library"]
     s = {
         "idea": idea_summary,
-        "diagram": diag_summary,
+        "diagram": diag_summary,          # once: the idea's diagram is this one
+        "stages": _stages(model),
         "totals": model.get("totals"),
         "bom": bom,
         "sheets": [{"id": sh["id"], "title": sh["title"], "parts": len(sh["parts"])} for sh in model.get("sheets", [])],
         "pending_proposals": [{"id": p["id"], "line": p["line"], "changes": p["changes"]}
                               for p in model.get("proposals", []) if p["status"] == "pending"],
-        "sources": [x["name"] for x in model.get("sources", [])],
+        # the project's own documents (and shared datasheets) by name; the course/JLC/IPC reference library only as a pointer
+        "sources": [x["name"] for x in sources if x.get("origin") != "Reference library"],
     }
+    if reference:
+        s["reference_library"] = (f"{len(reference)} course, JLC and IPC files in <repo>/shared/reference/, citable by their path "
+                                  "there; open its AGENTS.md (the topic index) to find one")
+    waiting = _pins_waiting(model)
+    if waiting:
+        # the DFM page's Unverified parts: the Gerber zip and the OutJob wait until the student resolves each (rule 7, rule 11)
+        s["pins_waiting"] = waiting
     checks_summary = []
     for c in model.get("checks", []):
         stem = c.get("stem")
         if stem:
             c_dir = workspace.project_dir(model.get("project")) / "checks" / stem
-            slice_paths = [f.as_posix() for f in sorted(c_dir.glob("slice_*.jpg"))]
-            checks_summary.append({"stem": stem, "slices": slice_paths, "triage_count": c.get("triage_count", 0)})
+            slices = sorted(f.name for f in c_dir.glob("slice_*.jpg"))
+            checks_summary.append({"stem": stem, "folder": c_dir.as_posix(), "slices": slices, "triage_count": c.get("triage_count", 0)})
     if checks_summary:
         s["dfm_checks"] = checks_summary
     import ext
     ext.load()
     ext.merge(ext.SUMMARY, model.get("project") or "", s)
-    return json.dumps(s, ensure_ascii=False, indent=1)
+    return json.dumps(s, ensure_ascii=False, separators=(",", ":"))
+
+
+STAGE_REASON_CUT = 240
+
+
+def _pins_waiting(model):
+    """The parts the manufacturing gate waits on (store.pins_to_resolve: unverified AND conflicting with the datasheet, DNP left out),
+    with their status; without a project, the model's pin_decisions.remaining (unverified only)."""
+    rows = None
+    if model.get("project"):
+        try:
+            import store
+            rows = store.pins_to_resolve(model["project"])
+        except Exception:           # noqa: BLE001 - the state must always build
+            rows = None
+    if rows is None:
+        rows = [dict(r, status="unverified") for r in ((model.get("pin_decisions") or {}).get("remaining") or [])]
+    return [{"line": r.get("line"), "refs": r.get("refs"), "status": r.get("status")} for r in rows]
+
+
+def _stages(model):
+    """Where the project stands, one row per stage (stages.ORDER: idea, bom, sch, pcb, rules, outputs, checks): its state, why, and the
+    next step the pages offer; a gate that holds the stage says so. Without it the agent could not name the student's next step."""
+    out = []
+    for st in model.get("stages") or []:
+        if not isinstance(st, dict):
+            continue
+        row = {"id": st.get("id"), "state": st.get("state")}
+        reason = str(st.get("reason") or "")
+        if reason:
+            row["why"] = _clip(reason, STAGE_REASON_CUT)          # head and tail: a gate reason ends with what to do
+        nxt = (st.get("next") or {}).get("label")
+        if nxt:
+            row["next"] = nxt
+        if (st.get("gate") or {}).get("blocked"):
+            row["blocked"] = True
+        if st.get("primary"):
+            row["current"] = True          # the stage the student's pages lead with now
+        out.append(row)
+    return out
 
 
 def _workspace_section(project, engine_home=None):
@@ -439,6 +501,17 @@ def history_lines(history, keep):
     return "\n".join(out)
 
 
+def _server_round_keep(history):
+    """A follow-up or retry round answers the server's report on the last exchange: it needs the student's last message (the
+    `student_said` quote, what was asked) and the agent replies since (what to correct), not the whole window. Consent in a retry is
+    checked against round 0's own inputs on the server, never against this prompt."""
+    turns = [m for m in history if not is_note(m)]
+    for back, m in enumerate(reversed(turns), 1):
+        if m.get("role") == "user":
+            return back
+    return min(len(turns), 2)
+
+
 MIN_LETTERS = 3          # a message with fewer letters of either script ("ok", "R5 100k") says nothing about the language
 
 
@@ -490,9 +563,22 @@ def reply_language_line(typed, history=(), generated=False):
     return line
 
 
-def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None, typed=None, generated=False):
+REMINDER = (
+    "Before you answer: the answer first, short (40-60 words, 100 at most), to one person. Facts only from <current_state>, a script you "
+    "ran this turn or a cited source; otherwise \"unknown\", and \"planned\" for anything on the board that board_facts did not measure. "
+    "End with the one next action of the `current` stage. Actions go in ONE closed ```json block at the end; say only what that block "
+    "starts, never a promise of a later reply. Draw, place, route and replace only on the student's own words (HARD RULES, REPLY FORMAT).\n")
+
+
+def _tag(name, body, note=""):
+    return f"<{name}{f' note={json.dumps(note)}' if note else ''}>\n{body}\n</{name}>"
+
+
+def respond(model, message, history, backend=None, timeout=None, on_event=None, cancel=None, typed=None, generated=False,
+            from_server=False):
     """(state, message) -> {reply, actions}. `backend` names an engine; None
-    means whatever `agent.provider` is set to. `typed` = the student's own text without the context the server adds."""
+    means whatever `agent.provider` is set to. `typed` = the student's own text without the context the server adds.
+    `from_server`: the message is the server's follow-up or retry note, not the student's words (tagged so)."""
     name = gateway.resolve(backend)
     if name == "external":
         return {"reply": None, "actions": [], "backend": name, "provider": name}
@@ -500,23 +586,27 @@ def respond(model, message, history, backend=None, timeout=None, on_event=None, 
     keep = int(workspace.get("agent.history_messages", 8))
     # a context card (role "ctx") has no text; the agent gets that context in the message itself
     history = [m for m in history if m.get("text")]
-    convo = history_lines(history, keep)
+    convo = history_lines(history, _server_round_keep(history) if from_server else keep)
 
-    parts = [rules()]
-    memory = (model.get("memory") or "").strip()
-    if memory:
-        parts.append("--- MEMORY (this conversation, kept small on purpose) ---\n"
-                     + memory)
     try:
         engine_home = runtime_pack.sync()
     except runtime_pack.RuntimePackError as exc:
         return {"reply": f"[{name}] {exc}", "actions": [], "backend": name, "provider": name,
                 "error": True}
+    # Stable first, dynamic last, each section in a named tag the rules refer to; the task and a short reminder close the prompt.
+    parts = [rules()]
     if gateway.provider(name).has_workspace():
-        parts.append("--- WORKSPACE ---\n" + _workspace_section(model.get("project"), engine_home))
-    parts.append("--- CURRENT STATE ---\n" + _summary(model))
-    parts.append("--- CONVERSATION SO FAR ---\n" + convo)
-    parts.append("--- STUDENT SAYS ---\n" + message + "\n" + reply_language_line(message if typed is None else typed, history, generated))
+        parts.append(_tag("workspace", _workspace_section(model.get("project"), engine_home)))
+    memory = (model.get("memory") or "").strip()
+    if memory:
+        parts.append(_tag("memory", memory, "this conversation, kept small on purpose"))
+    parts.append(_tag("current_state", _summary(model)))
+    parts.append(_tag("conversation", convo))
+    if from_server:      # a follow-up or retry round: the server reports what really happened; the student did not write this
+        parts.append(_tag("server_message", message))
+    else:
+        parts.append(_tag("student_message", message))
+    parts.append(_tag("reminder", REMINDER + reply_language_line(message if typed is None else typed, history, generated).strip()))
     prompt = "\n\n".join(parts)
 
     # The engine lives in its own folder, where only the instructions and skills are (sync() above).

@@ -1,6 +1,6 @@
 ---
 name: rules-and-calcs
-description: Produces the PCB design-rule table (JLC limits by layer count plus extra rules for current, impedance, noise), one .RUL file to import into Altium once, a read-back diff of the rules in the PcbDoc, and calculations (trace width, impedance, voltage divider) with formula and source for every number. Use when the student asks "which design rules do I set", "JLC minimum clearance / via / hole", "trace width for 2 A", "50 ohm trace width", "resistor divider for the feedback pin", "export the rules", "are my rules still the JLC ones" (Hebrew - חוקי תכנון, רוחב מסלול, מחלק מתח).
+description: Gives the PCB design-rule table (JLC limits plus extra rules), the .RUL file to import into Altium once, a diff against the PcbDoc, and calculations with formula and source. Use when the student asks "which design rules", "JLC minimum clearance / via", "trace width for 2 A", "50 ohm trace", "resistor divider", "export the rules" (Hebrew - חוקי תכנון, רוחב מסלול, מחלק מתח).
 ---
 
 # Rules and calculations
@@ -31,7 +31,9 @@ from the PcbDoc and shows differences. You never edit the PcbDoc.
    up to about 35 A and 10-100 C rise. IPC-2152 is the current standard and is not implemented here.
 6. Build the rule table: `Rule | Scope | Min/Pref/Max | Why | Source`. Specific rules get higher priority than the board default
    (Altium rule priorities: course m19 19.3.2).
-7. Produce the `.RUL` when the tool supports it (see Scripts). Tell the student the import path in Altium (verified AD26): Design > Rules, right-click
+7. With a linked PcbDoc send `altium.import_rules` (the rule set goes into the PcbDoc by name; the student's own rules stay).
+   Only when that is refused or the student imports by hand: produce the `.RUL` (see Scripts) and give the import path
+   (verified AD26): Design > Rules, right-click
    "Default Rule Set" > Import Rules... > pick the file > "Select Design Rules" (leave all ticked) > Import. In "Rule Set Already
    Exists": with a board-aware file (`export --board <PcbDoc>`, carries all the board's rules with JLC values) choose
    "Replace existing rules"; with the plain preset file choose "Merge with existing rules", then open "Priorities..." and raise the

@@ -1,6 +1,6 @@
 ---
 name: schematic-preview
-description: Produces example schematic sheets (SVG) - parts split into readable blocks, every pin a short stub ending in a net label, power port or No-ERC cross - then asks the student whether they redraw it by hand in Altium or the agent draws it there (action altium.draw_schematic). Use when the student asks to see a schematic first, "draw me the sheet", "how should I lay out the schematic", "split the circuit into sheets", "which net labels and power ports", "make the schematic readable" (Hebrew - לשרטט סכמה, תצוגה מקדימה של סכמה, איך לחלק לדפים).
+description: Writes example schematic sheets as readable blocks with short pin stubs, then offers redrawing by hand or drawing it in Altium. Use when the student asks to see or draw a schematic ("draw me the sheet", "draw the schematic", "split the circuit into sheets", "which net labels and power ports"; Hebrew - לשרטט סכמה, תצוגה מקדימה של סכמה, איך לחלק לדפים).
 ---
 
 # Schematic preview (example sheets to redraw)
@@ -15,9 +15,8 @@ lay it out. Who puts it into Altium is the student's choice (step 11): they redr
 - Not for: checking a sheet they already drew (use `schematic-review`); placing parts on the PCB (`placement-and-routing-plan`).
 
 ## Steps
-Asked to DRAW the schematic in Altium: send it in ONE turn, in this order: `altium.create_project` (if none), `library.build`,
-`netlist.write` (pins by exact name; the server fills the numbers from the built symbols), `altium.draw_schematic` with the student's quote.
-Never split it over turns, never say "I'll write the netlist next turn" or tell the student to write "continue".
+Asked to DRAW the schematic in Altium: one turn, project, `library.build`, `netlist.write`, `altium.draw_schematic`
+(AGENTS.md, WORK ORDER, Schematic). Never say "I'll write the netlist next turn".
 
 1. Collect the data first: per IC the pin number, pin name and net; per small part the ref, value and the two nets.
    Take pins from the part's datasheet in the project's `sources/` or from the student's library when one is there. Simple parts
@@ -25,11 +24,9 @@ Never split it over turns, never say "I'll write the netlist next turn" or tell 
    (`jlc.py part` gives `datasheet_url`; `sources.py get <project> <url> <MPN>.pdf`). If no link works, use the well-known pinout
    and keep going: the part is saved as `pins_source: "agent"` (unverified); say which datasheet is missing. If you truly do not
    know the pinout of a part, leave that part out and say so; do not invent pins.
-   Pin NUMBERS of a connector or IC with a downloaded symbol: you may write the netlist in the same turn as `library.build`, naming
-   the pins by their exact datasheet/symbol names; the server fills the numbers from the built symbol by name (a warning says so;
-   an ambiguous or unmatched name is refused with the real number=name pairs). Action order in one turn: `library.build`, then
-   `netlist.write`, then `altium.draw_schematic`. If the library is already built, read `<project>/library/build/symbols_spec.txt` first
-   (`PIN|number|name|...`) and use those numbers. Never invent numbers.
+   Pin NUMBERS of a part with a downloaded symbol: name the pins by their exact datasheet/symbol names; the server fills the numbers
+   from the built symbol (a warning says so; an ambiguous or unmatched name is refused with the real number=name pairs). Library
+   already built: read `<project>/library/build/symbols_spec.txt` first (`PIN|number|name|...`) and use those numbers. Never invent numbers.
    Never wait for a complete sheet: write it early and partial. Draw what is known, leave undecided pins with net "" (shown as an
    open pin) and include parts whose BOM proposals are still pending (shown "pending approval"). The write returns warnings
    (open pins, parts not in the BOM yet); tell the student in one line, e.g. "sheet written, 3 open pins, U5 waits for approval".
@@ -41,42 +38,38 @@ Never split it over turns, never say "I'll write the netlist next turn" or tell 
 5. Put small parts (R, C, LED, diode) in columns next to the IC, each between two net names. A part on a rail or on GND
    uses that symbol; a part between two signals gets a label at both ends.
 6. Place decoupling caps in the picture next to the IC pin they serve and say which pin (the student copies the order).
-7. Write the sheet as the JSON model described in the script docstring, run the renderer, and OPEN the image to look
-   at it. Fix overlapping text by moving a column or shortening a label. Do not hand over a picture you have not looked at.
+7. Write the sheet with `netlist.write`. The server applies it after your reply, so the netlist exists only in the next turn:
+   render it (`render_sheet.py`) and OPEN the image only for a sheet written in an earlier turn; for one written now the
+   Schematic page shows the preview once the server has applied it. Fix overlapping text by moving a column or shortening a
+   label. Do not hand over a picture you have not looked at.
 8. Cross-check every net in the picture against the source data (datasheet pin table or the student's netlist).
 9. Tell the student how to redraw it in Altium: place the parts, then wire only the short stub and name it (Place > Net Label,
    Place > Power Port); cite the AD20 manual step. Say the grey cross-sheet hints are not drawn objects.
-10. Send the image path plus a short table (see Output). Say clearly: generated from data, verify with Alt+Click on a net.
-11. If the student has NOT said who draws (in this turn or any earlier turn of this conversation), end the preview with ONE question, in
-    their language, naming the next click and not a bare question. Altium project linked: "Press Draw in Altium on the Schematic
-    page (or redraw it by hand in Altium, or tell me to draw it)". No Altium project yet (the button is not shown): "Create or link
-    the Altium project in Settings > Altium first, then press Draw in Altium on the Schematic page". Never "will you redraw it or
-    do you want me to draw it?" alone. Then stop and wait; never answer for them.
+10. Say clearly: generated from data, verify with Alt+Click on a net. Image path and table only as Output says.
+11. If the student has NOT said who draws (in this turn or any earlier turn), end the preview with ONE question, in their language,
+    naming the next click (wording and the Draw / Place / Route buttons: AGENTS.md, REPLY FORMAT AND ACTIONS, "Who draws");
+    never a bare "will you redraw it or do you want me to draw it?". Then stop and wait; never answer for them.
     If they already said it ("תצייר אתה", "you draw it"), do NOT ask again: run the chain above now, quoting that message.
     - "Myself" (or no clear answer): the manual path, steps 9-10 stay as they are; do not run the action.
-    - "You draw it": run `{"type": "altium.draw_schematic", "student_said": "<their words, most of their last message>"}` (add
-      `"sheet": "01"` for one sheet). The action is refused when the quote is only a fragment, or when their message says they draw it
-      themselves ("I'll draw it myself", בעצמי, אני אשרטט). "תשרטט לבד" means YOU draw it. It needs the library built (`library.build`)
-      and Altium open. It opens the project's SchDoc (adds one when the project has none), places every part from the project library
-      (pin count checked against the library symbol), sets the designators, keeps the footprint and parameters, puts a wire stub +
-      power port or net label on every connected pin and a No ERC cross on NC pins, lays the parts out on a grid, saves, and reads the
-      saved file back to compare every net with the
-      netlist. Report the result in the student's words: parts placed, nets, warnings (open pins, pins not in the library).
-    - It refuses (and tells you why) when the sheet already has anything on it, or is open in Altium with unsaved changes: the student's
-      drawing is never wiped. `"replace": true` is granted only when the student's LAST message is a short (8 words or fewer) clear
-      replace (`"yes, replace"`, `"תשרטט מחדש"`) or a bare yes right after you asked `"Replace the drawing on sheet 01? This wipes
-      what is there (a backup is kept). Answer yes/no."`; a longer message never grants it (the old file is copied to `.advisor-backup`
-      first). Pins are matched by number: a different name is a warning (tell the student), a name that is
-      another library pin's is a swap and refused. Hebrew headings are drawn as "Section N". Multi-part symbols are not
-      drawn: say which, and fix the netlist or draw that part by hand. A refusal because the library lacks a symbol, a pin count
-      differs, or the sheet does not fit one A4 page: say what is missing and fix that (library, netlist, a second sheet),
-      never work around it with a script in Altium.
-    - NEXT STEP after the schematic is drawn (never tell the student to do Design > Update PCB by hand, that is not the offer):
-      ask ONE question in their language: "Should I place the parts on the board, or will you (Update PCB)?" Then stop and wait.
-      "You place them" = follow the `placement-and-routing-plan` skill (`altium.place_pcb`, only on their answer); "myself" = then
+    - "You draw it": send `{"type": "altium.draw_schematic", "student_said": "<their words, most of their last message>"}`
+      (add `"sheet": "01"` for one sheet); the quote and replace rules are in AGENTS.md, REPLY FORMAT AND ACTIONS.
+      "תשרטט לבד" means YOU draw it. It needs the library built and Altium open. It opens the project's SchDoc (adds one when
+      the project has none), places every part from the project library (pin count checked against the symbol), sets the
+      designators, keeps footprint and parameters, puts a wire stub + power port or net label on every connected pin and a
+      No ERC cross on NC pins, lays the parts out on a grid, saves, and reads the saved file back to compare every net with the
+      netlist. Report in the student's words: parts placed, nets, warnings (open pins, pins not in the library).
+    - It refuses (and tells you why) when the sheet already has anything on it, or is open in Altium with unsaved changes: the
+      student's drawing is never wiped (the old file is copied to `.advisor-backup` before any replace). Pins are matched by
+      number: a different name is a warning (tell the student), a name that is another library pin's is a swap and refused.
+      Hebrew headings are drawn as "Section N". Multi-part symbols are not drawn: say which, and fix the netlist or draw that
+      part by hand. A refusal because the library lacks a symbol, a pin count differs, or the sheet does not fit one A4 page:
+      say what is missing and fix that (library, netlist, a second sheet), never work around it with a script in Altium.
+    - NEXT STEP after the schematic is drawn (never send the student to Design > Update PCB unasked): ask ONE question in
+      their language: "Place the parts in Altium yourself, press Place parts on the Layout page, or should I?" Then stop and
+      wait. "You place them" = follow `placement-and-routing-plan` (`altium.place_pcb`, only on their answer); "myself" = then
       and only then explain Design > Update PCB.
-    - Afterwards the student can check it with `schematic-review`. The layout is simple (a grid per section), readable, not optimized:
-      say so, they may move parts by hand.
+    - Afterwards the student can check it with `schematic-review`. The layout is simple (a grid per section), readable, not
+      optimized: say so, they may move parts by hand.
 
 ## Scripts
 - `python <repo>/scripts/preview_sch.py <schdoc> [--output <out.svg>]` - renders a linked Altium .SchDoc to interactive SVG.
@@ -90,7 +83,6 @@ Never split it over turns, never say "I'll write the netlist next turn" or tell 
   [13] before building, [20]-[21] layout.
 - `<repo>/shared/reference/course/ad20-essentials/m06-making-the-connection.en.md` - wiring, net labels, power ports in Altium.
 - `<repo>/shared/reference/course/ad20-essentials/m05-schematic-capture.en.md` - placing parts and designators.
-- `<repo>/docs/PRODUCT-PLAN.md` - capability 5 (schematic preview) and pain point K8 (look before building in Altium).
 
 ## Pitfalls
 - A wrong net drawn confidently is worse than no picture. The drawing only shows the data you gave it, so verify pin numbers

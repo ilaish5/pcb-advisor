@@ -1,6 +1,6 @@
 ---
 name: part-models
-description: Finds and checks the symbol, footprint and 3D model of a part, and tells the student which link to open when a file must be downloaded and handed back. Use when a part is missing from the library or its model looks wrong ("find the footprint", "where do I get the symbol", "3D model", "SnapEDA", "Ultra Librarian", "EasyEDA", "is this the right package", "pin 1", "the 3D is rotated"; Hebrew - "תחפש footprint", "תוריד מודל", "ה-3D הפוך", "איפה פין 1").
+description: Finds and checks the symbol, footprint and 3D model of a part and says which link to open when a file must be downloaded. Use when a part is missing from the library or its model looks wrong ("find the footprint", "3D model", "SnapEDA", "is this the right package", "pin 1", "the 3D is rotated"; Hebrew - "תחפש footprint", "ה-3D הפוך", "איפה פין 1").
 ---
 
 # Part models
@@ -37,7 +37,7 @@ description: Finds and checks the symbol, footprint and 3D model of a part, and 
 ## Scripts
 - `python <repo>/scripts/library.py search <MPN>` - model search links across LCSC/EasyEDA, Ultra Librarian, and SnapEDA (link-and-return).
 - `python <repo>/scripts/library.py check-package <BOM_package> <JLC_package>` - package-variant check between BOM and manufacturer part.
-- `python <repo>/scripts/skills/verify_part.py <project> <line>` - exists today. Compares the pin numbers and names of the part with its
+- `python <repo>/scripts/skills/verify_part.py <project> <line>` - compares the pin numbers and names of the part with its
   datasheet text; lists what it cannot find. Result `pass` does not mean accepted.
 - `python <repo>/scripts/sources.py get <project> <url> [name]` - fetches a datasheet, records url and sha256.
   `python <repo>/scripts/sources.py list` lists what is stored.

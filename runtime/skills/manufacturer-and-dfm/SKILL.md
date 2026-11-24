@@ -1,6 +1,6 @@
 ---
 name: manufacturer-and-dfm
-description: Prepares the manufacturing package for JLC and walks the student through the JLC DFM and assembly preview (Gerber zip, upload at jlcdfm.com, finding the exported report), then triages every red item as real or false alarm with a fix. Use when the student asks for "gerbers", "OutJob", "BOM and CPL for JLC", "pre-upload check", "upload to JLC", "run JLC DFM", "I exported the report", "DFM shows red", "CPL rotation wrong", "pick and place", "files for the factory", "quote" (Hebrew - "קבצי ייצור", "גרברים", "DFM אדום", "סיבוב רכיבים").
+description: Prepares the JLC manufacturing package (OutJob, Gerber zip, BOM, CPL), checks it before upload and triages JLC DFM reports. Use when the student asks for "gerbers", "OutJob", "pick and place", "pre-upload check", "run JLC DFM", "I exported the report", "DFM shows red", "CPL rotation wrong" (Hebrew - "קבצי ייצור", "גרברים", "DFM אדום"). Price and stock quotes belong to parts-and-stock.
 ---
 
 # Manufacturer files and JLC DFM
@@ -11,14 +11,16 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - The student asks how to export Gerber, drill, pick and place, BOM from Altium, or for a ready OutJob.
 - Before the student uploads to JLC: a pre-upload check of the files.
 - JLC DFM or the assembly (SMT) preview shows red items and the student asks "is this a problem?".
-- The student wants the stock or price of a part: run the parts script, never answer from memory.
 - Not for: DRC and layout review (board-review), how a menu works in Altium (altium-help), ordering (the student does it).
 
 ## Steps
-1. Confirm the board passed the batch DRC (board-review) and the BOM has an LCSC number on every fitted line.
-2. OutJob. Run `scripts/outjob.py <project>` to write the ready OutJob into `projects/<project>/exports/` (or use the manual recipe
-   from {{src:m25-fabrication-files.en.md|25.4 Output Job File}}): Gerber, NC Drill, Pick and Place, BOM, Schematics.
-   The student copies the OutJob into their Altium project folder and clicks Generate content.
+1. The board passed DRC: `drc_total` in `board_facts` or the route result says so, else ask the student (board-review; the
+   physical checks are `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`). Every fitted BOM line has an LCSC number.
+   Parts in `pins_waiting` (CURRENT STATE) hold the OutJob and the Gerber zip: say so first.
+   Run `python <repo>/scripts/lineage.py <project> status` before files go out.
+2. OutJob. With a linked Altium project send `altium.run_outjob` (adds the OutJob and generates Gerber, NC Drill, Pick and Place,
+   BOM). Without one run `python <repo>/scripts/outjob.py <project>` (writes `projects/<project>/exports/`; the student copies it
+   into the Altium project and clicks Generate content), or the manual recipe {{src:m25-fabrication-files.en.md|25.4 Output Job File}}.
 3. Pre-upload check of the generated files (read them, do not trust the dialog):
    a. Outline: the board outline is on its own mechanical layer and appears only in the outline Gerber. It must not be
       in the "add to all plots" list, or every layer gets the outline and JLC reports trace to board edge.
@@ -29,8 +31,9 @@ description: Prepares the manufacturing package for JLC and walks the student th
    e. CPL columns: Designator, Mid X, Mid Y, Layer, Rotation. Same designators as the BOM. Units in mm.
    f. Produce the files before naming them: run export_bom.py (jlc) for the BOM and export_cpl.py for the CPL, then list
       `exports/`. Tell the student to upload only files that exist there, by their real names. No CPL file: say so, never name one.
-4. Parts: run the availability script for every BOM line; take stock, price and Basic/Extended type only from it, with
-   its time. Zero or low stock: say the JLC signal, and propose an in-stock drop-in for the student to approve. Same
+4. Parts: stock, price and Basic/Extended type only from the stored JLC checks, with their time; run
+   `check_availability.py` only for lines whose `stock_check` is `missing` or `stale` (rule 4).
+   Zero or low stock: say the JLC signal, and propose an in-stock drop-in for the student to approve. Same
    package is not enough: at ordering a swap is free only on the same FOOTPRINT (step 9).
 5. The JLC check, done with the student at the end. The account is theirs: never log in, never ask for a password,
    never upload for them. Go one step at a time, as the DFM view lists them (header menu, "How to check at JLC"):
@@ -56,18 +59,11 @@ description: Prepares the manufacturing package for JLC and walks the student th
    datasheet, not with a guess.
 8. Fix at the source: copper or silk in the board; rotation via the BOM line's `cpl_rotation` (bom.propose, multiple of 90); LCSC number
    in the BOM. Regenerate and re-upload. A re-uploaded CPL may be ignored by the preview: upload the Gerber zip again too.
-
-9. The order step, after the Gerber zip and a clean DFM: action `order.check` (`"recheck": true` asks JLC again first).
-   Its line says, per bought line, ok, swap_free, design_change or no_alternative. Design and ordering are separate: the
-   design fixes value, package and pins and the library is built from it; at ordering the MPN or LCSC code may change
-   FREELY when the new part has the same footprint (same land pattern and pins), with no schematic, library or board
-   change. For a swap_free line propose `bom.propose` with `changes` `{mpn, lcsc, manufacturer, footprint_lock}` (the
-   footprint name from the Order check panel), reason "order-only swap: same footprint". The server re-proves the
-   footprint AND the pin functions (or value and kind of a plain passive) and drops the lock otherwise; the student still
-   approves. After a swap Altium's own part parameters still show the old MPN/code until the next library build: the JLC
-   BOM comes from the advisor's `export_bom`, never from Altium's BOM (order.check lists such lines in `params_stale`).
-   A design_change line (other or unproven footprint)
-   needs a library rebuild and a PCB update in Altium: say so, never present it as a plain swap. Export the BOM again after.
+9. The order step, after the Gerber zip and a clean DFM: action `order.check` (`"recheck": true` asks JLC again first); the
+   swap rules (same footprint, `footprint_lock`, `match`) are in `parts-and-stock`, step 11. After a swap Altium's own part
+   parameters still show the old MPN/code until the next library build: the JLC BOM comes from the advisor's `export_bom`,
+   never from Altium's BOM (order.check lists such lines in `params_stale`). A design_change line needs a library rebuild
+   and a PCB update in Altium: say so, never present it as a plain swap. Export the BOM again after.
 
 ## Scripts
 - `python <repo>/scripts/order_check.py <project> [--recheck]` per line: stock class and up to 3 alternatives with the footprint match.
@@ -76,17 +72,15 @@ description: Prepares the manufacturing package for JLC and walks the student th
 - `python <repo>/scripts/skills/export_cpl.py <project> [pcb_file]` writes `exports/<project>_cpl.csv` (JLC pick and place).
   Without a linked PcbDoc the positions are a stub from the BOM: say so.
 - `python <repo>/scripts/skills/check_availability.py ...` stock and price from JLC, with query time. Quote the time.
-- `python <repo>/scripts/outjob.py <project> [output_dir]` writes an Altium OutJob text file (Gerber, NC drill, JLC BOM, CPL, schematic PDF).
+- `python <repo>/scripts/outjob.py <project> [--out <dir>]` writes an Altium OutJob text file (Gerber, NC drill, JLC BOM, CPL, schematic PDF).
 - `python <repo>/scripts/checks/board.py <pcb_file>` checks outline clearances, connector orientation, decap distances, and CPL rotation sanity.
 - `python <repo>/scripts/dfm.py gerber-zip <project>` builds the Gerber + drill zip from the linked Altium outputs (read only); prints the files and gaps.
 - `python <repo>/scripts/dfm.py pickup <project> [--kind pcb|smt|both] [--name FILE]` adds the new JLCDFM report PDFs from Downloads.
 - `python <repo>/scripts/dfm.py ingest <project> <pdf_path> [--kind pcb|smt|both|auto]` ingests a PDF the student gave you by path.
-- Never run Altium, never log in to JLC and never ask for the student's password.
 
 ## References
 - `<repo>/shared/reference/course/ad20-essentials/m25-fabrication-files.en.md` (OutJob, BOM, Gerber setup)
 - `<repo>/shared/reference/course/altium-education/unit3-pcb-layout.en.md` ([03] process, [06] Preparing for Manufacturing)
-- `<repo>/docs/PRODUCT-PLAN.md` (section 8, export rules)
 - `references/jlcdfm-report.md` - layout of the JLCDFM report PDF and how to triage its SMT section.
 - `references/jlcdfm-smt.md` - JLCDFM SMT assembly DFM checks, common findings, fixes, and triage.
 - `<repo>/shared/reference/jlc/files-and-formats.en.md` - JLC's Gerber/drill/BOM/CPL rules, rotation, rejections; order steps: `ordering-workflow.en.md`.

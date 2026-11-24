@@ -1,6 +1,6 @@
 ---
 name: parts-and-stock
-description: Checks every BOM line against JLC as it is entered and returns a table of stock, price at quantity, Basic/Extended/Preferred, assembly caveats, cost per board, a risk flag and in-stock alternatives. Use when the student adds or changes a part or asks "is it in stock", "how much does the BOM cost", "Basic or Extended", "why Standard only", "find a cheaper or in-stock replacement", "is this part obsolete" (Hebrew - "יש במלאי?", "כמה עולה הלוח", "תמצא חלופה").
+description: Checks BOM lines against JLC: stock, price at quantity, Basic/Extended, cost per board, risk flags, in-stock alternatives. Use when the student adds or changes a part or asks "is it in stock", "how much does the BOM cost", "price quote", "Basic or Extended", "find an in-stock replacement", "is this part obsolete" (Hebrew - "יש במלאי?", "כמה עולה הלוח", "תמצא חלופה").
 ---
 
 # Parts and stock
@@ -42,6 +42,8 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
     stay as they are. Match "different" or "unknown" is a design change (library rebuild + PCB update): propose it without a
     `footprint_lock`, and say it changes the board. Never claim "same package" means the same footprint, and never call a
     part you found yourself (a search, a cache) "identical" or a drop-in: only a `match` "same" from order.check is.
+    order.check says per line ok, swap_free, design_change or no_alternative. The server re-proves the footprint and the pin
+    functions (or value and kind of a passive) and drops the lock otherwise; the student still approves.
 
 ## Scripts
 - `python <repo>/scripts/skills/check_availability.py <project> [LINE ...]` - Searches JLC by MPN, returns stock, unit price at 10 pcs,
@@ -52,7 +54,6 @@ description: Checks every BOM line against JLC as it is entered and returns a ta
 
 ## References
 - `<repo>/docs/feasibility/README.md` - what the JLC endpoint returns (stock, library type, prices, datasheet link) and what it lacks.
-- `<repo>/docs/PRODUCT-PLAN.md` - section 1 K2 (stock found too late), section 7 decisions 2, 8, 19 (stock in table, obsolete signals).
 - `<repo>/shared/reference/course/altium-education/unit2-schematics-libraries.en.md` - [15]-[19] and [22] choosing parts, MOQ, supply chain.
 - `<repo>/shared/reference/jlc/assembly-capabilities.en.md` - Basic/Preferred/Extended fees (Economic vs Standard), Standard-only limits, sourcing channels.
 

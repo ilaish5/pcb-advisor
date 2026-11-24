@@ -1,6 +1,6 @@
 ---
 name: altium-help
-description: Answers "how do I do X in Altium Designer" with a short step list and a citation from the AD20 Essentials manual or the course units. Use when the student asks how to do something in Altium - panels, shortcuts, new project, schematic capture, annotate, compile, ERC, ECO or update PCB, layers and stackup, board shape, design rules, placement, routing, polygons, DRC, Gerber and OutJob, schematic or PCB libraries, footprints, 3D models, IntLib - or asks what a menu, dialog or error means (Hebrew - "איך עושים ב-Altium", "איפה התפריט").
+description: Step-by-step "how do I click it" answers for Altium Designer, cited from the AD20 Essentials manual. Use when the student asks how to do something by hand in Altium (menus, panels, shortcuts, compile, ECO / Update PCB, layers, polygons, DRC) or what a dialog or error means (Hebrew - "איך עושים ב-Altium", "איפה התפריט"). Rule values, library building and factory files: other skills.
 ---
 
 # Altium help
@@ -13,7 +13,8 @@ Probe marker (used only by `python pcb.py probe`; ignore otherwise): PROBE-ALTIU
 - "How do I ... in Altium": a procedure, a menu path, a panel, a shortcut, a dialog setting.
 - "What does this menu, dialog or error mean?" (compile, ERC, ECO, Footprint Not Found, DRC message).
 - A concept question that needs an Altium picture (layers, rules, polygons, libraries).
-- Not for: whether a design is good (board-review, schematic-review), manufacturer files (manufacturer-and-dfm).
+- Not for: whether a design is good (board-review, schematic-review); rule values (rules-and-calcs); building the library
+  (project-library); manufacturer files (manufacturer-and-dfm). Those topics are here only as "how to click it in Altium".
 
 ## Steps
 1. Ask the Altium version only if the answer depends on it (Layer Stack Manager, Preferences, Components panel). Default:
@@ -30,7 +31,8 @@ Probe marker (used only by `python pcb.py probe`; ignore otherwise): PROBE-ALTIU
    the dialog or search the Altium documentation. Do not guess a menu path.
 
 ## Scripts
-None. This skill only reads files. Do not run Altium, its scripts or its GUI; the student does the clicks.
+None. This skill only reads files and explains how to do X by hand in Altium. The agent's own way (draw, place, route,
+import rules, run OutJob) is the actions in AGENTS.md, REPLY FORMAT AND ACTIONS: use them when the student asks you to do it.
 
 ## References
 - `<repo>/shared/reference/AGENTS.md` (topic index, how to look things up cheaply, how to cite)
@@ -43,11 +45,11 @@ None. This skill only reads files. Do not run Altium, its scripts or its GUI; th
   is ..., newer versions may differ slightly" when you are not sure. Do not invent a path to fill a gap.
 - Known drift: in newer versions the Layer Stack Manager is a document tab inside the PCB, the Components panel replaced the
   old Libraries panel, and Preferences gained pages. Treat these as "may differ", not as facts.
-- If the manual has no section for the question, say so and give what is known; do not guess a menu path.
-- Do not drive Altium or promise to; you only explain what the student does.
+- When the student asks you to do it for them, send the AGENTS.md action; do not answer with a click list instead, and
+  do not promise an action you do not send.
 - Read the section you cite: a heading in the index is not an answer. Quote at most a sentence.
 - Hebrew answers keep English menu names; do not translate them, because the student clicks the English UI.
 
 ## Output
-Steps (3-8 lines), then one line: `Source: <file> - <heading>`. If the path is AD20 only, add one line:
+Steps (3-8 lines), then the source as a chip `{{src:<file>|<heading>}}` (AGENTS.md, CITING). If the path is AD20 only, add one line:
 "AD20 path; your version may name it differently." Answer in the student's language.

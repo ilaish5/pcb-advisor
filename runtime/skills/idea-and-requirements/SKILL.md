@@ -1,6 +1,6 @@
 ---
 name: idea-and-requirements
-description: Turns a rough project idea into a short list of open requirements questions, the ones students regret not asking early. Use when the student describes a new idea or starts a project ("I want to build...", "what should I decide first", "which MCU", "how do I flash it", "battery or mains", "what connectors"; Hebrew - "יש לי רעיון לפרויקט", "מה צריך להחליט לפני שמתחילים", "איך צורבים").
+description: Turns a rough project idea into a first draft plus the few requirements questions worth asking early. Use when the student describes a new idea or starts a project ("I want to build...", "what should I decide first", "which MCU", "how do I flash it", "battery or mains", "what connectors"; Hebrew - "יש לי רעיון לפרויקט", "איך צורבים").
 ---
 
 # Idea and requirements
@@ -17,18 +17,15 @@ description: Turns a rough project idea into a short list of open requirements q
    description (`idea.describe`), the block diagram (`idea.diagram.edit`), and one `idea.propose` per requirement. Mark
    every guess "(assumed)" in the requirement text. The edits land in a live draft the student sees and can Save or Revert,
    so a wrong guess costs one click. Never open with a questionnaire.
-   The Idea step is requirements only (flow: Idea -> Confirm idea -> BOM). Do NOT send `bom.propose` cards while the idea
-   is not confirmed (`idea.confirmed` in CURRENT STATE is false): a part may appear only as a candidate in your text
-   ("a USB-C receptacle, for example"), never as a card. Once the idea is confirmed, or when the student explicitly asks
-   for parts ("which MCU should I use", "put the parts in the BOM"), switch to `parts-and-stock` and propose the BOM.
+   `{"type": "idea.describe", "text": "..."}` is the board in plain words (what it is, what it is for, the diagram as text).
+   Stage gating (no `bom.propose` card before `idea.confirmed`, parts only as candidates in text): AGENTS.md, WORK ORDER.
+   Once confirmed, or when the student explicitly asks for parts, switch to `parts-and-stock`.
 3. Then ask at most 1-3 questions: the ones from the list below whose answer would change the draft most and are
    expensive to change later. Per question: one line "why it matters" and your default (the one already in the draft).
 4. When the answers come, change the draft (replace "(assumed)" with the agreed value), list what each answer forces
    (a connector, a part, a footprint, a rule) and name the skill that handles it.
 5. When you think the idea is agreed, emit `{"type": "idea.ready"}`: the reply shows a Confirm idea button and the student
-   decides. Do not ask them to type a yes. `idea.confirm` still exists, only with a quote of a clear yes in their last message.
-- `{"type": "idea.describe", "text": "..."}` the board in plain words (what it is, what it is for, the diagram told as text);
-  applies to the draft at once.
+   decides. Do not ask them to type a yes (`idea.confirm` and its quote rule: AGENTS.md).
 6. Student edits go into the same draft. Read the draft (the idea in the project state) before changing anything.
 7. Block diagram: edit directly with `idea.diagram.edit` (live in the draft, no approval) for adding/updating blocks, buses,
    connectors, frames, or auto-layout. Use `idea.diagram` (proposal with approve/reject) only for whole-diagram
@@ -55,10 +52,10 @@ Question list (pick, do not ask all):
 ## Scripts
 - None needed for the questions. Do not run stock checks here; if the student already names parts, go to `parts-and-stock`.
 - `python <repo>/scripts/model.py <project>` prints the project state (idea, BOM). Read it before asking.
-- `python <repo>/scripts/keeping.py <project> log|decisions` - records agreed architectural decisions in the decision log.
+- `python <repo>/scripts/keeping.py <project> log "<decision>" [--who W] [--why W] [--source S]` records an agreed decision;
+  `decisions` lists them.
 
 ## References
-- `<repo>/docs/PRODUCT-PLAN.md` - section 1 (K4: late requirements cost a day of rework) and section 3.
 - `<repo>/shared/reference/course/altium-education/unit2-schematics-libraries.en.md` - [15]-[19], [22] component choice, supply chain.
 - `references/question-bank.md` - why-it-matters text and follow-ups per question (in this skill folder).
 - `references/diagram-ops.md` - operations and examples for live diagram editing (in this skill folder).

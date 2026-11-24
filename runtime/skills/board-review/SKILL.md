@@ -1,6 +1,6 @@
 ---
 name: board-review
-description: Reviews a placed or routed PCB against the layout mistakes that are expensive to find late, and explains DRC messages, giving a findings table with a verdict and a fix per row. Use when the student asks "is my board OK", "check the layout", "which way should the connector face", "are my decoupling caps close enough", "antenna keep-out", "GND pour", "stitching vias", "silkscreen", "what does this DRC violation mean", "3D check" (Hebrew - "לבדוק את הלוח", "כיוון מחבר", "הפרות DRC").
+description: Reviews a placed or routed PCB for expensive late layout mistakes and explains DRC messages. Use when the student asks "is my board OK", "check the layout", "connector direction", "decoupling caps close enough", "antenna keep-out", "GND pour", "what does this DRC violation mean" (Hebrew - "לבדוק את הלוח", "כיוון מחבר", "הפרות DRC").
 ---
 
 # Board review
@@ -14,14 +14,17 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 - Not for: choosing rules or widths (rules-and-calcs), export files and the JLC DFM site (manufacturer-and-dfm).
 
 ## Steps
-1. Ask for the board facts you cannot read: board outline and mounting holes, which side each connector's cable
+1. Read `board_facts` and `constraints` in CURRENT STATE first; ask only for the
+   board facts neither has: board outline and mounting holes, which side each connector's cable
    enters, any antenna or module with a datasheet keep-out. If the student gives only a screenshot, review the screenshot
    and say what you cannot see (bottom side, inner layers).
-2. Connectors. Run `scripts/checks/board.py` to verify opening orientation against the nearest board edge normal. For each connector,
+2. Connectors. Run `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`
+   (the PcbDoc path: the linked Altium project line in WORKSPACE) to verify opening orientation against the nearest board edge normal. For each connector,
    the opening must face outward toward the board edge and be free of obstructing parts. Ask for a tilted 3D screenshot
    (View > 3D layout mode, tilt, look from the edge) to verify symmetric footprints that may hide a 180° rotation.
-3. Decoupling. Run `scripts/checks/board.py` to measure distance from each decoupling cap to its IC power pin on the same net.
-   Aim at a few mm (roughly 2-5 mm); the small cap sits closer than the bulk cap. One cap per supply pin, not one cap for all.
+3. Decoupling. The same `checks/board.py` run measures distance from each decoupling cap to its IC power pin on the same net.
+   Aim for 2-3 mm from the pin; `checks/board.py` flags above 5 mm. The small cap sits closer than the bulk cap. One cap per
+   supply pin, not one cap for all.
    Flag a cap whose current path goes through a via first. Datasheet layout advice wins over the rule of thumb; cite its page.
 4. RF and antenna. Use the module datasheet keep-out: no copper, no pour, no parts under or beside the antenna element
    as drawn there. Feed line: short, one layer, over an unbroken reference plane, with GND stitching vias beside it.
@@ -41,8 +44,8 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
   (read-only): parts, pins, pads with nets, rules. Use it instead of screenshots.
 - `python <repo>/scripts/trace_width.py ...` IPC-2221 trace width for a current; use it instead of estimating.
 - `python <repo>/scripts/model.py <project>` prints project state (BOM, parts, notes) to read the part list.
-- `python <repo>/scripts/checks/board.py <pcb_file> --design <project>` lists nets, pins, parts the board lacks. Run it with every DRC review.
-- `python <repo>/scripts/checks/board.py <pcb_file>` checks connector opening vs nearest edge normal, decap distance to IC power pin, and CPL rotation sanity.
+- `python <repo>/scripts/checks/board.py <pcb_file> [--design <project>]` connector opening vs nearest edge, decap distance, CPL rotation;
+  with `--design` also nets, pins and parts the board lacks. Run it with every DRC review.
 - Never run Altium, Altium scripts or the GUI. The student runs DRC and sends the result.
 
 ## References
@@ -68,9 +71,9 @@ description: Reviews a placed or routed PCB against the layout mistakes that are
 - A pour split on a plane layer breaks the return path of any signal that crosses it, also from the neighbour layer.
 
 ## Measured, not remembered
-Hole positions, part-to-edge and part-to-part distances, copper under the antenna: quote `board_facts` (CURRENT STATE)
-and only if it is not marked stale; with "none measured" say "planned". The `requirements` rows (met, violated, unverifiable) are the checklist
-of what the student confirmed.
+Positions, distances, copper under the antenna: quote `board_facts` only if not marked stale; "none measured" = say "planned"
+(AGENTS.md, WHERE THINGS ARE). The `requirements` rows (met, violated, unverifiable; `python <repo>/scripts/model.py <project>`)
+are the checklist of what the student confirmed.
 
 ## Output
 The chat is a narrow side panel: lead with the verdict in one line ("One thing to fix: J1 faces inward"), then only the
