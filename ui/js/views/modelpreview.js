@@ -108,8 +108,8 @@ function mpTabs(row, kind) {
 function mpFrame(row, kind, body) {
   const bom = (S.bom || []).find(b => b.key === row.line) || {};
   const refs = refsLabel(row.refs || []) || row.line;
-  return `<header class="mp-h"><div><h2 id="mp-title">${esc(refs)} <span class="m muted">${esc(row.mpn || bom.mpn || '')}</span></h2>` +
-    `<p class="muted mp-sub">${esc(MP_TITLE[kind])} preview</p></div><button type="button" class="btn icon" data-mp-close title="Close (Esc)" aria-label="Close preview">${icon('x')}</button></header>` +
+  return `<div class="mp-h"><div><h2 id="mp-title">${esc(refs)} <span class="m muted">${esc(row.mpn || bom.mpn || '')}</span></h2>` +
+    `<p class="muted mp-sub">${esc(MP_TITLE[kind])} preview</p></div><button type="button" class="btn icon" data-mp-close title="Close (Esc)" aria-label="Close preview">${icon('x')}</button></div>` +
     mpTabs(row, kind) + `<div class="mp-body" data-mp-kind="${kind}">${body}</div>`;
 }
 function mpMissing(what, row) {
