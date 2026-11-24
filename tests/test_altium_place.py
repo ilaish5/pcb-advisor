@@ -1,4 +1,6 @@
 """altium.place_pcb / route_pcb: the consent guard per action, the DRC report parser, the PCBCHECK log parser."""
+import pathlib
+
 import pytest
 
 import serve
@@ -349,3 +351,105 @@ def test_a_refusal_on_a_routed_board_names_what_a_new_placement_deletes(monkeypa
     msg = str(e.value)
     assert "47 parts or copper objects, among them routing of 40 tracks, 6 vias and 1 pour that placing again deletes" in msg
     assert serve.needs_replace(e.value)                       # still the one Replace confirm of the UI, now an informed one
+
+
+# ---------------------------------------------------------------- E10: change the outline of a board that already exists
+
+def _resize_fakes(monkeypatch, tmp_path, old=(0.0, 0.0, 100.0, 80.0), parts=(("U1", 50.0, 40.0), ("J1", 95.0, 70.0)), modified=False, kept=False):
+    import altium.pcbdoc as pcbdoc
+    from altium import layout
+    pcb = tmp_path / "B.PcbDoc"
+    pcb.write_bytes(b"pcb")
+    sent, shape, docs = [], {"box": list(old)}, {"tracks": _rect_tracks(*old)}
+    monkeypatch.setattr(bridge, "_linked", lambda project: tmp_path / "P.PrjPcb")
+    monkeypatch.setattr(bridge, "_project_pcb", lambda project: pcb)
+    monkeypatch.setattr(bridge, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(bridge, "_backup", lambda prj, files: sent.append(["BACKUP"]) or "bk")
+    monkeypatch.setattr(bridge, "_board_size", lambda project: (120.0, 90.0))
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: {"components": [{"ref": r, "x_mm": x, "y_mm": y} for r, x, y in parts],
+                                                                          "tracks": docs["tracks"]})
+    monkeypatch.setattr(pcbdoc, "board_shape_box", lambda p: list(shape["box"]))
+
+    def write_shape(p, box):
+        shape["box"] = list(box)
+        return ""
+    monkeypatch.setattr(bridge, "_write_shape", write_shape)
+
+    def altium(cmds, **kw):
+        sent.append([c[0] for c in cmds])
+        out = []
+        for c in cmds:
+            if c[0] == "DOCSTATE":
+                out.append("docstate open modified=1" if modified else "docstate open modified=0")
+            if c[0] == "OUTLINERESIZE":
+                old_box = [float(v) for v in c[2:6]]
+                shape["last"] = old_box
+                if kept:
+                    out.append("outlineresize drawn=0 kept=6")
+                else:
+                    docs["tracks"] = _rect_tracks(*old_box)
+                    out.append("outlineresize drawn=4")
+            if c[0] == "PCBCHECK":
+                box = shape.get("last") or list(old)
+                out.append("pcbcheck rect=1 objects=3 parts=2 tracks=0 outline_pts=4 box_mil=" + ",".join(str(round(v / bridge.MM_PER_MIL)) for v in box))
+        return out
+    monkeypatch.setattr(bridge, "run_commands", altium)
+    return sent, shape
+
+
+def test_resize_outline_sets_the_new_size_after_a_backup_and_reads_it_back(tmp_path, monkeypatch):
+    sent, shape = _resize_fakes(monkeypatch, tmp_path)
+    res = bridge.resize_outline("p", 120, 90)
+    assert res["box"] == pytest.approx([0.0, 0.0, 120.0, 90.0], abs=0.02) and res["old_box"] == pytest.approx([0.0, 0.0, 100.0, 80.0], abs=0.02) and res["backup"] == "bk"
+    assert res["outside"] == [] and res["problems"] == [] and shape["box"] == [0.0, 0.0, 120.0, 90.0]          # the board shape follows
+    flat = [x for run in sent for x in run]
+    assert flat.index("BACKUP") < flat.index("OUTLINERESIZE") < flat.index("PCBSAVE") < flat.index("REVERT")
+    assert bridge.resize_outline("p")["box"] == [0.0, 0.0, 120.0, 90.0]                                         # the idea's size when none is given
+
+
+def test_resize_outline_refuses_a_board_with_unsaved_changes_and_changes_nothing(tmp_path, monkeypatch):
+    sent, shape = _resize_fakes(monkeypatch, tmp_path, modified=True)
+    with pytest.raises(bridge.BridgeError, match="unsaved changes.*Nothing was changed"):
+        bridge.resize_outline("p", 120, 90)
+    assert "BACKUP" not in [x for run in sent for x in run] and "OUTLINERESIZE" not in [x for run in sent for x in run]
+
+
+def test_resize_outline_warns_about_the_parts_that_fall_outside_and_leaves_them(tmp_path, monkeypatch):
+    sent, shape = _resize_fakes(monkeypatch, tmp_path)
+    res = bridge.resize_outline("p", 60, 50)
+    assert res["outside"] == ["J1"] and any("J1" in w and "outside" in w for w in res["warnings"])
+    assert shape["box"] == [0.0, 0.0, 60.0, 50.0]
+
+
+def test_resize_outline_leaves_an_outline_drawing_of_the_students_own(tmp_path, monkeypatch):
+    sent, shape = _resize_fakes(monkeypatch, tmp_path, kept=True)
+    res = bridge.resize_outline("p", 120, 90)
+    assert any("drawing of your own" in w for w in res["warnings"])
+
+
+def test_resize_outline_checks_the_numbers(tmp_path, monkeypatch):
+    sent, shape = _resize_fakes(monkeypatch, tmp_path)
+    for bad in ((5, 90), (120, 900), ("x", 90)):
+        with pytest.raises(bridge.BridgeError, match="Nothing was changed"):
+            bridge.resize_outline("p", *bad)
+    assert not sent
+
+
+def test_outline_status_says_when_the_idea_and_the_pcbdoc_differ(tmp_path, monkeypatch):
+    _resize_fakes(monkeypatch, tmp_path)
+    st = bridge.outline_status("p")
+    assert st["idea"] == [120.0, 90.0] and st["pcb"] == [100.0, 80.0] and st["differs"] and st["parts"] == 2
+    monkeypatch.setattr(bridge, "_board_size", lambda project: (100.0, 80.0))
+    assert not bridge.outline_status("p")["differs"]
+    monkeypatch.setattr(bridge, "_board_size", lambda project: None)
+    assert not bridge.outline_status("p")["differs"]
+
+
+def test_the_server_and_the_layout_page_offer_the_resize():
+    root = pathlib.Path(__file__).resolve().parent.parent
+    srv = (root / "scripts" / "serve.py").read_text(encoding="utf-8")
+    assert '"/api/altium/outline-resize"' in srv and "bridge.resize_outline(" in srv and "bridge.outline_status(" in srv
+    js = (root / "ui" / "js" / "views" / "previews.js").read_text(encoding="utf-8")
+    assert "Set board to" in js and "pcb-outline-resize" in js
+    pas = (root / "scripts" / "altium" / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
+    assert "OUTLINERESIZE" in pas and "DrawBegin(Field(Line, 1), Field(Line, 2), Field(Line, 3))" in pas

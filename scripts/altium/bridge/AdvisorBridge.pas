@@ -21,7 +21,7 @@
              SYMPARAMS schlib paramsfile | HIDEPINS schlib hidefile | ATTACH3D spec | SAVELIB path kind
              COMPILE libpkg intlib | CHECKINST intlib
 
-  Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace | PLACE path ref libref schlib x y pins [desx desy comx comy]
+  Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace [style: 0 = A4, 1 = A3] | PLACE path ref libref schlib x y pins [desx desy comx comy]
              WIRE path x1 y1 x2 y2 | NETLABEL path x y rot text | POWER path x y rot style text | NOERC path x y
 
   The create-footprints-batch and create-symbols-batch code below (LibFootprintsBatch, LibMakeSymbol,
@@ -205,15 +205,21 @@ end;
 { The sheet the drawing code (draw.py: SHEET_STYLE, AREA, GRID) assumes: A4 (SheetStyle 0) on a 100 mil snap and visible grid. A new
   sheet keeps Altium's default (Letter, a 5 mm snap grid), so every object placed on the 100 mil grid was reported off grid and frames
   crossed the border. Set when a sheet is drawn (DRAWBEGIN) and when its skeleton is made (TITLEBLOCK). }
-procedure SheetSetup(Sch: IDispatch);
+procedure SheetSetupStyle(Sch: IDispatch; Style: Integer);
 begin
     Sch.UseCustomSheet := False;
-    Sch.SheetStyle := 0;
+    Sch.SheetStyle := Style;
     Sch.SnapGridSize := MilsToCoord(100);
     Sch.VisibleGridSize := MilsToCoord(100);
     Sch.SnapGridOn := True;
     Sch.VisibleGridOn := True;
-    Log('sheet A4, 100 mil grid');
+    Log('sheet style ' + IntToStr(Style) + ', 100 mil grid');
+end;
+
+{ A4 (style 0) unless a drawing asks for a bigger sheet (DRAWBEGIN's 4th field: 1 = A3) }
+procedure SheetSetup(Sch: IDispatch);
+begin
+    SheetSetupStyle(Sch, 0);
 end;
 
 { Removes every text frame whose text starts with the advisor tag (one at a time, an iterator does not survive a removal) }
@@ -1665,7 +1671,7 @@ begin
 end;
 
 { DRAWBEGIN path replace: the sheet is wiped only when replace is 1 (DRAWCHECK ran before, this is the second lock) }
-procedure DrawBegin(Path: String; Replace: String);
+procedure DrawBegin(Path: String; Replace: String; Style: String);
 var
     Sch : IDispatch;
     n   : Integer;
@@ -1692,7 +1698,7 @@ begin
         RemoveKind(Sch, eJunction);
         RemoveKind(Sch, ePort);
     end;
-    SheetSetup(Sch);
+    if (Style = '1') then SheetSetupStyle(Sch, 1) else SheetSetupStyle(Sch, 0);      { only A4 and A3 are drawn }
     ClearFrames(Path);
     Log('drawbegin ' + IntToStr(n) + ' objects removed');
 end;
@@ -2263,6 +2269,57 @@ begin
     Log('outlinedraw drawn=4 existing=0');
 end;
 
+{ OUTLINERESIZE path x0 y0 x1 y1 width: a board that is already placed gets another rectangle: the four corners move (OUTLINE) and, when
+  Mechanical 1 holds exactly the four free tracks of our own rectangle drawing, they are removed and drawn again at the new size
+  (OUTLINEDRAW). A drawing of any other kind (arcs, more or fewer tracks) is never touched: the log says "outlineresize drawn=0
+  kept=N" and the caller warns. Parts, tracks and pours stay where they are. Logs "outlineresize drawn=4|0 ...". }
+procedure PcbOutlineResize(Path: String; X0, Y0, X1, Y1, W: String);
+var
+    B, It, O : IDispatch;
+    L        : TInterfaceList;
+    i, n     : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    if (B.BoardOutline.PointCount <> 4) then
+    begin
+        Say('ERR the board outline has ' + IntToStr(B.BoardOutline.PointCount) + ' points, not the 4 of a rectangle; nothing was changed');
+        Exit;
+    end;
+    PcbOutline(Path, X0, Y0, X1, Y1);
+    n := PcbOutlineLayerCount(B);
+    L := TInterfaceList.Create;
+    It := B.BoardIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(eTrackObject));
+    It.AddFilter_LayerSet(MkSet(eMechanical1));
+    It.AddFilter_Method(eProcessAll);
+    O := It.FirstPCBObject;
+    while (O <> nil) do
+    begin
+        if (not O.InComponent) then L.Add(O);
+        O := It.NextPCBObject;
+    end;
+    B.BoardIterator_Destroy(It);
+    if (n = 4) and (L.Count = 4) then
+    begin
+        PCBServer.PreProcess;
+        for i := 0 to L.Count - 1 do
+        begin
+            O := L.Items[i];
+            B.RemovePCBObject(O);
+        end;
+        PCBServer.PostProcess;
+        PcbOutlineDraw(Path, X0, Y0, X1, Y1, W);
+    end
+    else
+        Log('outlineresize drawn=0 kept=' + IntToStr(n));
+    L.Free;
+end;
+
 { PLACEFP path ref footprint pcblib x y rot libref: the footprint comes from the project PcbLib and is linked the way Update PCB
   links it (designator, source designator, library reference, footprint library) so that a later Update PCB matches it }
 procedure PcbPlace(Path: String; Ref: String; Pattern: String; PcbLib: String; X, Y, Rot, LibRef, Value, LX, LY, LH, LLine, SrcId, SrcPath, LRot: String);
@@ -2471,7 +2528,7 @@ begin
     else if (Cmd = 'FPINFO') then LibFootprintInfo(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'DRAWCHECK') then DrawCheck(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'REVERT') then CloseDocByPath(Field(Line, 1))
-    else if (Cmd = 'DRAWBEGIN') then DrawBegin(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'DRAWBEGIN') then DrawBegin(Field(Line, 1), Field(Line, 2), Field(Line, 3))
     else if (Cmd = 'PLACE') then
         PlacePart(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), StrToInt(Field(Line, 5)),
                   StrToInt(Field(Line, 6)), StrToInt(Field(Line, 7)), Field(Line, 8), Field(Line, 9), Field(Line, 10), Field(Line, 11))
@@ -2492,6 +2549,7 @@ begin
     else if (Cmd = 'POLYDEL') then PcbPolyDelete(Field(Line, 1))
     else if (Cmd = 'PCBBEGIN') then PcbBegin(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'OUTLINE') then PcbOutline(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5))
+    else if (Cmd = 'OUTLINERESIZE') then PcbOutlineResize(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
     else if (Cmd = 'OUTLINEDRAW') then PcbOutlineDraw(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
     else if (Cmd = 'PLACEFP') then
         PcbPlace(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7), Field(Line, 8),
