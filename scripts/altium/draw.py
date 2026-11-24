@@ -24,7 +24,7 @@ TAG = "[advisor]"                      # the same first word the skeleton frames
 GRID = 100                             # mils: everything is placed on the 100 mil grid
 DIRECTION = {0: (1, 0), 1: (0, 1), 2: (-1, 0), 3: (0, -1)}      # pin rotation: right, up, left, down
 SHEETS = {"A4": {"style": 0, "size": (11500, 7600)},      # Altium SheetStyle and size in mils of the sheets drawn here
-          "A3": {"style": 1, "size": (16500, 11100)}}      # (AdvisorBridge.pas DRAWBEGIN's style field sets the same value)
+          "A3": {"style": 1, "size": (15500, 11100)}}      # (AdvisorBridge.pas DRAWBEGIN's style field sets the same value)
 SHEET_ORDER = ("A4", "A3")             # a sheet is drawn on the first of these that holds its layout
 SHEET_STYLE = SHEETS["A4"]["style"]    # the default sheet
 SHEET_SIZE = SHEETS["A4"]["size"]      # its inner border is SHEET_BORDER inside the edge
