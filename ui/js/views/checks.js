@@ -134,7 +134,7 @@ function dfmRemakeAll() {       // more than one output to make again: one butto
 function dfmHeader(reports) {
   if (!reports) return viewHeader({title: 'DFM'});
   const t = dfmTotals();
-  const unv = dfmUnverified().length;
+  const unv = dfmUnverifiedCount();
   const gaps = dfmGaps();
   const old = outOld(S.exports || []).length;
   const ready = t.known && t.n > 0 && !t.open && !t.real && !unv && !gaps.open_pins.length && !gaps.parts.length && !old;     // reports alone do not make a board ready: every finding is judged, every output is current
@@ -157,6 +157,10 @@ function dfmHeader(reports) {
 function dfmUnverified() {
   return (S.bom || []).filter(l => (l.refs || []).length && (l.on_sheet || []).length && !l.dnp && !l.nobuy && (l.pins_status === 'unverified' || l.pins_status === 'mismatch'));
 }
+// THE number of parts waiting on their pins (E11): the server's store.pin_counts, the same on every page; the BOM lines above are the list
+function dfmUnverifiedCount() {
+  return typeof pinsWaiting === 'function' && pinsWaiting() ? pinsCount('parts') : dfmUnverified().reduce((a, l) => a + (l.refs || []).length, 0);
+}
 function dfmUnverifiedHTML() {
   const rows = dfmUnverified();
   if (!rows.length) return '';
@@ -168,7 +172,7 @@ function dfmUnverifiedHTML() {
     <span class="unv-why" title="${esc(l.pins_issues || '')}">${l.pins_status === 'mismatch' ? 'Pins conflict with ' + esc(l.datasheet || 'the datasheet') + ': ' + esc(l.pins_issues || '') : esc(l.pins_issues || 'Pins not checked against a datasheet')}</span>
     ${btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: l.key, title: 'See the datasheet page next to the pins; one click records your decision'})}
     ${docs.length ? `<select class="in quiet" data-pick-ds="${esc(l.key)}" aria-label="Pick a datasheet for ${esc(refsLabel(l.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}"${d === l.datasheet ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
-  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>
+  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${dfmUnverifiedCount()}) to resolve before ordering</span></h3>
     <p class="muted">Drop each datasheet in Sources and re-check, or confirm the pins yourself (one click, undoable).</p>
     <ul>${rows.map(item).join('')}</ul>${btn(dfmRecheckBusy ? 'Checking…' : 'Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy})} ${typeof pinsAcceptAllBtn === 'function' ? pinsAcceptAllBtn() : ''}</section>`;
 }
@@ -181,7 +185,7 @@ function dfmWaitingHTML(w) {
     ${g.own_look ? btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: g.id, title: 'See the conflict next to the pins; one click records your decision'}) : ''}
     ${g.kind === 'ic' && docs.length ? `<select class="in quiet" data-pick-ds="${esc(g.id)}" aria-label="Pick a datasheet for ${esc(refsLabel(g.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
   const recheck = btn(dfmRecheckBusy ? 'Checking…' : 'Check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy, title: 'Fetches the datasheets it can find itself and checks the pins against them'});
-  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${w.questions}) to resolve before ordering</span></h3>
+  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${pinsNum(pinsCount('parts'))}) to resolve before ordering</span></h3>
     ${pinsWaitingBar()}<ul>${w.groups.map(item).join('')}</ul>${recheck}</section>`;
 }
 // The order: how many boards, and whether JLC assembles them (then the outputs must hold the BOM and the CPL).
@@ -249,11 +253,15 @@ onChange(t => t.dataset && t.dataset.pickDs !== undefined, async e => {
 onAct('recheck-pins', async () => {
   if (dfmRecheckBusy) return;
   dfmRecheckBusy = true;
+  if (typeof pinsBusy !== 'undefined') pinsBusy++;      // the counts on screen are old until the fresh state is in (E11)
   if (dfmVisible()) renderCenter(true);
   let r = null;
-  try { r = await api('/api/final/unverified', {}); } catch (err) { dfmFail(err); }      // a POST: it links documents, verifies and writes logs
-  dfmRecheckBusy = false;
-  await refresh(true);
+  try {
+    try { r = await api('/api/final/unverified', {}); } catch (err) { dfmFail(err); }      // a POST: it links documents, verifies and writes logs
+    dfmRecheckBusy = false;
+    await refresh(true);
+  } finally { dfmRecheckBusy = false; if (typeof pinsBusy !== 'undefined') pinsBusy--; }
+  render(true);
   if (r && r.message) toast(r.message);
 });
 function dfmUpload(trigger) {

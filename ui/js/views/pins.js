@@ -46,10 +46,16 @@ function verifyToast(v) {
    group, so five LEDs read "D1-D5" and count as one question. A mismatch is never in the bulk: its own row has its own button. */
 function pinsWaiting() { return (S.pin_decisions || {}).waiting || null; }
 function pinsBulkGroups() { const w = pinsWaiting(); return w ? (w.groups || []).filter(g => !g.own_look) : []; }
+/* THE counts (E11): the server's store.pin_counts, never one of our own. While a decision or a re-check is on its way to the server the
+   numbers on screen are old, so they are not shown at all until the fresh state is in (pinsBusy): no 26, then 8, then 1. */
+let pinsBusy = 0;
+function pinsCount(kind) { const w = pinsWaiting(); return w ? (w[kind || 'parts'] || 0) : 0; }
+function pinsNum(n) { return pinsBusy ? '…' : String(n); }
+async function pinsWhile(fn) { pinsBusy++; try { return await fn(); } finally { pinsBusy--; } }
 function pinsConfirmAllBtn(o) {
   const g = pinsBulkGroups();
-  const n = g.reduce((a, x) => a + (x.count || (x.refs || []).length), 0);
-  return n ? btn(g.length > 1 || n > 1 ? `Confirm all (${n})` : 'Confirm', {kind: 'line', size: 'sm', act: 'accept-all-pins', ...(o || {}),
+  const n = pinsCount('to_confirm');
+  return n ? btn(g.length > 1 || n > 1 ? `Confirm all (${pinsNum(n)})` : 'Confirm', {kind: 'line', size: 'sm', act: 'accept-all-pins', disabled: !!pinsBusy, ...(o || {}),
     title: 'Accepts the pins of every part named here as they are drawn. Each stays listed as an accepted risk and can be revoked.'}) : '';
 }
 function pinsAcceptAllBtn() { return pinsConfirmAllBtn(); }       // the name the DFM list used
@@ -57,10 +63,10 @@ function pinsWaitingBar() {
   const w = pinsWaiting();
   if (!w || !w.questions) return '';
   const g = pinsBulkGroups(), own = (w.groups || []).filter(x => x.own_look);
-  const n = g.reduce((a, x) => a + (x.count || (x.refs || []).length), 0);
+  const n = pinsCount('to_confirm'), nOwn = pinsCount('conflicts');
   const names = g.slice(0, 6).map(x => refsLabel(x.refs)).join(', ') + (g.length > 6 ? ` and ${g.length - 6} more` : '');
-  const head = n ? `<strong>${n} ${n === 1 ? 'part waits' : 'parts wait'} for your confirmation</strong> <span class="m">${esc(names)}</span>` : '';
-  const ownTxt = own.length ? `${n ? ' · ' : ''}<strong>${own.length} ${own.length === 1 ? 'part needs' : 'parts need'} your own look</strong> <span class="m">${esc(own.map(x => refsLabel(x.refs)).join(', '))}</span>` : '';
+  const head = n ? `<strong>${pinsNum(n)} ${n === 1 ? 'part waits' : 'parts wait'} for your confirmation</strong> <span class="m">${esc(names)}</span>` : '';
+  const ownTxt = nOwn ? `${n ? ' · ' : ''}<strong>${pinsNum(nOwn)} ${nOwn === 1 ? 'part needs' : 'parts need'} your own look</strong> <span class="m">${esc(own.map(x => refsLabel(x.refs)).join(', '))}</span>` : '';
   const auto = w.auto_verified ? `<span class="muted"> · ${w.auto_verified} already matched ${w.auto_verified === 1 ? 'its' : 'their'} library model</span>` : '';
   const fetch = w.fetchable ? btn(dfmRecheckBusyNow() ? 'Fetching…' : 'Fetch datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', title: 'The tool downloads the datasheet itself and checks the pins against it'}) : '';
   return `<div class="pins-bar" role="status"><span class="pins-bar-t">${head}${ownTxt}${auto}</span>${pinsConfirmAllBtn()}${fetch}</div>`;
@@ -127,26 +133,36 @@ async function pinsConfirm(key) {
     });
     if (!result) return;
     const ev = doc && !result.wrong.length ? [{doc: doc.name, sha256: doc.sha256, page: result.page}] : [];
-    const r = await api('/api/pins/confirm', {line: key, evidence: ev, wrong: result.wrong});
-    await refresh(true);
+    const r = await pinsWhile(async () => { const x = await api('/api/pins/confirm', {line: key, evidence: ev, wrong: result.wrong}); await refresh(true); return x; });
+    render(true);
     toast(r.flagged ? `Marked pin ${r.flagged.join(', ')} as wrong: the part stays in the list` : 'Pins confirmed');
   } finally { pinsOpen = false; }
 }
 onAct('confirm-pins', async (el, d) => { await pinsConfirm(d.line); });
-onAct('revoke-pins', async (el, d) => { await api('/api/pins/revoke', {line: d.line}); await refresh(true); toast('Decision revoked: the pins are unverified again'); });
+onAct('revoke-pins', async (el, d) => { await pinsWhile(async () => { await api('/api/pins/revoke', {line: d.line}); await refresh(true); }); render(true); toast('Decision revoked: the pins are unverified again'); });
 /* One click. Only when the line holds a part nothing but the student's word settles (an IC with no datasheet check) is the click
    asked once more, naming those parts: that is a real engineering check the click would skip. Anything else is done at once, with Undo. */
+function pinsAcceptTitle(n, w) {
+  const one = (pinsBulkGroups()[0] || {}).refs || [];
+  return `Accept ${n === 1 && one.length === 1 ? one[0] : n + ' parts'} on your word?`;
+}
+function pinsAcceptText(blind) {
+  return `${blind.join(', ')}: no datasheet pin table was checked for ${blind.length === 1 ? 'this part' : 'these parts'}. Every part accepted here stays listed as an accepted risk and can be revoked.`;
+}
 onAct('accept-all-pins', async () => {
   const w = pinsWaiting();
   const lines = w ? w.bulk || [] : ((S.pin_decisions || {}).remaining || []).map(r => r.line);
   if (!lines.length) return;
   const blind = w ? w.blind || [] : [];
   if (blind.length) {
-    const yes = await askChoice({title: `Accept ${blind.length === 1 ? blind[0] : blind.length + ' parts'} on your word?`, text: `${blind.join(', ')}: no datasheet pin table was checked for ${blind.length === 1 ? 'this part' : 'these parts'}. ${blind.length === 1 ? 'It stays' : 'They stay'} listed as accepted risks and can be revoked.`, yes: 'Accept all', no: 'Not now'});
+    // the dialog names the same number as the button (E11): every part Confirm all settles; the ones with no datasheet check are named
+    const n = pinsCount('to_confirm') || blind.length;
+    const yes = await askChoice({title: pinsAcceptTitle(n, w), text: pinsAcceptText(blind), yes: 'Accept all', no: 'Not now'});
     if (!yes) return;
   }
-  const r = await api('/api/pins/accept-all', {confirm: true, lines});
-  await refresh(true);
+  let r = null;
+  await pinsWhile(async () => { if (typeof render === 'function') render(true); r = await api('/api/pins/accept-all', {confirm: true, lines}); await refresh(true); });
+  if (typeof render === 'function') render(true);
   const done = (r && r.accepted) || lines;
   toast(`${done.length} ${done.length === 1 ? 'part' : 'parts'} confirmed`, {label: 'Undo', onClick: async () => {
     for (const l of done) await api('/api/pins/revoke', {line: l});

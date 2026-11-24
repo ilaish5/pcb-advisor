@@ -271,7 +271,7 @@ function outTable(files, a, timed) {
 function outLimits(linked) {                  // only the reasons that are true now: no Altium project linked, unverified pins
   const r = [];
   if (!linked) r.push('The automatic run needs a linked Altium project.');
-  if (typeof dfmUnverified === 'function' && dfmUnverified().length) r.push("The Altium outputs and the Gerber zip are refused while a part's pins are unverified (see above).");
+  if (typeof dfmUnverifiedCount === 'function' && dfmUnverifiedCount()) r.push("The Altium outputs and the Gerber zip are refused while a part's pins are unverified (see above).");
   return r.join(' ');
 }
 const outPinRisks = () => (typeof pinRisksHTML === 'function' ? `<div class="vb out-risks">${pinRisksHTML()}</div>` : '').replace('<div class="vb out-risks"></div>', '');       // the accepted pin risks stay in view where the files are made

@@ -135,15 +135,25 @@ SCRIPT_WORDS = {
     "requirements.py": "Checking the requirements", "drc_origin.py": "Tracing the DRC findings", "drc_jlc_map.py": "Matching the DRC to JLC",
 }
 _FIRST = re.compile(r"^(Denied: Running|Running|Reading|Searching for|Searching the web:|Opening skill|Opening|Editing)\s*(.*)$", re.S)
+# a bare tool name (the label of a call that has no input to name): said in words, never as the tool's own name
+_BARE = {"Read": "Reading a file", "Grep": "Searching the project", "Glob": "Searching the project", "Bash": "Running a command",
+         "PowerShell": "Running a command", "Edit": "Updating a file", "Write": "Updating a file", "MultiEdit": "Updating a file",
+         "WebSearch": "Searching the web", "WebFetch": "Opening a web page", "Skill": "Opening instructions"}
+_TOKEN = re.compile(r"^[\w:.-]+$")
+_PLAIN_WORDS = {"Thinking", "Working", "Stopping", "Done"}
 
 
 def human(label):
-    """The student's version of a `label()` line: what is being done, not which command. Tool and script names never show
-    (`Running jlc.py search x` is "Searching JLC"); a file name or a search term the student can recognise stays."""
+    """The student's version of a `label()` line: what is being done, not which command. Tool names, script names, search patterns, file
+    names, paths and web addresses never show (`Running jlc.py search x` is "Searching JLC", `Reading W25Q128JV.pdf` is "Reading the
+    datasheet", `Searching for ^pin.*` is "Searching the project"); the full label stays in the debug record (calls). Already plain
+    words come back unchanged, so it is safe to apply twice."""
     lab = str(label or "").strip()
+    if lab in _BARE:
+        return _BARE[lab]
     m = _FIRST.match(lab)
     if not m:
-        return lab or "Working"
+        return lab if lab in _PLAIN_WORDS else "Working" if (not lab or _TOKEN.match(lab)) else lab       # one unknown token is a tool's name
     verb, rest = m.group(1), m.group(2).strip()
     if verb in ("Running", "Denied: Running"):
         script = re.match(r"([\w.-]+\.py)\b", rest)
@@ -151,6 +161,18 @@ def human(label):
         return ("Not allowed: " + out[0].lower() + out[1:]) if verb != "Running" else out
     if verb == "Opening skill":
         return "Opening instructions"
+    if verb == "Reading":
+        if re.match(r"the\b", rest):
+            return lab                                         # already plain
+        return "Reading the datasheet" if re.search(r"\.pdf\b", rest, re.I) else "Reading the project files"
+    if verb == "Searching for":
+        return "Searching the project"
+    if verb == "Searching the web:":
+        return "Searching the web"
+    if verb == "Editing":
+        return "Updating a file"
+    if verb == "Opening":
+        return "Opening a web page" if re.match(r"[\w-]+(\.[\w-]+)+$", rest) else lab
     return lab
 
 

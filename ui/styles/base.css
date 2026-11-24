@@ -261,9 +261,12 @@ tr.flash td{animation:flash 1.6s ease-out}   /* a row that has just appeared (a 
 .note.bad{background:var(--bad-soft);color:var(--ink)}
 .note.ok{background:var(--ok-soft);color:var(--ink)}
 .note:has(>.acts){align-items:center}   /* actions on the right sit level with the text, not below its first line */
-.note>span:not(.acts){flex:1;min-width:0}
-.note .acts{margin-left:auto}
-.note>.note-i{margin-top:1px;color:var(--ink-3)}
+/* E15: text and buttons share a row only while both fit. The text never goes below 14em (it wrapped one word per line beside long
+   buttons) and the buttons drop under it, still visible, instead of being squeezed or pushed out. */
+.note{flex-wrap:wrap}
+.note>span:not(.acts){flex:1 1 14em;min-width:min(14em,100%);overflow-wrap:anywhere}
+.note .acts{margin-left:auto;flex:0 1 auto;max-width:100%;justify-content:flex-end}
+.note>.note-i{margin-top:1px;color:var(--ink-3);flex:none}
 .note.warn>.note-i{color:var(--warn)}
 .note.bad>.note-i{color:var(--bad)}
 .note.ok>.note-i{color:var(--ok)}

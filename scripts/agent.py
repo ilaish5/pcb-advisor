@@ -153,6 +153,12 @@ def _summary(model):
     if waiting:
         # the DFM page's Unverified parts: the Gerber zip and the OutJob wait until the student resolves each (rule 7, rule 11)
         s["pins_waiting"] = waiting
+        try:
+            import store
+            # the same numbers the pages show (store.pin_counts): say these, never a count of your own
+            s["pins_waiting_count"] = store.pin_counts(waiting)
+        except Exception:           # noqa: BLE001 - the state must always build
+            pass
     checks_summary = []
     for c in model.get("checks", []):
         stem = c.get("stem")

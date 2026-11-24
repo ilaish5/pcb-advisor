@@ -611,6 +611,30 @@ window.addEventListener('resize', () => {
 });
 
 /* ---------- action handlers (dispatched by the delegates in core.js) ---------- */
+/* The size the text states fills the Board size fields while the text is typed, not only after its Save (E19). Only fields that are
+   empty or still hold a size read from the text; a size the student typed in the fields is never replaced, and a field being typed in is left alone. */
+let boardReadTimer = null, boardReadSeq = 0;
+function boardFieldsFollowText(text) {
+  clearTimeout(boardReadTimer);
+  boardReadTimer = setTimeout(async () => {
+    const seq = ++boardReadSeq;
+    let r = null;
+    try { r = await api('/api/idea/board/read', {text}, {soft: true}); } catch (e) { return; }
+    if (seq !== boardReadSeq || !r || !r.width_mm || !r.height_mm) return;
+    const cur = ((S && S.idea) || {}).board || {};
+    if (cur.width_mm && cur.height_mm && cur.source !== 'text') return;       // the student's own size
+    document.querySelectorAll('.board-size').forEach(row => {
+      const wi = row.querySelector('.board-w'), hi = row.querySelector('.board-h');
+      if (!wi || !hi || row.contains(document.activeElement)) return;
+      wi.value = String(r.width_mm);
+      hi.value = String(r.height_mm);
+    });
+  }, 350);
+}
+document.addEventListener('input', e => {
+  const t = e.target;
+  if (t && t.matches && t.matches('.desc-edit-text, .req-edit-text, .req-add-text, .req-edit textarea')) boardFieldsFollowText(t.value);
+});
 onAct('set-board-size', async (el) => {
   const row = el.closest('.board-size');
   const wi = row.querySelector('.board-w'), hi = row.querySelector('.board-h');

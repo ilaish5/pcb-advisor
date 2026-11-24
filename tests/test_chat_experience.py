@@ -25,7 +25,7 @@ def test_a_script_run_is_told_in_words_and_the_command_line_is_not_the_headline(
     assert events.human("Running jlc.py search esp32") == "Searching JLC"
     assert events.human("Running a_new_script.py --x") == "Running a check"        # unknown script: still no file name
     assert events.human("Running ls /tmp") == "Running a command"
-    assert events.human("Reading BOM.md") == "Reading BOM.md"                      # a file the student recognises stays
+    assert events.human("Reading BOM.md") == "Reading the project files"           # no file name or path in the progress line (E17)
     assert events.human("Opening skill parts-and-stock") == "Opening instructions"
     assert events.human("Denied: Running jlc.py part x").startswith("Not allowed: ")
 

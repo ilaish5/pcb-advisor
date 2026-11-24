@@ -500,8 +500,8 @@ def totals(lines):
     for l in lines:
         q = qty(l)
         t["parts"] += q
-        if l.get("library") in ("review", "missing"):
-            t["to_verify"] += 1
+        if l.get("library") in ("review", "missing") and not (l.get("dnp") or l.get("nobuy")):
+            t["to_verify"] += 1          # lines whose library models wait for a look (not pins: pin_counts is that number)
         if l.get("library") == "error":
             t["library_error"] += 1
         if not q:
@@ -3264,6 +3264,16 @@ def pins_to_resolve(project, verify_new=False, checked=None):
     rows = unverified_parts(project, verify_new=verify_new, **({"checked": checked} if checked is not None else {}))
     return [r for r in rows if r["line"] not in skip]
 
+
+
+def pin_counts(rows):
+    """THE count of parts waiting on their pins, from pins_to_resolve rows: every page, the Confirm all button, its dialog, the DFM
+    heading, the Outputs banner and the agent's context read these numbers, never their own. A part is a designator (U1), so five
+    identical LEDs on one line are five parts. {parts, to_confirm (no conflict: what Confirm all settles), conflicts, lines}."""
+    refs = lambda rs: [ref for r in rs for ref in (r.get("refs") or [r.get("line")])]
+    ok = [r for r in rows if r.get("status") != "mismatch"]
+    bad = [r for r in rows if r.get("status") == "mismatch"]
+    return {"parts": len(refs(rows)), "to_confirm": len(refs(ok)), "conflicts": len(refs(bad)), "lines": len(rows)}
 
 def _checked_outcome(line, entry):
     """(status, words) of a part just checked again, from its own library entry and pins_status: verified only on a pin-table pass."""

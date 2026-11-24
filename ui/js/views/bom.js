@@ -126,7 +126,7 @@ function bomHeader(t) {
     {n: t.checking, label: 'not checked', tone: 'warn', title: 'Lines with no stock answer yet'},
     {n: t.out_of_stock, label: 'out of stock', tone: 'bad', title: 'Lines no supplier has enough of'},
     {n: t.library_error, label: 'footprint error', tone: 'bad', title: 'Parts whose footprint has errors: they are not drawn, placed or made until you pick another LCSC code or let the tool generate the footprint.'},
-    {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model nobody has confirmed yet. Open each part (its Status says what is left) and accept or fix it.'},
+    {n: t.to_verify, label: 'to verify (library)', tone: 'warn', title: 'BOM lines whose symbol, footprint or 3D model nobody has confirmed yet (lines, not parts; the pins waiting for you are counted in the line below the header). Open each line (its Status says what is left) and accept or fix it.'},
   ]);
   const actions = menu({label: 'Export', iconAfter: 'chev'}, [
       {label: BOM_EXPORTS.jlc, act: 'export', attrs: {fmt: 'jlc'}},
