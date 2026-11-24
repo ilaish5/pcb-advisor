@@ -309,6 +309,9 @@ def cmd_check(args):
             for e in errors:
                 print(f"  FAIL  {name}/{sid}: {e}")
             bad += len(errors)
+        from checks import coverage
+        for f in coverage.design_findings(name)["open"]:      # a finding, not a failure: the student may mark it intended
+            print(f"  warn  {name}: {f['message']}")
         print(f"  ok    {name}: {len(store.sheet_ids(name))} sheet(s) checked")
     return 1 if (bad or verify_sources.main(projects)) else 0
 

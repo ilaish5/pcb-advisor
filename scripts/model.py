@@ -227,6 +227,12 @@ def part_context(project, ref):
 
 # ---------------------------------------------------------------- build
 
+def _design_findings(project):
+    """Interface pins left NC and Idea requirements whose parts are on no sheet (checks.coverage), with the student's "intended" marks."""
+    from checks import coverage
+    return coverage.design_findings(project)
+
+
 def build(project=None, session=None):
     """The model dict. The derived BOM, the pin gaps and the pin fingerprints are each computed once for this build (store.build_scope)."""
     with store.build_scope():
@@ -287,6 +293,7 @@ def _build(project=None, session=None):
         "altium_ok": altium_ok(project),
         "sheet_gaps": store.sheet_gaps(project),
         "bom_count_check": store.bom_design_count(project),
+        "design_findings": _design_findings(project),
         "library": store.library_view(project),
         "sources": list_sources(project),
         "checks": checks_list,

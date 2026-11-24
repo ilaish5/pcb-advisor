@@ -228,6 +228,29 @@ function dfmStaleHTML() {        // an order must not go out with files the desi
   return `<section class="dfm-unv"><h3>Outputs out of date <span class="muted">(${rows.length}) to export again before ordering</span></h3>
     <p class="muted">Each was made from a design that has changed since, or was edited after the tool wrote it. Make each again here (Gerbers: Altium writes them first).</p><ul>${rows.map(item).join('')}</ul></section>`;
 }
+/* Design findings (checks/coverage.py): interface pins left NC, Idea requirements whose parts are on no sheet. One click marks one
+   intended; it comes back if the finding changes. The agent sees the open ones. */
+function dfmDesignHTML() {
+  const df = S.design_findings || {};
+  const open = df.open || [], done = df.intended || [];
+  if (!open.length && !done.length) return '';
+  const row = f => `<li class="unv-row"><span class="m">${esc((f.refs || []).join(', '))}</span> ${esc(f.message)} <span class="unv-why">${esc(f.fix || '')}</span> ` +
+    btn('Intended', {kind: 'link', size: 'sm', act: 'design-intended', key: f.key, title: 'This is on purpose: hide it until the finding changes'}) + '</li>';
+  const back = f => `<li class="unv-row done"><span class="m">${esc((f.refs || []).join(', '))}</span> ${esc(f.message)} ` +
+    btn('Undo', {kind: 'link', size: 'sm', act: 'design-unintended', key: f.key, title: 'Show this finding again'}) + '</li>';
+  const more = done.length ? `<details class="pv-more"><summary>Marked intended (${done.length})</summary><ul>${done.map(back).join('')}</ul></details>` : '';
+  return `<section class="dfm-unv"><h3>Design review <span class="muted">(${open.length}) from the netlist and the Idea</span></h3>
+    <p class="muted">Interface pins left NC, and requirements whose parts are in the BOM but on no sheet.</p><ul>${open.map(row).join('')}</ul>${more}</section>`;
+}
+async function dfmDesignMark(key, intended) {
+  let r;
+  try { r = await api('/api/design-findings/intended', {key, intended}, {soft: true}); } catch (err) { dfmFail(err); return; }
+  if (!r || r.error) { toast((r && r.error) || 'The finding could not be marked.', null, {bad: true}); return; }
+  toast(intended ? 'Marked intended' : 'Shown again');
+  await refresh(true);
+}
+onAct('design-intended', (el, d) => dfmDesignMark(d.key, true));
+onAct('design-unintended', (el, d) => dfmDesignMark(d.key, false));
 function dfmGapsHTML() {
   const g = dfmGaps();
   if (!g.open_pins.length && !g.parts.length) return '';
@@ -462,7 +485,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -481,7 +504,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
