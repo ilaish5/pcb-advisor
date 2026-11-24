@@ -86,7 +86,9 @@ function pinsDialogHTML(d, page) {
     ? `<div class="pins-doc"><div class="pins-pages">${pages.length ? 'Pin pages: ' + pages.map(p => `<button type="button" class="btn sm${p === page ? ' pri' : ''}" data-pins-page="${p}">p.${p}</button>`).join(' ') : '<span class="muted">No pin page found by text: scroll the datasheet.</span>'}
        <a class="pins-open" href="${pinsDocUrl(doc, page)}" target="_blank" rel="noopener">Open in a new tab</a></div>
        <iframe class="pins-frame" title="${esc(doc.name)}" src="${pinsDocUrl(doc, page)}"></iframe></div>`
-    : `<div class="pins-doc pins-nodoc"><p class="muted">No datasheet is linked to this part, so there is no page to compare with.</p>
+    : `<div class="pins-doc pins-nodoc"><p class="muted">${d.missing_doc
+      ? `The datasheet ${esc(d.missing_doc)} is linked to this part but its file is not on this computer, so there is no page to compare with. Attach the file on the Sources page.`
+      : 'No datasheet is linked to this part, so there is no page to compare with.'}</p>
        <p class="muted">Pins match accepts the pins as they are drawn. It is kept as an accepted risk and can be revoked.</p></div>`;
   const rows = (d.pins || []).map(p => `<tr><td class="m">${esc(p.ref)}</td><td class="m">${esc(p.num)}</td><td class="m">${esc(p.name)}</td><td>${p.net ? `<span class="m">${esc(p.net)}</span>` : '<span class="muted">—</span>'}</td>
     <td><label class="pins-wrong"><input type="checkbox" data-pin-wrong="${esc(p.num)}"> wrong</label></td></tr>`).join('');

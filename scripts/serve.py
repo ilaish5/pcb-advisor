@@ -3242,20 +3242,15 @@ class Handler(BaseHTTPRequestHandler):
             name = unquote(path.split("/api/source/", 1)[1])
             # a plain name is a project or shared document; a name with a folder ('jlc/pcb-capabilities.en.md') is a
             # reference document and only resolves through the reference listing, so a path can never leave the library
-            if "/" in name or "\\" in name:
-                found = [sources.reference_path(name)]
-            else:
-                found = [base / pathlib.Path(name).name for base in (model.project_dir(self.project()) / "sources", workspace.datasheets_dir())]
-                found.append(sources.reference_path(name))
-            for f in found:
-                if f is not None and f.exists() and f.is_file():
-                    ctype = mimetypes.guess_type(f.name)[0] or "text/plain"
-                    if ctype.startswith("text/") or "xml" in ctype or "html" in ctype:
-                        ctype = "text/plain; charset=utf-8"  # never let an uploaded .html run in the UI origin
-                    extra = {}
-                    if self.query("download") == "1":
-                        extra["Content-Disposition"] = f'attachment; filename="{f.name}"'
-                    return self._send(200, f.read_bytes(), ctype, extra=extra)
+            f = sources.document_path(self.project(), name)
+            if f is not None:
+                ctype = mimetypes.guess_type(f.name)[0] or "text/plain"
+                if ctype.startswith("text/") or "xml" in ctype or "html" in ctype:
+                    ctype = "text/plain; charset=utf-8"  # never let an uploaded .html run in the UI origin
+                extra = {}
+                if self.query("download") == "1":
+                    extra["Content-Disposition"] = f'attachment; filename="{f.name}"'
+                return self._send(200, f.read_bytes(), ctype, extra=extra)
             return self._send(404, {"error": "not in the library"})
         if path.startswith("/api/export/"):
             name = pathlib.Path(unquote(path.split("/api/export/", 1)[1])).name

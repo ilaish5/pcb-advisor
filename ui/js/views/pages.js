@@ -71,12 +71,15 @@ function libPinsState(r) {
   if (st === 'mismatch') return ['bad', 'Pins conflict with the datasheet: ' + (l.pins_issues || '')];
   if (st === 'accepted') return ['ok', 'Pins accepted by you (no datasheet pin table checked them)'];
   if (st === 'verified') return ['ok', 'Pins verified against the datasheet pin table'];
+  if (r.build_status === 'missing') return ['no', 'Pins: the library build made no symbol for this line, so no pins to check'];       // after the decisions above: a recorded conflict stays red
   return ['ok', 'Pins: nothing to verify for this part'];
 }
 function libModelStates(r) {
   const fpErr = r.build_status === 'error';
-  const sym = r.symbol ? ['ok', 'Symbol is in the library'] : ['no', 'Symbol: missing'];
-  const fp = fpErr ? ['bad', 'Footprint error: ' + (r.issues || 'the converter could not keep it truthfully')]
+  // the build made nothing for this line (it says so in the row, and the preview has nothing to draw): the icons agree with it, whatever the Altium project already holds
+  const none = r.build_status === 'missing';
+  const sym = none ? ['bad', 'Symbol: the library build made none for this line'] : r.symbol ? ['ok', 'Symbol is in the library'] : ['no', 'Symbol: missing'];
+  const fp = none ? ['bad', 'Footprint: the library build made none for this line'] : fpErr ? ['bad', 'Footprint error: ' + (r.issues || 'the converter could not keep it truthfully')]
     : !r.footprint ? ['no', 'Footprint: missing']
     : r.source === 'generated' ? ['ok', 'Footprint is basic, generated (no vendor footprint)'] : ['ok', 'Footprint is in the library'];
   const m3 = r.step ? ['ok', '3D model from a STEP file']
