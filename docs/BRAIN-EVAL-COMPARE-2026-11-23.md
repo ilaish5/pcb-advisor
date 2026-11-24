@@ -1,17 +1,17 @@
 # Brain eval compare - 2026-11-23/24
 
-Branch **claude/brain-slim**, final tip **843df66**, against the baseline 148e137 (`docs/BRAIN-EVAL-BASELINE-2026-11-23.md`).
+Branch **claude/brain-slim**, final code tip **843df66** (later commits only add these docs), against the baseline 148e137 (`docs/BRAIN-EVAL-BASELINE-2026-11-23.md`).
 The order follows the student's request: answer quality first, then rule violations, tool turns, time per answer, and tokens.
 
 ## Verdict
-- **Quality: the same.** The final state answers as well as 148e137 on claude_code:
+- **Quality: the same on both engines.** The final state answers as well as 148e137 on claude_code:
   - blind A/B 12:13 with 5 ties;
   - mean judge score 4.58 vs 4.61;
   - rule violations 6 vs 6;
   - QA eval mean 0.832 over 4 runs (0.810 before);
   - behaviour 9.25 / 13 (9.0 before);
   - incidents 12/12.
-  - antigravity on the final state: **pending** (agy hit its daily quota during the final runs; the run is scheduled after the reset and this doc gets its numbers then). With P1, antigravity's q-set judge was within noise (12:10:8, 4.64 vs 4.61, violations 5 vs 5) but its bench regressed on a stable case (b03).
+  - **antigravity on the final state: the same.** Blind A/B 12:12 with 6 ties; mean judge score 4.71 vs 4.75 (the same-version noise gap is 0.28); rule violations 4 vs 3 (the same-version control had 2 vs 6, so this is inside the noise). The slips are spread across both sides: in q05, each side has one sample that misreports the pin-check state, and q04 has the same unsourced USB-C sentence on both sides. Bench: QA 0.957 (before 0.930 / 0.956), behaviour 11/13 (11, 12), incidents 10/12 (11, 11; the two misses were already flaky). No engine or quota errors in the final runs. Model: Gemini 4 Hydrogen (High) on both sides.
 - **Two cuts made quality worse and were reverted:**
   - **P1** (AGENTS.md only through CLAUDE.md): QA cite 0.69 to 0.44-0.51; blind A/B 6:19; rule slips. It also hurt antigravity (b03 mpn_guard failed in both runs; it passed in both before).
   - **P2** (WORKSPACE without the script commands): fewer checks run, less grounded answers; blind A/B 7:18 with P1 already reverted, 12:13 once P2 was also reverted.
@@ -21,7 +21,7 @@ The order follows the student's request: answer quality first, then rule violati
   - cut 5 (skill bodies, S9-S16 fixes);
   - P3 (short follow-up/retry round).
 - **Tokens: small.** A one-turn chat message costs about 660 fewer input tokens on claude_code (71.9k to 71.2k, -0.9%). The follow-up/retry prompt is 10% shorter (51.1k to 46.1k chars).
-  The big savings were P1 (about -13k tokens a turn) and P2 (-2.2k), and they cost quality. Overall: no improvement in quality, no loss, and a small saving.
+  The big savings were P1 (about -10.3k tokens a turn) and P2 (-2.2k), and they cost quality. Overall: no improvement in quality, no loss, and a small saving.
 
 ## 1. Cuts kept and dropped
 
@@ -86,6 +86,42 @@ Violations, before:
 - q08-drc: source: It is also a fine-pitch footprint, so it's expected to trip the DRC, and JLC can still mak
 - q06-placement: position: The LDO (U3) is on the input side by the USB-C connector
 - q08-drc: source: If the gap is below 0.152 mm, JLC cannot make it
+
+### Final vs before, antigravity (843df66 tree, run 2026-11-24 after the quota reset)
+#### `finag-ag` (30 pairs)
+| side | correct | rules | action | next_step | lang_len | mean | preferred | violations |
+|---|---|---|---|---|---|---|---|---|
+| after | 4.67 | 4.73 | 4.77 | 4.73 | 4.63 | 4.71 | 12 | 4 (source 2, other 1, position 1) |
+| before | 4.73 | 4.70 | 4.70 | 4.83 | 4.77 | 4.75 | 12 | 3 (source 1, pins 1, other 1) |
+| tie | | | | | | | 6 | |
+
+| question | after | before | tie |
+|---|---|---|---|
+| q01-idea | 1 | 1 | 0 |
+| q02-stock | 0 | 1 | 1 |
+| q03-sch-review | 1 | 1 | 0 |
+| q04-nc | 1 | 1 | 0 |
+| q05-accept-pins | 1 | 1 | 0 |
+| q06-placement | 0 | 2 | 0 |
+| q07-trace | 1 | 1 | 0 |
+| q08-drc | 2 | 0 | 0 |
+| q09-gerbers | 1 | 0 | 1 |
+| q10-place-consent | 1 | 1 | 0 |
+| q11-self-draw | 1 | 0 | 1 |
+| q12-datasheet | 0 | 2 | 0 |
+| q13-retry | 0 | 0 | 2 |
+| q14-why-he | 0 | 1 | 1 |
+| q15-next-en | 2 | 0 | 0 |
+
+Violations, after:
+- q04-nc: source: They are USB-C Sideband Use pins for alternate modes
+- q05-accept-pins: other: {{ref:U1}}, {{ref:U2}}, {{ref:U3}}, {{ref:U4}} נותרו `unchecked` בבדיקה האוטומטית
+- q06-placement: position: Currently {{ref:U3}} is at (28, 10) mm and {{ref:U2}} at (33, 20) mm
+- q14-why-he: source: הוא מספק זרם מיידי בקפיצות צריכה ומסנן רעשים בתדר גבוה
+Violations, before:
+- q04-nc: source: They are USB-C Sideband Use pins for alternate modes
+- q05-accept-pins: pins: הפינים של {{ref:U1}}, {{ref:U2}}, {{ref:U3}}, {{ref:U4}}, {{ref:J1}} ו-{{ref:D1}} כבר מסומ
+- q06-placement: other: {"type": "idea.constrain", "op": "add", "item": {"id": "sht40_ldo_apart", "kind": "keep_ap
 
 ### Noise control (same version on both sides)
 A difference between versions counts only beyond this: the preference split, a mean gap of about 0.25-0.28, and 2 to 9 violations per run.
@@ -170,6 +206,7 @@ Violations, qbefore-ag-2:
 | ab-ag | 5/21/4 | 7/19/4 | 2/27/1 | 5/19/6 | 1/24/5 |
 | fin-cc | 4/21/5 | 7/16/7 | 2/27/1 | 2/19/9 | 7/17/6 |
 | bisB-cc | 5/21/4 | 9/18/3 | 2/24/4 | 4/22/4 | 9/17/4 |
+| finag-ag | correct 3/23/4 | rules 6/19/5 | action 2/28/0 | next_step 3/21/6 | lang_len 2/22/6 |
 
 ### Dropped states (for the record)
 All cuts with P1 and P2, claude_code (`ab-cc`):
@@ -290,9 +327,10 @@ Violations, before:
 
 ## 3. Rule violations
 Per judged run, from the blind judge (each with a quote), in the tables above:
-- **Final vs before:** 6 vs 6. Final: other 4, language 1, source 1. Before: source 3, other 2, position 1.
+- **Final vs before, antigravity:** 4 vs 3 (source 2, other 1, position 1 against source 1, pins 1, other 1).
+- **Final vs before, claude_code:** 6 vs 6. Final: other 4, language 1, source 1. Before: source 3, other 2, position 1.
 - **Noise control:** 9 vs 2 for the same version.
-- **No rise, so this does not fail the cuts.**
+- **No rise beyond the same-version noise on either engine, so this does not fail the cuts.** antigravity's one extra violation is inside its control's 2-6 range.
 
 Hand-checked in the dropped P1+P2 state (claude_code), to see what the judge flagged:
 - q10 "Place the parts on the PCB for me": "I'm placing the netlist parts on the PCB now", with no action in the block. A claim of
@@ -334,32 +372,57 @@ claude_code. The final state is 843df66; the qa-bisB runs are the same tree, and
   - b05 and b10 fail on both sides.
 - **Incidents:** 12/12 in every claude_code run.
 
-antigravity (the final state is pending, see the verdict; with P1+P2 for the record):
+antigravity (model: Gemini 4 Hydrogen (High), agy's default, the same on every run; the final state is final-ag-1; the dropped P1+P2 runs after-ag-1/2 are kept for the record):
 
 | run | engine | incidents caught | qa score | behaviour pass | calls | errors | mean input tok/call | median | mean fresh input | cost USD | minutes |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | before-ag-1 | antigravity | 11/12 | 0.930 | 11/13 | 50 | 0 | 44712 | 41456 | 44712 | 0.00 | 29.4 |
 | before-ag-2 | antigravity | 11/12 | 0.956 | 12/13 | 50 | 0 | 45651 | 41508 | 45651 | 0.00 | 31.3 |
+| final-ag-1 | antigravity | 10/12 | 0.957 | 11/13 | 50 | 0 | 51571 | 43413 | 51571 | 0.00 | 36.5 |
 | after-ag-1 | antigravity | 12/12 | 0.950 | 10/13 | 50 | 0 | 40955 | 36768 | 40955 | 0.00 | 33.1 |
 | after-ag-2 | antigravity | 11/12 | 0.916 | 6/13 | 50 | 4 | 47101 | 40708 | 47101 | 0.00 | 74.8 |
-Behaviour (pass, failed checks):
-| case | before-ag-1 | before-ag-2 | after-ag-1 | after-ag-2 |
-|---|---|---|---|---|
-| b01 he | pass | pass | pass | pass |
-| b02 en | pass | pass | pass | pass |
-| b03 en | pass | pass | FAIL mpn_guard | FAIL mpn_guard |
-| b04 he | pass | pass | pass | FAIL mpn_guard |
-| b05 he | FAIL regex | pass | FAIL regex | FAIL regex |
-| b06 en | pass | pass | pass | pass |
-| b07 en | pass | pass | pass | pass |
-| b08 he | pass | pass | pass | pass |
-| b09 en | pass | pass | pass | pass |
-| b10 he | FAIL lang | FAIL lang | FAIL lang | FAIL lang |
-| b11 he | pass | pass | pass | err |
-| b12 he | pass | pass | pass | err |
-| b13 he | pass | pass | pass | err |
 
-after-ag-2 ran while agy was close to its quota: 4 engine errors (b11-b13 and one QA case).
+Incidents (engine caught the expected point):
+| incident | before-ag-1 | before-ag-2 | final-ag-1 | after-ag-1 | after-ag-2 |
+|---|---|---|---|---|---|
+| 01 u4-footprint-variant | yes | yes | yes | yes | yes |
+| 02 jlc-no-match-11 | yes | no | no | yes | no |
+| 03 u9-expensive-flash | yes | yes | yes | yes | yes |
+| 04 u7-variant-out-of-stock | yes | yes | yes | yes | yes |
+| 05 u4-standard-only | yes | yes | yes | yes | yes |
+| 06 mp2315-vcc-cap | yes | yes | yes | yes | yes |
+| 07 tc-fault-output-type | no | yes | no | yes | yes |
+| 08 f103-no-usb-dfu | yes | yes | yes | yes | yes |
+| 09 f411-swap-vcap | yes | yes | yes | yes | yes |
+| 10 j1-faces-inward | yes | yes | yes | yes | yes |
+| 11 outline-in-all-gerber-layers | yes | yes | yes | yes | yes |
+| 12 cpl-rotation-vs-jlc-models | yes | yes | yes | yes | yes |
+
+Behaviour (pass, failed checks):
+| case | before-ag-1 | before-ag-2 | final-ag-1 | after-ag-1 | after-ag-2 |
+|---|---|---|---|---|---|
+| b01 he | pass | pass | pass | pass | pass |
+| b02 en | pass | pass | pass | pass | pass |
+| b03 en | pass | pass | pass | FAIL mpn_guard | FAIL mpn_guard |
+| b04 he | pass | pass | pass | pass | FAIL mpn_guard |
+| b05 he | FAIL regex | pass | FAIL regex | FAIL regex | FAIL regex |
+| b06 en | pass | pass | pass | pass | pass |
+| b07 en | pass | pass | pass | pass | pass |
+| b08 he | pass | pass | pass | pass | pass |
+| b09 en | pass | pass | pass | pass | pass |
+| b10 he | FAIL lang | FAIL lang | FAIL lang | FAIL lang | FAIL lang |
+| b11 he | pass | pass | pass | pass | err |
+| b12 he | pass | pass | pass | pass | err |
+| b13 he | pass | pass | pass | pass | err |
+
+- **Final state, antigravity:**
+  - QA 0.957 (before 0.930 / 0.956);
+  - behaviour 11/13 (before 11, 12);
+  - incidents 10/12 (before 11, 11).
+- **b03** (an unverified MPN must carry "(unverified - check)") passes again in the final state. With P1 it failed in both runs, which confirms P1 as the cause.
+- **The two missed incidents** were 02 and 07. Both were flaky before: 02 was caught in 1 of 2 runs and 07 in 1 of 2. This is noise, not a regression.
+- **Watch item: input tokens per call** were 51.6k mean, 43.4k median, against 44.7k / 45.7k before (medians 41.5k). The prompt the server sends is 2.4k chars shorter, so the rise is in agy's own tool loop, not in the prompt. It is not attributed to the cuts.
+- after-ag-2 ran while agy was close to its quota: 4 engine errors (b11-b13 and one QA case).
 
 ## 5. Tool turns and blocked commands (claude_code, 15-question set)
 Cell = tool calls / blocked or failed calls / reads of AGENTS.md or a skill, per question, from Claude Code's own transcripts.
@@ -405,6 +468,8 @@ The final and bisect runs ran while 3-5 other engine runs shared the machine; th
 
 The engine-side number that does not depend on load is the number of engine turns per answer. Over the 15 questions × 2: 65 before, 61 final.
 
+antigravity: 46.0 / 47.7 s before, 57.8 / 57.6 s final. The before runs shared the machine with claude_code runs; the final runs were three agy runs at once on one account, the morning after a quota reset. Input tokens per answer stayed within the run-to-run spread (below). It is not attributed to the cuts, but it is a watch item.
+
 ## 7. Tokens and sizes
 Per piece, chars (UX-E2E-ESP32C3, the q-set's Hebrew draw message, normalised paths):
 
@@ -429,6 +494,8 @@ Measured input tokens on claude_code, the same one-turn questions (q01, q02, q09
 So P1 was worth about 10.3k tokens and P2 about 2.2k; cuts 3-5 together about 0.66k. Mean over the whole q-set (all turns):
 143k / 128k before, 135k / 120k final.
 
+antigravity (reported input tokens per answer, its own tool loop included): q-set mean 67k / 70k before, 73k / 68k final; the one-turn questions q02, q09, q14, q15: 44k / 42k before, 47k / 44k final. The run-to-run spread on the same question is larger than the 600-token prompt cut (q01: 48k / 52k before), so no saving is measurable on antigravity.
+
 ## 8. Proposals and follow-ups (not done here)
 - **An antigravity-only P1: not recommended.** With P1, antigravity's b03 (an unverified MPN without "(unverified - check)")
   failed in both runs and passed in both before; the q-set judge saw no difference there.
@@ -440,9 +507,9 @@ So P1 was worth about 10.3k tokens and P2 about 2.2k; cuts 3-5 together about 0.
 ## 9. Method and limits
 - **claude_code:** before 2 full bench runs + 2 behaviour-only runs, the same on the final state, plus 2 QA-only runs on each
   bisect state; the q-set ×2 on each state.
-- **antigravity:** before 2 full bench runs and the q-set ×2; the dropped P1+P2 state the same; the final state pending (quota, see the verdict).
+- **antigravity:** Model: Gemini 4 Hydrogen (High) (`gemini-4-hydrogen-high`, agy's default; no run set a model), the same on every antigravity run. Before: 2 full bench runs and the q-set ×2. Dropped P1+P2 state: the same. Final state (843df66 tree): the q-set ×2 and 1 full bench run, all run on 2026-11-24 after the agy quota reset. claude_code got more repetitions and antigravity fewer, as asked: agy has a daily quota, and one run near the limit (after-ag-2) produced engine errors.
 - **The judge** is one Opus model with a fixed rubric (`judge/INSTRUCTIONS.md` in the scratch folder) and a shared context. A
   same-version control was run for both engines to show its noise.
 - **Bisect states:** they were scratch worktrees at 635215f with the named commits reverted. The final branch tip 843df66 has
   a tree identical to bisect state B (checked with `git diff`).
-- **Checks on the final tip:** probe PASS on both engines; full pytest green when run on a quiet machine (6 router/autonomy timing tests failed only while 4-5 engine runs shared the CPU; they pass alone); `ruff check scripts tests` clean.
+- **Checks on the final tip:** probe PASS on both engines; full pytest not run locally in full (the project runs full suites only in the cloud; GitHub CI runs the portable suite on the push); the touched test files tests/test_agent_context.py and tests/test_runtime_pack.py pass locally (36 tests); `ruff check scripts tests` clean.
