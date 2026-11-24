@@ -5,15 +5,22 @@
 const PIN_BASIS = {datasheet_page: 'checked against a datasheet page', polarity: 'polarity accepted by you', blind: 'accepted without a datasheet', legacy: 'accepted earlier', library_model: 'matches the library model of its LCSC part'};
 function pinsWhen(ts) { return ts ? whenText(ts) : ''; }
 
-/* the accepted risks, with Revoke: DFM and Outputs show them so an accepted risk never disappears from view */
-function pinRisksHTML() {
-  const rows = (S.pin_decisions || {}).accepted || [];
+/* the accepted pins, with Revoke: DFM and Outputs show them so an accepted risk never disappears from view. Split by basis: a part the
+   student checked against a datasheet page is NOT "not verified by a datasheet" (E12, 24/11/2026); the rest (polarity, blind, legacy) are. */
+const PIN_PAGE_CHECKED = r => r.basis === 'datasheet_page';
+function pinRisksList(rows, head, note) {
   if (!rows.length) return '';
   const item = r => `<li class="unv-row"><span class="m">${esc(refsLabel(r.refs))}</span> ${esc(r.mpn || '')}
     <span class="unv-why">${esc(PIN_BASIS[r.basis] || r.basis)}${r.ts ? ' on ' + esc(pinsWhen(r.ts)) : ''}${r.reason ? ': ' + esc(r.reason) : ''}</span>
     ${btn('Revoke', {kind: 'line', size: 'sm', act: 'revoke-pins', line: r.line, title: 'Take your decision back: the part is unverified again'})}</li>`;
-  return `<section class="dfm-unv pin-risks"><h3>Accepted risks <span class="muted">(${rows.length}) pins you accepted, not verified by a datasheet table</span></h3>
+  return `<section class="dfm-unv pin-risks"><h3>${head} <span class="muted">(${rows.length}) ${note}</span></h3>
     <ul>${rows.map(item).join('')}</ul></section>`;
+}
+function pinRisksHTML() {
+  const rows = (S.pin_decisions || {}).accepted || [];
+  if (!rows.length) return '';
+  return pinRisksList(rows.filter(PIN_PAGE_CHECKED), 'Checked by you', 'pins you checked against a datasheet page')
+    + pinRisksList(rows.filter(r => !PIN_PAGE_CHECKED(r)), 'Accepted risks', 'pins you accepted without checking a datasheet page');
 }
 /* the line of the part panel: what the student decided, and the way back */
 function pinsInspHTML(l) {

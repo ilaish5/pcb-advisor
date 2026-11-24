@@ -2539,7 +2539,7 @@ def _bom_into_outputs(project, roots, written):
         shutil.copyfile(src, dest)
         note = (f"Altium wrote no BOM, so {dest.parent.name}/{dest.name} is the advisor's JLC BOM (the one Export writes)"
                 + (f"; {len(res['needs_lcsc'])} line(s) have no LCSC number ({', '.join(res['needs_lcsc'][:5])}): run Check stock"
-                   if res.get("needs_lcsc") else "") + ".")
+                   if res.get("needs_lcsc") else "") + "." + (" " + res["left_out_text"] if res.get("left_out_text") else ""))
         return [str(dest)], [note]
     except Exception as exc:
         return [], [f"Altium wrote no BOM and the advisor's could not be made ({type(exc).__name__}: {exc}). Export it on the BOM page."]

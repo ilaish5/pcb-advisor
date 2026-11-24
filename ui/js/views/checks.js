@@ -366,7 +366,7 @@ function dfmGuideHTML(empty) {
   dfmZipSync();
   if (dfmFolderAsked !== PROJECT) dfmFolderLoad();
   const folder = dfmFolder ? `<span class="m">${esc(dfmFolder)}</span>` : 'your Downloads folder';
-  const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // unverified pins: the server refuses the zip, so the button says why before the click
+  const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // the server's gate (unrouted board, unfinished design): the zip is refused, so the button says why before the click
   const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy || !!held, title: held || undefined});
   const steps = [
     dfmStep('Get the Gerber zip', zipBtn, (held ? banner({tone: 'warn', cls: 'dfm-zip-why', text: held}) : '') + dfmZipBody()),

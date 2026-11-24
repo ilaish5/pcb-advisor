@@ -384,13 +384,14 @@ def risks(project):
 
 
 def write_manifest(project):
-    """exports/<project>_order_manifest.json: {accepted_risks, unverified, verified_by_library_model, board_check, generated}, beside the Gerber zip, never inside it.
+    """exports/<project>_order_manifest.json: {warning, accepted_risks, unverified, verified_by_library_model, board_check, generated}, beside the Gerber zip, never inside it.
     Written when there is anything to say (or an older one to keep current); the JLC BOM CSV is not touched."""
     import json
 
     import workspace
     path = store.pdir(project) / "exports" / f"{workspace.safe_name(project)}_order_manifest.json"
     acc, unv = risks(project), store.pins_to_resolve(project)
+    warn = store.pins_warning(project, rows=unv)            # named, never a block: the order goes out with it in plain words
     try:
         import pin_model
         lib = pin_model.verified_lines(project)
@@ -405,12 +406,12 @@ def write_manifest(project):
         board = None
     try:
         old = json.loads(path.read_text(encoding="utf-8"))
-        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str))
+        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str)) and old.get("warning", "") == warn
     except (OSError, ValueError):
         same = False
     if not same:
         path.parent.mkdir(parents=True, exist_ok=True)
-        doc = {"accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
+        doc = {"warning": warn, "accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
         store._write_text(path, json.dumps(doc, ensure_ascii=False, indent=2, default=str))
     return str(path)
 

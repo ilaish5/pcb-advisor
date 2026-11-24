@@ -468,7 +468,7 @@ def main(argv=None):
     elif args.cmd == "gerber-zip":
         import jlc_upload
         import store
-        blocked = store.manufacturing_warning(args.project)
+        blocked = store.manufacturing_block(args.project)           # an unrouted board or an unfinished design; pins only warn
         if blocked:
             raise SystemExit(blocked)
         print(json.dumps(jlc_upload.gerber_zip(args.project), ensure_ascii=False, indent=2))

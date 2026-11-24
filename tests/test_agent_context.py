@@ -276,13 +276,19 @@ def test_a_server_round_sends_the_last_exchange_not_the_whole_conversation(lte, 
 
 def test_the_agent_context_carries_the_outputs_gate_the_ui_shows(empty):
     """UX-E2E-ESP32C3 (2026-11-24): the Outputs banner said an unfinished schematic blocks the outputs, the agent said "nothing is
-    blocking". One gate (store.manufacturing_warning, through stages.outputs_stage) feeds the button, the dot, the banner and the
+    blocking". One gate (store.manufacturing_block, through stages.outputs_stage) feeds the button, the dot, the banner and the
     agent's CURRENT STATE."""
     import agent
     import model
     import store
     from test_unverified_pins import _sheet
-    _sheet(empty)                                   # a part whose pins nobody checked: the outputs are blocked
+    _sheet(empty)                                   # a part whose pins nobody checked: a WARNING only, the outputs are not blocked
+    assert store.manufacturing_warning(empty) == "" and not store.manufacturing_block(empty)
+    free = json.loads(agent._summary(model.build(project=empty)))
+    assert "outputs_blocked" not in free and "U1" in free["pins_warning"]
+    sh = store.load_sheet(empty, "01")
+    sh["parts"][0]["pins"][-1]["net"] = ""          # an open pin (no net, not NC) is a real block
+    store.write_sheet(empty, "01", sh)
     gate = store.manufacturing_warning(empty)
     assert gate
     m = model.build(project=empty)
