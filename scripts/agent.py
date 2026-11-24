@@ -153,6 +153,12 @@ def _summary(model):
     if waiting:
         # the DFM page's Unverified parts: the Gerber zip and the OutJob wait until the student resolves each (rule 7, rule 11)
         s["pins_waiting"] = waiting
+    df = model.get("design_findings") or {}
+    if df.get("open"):
+        # interface pins on NC and requirements whose parts are on no sheet (checks.coverage); the student may mark one intended
+        s["design_findings"] = [f["message"] for f in df["open"]]
+    if df.get("coverage"):
+        s["requirement_coverage"] = df["coverage"]
     checks_summary = []
     for c in model.get("checks", []):
         stem = c.get("stem")

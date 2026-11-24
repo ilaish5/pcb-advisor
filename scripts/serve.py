@@ -4534,6 +4534,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._send(400, {"error": f"could not ingest DFM report: {exc}"})
 
+        if path == "/api/design-findings/intended":   # the student's one click on a design finding (checks.coverage)
+            from checks import coverage
+            try:
+                return self._send(200, coverage.mark(proj, str(data.get("key") or ""), data.get("intended", True) is not False))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
         if path == "/api/checks/triage":
             stem = data.get("stem")
             rows = data.get("rows")
