@@ -11,7 +11,7 @@
   start.flag is written once the script runs and end.flag once, at the very end: Python only stats log.txt while
   the script runs (it must never open these files then; Altium saves them without sharing) and reads them after end.flag.
 
-  Commands:  PROJECT prj | SCH path | PCB path | SAVEPRJ prj | CLEAR path | PARAM path name value
+  Commands:  PROJECT prj | SCH path | PCB path | SAVEPRJ prj | CLEAR path | PARAM path name value | OUTJOB path medium base kind | UNMARK path
              FRAME path x y w h text | TITLEBLOCK path | SAVE path | PING
              RULE pcb kind name scope1 scope2 priority prop=value... | RULESIN pcb | ADDDOC prj path | OUTJOB path medium basepath
 
@@ -594,7 +594,7 @@ begin
 end;
 
 { OUTJOB path medium basepath: generate the files of one Folder Structure container of the OutJob }
-procedure RunOutJob(Path: String; Medium: String; Base: String);
+procedure RunOutJob(Path: String; Medium: String; Base: String; Kind: String);
 var
     P, D : IDispatch;
 begin
@@ -628,12 +628,38 @@ begin
         Exit;
     end;
     ResetParameters;
+    if (Kind = 'Publish') then
+    begin
+        { a PDF container is published, not generated: GenerateReport on it prints nothing ("Documents Printed: 0") }
+        AddStringParameter('Action', 'PublishToPDF');
+        AddStringParameter('OutputMedium', Medium);
+        AddStringParameter('ObjectKind', 'OutputBatch');
+        AddStringParameter('DisableDialog', 'True');
+        RunProcess('WorkspaceManager:Print');
+        Log('outjob published ' + Medium);
+        Exit;
+    end;
     AddStringParameter('Action', 'Run');
     AddStringParameter('OutputMedium', Medium);
     AddStringParameter('ObjectKind', 'OutputBatch');
     AddStringParameter('OutputBasePath', Base);
     RunProcess('WorkspaceManager:GenerateReport');
     Log('outjob ran ' + Medium);
+end;
+
+{ UNMARK path: a document the advisor's own step left marked modified without changing the design (plotting the outputs) is
+  marked saved again. Sent only for a document that was saved before that step. Changes nothing on the disk. }
+procedure Unmark(Path: String);
+var
+    D : IDispatch;
+begin
+    D := Client.GetDocumentByPath(Path);
+    if (D = nil) then Exit;
+    if (IntToStr(D.Modified) <> '0') then
+    begin
+        D.SetModified(False);
+        Log('cleared the modified mark the outputs left on ' + Path);
+    end;
 end;
 
 procedure SaveLib(Path: String; Kind: String);
@@ -2453,7 +2479,8 @@ begin
     else if (Cmd = 'RULE') then ApplyRule(Line)
     else if (Cmd = 'RULESIN') then RulesIn(Field(Line, 1))
     else if (Cmd = 'ADDDOC') then AddDocument(Field(Line, 1), Field(Line, 2))
-    else if (Cmd = 'OUTJOB') then RunOutJob(Field(Line, 1), Field(Line, 2), Field(Line, 3))
+    else if (Cmd = 'OUTJOB') then RunOutJob(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
+    else if (Cmd = 'UNMARK') then Unmark(Field(Line, 1))
     else if (Cmd = 'LIBCLOSE') then LibClose(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
     else if (Cmd = 'FPBATCH') then LibFootprintsBatch(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'FPREMOVE') then LibFootprintRemove(Field(Line, 1), Field(Line, 2))
@@ -2514,7 +2541,7 @@ begin
     Cmd := Field(Line, 0);
     Was := 0;
     { a read-only step must leave the document as it found it: the batch DRC and the read-backs can mark an unchanged document modified }
-    if (Cmd = 'DRC') or (Cmd = 'PCBEXTENT') or (Cmd = 'PCBCHECK') or (Cmd = 'FPINFO') or (Cmd = 'DRAWCHECK') then Was := DocDirty(Field(Line, 1)) + 1;
+    if (Cmd = 'DRC') or (Cmd = 'PCBEXTENT') or (Cmd = 'PCBCHECK') or (Cmd = 'FPINFO') or (Cmd = 'DRAWCHECK') or (Cmd = 'RULESIN') then Was := DocDirty(Field(Line, 1)) + 1;
     DispatchStep(Line);
     if (Was = 1) and (not Failed) then
     begin

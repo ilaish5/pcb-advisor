@@ -20,6 +20,8 @@ description: Turns a rough project idea into a first draft plus the few requirem
    `{"type": "idea.describe", "text": "..."}` is the board in plain words (what it is, what it is for, the diagram as text).
    Stage gating (no `bom.propose` card before `idea.confirmed`, parts only as candidates in text): AGENTS.md, WORK ORDER.
    Once confirmed, or when the student explicitly asks for parts, switch to `parts-and-stock`.
+   A new project based on an old one: take the structure, never the old figures (budgets, counts, currents, sizes, prices). Write
+   each old figure only after saying where it comes from ("the old project had 8 relays; keep that?"), else leave it out or "(assumed)".
 3. Then ask at most 1-3 questions: the ones from the list below whose answer would change the draft most and are
    expensive to change later. Per question: one line "why it matters" and your default (the one already in the draft).
 4. When the answers come, change the draft (replace "(assumed)" with the agreed value), list what each answer forces

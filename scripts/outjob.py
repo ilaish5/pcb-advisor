@@ -29,6 +29,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import oscompat  # noqa: E402
 import workspace  # noqa: E402
 
+# Run from a script, nothing may open a window or ask: the PDF is neither opened nor prompted for on overwrite (a prompt nobody answers
+# stops the run), and the generated files are neither opened nor added to the project (adding them leaves the project file unsaved, E14).
 OUTJOB_TEMPLATE = """[OutputJobFile]
 Version=1.0
 Caption=Production Files
@@ -158,8 +160,8 @@ OutputFileName2={project}_Schematics.pdf
 OutputFileNameMulti2=
 UseOutputNameForMulti2=1
 OutputFileNameSpecial2=
-OpenOutput2=1
-PromptOverwrite2=1
+OpenOutput2=0
+PromptOverwrite2=0
 PublishMethod2=0
 ZoomLevel2=50
 FitSCHPrintSizeToDoc2=1
@@ -186,14 +188,14 @@ OutputFileName3=
 OutputFileNameMulti3=
 UseOutputNameForMulti3=1
 OutputFileNameSpecial3=
-OpenOutput3=1
+OpenOutput3=0
 
 [GeneratedFilesSettings]
 RelativeOutputPath2=
-OpenOutputs2=1
+OpenOutputs2=0
 RelativeOutputPath3=
-OpenOutputs3=1
-AddToProject3=1
+OpenOutputs3=0
+AddToProject3=0
 TimestampFolder3=0
 UseOutputName3=0
 OpenODBOutput3=0

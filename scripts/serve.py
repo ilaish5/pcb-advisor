@@ -105,8 +105,9 @@ def _turn_event(key, ev):
         if not turn:
             return
         turn["last"] = now_t
-        label = str(ev.get("label") or ev.get("tool") or ev.get("kind") or "")
-        turn["current"] = label or turn["current"]
+        from gateway import events as gw_events
+        label = gw_events.human(str(ev.get("label") or ev.get("tool") or ev.get("kind") or "")) if (ev.get("label") or ev.get("tool") or ev.get("kind")) else ""
+        turn["current"] = label or turn["current"]       # plain words only: no tool name, pattern or path reaches the student (E17)
         if ev.get("kind") != "text" and label:
             turn["steps"].append({"label": label, "ts": ev.get("ts") or now_t})
             del turn["steps"][:-50]
@@ -573,6 +574,22 @@ _NEG = r"(?:don[’']?t|do not|never|אל)"
 _NEG_OTHER = re.compile(_NEG + r"\s+(?:\S+\s+){0,2}?(?:" + _OTHER_VERB.pattern + ")", re.I)
 
 
+# An inability or an unwillingness to do it oneself ("I cannot draw by hand", "I can't do it myself", "אני לא יכול לשרטט בעצמי"): the student
+# says they CANNOT, so the agent is the one to do it. It is the opposite of "I'll do it myself" and must never be read as that (E18).
+_CANT = re.compile(
+    r"\b(?:cannot|can[’']?t|cant|couldn[’']?t|unable|not\s+able|incapable|no\s+way\s+to|don[’']?t\s+know\s+how|do\s+not\s+know\s+how"
+    r"|(?:don[’']?t|do\s+not)\s+want\s+to|(?:don[’']?t|do\s+not)\s+feel\s+like)\b"
+    r"|(?<!\w)(?:אני\s+|אנחנו\s+)?(?:לא|אינ(?:ני|י))\s+(?:יכול|יכולה|יכולים|מסוגל|מסוגלת|מצליח|מצליחה|יודע|יודעת|בקיא|בקיאה|רוצה\s+ל|מעוניין\s+ל|מעוניינת\s+ל)(?!\w)",
+    re.I)
+# what stays a "do not" aimed at the agent even in a clause that also says "cannot" ("I can't wait, don't draw it")
+_PROHIBIT = re.compile(r"\bdon[’']?t\s+(?:draw|place|route|mark)\b|\bdo\s+not\s+(?:draw|place|route|mark)\b|אל\s+ת\S+|(?<!\w)לא\s+(?:ל(?:שרטט|צייר|מקם|נתב|סמן)|ת(?:שרטט|צייר|מקם|נתב|סמן))|אני\s+לא\s+רוצה\s+ש", re.I)
+
+
+def says_cannot(clause):
+    """True when the clause says the student cannot / will not do it themselves, and is no instruction to the agent to hold back."""
+    return bool(_CANT.search(clause)) and not _PROHIBIT.search(clause)
+
+
 class _Stops:
     """The student's words that say no, wait or stop. The unambiguous words (stop, wait, don't, עצור ...) count anywhere; a bare
     "no"/"לא" only as a short reply (the clause is at most three words: "no", "no thanks", "לא עכשיו"), never inside a sentence
@@ -588,7 +605,7 @@ class _Stops:
             if _STOP.search(clause):
                 return True
             words = clause.strip().split()
-            if words and len(words) <= 3 and _STOP_BARE.match(words[0]):
+            if words and len(words) <= 3 and _STOP_BARE.match(words[0]) and not _CANT.search(clause):       # "לא יכול לשרטט" is not "no"
                 return True
         return False
 
@@ -631,6 +648,8 @@ def _self_verdict(kind, text):
     for clause in _CLAUSE.split(str(text or "")):
         if not self_re.search(clause):
             continue
+        if says_cannot(clause):
+            continue              # "I cannot draw by myself": the student cannot, so the agent does it (E18)
         if _ACTION_ANY[kind].search(clause):
             return "self"
         if _OTHER_ACTION[kind].search(clause):
@@ -4146,6 +4165,11 @@ class Handler(BaseHTTPRequestHandler):
             except KeyError as exc:
                 return self._send(400, {"error": str(exc).strip("'")})
             return self._send(200, state())
+
+        if path == "/api/idea/board/read":      # read only: the size a text states, so the fields fill while it is typed (E19)
+            from altium import layout
+            size = layout.board_size({"goal": str(data.get("text") or "")[:3000]})
+            return self._send(200, {"width_mm": size[0], "height_mm": size[1]} if size else {})
 
         if path == "/api/idea/board":      # the board size typed in directly: no confirmed idea needed (validation in the store)
             try:

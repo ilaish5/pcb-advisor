@@ -154,6 +154,12 @@ def _summary(model):
         # the DFM page's Unverified parts: a WARNING only (owner decision 24/11/2026), the outputs are made all the same; the student
         # should still verify, fix or accept each before ordering (rule 7, rule 11)
         s["pins_waiting"] = waiting
+        try:
+            import store
+            # the same numbers the pages show (store.pin_counts): say these, never a count of your own
+            s["pins_waiting_count"] = store.pin_counts(waiting)
+        except Exception:           # noqa: BLE001 - the state must always build
+            pass
     warn = _pins_warning(model)
     if warn:
         s["pins_warning"] = warn            # the Outputs page's warning text, the same words: never call it a block

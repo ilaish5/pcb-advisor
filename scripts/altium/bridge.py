@@ -2320,19 +2320,35 @@ def import_rules(project):
 # ---------------------------------------------------------------- the OutJob
 
 def outjob_containers(path):
-    """[(medium name, base path)] of the OutJob's Folder Structure containers: the ones that write files."""
+    """[(medium name, base path, kind)] of the OutJob's containers that write files: "GeneratedFiles" (Folder Structure: Gerbers,
+    drill, BOM, pick and place) first, then "Publish" (PDF: the schematic prints). A PDF container is run by another Altium process
+    than a folder one (WorkspaceManager:Print, not GenerateReport): leaving it out is why the Schematic PDF was never made (E14)."""
     cp = configparser.RawConfigParser(strict=False, interpolation=None)
     cp.optionxform = str
     cp.read(str(path), encoding="latin-1")
     out = []
-    for sec in cp.sections():
-        if not sec.startswith("OutputGroup"):
-            continue
-        for key, val in cp.items(sec):
-            m = re.fullmatch(r"OutputMedium(\d+)", key)
-            if m and cp.get(sec, key + "_Type", fallback="") == "GeneratedFiles" and val not in [o[0] for o in out]:
-                out.append((val, cp.get("PublishSettings", f"OutputBasePath{m.group(1)}", fallback="")))
+    for kind in ("GeneratedFiles", "Publish"):
+        for sec in cp.sections():
+            if not sec.startswith("OutputGroup"):
+                continue
+            for key, val in cp.items(sec):
+                m = re.fullmatch(r"OutputMedium(\d+)", key)
+                if m and cp.get(sec, key + "_Type", fallback="") == kind and val not in [o[0] for o in out] and _medium_used(cp, sec, m.group(1)):
+                    out.append((val, cp.get("PublishSettings", f"OutputBasePath{m.group(1)}", fallback=""), kind))
     return out
+
+
+def _medium_used(cp, sec, n):
+    """Whether any enabled output of the group is sent to medium n (OutputEnabledK_OutputMediumN=1). A group with no such keys at all
+    (an OutJob written by hand) counts every medium as used."""
+    keys = [k for k, _ in cp.items(sec) if re.fullmatch(r"OutputEnabled\d+_OutputMedium\d+", k)]
+    if not keys:
+        return True
+    for k in keys:
+        out_n = re.fullmatch(r"OutputEnabled(\d+)_OutputMedium(\d+)", k)
+        if out_n.group(2) == n and cp.get(sec, k).strip() == "1" and cp.get(sec, f"OutputEnabled{out_n.group(1)}", fallback="1").strip() == "1":
+            return True
+    return False
 
 
 def repair_outline(prj, pcb):
@@ -2399,12 +2415,17 @@ def add_outjob(project):
     return {"file": str(target), "backup": backup}
 
 
+def _project_docs(prj):
+    """The project's sheets and boards that are on the disk, then the project file itself."""
+    summary = read_prjpcb(prj)
+    docs = [prj.parent / pathlib.Path(rel.replace("\\", "/")) for rel in summary["sheets"] + summary["pcbs"]]
+    return [d for d in docs if d.is_file()] + [prj]
+
+
 def unsaved_documents(prj):
     """Names of the project's documents that Altium holds open with unsaved changes (DOCSTATE, read only), [] when all are
     saved. Raises BridgeError when Altium cannot be asked. Outputs made then may not match the files on disk."""
-    summary = read_prjpcb(prj)
-    docs = [prj.parent / pathlib.Path(rel.replace("\\", "/")) for rel in summary["sheets"] + summary["pcbs"]]
-    docs = [d for d in docs if d.is_file()] + [prj]
+    docs = _project_docs(prj)
     state = [l for l in run_commands([("PROJECT", str(prj))] + [("DOCSTATE", str(d)) for d in docs]) if l.startswith("docstate ")]
     if len(state) != len(docs):
         return []                                      # an answer that does not match what was asked says nothing
@@ -2451,15 +2472,20 @@ def run_outjob(project):
         cmds += add_cmds
         added = True
     boxes = outjob_containers(target)
-    cmds += [("OUTJOB", str(target), medium, base) for medium, base in boxes]
+    cmds += [("OUTJOB", str(target), medium, base, kind) for medium, base, kind in boxes]
+    # making outputs changes no design, but Altium can mark the board or a sheet modified while it plots them: a document that was
+    # saved before the run is marked saved again, so the next step does not report unsaved changes the student never made (E14)
+    cmds += [("UNMARK", str(d)) for d in _project_docs(prj) if d.name not in unsaved]
     t0 = time.time() - 2
     run_commands(cmds, total_timeout=600)
+    import outputs_check
     roots = jlc_upload._roots(project) or [prj.parent / "Outputs"]     # the linked folder, Altium's "Project Outputs for ..."
     files = []
     for root in roots:
         for dirpath, dirs, names in os.walk(root):
             dirs[:] = [d for d in dirs if d.lower() != BACKUP_DIR]
-            files += [str(pathlib.Path(dirpath, n)) for n in names if pathlib.Path(dirpath, n).stat().st_mtime >= t0]
+            files += [str(pathlib.Path(dirpath, n)) for n in names if pathlib.Path(dirpath, n).stat().st_mtime >= t0
+                      and not outputs_check.is_side_file(n)]     # Altium's aperture macro file and reports are no outputs (E14)
     if not files:
         raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
     bom_files, bom_notes = _bom_into_outputs(project, roots, files)
@@ -2505,7 +2531,7 @@ def run_outjob(project):
     warnings = list(check["warnings"]) + warnings          # what is missing comes first: it decides whether the step did its job
     _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing,
          missing=check["missing"], empty=check["empty"], unsaved=unsaved)
-    return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
+    return {"outjob": str(target), "added": added, "containers": [m for m, _, _ in boxes], "files": sorted(files), "backup": backup,
             "warnings": warnings, "outline_drawn": outline_drawn, "outputs_check": check}
 
 
