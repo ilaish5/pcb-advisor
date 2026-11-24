@@ -1,4 +1,4 @@
-/* PCB Advisor UI - Library, Sources and Settings (Skills is a section of Settings; the old Skills page shows Settings
+/* PCB Advisor UI - the library pieces of the BOM page (model icons, legend, build actions), Sources and Settings (Skills is a section of Settings; the old Skills page shows Settings
    scrolled to it). Sources has two scopes: Shared (general reference material every project sees) and Project (this
    project's own documents, including its parts' datasheets); "Add" always puts a document into the project.
    Settings saves each field on its own as it changes (debounced for text) and says "Saved" next to it for two seconds.
@@ -44,7 +44,9 @@ async function loadConfig() {
   if (pgShowsSettings()) renderCenter(true);
 }
 
-/* ================================ Library ================================ */
+/* ================================ Library ================================
+   There is no Library page any more: its table is the Models and Status columns of the BOM (views/bom.js), and the full notes of a
+   line are in the part panel (views/inspector.js). These are the pieces both draw from, and the build actions. */
 const PG_LIB = {ok: ['Verified', 'ok'], review: ['To review', 'warn'], missing: ['Missing', 'bad'], error: ['Footprint error', 'bad']};
 
 const PG_SOURCE = {easyeda: 'EasyEDA', vendor: 'Vendor zip', kicad: 'KiCad', generated: 'Generated', missing: 'Missing'};
@@ -52,7 +54,8 @@ const PG_SOURCE = {easyeda: 'EasyEDA', vendor: 'Vendor zip', kicad: 'KiCad', gen
      ok = present and fine (green glyph), no = missing (grey glyph), bad = needs fixing (red glyph: pins unverified or conflicting,
      a footprint error). The glyph itself carries the colour: no frame, no background. A generated body or footprint counts as present
      (green) and says "basic, generated" in its title and aria-label only.
-   libModelStates(r) is the one place that decides; the Library table and the part panel both draw from it (libIconsHTML).
+   libModelStates(r) is the one place that decides; the BOM table and the part panel both draw from it (libIconsHTML). The table
+   leaves out the Built / Not built word (its Status column says it): libIconsHTML(r, {built: false}).
    A click opens the quick preview (views/modelpreview.js). */
 const MIC_ICON = {symbol: 'model-symbol', footprint: 'chip', model: 'model-3d', pins: 'model-pins'};      // glyphs: KIT_ICONS in kit.js
 const MIC_WORD = {ok: 'present', no: 'missing', bad: 'needs attention'};
@@ -86,13 +89,13 @@ function libModelStates(r) {
     : (r.symbol || r.footprint) ? ['ok', '3D is basic, generated (no vendor STEP)'] : ['no', '3D: no model'];
   return [['symbol', ...sym], ['footprint', ...fp], ['model', ...m3], ['pins', ...libPinsState(r)]];
 }
-function libIconsHTML(r) {
+function libIconsHTML(r, o) {
   const icons = libModelStates(r).map(([kind, state, text]) => {
     const name = MIC_NAME[kind], say = `${text}. ${MIC_WORD[state]}. Click for a quick preview`;
     return `<button type="button" class="mic ${state}" data-act="lib-preview" data-line="${esc(r.line)}" data-kind="${kind}" title="${esc(say)}" aria-label="${esc(name + ': ' + say)}">` +
       `${icon(MIC_ICON[kind], 'mic-g')}</button>`;
   }).join('');
-  const built = r.build_status ? (r.built ? `<span class="mic-built ok" title="In the compiled IntLib">Built</span>`
+  const built = o && o.built === false ? '' : r.build_status ? (r.built ? `<span class="mic-built ok" title="In the compiled IntLib">Built</span>`
     : `<span class="mic-built" title="Not in the IntLib yet: build the library">Not built</span>`) : '';
   return `<div class="mdls" role="group" aria-label="Models of ${esc(r.line)}">${icons}${built}</div>`;
 }
@@ -121,17 +124,6 @@ function libAction(r) {
   if (r.verify !== 'pass' && r.symbol) return (canVerify ? btn('Verify', {size: 'sm', verify: r.line, title: 'Compare the pins with the datasheet'}) : '') + pinsOwnLookBtn(r.line, {size: 'sm'});
   return '';
 }
-function libRow(r) {
-  const known = !!r.build_status;
-  const [text, tone] = known ? libBuildTag(r) : (PG_LIB[r.status] || [LIBTXT[r.status] || r.status, '']);
-  const refs = r.refs || [];
-  return `<tr data-key="${esc(r.line)}" tabindex="0" class="${sel === r.line ? 'sel' : ''}"${r.model_source ? ` title="${esc('Model from ' + r.model_source)}"` : ''}>
-    <td title="${esc(refs.join(', '))}"><span class="ref">${esc(refsLabel(refs) || r.line)}</span>${r.mpn ? `<span class="sub m">${esc(r.mpn)}</span>` : ''}</td>
-    ${known ? `<td title="${esc(r.vendor_zip ? 'From ' + r.vendor_zip : '')}">${esc(PG_SOURCE[r.source] || r.source)}</td>` : ''}
-    <td>${libIconsHTML(r)}</td>
-    <td${known ? ' class="lib-issues"' : ''}>${tag(text, tone, known ? '' : (r.issues || LIBTXT[r.status] || ''))}${known ? libIssues(r) : ''}</td>
-    <td class="act">${libAction(r)}</td></tr>`;
-}
 /* shown after an export: how to get the package into Altium, and what is still unverified */
 function libExportHTML() {
   if (!libExport) return '';
@@ -144,32 +136,6 @@ function libExportHTML() {
     ${course ? `<p class="muted">See ${chip(PG_COURSE_LIB, 'Module 29, Integrated Library')}</p>` : ''}
     ${w.length ? `<h3>Still unverified (${w.length})</h3><ul>${w.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div></details>`;
 }
-function libHTML(container) {
-  const rows = S.library || [];
-  const todo = rows.filter(r => r.status !== 'ok').length;
-  const known = rows.some(r => r.build_status);
-  const open = rows.filter(r => r.build_status === 'missing' || r.build_status === 'error').length;
-  const built = rows.filter(r => r.built).length;
-  const meta = known ? metaLine([{n: rows.length, label: rows.length === 1 ? 'line' : 'lines'}, {n: built, label: 'built'},
-    {n: open, label: 'missing', tone: 'bad', title: 'Lines with no model yet: their issue says what to download'}])
-    : metaLine([{n: rows.length, label: rows.length === 1 ? 'part' : 'parts'},
-      {n: todo, label: 'to review', tone: 'warn', title: 'Parts that are not verified and accepted yet'}]);
-  const primary = btn(libBusy === 'build' ? 'Building...' : 'Build library', {kind: 'pri', act: 'libbuild', disabled: !!libBusy,
-    title: 'Download, convert and generate the models, compile the IntLib in Altium and install it'});
-  const actions = btn(libBusy === 'prepare' ? 'Preparing...' : 'Prepare only', {act: 'libprepare', disabled: !!libBusy,
-    title: 'Get and convert the models without touching Altium'}) +
-    btn('Export', {size: 'sm', act: 'libexport', disabled: !!libBusy || !rows.length, title: 'Write a package of the library files to compile yourself'});
-  const note = libBusy === 'build' ? banner({tone: 'info', text: 'Building in Altium. It can take a few minutes and Altium may flash while it works.'})
-    : libNote ? banner({tone: libNote.tone, text: libNote.text, actions: /No Altium project is linked/.test(libNote.text)
-      ? btn('Create an Altium project', {size: 'sm', act: 'altium-create', title: 'Altium makes the project, an empty PCB and one sheet per planned sheet, with no components'}) + btn('Link a project', {size: 'sm', act: 'pv-link'}) : ''}) : '';
-  const head = known ? '<th>Part</th><th>Source</th><th>Models</th><th>Status and what to do</th>' : '<th>Part</th><th>Models</th><th>Status</th>';
-  const body = rows.length
-    ? `<div class="tbl-wrap"><table class="tbl rows lib-tbl"><thead><tr>${head}<th><span class="sr">Action</span></th></tr></thead>
-      <tbody>${rows.map(libRow).join('')}</tbody></table></div>`
-    : emptyState('No library parts yet', 'Press Build library: every BOM line gets a symbol, a footprint and a 3D model, from EasyEDA, a vendor zip or the generator.');
-  return `${viewHeader({title: 'Library', meta, actions, primary})}<div class="vb">${note}${pinsWaitingBar()}${libExportHTML()}${rows.length ? libLegendHTML() : ''}${body}</div>`;
-}
-
 /* ================================ Sources ================================ */
 function srcTip(s) {
   return [s.name.includes('/') ? s.name : '', s.url ? 'Origin: ' + s.url : (s.origin ? 'Origin: ' + s.origin : ''), s.sha256 && s.sha256 !== '—' ? 'sha256 ' + s.sha256 : '', s.text ? 'Text extracted' : 'No extracted text']
@@ -521,19 +487,8 @@ new MutationObserver(() => {
   document.querySelectorAll('[data-act="set-theme"]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.value === v)));
 }).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
 
-// library rows: reachable with the keyboard, like the BOM rows
-document.addEventListener('keydown', e => {
-  const tr = e.target.closest && e.target.closest('.lib-tbl tbody tr[data-key]');
-  if (!tr || e.target !== tr) return;
-  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(tr.dataset.key); }
-  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-    const next = e.key === 'ArrowDown' ? tr.nextElementSibling : tr.previousElementSibling;
-    if (next) { e.preventDefault(); next.focus(); }
-  }
-});
-
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
-async function libRun(kind, path, done) {         // build or prepare: busy state while it runs, the result or the error in a note
+async function libRun(kind, path, done) {         // build or prepare (the BOM page's header): busy state while it runs, the result or the error in a note
   if (libBusy) return;
   libBusy = kind;
   libNote = null;
@@ -625,7 +580,7 @@ onAct('altium-create', async (el, d, e) => {
     ALTIUM_DATA = await api('/api/altium/create', {});
     ALTIUM_ERR = null;
     impFor = null;                            // the BOM asks again whether a project is linked
-    if (libNote && /No Altium project is linked/.test(libNote.text)) libNote = null;      // the Library page's message is answered
+    if (libNote && /No Altium project is linked/.test(libNote.text)) libNote = null;      // the build note on the BOM page is answered
     toast('Altium project created: ' + pgBase(ALTIUM_DATA.linked.project_file)
       + (ALTIUM_DATA.warning ? '. ' + ALTIUM_DATA.warning : ''));
   } catch (err) {

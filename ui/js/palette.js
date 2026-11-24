@@ -9,7 +9,7 @@ let pal = null;                   // {scrim, input, ul, q, idx, opts, opener} wh
 function palGoTo() {
   const out = [];
   for (const [id, label] of STAGES) out.push({g: 'Go to', label, d: stageStatus(id).title, fields: [[label, 1], [id, .9]], run: () => go('workspace', id)});
-  for (const id of ['library', 'sources', 'settings', 'skills']) out.push({g: 'Go to', label: PAGE_TITLES[id], fields: [[PAGE_TITLES[id], 1], [id, .9]], run: () => go(id)});
+  for (const id of ['sources', 'settings', 'skills']) out.push({g: 'Go to', label: PAGE_TITLES[id], fields: [[PAGE_TITLES[id], 1], [id, .9]], run: () => go(id)});
   return out;
 }
 function palParts() {

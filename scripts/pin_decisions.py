@@ -255,7 +255,8 @@ def questions(project):
 
 
 def row_buttons(row, line):
-    """Buttons the Library table puts on one row, as ui/js/views/pages.js libAction decides: Accept after a datasheet pass, Verify only
+    """Buttons the library row of a part shows (the quick preview's Pins tab; the Library page's table is the BOM's now), as
+    ui/js/views/pages.js libAction decides: Accept after a datasheet pass, Verify only
     where a datasheet check can decide (a part that is not a passive / diode / connector, with a datasheet linked and no pass yet), and
     Confirm pins only on a row that needs its own look (a mismatch). The other rows are settled by the one line on top."""
     line = line or {}

@@ -1585,7 +1585,7 @@ def _step_note(project, sess, step, done, summary=None, failure=""):
 # Altium's refusals are written for the agent (action names, "ask the student"); the button page shows them to the student
 BUTTON_WORDS = [
     (r"write the netlist first \(netlist\.write\)", "ask the agent in the chat to write the schematic first"),
-    (r"run library\.build (first|again)", r"build the library \1: Library page, Build library"),
+    (r"run library\.build (first|again)", r"build the library \1: BOM page, Build library"),
     (r"draw it first \(altium\.draw_schematic, with the student's agreement\)", "draw it first (Schematic, Draw in Altium)"),
     (r"place the parts first \(altium\.place_pcb\)", "place the parts first (Layout, Place parts)"),
     (r"Import the JLC rules first \(altium\.import_rules\)", "Import the JLC rules first (Rules, Apply rules in Altium)"),
@@ -1600,7 +1600,7 @@ def button_words(text, built=False):
     """A refusal as the student reads it on a step button's page; the chat note keeps the agent's wording. built: the button
     already rebuilt the library in this run, so building again would not help: the part's own library line is the place to look."""
     if built:
-        text = re.sub(r"run library\.build (first|again)", "the library was just built without it: open the part on the Library page", text)
+        text = re.sub(r"run library\.build (first|again)", "the library was just built without it: open the part on the BOM page", text)
     for pat, rep in BUTTON_WORDS:
         text = re.sub(pat, rep, text)
     return text

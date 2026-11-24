@@ -5,6 +5,7 @@ initLayout();
 // The first sheet: ?page= names a page or a stage, ?tab= a stage; with neither, an empty project opens on the idea.
 function initialMain() {
   const p = URLQ.get('page'), t = URLQ.get('tab');
+  if (p && PAGE_MOVED[p]) return stageItem(PAGE_MOVED[p]);      // ?page=library: the Library is part of the BOM now
   if (p && PAGE_TITLES[p]) return pageItem(p);
   if (p && STAGE_TITLES[p]) return stageItem(p);
   if (t && STAGE_TITLES[t]) return stageItem(t);

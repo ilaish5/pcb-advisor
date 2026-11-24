@@ -1,5 +1,5 @@
 /* PCB Advisor UI - inspector: the one right-hand drawer (#detail). core.js renderDetail() asks inspectorHTML() and hides the
-   drawer when it returns ''. It shows what is selected on the BOM, the schematic, the layout or in the library:
+   drawer when it returns ''. It shows what is selected on the BOM, the schematic or the layout:
      - a part         sel (a BOM line key, set by select() in core.js)
      - a net          selNet (a net name)
      - something else selThing: {kind: 'ref', ref, sheet} for a designator that is not in the BOM, or {kind: 'zone', name}
@@ -14,7 +14,7 @@ let inspKeptKey = '';        // what the drawing was last slid aside for
 let inspPinsOpen = false;   // the Pins disclosure stays as the user left it while the selection changes
 let inspPadsMemo = null;    // {text, map}: net -> [{ref, pin}], read from the layout picture
 
-const INSP_VIEWS = ['bom', 'sch', 'pcb', 'library'];
+const INSP_VIEWS = ['bom', 'sch', 'pcb'];
 const INSP_CAP = {where: 8, nets: 12, parts: 40};
 
 /* ---------- which views show it, and what it shows ---------- */
@@ -189,16 +189,21 @@ function inspDesc(l) {
   const mpn = String(l.mpn || '').trim().toLowerCase();
   return [l.value, l.description].filter(x => x && String(x).trim().toLowerCase() !== mpn).filter((x, i, a) => a.indexOf(x) === i).join(' · ');
 }
+/* The Library page's row of the part, in full: the status in one short sentence (the same tag and words as the BOM's Status
+   column), the four model icons, where the models came from, and the converter's own notes (the table never shows those). */
 function inspLibHTML(l) {
-  if (l.library === 'std') return inspSec('Library', '<p class="muted">Altium default library</p>');
-  const e = l.library_entry || {};
-  const tone = {ok: 'ok', review: 'warn', missing: 'bad', error: 'bad'}[l.library] || '';
-  const act = e.verify === 'pass' && !e.accepted ? btn('Accept', {size: 'sm', kind: 'line', accept: l.key})
-    : e.verify !== 'pass' && e.symbol && pinsCanVerify(l) ? btn('Verify', {size: 'sm', kind: 'line', verify: l.key}) : '';
-  const status = tag(({ok: 'Verified', review: 'To review', missing: 'Missing', error: 'Footprint error'})[l.library] || l.library, tone);
+  const r = bomLibRow(l);
+  if (!r && l.library === 'std') return inspSec('Library', '<p class="muted">Altium default library</p>');
+  const row = r || libRowOf(l), e = l.library_entry || {}, st = bomStatus(l);
+  const act = e.verify === 'pass' && !e.accepted ? btn('Accept', {size: 'sm', kind: 'line', accept: l.key, title: 'It passed the datasheet check. Accept it for the library.'})
+    : e.verify !== 'pass' && e.symbol && pinsCanVerify(l) ? btn('Verify', {size: 'sm', kind: 'line', verify: l.key, title: 'Compare the pins with the datasheet'}) : '';
+  const from = [row.source ? 'Source: ' + esc(PG_SOURCE[row.source] || row.source) + (row.vendor_zip ? ` (<span class="m">${esc(row.vendor_zip)}</span>)` : '') : '',
+    e.model_source ? 'Model: ' + esc(e.model_source) : ''].filter(Boolean).join(' · ');
+  const notes = row.build_status ? libIssues(row) : e.issues ? `<div class="lib-issue">${esc(e.issues)}</div>` : '';
   return inspSec('Library',
-    `<div class="insp-lib">${libIconsHTML(libRowOf(l))}</div>` +
-    `${e.model_source ? `<p class="insp-foot">Model: ${esc(e.model_source)}</p>` : ''}${e.issues ? `<p class="insp-foot warn-t">${esc(e.issues)}</p>` : ''}`, status + act + pinsConfirmBtn(l.key, {size: 'sm', kind: 'line'}));
+    `${st.say ? `<p class="insp-say">${esc(st.say)}</p>` : ''}<div class="insp-lib">${libIconsHTML(row)}</div>` +
+    `${from ? `<p class="insp-foot">${from}</p>` : ''}${notes ? `<div class="insp-issues">${notes}</div>` : ''}`,
+    tag(st.text, st.tone) + act + pinsConfirmBtn(l.key, {size: 'sm', kind: 'line'}));
 }
 function inspDatasheetHTML(l) {
   if (l.datasheet) {

@@ -1,14 +1,15 @@
-"""2026-11-20: the Library page's 'no Altium project' note has the Create button, and the DRC summary names each rule once."""
+"""2026-11-20: the library build's 'no Altium project' note has the Create button (on the BOM page, where Build library is now),
+and the DRC summary names each rule once."""
 import pathlib
 import re
 
 from altium import bridge
 
-PAGES = (pathlib.Path(__file__).parent.parent / "ui" / "js" / "views" / "pages.js").read_text(encoding="utf-8")
+BOM = (pathlib.Path(__file__).parent.parent / "ui" / "js" / "views" / "bom.js").read_text(encoding="utf-8")
 
 
 def test_the_library_note_about_a_missing_altium_project_has_create_and_link_buttons():
-    m = re.search(r"const note = .*?: '';", PAGES, re.S)
+    m = re.search(r"function bomLibNote\(\) \{.*?\n\}", BOM, re.S)
     assert m and "No Altium project is linked" in m.group(0)
     assert "act: 'altium-create'" in m.group(0) and "act: 'pv-link'" in m.group(0)
     assert "No Altium project is linked" in (pathlib.Path(bridge.__file__).read_text(encoding="utf-8"))     # the text the build error carries

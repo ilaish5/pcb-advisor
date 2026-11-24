@@ -41,7 +41,10 @@ function lsJson(key) {
 /* ---------- what a sheet can show ---------- */
 const STAGES = [['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic'], ['pcb', 'Layout'], ['rules', 'Rules'], ['outputs', 'Outputs'], ['checks', 'DFM']];
 const STAGE_TITLES = Object.fromEntries(STAGES);
-const PAGE_TITLES = {library: 'Library', sources: 'Sources', skills: 'Skills', settings: 'Settings'};
+const PAGE_TITLES = {sources: 'Sources', skills: 'Skills', settings: 'Settings'};
+/* Pages that were merged into a stage: an old link (?page=library, a saved sheet 'page:library', go('library'), data-nav="library")
+   lands on the stage that holds them now, never on a dead page. The Library is the Models and Status columns of the BOM. */
+const PAGE_MOVED = {library: 'bom'};
 
 const stageItem = id => ({id: 'stage:' + id, kind: 'stage', stage: id, title: STAGE_TITLES[id] || id});
 const pageItem = id => ({id: 'page:' + id, kind: 'page', page: id, title: PAGE_TITLES[id] || id});
@@ -67,12 +70,13 @@ function fileItem(info) {
 const itemKey = it => (it ? it.id : '');
 const viewOf = it => (!it ? '' : it.kind === 'stage' ? it.stage : it.kind === 'page' ? it.page : 'file');
 function itemTitle(it) { return it.kind === 'file' ? it.name : it.title; }
-/* 'stage:bom' | 'page:library' | 'file' (the last document opened) -> item, or null */
+/* 'stage:bom' | 'page:sources' | 'file' (the last document opened) -> item, or null */
 function itemFromRef(ref) {
   if (ref === 'file') return sideMemo.file;
   const m = /^(stage|page):(\w+)$/.exec(String(ref || ''));
   if (!m) return null;
   if (m[1] === 'stage') return STAGE_TITLES[m[2]] ? stageItem(m[2]) : null;
+  if (PAGE_MOVED[m[2]]) return stageItem(PAGE_MOVED[m[2]]);
   return PAGE_TITLES[m[2]] ? pageItem(m[2]) : null;
 }
 
@@ -174,7 +178,7 @@ function navHTML() {
   return switcher + navToggleHTML() +
     `<div class="viewsw seg" role="group" aria-label="Show"><button type="button" data-view="work" aria-pressed="${appView !== 'chat'}">Work</button><button type="button" data-view="chat" aria-pressed="${appView === 'chat'}">Chat</button></div>` +
     `<div class="trace" role="group" aria-label="Design stages">${STAGES.map(stage).join('')}</div>` +
-    `<div class="navsp"></div>${pageBtn('library', 'book')}${pageBtn('sources', 'file')}` +
+    `<div class="navsp"></div>${pageBtn('sources', 'file')}` +
     `<div class="navfoot">` + (typeof updNavBtn === 'function' ? updNavBtn() : '') +
     `<button type="button" class="nitem" data-act="palette" data-nav="search" title="Search (Ctrl K)"><span class="no">${icon('search', 's')}</span><span class="lbl">Search</span><kbd>Ctrl K</kbd></button>` +
     `<button type="button" class="nitem chat-sw" data-act="toggle-chat" data-nav="chat" aria-pressed="${shown}" title="Chat (Ctrl J)"><span class="no">${icon('chat', 's')}</span><span class="lbl">Chat</span><kbd>Ctrl J</kbd></button>` +
@@ -231,7 +235,6 @@ function renderPage(pageId, container) {
   if (pageId === 'workspace') html = renderStage(tab, container);
   else if (pageId === 'outputs') html = outputsHTML(container);
   else if (pageId === 'checks') html = checksHTML(container);
-  else if (pageId === 'library') html = libHTML(container);
   else if (pageId === 'sources') html = sourcesHTML(container);
   else if (pageId === 'skills') html = skillsHTML(container);
   else if (pageId === 'settings') html = settingsHTML(container);
@@ -364,9 +367,10 @@ function savedMain() {
   const it = itemFromRef(lsGet(MAIN_KEY + PROJECT));
   return it && it.kind !== 'file' ? it : null;
 }
-// go('workspace', 'bom'), go('bom'), go('library'): show a stage or a page in the main sheet
+// go('workspace', 'bom'), go('bom'), go('sources'): show a stage or a page in the main sheet; go('library') shows the BOM (PAGE_MOVED)
 function go(p, t) {
   let item = null;
+  if (PAGE_MOVED[p] && !t) p = PAGE_MOVED[p];
   if (t && STAGE_TITLES[t]) item = stageItem(t);
   else if (p === 'workspace') item = stageItem(STAGE_TITLES[tab] ? tab : 'bom');
   else if (STAGE_TITLES[p]) item = stageItem(p);

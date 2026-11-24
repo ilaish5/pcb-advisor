@@ -106,11 +106,10 @@ for (const [kind, mk] of Object.entries(states)) {
   for (const [id, title] of STAGES) out[kind + ':' + id] = to(viewHeader({title}));
 }
 S = {stages: STAGES.map(([sid], i) => ({id: sid, state: 'in_progress', primary: i === 4, next: {label: 'x', act: 'go:' + sid}}))};
-out.library = to(viewHeader({title: 'Library'}));
 out.sources = to(viewHeader({title: 'Sources'}));
 out.settings = to(viewHeader({title: 'Settings'}));
 S = {stages: []};
-out.nostages = to(viewHeader({title: 'Library'}));
+out.nostages = to(viewHeader({title: 'Sources'}));
 console.log(JSON.stringify(out));
 """
     out = _run(script, tmp_path)
@@ -121,7 +120,7 @@ console.log(JSON.stringify(out));
                 assert out[f"{kind}:{sid}"] == order[i + 1], (kind, sid, out)
         assert out[f"{kind}:checks"] == ""         # DFM is the last stage: nothing comes after it
     assert out["other:sch"] == "bom"               # the server's own target still wins
-    assert out["library"] == "rules" and out["sources"] == "rules"     # the stage where the work goes on
+    assert out["sources"] == "rules"     # the stage where the work goes on (the Library is part of the BOM stage now, no page)
     assert out["settings"] == "" and out["nostages"] == ""
 
 

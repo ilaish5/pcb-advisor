@@ -1,5 +1,6 @@
 """
-Static checks for the Library, Sources and Settings pages and the document viewer
+Static checks for the library pieces (the Library page is the BOM's Models and Status columns now), the Sources and Settings
+pages and the document viewer
 (ui/js/views/pages.js, ui/js/viewer.js, ui/styles/pages.css, ui/styles/viewer.css).
 
 They pin the structure of the redesign: one primary button per view, empty, loading and error states, Settings that saves
@@ -13,6 +14,7 @@ from ui_source import UI, ui_js
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 PAGES = (UI / "js" / "views" / "pages.js").read_text(encoding="utf-8")
+BOM = (UI / "js" / "views" / "bom.js").read_text(encoding="utf-8")
 VIEWER = (UI / "js" / "viewer.js").read_text(encoding="utf-8")
 SHELL = (UI / "js" / "shell.js").read_text(encoding="utf-8")
 PAGES_CSS = (UI / "styles" / "pages.css").read_text(encoding="utf-8")
@@ -48,10 +50,10 @@ def test_no_hebrew_literals_only_the_entity():
 
 
 def test_one_primary_button_per_view():
-    """Library and Sources each have exactly one primary action; Settings has none (it saves as you type)."""
-    lib = func_body(PAGES, "libHTML")
+    """The BOM (with the library merged in) and Sources each have exactly one primary action; Settings has none (it saves as you type)."""
+    lib = func_body(BOM, "bomHeader")
     src = func_body(PAGES, "sourcesHTML")
-    assert lib.count("kind: 'pri'") == 1 and "Build library" in lib
+    assert lib.count("kind: t.lines ? 'pri' : 'line'") == 1 and lib.count("'pri'") == 1 and "Build library" in lib     # outlined while the BOM is empty
     assert src.count("kind: 'pri'") == 1 and "Add" in src
     for settings in (func_body(PAGES, "settingsBody"), func_body(PAGES, "setAgentHTML"), func_body(PAGES, "setAltiumHTML")):
         assert "kind: 'pri'" not in settings
@@ -59,7 +61,8 @@ def test_one_primary_button_per_view():
 
 
 def test_every_page_has_empty_loading_and_error_states():
-    assert "emptyState(" in func_body(PAGES, "libHTML"), "Library needs an empty state"
+    assert "emptyState(" in func_body(BOM, "bomHTML"), "the BOM (and its models) needs an empty state"
+    assert "function libHTML" not in PAGES, "there is no Library page any more"
     src = func_body(PAGES, "sourcesHTML")
     assert "emptyState(" in src and "loadingLine(" in src, "Sources needs an empty state and a busy state while adding"
     settings = func_body(PAGES, "settingsBody")
@@ -176,15 +179,20 @@ def test_server_values_are_escaped():
 
 
 def test_library_row_actions_and_keyboard():
+    """The Library page's per-row actions live on in the part panel and the quick preview; the row is a BOM row."""
     action = func_body(PAGES, "libAction")
-    assert "accept:" in action and "verify:" in action, "one quiet action: Verify, then Accept"
+    assert "accept:" in action and "verify:" in action, "one quiet action: Verify, then Accept (the quick preview's Pins tab)"
     assert "Accept" in action and "Verify" in action
-    row = func_body(PAGES, "libRow")
+    panel = func_body((UI / "js" / "views" / "inspector.js").read_text(encoding="utf-8"), "inspLibHTML")
+    assert "btn('Accept'" in panel and "btn('Verify'" in panel and "pinsConfirmBtn(l.key" in panel
+    row = func_body(BOM, "bomRow")
     assert 'tabindex="0"' in row and "data-key=" in row, "a row opens the inspector and takes keyboard focus"
-    assert ".lib-tbl tbody tr[data-key]" in PAGES and "'Enter'" in PAGES
-    assert "act: 'libexport'" in func_body(PAGES, "libHTML")
-    # the install steps are a disclosure shown after an export, and the old export card is gone
+    assert ".bom-view tbody tr[data-key]" in BOM and "'Enter'" in BOM
+    assert "function libRow(" not in PAGES and ".lib-tbl" not in PAGES
+    assert "act: 'libexport'" in func_body(BOM, "bomHeader") and "act: 'libprepare'" in func_body(BOM, "bomHeader")
+    # the install steps are a disclosure shown after an export, above the BOM table now; the old export card is gone
     assert "<details class=\"disc lib-how\">" in func_body(PAGES, "libExportHTML")
+    assert "libExportHTML()" in func_body(BOM, "bomTop")
     assert "closecard" not in PAGES
 
 

@@ -145,7 +145,7 @@ def test_next_is_rendered_once_in_the_slot_for_every_kind_of_header(tmp_path):
         "const stageNextBtn = id => btn('Next: Schematic', {kind: 'line', act: 'stage-next', stage: id, to: 'sch'});\n"
         "const pageNextBtn = () => btn('Next: Rules', {kind: 'line', act: 'stage-next', stage: 'rules', to: 'rules'});\n"
         "const out = {bom: viewHeader({title: 'BOM', actions: btn('Check', {act: 'x'}), primary: btn('Go', {kind: 'pri', act: 'y'})}),\n"
-        "  lib: viewHeader({title: 'Library'}), set: viewHeader({title: 'Settings'}),\n"
+        "  src: viewHeader({title: 'Sources'}), set: viewHeader({title: 'Settings'}),\n"
         "  idea: viewHeader({title: 'Idea', next: btn('Next: BOM', {kind: 'pri', act: 'idea-next'}), primary: btn('Confirm idea', {kind: 'pri', act: 'c'})}),\n"
         "  ideaOpen: viewHeader({title: 'Idea', primary: btn('Confirm idea', {kind: 'pri', act: 'c'})})};\n"
         "console.log(JSON.stringify(out));")
@@ -153,7 +153,7 @@ def test_next_is_rendered_once_in_the_slot_for_every_kind_of_header(tmp_path):
     r = subprocess.run([shutil.which("node"), str(tmp_path / "t.js")], capture_output=True, text=True, encoding="utf-8")
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
-    for key, text in (("bom", "Next: Schematic"), ("lib", "Next: Rules"), ("idea", "Next: BOM")):
+    for key, text in (("bom", "Next: Schematic"), ("src", "Next: Rules"), ("idea", "Next: BOM")):
         html = out[key]
         slot = html[html.index('<div class="vh-next">'):]
         assert text in slot and html.count("Next:") == 1, key                                    # once, and in the slot

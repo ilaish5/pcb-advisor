@@ -1,6 +1,6 @@
 """
-The BOM view (ui/js/views/bom.js, ui/styles/bom.css): a header with one primary, a table without inputs, a tag column
-that names problems only, and a right-hand drawer for alternatives, price comparison and the Altium import.
+The BOM view (ui/js/views/bom.js, ui/styles/bom.css): a header with one primary, a table without inputs (one row per line, with
+its models: the Library page is merged in), and a right-hand drawer for alternatives, price comparison and the Altium import.
 
 The UI has no JS test runner here, so these read the UI source (tests/ui_source.py) the way the other UI tests do;
 the behaviour itself was driven in headless Edge when it was written (scripts in the redesign scratchpad).
@@ -47,7 +47,8 @@ def test_the_table_has_no_inputs_and_no_inline_styles():
 def test_the_table_columns_and_the_row_contract():
     html = _fn("bomHTML")
     assert 'class="tbl rows bom-tbl"' in html
-    assert re.findall(r"<th[^>]*>([^<]+)</th>", html) == ["Ref", "Part", "Package", "LCSC", "Qty", "Stock", "Unit", "Per board"]
+    # one table for the ordering data and the Altium models (the Library page is merged in): docs/mockups/parts-merged.html
+    assert re.findall(r"<th[^>]*>([^<]+)</th>", html) == ["Ref", "Part", "Qty", "Models", "Supply", "Status"]
     row = _fn("bomRow")
     assert 'data-key="${esc(l.key)}"' in row and 'tabindex="0"' in row             # core selects a part by tr[data-key]
     assert "refsLabel(refs)" in row and 'title="${esc(refs.join(\', \'))}"' in row  # a short label, the full list in the title
@@ -65,24 +66,32 @@ def test_the_table_scrolls_inside_the_sheet_with_its_head_pinned():
     assert ".bom-tbl td{white-space:nowrap}" in CSS
 
 
-def test_the_tag_column_names_problems_only():
-    problems = _fn("bomProblems")
-    for text in ("Out of stock", "Low stock", "Code is another part", "No exact match", "Not checked", "No model"):
-        assert f"text: '{text}'" in problems, text
-    assert "text: 'Extended'" not in problems and "Basic" not in problems and "Preferred" not in problems
-    # a model still to review is the normal state of a new BOM (the meta line counts it): no tag on every row
-    assert "text: 'To verify'" not in problems
-    assert "if (!q) return [];" in problems                # a line that is not fitted has nothing to flag
-    # the library type is a tooltip on the part, and the meta line sums the fee
-    assert "l.library_type" in _fn("bomRow")
-    assert "extended fees" in _fn("bomHeader")
+def test_the_supply_cell_is_one_tag_worst_first():
+    sup = _fn("bomSupply")
+    for text in ("Not checked", "No stock", "Low stock", "Extended fee", "In stock"):
+        assert f"text: '{text}'" in sup, text
+    order = [sup.index(f"text: '{t}'") for t in ("Not checked", "No stock", "Low stock", "Extended fee", "In stock")]
+    assert order == sorted(order)                           # the worst answer wins
+    assert "if (!q) return {text: '', risks: []};" in sup   # a line that is not fitted or not bought has no supply tag
+    # the supplier risks that are not about stock are counted beside the tag, and named in its title
+    assert "CODE_RISK" in sup and "'no exact MPN match'" in sup
+    assert "'+' + sup.risks.length" in _fn("bomRow")
 
 
-def test_a_row_with_several_problems_shows_the_worst_and_a_count():
-    tags = _fn("bomTags")
-    assert "ps[0]" in tags and "'+' + rest.length" in tags and "more problem" in tags      # the rest is named in the tooltip
-    assert "slice(0, 2)" not in tags                                                    # never stacked: the row keeps its height
-    assert "out.sort((a, c) => a.rank - c.rank)" in _fn("bomProblems")                  # worst first
+def test_the_status_cell_is_one_tag_from_the_build_or_the_pins():
+    st = _fn("bomStatus")
+    assert "libBuildTag(r)" in st and "PG_LIB[r.status]" in st      # the Library page's own words
+    for text in ("Missing", "Footprint error", "Pins conflict", "Verify pins", "Accepted risk", "Altium default"):
+        assert f"text: '{text}'" in st, text
+    # every status says itself in one short sentence (the long converter text is in the part panel, never in the table)
+    assert st.count("say:") >= 8 and "issue_list" not in st and "libIssues" not in BOM
+    assert "tag(st.text, st.tone, st.say" in _fn("bomRow")
+
+
+def test_the_models_cell_draws_the_library_icons_without_the_built_word():
+    m = _fn("bomModels")
+    assert "libIconsHTML(r || libRowOf(l), {built: false})" in m
+    assert "l.library === 'std'" in m                     # an Altium default part has no models of its own
 
 
 def test_a_placeholder_dash_is_not_shown_as_an_mpn():
@@ -100,9 +109,8 @@ def test_the_part_column_takes_what_is_left_so_the_table_never_outgrows_its_shee
     assert '<th class="c-part">Part</th>' in _fn("bomHTML") and '<td class="c-part"' in _fn("bomRow")
 
 
-def test_a_narrow_sheet_drops_the_columns_that_can_be_read_elsewhere():
-    assert "@container (max-width:920px){.bom-tbl .c-unit{display:none}}" in CSS
-    assert "@container (max-width:850px){.bom-tbl .c-pkg{display:none}}" in CSS
+def test_a_narrow_sheet_drops_the_row_icons_first():
+    assert "@container (max-width:560px){.bom-tbl th:last-child,.bom-tbl td:last-child{display:none}}" in CSS
     assert "container-type:inline-size" in CSS
     # not on .bom-view: layout containment there would trap the fixed-position header menus
     assert not re.search(r"\.bom-view\{[^}]*container-type", CSS)
@@ -112,7 +120,7 @@ def test_a_narrow_sheet_drops_the_columns_that_can_be_read_elsewhere():
 
 def test_the_header_has_one_primary_and_the_rest_in_menus():
     head = _fn("bomHeader")
-    assert head.count("kind: 'pri'") == 1 and "'Check stock'" in head and "act: 'check-all'" in head
+    assert head.count("kind: t.lines ? 'pri' : 'line'") == 1 and head.count("'pri'") == 1 and "'Check stock'" in head and "act: 'check-all'" in head and "act: 'libbuild'" in head
     assert "viewHeader({title: 'BOM'" in head
     for needle in ("label: BOM_EXPORTS.jlc", "label: BOM_EXPORTS.generic", "fmt: 'jlc'", "fmt: 'generic'",
                    "label: 'Compare prices', act: 'compare'", "bomLinked() && {label: 'Import from Altium', act: 'imp-open'}"):

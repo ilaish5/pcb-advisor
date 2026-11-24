@@ -131,7 +131,11 @@ def test_header_demotes_the_page_primary_when_next_is_the_filled_one(tmp_path):
 # ---- 48: LCSC code and part type in the table ----
 def test_the_bom_table_shows_the_lcsc_code_and_the_part_type():
     bom = _src("js/views/bom.js")
-    assert "bomLcscCell(l)" in _fn(bom, "bomRow") and 'class="c-lcsc"' in bom
+    # the merged table has no LCSC column: the code and the type are on the supply card a click on the Supply tag opens,
+    # and in the part panel; an Extended part says so on the row itself (its Supply tag reads Extended fee)
+    card = _fn(bom, "bomSupCardHTML")
+    assert "esc(l.lcsc)" in card and "tag(lt, bomExt(l)" in card
+    assert "bomExt(l)" in _fn(bom, "bomSupply") and "'Extended fee'" in _fn(bom, "bomSupply")
     assert "l.library_type" in bom and "LCSC.library_type" in bom
     assert "bomLibType(l)" in _src("js/views/inspector.js")
 

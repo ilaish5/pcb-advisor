@@ -685,7 +685,7 @@ def test_a_refusal_on_a_button_page_is_in_the_students_words(server, empty, monk
 
 def test_button_words_leave_the_library_hint_readable_and_other_text_alone():
     assert serve.button_words("No footprint in the project library for R1: run library.build first.") == \
-        "No footprint in the project library for R1: build the library first: Library page, Build library."
+        "No footprint in the project library for R1: build the library first: BOM page, Build library."
     assert serve.NEEDS_LIBRARY.search("run library.build first")        # the retry still reads the bridge's own text
     assert serve.button_words("Altium refused a step: nothing was changed") == "Altium refused a step: nothing was changed"
 
@@ -697,7 +697,7 @@ def test_after_the_button_rebuilt_the_library_it_does_not_send_the_student_to_bu
     monkeypatch.setattr(bridge, BRIDGE_FN["draw"], refuse)
     code, body = call(server, "POST", ENDPOINTS["draw"], empty, {})
     assert code == 400 and "library.build" not in body["error"] and "Build library" not in body["error"]
-    assert "(the library was just built without it: open the part on the Library page)" in body["error"]
+    assert "(the library was just built without it: open the part on the BOM page)" in body["error"]
 
 
 def test_the_layout_page_offers_place_parts_before_a_pcbdoc_exists():

@@ -1,5 +1,6 @@
-/* PCB Advisor UI - BOM view: the parts table, the header actions, and the right-hand drawer (alternatives, price
-   comparison, import from Altium). A part is edited in the inspector (inspector.js); the change handler for its
+/* PCB Advisor UI - BOM view: the one parts table (ordering data and Altium models of every line: the Library page is
+   merged into it), the header actions, the supply card, and the right-hand drawer (alternatives, price comparison, import
+   from Altium). A part is edited in the inspector (inspector.js); the change handler for its
    role / note / MPN inputs is at the end of this file and works wherever the input sits. */
 
 const CODE_RISK = 'LCSC code is another part';    // store.CODE_RISK
@@ -33,69 +34,87 @@ function bomStamp(at) {     // "2026-10-14 10:20" -> {text: '14 Oct 10:20', stal
   if (isNaN(d)) return {text: String(at), stale: false};
   return {text: whenText(at, true), stale: Date.now() - d.getTime() > BOM_STALE_MS};
 }
-/* The problems of one line, worst first. A line that is not fitted or not bought has none. Only a problem gets a tag:
-   a healthy line has an empty cell. The library type (Basic, Preferred, Extended) is not a problem: it is in the
-   row's tooltip, the meta line sums the extended fee, and the inspector shows the type. */
-function bomProblems(l, q, b) {
-  if (!q) return [];
-  const risks = l.risk || [], out = [];
+/* ---------- the parts table: one row per BOM line, with its ordering data and its Altium models ----------
+   The BOM and the Library were two tables of the same lines. They are one now: Ref, Part, Qty, Models (the four icons of
+   pages.js libIconsHTML), Supply (one tag; a click opens the supply card), Status (one tag from the library build or the pins).
+   The long text (the converter's notes, every supplier, the datasheet) is in the part panel (inspector.js) and the supply card. */
+const bomLibType = l => l.library_type || (l.supply && l.supply.LCSC && l.supply.LCSC.library_type) || '';
+const bomExt = l => /^ext/i.test(bomLibType(l));
+const bomLibRow = l => (S.library || []).find(r => r.line === l.key) || null;
+/* Supply: one tag. Worst first: not checked, no stock, low stock, then Extended (a fee per part type), else in stock.
+   The supplier risks that are not about stock (the code is another part, no exact MPN match) are counted beside it. */
+function bomSupply(l, q, b) {
+  if (!q) return {text: '', risks: []};
+  const risks = l.risk || [], extra = [];
+  if (risks.includes(CODE_RISK)) extra.push({text: 'Code is another part', title: l.supply?.LCSC?.code_mismatch || 'The LCSC code belongs to another part'});
+  if (risks.includes('no exact MPN match')) extra.push({text: 'No exact match', title: 'No supplier lists exactly this MPN'});
+  let s;
   if (l.supply == null) {
     const lookup = (l.mpn || '').trim() || l.lcsc;
-    out.push({rank: 5, text: 'Not checked', title: lookup ? 'Press Check stock' : 'Add an MPN to check stock'});
-  } else if (!b || risks.includes('out of stock')) {
-    out.push({rank: 0, text: 'Out of stock', tone: 'bad', title: `No supplier has ${q} in stock`});
-  } else if (risks.includes('low stock')) {
-    out.push({rank: 3, text: 'Low stock', tone: 'warn', title: `${num(b.stock)} in stock`});
+    s = {text: 'Not checked', tone: '', title: lookup ? 'Not checked yet. Press Check stock.' : 'Add an MPN to check stock.'};
+  } else if (!b || risks.includes('out of stock')) s = {text: 'No stock', tone: 'bad', title: `No supplier has ${q} in stock`};
+  else if (risks.includes('low stock')) s = {text: 'Low stock', tone: 'warn', title: `${num(b.stock)} in stock`};
+  else if (bomExt(l)) s = {text: 'Extended fee', tone: 'warn', title: `In stock (${num(b.stock)}). Extended part: JLC charges a fee for each type, once per order`};
+  else s = {text: 'In stock', tone: 'ok', title: `${num(b.stock)} in stock at ${b.s}`};
+  return Object.assign(s, {risks: extra});
+}
+/* Status: one tag and one short sentence (the tag's title in the table; the part panel shows it, with the converter's full notes).
+   A problem with the pins or the build comes first; a line the build made fine says how far it got. */
+function bomStatus(l) {
+  const r = bomLibRow(l);
+  if (!r && l.library === 'std') return {text: 'Altium default', tone: '', say: 'A part of the Altium default library: nothing to build.'};
+  const bs = r ? r.build_status : '';
+  if (bs === 'missing') return {text: 'Missing', tone: 'bad', say: 'The library build made no model for this part.'};
+  if (bs === 'error' || l.library === 'error') return {text: 'Footprint error', tone: 'bad', say: 'The footprint has errors, so it is not drawn, placed or made.'};
+  if (l.pins_status === 'mismatch') return {text: 'Pins conflict', tone: 'bad', say: 'The pins differ from the datasheet: look at them and confirm or fix them.'};
+  if (l.pins_status === 'unverified') return {text: 'Verify pins', tone: 'warn', say: 'The pins are not checked against a datasheet yet.'};
+  if (!r) return l.library === 'missing' ? {text: 'Missing', tone: 'bad', say: 'No symbol or footprint yet. Press Build library.'} : {text: 'To review', tone: 'warn', say: 'Not reviewed yet.'};
+  if (l.pin_decision) return {text: 'Accepted risk', tone: 'warn', say: 'You accepted these pins without a datasheet pin table.'};
+  if (bs) {
+    const [text, tone] = libBuildTag(r);
+    const say = r.built ? (bs === 'warn' ? 'Built, with notes to check.' : 'In the compiled library.')
+      : bs === 'warn' ? 'Ready to build, with notes to check.' : 'Press Build library to put it in Altium.';
+    return {text, tone, say};
   }
-  if (risks.includes(CODE_RISK)) out.push({rank: 1, text: 'Code is another part', tone: 'warn', title: l.supply?.LCSC?.code_mismatch || ''});
-  if (risks.includes('no exact MPN match')) out.push({rank: 2, text: 'No exact match', tone: 'warn', title: 'No supplier lists exactly this MPN'});
-  // A model still to review is the normal state of a new or imported BOM: the meta line counts those, the Library page
-  // lists them. Only a missing model is a problem worth a tag on the row.
-  if (l.library === 'error') out.push({rank: 0, text: 'Footprint error', tone: 'bad', title: 'The footprint of this part has errors, so it is not drawn, placed or made. Open the Library page: pick another LCSC code or let the tool generate the footprint.'});
-  if (l.library === 'missing') out.push({rank: 4, text: 'No model', tone: 'warn', title: 'No symbol or footprint in your Altium library for this part yet. Open the Library page and add or import one, or ask the agent to.'});
-  if (l.pins_status === 'unverified') out.push({rank: 6, text: 'unverified', title: l.pins_issues || 'Pins not checked against a datasheet'});
-  if (l.pin_decision) out.push({rank: 7, text: 'Accepted risk', tone: 'warn', title: 'You accepted these pins' + (l.pin_decision.ts ? ' on ' + String(l.pin_decision.ts).slice(0, 10) : '') + ', not verified by a datasheet pin table. Revoke it in the part panel.'});
-  if (l.pins_status === 'mismatch') out.push({rank: 3, text: 'pins conflict', tone: 'warn', title: 'Pins differ from the datasheet: ' + (l.pins_issues || '')});
-  return out.sort((a, c) => a.rank - c.rank);
+  const [text, tone] = PG_LIB[r.status] || [LIBTXT[r.status] || r.status, ''];
+  const say = {ok: 'Symbol and footprint verified.', review: 'Not reviewed yet: verify or accept it.',
+    missing: 'No symbol or footprint yet. Press Build library.'}[r.status] || '';
+  return {text, tone, say};
 }
-function bomTags(ps) {      // the worst problem; the others are counted, and named in the tooltip, so a row keeps its height
-  if (!ps.length) return '';
-  const rest = ps.slice(1);
-  return tag(ps[0].text, ps[0].tone, ps[0].title) + (rest.length ? tag('+' + rest.length, '', `${rest.length} more problem${rest.length === 1 ? '' : 's'} on this line: ` + rest.map(p => p.text).join(', ') + '. Click the row to see them.') : '');
-}
-/* The JLC code and the part type are data of the line, so the table shows them (they were only in a tooltip): the code in mono,
-   then Basic / Preferred / Extended. Extended is the one that costs a fee, so it is the one that gets a tone. */
-const bomLibType = l => l.library_type || (l.supply && l.supply.LCSC && l.supply.LCSC.library_type) || '';
-function bomLcscCell(l) {
-  const code = (l.lcsc || '').trim(), lt = bomLibType(l);
-  if (!code && !lt) return '<span class="muted">·</span>';
-  return (code ? `<span class="m">${esc(code)}</span>` : '') + (lt ? ' ' + tag(lt, /^ext/i.test(lt) ? 'warn' : '', /^ext/i.test(lt) ? 'Extended part: JLC charges a fee for each type, once per order' : '') : '');
+function bomModels(l) {
+  const r = bomLibRow(l);
+  if (!r && l.library === 'std') return '<span class="muted" title="Altium default library: no models of its own">·</span>';
+  return libIconsHTML(r || libRowOf(l), {built: false});
 }
 function bomRow(l) {
   const q = qty(l), b = best(l), refs = l.refs || [], label = refsLabel(refs);
   const real = v => (v && !/^[-–—\s]+$/.test(v)) ? v : '';        // "-" and an em dash stand for "none"
   const mpn = real(l.mpn), maker = real(l.manufacturer);
   const main = l.value || l.description || mpn || '';
-  const sub = [mpn && mpn !== main ? `<span class="m">${esc(mpn)}</span>` : '', esc(maker)].filter(Boolean).join(' · ');
-  const noStock = q > 0 && l.supply != null && !b;
-  const maxStock = Math.max(0, ...Object.values(l.supply || {}).map(s => s.stock || 0));
-  const stock = !q || l.supply == null ? '—' : num(b ? b.stock : maxStock);
-  const cost = q && l.cost_per_board > 0 ? l.cost_per_board : null;
+  const sub = mpn && mpn !== main ? mpn : maker;
+  const sup = bomSupply(l, q, b), st = bomStatus(l);
   const picked = sel === l.key || (bomDrawer && bomDrawer.line === l.key);
+  const supCell = sup.text ? `<button type="button" class="sup-btn" data-act="sup-open" data-line="${esc(l.key)}" aria-haspopup="dialog" aria-expanded="${bomSupOpen === l.key}" aria-label="${esc(`Supply of ${label}: ${sup.text}. Open the stock and supplier details`)}" title="${esc(sup.title + '. Click for every supplier')}">${tag(sup.text, sup.tone)}</button>` +
+      (sup.risks.length ? tag('+' + sup.risks.length, 'warn', sup.risks.map(x => x.text).join(', ') + '. Click the supply tag to see why.') : '')
+    : '<span class="muted">·</span>';
   return `<tr data-key="${esc(l.key)}" tabindex="0" class="${picked ? 'sel' : ''}${q ? '' : ' off'}">
     <td class="bom-ref" title="${esc(refs.join(', '))}">${esc(label)}</td>
-    <td class="c-part" title="${esc([l.description, mpn, maker, l.library_type].filter(Boolean).join(' · '))}"><span class="main">${esc(main)}</span>${sub ? `<span class="sub">${sub}</span>` : ''}</td>
-    <td class="c-pkg"><span class="clip" title="${esc(l.package)}">${esc(l.package)}</span></td>
-    <td class="c-lcsc">${bomLcscCell(l)}</td>
+    <td class="c-part" title="${esc([l.description, mpn, maker, l.package, l.library_type].filter(Boolean).join(' · '))}"><span class="main">${esc(main)}</span>${sub ? `<span class="sub m">${esc(sub)}</span>` : ''}</td>
     <td class="num">${l.dnp ? 'DNP' : q || '—'}</td>
-    <td class="num${noStock ? ' bad-t' : ''}"${b ? ` title="${esc(b.s)}"` : ''}>${stock}</td>
-    <td class="num c-unit">${b && q ? money(b.price) : '—'}</td>
-    <td class="num"${b && q ? ` title="${esc(money(b.price))} each"` : ''}>${money(cost)}</td>
-    <td class="tags">${bomTags(bomProblems(l, q, b))}</td>
+    <td class="c-mdl">${bomModels(l)}</td>
+    <td class="c-sup">${supCell}</td>
+    <td class="c-st">${tag(st.text, st.tone, st.say + (st.tone ? ' Click the row for the details.' : ''))}</td>
     <td><div class="row-acts">${btn('', {icon: 'chat', size: 'sm', title: `Ask about ${label}`, act: 'ask-part', line: l.key})}${btn('', {html: BOM_SWAP, cls: 'icon', size: 'sm', title: 'Alternatives', 'aria-label': `Alternatives for ${label}`, act: 'alts', line: l.key})}</div></td></tr>`;
 }
+/* Two header buttons, side by side and always there: Check stock (the BOM's) and Build library (the models'). viewHeader has one
+   primary, so Build library is the primary and Check stock the last action; the stage's Next keeps its own slot. */
 function bomHeader(t) {
-  if (!t.lines) return viewHeader({title: 'BOM'});
+  const lib = S.library || [];
+  const check = btn(bomChecking ? 'Checking…' : 'Check stock', {kind: 'line', act: 'check-all', disabled: bomChecking || !t.lines, title: 'Look up stock and prices for every line'});
+  // an empty BOM has nothing to build: both stay (disabled, outlined) and the empty state's own button is the one filled button
+  const build = btn(libBusy === 'build' ? 'Building…' : 'Build library', {kind: t.lines ? 'pri' : 'line', act: 'libbuild', disabled: !!libBusy || !t.lines,
+    title: 'Download, convert and generate the models, compile the IntLib in Altium and install it'});
+  if (!t.lines) return viewHeader({title: 'BOM', actions: check, primary: build});
   const fee = t.extended_fee || 0, cost = t.cost_per_board ?? t.cost ?? 0;
   const meta = metaLine([
     {n: t.lines, label: t.lines === 1 ? 'line' : 'lines'},
@@ -107,17 +126,109 @@ function bomHeader(t) {
     {n: t.checking, label: 'not checked', tone: 'warn', title: 'Lines with no stock answer yet'},
     {n: t.out_of_stock, label: 'out of stock', tone: 'bad', title: 'Lines no supplier has enough of'},
     {n: t.library_error, label: 'footprint error', tone: 'bad', title: 'Parts whose footprint has errors: they are not drawn, placed or made until you pick another LCSC code or let the tool generate the footprint.'},
-    {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model nobody has confirmed yet. Open the Library page and accept or fix each one.'},
+    {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model nobody has confirmed yet. Open each part (its Status says what is left) and accept or fix it.'},
   ]);
   const actions = menu({label: 'Export', iconAfter: 'chev'}, [
       {label: BOM_EXPORTS.jlc, act: 'export', attrs: {fmt: 'jlc'}},
-      {label: BOM_EXPORTS.generic, act: 'export', attrs: {fmt: 'generic'}}]) +
+      {label: BOM_EXPORTS.generic, act: 'export', attrs: {fmt: 'generic'}},
+      'sep',
+      {label: 'Library package', act: 'libexport', disabled: !!libBusy || !lib.length, title: 'Write a package of the library files to compile yourself'}]) +
     menu({icon: 'more', title: 'More'}, [
       {label: 'Compare prices', act: 'compare'},
-      bomLinked() && {label: 'Import from Altium', act: 'imp-open'}]);
-  const primary = btn(bomChecking ? 'Checking…' : 'Check stock', {kind: 'pri', act: 'check-all', disabled: bomChecking, title: 'Look up stock and prices for every line'});
-  return viewHeader({title: 'BOM', meta, actions, primary});
+      bomLinked() && {label: 'Import from Altium', act: 'imp-open'},
+      {label: 'Prepare library only', act: 'libprepare', disabled: !!libBusy, title: 'Get and convert the models without touching Altium'}]) +
+    check;
+  return viewHeader({title: 'BOM', meta, actions, primary: build});
 }
+/* what the Library page said above its table: the build's note, the pins waiting for a decision, the export's install steps, the icon legend */
+function bomLibNote() {
+  if (libBusy === 'build') return banner({tone: 'info', text: 'Building in Altium. It can take a few minutes and Altium may flash while it works.'});
+  if (!libNote) return '';
+  return banner({tone: libNote.tone, text: libNote.text, actions: /No Altium project is linked/.test(libNote.text)
+    ? btn('Create an Altium project', {size: 'sm', act: 'altium-create', title: 'Altium makes the project, an empty PCB and one sheet per planned sheet, with no components'}) + btn('Link a project', {size: 'sm', act: 'pv-link'}) : ''});
+}
+function bomTop() {
+  const html = bomLibNote() + pinsWaitingBar() + libExportHTML() + libLegendHTML();
+  return `<div class="bom-top">${html}</div>`;
+}
+
+/* ---------- the supply card: every supplier's stock and price, the LCSC code and type, when it was checked ----------
+   It opens from the Supply cell (a button: Enter or a click), sits by it, and closes on Esc, an outside click or its X;
+   the focus goes back to the cell. It lives in <body>, so a redraw of the table does not take it away: the redraw paints it again. */
+let bomSupOpen = null;      // the line whose supply card is open
+function bomSupCardHTML(l) {
+  const q = qty(l), b = best(l), refs = l.refs || [], label = refsLabel(refs) || l.key;
+  const sup = bomSupply(l, q, b), lt = bomLibType(l);
+  let at = '';
+  for (const v of Object.values(l.supply || {})) if (v && (v.checked_at || '') > at) at = v.checked_at;
+  const facts = kv([
+    ['LCSC', l.lcsc ? `<span class="m">${esc(l.lcsc)}</span>${lt ? ' ' + tag(lt, bomExt(l) ? 'warn' : '', bomExt(l) ? 'Extended part: JLC charges a fee for each type, once per order' : 'JLC part type') : ''}` : '<span class="muted">none</span>', true],
+    lt && !l.lcsc ? ['JLC type', lt] : null,
+    ['Quantity', l.dnp ? 'DNP (not fitted)' : q ? `${q} per board` : 'not bought'],
+    ['Unit price', b && q ? `${money(b.price)} at ${b.s}` : '—'],
+    ['Per board', q && l.cost_per_board > 0 ? money(l.cost_per_board) : '—'],
+    ['Checked', at ? inspWhen(at) : 'not yet'],
+  ]);
+  const risks = sup.risks.map(x => `<p class="warn-t">${esc(x.text)}${x.title ? ': ' + esc(x.title) : ''}</p>`).join('');
+  const stock = q ? inspStockHTML(l) : '<p class="muted">Not fitted or not bought: nothing to order.</p>';
+  return `<div class="sup-h"><div><h2 id="sup-pop-t">${esc(label)}</h2><p class="m">${esc(l.mpn || l.value || '')}</p></div>` +
+    btn('', {icon: 'x', size: 'sm', title: 'Close (Esc)', act: 'sup-close'}) + `</div>` +
+    `<div class="sup-b">${sup.text ? `<p>${tag(sup.text, sup.tone)} <span class="muted">${esc(sup.title)}</span></p>` : ''}${facts}${risks}${stock}</div>` +
+    `<div class="sup-f">${btn('Check stock', {kind: 'line', size: 'sm', act: 'check-all', disabled: bomChecking})}${btn('Alternatives', {kind: 'line', size: 'sm', act: 'alts', line: l.key})}</div>`;
+}
+function bomSupPlace(pop, anchor) {
+  const a = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(8, Math.min(a.right - w, window.innerWidth - w - 8));
+  const below = a.bottom + 6 + h <= window.innerHeight - 8;
+  pop.style.left = left + 'px';
+  pop.style.top = (below ? a.bottom + 6 : Math.max(8, a.top - 6 - h)) + 'px';
+}
+function bomSupAnchor(key) { return document.querySelector(`.bom-view .sup-btn[data-line="${CSS.escape(key)}"]`); }
+function bomSupPaint() {
+  const pop = document.getElementById('sup-pop');
+  const l = bomSupOpen && lineByKey(bomSupOpen), anchor = l && bomSupAnchor(bomSupOpen);
+  if (!l || !anchor) { if (pop) bomSupClose(false); return; }
+  const had = pop && pop.contains(document.activeElement);
+  const el = pop || document.createElement('div');
+  if (!pop) {
+    el.id = 'sup-pop';
+    el.className = 'sup-pop';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-labelledby', 'sup-pop-t');
+    el.tabIndex = -1;
+    document.body.appendChild(el);
+  }
+  el.innerHTML = bomSupCardHTML(l);
+  bomSupPlace(el, anchor);
+  anchor.setAttribute('aria-expanded', 'true');
+  if (!pop || had) el.focus({preventScroll: true});
+}
+function bomSupClose(refocus) {
+  const pop = document.getElementById('sup-pop'), key = bomSupOpen;
+  bomSupOpen = null;
+  if (pop) pop.remove();
+  const a = key && bomSupAnchor(key);
+  if (a) { a.setAttribute('aria-expanded', 'false'); if (refocus) a.focus({preventScroll: true}); }
+}
+// Esc closes the card before anything else (the inspector, the drawer) hears it; a click outside it closes it too
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !bomSupOpen || !document.getElementById('sup-pop')) return;
+  e.preventDefault(); e.stopPropagation();
+  bomSupClose(true);
+}, true);
+document.addEventListener('pointerdown', e => {
+  if (!bomSupOpen) return;
+  const t = e.target;
+  if (t.closest && (t.closest('#sup-pop') || t.closest(`.sup-btn[data-line="${CSS.escape(bomSupOpen)}"]`))) return;
+  bomSupClose(false);
+}, true);
+function bomSupFollow() {      // the table scrolled or the window changed size: the card stays by its cell
+  const pop = document.getElementById('sup-pop'), a = bomSupOpen && bomSupAnchor(bomSupOpen);
+  if (pop && a) bomSupPlace(pop, a);
+}
+window.addEventListener('resize', bomSupFollow);
+document.addEventListener('scroll', bomSupFollow, true);
+
 // The BOM and the schematic disagree on the parts: the server says which designators differ (only when both sides are known).
 function bomPending() { return (S.proposals || []).filter(p => p.status === 'pending' && p.kind === 'bom'); }
 // The pending BOM proposals: the shared proposal table (chat.js propListHTML), one row and one tick per part, with the
@@ -151,12 +262,14 @@ function bomHTML(container) {
     body = emptyState('No parts yet', bomLinked() ? 'Import the BOM you exported from Altium, or describe your idea in the chat.' : 'Describe your idea in the chat and the agent will propose parts.',
       bomLinked() ? btn('Import from Altium', {kind: 'pri', act: 'imp-open'}) : '');
   } else {
-    body = `<div class="bom-scroll"><table class="tbl rows bom-tbl"><thead><tr><th>Ref</th><th class="c-part">Part</th><th class="c-pkg">Package</th><th class="c-lcsc" title="JLC part code and type (Basic, Preferred, Extended)">LCSC</th>
-      <th class="num">Qty</th><th class="num">Stock</th><th class="num c-unit" title="Cheapest offer with enough stock, at qty 10">Unit</th><th class="num">Per board</th>
-      <th><span class="sr">Problems</span></th><th><span class="sr">Actions</span></th></tr></thead>
+    body = `<div class="bom-scroll">${bomTop()}<table class="tbl rows bom-tbl"><thead><tr><th>Ref</th><th class="c-part">Part</th><th class="num">Qty</th>
+      <th class="c-mdl" title="Symbol, footprint, 3D, pins: green present, grey missing, red needs fixing">Models</th>
+      <th class="c-sup" title="Stock at the suppliers. Click a tag for every supplier, the LCSC code and the prices">Supply</th>
+      <th class="c-st" title="What the library build made of the part, or what its pins still need">Status</th><th><span class="sr">Actions</span></th></tr></thead>
       <tbody>${lines().map(bomRow).join('')}</tbody></table></div>${bomFoot()}`;
   }
   if (top || left) requestAnimationFrame(() => { const s = container.querySelector('.bom-scroll'); if (s) { s.scrollTop = top; s.scrollLeft = left; } });
+  if (bomSupOpen) requestAnimationFrame(bomSupPaint);      // the card follows the redraw: new numbers, the new cell
   return `<div class="bom-view">${bomHeader(t)}${t.lines ? bomPendingNote(pend) + bomCountNote() : ''}${body}${bomDrawerHTML()}</div>`;
 }
 
@@ -260,6 +373,7 @@ function bomDrawerHTML() {
 }
 /* the drawer takes the inspector's place while it is open, and gives it back on close */
 function openBomDrawer(d) {
+  bomSupClose(false);
   if (!bomDrawer && sel) { bomPrevSel = sel; sel = null; }
   bomDrawer = d;
   if ($('.bom-view')) renderCenter(true); else go('workspace', 'bom');
@@ -318,6 +432,13 @@ document.addEventListener('click', e => {      // picking a row hands the slot b
 onAct('bom-drawer-close', async (el, d, e) => {
   closeBomDrawer(); return;
 });
+onAct('sup-open', async (el, d, e) => {
+  if (bomSupOpen === d.line) { bomSupClose(true); return; }
+  bomSupClose(false);
+  bomSupOpen = d.line;
+  bomSupPaint();
+});
+onAct('sup-close', async (el, d, e) => { bomSupClose(true); });
 onAct('ask-part', async (el, d, e) => {
   const l = lineByKey(d.line);
   askAbout({kind: 'part', id: d.line, label: l ? refsLabel(l.refs || []) : d.line}); return;
