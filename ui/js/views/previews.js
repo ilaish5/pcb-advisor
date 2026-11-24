@@ -774,7 +774,41 @@ async function loadPcb(container) {
   root.outerHTML = pcbHTML();                               // the empty state and the picture have different frames
   afterPcb();
 }
+/* The idea's board size differs from the outline the PcbDoc holds (the placer reads the size only when there is no outline): Layout offers
+   to set the board to the idea's size. The change backs the PcbDoc up first and names parts that would fall outside. */
+let pcbOutline = null;
+function pcbOutlineOfferHTML() {
+  const o = pcbOutline;
+  if (!o || !o.differs || !o.idea || !o.pcb || !pvAltiumLinked()) return '';
+  const mm = v => Math.round(v * 10) / 10;
+  return `<div class="pv-note" id="pcb-outline-offer">${banner({tone: 'warn',
+    html: `The board in Altium is ${mm(o.pcb[0])} × ${mm(o.pcb[1])} mm, the idea says ${mm(o.idea[0])} × ${mm(o.idea[1])} mm.`,
+    actions: btn(`Set board to ${mm(o.idea[0])} × ${mm(o.idea[1])} mm`, {size: 'sm', kind: 'line', act: 'pcb-outline-resize', disabled: pvBusy ? true : undefined,
+      title: 'Changes the board outline in the PcbDoc; the file is backed up first and the parts stay where they are'})})}</div>`;
+}
+async function loadPcbOutline() {
+  const root = $('.pv[data-pv="pcb"]');
+  if (!root || !pvAltiumLinked()) return;
+  try { pcbOutline = await api('/api/altium/outline'); } catch (e) { pcbOutline = null; }
+  const old = $('#pcb-outline-offer'), html = pcbOutlineOfferHTML();
+  if (old) old.remove();
+  const head = root.querySelector('header.vh');
+  if (html && head) head.insertAdjacentHTML('afterend', html);
+}
+onAct('pcb-outline-resize', async (el) => {
+  const o = pcbOutline;
+  if (!o || !o.idea) return;
+  el.disabled = true;
+  try {
+    const r = await api('/api/altium/outline-resize', {width: o.idea[0], height: o.idea[1]});
+    toast(r.warnings && r.warnings.length ? 'Board resized. ' + r.warnings[0] : 'Board resized to ' + o.idea[0] + ' × ' + o.idea[1] + ' mm');
+    pcbSvgCache.key = '';                       // the picture is read again
+    await loadPcb();
+  } catch (err) { toast(err.message || 'The board could not be resized'); el.disabled = false; }
+  await loadPcbOutline();
+});
 function afterPcb() {
+  loadPcbOutline();
   const wrap = $('#pcbwrap');
   const svg = wrap && wrap.querySelector('svg');
   if (!svg) return;

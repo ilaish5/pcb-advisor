@@ -3193,6 +3193,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, turn_progress((proj, self.session(proj))))
         if path == "/api/altium":
             return self._send(200, _altium_state(self.project()))
+        if path in ("/api/altium/outline", "/api/altium/sheet-fit"):    # read only: the Layout page's board size offer; the fit of each sheet before Draw
+            proj = self.project()
+            if not project_mod.exists(proj):
+                return self._send(404, {"error": f"no such project: {proj}"})
+            from altium import bridge
+            try:
+                if path.endswith("/outline"):
+                    return self._send(200, bridge.outline_status(proj))
+                return self._send(200, {"sheets": bridge.sheet_fit(proj, self.query("sheet") or None)})
+            except bridge.BridgeError as exc:
+                return self._send(409, {"error": str(exc)})
         if path == "/api/bom/import/candidates":
             proj = self.project()
             if not project_mod.exists(proj):
@@ -4394,6 +4405,19 @@ class Handler(BaseHTTPRequestHandler):
             self._send(code, body)
             step_ack(proj, run_id)        # this run's record only; a page that was reloaded mid-run finds "finished" or nothing, and says so
             return
+
+        if path == "/api/altium/outline-resize":     # the Layout page's "Set board to W x H mm": the idea's size (or the numbers sent) on the PcbDoc
+            from altium import bridge
+            if not STEP_LOCK.acquire(blocking=False):      # one Altium step at a time, the same lock the step buttons take
+                return self._send(409, {"error": "Altium is busy with another step; try again when it is done."})
+            try:
+                with project_busy(proj):
+                    res = bridge.resize_outline(proj, data.get("width"), data.get("height"))
+            except bridge.BridgeError as exc:
+                return self._send(409, {"error": str(exc)})
+            finally:
+                STEP_LOCK.release()
+            return self._send(200, res)
 
         if path == "/api/altium/step-stop":        # the Stop button of the live list: the run ends before its next step
             if not step_stop(proj):

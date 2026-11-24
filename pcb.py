@@ -313,6 +313,16 @@ def cmd_check(args):
         for f in coverage.design_findings(name)["open"]:      # a finding, not a failure: the student may mark it intended
             print(f"  warn  {name}: {f['message']}")
         print(f"  ok    {name}: {len(store.sheet_ids(name))} sheet(s) checked")
+        try:        # does each sheet fit a drawn sheet (A4, else A3)? Same check as Draw; needs the Altium link and the library, so only a note
+            from altium import bridge
+            for f in bridge.sheet_fit(name):
+                if f["fits"] is False:
+                    print(f"  FAIL  {name}/{f['sheet']}: does not fit even an A3 sheet: {f['message']}")
+                    bad += 1
+                elif f["size"] == "A3":
+                    print(f"  note  {name}/{f['sheet']}: drawn on an A3 sheet (does not fit A4)")
+        except Exception:        # noqa: BLE001 - not linked / library not built: nothing to say about the fit yet
+            pass
     return 1 if (bad or verify_sources.main(projects)) else 0
 
 

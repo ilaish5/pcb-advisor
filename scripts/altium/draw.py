@@ -23,11 +23,22 @@ from partlib_convert import NAME_CHAR, NAME_HEIGHT, NUMBER_RAISE  # noqa: E402
 TAG = "[advisor]"                      # the same first word the skeleton frames carry
 GRID = 100                             # mils: everything is placed on the 100 mil grid
 DIRECTION = {0: (1, 0), 1: (0, 1), 2: (-1, 0), 3: (0, -1)}      # pin rotation: right, up, left, down
-SHEET_STYLE = 0                        # Altium SheetStyle of the sheets drawn here: A4 (AdvisorBridge.pas SheetSetup sets the same value)
-SHEET_SIZE = (11500, 7600)             # that sheet in mils (Altium's A4); its inner border is SHEET_BORDER inside the edge
+SHEETS = {"A4": {"style": 0, "size": (11500, 7600)},      # Altium SheetStyle and size in mils of the sheets drawn here
+          "A3": {"style": 1, "size": (15500, 11100)}}      # (AdvisorBridge.pas DRAWBEGIN's style field sets the same value)
+SHEET_ORDER = ("A4", "A3")             # a sheet is drawn on the first of these that holds its layout
+SHEET_STYLE = SHEETS["A4"]["style"]    # the default sheet
+SHEET_SIZE = SHEETS["A4"]["size"]      # its inner border is SHEET_BORDER inside the edge
 SHEET_BORDER = 200
-AREA = (800, 1000, SHEET_SIZE[0] - 700, SHEET_SIZE[1] - 800)    # usable drawing area in mils: x0, y0, x1, y1 (frames reach FRAME_PAD past x1,
-                                                                # still inside the inner border; the title block sits below y0)
+
+
+def sheet_area(name="A4"):
+    """Usable drawing area in mils (x0, y0, x1, y1) of the sheet size `name`: frames reach FRAME_PAD past x1, still inside the inner
+    border; the title block sits below y0."""
+    w, h = SHEETS[name]["size"]
+    return (800, 1000, w - 700, h - 800)
+
+
+AREA = sheet_area("A4")
 HEADER = 300                           # height of a section heading
 GAP = 200                              # between two parts, on top of their own margin
 MARGIN = 200                           # room kept around a part for its power symbols and labels
@@ -738,6 +749,16 @@ def _join(a, b):
     return out
 
 
+def fit_size(cells, sections, texts=None, sizes=SHEET_ORDER):
+    """The first sheet size of `sizes` (A4, then A3) whose layout holds every cell: (name, pos, heads, []) or, when none does,
+    (None, pos, heads, problems of the biggest size tried)."""
+    for name in sizes:
+        pos, heads, problems = layout(cells, sections, sheet_area(name), texts)
+        if not problems:
+            return name, pos, heads, []
+    return None, pos, heads, problems
+
+
 def suggest_sheets(cells, sections, area=AREA, texts=None):
     """How the design could be spread over several sheets so that EVERY sheet fits: ([sheet], [ref that does not fit alone]); a sheet
     is [(section id, [refs] or None for the whole section)]. Every candidate sheet goes through layout(), the very check plan_sheet
@@ -754,7 +775,10 @@ def suggest_sheets(cells, sections, area=AREA, texts=None):
         for sid, _ in sel:
             if sid not in sids:
                 sids.append(sid)
-        return bool(sel) and not layout(sel, [sec.get(i, {"id": i}) for i in sids], area, texts)[2]
+        secs = [sec.get(i, {"id": i}) for i in sids]
+        if not sel:
+            return False
+        return fit_size(sel, secs, texts)[0] is not None if area is None else not layout(sel, secs, area, texts)[2]
     sheets, hopeless, cur = [], [], []
     for sid in order:
         if cur and fits(cur + [(sid, None)]):
@@ -803,7 +827,7 @@ def suggest_sheets(cells, sections, area=AREA, texts=None):
 
 
 def _too_big_message(cells, sections, texts=None):
-    sheets, hopeless = suggest_sheets(cells, sections, texts=texts)
+    sheets, hopeless = suggest_sheets(cells, sections, area=None, texts=texts)
     titles = {s["id"]: str(s.get("title") or "").strip() for s in sections}
     refs = {}
     for sid, c in cells:
@@ -829,13 +853,13 @@ def _too_big_message(cells, sections, texts=None):
     shared = sorted(n for n, where in by_net.items() if len(where) > 1)
     cut = [sid for sid in dict.fromkeys(s_ for s_, _ in cells) if sum(1 for sh in sheets for i, r in sh if i == sid and r is not None)]
     if hopeless:
-        return (f"the design does not fit on one A4 sheet, and {', '.join(hopeless[:6])} does not fit on a sheet even by itself "
+        return (f"the design does not fit on one A4 sheet, nor on A3, and {', '.join(hopeless[:6])} does not fit on an A3 sheet even by itself "
                 "(too many pins or too long net names): split the part's connections differently or draw it by hand.")
     if len(sheets) <= 1:       # one sheet is all there is and it is still refused: there is nothing to move to a second sheet
-        return (f"the design does not fit on one A4 sheet, and it is a single section ({', '.join(label(i) for i, _ in (sheets[0] if sheets else []))}) "
+        return (f"the design does not fit on one A4 sheet, nor on A3, and it is a single section ({', '.join(label(i) for i, _ in (sheets[0] if sheets else []))}) "
                 "that is too big for a sheet by itself: it must be split into several sections (and sheets) in the netlist. "
                 "The tool does not yet draw the nets that run between sheets (that needs ports), so each sheet is a netlist sheet of its own.")
-    msg = (f"the design does not fit on one A4 sheet. It needs about {len(sheets)} sheets (each one checked to fit): "
+    msg = (f"the design does not fit on one A4 sheet, nor on A3. It needs about {len(sheets)} sheets (each one checked to fit): "
            + "; ".join(f"sheet {k}: {', '.join(label(i, r) for i, r in sh)}" for k, sh in enumerate(sheets, 1)) + ". ")
     if cut:
         msg += f"Section {', '.join(label(x) for x in cut)} is too big for one sheet, so it is cut by parts above. "
@@ -950,11 +974,12 @@ def placeholder(part, why, name):
             "warnings": warn, "why": why}
 
 
-def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None, placeholders=None):
+def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None, placeholders=None, sheet_size=None):
     """Plan one netlist sheet.
     sheet: the netlist sheet dict; symbols: {ref: symbol dict from read_schlib}; schlib / doc: file paths.
     placeholders (a draft draw): {ref: {"why", "name", "schlib"}}: those parts are drawn from placeholder() (symbol `name` in the draft
     SchLib `schlib`) instead of `symbols`; a part with neither is an error, as ever.
+    sheet_size: "A4" / "A3" to force a size, else the first of A4, A3 that holds the layout (out["sheet_size"]; None = too big even for A3).
     Returns {"commands": [...], "parts": [{ref, symbol, pins, x, y}], "expected": {net: [tags]}, "no_erc": [tags],
              "warnings": [...], "errors": [...], "placeholders": [{ref, why, section}]}."""
     placeholders = placeholders or {}
@@ -1001,7 +1026,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None, placeho
     errors += texts_bad
     if texts_bad:
         why.add("other")
-    out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors, "renamed": renamed,
+    out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors, "renamed": renamed, "sheet_size": None,
            "placeholders": [{"ref": r, "why": w} for r, w in drafted.items()]}
     if errors:
         out["fix_code"] = next(iter(why)) if len(why) == 1 and "other" not in why else None
@@ -1040,14 +1065,15 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None, placeho
         if dr:
             note += f" | DRAFT, placeholder parts: {', '.join(dr[:6])}" + (f" +{len(dr) - 6}" if len(dr) > 6 else "")
         texts[sid] = frame_text(head_names.get(sid, sid), titles.get(sid, ""), note)
-    pos, heads, problems = layout(cells, sections, texts=texts)
+    size, pos, heads, problems = fit_size(cells, sections, texts, (sheet_size,) if sheet_size else SHEET_ORDER)
+    out["sheet_size"] = size
     if problems:
         errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections, texts))
         out["fix_code"] = "sheet.too_big"
     if errors:
         return out
     d = str(doc)
-    cmds = [("DRAWBEGIN", d, "1" if replace else "0")]
+    cmds = [("DRAWBEGIN", d, "1" if replace else "0", str(SHEETS[size]["style"]))]
     for (fx, fy, fw, fh), sid in heads:         # one frame around the whole section, its title at the top (a text frame starts its text there)
         if sid or texts.get(sid):
             cmds.append(("FRAME", d, str(fx), str(fy), str(fw), str(fh), texts[sid]))

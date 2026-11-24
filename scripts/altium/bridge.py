@@ -1008,6 +1008,36 @@ def _close_draft_library(project):
         pass
 
 
+def sheet_fit(project, sheet=None):
+    """Does each netlist sheet fit a drawn sheet? The same layout check Draw makes (draw.plan_sheet), without touching Altium or any
+    file: [{"sheet", "fits", "size": "A4" | "A3" | None, "message"}]. A part that does not fit A4 is drawn on A3 by itself ("size");
+    fits False = too big even for A3 (message says why and how the design could be split). Never raises for one bad sheet."""
+    from altium import draw
+    lp = library_paths(project)
+    lib_symbols, lib_why = _project_symbols(lp)
+    aliases = drawn_names(project)
+    out = []
+    for sid, _title, sh in _sheets(project):
+        if sheet is not None and str(sid) != str(sheet):
+            continue
+        try:
+            syms = _sheet_symbols(project, sh, lib_symbols)
+            phs = _placeholder_reasons(sh, syms, lib_why)
+            by_ref = {p.get("ref"): p for p in sh.get("parts", []) if isinstance(p, dict)}
+            for k, (ref, ph) in enumerate(phs.items(), 1):
+                ph["name"], ph["schlib"], ph["sheet"] = draw.placeholder_name(ref) + f"_{k}", str(draft_library_path(project)), sid
+            plan = draw.plan_sheet(sh, syms, lp["schlib"], pathlib.Path("fit-check.SchDoc"), aliases=aliases, placeholders=phs)
+        except (BridgeError, KeyError, ValueError) as exc:
+            out.append({"sheet": sid, "fits": False, "size": None, "message": str(exc)})
+            continue
+        too_big = plan.get("fix_code") == "sheet.too_big"
+        size = plan.get("sheet_size")
+        # fits: True / False; None = the layout was not reached (another error, e.g. a pin that is not mapped, comes first)
+        out.append({"sheet": sid, "fits": True if size else (False if too_big else None), "size": size,
+                    "message": f"fits on an {size} sheet" if size else "; ".join(plan["errors"][:4]), "too_big": too_big})
+    return out
+
+
 def draw_schematic(project, sheet=None, replace=False):
     """Draw the netlist sheet(s) of the project in Altium: every part from the project SchLib, a wire stub on every connected pin
     ending in a power port or a net label, a No ERC cross on NC pins. Then the saved SchDoc is read back and compared with the netlist.
@@ -1035,6 +1065,7 @@ def draw_schematic(project, sheet=None, replace=False):
     key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
     plans, existing, new_docs, adopted = [], [], [], set()
     draft_items, draft_names = {}, set()
+    skipped = []             # [(sheet id, why)]: sheets too big even for A3, not drawn
     # one drawn name per net for the whole design (a net on two sheets keeps one name; two names never share one)
     aliases = drawn_names(project)
     for sid, title, sh in planned:
@@ -1057,23 +1088,36 @@ def draw_schematic(project, sheet=None, replace=False):
         syms = _sheet_symbols(project, sh, lib_symbols)
         phs = _placeholder_reasons(sh, syms, lib_why)
         by_ref = {p.get("ref"): p for p in sh.get("parts", []) if isinstance(p, dict)}
+        names, mine = set(draft_names), {}
         for ref, ph in phs.items():
             name, n = draw.placeholder_name(ref), 1
-            while name in draft_names:
+            while name in names:
                 n += 1
                 name = f"{draw.placeholder_name(ref)}_{n}"
-            draft_names.add(name)
+            names.add(name)
             ph["name"], ph["schlib"], ph["sheet"] = name, str(draft_library_path(project)), sid
-            draft_items[name] = draw.placeholder(by_ref[ref], ph["why"], name)
+            mine[name] = draw.placeholder(by_ref[ref], ph["why"], name)
         plan = draw.plan_sheet(sh, syms, lp["schlib"], doc, replace=replace and doc not in adopted,
                                aliases=aliases, placeholders=phs)      # a sheet taken over as empty is never wiped: anything on it stops the draw
         if plan["errors"]:
             msg = f"Sheet {sid} cannot be drawn: " + "; ".join(plan["errors"][:8])
+            if plan.get("fix_code") == "sheet.too_big":
+                # too big even for A3: this sheet is reported and the others are still drawn (one bad sheet never blocks the Draw)
+                skipped.append((sid, msg))
+                for lst in (existing, new_docs):
+                    if doc in lst:
+                        lst.remove(doc)
+                adopted.discard(doc)
+                continue
             raise Fixable(plan["fix_code"], msg) if plan.get("fix_code") in NEUTRAL_CODES else BridgeError(msg)
+        draft_names |= set(mine)
+        draft_items.update(mine)
         plan["draft"] = [{"sheet": sid, "ref": r, "why": ph["why"], "detail": ph["detail"]} for r, ph in phs.items()]
         # a footprint link is checked on the sheet only for a part that has one: a placeholder has none, and a footprint in error was never
         # written to the PcbLib (the part's schematic symbol is fine; the placement refuses it)
         plans.append((sid, doc, plan, {r: (None if r in phs or r in fp_bad else (manifest.get(key.get(r)) or {}).get("footprint")) for r in key}))
+    if not plans:            # every sheet asked for is too big: nothing to draw, and the reason of the first one is the answer
+        raise Fixable("sheet.too_big", " | ".join(m for _s, m in skipped))
     saved_first = save_open_sheets(prj, existing) if existing else []      # before the backup, so the backup holds the student's latest edits
     backup = _backup(prj, existing + ([prj] if new_docs else []))
     if existing:        # Altium's own view first: anything on the sheet stops the run before it touches anything
@@ -1115,7 +1159,10 @@ def draw_schematic(project, sheet=None, replace=False):
     _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans}, created=[str(d) for d in new_docs])
     if new_docs:
         ensure_sheets_in_project(prj, new_docs)      # every new sheet, not only the first one, must be in the saved project
-    problems, warnings, parts, nets = [], [], 0, set()
+    problems, parts, nets = [], 0, set()
+    warnings = [f"{m} The sheet was NOT drawn; the other sheets were." for _s, m in skipped]
+    big = {sid: plan.get("sheet_size") for sid, _d, plan, _fp in plans if plan.get("sheet_size") not in (None, "A4")}
+    warnings += [f"sheet {sid} is drawn on an {size} sheet (its parts do not fit on A4)" for sid, size in big.items()]
     for sid, doc, plan, fps in plans:
         warnings += plan["warnings"] + circular_pin_warnings(project, [p["ref"] for p in plan["parts"] if isinstance(p, dict) and p.get("ref")])
         parts += len(plan["parts"])
@@ -1144,7 +1191,8 @@ def draw_schematic(project, sheet=None, replace=False):
     renamed = {n: a for _, _, plan, _ in plans for n, a in plan.get("renamed", {}).items()}
     res = {"sheets": [str(d) for _, d, _, _ in plans], "parts": parts, "nets": sorted(nets), "warnings": warnings,
            "problems": problems, "backup": backup, "created": [str(d) for d in new_docs], "saved_first": saved_first,
-           "renamed_nets": renamed, "placeholders": drafted, "footprint_errors": fp_listed}
+           "renamed_nets": renamed, "placeholders": drafted, "footprint_errors": fp_listed,
+           "sheet_sizes": {sid: plan.get("sheet_size") for sid, _d, plan, _fp in plans}, "skipped": [{"sheet": s, "why": m} for s, m in skipped]}
     if not problems:
         res["stale"] = remove_stale_sheets(project, prj)
         res["warnings"] += [f"{x['name']} was left in the project: {x['why']}" for x in res["stale"]["left"] if x["name"]]
@@ -1422,6 +1470,118 @@ def _fit_shape(prj, pcb, box):
     except BridgeError as exc:
         return str(exc)
     return _write_shape(pcb, box)
+
+
+def outline_status(project):
+    """The idea's board size against the board shape of the PcbDoc (read from the file, Altium is not asked):
+    {"idea": [w, h] | None, "pcb": [w, h] | None, "box": [x0, y0, x1, y1] | None, "differs": bool, "parts": n}. differs is True only when
+    both sizes are known and one side is off by more than 0.1 mm: the Layout page then offers "Set board to W x H mm"."""
+    from altium.pcbdoc import board_shape_box, read_pcbdoc
+    size = _board_size(project)
+    out = {"idea": [round(size[0], 3), round(size[1], 3)] if size else None, "pcb": None, "box": None, "differs": False, "parts": 0}
+    try:
+        pcb = _project_pcb(project)
+        if not pcb or not pathlib.Path(pcb).is_file():
+            return out
+        box = board_shape_box(pcb)
+        out["parts"] = len(read_pcbdoc(pathlib.Path(pcb)).get("components", []))
+    except Exception:                                    # a status line must never stop a page
+        return out
+    if box:
+        out["box"] = [round(v, 3) for v in box]
+        out["pcb"] = [round(box[2] - box[0], 3), round(box[3] - box[1], 3)]
+    if out["idea"] and out["pcb"]:
+        out["differs"] = any(abs(a - b) > 0.1 for a, b in zip(out["idea"], out["pcb"]))
+    return out
+
+
+def _parts_outside(pcb, box):
+    """Refs of the parts of the saved PcbDoc whose origin lies outside the rectangle `box` (mm)."""
+    from altium.pcbdoc import read_pcbdoc
+    x0, y0, x1, y1 = box
+    return sorted(c["ref"] for c in read_pcbdoc(pathlib.Path(pcb)).get("components", [])
+                  if c.get("ref") and not (x0 - 0.01 <= c["x_mm"] <= x1 + 0.01 and y0 - 0.01 <= c["y_mm"] <= y1 + 0.01))
+
+
+def resize_outline(project, width_mm=None, height_mm=None):
+    """Change the board outline of the project's existing PcbDoc to width x height mm (default: the idea's board size), the lower
+    left corner stays where it is. The PcbDoc is copied to .advisor-backup first; a board that is open in Altium with unsaved changes
+    is refused (nothing is changed); parts stay where they are and those that fall outside the new outline are named in `warnings`.
+    The four outline corners and the outline drawing on Mechanical 1 (when it is our own four tracks) are set in Altium, the board
+    shape a pour is clipped to is written in the closed file (_write_shape), then the file is read back.
+    Returns {"box", "old_box", "backup", "outside", "warnings", "problems", "restored"}."""
+    from altium import layout
+    from altium.pcbdoc import board_shape_box, read_pcbdoc
+    prj, pcb = _linked(project), _project_pcb(project)
+    if not pcb or not pathlib.Path(pcb).is_file():
+        raise BridgeError("The project has no PcbDoc yet: place the parts first (altium.place_pcb). Nothing was changed.")
+    if width_mm is None or height_mm is None:
+        size = _board_size(project)
+        width_mm, height_mm = size if size else (None, None)
+    try:
+        w, h = float(width_mm), float(height_mm)
+    except (TypeError, ValueError):
+        raise BridgeError("Give the board width and height in mm. Nothing was changed.") from None
+    if layout.plan_outline((w, h)) is None:
+        raise BridgeError("The board must be between 10 and 500 mm on each side. Nothing was changed.")
+    state = run_commands([("PROJECT", str(prj)), ("DOCSTATE", str(pcb))])
+    if any(l.startswith("docstate open modified=1") for l in state):
+        raise BridgeError("The board is open in Altium with unsaved changes; save or close it first (click the PCB tab in Altium and press "
+                          "Ctrl+S). Nothing was changed.")
+    info = _pcbcheck_info(run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1")]))
+    if info is None:
+        raise BridgeError("Altium did not report the state of the board. Nothing was changed.")
+    if not info["rect"]:
+        raise BridgeError("The board outline is not a rectangle, so I cannot resize it: change it in Altium (Design > Board Shape). "
+                          "Nothing was changed.")
+    old = [round(v * MM_PER_MIL, 3) for v in info["box_mil"]]
+    box = [old[0], old[1], round(old[0] + w, 3), round(old[1] + h, 3)]
+    warnings = []
+    try:
+        outside = _parts_outside(pcb, box)
+    except (AltiumReadError, OSError, KeyError):
+        outside = []
+        warnings.append("the parts could not be read to check that they fit inside the new outline: look at the board")
+    if outside:
+        warnings.append(f"{len(outside)} part{'s' if len(outside) != 1 else ''} fall{'s' if len(outside) == 1 else ''} outside the new "
+                        f"{w:g} x {h:g} mm outline: {', '.join(outside[:12])}{' ...' if len(outside) > 12 else ''}. Parts are not moved; "
+                        "place again (Replace) or move them in Altium")
+    backup = _backup(prj, [pcb])
+    cmds = [("PROJECT", str(prj)), ("OUTLINERESIZE", str(pcb)) + tuple(f"{v:g}" for v in box) + (f"{layout.OUTLINE_WIDTH_MM:g}",),
+            ("PCBSAVE", str(pcb))]
+    try:
+        log = run_commands(cmds)
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])      # closed: the board shape below is written in the file
+    except BridgeError as exc:
+        raise BridgeError(str(exc) + _revert(prj, pcb, "resized") + (f" The earlier file is in {backup}." if backup else "")) from exc
+    if any("outlineresize drawn=0 kept=" in l for l in log):
+        warnings.append("the outline on Mechanical 1 is a drawing of your own (not our four lines), so it was left as it was: redraw it "
+                        "in Altium (Design > Board Shape > Create Primitives From Board Shape)")
+    problems = []
+    why = _write_shape(pcb, box)
+    if why:
+        warnings.append(f"The board shape Altium holds could not be set ({why}). A ground pour would stay empty: redefine the board "
+                        "shape in Altium (Design > Board Shape > Redefine Board Shape) before routing")
+    try:
+        got = board_shape_box(pcb)
+        saved = read_pcbdoc(pathlib.Path(pcb), geometry=True)
+        after = _pcbcheck_info(run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1")]))
+        if after is None or any(abs(v * MM_PER_MIL - b) > 0.05 for v, b in zip(after["box_mil"], box)) or not after["rect"]:
+            problems.append(f"the saved board outline is not {w:g} x {h:g} mm")
+        if got is None or any(abs(a - b) > 0.1 for a, b in zip(got, box)):
+            problems.append("the saved board shape is not the new outline")
+        if not any("kept=" in l for l in log):
+            problems += layout.outline_drawing_problems(saved, box)
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        problems.append(f"the resized board could not be read back: {exc}")
+    restored = False
+    if problems and backup:
+        restored = _restore(prj, pcb, backup)
+    _log(project, "resize-outline", box=box, old_box=old, backup=backup, outside=outside, problems=problems, warnings=warnings, restored=restored)
+    if problems:
+        raise BridgeError("The board was resized but did not check out: " + "; ".join(problems[:4])
+                          + (" The board file was put back as it was before (backup kept)." if restored else f" The backup is in {backup}."))
+    return {"box": box, "old_box": old, "backup": backup, "outside": outside, "warnings": warnings, "problems": problems, "restored": restored}
 
 
 def _mechanical_parts(items, outline, fps, parts, refs_lines=None, size=None):
