@@ -52,6 +52,9 @@ def test_the_sheet_marks_an_accepted_part_and_the_drawn_heading_says_so(empty):
 
 def test_order_check_carries_the_accepted_risk_and_writes_a_manifest_beside_the_zip(empty):
     _sheet(empty)
+    src = store.pdir(empty) / "sources"
+    src.mkdir(parents=True, exist_ok=True)
+    (src / "d.pdf").write_bytes(b"%PDF-1.4\n")          # a page counts as evidence only when its file is on this machine
     pin_decisions.accept(empty, "U1", evidence=[{"doc": "d.pdf", "page": 3}])
     res = order_check.order_check(empty)
     assert res["counts"]["accepted_risk"] == 1
