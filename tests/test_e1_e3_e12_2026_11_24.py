@@ -1,3 +1,4 @@
+import pytest
 """E3 (the JLC BOM leaves out DNP lines and designators on no drawn sheet, and says so) and E12 (a part checked against a datasheet
 page is not listed as "not verified by a datasheet table"). E1 (pins warn, an unrouted board blocks): test_manufacturing_block.py."""
 import csv
@@ -92,3 +93,17 @@ def test_a_part_checked_against_a_datasheet_page_is_not_listed_as_not_verified_b
 def test_the_design_report_splits_page_checked_from_blind_accepts():
     src = (REPO / "scripts" / "design_report.py").read_text(encoding="utf-8")
     assert "Pins checked by the student against a datasheet page" in src and "without a datasheet page" in src
+
+
+
+@pytest.mark.route_gate
+def test_drc_without_the_unrouted_rule_is_not_ready(monkeypatch):
+    """A design rule check that did not run Un-Routed Net cannot say the copper is complete (review 24/11/2026)."""
+    import board_results
+    import store
+    drc = {"rules": {"Clearance Constraint": 0}, "unrouted": 0, "complete": True, "violations": []}
+    monkeypatch.setattr(board_results, "latest", lambda p: {"board_check": {"drc": drc}})
+    st = store.route_state("x")
+    assert not st["ready"] and "Un-Routed Net rule" in st["why"]
+    drc["rules"]["Un-Routed Net Constraint ( (All) )"] = 0
+    assert store.route_state("x")["ready"]

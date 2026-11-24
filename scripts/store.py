@@ -3877,6 +3877,12 @@ def route_state(project):
     if d.get("complete") is False:
         out["why"] = "the last design rule check was not read in full, so the unrouted nets are not known"
         return out
+    rules = d.get("rules")
+    if isinstance(rules, dict) and rules and not any(str(k).startswith("Un-Routed Net") for k in rules):
+        # a DRC without the Un-Routed Net rule (disabled, or not in the batch) says nothing about the copper: a board with no
+        # tracks would read as complete (review 24/11/2026)
+        out["why"] = "the last design rule check did not run the Un-Routed Net rule, so it cannot tell whether every net is routed"
+        return out
     if out["unrouted"] or out["open_nets"]:
         nets = out["open_nets"]
         shown = f"; open nets: {', '.join(nets[:6])}{' ...' if len(nets) > 6 else ''}" if nets else ""

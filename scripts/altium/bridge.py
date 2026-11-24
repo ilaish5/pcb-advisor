@@ -2705,7 +2705,7 @@ def run_outjob(project):
         if cand.is_file() and outjob_containers(cand):
             target = cand
             break
-    unsaved = []
+    unsaved = None                                       # None: not known; then nothing is marked saved below
     try:                                                 # outputs made from a project with unsaved edits do not match its files
         unsaved = unsaved_documents(prj)
     except BridgeError as exc:
@@ -2722,7 +2722,9 @@ def run_outjob(project):
     cmds += [("OUTJOB", str(target), medium, base, kind) for medium, base, kind in boxes]
     # making outputs changes no design, but Altium can mark the board or a sheet modified while it plots them: a document that was
     # saved before the run is marked saved again, so the next step does not report unsaved changes the student never made (E14)
-    cmds += [("UNMARK", str(d)) for d in _project_docs(prj) if d.name not in unsaved]
+    # only when the unsaved check answered: without it a document the student really left unsaved would lose Altium's prompt
+    if unsaved is not None:
+        cmds += [("UNMARK", str(d)) for d in _project_docs(prj) if d.name not in unsaved]
     t0 = time.time() - 2
     run_commands(cmds, total_timeout=600)
     import outputs_check

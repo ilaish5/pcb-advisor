@@ -132,7 +132,9 @@ def test_a_routed_and_clean_board_is_ready_and_a_stale_check_is_not(server, empt
     import board_results
     _fresh(monkeypatch)
     _log(empty, "route", summary={"routed": 9, "failed": 0, "tracks": 80, "vias": 4, "open_nets": []})
-    _log(empty, "drc", drc={"rules": {"Clearance Constraint": 0}, "total": 0, "unrouted": 0, "clean": True, "complete": True, "violations": []})
+    # a real report lists every rule it ran, the zero counts too (tests/fixtures/drc): Un-Routed Net among them
+    _log(empty, "drc", drc={"rules": {"Clearance Constraint": 0, "Un-Routed Net Constraint ( (All) )": 0}, "total": 0, "unrouted": 0,
+                            "clean": True, "complete": True, "violations": []})
     assert store.route_block(empty) == ""
     assert [c for c, _ in _both(server, empty)] == [200, 200]
     monkeypatch.setattr(board_results, "_stale", lambda project, rec: True)          # the PcbDoc changed since the check
