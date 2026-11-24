@@ -2,6 +2,9 @@
 that does not fit the netlist's pins is drawn as a PLACEHOLDER (a rectangle with the netlist's own pins), every net still connected; the sheet
 says DRAFT, the stage says draft (not done), store.manufacturing_warning keeps the outputs blocked until a redraw has the real symbols.
 Altium is faked here; the live run is in the report."""
+import os
+import pathlib
+
 import pytest
 
 import stages
@@ -371,9 +374,69 @@ def test_the_sources_say_the_draft_is_not_wiped_and_the_old_refusals_are_gone():
 
 
 def test_the_board_is_not_placed_from_a_draft_schematic(world, monkeypatch):
-    """A part placed now is linked to the placeholder component; the redraw gives the part a new schematic id: Update PCB would add it twice."""
+    """A part placed now is linked to the placeholder's schematic id (_sch_links); the redraw makes a new component with a new id, and Update PCB would add the part again."""
     monkeypatch.setattr(bridge, "_project_pcb", lambda p: world.lp["folder"] / "x.PcbDoc")
     world.manifest["U1"]["symbol"] = "MISSING"
     bridge.draw_schematic(world.project)
     with pytest.raises(bridge.BridgeError, match="still a draft: U1 is a placeholder.*Nothing was changed"):
         bridge.place_pcb(world.project)
+
+
+def _doc_path(world):
+    import project as project_mod
+    return pathlib.Path(project_mod.altium_link(world.project)["project_file"]).parent / store.sheet_docs(world.project)["01"]
+
+
+def test_a_failed_or_restored_draw_record_does_not_clear_the_draft(world):
+    world.lp["schlib"].unlink()
+    bridge.draw_schematic(world.project)
+    for extra in ({"error": "Altium refused a step"}, {"restored": ["01 Power.SchDoc"]}, {"failed": ["01"]}):
+        store.append(world.project, "altium-log.jsonl", {"op": "draw-schematic", "sheet_docs": {"01": "x.SchDoc"}, **extra})
+        assert [x["ref"] for x in store.draft_parts(world.project)] == ["U1", "R1", "R2"], extra
+
+
+def test_a_part_the_student_drew_by_hand_in_altium_is_no_longer_a_placeholder(world, monkeypatch):
+    """A multi-part symbol is a placeholder that says "draw it by hand": the hand drawing, saved, lifts it. So does a restored backup."""
+    world.lp["schlib"].unlink()
+    bridge.draw_schematic(world.project)
+    path = _doc_path(world)
+    path.write_bytes(b"schdoc")
+    reads = []
+    held = {"components": [{"ref": "U1", "lib_ref": "STM32_UNIT_A"}, {"ref": "R1", "lib_ref": "PH_R1"}, {"ref": "R2", "lib_ref": "PH_R2"}]}
+    import altium.schdoc
+    monkeypatch.setattr(altium.schdoc, "read_schdoc", lambda p: (reads.append(p), held)[1])
+    assert len(store.draft_parts(world.project)) == 3 and not reads                  # the file is not newer than the draw: not even read
+    later = path.stat().st_mtime + 120
+    os.utime(path, (later, later))                                                   # saved by the student after the draw
+    assert [x["ref"] for x in store.draft_parts(world.project)] == ["R1", "R2"] and reads
+    held["components"] = [c for c in held["components"] if c["ref"] != "R1"]          # a part deleted from the sheet is no placeholder either
+    assert [x["ref"] for x in store.draft_parts(world.project)] == ["R2"]
+    monkeypatch.setattr(altium.schdoc, "read_schdoc", lambda p: (_ for _ in ()).throw(OSError("locked")))
+    assert len(store.draft_parts(world.project)) == 3                                # cannot be read: stays a draft (fail closed)
+
+
+def test_the_layout_stage_sends_the_student_to_the_schematic_while_it_is_a_draft(world):
+    world.manifest["U1"]["symbol"] = "MISSING"
+    bridge.draw_schematic(world.project)
+    st = stages.pcb_stage(world.project, {}, {})
+    assert st["state"] == "not_started" and "still a draft" in st["reason"] and st["next"]["act"] == "go:sch"
+    world.manifest["U1"]["symbol"] = "IC1"
+    bridge.draw_schematic(world.project, replace=True)
+    assert stages.pcb_stage(world.project, {}, {})["next"]["act"] == "go:pcb"
+
+
+def test_the_chat_draw_goes_on_when_the_library_build_in_the_same_turn_is_refused(world, monkeypatch):
+    """[library.build, altium.draw_schematic] from the agent: the build is refused, the draw still runs and says what is a placeholder."""
+    import serve
+    world.lp["schlib"].unlink()
+    said = "תצייר אתה את הסכמה באלטיום"
+
+    def broken(project):
+        raise bridge.BridgeError("The library data has no symbols to build.")
+    monkeypatch.setattr(bridge, "build_library", broken)
+    applied, _, refused = serve.apply_actions(world.project, [{"type": "library.build"}, {"type": "altium.draw_schematic", "student_said": said}],
+                                              last_user=said, chat=[{"role": "user", "text": said}])
+    assert any(r.startswith("library.build") for r in refused)
+    draw_done = [a for a in applied if a.startswith("altium.draw_schematic")]
+    assert draw_done and "DRAFT" in draw_done[0] and "U1" in draw_done[0], (applied, refused)
+    assert {x["ref"] for x in store.draft_parts(world.project)} == {"U1", "R1", "R2"}

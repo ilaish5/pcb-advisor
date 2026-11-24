@@ -174,6 +174,8 @@ def pcb_stage(project, model, lt):
     if routed and place and place.get("ok") and route and place.get("seq", -1) > route.get("seq", -1):
         routed = False         # placed again after the last route: the copper is gone
     if not placed:
+        if store.draft_parts(project):           # place_pcb refuses a draft schematic: the first step is on the Schematic page
+            return _stage("pcb", "not_started", "Parts not placed yet; the schematic is still a draft", next_={"label": "Build the library, draw again", "act": "go:sch"})
         return _stage("pcb", "not_started", "Parts not placed yet", next_={"label": "Place parts", "act": "go:pcb"})
     chk = board_check_of(lt)
     if not routed:

@@ -3587,23 +3587,47 @@ def draft_parts(project):
     """[{sheet, ref, why, detail}] of the parts the schematic as last drawn holds as PLACEHOLDERS (a rectangle with the netlist's pins, no
     library symbol behind it: altium.draw.placeholder). Replayed from the draw records of altium-log.jsonl ("draw-schematic" with
     "draft": {sheet id: [...]}): each draw of a sheet replaces what an earlier draw of it said (a record without "draft", from before
-    the draft draw existed, says none), a sheet or part the design no longer has is dropped. The next draw, with the real symbol,
-    is what clears a part; nothing else does."""
+    the draft draw existed, says none; a record of a draw that failed or was restored says nothing at all), a sheet or part the design
+    no longer has is dropped. The next draw, with the real symbol, is what clears a part. So does a hand change: when the SchDoc was
+    saved after that draw (the student drew the part by hand, or put an .advisor-backup back), it is read and a part that is no longer
+    a PH_ symbol is dropped; a SchDoc that cannot be read leaves the list as it was (fail closed)."""
     def build():
         state = {}
         for e in read_jsonl(pdir(project) / "altium-log.jsonl"):
-            if e.get("op") != "draw-schematic":
+            if e.get("op") != "draw-schematic" or e.get("error") or e.get("restored") or e.get("failed"):
                 continue
             draft = e.get("draft") if isinstance(e.get("draft"), dict) else {}
             for sid in e.get("sheet_docs") or {}:
-                state[str(sid)] = [x for x in (draft.get(str(sid)) or []) if isinstance(x, dict) and x.get("ref")]
+                state[str(sid)] = ([x for x in (draft.get(str(sid)) or []) if isinstance(x, dict) and x.get("ref")], str(e.get("ts") or ""))
+        docs = sheet_docs(project)
         out = []
         for sid in sheet_ids(project):
             refs = {p.get("ref") for p in load_sheet(project, sid).get("parts", []) if isinstance(p, dict)}
-            out += [{"sheet": sid, "ref": x["ref"], "why": str(x.get("why") or ""), "detail": str(x.get("detail") or "")}
-                    for x in state.get(sid, []) if x["ref"] in refs]
+            items, ts = state.get(sid, ([], ""))
+            items = [x for x in items if x["ref"] in refs]
+            if items:
+                items = _still_placeholders(project, docs.get(sid), ts, items)
+            out += [{"sheet": sid, "ref": x["ref"], "why": str(x.get("why") or ""), "detail": str(x.get("detail") or "")} for x in items]
         return out
     return memoised(("draft_parts", project), build)
+
+
+def _still_placeholders(project, doc_name, ts, items):
+    """`items` minus the parts a SchDoc saved after the draw (record time `ts`) no longer holds as a PH_ symbol. Nothing is read unless the
+    file is newer than the draw (a few seconds' grace for the clocks); an unreadable file or a missing link keeps every item."""
+    try:
+        import project as project_mod
+        link = pathlib.Path(project_mod.altium_link(project)["project_file"])
+        path = link.parent / doc_name
+        if not doc_name or not link.name or not path.is_file():
+            return items
+        if path.stat().st_mtime <= dt.datetime.fromisoformat(ts).timestamp() + 5:
+            return items
+        from altium.schdoc import read_schdoc
+        holding = {c.get("ref"): str(c.get("lib_ref") or "") for c in read_schdoc(path).get("components", [])}
+    except Exception:                     # noqa: BLE001  fail closed: what cannot be checked stays a placeholder
+        return items
+    return [x for x in items if holding.get(x["ref"], "").startswith("PH_")]
 
 
 def draft_text(items, cut=12):

@@ -1617,8 +1617,8 @@ def place_pcb(project, replace=False):
         refs = [x["ref"] for x in draft]
         raise BridgeError(f"The schematic is still a draft: {', '.join(refs[:8])}{' ...' if len(refs) > 8 else ''} "
                           f"{'is a placeholder' if len(refs) == 1 else 'are placeholders'}, not the library symbol. Build the library and draw the "
-                          "schematic again (Schematic page), then place the parts: a part placed now is linked to the placeholder, the redraw "
-                          "replaces it, and the first Update PCB would then add the part a second time. Nothing was changed.")
+                          "schematic again (Schematic page), then place the parts: a part placed now is linked to the placeholder's schematic id, "
+                          "the redraw makes a new component with a new id, and Update PCB would then add the part again. Nothing was changed.")
     links = _sch_links(prj)
     undrawn = sorted({p["ref"] for p in parts if p["ref"] not in links})
     if undrawn:                  # parts placed without their schematic link are added a second time by the first Update PCB
