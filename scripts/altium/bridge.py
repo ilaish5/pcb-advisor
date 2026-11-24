@@ -902,36 +902,139 @@ def save_open_sheets(prj, docs):
 
 
 def refuse_footprint_errors(project, refs, what):
-    """Fail closed: a part whose library footprint has converter errors (store.footprint_errors) is neither drawn nor placed. One message
-    names every such part, what is wrong and how to fix it. Nothing has been changed when this raises."""
+    """Fail closed: a part whose library footprint has converter errors (store.footprint_errors) is not placed on the board (what="place").
+    One message names every such part, what is wrong and how to fix it. Nothing has been changed when this raises. The draw does not call
+    this any more: the schematic carries no copper, so such a part is drawn with its real symbol and listed (draw_schematic)."""
     msg = store.footprint_error_text(store.footprint_error_parts(project, refs=set(refs)), f"Cannot {what}")
     if msg:
         raise BridgeError(msg + " Nothing was changed.")
 
 
+def draft_library_path(project):
+    """The SchLib the placeholder symbols of a draft draw live in: next to the project library, never inside it (the library build
+    starts from the template and verify_library_files refuses a symbol that is not ours)."""
+    lp = library_paths(project)
+    return lp["folder"] / f"{lp['name']}-Draft.SchLib"
+
+
+def _project_symbols(lp):
+    """({symbol name: symbol} of the project SchLib, why it has none): a SchLib that is missing or cannot be read gives no symbols (every
+    part is then drawn as a placeholder), never an error."""
+    if not lp["schlib"].is_file():
+        return {}, "the project library is not built yet"
+    try:
+        return {s["name"]: s for s in read_schlib(lp["schlib"])["symbols"]}, ""
+    except Exception as exc:                  # noqa: BLE001  a broken file of any kind: the draft draw goes on without it
+        return {}, f"the project library could not be read ({str(exc)[:80]})"
+
+
+def _placeholder_reasons(sheet, symbols, lib_why):
+    """{ref: {"why", "detail"}} of the parts of one netlist sheet that cannot be drawn from the project library: no symbol for the part
+    (or no library), a symbol whose pins do not fit the netlist's, a symbol of several parts. {} = every part has a symbol that fits."""
+    from altium import draw
+    out = {}
+    for part in sheet.get("parts", []):
+        if not isinstance(part, dict) or not part.get("ref"):
+            continue
+        sym = symbols.get(part["ref"])
+        if sym is None:
+            out[part["ref"]] = {"why": draw.NO_SYMBOL, "detail": lib_why or "the library has no symbol for this part"}
+            continue
+        problems = draw.symbol_problems(part, sym)
+        if problems:
+            multi = all("several parts" in m for m in problems)
+            out[part["ref"]] = {"why": draw.MULTI_SYMBOL if multi else draw.BAD_SYMBOL, "detail": problems[0]}
+    return out
+
+
+def _draft_close_args(path):
+    return [str(path.with_suffix(e)) if e != ".SchLib" else str(path) for e in (".LibPkg", ".SchLib", ".PcbLib", ".IntLib")]
+
+
+def draw_needs_library(project, sheet=None):
+    """True when the draw would draw a part as a placeholder only because the library is OLDER than the design (a part with no symbol in a
+    library that library_stale says is out of date): building the library first may give it a symbol. A library that is up to date, or
+    none to read, or a part the build cannot give a symbol, is False. File checks only; never raises."""
+    from altium import draw
+    try:
+        if not library_stale(project):
+            return False
+        symbols, _why = _project_symbols(library_paths(project))
+        for sid, _t, sh in _sheets(project):
+            if sheet is not None and sid != str(sheet):
+                continue
+            if any(r["why"] == draw.NO_SYMBOL for r in _placeholder_reasons(sh, _sheet_symbols(project, sh, symbols), "").values()):
+                return True
+    except Exception:                         # noqa: BLE001  a check that fails plans nothing: the draw then gives its own answer
+        pass
+    return False
+
+
+def build_draft_library(project, items):
+    """Make the draft SchLib holding `items` ({symbol name: draw.placeholder()}) through Altium, then read it back and compare every symbol
+    (pins, comment, designator) with what was asked. Returns the file. A BridgeError names what differs; nothing is drawn from it then."""
+    path = draft_library_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    run_commands([("LIBCLOSE", *_draft_close_args(path))])      # closes what is open, ignores what is not there
+    _check_unlocked([path])
+    shutil.copyfile(TEMPLATES / "Template.SchLib", path)
+    work = store.pdir(project) / "draft-library"
+    work.mkdir(parents=True, exist_ok=True)
+    _write_ansi(work / "symbols_spec.txt", "\n".join([f"LIBRARY|{path}"] + [ln for it in items.values() for ln in it["spec"]]) + "\n")
+    _write_ansi(work / "props.txt", "".join(it["props"] + "\n" for it in items.values()))
+    run_commands([("SYMBATCH", str(path), str(work / "symbols_spec.txt")), ("SYMREMOVE", str(path), TEMPLATE_SYMBOL),
+                  ("SYMPROPS", str(path), str(work / "props.txt")), ("SAVELIB", str(path), "SchLib")], stall_timeout=120, total_timeout=300)
+    got = {s["name"]: s for s in read_schlib(path)["symbols"]}
+    bad = [f"{n} is not in the draft library" for n in items if n not in got] + [f"{n} is not ours" for n in got if n not in items]
+    for n, it in items.items():
+        s = got.get(n)
+        if s is None:
+            continue
+        want = sorted((p["number"], p["name"], "Passive") for p in it["symbol"]["pins"])
+        if sorted((p["number"], p["name"], p["electrical"]) for p in s["pins"]) != want:
+            bad.append(f"{n}: its pins differ ({len(s['pins'])} made, {len(want)} asked)")
+        if s["comment"] != it["symbol"]["comment"] or s["designator"] != it["symbol"]["designator"]:
+            bad.append(f"{n}: its comment or designator differs")
+    if bad:
+        raise BridgeError("The placeholder symbols could not be made in Altium: " + "; ".join(bad[:6]) + ". Nothing was drawn.")
+    return path
+
+
+def _close_draft_library(project):
+    """Best effort: the draft SchLib is only read while the parts are placed; it is not left open in Altium."""
+    try:
+        run_commands([("LIBCLOSE", *_draft_close_args(draft_library_path(project)))])
+    except (BridgeError, OSError):
+        pass
+
+
 def draw_schematic(project, sheet=None, replace=False):
-    """Draw the netlist sheet(s) of the project in Altium: every part from the project SchLib (pin count checked), a wire stub
-    on every connected pin ending in a power port or a net label, a No ERC cross on NC pins. Then the saved SchDoc is read back
-    and compared with the netlist. Refuses a sheet that already has components unless replace is true (the old SchDoc is
-    copied to .advisor-backup first). The SchDoc comes from the PrjPcb (a new one is added when there is none)."""
+    """Draw the netlist sheet(s) of the project in Altium: every part from the project SchLib, a wire stub on every connected pin
+    ending in a power port or a net label, a No ERC cross on NC pins. Then the saved SchDoc is read back and compared with the netlist.
+    Always a DRAFT when it has to be: a part the library has no symbol for (or none was built, or its symbol does not fit the
+    netlist's pins) is drawn as a PLACEHOLDER, a rectangle with the netlist's own pins (draw.placeholder), every net still connected;
+    the result and the log list them (`placeholders`), the sheet's heading says DRAFT, and store.manufacturing_warning blocks the
+    outputs until a later draw has the real symbols. A part whose library footprint is in error is drawn with its symbol (the
+    schematic carries no copper); the placement still refuses it. Refuses a sheet that already has components unless replace is true
+    (the old SchDoc is copied to .advisor-backup first). The SchDoc comes from the PrjPcb (a new one is added when there is none)."""
     from altium import draw
     from altium.schdoc import read_schdoc
     prj = _linked(project)
     lp = library_paths(project)
-    if not lp["schlib"].is_file():
-        raise Fixable("prereq.library_not_built", "The project library is not built yet: run library.build first, the parts are drawn from it.")
     planned = _sheets(project)
     if sheet is not None:
         planned = [s for s in planned if s[0] == str(sheet)]
     if not planned:
         raise Fixable("prereq.no_netlist", "There is no netlist sheet to draw" + (f" (no sheet {sheet})" if sheet is not None else "")
                       + ": write the netlist first (netlist.write).")
-    refuse_footprint_errors(project, {p.get("ref") for _s, _t, sh in planned for p in sh.get("parts", []) if isinstance(p, dict)}, "draw")
+    all_refs = {p.get("ref") for _s, _t, sh in planned for p in sh.get("parts", []) if isinstance(p, dict)}
+    fp_bad = {r: i["footprint"] for i in store.footprint_error_parts(project, refs=all_refs) for r in i["refs"]}
     bom_refs = {r for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
-    lib_symbols = {s["name"]: s for s in read_schlib(lp["schlib"])["symbols"]}
+    lib_symbols, lib_why = _project_symbols(lp)
     manifest = store.library_manifest(project)
     key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
     plans, existing, new_docs, adopted = [], [], [], set()
+    draft_items, draft_names = {}, set()
     # one drawn name per net for the whole design (a net on two sheets keeps one name; two names never share one)
     aliases = drawn_names(project)
     for sid, title, sh in planned:
@@ -951,12 +1054,26 @@ def draw_schematic(project, sheet=None, replace=False):
             if have and not replace:
                 raise BridgeError(f"{doc.name} already has {have} objects (parts, wires, labels). I never wipe a drawing: say so if it "
                                   "should be redrawn (replace), the old file is kept in .advisor-backup.")
-        plan = draw.plan_sheet(sh, _sheet_symbols(project, sh, lib_symbols), lp["schlib"], doc, replace=replace and doc not in adopted,
-                               aliases=aliases)      # a sheet taken over as empty is never wiped: anything on it stops the draw
+        syms = _sheet_symbols(project, sh, lib_symbols)
+        phs = _placeholder_reasons(sh, syms, lib_why)
+        by_ref = {p.get("ref"): p for p in sh.get("parts", []) if isinstance(p, dict)}
+        for ref, ph in phs.items():
+            name, n = draw.placeholder_name(ref), 1
+            while name in draft_names:
+                n += 1
+                name = f"{draw.placeholder_name(ref)}_{n}"
+            draft_names.add(name)
+            ph["name"], ph["schlib"], ph["sheet"] = name, str(draft_library_path(project)), sid
+            draft_items[name] = draw.placeholder(by_ref[ref], ph["why"], name)
+        plan = draw.plan_sheet(sh, syms, lp["schlib"], doc, replace=replace and doc not in adopted,
+                               aliases=aliases, placeholders=phs)      # a sheet taken over as empty is never wiped: anything on it stops the draw
         if plan["errors"]:
             msg = f"Sheet {sid} cannot be drawn: " + "; ".join(plan["errors"][:8])
             raise Fixable(plan["fix_code"], msg) if plan.get("fix_code") in NEUTRAL_CODES else BridgeError(msg)
-        plans.append((sid, doc, plan, {r: (manifest.get(key.get(r)) or {}).get("footprint") for r in key}))
+        plan["draft"] = [{"sheet": sid, "ref": r, "why": ph["why"], "detail": ph["detail"]} for r, ph in phs.items()]
+        # a footprint link is checked on the sheet only for a part that has one: a placeholder has none, and a footprint in error was never
+        # written to the PcbLib (the part's schematic symbol is fine; the placement refuses it)
+        plans.append((sid, doc, plan, {r: (None if r in phs or r in fp_bad else (manifest.get(key.get(r)) or {}).get("footprint")) for r in key}))
     saved_first = save_open_sheets(prj, existing) if existing else []      # before the backup, so the backup holds the student's latest edits
     backup = _backup(prj, existing + ([prj] if new_docs else []))
     if existing:        # Altium's own view first: anything on the sheet stops the run before it touches anything
@@ -968,6 +1085,8 @@ def draw_schematic(project, sheet=None, replace=False):
                                    if saved_first else "A sheet is open in Altium with unsaved changes that could not be saved from here. ")
                                   + SAVE_BY_HAND) from exc
             raise
+    if draft_items:        # the placeholder symbols are made and read back before anything is drawn
+        build_draft_library(project, draft_items)
     cmds = [("PROJECT", str(prj))] + [("SCH", str(d)) for d in new_docs]
     titles = {sid: title for sid, title, _ in planned}
     for sid, doc, plan, _fp in plans:
@@ -988,6 +1107,9 @@ def draw_schematic(project, sheet=None, replace=False):
         except BridgeError:
             closed = " Close the sheet in Altium WITHOUT saving: it is half drawn."
         raise BridgeError(str(exc) + closed) from exc
+    finally:
+        if draft_items:
+            _close_draft_library(project)
     # the sheets are in the Altium project now: their files are recorded before anything below can fail, so a later run never
     # makes a second copy of a sheet whose check broke off
     _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans}, created=[str(d) for d in new_docs])
@@ -1008,15 +1130,21 @@ def draw_schematic(project, sheet=None, replace=False):
             from checks.schematic import check_schematic
             found = [f for f in check_schematic(doc)["findings"] if f.get("severity") == "error"]
             problems += [f"sheet {sid}: {f['message']}" for f in found[:5]]
+    draft = {sid: [{"ref": x["ref"], "why": x["why"], "detail": x["detail"]} for x in plan["draft"]] for sid, _d, plan, _fp in plans}
+    drafted = [x for _sid, _d, plan, _fp in plans for x in plan["draft"]]
+    fp_listed = sorted(p["ref"] for _sid, _d, plan, _fp in plans for p in plan["parts"] if p["ref"] in fp_bad)
+    if fp_listed:
+        warnings.append(f"{', '.join(fp_listed[:12])}: the library footprint is in error, so the part has no footprint to place yet "
+                        "(drawn with its symbol; fix the footprint and build the library)")
     _log(project, "draw-schematic", sheets=[str(d) for _, d, _, _ in plans], parts=parts, nets=len(nets), replace=bool(replace),
          created=[str(d) for d in new_docs], backup=backup, problems=problems, warnings=warnings,
-         sheet_docs={sid: d.name for sid, d, _, _ in plans})
+         sheet_docs={sid: d.name for sid, d, _, _ in plans}, draft=draft, footprint_errors=fp_listed)
     if saved_first:
         warnings.insert(0, f"saved {', '.join(saved_first)} before drawing (it had unsaved changes in Altium)")
     renamed = {n: a for _, _, plan, _ in plans for n, a in plan.get("renamed", {}).items()}
     res = {"sheets": [str(d) for _, d, _, _ in plans], "parts": parts, "nets": sorted(nets), "warnings": warnings,
            "problems": problems, "backup": backup, "created": [str(d) for d in new_docs], "saved_first": saved_first,
-           "renamed_nets": renamed}
+           "renamed_nets": renamed, "placeholders": drafted, "footprint_errors": fp_listed}
     if not problems:
         res["stale"] = remove_stale_sheets(project, prj)
         res["warnings"] += [f"{x['name']} was left in the project: {x['why']}" for x in res["stale"]["left"] if x["name"]]
@@ -1484,6 +1612,13 @@ def place_pcb(project, replace=False):
     lp = library_paths(project)
     parts = _netlist_parts(project)
     refuse_footprint_errors(project, {p["ref"] for p in parts}, "place")
+    draft = store.draft_parts(project)
+    if draft:           # the one place a draft schematic stops work: the redraw that replaces a placeholder gives the part a new schematic id
+        refs = [x["ref"] for x in draft]
+        raise BridgeError(f"The schematic is still a draft: {', '.join(refs[:8])}{' ...' if len(refs) > 8 else ''} "
+                          f"{'is a placeholder' if len(refs) == 1 else 'are placeholders'}, not the library symbol. Build the library and draw the "
+                          "schematic again (Schematic page), then place the parts: a part placed now is linked to the placeholder, the redraw "
+                          "replaces it, and the first Update PCB would then add the part a second time. Nothing was changed.")
     links = _sch_links(prj)
     undrawn = sorted({p["ref"] for p in parts if p["ref"] not in links})
     if undrawn:                  # parts placed without their schematic link are added a second time by the first Update PCB

@@ -102,6 +102,7 @@ def sch_stage(project, model):
     missing_parts = list(sg.get("parts") or [])
     n_open, n_unl = len(gaps["open"]), len(gaps["unlisted"])
     opened = n_open + n_unl + len(missing_parts)
+    draft = store.draft_parts(project)
     if opened:
         said = []
         if n_open:
@@ -110,11 +111,38 @@ def sch_stage(project, model):
             said.append(f"{_plural(n_unl, 'pin')} missing from the netlist")
         if missing_parts:
             said.append(f"{_plural(len(missing_parts), 'part')} not in the BOM or not approved yet")
-        return _stage("sch", "issues", ", ".join(said), "warn", opened, next_={"label": "Fix the schematic", "act": "go:sch"})
+        if draft:
+            said.append(f"{_plural(len(draft), 'placeholder part')} (draft)")
+        return _stage("sch", "issues", ", ".join(said), "warn", opened + len(draft), next_={"label": "Fix the schematic", "act": "go:sch"})
+    if draft:           # drawn, but not finished: never "clean" while a part is only a rectangle with the netlist's pins
+        return _stage("sch", "in_progress", f"Draft: {_plural(len(draft), 'placeholder part')} ({', '.join(x['ref'] for x in draft[:4])}"
+                      f"{' ...' if len(draft) > 4 else ''}), no real library symbol yet", "warn", len(draft),
+                      next_={"label": "Build the library, draw again", "act": "go:sch"})
     drawn = bool(store.sheet_docs(project))
     if not drawn:
         return _stage("sch", "in_progress", f"{_plural(counts['total'], 'sheet')} planned, not drawn in Altium yet", next_={"label": "Draw in Altium", "act": "go:sch"})
     return _stage("sch", "clean", _plural(counts["total"], "sheet"), next_=_go("pcb", "Next: Layout"))
+
+
+def draft_summary(project):
+    """What the Schematic page says about a drawn draft: {"parts": [{sheet, ref, why, detail}], "footprint_errors": [ref], "text": one line}.
+    parts is empty when the drawn schematic holds no placeholder."""
+    parts = store.draft_parts(project)
+    fp = []
+    for e in reversed(store.read_jsonl(store.pdir(project) / "altium-log.jsonl")):
+        if e.get("op") == "draw-schematic":
+            now = {r for i in store.footprint_error_parts(project) for r in i["refs"]}        # still in error now
+            fp = [str(r) for r in e.get("footprint_errors") or [] if r in now]
+            break
+    if not parts and not fp:
+        return {"parts": [], "footprint_errors": [], "text": ""}
+    said = []
+    if parts:
+        said.append(f"Draft: {_plural(len(parts), 'part')} drawn as {'a placeholder' if len(parts) == 1 else 'placeholders'}, no real library symbol yet "
+                    f"({', '.join(x['ref'] for x in parts[:8])}{' ...' if len(parts) > 8 else ''})")
+    if fp:
+        said.append(f"{', '.join(fp[:8])}{' ...' if len(fp) > 8 else ''}: footprint in error")
+    return {"parts": parts, "footprint_errors": fp, "text": "; ".join(said)}
 
 
 def board_check_of(lt):
@@ -263,7 +291,7 @@ def outputs_stage(project, model):
     if why:
         gaps = store.pin_gaps(project)
         has_pins = bool(gaps["open"] or gaps["unlisted"])
-        gate = {"blocked": True, "why": why, "page": "sch" if has_pins else "checks"}
+        gate = {"blocked": True, "why": why, "page": "sch" if has_pins or store.draft_parts(project) else "checks"}
         if has_pins:
             gate["gaps"] = gaps
             gate["nc_proposal"] = store.nc_proposal(project)
@@ -340,7 +368,7 @@ def rev(project):
 def _model(project, model):
     stages, chk = derive(project, model)
     return {"rev": rev(project), "stages": stages, "stage_sheets": sheets_counts(model), "board_check": chk,
-            "nc_proposal": store.nc_proposal(project)}
+            "nc_proposal": store.nc_proposal(project), "draft": draft_summary(project)}
 
 
 @ext.register("post")

@@ -1268,7 +1268,11 @@ def _warn_tail(res):
 
 def draw_summary(res):
     fitted = res.get("fitted") or []
-    return (f"{res['parts']} parts and {len(res['nets'])} nets drawn on {len(res['sheets'])} sheet(s), saved and checked against the netlist"
+    ph = [x["ref"] for x in res.get("placeholders") or []]
+    draft = (f" as a DRAFT: {len(ph)} {'part is a placeholder' if len(ph) == 1 else 'parts are placeholders'} "
+             f"({', '.join(ph[:8])}{' ...' if len(ph) > 8 else ''}), no real library symbol yet; build the library and draw again to replace "
+             f"{'it' if len(ph) == 1 else 'them'}; the outputs stay blocked until then") if ph else ""
+    return (f"{res['parts']} parts and {len(res['nets'])} nets drawn on {len(res['sheets'])} sheet(s){draft}, saved and checked against the netlist"
             + (f", pin numbers of {', '.join(fitted[:12])}{' ...' if len(fitted) > 12 else ''} matched by pin name to the library symbols" if fitted else "")
             + _warn_tail(res))
 
@@ -1405,7 +1409,8 @@ def _and(items):
 def step_plan(project, step):
     """The preparations a step button runs before its step, from file checks only (no Altium call). Each is planned only when the
     step cannot run without it and nothing of the student's can be touched by it:
-    - library.build (draw, place) when the project has no library file yet. A library that is merely older than the BOM or the
+    - library.build (draw, place) when the project has no library file yet; for the draw it is a try: when the build fails the
+      draft draw goes on, the parts without a symbol are placeholders (_run_step). A library that is merely older than the BOM or the
       netlist (library_stale: true after almost every edit) is NOT rebuilt here: that takes minutes, replaces symbols under a sheet
       that is already drawn, and the step says so itself when a part is really missing from the library;
     - altium.add_pcb (place) when the Altium project lists no PcbDoc at all (one the student added by hand is theirs to link);
@@ -1471,6 +1476,12 @@ def _run_insert(project, key, before):
             steps.insert(at, {"key": key, "label": STEP_LABELS[key], "state": "running", "note": ""})
             for st in steps[at + 1:]:
                 st["state"] = "waiting"
+
+
+def _short(text, n=160):
+    """The first words of a failure, on one line (a step's note on the button page)."""
+    t = " ".join(str(text).split())
+    return t if len(t) <= n else t[:n - 1].rstrip() + "…"
 
 
 def _run_mark(project, key, state, note=""):
@@ -1715,13 +1726,21 @@ def _run_step(project, sess, step, data, bridge):
         _run_end(project, **body)
         return 400, body
     plan = step_plan(project, step)
+    skipped = []              # [(preparation, why)]: a preparation of the draw that failed and was not needed to go on (the draft draw)
     _run_begin(project, step, [*plan, final])
     try:
         for current in plan:
             _stop_check(project)              # Stop is read between steps only: a step in Altium is never cut in the middle
             _run_mark(project, current, "running")
             if current == "library.build":
-                res = bridge.build_library(project)
+                try:
+                    res = bridge.build_library(project)
+                except bridge.BridgeError as exc:
+                    if step != "draw":
+                        raise
+                    skipped.append((current, str(exc)))        # a draft draw never waits for a library that cannot be built
+                    _run_mark(project, current, "failed", _short(str(exc)))
+                    continue
             elif current == "altium.add_pcb":
                 res = bridge.add_pcb(project)
             elif current == "outjob.generate":
@@ -1747,6 +1766,21 @@ def _run_step(project, sess, step, data, bridge):
             return bridge.route_pcb(project, replace=replace, keep_partial=_truthy(data.get("keep_partial")))
         current = final
         _stop_check(project)
+        if step == "draw" and not done and not skipped and bridge.draw_needs_library(project, data.get("sheet") or None):
+            # a part has no symbol in a library that is older than the BOM or the netlist: it is rebuilt first (the old "run
+            # library.build first" answer), and when that fails the draw goes on, those parts as placeholders
+            current = "library.build"
+            _run_insert(project, current, final)
+            try:
+                res = bridge.build_library(project)
+                said = _prep_said(project, current, res)
+                done.append((current, said))
+                _run_mark(project, current, "done", said)
+            except bridge.BridgeError as exc:
+                skipped.append((current, str(exc)))
+                _run_mark(project, current, "failed", _short(str(exc)))
+            current = final
+            _stop_check(project)
         _run_mark(project, final, "running")
         try:
             res = the_step()
@@ -1782,6 +1816,8 @@ def _run_step(project, sess, step, data, bridge):
         return code, body
     if step == "outputs" and any(k == "outjob.generate" for k, _ in done):
         res = {**res, "added": True}          # the same answer as when the bridge adds the OutJob itself
+    if skipped:            # a warning of the result, so the summary's tail (the amber chip in the chat) carries it
+        res = {**res, "warnings": [*(res.get("warnings") or []), "the library build failed - " + _short(skipped[0][1]) + " - so the parts it could not give a symbol are placeholders"]}
     summary = STEP_SUMMARY[step](res)
     # the agent reads this conversation on its next turn: a note there says the step is done, so it does not offer it again.
     # "applied" makes it an applied action like the chat's: consent given in words before it is used up (earlier_student_messages)

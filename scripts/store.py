@@ -3583,16 +3583,51 @@ def footprint_error_text(items, what):
             "then build the library again.")
 
 
+def draft_parts(project):
+    """[{sheet, ref, why, detail}] of the parts the schematic as last drawn holds as PLACEHOLDERS (a rectangle with the netlist's pins, no
+    library symbol behind it: altium.draw.placeholder). Replayed from the draw records of altium-log.jsonl ("draw-schematic" with
+    "draft": {sheet id: [...]}): each draw of a sheet replaces what an earlier draw of it said (a record without "draft", from before
+    the draft draw existed, says none), a sheet or part the design no longer has is dropped. The next draw, with the real symbol,
+    is what clears a part; nothing else does."""
+    def build():
+        state = {}
+        for e in read_jsonl(pdir(project) / "altium-log.jsonl"):
+            if e.get("op") != "draw-schematic":
+                continue
+            draft = e.get("draft") if isinstance(e.get("draft"), dict) else {}
+            for sid in e.get("sheet_docs") or {}:
+                state[str(sid)] = [x for x in (draft.get(str(sid)) or []) if isinstance(x, dict) and x.get("ref")]
+        out = []
+        for sid in sheet_ids(project):
+            refs = {p.get("ref") for p in load_sheet(project, sid).get("parts", []) if isinstance(p, dict)}
+            out += [{"sheet": sid, "ref": x["ref"], "why": str(x.get("why") or ""), "detail": str(x.get("detail") or "")}
+                    for x in state.get(sid, []) if x["ref"] in refs]
+        return out
+    return memoised(("draft_parts", project), build)
+
+
+def draft_text(items, cut=12):
+    """The one line that says a drawn schematic is a draft: how many parts are placeholders and which ("" when none)."""
+    refs = [x["ref"] for x in items]
+    if not refs:
+        return ""
+    return (f"the schematic is a draft: {len(refs)} {'part is a placeholder' if len(refs) == 1 else 'parts are placeholders'} "
+            f"(no real library symbol yet): {', '.join(refs[:cut])}{' ...' if len(refs) > cut else ''}")
+
+
 def manufacturing_warning(project):
     """"" when every part on the board has verified or accepted pins and no pin is left undecided; else the refusal that stops the
     manufacturing outputs (Altium OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list,
     without DNP / do-not-buy lines), then the open pins (no net, not NC) and the pins of a built symbol the netlist does not list.
     The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins);
-    a pin by a net or by NC (mark_pins_nc). A BOM part whose library footprint is in error (footprint_errors) blocks too, named first."""
+    a pin by a net or by NC (mark_pins_nc). A BOM part whose library footprint is in error (footprint_errors) blocks too, named first.
+    So does a drawn schematic that is still a DRAFT (draft_parts): a placeholder part is not the library symbol, so the board it
+    would give is not the board that is ordered; the redraw with the real symbol is what lifts it."""
     fp_msg = footprint_error_text(footprint_error_parts(project, buyable=True), "Not made yet")
     rows = pins_to_resolve(project)
     gaps = pin_gap_text(pin_gaps(project))
-    if not rows and not gaps:
+    draft = draft_parts(project)
+    if not rows and not gaps and not draft:
         return fp_msg
     said = []
     bad = [r for r in rows if r["status"] == "mismatch"]
@@ -3606,11 +3641,15 @@ def manufacturing_warning(project):
         said.append(part(bad, "pins that differ from the datasheet"))
     if gaps:
         said.append(gaps)
+    if draft:
+        said.append(draft_text(draft))
     tail = []
     if rows:
         tail.append("Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
     if gaps:
         tail.append("Open Schematic: connect each pin or mark them all NC in one click.")
+    if draft:
+        tail.append("Build the library so each placeholder part gets its real symbol, then draw the schematic again (Schematic page).")
     return (fp_msg + " Also: " if fp_msg else "Not made yet: ") + "; ".join(said) + ". " + " ".join(tail)
 
 

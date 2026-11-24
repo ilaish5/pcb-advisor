@@ -206,11 +206,7 @@ def test_a_sheet_that_does_not_match_the_netlist_fails_loudly(drawn, monkeypatch
         bridge.draw_schematic(project)
 
 
-def test_the_library_must_be_built_first(drawn):
-    project, _, _ = drawn
-    bridge.library_paths(project)["schlib"].unlink()
-    with pytest.raises(bridge.BridgeError, match="library"):
-        bridge.draw_schematic(project)
+# (a library that was never built no longer refuses the draw: it is drawn as a draft of placeholders, tests/test_draft_schematic.py)
 
 
 def _run(project, act, said):

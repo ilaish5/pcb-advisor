@@ -53,17 +53,20 @@ Asked to DRAW the schematic in Altium: one turn, project, `library.build`, `netl
     - "Myself" (or no clear answer): the manual path, steps 9-10 stay as they are; do not run the action.
     - "You draw it": send `{"type": "altium.draw_schematic", "student_said": "<their words, most of their last message>"}`
       (add `"sheet": "01"` for one sheet); the quote and replace rules are in AGENTS.md, REPLY FORMAT AND ACTIONS.
-      "תשרטט לבד" means YOU draw it. It needs the library built and Altium open. It opens the project's SchDoc (adds one when
+      "תשרטט לבד" means YOU draw it. It needs Altium open (build the library first; the draw does not wait for it). It opens the project's SchDoc (adds one when
       the project has none), places every part from the project library (pin count checked against the symbol), sets the
       designators, keeps footprint and parameters, puts a wire stub + power port or net label on every connected pin and a
       No ERC cross on NC pins, lays the parts out on a grid, saves, and reads the saved file back to compare every net with the
       netlist. Report in the student's words: parts placed, nets, warnings (open pins, pins not in the library).
+      A part with no library symbol, or one whose symbol does not fit the netlist's pins, is drawn as a PLACEHOLDER (a plain
+      rectangle with the netlist's pins, comment "PLACEHOLDER"), every net connected, the sheet titled DRAFT. Say which parts; the
+      outputs stay blocked until the library has them and the sheet is drawn again (replace).
     - It refuses (and tells you why) when the sheet already has anything on it, or is open in Altium with unsaved changes: the
       student's drawing is never wiped (the old file is copied to `.advisor-backup` before any replace). Pins are matched by
       number: a different name is a warning (tell the student), a name that is another library pin's is a swap and refused.
-      Hebrew headings are drawn as "Section N". Multi-part symbols are not drawn: say which, and fix the netlist or draw that
-      part by hand. A refusal because the library lacks a symbol, a pin count differs, or the sheet does not fit one A4 page:
-      say what is missing and fix that (library, netlist, a second sheet), never work around it with a script in Altium.
+      Hebrew headings are drawn as "Section N". A multi-part symbol is drawn as a placeholder: say which, and fix the netlist
+      or draw that part by hand. A refusal because the sheet does not fit one A4 page: say so and fix that (a second sheet),
+      never work around it with a script in Altium.
     - NEXT STEP after the schematic is drawn (never send the student to Design > Update PCB unasked): ask ONE question in
       their language: "Place the parts in Altium yourself, press Place parts on the Layout page, or should I?" Then stop and
       wait. "You place them" = follow `placement-and-routing-plan` (`altium.place_pcb`, only on their answer); "myself" = then

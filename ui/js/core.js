@@ -240,7 +240,7 @@ function render(force) {
   renderNav();
   if (typeof readyShow === 'function') readyShow();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, S.stages, S.board_check, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy, libBusy, libNote]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, S.stages, S.draft, S.board_check, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy, libBusy, libNote]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
 // go('workspace', 'bom') or go('bom') shows a stage in the main sheet; go('library') a page. See shell.js.
