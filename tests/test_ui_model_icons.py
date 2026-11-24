@@ -31,6 +31,7 @@ def test_states_map_the_way_the_brief_says():
     assert "'basic'" not in states
     assert "r.step ?" in states                                                # a STEP file is a real 3D model
     assert "libPinsState(r)" in states
+    assert "build_status === 'missing'" in states                              # a line the build made nothing for is not green: its preview has nothing to draw
     assert "Pins unverified" in js and "Pins conflict" in js
 
 
