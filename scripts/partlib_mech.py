@@ -7,7 +7,10 @@ import re
 
 import partlib_generate as gen
 
-RF_RE = re.compile(r"wroom|mini-?1\b|esp32-?\w*-?(?:wroom|mini)|wi-?fi|\bble\b|bluetooth|\blora\b|sx12\d\d|\bantenna\b", re.I)
+RF_RE = re.compile(r"wroom|wrover|mini-?1\b|esp32|esp8266|wi-?fi|\bwlan\b|\bble\b|bluetooth|\blora\b|sx12\d\d|\bantenna\b|"
+                   # cellular modules (kiln LTE run, E6: an A7670 sat in the middle of the board with no keep-out); layout.RF_MODULE is the placer's twin
+                   r"\blte\b|\bgsm\b|\bgprs\b|\b[45]g\b|cat-?1\b|cat-?m|nb-?iot|cellular|a76\d\d|sim7\d{3}|sim8\d\d|sim900|wh-?lte|"
+                   r"\bec2\d|\bbg9\d|\bsara-|quectel|\bnrf\d|zigbee|radio module|rf module", re.I)
 MIL = 0.0254
 ANTENNA_MIN_MM = 2.0            # the pad-free strip must be at least this deep to be called an antenna side
 KEEPOUT_DEFAULT_MM = 15.0       # Espressif asks for this much free board beyond the antenna end of a module: recorded, not enforced
@@ -50,7 +53,7 @@ def rf_module(line, fp):
     {"antenna_side": "L|R|T|B" or None, "keepout_mm": depth of the pad-free strip, "keepout_box": [x0, y0, x1, y1] mm in footprint
     coordinates, "source": "heuristic"}. The side is the one on which the outline reaches farthest beyond the pads (a module's antenna
     area has no pads); None when no side reaches 2 mm. A guess by name and shape: the Library shows it and the student can override."""
-    text = " ".join(str(line.get(k) or "") for k in ("mpn", "value", "description", "package")) + " " + str(fp.get("name") or "")
+    text = " ".join(str(line.get(k) or "") for k in ("mpn", "value", "description", "package", "role")) + " " + str(fp.get("name") or "")
     if not RF_RE.search(text):
         return None
     pb, ob = _geometry(fp.get("lines", []))
