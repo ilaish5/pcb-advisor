@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Parts table mockup</title>
+<style>
+:root{--ink:#1f1f1d;--ink2:#6b6a66;--mut:#a3a19b;--line:#e7e5df;--bg:#f4f3ef;--sheet:#fff;--ok:#2f7a1f;--okb:#e6f2dc;--warn:#8a5a0b;--warnb:#fbefd9;--bad:#a32d2d;--badb:#fbe7e7;--acc:#2f6fd0}
+@media (prefers-color-scheme:dark){:root{--ink:#eceae4;--ink2:#b4b2a9;--mut:#6f6d67;--line:#3a3a38;--bg:#1b1b1a;--sheet:#242423;--okb:#25361d;--warnb:#3a2e17;--badb:#3d2121;--ok:#8fd16f;--warn:#e8b45a;--bad:#f08a8a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,sans-serif;padding:16px}
+.page{max-width:1080px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}
+.card{background:var(--sheet);border:1px solid var(--line);border-radius:12px}
+.main{padding:16px 18px}
+.vh{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+h1{font-size:22px;margin:0}.meta{display:flex;gap:16px;flex-wrap:wrap;color:var(--ink2);margin:6px 0 12px;font-size:13px}.meta b{color:var(--ink)}
+.btn{border:1px solid var(--line);background:var(--sheet);color:var(--ink);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+.btn.pri{background:var(--ink);color:var(--sheet);border-color:var(--ink)}.acts{display:flex;gap:8px}
+.wait{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--warnb);color:var(--warn);border-radius:8px;padding:8px 12px;margin:0 0 10px;font-size:13px}
+.lg{display:flex;gap:14px;flex-wrap:wrap;color:var(--ink2);font-size:12px;margin:0 0 8px}
+table{width:100%;border-collapse:collapse}th{text-align:left;font-weight:500;color:var(--ink2);font-size:12.5px;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:middle}tr.sel td{background:rgba(47,111,208,.07)}tbody tr{cursor:pointer}
+.ref{font-family:ui-monospace,monospace;font-weight:600}.sub{display:block;color:var(--ink2);font-size:12px;font-family:ui-monospace,monospace}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.mic{display:inline-flex;width:24px;height:24px;align-items:center;justify-content:center;border:0;background:none;padding:0;cursor:pointer}
+.mic svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.mic.ok{color:var(--ok)}.mic.no{color:var(--mut)}.mic.bad{color:var(--bad)}
+.tag{display:inline-block;border-radius:6px;padding:1px 8px;font-size:12px;white-space:nowrap}
+.t-ok{background:var(--okb);color:var(--ok)}.t-warn{background:var(--warnb);color:var(--warn)}.t-bad{background:var(--badb);color:var(--bad)}.t-n{background:rgba(128,128,128,.13);color:var(--ink2)}
+.side{padding:14px 16px;align-self:start}.side h2{font-size:16px;margin:0}.sec{border-top:1px solid var(--line);padding:10px 0 4px;margin-top:10px}.sec h3{font-size:12px;color:var(--ink2);font-weight:500;margin:0 0 6px;text-transform:uppercase;letter-spacing:.03em}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13px}.kv span:nth-child(odd){color:var(--ink2)}
+.sup{display:grid;grid-template-columns:1fr auto auto;gap:4px 12px;font-size:13px}.sup .best{font-weight:600}
+.note{max-width:1080px;margin:14px auto 0;color:var(--ink2);font-size:13px}
+@media (max-width:820px){.page{grid-template-columns:1fr}}
+</style></head><body>
+<div class="page">
+<section class="card main">
+  <div class="vh"><div><h1>Parts</h1>
+    <div class="meta"><span><b>60</b> lines</span><span><b>127</b> parts</span><span><b>$41.60</b> per board</span><span>plus $76.75 extended fees</span><span style="color:var(--warn)"><b>25</b> to verify</span></div></div>
+    <div class="acts"><button class="btn">Export ▾</button><button class="btn">⋯</button><button class="btn pri">Build library</button></div></div>
+  <div class="wait"><span>3 parts wait for a pin decision</span><button class="btn">Review all</button></div>
+  <div class="lg">Models, left to right: Symbol · Footprint · 3D · Pins. <span style="color:var(--ok)">■ present</span><span style="color:var(--mut)">■ missing</span><span style="color:var(--bad)">■ needs fixing</span></div>
+  <table><thead><tr><th>Ref</th><th>Part</th><th class="num">Qty</th><th>Models</th><th>Supply</th><th>Status</th></tr></thead>
+  <tbody id="rows"></tbody></table>
+</section>
+<aside class="card side" id="side"></aside>
+</div>
+<p class="note">Mockup only. One table, one row per BOM line. The header total keeps cost visible. LCSC, unit price, per board price, suppliers, package and source move to the card on the right (click a row). The full issue text moves there too.</p>
+<script>
+const I={symbol:'<path d="M7 4h10v16H7z"/><path d="M3 8h4M3 16h4M17 8h4M17 16h4"/>',footprint:'<rect x="8" y="6" width="8" height="12" rx="1"/><path d="M4 8h3M4 12h3M4 16h3M17 8h3M17 12h3M17 16h3"/>',model:'<path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M12 12l8-4.5M12 12v9M12 12L4 7.5"/>',pins:'<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>'};
+const R=[
+ {ref:'C1',v:'100uF 25V',mpn:'EEE-FK1E101P',pkg:'CAP_EEEFK1E101P',lcsc:'C178539',type:'Extended',q:1,stock:8,unit:.309,m:['ok','ok','ok','ok'],sup:['Low stock','t-warn'],st:['Built','t-ok']},
+ {ref:'C2',v:'22uF',mpn:'CL31A226KAHNNNE',pkg:'C1206',lcsc:'C12891',type:'Basic',q:1,stock:2626953,unit:.103,m:['ok','ok','ok','ok'],sup:['In stock','t-ok'],st:['Built','t-ok']},
+ {ref:'C3–C5, C20, …',v:'100nF',mpn:'CC0603KRX7R9BB104',pkg:'C0603',lcsc:'C14663',type:'Basic',q:22,stock:52110515,unit:.005,m:['ok','ok','ok','ok'],sup:['In stock','t-ok'],st:['Built','t-ok']},
+ {ref:'C30',v:'330uF 6.3V',mpn:'T520D337M006ATE015',pkg:'CAP-SMD_L7.3-W4.3',lcsc:'C116744',type:'Extended',q:1,stock:2760,unit:1.2,m:['ok','ok','ok','bad'],sup:['Extended fee','t-warn'],st:['Verify pins','t-warn']},
+ {ref:'D1',v:'LED green',mpn:'KT-0603G',pkg:'LED0603',lcsc:'C72043',type:'Basic',q:1,stock:910220,unit:.011,m:['ok','ok','ok','ok'],sup:['In stock','t-ok'],st:['Built','t-ok']},
+ {ref:'F1',v:'Fuse 2.6A',mpn:'1812L260/16MR',pkg:'1812',lcsc:'C883162',type:'Extended',q:1,stock:0,unit:null,m:['no','no','no','no'],sup:['No stock','t-bad'],st:['Missing','t-bad']},
+ {ref:'J1',v:'USB-C 16P',mpn:'TYPE-C-31-M-12',pkg:'USB-C-SMD',lcsc:'C165948',type:'Extended',q:1,stock:41230,unit:.21,m:['ok','ok','ok','bad'],sup:['Extended fee','t-warn'],st:['Confirm pins','t-warn']},
+ {ref:'U1',v:'ESP32-C3',mpn:'ESP32-C3-MINI-1-N4',pkg:'MODULE-SMD',lcsc:'C2838502',type:'Extended',q:1,stock:5120,unit:2.34,m:['ok','ok','ok','ok'],sup:['In stock','t-ok'],st:['Built','t-ok']}];
+const $=s=>document.querySelector(s),money=v=>v==null?'—':'$'+(v<.1?v.toFixed(3):v.toFixed(2)),num=n=>n.toLocaleString('en-US');
+const names={symbol:'Symbol',footprint:'Footprint',model:'3D',pins:'Pins'};
+function icons(r){return Object.keys(I).map((k,i)=>`<button class="mic ${r.m[i]}" title="${names[k]}"><svg viewBox="0 0 24 24">${I[k]}</svg></button>`).join('')}
+let sel=0;
+function draw(){$('#rows').innerHTML=R.map((r,i)=>`<tr data-i="${i}" class="${i===sel?'sel':''}"><td class="ref">${r.ref}</td><td>${r.v}<span class="sub">${r.mpn}</span></td><td class="num">${r.q}</td><td>${icons(r)}</td><td><span class="tag ${r.sup[1]}">${r.sup[0]}</span></td><td><span class="tag ${r.st[1]}">${r.st[0]}</span></td></tr>`).join('');
+ const r=R[sel];$('#side').innerHTML=`<h2>${r.ref}</h2><div style="color:var(--ink2);font-size:13px">${r.v} · ${r.mpn}</div>
+ <div class="sec"><h3>Order</h3><div class="kv"><span>LCSC</span><span>${r.lcsc} <span class="tag t-n">${r.type}</span></span><span>Package</span><span>${r.pkg}</span><span>Qty</span><span>${r.q} per board</span><span>Unit</span><span>${money(r.unit)}</span><span>Per board</span><span>${r.unit==null?'—':money(r.unit*r.q)}</span></div></div>
+ <div class="sec"><h3>Stock and price</h3><div class="sup"><span class="best">JLCPCB</span><span class="num">${num(r.stock)}</span><span class="num">${money(r.unit)}</span><span>LCSC</span><span class="num">${num(Math.round(r.stock*.8))}</span><span class="num">${r.unit==null?'—':money(r.unit*1.08)}</span></div></div>
+ <div class="sec"><h3>Library</h3><div>${icons(r)}</div><div style="font-size:12px;color:var(--ink2);margin-top:4px">Source: EasyEDA · ${r.st[0]}</div></div>
+ <div class="sec"><h3>Datasheet</h3><span style="color:var(--acc)">${r.mpn}.pdf</span></div>`;
+ document.querySelectorAll('#rows tr').forEach(t=>t.onclick=()=>{sel=+t.dataset.i;draw()})}
+draw();
+</script></body></html>
