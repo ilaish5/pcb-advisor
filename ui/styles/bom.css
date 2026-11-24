@@ -1,4 +1,4 @@
-/* bom.css: the BOM view (table, footer, right-hand drawer). Tokens only. The shared pieces (.tbl, .drawer, .tag, .btn,
+/* bom.css: the BOM view (the parts table with its models, the supply card, footer, right-hand drawer). Tokens only. The shared pieces (.tbl, .drawer, .tag, .btn,
    .meta, .empty ...) are in base.css. */
 
 /* the sheet holds the header and the footer; only the table scrolls, with its head pinned */
@@ -14,18 +14,29 @@
 .bom-tbl tr.off td{color:var(--ink-3)}
 .bom-tbl .clip{display:inline-block;max-width:100px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 /* The Part column takes the width the others leave and is cut with an ellipsis (the row's tooltip has the whole text), so the
-   table never needs more than its sheet: with a fixed 200px here it overflowed by 40px at 1600x1000 with the chat open, and
-   a thin scrollbar appeared under the table. */
+   table never needs more than its sheet. The other columns are sized to their content: at 1280px with the chat open the sheet
+   is about 670px wide, and the seven columns fit it with the Part column still readable. */
 .bom-tbl .c-part{width:100%;max-width:0}
 .bom-tbl .main,.bom-tbl .sub{display:block;overflow:hidden;text-overflow:ellipsis}
-.bom-tbl td.bom-ref{max-width:170px;overflow:hidden;text-overflow:ellipsis;font-family:var(--f-mono);font-weight:600}
-.bom-tbl td.tags .tag{margin-right:4px}
+.bom-tbl .sub{font-size:12px;color:var(--ink-3)}
+.bom-tbl td.bom-ref{max-width:120px;overflow:hidden;text-overflow:ellipsis;font-family:var(--f-mono);font-weight:600}
+.bom-tbl td.c-mdl .mdls{flex-wrap:nowrap;min-width:0;gap:0}
+.bom-tbl td.c-mdl .mic{width:24px;height:24px}
+.bom-tbl td.c-mdl .mic-g{width:19px;height:19px}
+.bom-tbl td.c-sup{white-space:nowrap}
+.bom-tbl td.c-sup .tag+.tag{margin-left:4px}
+.sup-btn{display:inline-flex;padding:0;border:0;background:none;border-radius:var(--r-sm);cursor:pointer;font:inherit}
+.sup-btn:hover .tag{box-shadow:0 0 0 1px var(--line-2)}
+.sup-btn[aria-expanded="true"] .tag{box-shadow:0 0 0 1.5px var(--sig-line)}
 .bom-tbl .row-acts{display:flex;gap:2px;justify-content:flex-end}
 
-/* a narrow sheet drops the columns that can be read elsewhere (unit price: title of Per board; package: title of Package) */
-@container (max-width:920px){.bom-tbl .c-unit{display:none}}
-@container (max-width:850px){.bom-tbl .c-pkg{display:none}}
-@container (max-width:760px){.bom-tbl .c-lcsc .tag{display:none}}
+/* above the table, in the scroller: the build's note, the pins waiting for a decision, the library export, the icon legend */
+.bom-top{display:grid;gap:8px;padding:2px 0 6px}
+.bom-top:empty{display:none}
+.bom-top>*{margin:0}
+
+/* a narrow sheet: the action icons give way to the row click (the part panel has Ask and Alternatives) */
+@container (max-width:560px){.bom-tbl th:last-child,.bom-tbl td:last-child{display:none}}
 
 .bom-foot{flex:none;margin:0;padding:8px 24px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3)}
 .bom-foot.stale{color:var(--warn)}
@@ -52,3 +63,17 @@
 .imp-rep{display:grid;gap:10px;font-size:13px}
 .imp-rep td{white-space:normal;vertical-align:top;overflow-wrap:anywhere}
 .imp-rep .sub{max-width:none;white-space:normal}
+
+/* the supply card: every supplier's stock and price, the LCSC code and type, when it was checked (views/bom.js bomSupCardHTML) */
+.sup-pop{position:fixed;z-index:45;width:min(340px,calc(100vw - 16px));max-height:min(460px,calc(100vh - 16px));overflow:auto;
+  background:var(--sheet);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--float);outline:none;font-size:13px}
+.sup-h{display:flex;align-items:flex-start;gap:8px;padding:12px 10px 6px 16px}
+.sup-h>div{flex:1;min-width:0}
+.sup-h h2{font-size:var(--t-md);font-family:var(--f-mono);overflow-wrap:anywhere}
+.sup-h p{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}
+.sup-b{display:grid;gap:10px;padding:4px 16px 10px}
+.sup-b p{margin:0;font-size:12.5px}
+.sup-b .kv{row-gap:4px;font-size:12.5px}
+.sup-b section h3{font-size:12px;font-weight:600;color:var(--ink-3);margin-bottom:4px}
+.sup-b .insp-sh .acts{display:none}
+.sup-f{display:flex;gap:6px;padding:8px 16px 12px;border-top:1px solid var(--line)}

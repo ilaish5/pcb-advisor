@@ -134,7 +134,7 @@ function viewHeader(o) {
   // stays an action until the idea is agreed), a page that is already where the next step is (go:<itself>) has none
   const sid = o.stage || (typeof STAGES !== 'undefined' && (STAGES.find(s => s[1] === o.title) || [])[0]);
   const next = o.next != null ? o.next : sid ? (sid !== 'idea' && typeof stageNextBtn === 'function' ? stageNextBtn(sid) : '')
-    : (o.title === 'Library' || o.title === 'Sources') && typeof pageNextBtn === 'function' ? pageNextBtn() : '';
+    : o.title === 'Sources' && typeof pageNextBtn === 'function' ? pageNextBtn() : '';
   // ONE filled button per header, and it is the last one on the right: when the stage's Next is the filled one, the page's own
   // action steps down to the outlined style (a done stage keeps "Download" or "Check" as a secondary action, not a second call to action)
   const primary = next && /class="btn pri\b/.test(next) && o.primary ? o.primary.replace(/class="btn pri\b/, 'class="btn line') : (o.primary || '');

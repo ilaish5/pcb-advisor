@@ -38,14 +38,20 @@ def test_states_map_the_way_the_brief_says():
 def test_the_legend_sits_above_the_table_and_the_built_tag_stays():
     js = ui_js()
     assert 'id="lib-legend"' in js
-    page = js[js.index("function libHTML"):]
-    assert page.index("libLegendHTML()") < page.index("${body}")
-    assert "mic-built" in js and "Not built" in js
+    # the Library page is the BOM's Models column now: the legend is above the BOM table, in the same scroller
+    top = js[js.index("function bomTop"):]
+    assert "libLegendHTML()" in top[:top.index("\n}")]
+    page = js[js.index("function bomHTML"):]
+    assert page.index("${bomTop()}") < page.index('<table class="tbl rows bom-tbl">')
+    # the table leaves out the Built word (its Status column says it); the part panel keeps it
+    assert "mic-built" in js and "Not built" in js and "o && o.built === false ? ''" in js
 
 
 def test_the_inspector_shows_the_same_icons():
     js = (UI / "js" / "views" / "inspector.js").read_text(encoding="utf-8")
-    assert "libIconsHTML(libRowOf(l))" in js
+    assert "libIconsHTML(row)" in js and "const row = r || libRowOf(l)" in js
+    bom = (UI / "js" / "views" / "bom.js").read_text(encoding="utf-8")
+    assert "libIconsHTML(r || libRowOf(l), {built: false})" in bom
 
 
 def test_the_preview_is_a_dialog_with_the_four_kinds_and_a_build_action():

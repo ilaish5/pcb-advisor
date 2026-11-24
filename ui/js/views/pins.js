@@ -66,7 +66,7 @@ function pinsWaitingBar() {
   return `<div class="pins-bar" role="status"><span class="pins-bar-t">${head}${ownTxt}${auto}</span>${pinsConfirmAllBtn()}${fetch}</div>`;
 }
 function dfmRecheckBusyNow() { return typeof dfmRecheckBusy !== 'undefined' && dfmRecheckBusy; }
-/* a row that needs its own look (a mismatch): the only per-row pin button on the Library page */
+/* a row that needs its own look (a mismatch): its own pin button (the quick preview and the part panel) */
 function pinsOwnLookBtn(key, o) {
   const l = (S.bom || []).find(b => b.key === key);
   return l && l.pins_status === 'mismatch' ? btn('Confirm pins', {...o, act: 'confirm-pins', line: key, title: 'Look at the conflict, then one click'}) : '';

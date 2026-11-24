@@ -144,9 +144,11 @@ def test_library_rows_carry_no_pin_button_unless_the_row_needs_its_own_look(empt
     assert pin_decisions.row_buttons({"verify": "pass", "accepted": False, "symbol": "S"}, {}) == 1                      # Accept after a pass
 
 
-def test_the_waiting_line_is_on_the_library_dfm_and_outputs_pages():
-    pages, checks, outputs, pins = [(UI / f).read_text(encoding="utf-8") for f in ("pages.js", "checks.js", "outputs.js", "pins.js")]
-    assert "pinsWaitingBar()" in pages[pages.index("title: 'Library'"):]
+def test_the_waiting_line_is_on_the_bom_dfm_and_outputs_pages():
+    bom, pages, checks, outputs, pins = [(UI / f).read_text(encoding="utf-8") for f in ("bom.js", "pages.js", "checks.js", "outputs.js", "pins.js")]
+    # the Library page's waiting line moved with its table onto the BOM page, above the table
+    top = bom[bom.index("function bomTop"):]
+    assert "pinsWaitingBar()" in top[:top.index("\n}")] and "title: 'Library'" not in pages
     assert "dfmWaitingHTML" in checks and "pinsWaitingBar()" in checks
     assert "pinsConfirmAllBtn" in outputs
     assert "Confirm all" in pins and "pins-bar" in pins and "own look" in pins

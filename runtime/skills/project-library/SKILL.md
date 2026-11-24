@@ -61,7 +61,7 @@ description: Explains the one project library (symbols linked to footprints and 
 
 ## Output
 - Lead with the result in one line (library built: N of M parts ready) when the build already ran (CURRENT STATE); when you
-  start it this turn, say you started it: its real result appears under your message. The Library page shows the full table: in the chat
+  start it this turn, say you started it: its real result appears under your message. The BOM page shows the full table (Models and Status columns): in the chat
   list only the parts with a gap, one line each: part, what is missing, what the student downloads (link).
 - Install check: the steps as a short numbered list, cited like `{{src:m29-integrated-library.en.md|29.3}}`, only when
   the student asks how to check or the build just finished for the first time.

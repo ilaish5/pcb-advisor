@@ -240,11 +240,11 @@ function render(force) {
   renderNav();
   if (typeof readyShow === 'function') readyShow();
   renderChat(force);
-  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, S.stages, S.draft, S.board_check, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy, libBusy, libNote]);
+  const key = JSON.stringify([S.bom, S.proposals, S.library, S.sources, S.sheets, S.idea, S.idea_draft, S.totals, S.memory, S.exports, S.checks, S.stages, S.draft, S.board_check, S.pin_decisions, page, tab, mainKey(), sideKey(), libExport, sheetId, impInfo, impSel, impReport, impBusy, libBusy, libNote]);
   if (force || key !== lastCenterKey) { lastCenterKey = key; renderCenter(force); }
 }
-// go('workspace', 'bom') or go('bom') shows a stage in the main sheet; go('library') a page. See shell.js.
-// select(key) marks a part and opens the inspector; it leaves bom, sch, pcb and library where they are.
+// go('workspace', 'bom') or go('bom') shows a stage in the main sheet; go('sources') a page. See shell.js.
+// select(key) marks a part and opens the inspector; it leaves bom, sch and pcb where they are.
 function select(key, goSch) {
   sel = key;
   if (goSch) {
@@ -252,7 +252,7 @@ function select(key, goSch) {
     else { markSelected(); applyFocusSafe(); renderDetail(); }
     return;
   }
-  if (!['bom', 'sch', 'pcb', 'library'].includes(mainView()) && sideView() !== 'bom') {
+  if (!['bom', 'sch', 'pcb'].includes(mainView()) && sideView() !== 'bom') {
     go('workspace', 'bom');
     return;
   }

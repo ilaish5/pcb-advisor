@@ -132,7 +132,10 @@ def test_inspector_role_note_and_mpn_are_edited_in_place_and_saved_by_the_bom_ha
 def test_inspector_library_row_and_its_contextual_action():
     src = _view("inspector.js")
     lib = _func(src, "inspLibHTML")
-    assert "libIconsHTML(libRowOf(l))" in lib      # Symbol, Footprint, 3D and Pins are the four icons now (see test_ui_model_icons.py)
+    assert "const row = r || libRowOf(l)" in lib and "libIconsHTML(row)" in lib      # Symbol, Footprint, 3D and Pins are the four icons now (see test_ui_model_icons.py)
+    # the Library page's row in full: the BOM Status tag and its sentence, the source, the converter's notes (never in the table)
+    assert "bomStatus(l)" in lib and "st.say" in lib and "tag(st.text, st.tone)" in lib
+    assert "libIssues(row)" in lib and "PG_SOURCE[row.source]" in lib and "row.vendor_zip" in lib
     # Accept once verified and not yet accepted; Verify while it is not verified and a symbol exists; neither otherwise
     assert re.search(r"e\.verify === 'pass' && !e\.accepted\s*\?\s*btn\('Accept'.*accept: l\.key", lib, re.S)
     assert re.search(r":\s*e\.verify !== 'pass' && e\.symbol[^?]*\?\s*btn\('Verify'.*verify: l\.key", lib, re.S)

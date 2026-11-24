@@ -148,7 +148,7 @@ def test_the_page_offers_the_second_button_and_sends_keep_partial():
 def test_bom_page_wiring_for_pending_proposals_and_stock():
     assert "bomPending()" in BOM_JS and "prop-decide" in CHAT_JS_ALL and "waiting for your approval" in BOM_JS
     assert "bomAutoCheck" not in BOM_JS and "priced lines only" in BOM_JS and "propListHTML" in BOM_JS
-    assert "No symbol or footprint" in BOM_JS and "more problem" in BOM_JS
+    assert "No symbol or footprint" in BOM_JS and "sup.risks.length" in BOM_JS
 
 
 def test_group_card_lists_fields_not_raw_text():

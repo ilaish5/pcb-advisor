@@ -512,13 +512,12 @@ function chatStage() {
 }
 const CHAT_PROMPTS = {
   idea: ['What is still open?', 'What should I decide first?'],
-  bom: ['Check stock for the whole BOM', 'Compare supplier prices', 'Which parts need a second look?'],
+  bom: ['Check stock for the whole BOM', 'Which parts still need models?', 'Which parts need a second look?'],
   sch: ['Review this sheet', 'Check the power and ground connections'],
   pcb: ['What should I place first?', 'Which nets are critical?'],
   rules: ['Which rules are below the JLC minimum?', 'Why do my rules differ from the preset?'],
   outputs: ['What do I send to JLC?', 'Is the BOM ready to export?'],
   checks: ['What is still open?', 'Which findings are real issues?'],
-  library: ['Which parts still need models?', 'Which models should I verify first?'],
   sources: ['Which parts have no datasheet?'],
 };
 /* The chips come from the project's state: the server's stages[] (the stage where the work goes on: its open issues, or its next step),

@@ -146,8 +146,8 @@ def test_a_reply_with_a_failed_step_says_so_before_its_text():
 
 
 def test_the_library_page_marks_a_line_whose_pins_are_unverified():
-    # spec phase 1: "unverified" on the sheet, in the BOM and on the Library page
+    # spec phase 1: "unverified" on the sheet and in the BOM (the Library page is the BOM's Models and Status columns now)
     from ui_source import ui_js
     js = ui_js()
-    assert "function libPinsState(r)" in js and "libPinsState(r)" in js and "libIconsHTML(r)" in js   # the Pins icon carries it now
+    assert "function libPinsState(r)" in js and "libPinsState(r)" in js and "libIconsHTML(r || libRowOf(l)" in js   # the Pins icon carries it now
     assert "Pins unverified" in js and "Pins conflict" in js

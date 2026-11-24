@@ -18,7 +18,7 @@ function readyBannerHTML(problems) {
   return `<div class="ready-bar" role="alert"><ul>${rows}</ul><button type="button" class="ready-x" data-ready-x aria-label="Dismiss">Dismiss</button></div>`;
 }
 
-const READY_ALTIUM_IDS = ['altium', 'link'], READY_ALTIUM_VIEWS = ['sch', 'pcb', 'rules', 'outputs', 'library', 'checks', 'settings'];
+const READY_ALTIUM_IDS = ['altium', 'link'], READY_ALTIUM_VIEWS = ['sch', 'pcb', 'rules', 'outputs', 'checks', 'settings'];
 let readyAll = [];
 let readyRev = null, readyBusy = false;
 function readyShow() {       // Altium problems show only on an Altium step (Schematic, Layout, Rules, Outputs); the others show wherever the user is
