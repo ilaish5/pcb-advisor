@@ -372,6 +372,192 @@ def opening_dir(fp):
     return int(round(math.degrees(math.atan2(dy, dx)) / 90.0)) % 4 * 90
 
 
+_TERMINAL = re.compile(r"terminal|screw|\bKF\d|\bDG\d|\bKF-?\d{3}|\bDG-?\d{3}|wire.to.board|phoenix|\bMKDS", re.I)
+_HEADER = re.compile(r"header|pin.?head|\bHDR\b|\bIDC\b|\bJST\b|\bXH\b|\bPH\b|2\.54|1x\d+|2x\d+", re.I)
+_DEG_WORD = {0: "+x", 90: "+y", 180: "-x", 270: "-y"}
+
+
+def _dir_of(dx, dy):
+    return int(round(math.degrees(math.atan2(dy, dx)) / 90.0)) % 4 * 90
+
+
+def _pad_rows(fp):
+    """(axis, rows): the pads of a 1- or 2-row part ("x" = the rows run along x), or (None, 0) when the pads are not in 1 or 2 rows."""
+    pads = [p for p in fp.get("pads", []) if "x" in p]
+    if len(pads) < 2:
+        return None, 0
+    xs = sorted({round(p["x"] * MIL, 1) for p in pads})
+    ys = sorted({round(p["y"] * MIL, 1) for p in pads})
+    for axis, across, along in (("x", ys, xs), ("y", xs, ys)):
+        if len(across) <= 2 and len(along) >= len(across):
+            return axis, len(across)
+    return None, 0
+
+
+def opening_guess(fp, part=None):
+    """(degrees, source) of the way a connector opens at rotation 0, never None: the evidence in order
+      "outline"   the silkscreen/mechanical outline reaches out from the pads (opening_dir)
+      "3d body"   the outline of the 3D body does
+      "pad rows"  the pad rows of a 1- or 2-row header or terminal block sit off the footprint origin: the opening is the other side
+      "kind"      a terminal block or header opens along its short axis (across its pad rows), towards the side its body reaches
+                  farther from the pads
+      "guess"     nothing tells: the longer body side runs along the edge and the side the body reaches farther from the pad centre
+                  faces out (on a tie -y). The caller says so and asks for one confirmation."""
+    d = opening_dir(fp)
+    if d is not None:
+        return d, "outline"
+    pb = pads_box(fp)
+    if pb is None:
+        return 270, "guess"
+    pads = [_pad_rect(p) for p in fp.get("pads", []) if "x" in p]
+    px = sum((b[0] + b[2]) / 2 for b in pads) / len(pads)
+    py = sum((b[1] + b[3]) / 2 for b in pads) / len(pads)
+    body = (fp.get("extent") or {}).get("body")
+    if body:
+        bx, by = (body[0] + body[2]) / 2 * MIL - px, (body[1] + body[3]) / 2 * MIL - py
+        if math.hypot(bx, by) >= OPEN_MIN_MM:
+            return _dir_of(bx, by), "3d body"
+    axis, rows = _pad_rows(fp)
+    text = part_text(part or {}) + " " + str(fp.get("name") or "") + " " + str(fp.get("description") or "")
+    ref = str((part or {}).get("ref") or "")
+    kind = bool(_TERMINAL.search(text) or _HEADER.search(text) or re.match(r"^TERM\d", ref, re.I))
+    if axis and rows:
+        off = py if axis == "x" else px            # the rows' offset from the origin, across the rows
+        on_pad = any(b[0] - 1e-6 <= 0 <= b[2] + 1e-6 and b[1] - 1e-6 <= 0 <= b[3] + 1e-6 for b in pads)   # origin on pin 1: no evidence
+        if abs(off) >= OPEN_MIN_MM and not on_pad:
+            return (270 if off > 0 else 90) if axis == "x" else (180 if off > 0 else 0), "pad rows"
+    ext = footprint_extent(fp) or pb
+    reach = {0: ext[2] - px, 180: px - ext[0], 90: ext[3] - py, 270: py - ext[1]}
+    if axis and rows and kind:              # the short axis, and the side the body (the wire entry) reaches farther out to; a tie tells nothing
+        a, b = (90, 270) if axis == "x" else (0, 180)
+        if abs(reach[a] - reach[b]) > 0.05:
+            return (a if reach[a] > reach[b] else b), "kind"
+    if ext[2] - ext[0] >= ext[3] - ext[1]:          # long side along x: the opening is +y or -y
+        return (90 if reach[90] > reach[270] + 0.05 else 270), "guess"
+    return (0 if reach[0] > reach[180] + 0.05 else 180), "guess"
+
+
+# ---- radio modules and their antennas (E6): which parts get the "antenna" rule without anybody asking for it
+RF_MODULE = re.compile(r"\blte\b|\bgsm\b|\bgprs\b|\b[45]g\b|cat-?1\b|cat-?m|nb-?iot|cellular|\bwi-?fi\b|\bwlan\b|\bble\b|"
+                       r"bluetooth|esp32|esp8266|\bnrf\d|\bnrf\b|a76\d\d|sim7\d{3}|sim8\d\d|sim900|wh-?lte|\bec2\d|\bbg9\d|"
+                       r"\bsara-|quectel|\blora\b|sx12\d\d|zigbee|\brf module|radio module|wroom|wrover", re.I)
+ANT_PIN = re.compile(r"^(?:\w*_)?ANT(?:ENNA)?\d*(?:_\w+)?$|^RF_?(?:OUT|IN|IO|ANT)\w*$|^RFIO\w*$", re.I)
+RF_CONN = re.compile(r"u\.?fl\b|\bipex\b|i-pex|\bmhf\b|w\.fl|\bsma\b|\bmmcx\b|\bufl\b|antenna conn", re.I)
+RF_TALL_MM = 3.0            # nothing taller than TALL_MM within this of an antenna connector: the cable plug must reach it
+TALL_MM = 3.0
+
+
+def _height_mm(fp):
+    """The tallest 3D body of a read_pcblib footprint (mm), or None. OVERALLHEIGHT carries a unit ("3.5mm", "137.8mil"); bare = mil."""
+    best = None
+    for b in fp.get("bodies") or []:
+        m = re.match(r"\s*([-+]?\d+(?:\.\d+)?)\s*(mm|mil)?", str(b.get("height") or ""), re.I)
+        if m:
+            v = float(m.group(1)) * (1.0 if (m.group(2) or "").lower() == "mm" else MIL)
+            best = v if best is None else max(best, v)
+    return best
+
+
+def antenna_side(fp, part=None):
+    """(degrees, keep-out box mm in footprint coordinates, source) of a radio module's antenna end at rotation 0, or (None, None, "")
+    when it cannot be told. "outline": a side of the outline free of pads by ANTENNA_MIN_MM or more (the antenna area of an ESP32
+    module, the same heuristic as partlib_mech.rf_module; the keep-out is that strip); "antenna pin": the side of the pad that
+    carries ANT / RF_OUT."""
+    pb = pads_box(fp)
+    if pb is None:
+        return None, None, ""
+    ext = footprint_extent(fp) or pb
+    gaps = {0: ext[2] - pb[2], 180: pb[0] - ext[0], 90: ext[3] - pb[3], 270: pb[1] - ext[1]}
+    side = max(gaps, key=gaps.get)
+    if gaps[side] >= ANTENNA_MIN_MM:
+        box = {0: [pb[2], ext[1], ext[2], ext[3]], 180: [ext[0], ext[1], pb[0], ext[3]],
+               90: [ext[0], pb[3], ext[2], ext[3]], 270: [ext[0], ext[1], ext[2], pb[1]]}[side]
+        return side, [round(v, 3) for v in box], "outline"
+    names = {str(q.get("num", q.get("number", ""))): str(q.get("name") or "") for q in (part or {}).get("pins", [])}
+    cx, cy = (pb[0] + pb[2]) / 2, (pb[1] + pb[3]) / 2
+    for p in fp.get("pads", []):
+        if "x" in p and ANT_PIN.match(names.get(p["name"], "") or p["name"]):
+            nx, ny = (p["x"] * MIL - cx) / max(pb[2] - cx, 1e-6), (p["y"] * MIL - cy) / max(pb[3] - cy, 1e-6)
+            if max(abs(nx), abs(ny)) >= 0.5:            # on an outer row, not in the middle
+                return (_dir_of(nx, 0) if abs(nx) >= abs(ny) else _dir_of(0, ny)), None, "antenna pin"
+    return None, None, ""
+
+
+ANTENNA_MIN_MM = 2.0
+
+
+def rf_rules(parts, footprints):
+    """The placement rules a board's radio parts call for, derived without anybody asking (kiln LTE run, E6: the A7670 module sat in
+    the middle of the board with no keep-out). A part is a radio module when its BOM role, value, description or footprint names
+    one (RF_MODULE: LTE, GSM, WiFi, BLE, ESP32, nRF, A7670, SIM7600, WH-LTE ...), when one of its pins is an antenna pin (ANT,
+    RF_OUT), or when it is the part (more than 4 pads) a U.FL / IPEX / SMA connector's signal net reaches, directly or through one
+    two-pad part (a matching network).
+    Returns {"antenna": {ref: degrees} (the antenna end is known: the module goes to an edge, antenna outwards),
+             "edge": {ref: ""} (a module whose antenna end is not known: it still goes to an edge),
+             "keepouts": {ref: [x0, y0, x1, y1] mm in footprint coordinates} (copper keep-out over the antenna area),
+             "apart": [(rf connector, part, RF_TALL_MM)] (no tall part right beside an antenna connector),
+             "notes": [text]}"""
+    by_ref = {p["ref"]: p for p in parts}
+    nets_of = {p["ref"]: {str(q.get("net") or "") for q in p.get("pins", []) if q.get("net") and not is_gnd(q.get("net"))} for p in parts}
+    on_net = {}
+    for r, ns in nets_of.items():
+        for n in ns:
+            on_net.setdefault(n, set()).add(r)
+    npads = {p["ref"]: len((footprints.get(p.get("footprint") or "") or {}).get("pads", [])) or len(p.get("pins", [])) for p in parts}
+    text = {p["ref"]: part_text(p) + " " + str(p.get("footprint") or "") + " " + str(p.get("mpn") or p.get("bom_mpn") or "") for p in parts}
+    why = {}
+    for p in parts:
+        r = p["ref"]
+        if is_connector(r):
+            continue
+        if RF_MODULE.search(text[r]):
+            why[r] = "a radio module by its BOM text"
+        elif any(ANT_PIN.match(str(q.get("name") or "")) for q in p.get("pins", [])) and npads[r] > 4:
+            why[r] = "it has an antenna pin"
+    rf_conns = [r for r in by_ref if is_connector(r) and RF_CONN.search(text[r])]
+    conn_of = {}
+    for c in rf_conns:
+        near = set()
+        for n in nets_of[c]:
+            for o in on_net.get(n, ()):
+                if o == c:
+                    continue
+                if npads.get(o, 0) > 4:
+                    near.add(o)
+                elif npads.get(o, 0) == 2:              # a series part of a matching network
+                    for n2 in nets_of[o] - {n}:
+                        near |= {o2 for o2 in on_net.get(n2, ()) if o2 not in (c, o) and npads.get(o2, 0) > 4}
+        for m in sorted(near):
+            why.setdefault(m, f"it connects to the antenna connector {c}")
+            conn_of.setdefault(c, m)
+    out = {"antenna": {}, "edge": {}, "keepouts": {}, "apart": [], "notes": []}
+    for r in sorted(why):
+        fp = footprints.get(by_ref[r].get("footprint") or "")
+        deg, box, src = antenna_side(fp, by_ref[r]) if fp else (None, None, "")
+        if deg is not None:
+            out["antenna"][r] = deg
+            if box:
+                out["keepouts"][r] = box
+            out["notes"].append(f"{r}: {why[r]}, so it goes to a board edge with its antenna end ({_DEG_WORD[deg]} side of the footprint, "
+                                f"read from the {src}) outwards" + (", with a copper keep-out over the antenna area" if box else ""))
+        else:
+            out["edge"][r] = ""
+            out["notes"].append(f"{r}: {why[r]}, so it goes to a board edge; which end is the antenna cannot be told from its footprint"
+                                + (" (its antenna is reached through " + ", ".join(c for c, m in conn_of.items() if m == r) + ")"
+                                   if r in conn_of.values() else "") + ": check that the antenna end faces out")
+    for c in rf_conns:
+        for o, p in by_ref.items():
+            if o in (c, conn_of.get(c)):
+                continue
+            fp = footprints.get(p.get("footprint") or "") or {}
+            h = _height_mm(fp)
+            tall = (h is not None and h >= TALL_MM) or (h is None and (is_connector(o) or re.search(r"electrolytic|relay|transformer|heat.?sink", text[o], re.I)))
+            if tall:
+                out["apart"].append((c, o, RF_TALL_MM))
+        out["notes"].append(f"{c}: antenna connector, kept at a board edge with nothing tall within {RF_TALL_MM:g} mm so the cable plug reaches it")
+    return out
+
+
 def label_size(ref):
     """(width, height) mm of a designator drawn at LABEL_H."""
     return max(len(ref), 1) * LABEL_W, LABEL_H
@@ -512,7 +698,8 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         if box is None:
             errors.append(f"{p['ref']}: footprint {fpname} has no pads")
             continue
-        info[p["ref"]] = {"part": p, "fp": fpname, "box": box, "padbox": pads_box(fp), "silk": _silk_box(fp), "pads": _pads_of(p, fp), "open": opening_dir(fp),
+        info[p["ref"]] = {"part": p, "fp": fpname, "box": box, "padbox": pads_box(fp), "silk": _silk_box(fp), "pads": _pads_of(p, fp),
+                          **dict(zip(("open", "open_src"), opening_guess(fp, p) if is_connector(p["ref"]) else (opening_dir(fp), "outline"))),
                           "names": {str(q.get("num", q.get("number", ""))): str(q.get("name") or "") for q in p.get("pins", [])},
                           "reg": is_regulator(p, fpname)}
     if errors:
@@ -1284,12 +1471,15 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         if ref in antenna or not is_connector(ref):
             continue
         if ref in placed and ref not in (connector_dirs or {}):
-            if info[ref]["open"] is None:
-                warnings.append(f"{ref}: cannot tell from its footprint which way the connector opens; it was assumed to open towards +x: "
-                                "check the mating face in 3D")
+            deg, src = info[ref]["open"], info[ref].get("open_src") or "outline"
+            if src == "guess":
+                warnings.append(f"{ref}: cannot tell from its footprint which way the connector opens; it was turned so its longer side "
+                                f"runs along the board edge and the side its body reaches farther out from the pads ({_DEG_WORD[deg]} of the "
+                                f"footprint, {deg} deg) faces out of the board. Please confirm once in 3D: if the opening faces into the "
+                                f"board, ask to turn {ref} 180°")
             else:
-                warnings.append(f"{ref}: connector turned to open out of the board edge (opening read from the footprint outline, "
-                                f"{info[ref]['open']} deg): check the mating face in 3D")
+                warnings.append(f"{ref}: connector turned to open out of the board edge (opening read from the "
+                                f"{'footprint outline' if src == 'outline' else src}, {deg} deg): check the mating face in 3D")
     return {"places": places, "warnings": warnings, "errors": errors, "findings": findings, "crystals": crystals}
 
 

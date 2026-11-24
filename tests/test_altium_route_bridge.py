@@ -638,3 +638,52 @@ def test_a_board_whose_shape_cannot_be_set_is_planned_with_the_ground_by_tracks(
     monkeypatch.setattr(layout, "unrouted", lambda d: [])
     res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20)
     assert seen == [None] and res["pour"] is None and "could not be set" in res["pour_warning"] and not res["problems"]
+
+
+def _kiln_partial(monkeypatch, tmp_path, drc_after=None):
+    """E5 (kiln LTE run): GND is one of the nets the router left open; the pour then leaves a GND pad unjoined."""
+    import altium.pcbdoc as pcbdoc
+    import altium.pourcheck as pourcheck
+    from altium import route as route_mod
+    calls = _route_fakes(monkeypatch, tmp_path)
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda path, geometry=False: dict(_POUR_DOC, tracks=[], vias=[]))
+    monkeypatch.setattr(pcbdoc, "poured_copper", lambda path, layer=32: 4)
+    unj = {"islands": [], "unjoined_pads": [{"ref": "C3", "name": "1"}], "checked": True, "note": "", "ok": False}
+    monkeypatch.setattr(pourcheck, "check", lambda doc, net=None, layer=None: unj)
+    real = route_mod.plan_routes
+
+    def plan(doc, box, rules=None, **kw):
+        out = real(doc, box, rules, **dict(kw, pour_net=None))
+        out["routed"] = [n for n in out["routed"] if n != "GND"]
+        out["failed"] = list(out["failed"]) + [("GND", "no way to C3-1")]
+        return out
+    monkeypatch.setattr(route_mod, "plan_routes", plan)
+    if drc_after:
+        n = []
+        monkeypatch.setattr(bridge, "run_drc", lambda prj, pcb, report: (n.append(1), drc_after if len(n) == 2 else
+                            {"rules": {}, "violations": [], "unrouted": 0, "total": 0, "complete": True, "clean": True})[1])
+    res = bridge.route_on(tmp_path / "P.PrjPcb", tmp_path / "B.PcbDoc", seconds=20, keep_partial=True)
+    return calls, res
+
+
+def test_keep_partial_keeps_the_board_when_the_pour_finding_is_of_a_failed_net(tmp_path, monkeypatch):
+    calls, res = _kiln_partial(monkeypatch, tmp_path)
+    assert any("pad C3-1 (GND) is not joined" in p for p in res["problems"])
+    assert not res["restored"] and calls["restore"] == 0
+
+
+def test_keep_partial_still_restores_on_a_new_clearance_violation(tmp_path, monkeypatch):
+    drc = {"rules": {"Clearance Constraint (Gap=0.2mm)": 2, "Un-Routed Net Constraint": 3}, "violations": ["Clearance Constraint: x"],
+           "unrouted": 3, "total": 5, "complete": True, "clean": False}
+    calls, res = _kiln_partial(monkeypatch, tmp_path, drc_after=drc)
+    assert res["restored"] and calls["restore"] == 1
+
+
+def test_partial_ok_accepts_only_findings_of_failed_nets():
+    gnd = "pad J1-1 (GND) is not joined by the pour or a track"
+    assert not bridge._partial_ok(gnd) and bridge._partial_ok(gnd, [("GND", "no way")]) and bridge._partial_ok(gnd, ["GND"])
+    assert not bridge._partial_ok(gnd, [("VCC", "no way")])
+    dep = "GND was routed to the pour on the bottom layer but the pour is not in the saved board (see the pour warning): the GND pads are not connected"
+    assert bridge._partial_ok(dep, [("GND", "x")]) and not bridge._partial_ok(dep, [("A", "x")])
+    assert not bridge._partial_ok("Altium's design rule check reports 2 new Short-Circuit violations (GND)", [("GND", "x")])
+    assert bridge._partial_ok("Altium's design rule check reports 7 un-routed connections", [("GND", "x")])

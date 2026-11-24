@@ -1539,6 +1539,12 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     derived = {p["ref"]: layout.opening_dir(fps[p["footprint"]]) for p in parts if layout.is_connector(p["ref"]) and p.get("footprint") in fps}
     connector_dirs = {**{r: d for r, d in derived.items() if d is not None}, **(connector_dirs or {})}
     holes, keepouts, rules, mech_warnings = _mechanical_parts(constraint_items or [], outline, fps, parts, refs_lines, size)
+    rf = layout.rf_rules(parts, fps)         # a radio module / antenna connector gets its rule without anybody asking (kiln LTE run, E6)
+    for r, d in rf["antenna"].items():
+        rules["antenna"].setdefault(r, d)
+    rules["edge"].update({r: s for r, s in rf["edge"].items() if r not in rules["antenna"] and r not in rules["edge"]})
+    rules["apart"] += rf["apart"]
+    mech_warnings = mech_warnings + rf["notes"]
     plan = layout.plan_placement(parts + holes, fps, outline, clearance_mm=clearance_mm, connector_dirs=connector_dirs,
                                  edge_copper_mm=edge_copper_mm, rules=rules)
     if plan["errors"]:
@@ -1662,9 +1668,20 @@ def _drc_counts(res):
     return out
 
 
-def _partial_ok(problem):
-    """A problem that a partly routed board (agreed with the student) has by definition: nets left open."""
-    return problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem
+def _partial_ok(problem, failed=()):
+    """A problem that a partly routed board (agreed with the student) has by definition: nets left open. With `failed` (the nets
+    the router left open, plan["failed"] names or (name, why) pairs) also a problem that follows from one of those nets alone: a pad
+    of a failed net the pour does not join (the kiln run: GND failed, "pad J1-1 (GND) is not joined by the pour or a track" restored
+    678 tracks), or a ground routed to a pour that is missing when that ground is itself a failed net. A new clearance, short or
+    width violation is never one of them."""
+    if problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem:
+        return True
+    nets = {f[0] if isinstance(f, (list, tuple)) else f for f in failed or ()}
+    m = re.match(r"pad \S+ \((.+?)\) is not joined by the pour or a track$", problem)
+    if m:
+        return m.group(1) in nets
+    m = re.match(r"(\S+) was routed to the pour .* the \1 pads are not connected$", problem)
+    return bool(m) and m.group(1) in nets
 
 
 def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None,
@@ -1869,7 +1886,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         probs.append("not routed: " + "; ".join(f"{n} ({why})" for n, why in plan["failed"]))
     res["problems"] = probs
     res["saved_open"] = [n for n, _ in open_nets]        # nets still open on the saved board (the route plan's own "failed" list may name fewer)
-    if probs and not (keep_partial and all(_partial_ok(p) for p in probs)):
+    if probs and not (keep_partial and all(_partial_ok(p, plan["failed"]) for p in probs)):
         res["restored"] = _restore(prj, pcb, res["backup"])
     res["summary"] = (f"{len(plan['routed'])} nets routed with {res['tracks']} tracks and {res['vias']} vias"
                       + (f", {pour_net} poured on the bottom layer" if res["pour"] else "") + f", saved; own check: "
@@ -2705,7 +2722,20 @@ def python_keepouts(project, doc, outline):
                                          c["x_mm"], c["y_mm"]))
     except Exception:                       # noqa: BLE001
         pass
+    try:            # a radio module the library did not mark (found by its antenna pin or its U.FL connector): the antenna strip of its footprint
+        rects += _derived_rf_keepouts(project, doc, {r for r in by_ref if ((man.get(by_ref[r]) or {}).get("rf") or {}).get("keepout_box")})
+    except Exception:                       # noqa: BLE001
+        pass
     return rects
+
+
+def _derived_rf_keepouts(project, doc, done=()):
+    """Board boxes of the antenna keep-outs layout.rf_rules finds for the placed components (refs in `done` already have one)."""
+    from altium import layout
+    fps = {f["name"]: f for f in read_pcblib(library_paths(project)["pcblib"])["footprints"]}
+    boxes = layout.rf_rules(_netlist_parts(project), fps)["keepouts"]
+    return [_rotate_box(boxes[c["ref"]], float(c.get("rotation") or 0), str(c.get("layer") or "").lower().startswith("bottom"),
+                        c["x_mm"], c["y_mm"]) for c in doc.get("components", []) if c.get("ref") in boxes and c["ref"] not in done]
 
 
 def library_paths(project):
