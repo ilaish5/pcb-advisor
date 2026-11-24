@@ -2,13 +2,15 @@
 
 Branch `claude/verify-local-ef0f06` (cut from `phase0-correctness` at 4c713e1). Not merged.
 
-## What could not be done as asked
+## What was and was not done as asked
 
-- **Claude in Chrome was not usable.** The only connected Chrome was a macOS one ("Browser 1"), not the Windows
-  "ILAISHALEMD950". Its 127.0.0.1 would be another machine, so nothing was run there (the one empty tab it opened was closed).
-  All browser checks below ran in the **built-in browser pane** (Chromium) against this machine.
-- **The built-in browser does render PDFs** (its own PDF viewer, with toolbar). The earlier belief that it cannot was wrong,
-  so check 3a below is a real rendering check, with the caveat that it is not Chrome.
+- **Claude in Chrome**: at first only a macOS Chrome was connected, so nothing was run there (its one empty tab was closed).
+  The Windows Chrome appeared later; with it I repeated **only 3a** (Confirm pins dialog on UX-E2E-ESP32C3 U3 / AP2112K) in a new
+  tab and closed the tab (`a-pins-dialog-chrome-windows-ap2112.jpg`): PDF at p.1 (Pin Assignments), 108 % width-fit,
+  viewer sidebar closed, pin table beside it, readable. Everything else below ran in the **built-in browser pane** (Chromium).
+- **The built-in browser does render PDFs** (its own PDF viewer, with toolbar). The earlier belief that it cannot was wrong.
+- The chat question in section 4 was sent in the real UX-E2E-ESP32C3 project, so its chat log holds that turn and the
+  agent left a pending "Yes, make it" proposal button; nothing was pressed.
 - Altium tests: `PCB_ADVISOR_ALTIUM=1` was set by me (X2.EXE was running). The server now runs as a detached hidden process
   from the main checkout, not in the "pcb-advisor server" terminal tab. A second server (worktree code, same data,
   `PCB_ADVISOR_HOME` = main checkout, port 8932) was used for the fixed code and has been stopped.
@@ -19,10 +21,11 @@ Branch `claude/verify-local-ef0f06` (cut from `phase0-correctness` at 4c713e1). 
 |---|---|---|
 | tests (`-m "not windows and not altium"`) | success | success |
 | install | success | success |
-| check | still running when last looked (success on `phase0-correctness`) | success |
+| check | success | success |
 
 The earlier failure (`test_no_view_draws_a_next_button_outside_the_slot`) is gone. Nothing failed, so no
-real / platform / flaky classification was needed. Check once more for `main`/`check` before merging.
+real / platform / flaky classification was needed. The runs for this branch (`db7e6fa`, before the last fix commit) were still
+in progress when this was written: read them before merging.
 
 ## 2. Windows / Altium test set, local
 
@@ -36,8 +39,8 @@ test_viewer, test_ui_model_icons: all pass (one pre-existing skip).
 | Item | Result | Evidence |
 |---|---|---|
 | 3a Confirm pins dialog size | pass | dialog 1408x868 in a 1440x900 window |
-| 3a PDF at pin page, width-fit, sidebar closed, table beside it | pass | UX-E2E-ESP32C3 U1: opens at `#page=33&zoom=page-width&view=FitH&pagemode=none&navpanes=0`, no sidebar, 27-row pin table beside it (`img/verify-2026-11-24/a-pins-dialog-esp32-p33.jpg`). lte-tracker D31 after fix: `a-pins-dialog-pdf-after-fix.jpg` |
-| 3a Readable | pass, with a note | page-width zoom shows ~87-127 %; text is legible. Open: page 33 of that datasheet is a mechanical-dimensions page, not the pin table (see open defects) |
+| 3a PDF width-fit, sidebar closed, table beside it | pass | UX-E2E-ESP32C3 U1: opens at `#page=33&zoom=page-width&view=FitH&pagemode=none&navpanes=0`, no sidebar, 27-row pin table beside it (`img/verify-2026-11-24/a-pins-dialog-esp32-p33.jpg`). lte-tracker D31 after fix: `a-pins-dialog-pdf-after-fix.jpg` |
+| 3a Opens at the pin page, readable | pass on an English datasheet; open on a Chinese one | AP2112K (U3): p.1 is "Pin Assignments", 73 % in the pane (`a-pins-dialog-ap2112-pin-page.jpg`), 108 % in Windows Chrome. ESP32-C3-MINI-1 (Chinese file) opens at p.33, a dimensions page, not a pin table: open defect 2 |
 | 3a lte-tracker D31 (before fix) | **fail, fixed** | iframe showed `{"error": "not in the library"}` (`a-pins-dialog-missing-pdf-before.jpg`); see defect 1 |
 | 3b Library icons render, four per row | pass | 60+ rows, all four icons present |
 | 3b Colours green/grey/red | **fail, fixed** | the 25 "Missing" rows of ceramic-controller were all green; defect 2. After: red symbol/footprint, grey pins (`b-library-missing-row-fixed.jpg`) |
@@ -89,9 +92,11 @@ test_viewer, test_ui_model_icons: all pass (one pre-existing skip).
    `confirm_data` falls back to the same part's local document, else returns `missing_doc` and the dialog says the file is
    not on this computer; `accept` drops evidence whose file does not exist and carries no hash. Test:
    `test_a_linked_datasheet_with_no_file_is_not_offered_as_a_page`. Verified in the browser (iframe loads the real PDF).
-2. **e4cafa2, Library icons showed green for lines the build made nothing for.** `r.symbol` is true when the Altium project
+2. **e4cafa2 + the commit after it, Library icons showed green for lines the build made nothing for.** `r.symbol` is true when the Altium project
    holds a symbol, so 25 Missing rows had green symbol/footprint/pins icons while their preview said "There is no symbol to
-   draw yet". Symbol and footprint are now red, pins grey, with words. Test assertion added in `test_ui_model_icons.py`.
+   draw yet". Symbol and footprint are now red, pins grey, with words. The pins rule sits after the unverified / mismatch / accepted / verified
+   branches, so a recorded conflict stays red. All 25 Missing rows were checked: the symbol and footprint previews of every
+   one return "There is no ... to draw yet". Test assertion added in `test_ui_model_icons.py`.
 
 ## Defects left open
 
@@ -105,5 +110,5 @@ test_viewer, test_ui_model_icons: all pass (one pre-existing skip).
 4. **Library is off the Next path** (BOM goes straight to Schematic; Library's Next goes back to BOM). A design choice, noted
    as friction.
 5. **Library Missing rows** print raw converter output; a short human sentence with the details folded would read better.
-6. **Chrome not verified**: everything above ran in the built-in browser, not Chrome on ILAISHALEMD950.
-7. `main`/`check` workflow was still running at the last look.
+6. **Chrome**: only 3a was repeated in Windows Chrome; library icons, 3D and the UI pass ran in the built-in browser only.
+7. Branch CI results not yet read.

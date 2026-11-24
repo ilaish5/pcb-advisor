@@ -66,11 +66,12 @@ function libRowOf(l) {
 }
 function libPinsState(r) {
   const l = (S.bom || []).find(b => b.key === r.line), st = l && l.pins_status;
-  if (!r.symbol || r.build_status === 'missing') return ['no', 'Pins: no symbol yet, so no pins to check'];
+  if (!r.symbol) return ['no', 'Pins: no symbol yet, so no pins to check'];
   if (st === 'unverified') return ['bad', 'Pins unverified: ' + (l.pins_issues || 'not checked against a datasheet') + ' Verify them or accept them.'];
   if (st === 'mismatch') return ['bad', 'Pins conflict with the datasheet: ' + (l.pins_issues || '')];
   if (st === 'accepted') return ['ok', 'Pins accepted by you (no datasheet pin table checked them)'];
   if (st === 'verified') return ['ok', 'Pins verified against the datasheet pin table'];
+  if (r.build_status === 'missing') return ['no', 'Pins: the library build made no symbol for this line, so no pins to check'];       // after the decisions above: a recorded conflict stays red
   return ['ok', 'Pins: nothing to verify for this part'];
 }
 function libModelStates(r) {

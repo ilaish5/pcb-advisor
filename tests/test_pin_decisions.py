@@ -184,6 +184,7 @@ def test_a_linked_datasheet_with_no_file_is_not_offered_as_a_page(empty):
     d = pin_decisions.confirm_data(empty, "U1")
     assert d["docs"] == [] and d["missing_doc"] == "gone.pdf"
     (folder / "ABCD1234_datasheet.pdf").write_bytes(b"%PDF-1.4 x")                     # the same part's document is here: it stands in
+    (folder / "ABCD1234_datasheet.pdf.txt").write_text("ABCD1234 datasheet\fPin Functions\n1 VCC\n", encoding="utf-8")   # its text is cached: no PDF extraction in the test
     d = pin_decisions.confirm_data(empty, "U1")
     assert d["docs"][0]["name"] == "ABCD1234_datasheet.pdf" and d["missing_doc"] == ""
     r = pin_decisions.accept(empty, "U1", evidence=[{"doc": "gone.pdf", "sha256": "", "page": 3}])
