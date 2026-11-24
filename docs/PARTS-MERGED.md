@@ -131,7 +131,19 @@ These were checked with Playwright scripts against the running server; the scrip
 
 ## Tests
 
-`pytest -q -m "not windows and not altium" < /dev/null`: **RESULT_LINE**
+`pytest -q -m "not windows and not altium" < /dev/null`, full run on this branch: **3499 passed, 6 skipped, 1 xfailed, 3 failed**.
+None of the 3 failures is in UI code:
+
+- `tests/test_pin_downstream.py::test_order_check_carries_the_accepted_risk_and_writes_a_manifest_beside_the_zip`
+  **already fails on `origin/main`** (cae937c, checked with the same command): `{'U1': 'blind'} != {'U1': 'datasheet_page'}`.
+  This branch touches no server code it uses.
+- `tests/test_agent_retry.py::test_a_neutral_refusal_is_retried_with_round_0_consent_and_stores_its_applied_list` and
+  `::test_at_most_two_retry_rounds` failed in the full run and **pass when the file is run alone, three times in a row**
+  (`23 passed`). They wait for background chat follow-ups with a fixed timeout (`wait_for(..., 8)`), so they are timing-sensitive under load.
+  An earlier full run showed the same kind of flake once in `tests/test_chat_followup.py`, which also passes alone.
+
+All the UI test files pass: `tests/test_ui_*.py`, `tests/test_ui_parts_merged.py` (10 new tests),
+`tests/test_pin_waiting.py`, `tests/test_step_buttons.py`, `tests/test_wave4_verify_fixes.py` and the others listed below.
 
 `node --check` passes on every changed JS file: `ui/js/boot.js`, `chat.js`, `core.js`, `kit.js`, `palette.js`, `ready.js`, `shell.js`,
 `views/bom.js`, `views/inspector.js`, `views/pages.js`, `views/pins.js`.
@@ -147,7 +159,8 @@ These were checked with Playwright scripts against the running server; the scrip
   - `tests/test_pin_waiting.py` (the waiting line is on the BOM);
   - `tests/test_usability_fixes.py`;
   - `tests/test_e2e_2026_11_20_ui_drc.py` (the "no Altium project" note is `bomLibNote`);
-  - `tests/test_step_buttons.py` ("BOM page" wording).
+  - `tests/test_step_buttons.py` ("BOM page" wording);
+  - `tests/test_wave4_verify_fixes.py` (the page-Next harness uses Sources instead of Library).
 - `tests/test_ui_pins.py` needed no change.
 
 **New:** `tests/test_ui_parts_merged.py`. Several of these run the real functions in node with the real `kit.js`:
