@@ -1551,6 +1551,17 @@ def _restore_value(key, v):
     return [] if key == "refs" else False if key in ("dnp", "nobuy") else ""
 
 
+def superseded_by_delete(project, prop):
+    """Ids of the pending proposals for the deleted line that the delete threw out (rejected "superseded" when it was approved): an undo
+    puts the line back but not these, so the student is told."""
+    if not delete_spec(prop):
+        return []
+    since = str(prop.get("decided_at") or "")
+    return [p["id"] for p in proposals(project)
+            if p.get("line") == prop.get("line") and p.get("id") != prop.get("id") and p.get("status") == "rejected"
+            and p.get("decided_by") == "superseded" and str(p.get("decided_at") or "") >= since]
+
+
 def undo_proposal(project, pid, by="student"):
     prop = next((p for p in proposals(project) if p["id"] == pid), None)
     if not prop:
@@ -1579,9 +1590,10 @@ def undo_proposal(project, pid, by="student"):
         if not entry:
             raise UndoRefused("this change left no BOM entry to undo")
         if "deleted" in entry:
+            gone = superseded_by_delete(project, prop)        # read before the undo: what the delete threw out, still not asked again
             _undo_bom_delete(project, entry)
             append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": "undone", "by": by})
-            return prop
+            return {**prop, "superseded": gone}
         cur = next((l for l in bom_lines(project) if l["key"] == entry["line"]), None)
         if cur is None:
             raise UndoRefused(f"line {entry['line']} no longer exists")
@@ -2051,6 +2063,7 @@ def save_idea_from_draft(project, by="student"):
     import constraints            # noqa: PLC0415
     constraints.confirm_all(draft)          # the Save is the one confirmation of what the agent proposed
     board_from_text(draft)
+    sync_layers_from_idea(project, draft)
     save_idea(project, draft)
     _push_idea_version(project, draft, by, f"{changes} change{'s' if changes != 1 else ''} saved")
     revert_idea_draft(project)
@@ -2150,22 +2163,29 @@ def validate_idea_item(topic, text):
     return topic.strip(), text.strip()
 
 
-def sync_layers_from_text(project, topic, text):
-    """A requirement that states the board's layer count sets `board.layers` in project.json (so what the Idea says and what the
-    stack-up, router and outputs build cannot differ, E9). 2 or 4 is stored; any other count raises ValueError (board_layers.refusal)
-    and the requirement is not written. Text that states no count changes nothing. Returns the count or None."""
-    n = board_layers.from_text(topic, text)
-    if n is None:
+def sync_layers_from_idea(project, idea):
+    """The Save / Confirm of the Idea sets `board.layers` in project.json from the requirements (so what the Idea says and what the
+    stack-up, router and outputs build cannot differ, E9): the newest requirement that states an "N-layer board / PCB" or is about
+    the board and says "N layers" (board_layers.from_text). Only 2 or 4 is stored; another count, or no count, changes nothing.
+    Never raises. Returns the count stored or None."""
+    best, best_ts = None, ""
+    for it in (idea or {}).get("agreed", []):
+        n = board_layers.from_text(it.get("topic"), it.get("text"))
+        if n in board_layers.LAYER_CHOICES and str(it.get("ts") or "") >= best_ts:
+            best, best_ts = n, str(it.get("ts") or "")
+    if best is None:
         return None
-    import project as project_mod
-    return project_mod.set_layers(project, n)
+    try:
+        import project as project_mod
+        return project_mod.set_layers(project, best)
+    except (ValueError, OSError):
+        return None
 
 
 def propose_idea(project, topic, text, by="agent"):
     """A requirement, written into the live draft at once (the student's Save is the gate). 'proposed' only
     survives in projects made before the draft existed; Accept all / Dismiss all clear those."""
     topic, text = validate_idea_item(topic, text)
-    sync_layers_from_text(project, topic, text)
     idea = load_idea_working(project)
     item = next((i for i in idea["agreed"] if i["topic"] == topic), None)
     status = "confirmed"
@@ -2181,7 +2201,6 @@ def propose_idea(project, topic, text, by="agent"):
 def update_idea_item(project, index=None, old_topic=None, topic=None, text=None):
     """Student updates/renames a requirement row. Sets by='student' and status='confirmed'."""
     topic, text = validate_idea_item(topic, text)
-    sync_layers_from_text(project, topic, text)
     idea = load_idea_working(project)
     agreed = idea.get("agreed", [])
     item_idx = None
@@ -2311,6 +2330,7 @@ def confirm_idea(project):
     idea["confirmed"] = True
     idea["confirmed_at"] = now()
     board_from_text(idea)
+    sync_layers_from_idea(project, idea)
     return save_idea(project, idea)
 
 
@@ -3856,7 +3876,9 @@ def route_state(project):
     chk = lt.get("board_check")
     route = lt.get("route")
     out = {"ready": False, "why": "", "unrouted": None, "open_nets": []}
-    if route and route.get("ok") and not route.get("stale"):
+    newer_check = bool(chk and route and chk is not route and (chk.get("drc") or {}).get("complete") is not False
+                       and (chk.get("ts") or 0) > (route.get("ts") or 0))
+    if route and route.get("ok") and not route.get("stale") and not newer_check:     # a complete check newer than the route: its count and nets only
         out["open_nets"] = [str(n) for n in ((route.get("summary") or {}).get("open_nets") or [])]
     if not chk:
         out["why"] = ("the board was never checked: no route or design rule check of the PcbDoc is on record" if not route

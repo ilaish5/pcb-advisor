@@ -7,7 +7,6 @@ import pytest
 
 import serve
 import session as session_mod
-import store
 from altium import bridge
 from test_chat_turns import call, server  # noqa: F401
 from test_step_buttons import BUILT, IMPORTED, PLACED, spy, world  # noqa: F401

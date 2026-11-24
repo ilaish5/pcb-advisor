@@ -38,14 +38,23 @@ def check(value):
     return int(n)
 
 
+_TOPIC = re.compile(r"^\W*(?:the\s+)?(?:board|pcb|layers?|layer\s+count|stack(?:-?\s?up)?|copper|לוח|שכבות|מעגל מודפס)", re.I)
+_PHRASE = re.compile(
+    rf"\b(?:{_NUM}|({_WORD}))[\s-]*(?:copper\s+)?layers?[\s-]+(?:board|pcb|stack-?\s?up)\b"      # "4-layer board", "four layer PCB", "4 layer stack-up"
+    rf"|\b(?:board|pcb)\b[^.;\n]{{0,25}}?\b(?:with|of|has|have|is|needs?|:|=)\s*(?:a\s+)?(?:{_NUM}|({_WORD}))[\s-]*(?:copper\s+)?layers?\b"   # "board with 4 layers"
+    rf"|(?:לוח|מעגל מודפס)\s+{_NUM}\s+שכבות", re.I)
+
+
 def from_text(topic, text):
-    """The layer count the requirement `topic` / `text` states, or None when it states none. Only text about the board or its
-    stack-up counts ("4 layers of protection" is not a statement about the board): the topic or the text names the board, the pcb, the
-    stack-up, copper or layers. The first count wins; a number outside 1..40 is not a layer count."""
-    blob = f"{topic or ''} {text or ''}"
-    if not _BOARDISH.search(blob):
-        return None
-    m = _COUNT.search(f"{text or ''}") or _COUNT.search(blob)
+    """The layer count the requirement states, or None when it states none. Only a statement about the BOARD counts: an "N-layer
+    board / PCB / stack-up" phrase ("a 4 layer board", "board with 4 layers") anywhere in the text, or any "N layers" in a requirement
+    whose topic is the board, PCB, layers, stack-up or copper ("4 layers of protection", "the connector has 4 layers" are not). The
+    first count wins; a number outside 1..40 is not a layer count. Never raises: a count the tool does not build (6) is returned
+    as read, the writer decides (store.sync_layers_from_idea ignores it)."""
+    text = str(text or "")
+    m = _PHRASE.search(text)
+    if not m and _TOPIC.search(str(topic or "")):
+        m = _COUNT.search(text)
     if not m:
         return None
     raw = next((g for g in m.groups() if g), None)
@@ -56,8 +65,19 @@ def from_text(topic, text):
 
 
 def of_board(board):
-    """The layer count a project's board settings hold (2 when none or not a valid one: the tool's default)."""
+    """The layer count a project's board settings hold (2 when none stored: the tool's default). A stored count that is not 2 or 4 is
+    read as 2 too, but see stored_problem: callers that must not hide it ask that."""
     try:
         return check((board or {}).get("layers", DEFAULT_LAYERS))
     except ValueError:
         return DEFAULT_LAYERS
+
+
+def stored_problem(board):
+    """The message when the stored count is invalid (3, 6, "x"), else "": the board is then built as 2 layers, which the student must be told."""
+    value = (board or {}).get("layers", DEFAULT_LAYERS)
+    try:
+        check(value)
+        return ""
+    except ValueError:
+        return f"The stored layer count ({value!r}) is not 2 or 4, so the board is treated as {DEFAULT_LAYERS} layers. Choose 2 or 4 layers in the Idea."

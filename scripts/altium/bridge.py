@@ -55,6 +55,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import board_layers  # noqa: E402
 import jlc_upload  # noqa: E402
 import outjob  # noqa: E402
 import partlib  # noqa: E402
@@ -1011,7 +1012,8 @@ def _close_draft_library(project):
 def sheet_fit(project, sheet=None):
     """Does each netlist sheet fit a drawn sheet? The same layout check Draw makes (draw.plan_sheet), without touching Altium or any
     file: [{"sheet", "fits", "size": "A4" | "A3" | None, "message"}]. A part that does not fit A4 is drawn on A3 by itself ("size");
-    fits False = too big even for A3 (message says why and how the design could be split). Never raises for one bad sheet."""
+    fits False = too big even for A3 (message says why and how the design could be split); None = not known (an error reading the
+    sheet or its symbols). Never raises for one bad sheet."""
     from altium import draw
     lp = library_paths(project)
     lib_symbols, lib_why = _project_symbols(lp)
@@ -1023,12 +1025,11 @@ def sheet_fit(project, sheet=None):
         try:
             syms = _sheet_symbols(project, sh, lib_symbols)
             phs = _placeholder_reasons(sh, syms, lib_why)
-            by_ref = {p.get("ref"): p for p in sh.get("parts", []) if isinstance(p, dict)}
             for k, (ref, ph) in enumerate(phs.items(), 1):
                 ph["name"], ph["schlib"], ph["sheet"] = draw.placeholder_name(ref) + f"_{k}", str(draft_library_path(project)), sid
             plan = draw.plan_sheet(sh, syms, lp["schlib"], pathlib.Path("fit-check.SchDoc"), aliases=aliases, placeholders=phs)
-        except (BridgeError, KeyError, ValueError) as exc:
-            out.append({"sheet": sid, "fits": False, "size": None, "message": str(exc)})
+        except Exception as exc:     # noqa: BLE001 - one bad sheet is no verdict on the fit: unknown (None), never "too big", never a crash
+            out.append({"sheet": sid, "fits": None, "size": None, "message": f"{type(exc).__name__}: {exc}"})
             continue
         too_big = plan.get("fix_code") == "sheet.too_big"
         size = plan.get("sheet_size")
@@ -1540,12 +1541,48 @@ def outline_status(project):
     return out
 
 
+def _footprint_boxes(doc):
+    """{ref: [x0, y0, x1, y1] mm}: the box of each part's pads (the footprint's extent as far as the saved board tells it); a part with
+    no pad is its origin."""
+    boxes = {}
+    for p in doc.get("pads", []):
+        ref, x, y = p.get("ref"), p.get("x_mm"), p.get("y_mm")
+        if not ref or x is None or y is None:
+            continue
+        sx, sy = float(p.get("sx_mm") or 0.0) / 2, float(p.get("sy_mm") or 0.0) / 2
+        if round(float(p.get("rot") or 0.0) / 90.0) % 2:
+            sx, sy = sy, sx
+        b = boxes.setdefault(ref, [x - sx, y - sy, x + sx, y + sy])
+        b[:] = [min(b[0], x - sx), min(b[1], y - sy), max(b[2], x + sx), max(b[3], y + sy)]
+    for c in doc.get("components", []):
+        if c.get("ref") and c["ref"] not in boxes and c.get("x_mm") is not None:
+            boxes[c["ref"]] = [c["x_mm"], c["y_mm"], c["x_mm"], c["y_mm"]]
+    return boxes
+
+
 def _parts_outside(pcb, box):
-    """Refs of the parts of the saved PcbDoc whose origin lies outside the rectangle `box` (mm)."""
+    """Refs of the parts of the saved PcbDoc whose footprint (its pads, not just its origin) is not wholly inside the rectangle `box` (mm)."""
     from altium.pcbdoc import read_pcbdoc
     x0, y0, x1, y1 = box
-    return sorted(c["ref"] for c in read_pcbdoc(pathlib.Path(pcb)).get("components", [])
-                  if c.get("ref") and not (x0 - 0.01 <= c["x_mm"] <= x1 + 0.01 and y0 - 0.01 <= c["y_mm"] <= y1 + 0.01))
+    doc = read_pcbdoc(pathlib.Path(pcb))
+    boxes = _footprint_boxes(doc)
+    return sorted(c["ref"] for c in doc.get("components", [])
+                  if c.get("ref") and c["ref"] in boxes
+                  and not (x0 - 0.01 <= boxes[c["ref"]][0] and boxes[c["ref"]][2] <= x1 + 0.01
+                           and y0 - 0.01 <= boxes[c["ref"]][1] and boxes[c["ref"]][3] <= y1 + 0.01))
+
+
+def _copper_of(pcb):
+    """(tracks, vias, polygons) on the copper layers of the saved PcbDoc, the tracks and polygons as lists of points (mm): what a new
+    outline does not move."""
+    from altium.pcbdoc import read_pcbdoc
+    doc = read_pcbdoc(pathlib.Path(pcb))
+    tracks = [[(t["x1_mm"], t["y1_mm"]), (t["x2_mm"], t["y2_mm"])] for t in doc.get("tracks", [])
+              if 1 <= (t.get("layer") or 0) <= 32 and not t.get("in_component") and t.get("x1_mm") is not None]
+    vias = [[(v["x_mm"], v["y_mm"])] for v in doc.get("vias", []) if v.get("x_mm") is not None]
+    polys = [[tuple(p) for p in r.get("points_mm") or []] for r in doc.get("regions", [])
+             if r.get("polygon") and 1 <= (r.get("layer") or 0) <= 32 and not r.get("in_component")]
+    return tracks, vias, polys
 
 
 def resize_outline(project, width_mm=None, height_mm=None):
@@ -1591,6 +1628,21 @@ def resize_outline(project, width_mm=None, height_mm=None):
         warnings.append(f"{len(outside)} part{'s' if len(outside) != 1 else ''} fall{'s' if len(outside) == 1 else ''} outside the new "
                         f"{w:g} x {h:g} mm outline: {', '.join(outside[:12])}{' ...' if len(outside) > 12 else ''}. Parts are not moved; "
                         "place again (Replace) or move them in Altium")
+    try:
+        tracks, vias, polys = _copper_of(pcb)
+    except (AltiumReadError, OSError, KeyError):
+        tracks, vias, polys = [], [], []
+        warnings.append("the copper of the board could not be read to check it against the new outline: look at the board")
+    x0, y0, x1, y1 = box
+    out_copper = [pts for pts in tracks + vias + polys
+                  if any(not (x0 - 0.01 <= px <= x1 + 0.01 and y0 - 0.01 <= py <= y1 + 0.01) for px, py in pts)]
+    if out_copper:         # tracks and pours do not move with the outline: a smaller outline would leave copper beyond the board edge
+        raise BridgeError(f"The board already has copper (tracks, vias or pours) and {len(out_copper)} of them would lie outside the new "
+                          f"{w:g} x {h:g} mm outline: routing and pours are not moved. Place the board again (Replace) at the new size and "
+                          "route again, or choose a size that holds the copper. Nothing was changed.")
+    if tracks or vias or polys:
+        warnings.append("the board is already routed or poured: its copper stays as it is and a pour keeps its old shape; "
+                        "route again (Replace) after the new size so the pours and the clearances to the edge are redone")
     backup = _backup(prj, [pcb])
     cmds = [("PROJECT", str(prj)), ("OUTLINERESIZE", str(pcb)) + tuple(f"{v:g}" for v in box) + (f"{layout.OUTLINE_WIDTH_MM:g}",),
             ("PCBSAVE", str(pcb))]
@@ -1708,7 +1760,6 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     lost = _routing_lost(pcb) if pathlib.Path(pcb).is_file() else {}
     routed = _routing_words(lost)
     if pathlib.Path(pcb).is_file():
-        from altium import pcbdoc as pcbdoc_mod
         why_stack = stack_mismatch(layers, _stack_count(pcb))
         if why_stack:
             raise BridgeError(why_stack[0].upper() + why_stack[1:] + ". Nothing was changed.")
@@ -1765,7 +1816,11 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     parts = parts + holes + keepouts
     backup = _backup(prj, [pcb])
     if layers == 4:          # the stack-up is set before anything is placed (the backup above holds the board as it was)
-        ensure_stack(prj, pcb, 4)
+        try:
+            ensure_stack(prj, pcb, 4)
+        except BridgeError as exc:           # a stack-up that failed halfway must not leave the file changed
+            back = _restore(prj, pcb, backup) if backup else False
+            raise BridgeError(str(exc) + (" The board file was put back as it was before (backup kept)." if back else f" The backup is in {backup}.")) from exc
     links = _sch_links(prj)
     parts = [dict(p, uid=links[p["ref"]][0], sheet=links[p["ref"]][1]) if p["ref"] in links else p for p in parts]
     try:                                                 # did somebody already draw the outline? (it is then never touched)
@@ -1857,6 +1912,9 @@ def place_pcb(project, replace=False):
             "schematic: Altium's Update PCB will offer to remove them. Do not accept those removals."]
     if fit and fit["text"]:
         res["warnings"] = [fit["text"]] + list(res["warnings"])
+    bad_layers = board_layers.stored_problem(projects_mod.board(project))
+    if bad_layers:                                       # an invalid stored count is built as 2 layers: never silently
+        res["warnings"] = [bad_layers] + list(res["warnings"])
     _log(project, "place-pcb", pcb=str(pcb), parts=len(res["placed"]), outline=res["outline"], replace=bool(replace),
          backup=res["backup"], problems=res["problems"], warnings=res["warnings"])
     res["warnings"] = list(dict.fromkeys(res["warnings"] + [f"drill check: {m}" for m in res["drill_findings"][:6]]
@@ -1907,7 +1965,6 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     import tempfile
     from altium import layout, route
     from altium.pcbdoc import read_pcbdoc, poured_copper
-    from altium import pcbdoc as pcbdoc_mod
     prj, pcb = pathlib.Path(prj), pathlib.Path(pcb)
     log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0", "route")])   # unsaved / existing copper
     info = _pcbcheck_info(log)
@@ -2011,7 +2068,10 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     except BridgeError as exc:
         if str(exc).startswith("The board is open in Altium with unsaved changes"):      # nothing was drawn: leave the student's edits alone
             raise
-        raise BridgeError(str(exc) + _revert(prj, pcb, "routed")) from exc
+        # the board shape and the stack-up are written to the file before the route is drawn: the backup goes back, not just a close
+        back = _restore(prj, pcb, res["backup"]) if res.get("backup") else False
+        raise BridgeError(str(exc) + (" The board file was put back as it was before (backup kept)." if back
+                                      else _revert(prj, pcb, "routed") + f" The backup is in {res['backup']}.")) from exc
     res["written"] = True
     probs = []
     open_nets = []
@@ -2298,6 +2358,9 @@ def route_pcb(project, replace=False, keep_partial=False):
             err.open_nets = open_nets          # the page offers "route the rest and leave these open": the student's click is the consent
         raise err
     res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"footprint: {m}" for m in res.get("footprint_findings", [])[:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    bad_layers = board_layers.stored_problem(projects_mod.board(project))
+    if bad_layers:
+        res["warnings"] = [bad_layers] + list(res["warnings"])
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
     res["warnings"] += [f"not in the route's pass criteria, got worse: {m}" for m in res.get("new_unwatched", [])]
     _record_board_facts(project, pcb, drc_total=res.get("drc_total"))
@@ -2679,6 +2742,21 @@ def unsaved_documents(prj):
     return [d.name for d, l in zip(docs, state) if "modified=1" in l]
 
 
+def _pcb_sha(project):
+    try:
+        import lineage
+        pcb = lineage.linked_pcb(project)
+        return lineage.sha256_file(pcb) if pcb else ""
+    except Exception:       # noqa: BLE001 - no hash is no rebase
+        return ""
+
+
+def _rebase_board_check(project, old_sha):
+    """repair_outline changed the PcbDoc (outline tracks on Mechanical 1 only): keep the board check made on the file before it valid."""
+    import board_results
+    board_results.rebase_check(project, old_sha)
+
+
 def run_outjob(project):
     """Run the project's OutJob (ours is added first when it has none). Before the outputs, a board whose outline layer is empty gets
     its rectangular board shape drawn on Mechanical 1 (repair_outline). Returns {outjob, added, containers, files, backup, warnings,
@@ -2690,9 +2768,11 @@ def run_outjob(project):
             pcb_file = _project_pcb(project)
         except BridgeError:
             pcb_file = None                              # no PcbDoc in the project: nothing to repair
+        sha_before = _pcb_sha(project) if pcb_file else ""
         fix = repair_outline(prj, pcb_file) if pcb_file else {"drawn": False, "warning": ""}
         outline_drawn = fix["drawn"]
         if fix["drawn"]:
+            _rebase_board_check(project, sha_before)       # the outline is no copper: the board check made before still holds
             outline_note.append(f"The outline layer (Mechanical 1) was empty: drew the board shape {fix['box']} mm there (backup {fix['backup']}).")
         elif fix["warning"]:
             outline_note.append(fix["warning"])
@@ -3462,7 +3542,7 @@ def main(argv=None):
         elif a.op == "import-rules":
             res = import_rules(a.project)
         elif a.op == "run-outjob":
-            blocked = store.manufacturing_warning(a.project)
+            blocked = store.manufacturing_block(a.project)           # the design's refusal and the board's (unrouted nets); pins only warn
             if blocked:
                 print(f"Error: {blocked}", file=sys.stderr)
                 return 1

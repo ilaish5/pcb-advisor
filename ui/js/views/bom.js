@@ -240,7 +240,10 @@ function bomPending() { return (S.proposals || []).filter(p => p.status === 'pen
 // The pending BOM proposals: the shared proposal table (chat.js propListHTML), one row and one tick per part, with the
 // same three buttons as the chat card. Ticks are shared with the chat card by proposal id.
 function bomPendingBox(pend, cls) {
-  return `<div class="bom-pend ${cls || ''}" data-pids="${esc(pend.map(p => p.id).join(','))}">${propListHTML(pend)}${propActsHTML(pend.map(p => p.id), true)}</div>`;
+  // a delete is never part of Approve all: it gets its own card (Delete / Keep) under the list
+  const dels = pend.filter(p => propDelete(p)), rest = pend.filter(p => !propDelete(p));
+  const list = rest.length ? `<div class="bom-pend ${cls || ''}" data-pids="${esc(rest.map(p => p.id).join(','))}">${propListHTML(rest)}${propActsHTML(rest.map(p => p.id), true)}</div>` : '';
+  return list + dels.map(diffHTML).join('');
 }
 function bomPendingNote(pend) {
   return pend.length ? `<div class="pv-note">${banner({tone: 'info', cls: 'bom-pend-note', html: `${esc(bomPl(pend.length, 'proposed change'))} waiting for your approval.${bomPendingBox(pend)}`})}</div>` : '';

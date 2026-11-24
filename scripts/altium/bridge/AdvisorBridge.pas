@@ -294,6 +294,18 @@ begin
     Log('frame at ' + IntToStr(X) + ',' + IntToStr(Y));
 end;
 
+{ True when the sheet holds a component: its size was chosen for what is drawn on it (an A3 sheet stays A3) }
+function SheetHasParts(Sch: IDispatch): Boolean;
+var
+    It, O : IDispatch;
+begin
+    It := Sch.SchIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(eSchComponent));
+    O := It.FirstSchObject;
+    Result := (O <> nil);
+    Sch.SchIterator_Destroy(It);
+end;
+
 procedure TitleBlock(Path: String);
 var
     Sch : IDispatch;
@@ -304,7 +316,11 @@ begin
         Say('ERR could not open ' + Path);
         Exit;
     end;
-    SheetSetup(Sch);
+    { a skeleton run on a sheet that is already drawn must not reset an A3 sheet to A4: only a sheet with no part gets the standard style }
+    if SheetHasParts(Sch) then
+        Log('sheet style kept: the sheet has parts')
+    else
+        SheetSetup(Sch);
     Sch.TitleBlockOn := True;
     Log('title block on');
 end;
@@ -2299,14 +2315,28 @@ begin
 end;
 
 { OUTLINERESIZE path x0 y0 x1 y1 width: a board that is already placed gets another rectangle: the four corners move (OUTLINE) and, when
-  Mechanical 1 holds exactly the four free tracks of our own rectangle drawing, they are removed and drawn again at the new size
+  Mechanical 1 holds exactly four free tracks and each of them runs between corners of the old outline (our own rectangle drawing), they
+  are removed and drawn again at the new size
   (OUTLINEDRAW). A drawing of any other kind (arcs, more or fewer tracks) is never touched: the log says "outlineresize drawn=0
   kept=N" and the caller warns. Parts, tracks and pours stay where they are. Logs "outlineresize drawn=4|0 ...". }
+function NearCoord(A, B: Integer): Boolean;
+begin
+    Result := (Abs(A - B) <= MilsToCoord(1));
+end;
+
+{ a free track whose two ends both sit on corners of the old outline rectangle (ox0..ox1, oy0..oy1): our own drawing of the board shape }
+function TrackOnCorners(T: IDispatch; ox0, oy0, ox1, oy1: Integer): Boolean;
+begin
+    Result := (NearCoord(T.X1, ox0) or NearCoord(T.X1, ox1)) and (NearCoord(T.Y1, oy0) or NearCoord(T.Y1, oy1))
+          and (NearCoord(T.X2, ox0) or NearCoord(T.X2, ox1)) and (NearCoord(T.Y2, oy0) or NearCoord(T.Y2, oy1));
+end;
+
 procedure PcbOutlineResize(Path: String; X0, Y0, X1, Y1, W: String);
 var
     B, It, O : IDispatch;
     L        : TInterfaceList;
-    i, n     : Integer;
+    i, n, k  : Integer;
+    ox0, oy0, ox1, oy1 : Integer;
 begin
     B := BoardOf(Path);
     if (B = nil) then
@@ -2318,6 +2348,15 @@ begin
     begin
         Say('ERR the board outline has ' + IntToStr(B.BoardOutline.PointCount) + ' points, not the 4 of a rectangle; nothing was changed');
         Exit;
+    end;
+    { the corners of the outline as it is now: only tracks on those corners are our drawing of it }
+    ox0 := B.BoardOutline.Segments[0].vx; ox1 := ox0; oy0 := B.BoardOutline.Segments[0].vy; oy1 := oy0;
+    for i := 1 to 3 do
+    begin
+        if (B.BoardOutline.Segments[i].vx < ox0) then ox0 := B.BoardOutline.Segments[i].vx;
+        if (B.BoardOutline.Segments[i].vx > ox1) then ox1 := B.BoardOutline.Segments[i].vx;
+        if (B.BoardOutline.Segments[i].vy < oy0) then oy0 := B.BoardOutline.Segments[i].vy;
+        if (B.BoardOutline.Segments[i].vy > oy1) then oy1 := B.BoardOutline.Segments[i].vy;
     end;
     PcbOutline(Path, X0, Y0, X1, Y1);
     n := PcbOutlineLayerCount(B);
@@ -2333,7 +2372,13 @@ begin
         O := It.NextPCBObject;
     end;
     B.BoardIterator_Destroy(It);
-    if (n = 4) and (L.Count = 4) then
+    k := 0;
+    for i := 0 to L.Count - 1 do
+    begin
+        O := L.Items[i];
+        if TrackOnCorners(O, ox0, oy0, ox1, oy1) then k := k + 1;
+    end;
+    if (n = 4) and (L.Count = 4) and (k = 4) then
     begin
         PCBServer.PreProcess;
         for i := 0 to L.Count - 1 do

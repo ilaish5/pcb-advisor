@@ -727,3 +727,11 @@ def test_a_skipped_drill_file_makes_content_check_say_not_checked(tmp_path, monk
     monkeypatch.setattr(jlc_upload.gerber_check, "MAX_BYTES", 40)
     res = jlc_upload._describe(_set(tmp_path), tmp_path / "b.PcbDoc")
     assert res["content_check"]["checked"] is False and "drill files not checked" in res["content_check"]["note"]
+
+
+def test_side_files_are_never_counted_or_walked(tmp_path):
+    (tmp_path / "Gerber").mkdir()
+    for n in ("a.GTL", "p-macro.APR_LIB", "Status Report.Txt", "run.log"):
+        (tmp_path / "Gerber" / n).write_text("x")
+    names = sorted(p.name for p, _ in jlc_upload._walk([tmp_path]))
+    assert names == ["a.GTL"]

@@ -578,7 +578,10 @@ _NEG_OTHER = re.compile(_NEG + r"\s+(?:\S+\s+){0,2}?(?:" + _OTHER_VERB.pattern +
 # An inability or an unwillingness to do it oneself ("I cannot draw by hand", "I can't do it myself", "אני לא יכול לשרטט בעצמי"): the student
 # says they CANNOT, so the agent is the one to do it. It is the opposite of "I'll do it myself" and must never be read as that (E18).
 _CANT = re.compile(
-    r"\b(?:cannot|can[’']?t|cant|couldn[’']?t|unable|not\s+able|incapable|no\s+way\s+to|don[’']?t\s+know\s+how|do\s+not\s+know\s+how"
+    # "can't" / "cannot" count only directly before the action or "myself" / "by hand" ("I can't wait", "I can't see the pins" say nothing of doing it)
+    r"\b(?:cannot|can[’']?t|cant|couldn[’']?t|unable(?:\s+to)?|not\s+able(?:\s+to)?|incapable(?:\s+of)?)\s+(?:(?:really|actually|just|it|this|that)\s+)?"
+    r"(?:do|draw|sketch|place|position|lay\s?out|route|mark|handle|manage|myself|by\s+hand|by\s+myself|manually)\b"
+    r"|\b(?:no\s+way\s+to|don[’']?t\s+know\s+how|do\s+not\s+know\s+how"
     r"|(?:don[’']?t|do\s+not)\s+want\s+to|(?:don[’']?t|do\s+not)\s+feel\s+like)\b"
     r"|(?<!\w)(?:אני\s+|אנחנו\s+)?(?:לא|אינ(?:ני|י))\s+(?:יכול|יכולה|יכולים|מסוגל|מסוגלת|מצליח|מצליחה|יודע|יודעת|בקיא|בקיאה|רוצה\s+ל|מעוניין\s+ל|מעוניינת\s+ל)(?!\w)",
     re.I)
@@ -3881,6 +3884,9 @@ class Handler(BaseHTTPRequestHandler):
             results = []
             for pid in ids:
                 try:
+                    if decision == "approved" and store.delete_spec(next((p for p in store.proposals(proj) if p["id"] == pid), {})):
+                        results.append({"id": pid, "ok": False, "error": "a delete is approved on its own card, never with Approve all"})
+                        continue
                     got = decide_and_note(proj, sess, pid, decision, note=False, redraw_now=False)      # store.decide says "already" under its lock
                     results.append({"id": pid, "ok": True, **({"already": True} if got.get("already") else {})})
                 except (KeyError, ValueError) as exc:
@@ -3910,9 +3916,14 @@ class Handler(BaseHTTPRequestHandler):
                 recheck_async(proj, prop["line"])
             redraw(proj)
             project_mod.touch(proj)
+            gone = (prop.get("superseded") if isinstance(prop, dict) else None) or []
             say(proj, sess, {"ts": now(), "role": "agent", "decision": "undone", "proposal": data.get("id"),
-                             "text": f"The student undid change {data.get('id')}; it is back to how it was."})
-            return self._send(200, state())
+                             "text": f"The student undid change {data.get('id')}; it is back to how it was."
+                                     + (f" Pending changes for that line ({', '.join(gone)}) were dropped when it was deleted and are not back: propose them again if still wanted." if gone else "")})
+            out = state()
+            if gone:
+                out["superseded"] = gone
+            return self._send(200, out)
 
         if path == "/api/bom/edit":
             try:

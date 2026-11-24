@@ -53,12 +53,14 @@ def rf_module(line, fp):
     {"antenna_side": "L|R|T|B" or None, "keepout_mm": depth of the pad-free strip, "keepout_box": [x0, y0, x1, y1] mm in footprint
     coordinates, "source": "heuristic"}. The side is the one on which the outline reaches farthest beyond the pads (a module's antenna
     area has no pads); None when no side reaches 2 mm. A guess by name and shape: the Library shows it and the student can override."""
-    text = " ".join(str(line.get(k) or "") for k in ("mpn", "value", "description", "package", "role")) + " " + str(fp.get("name") or "")
+    text = " ".join(str(line.get(k) or "") for k in ("mpn", "value", "description", "package")) + " " + str(fp.get("name") or "")
     if not RF_RE.search(text):
         return None
     pb, ob = _geometry(fp.get("lines", []))
     if pb is None:
         return None
+    if sum(1 for ln in fp.get("lines", []) if str(ln).startswith("PAD|")) <= 4:
+        return None                          # a decoupling cap "for the LTE module" is not a module
     gaps = {"L": pb[0] - ob[0], "R": ob[2] - pb[2], "B": pb[1] - ob[1], "T": ob[3] - pb[3]}
     side = max(gaps, key=gaps.get)
     if gaps[side] < ANTENNA_MIN_MM:

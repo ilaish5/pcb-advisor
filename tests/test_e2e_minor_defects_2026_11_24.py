@@ -230,3 +230,20 @@ def test_every_ui_script_still_parses(tmp_path):
     for name in ("views/pins.js", "views/checks.js", "views/previews.js", "views/idea.js", "views/outputs.js", "views/bom.js"):
         r = subprocess.run([NODE, "--check", str(UI / "js" / name)], capture_output=True, text=True)
         assert r.returncode == 0, name + r.stderr
+
+
+@pytest.mark.parametrize("text", ["I can't wait, draw it", "I can't see the pins, draw them"])
+def test_cant_not_before_the_action_is_no_inability(text):
+    assert not serve.says_cannot(text)
+
+
+@pytest.mark.parametrize("text", ["I can't draw", "I can't do it myself", "I cannot really route by hand"])
+def test_cant_before_the_action_or_myself_is_an_inability(text):
+    assert serve.says_cannot(text)
+
+
+def test_a_package_family_word_alone_does_not_score_a_page():
+    import pin_decisions
+    text = "SOIC dimensions\fSOIC thermal notes\fPin Configuration and Functions\n8-pin SOIC\n1 VCC\n"
+    assert pin_decisions.candidate_pages(text, "SOIC-8") == [3]
+    assert pin_decisions.candidate_pages("SOIC notes\fSOIC notes", "SOIC") == []

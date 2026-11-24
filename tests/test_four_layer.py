@@ -6,7 +6,7 @@ import board_layers
 import project as project_mod
 import store
 from altium import bridge, route
-from test_altium_route import JLC, pad, rules
+from test_altium_route import pad, rules
 from test_chat_turns import call, server  # noqa: F401
 
 
@@ -71,15 +71,32 @@ def test_the_meta_endpoint_checks_layers_too(server, empty):
     assert call(server, "POST", "/api/project/meta", empty, {"board": {"layers": 4}})[0] == 200 and project_mod.layers(empty) == 4
 
 
-def test_a_requirement_that_states_the_layers_sets_them_and_a_bad_count_is_not_written(empty):
+def test_a_requirement_sets_the_layers_on_save_only_and_never_raises(empty):
     store.propose_idea(empty, "Board", "a 4 layer board with a ground and a power plane")
+    assert project_mod.layers(empty) == 2                             # a draft changes nothing yet
+    store.save_idea_from_draft(empty)
     assert project_mod.layers(empty) == 4
-    with pytest.raises(ValueError) as e:
-        store.propose_idea(empty, "Board", "a 6 layer board")
-    assert "2 or 4" in str(e.value) and project_mod.layers(empty) == 4
-    assert not [i for i in store.load_idea_working(empty)["agreed"] if "6 layer" in i["text"]]
-    store.propose_idea(empty, "Power", "5 V in, 2 A")                 # no count: nothing changes
+    store.propose_idea(empty, "Board", "a 6 layer board")             # never raises; a count the tool does not build is not stored
+    store.save_idea_from_draft(empty)
     assert project_mod.layers(empty) == 4
+    store.propose_idea(empty, "Power", "5 V in, 2 A, 2 layers of protection on the input")
+    store.save_idea_from_draft(empty)
+    assert project_mod.layers(empty) == 4
+
+
+def test_only_a_board_statement_reads_as_a_layer_count():
+    f = board_layers.from_text
+    assert f("Power", "the connector has 4 layers of gold and the board is small") is None
+    assert f("Display", "a 2 layers deep menu on the pcb screen") is None
+    assert f("Power", "needs a 4-layer board for the planes") == 4
+    assert f("Layers", "4 layers") == 4 and f("Layer count", "four layers") == 4
+    assert f("Power", "the PCB has 4 layers") == 4
+
+
+def test_a_stored_layer_count_that_is_invalid_is_flagged_not_hidden():
+    assert board_layers.of_board({"layers": 3}) == 2
+    assert "not 2 or 4" in board_layers.stored_problem({"layers": 3})
+    assert board_layers.stored_problem({}) == "" and board_layers.stored_problem({"layers": 4}) == ""
 
 
 def test_the_idea_page_has_the_layers_select():
@@ -242,3 +259,25 @@ def test_inner_copper_is_refused_on_two_layers_and_only_the_planes_pours_are_all
     assert not route.capability_check(dict(base, regions=[pour]), layers=4)             # the plane's own pour
     assert "inner layers" in route.capability_check(dict(base, regions=[pour], tracks=[track]), layers=4)[0]
     assert "inner layers" in route.capability_check(dict(base, regions=[dict(pour, layer=4)]), layers=4)[0]
+
+
+def test_a_failed_stack_up_puts_the_board_file_back(monkeypatch, tmp_path):
+    from altium import bridge
+    lib, pcb = tmp_path / "L.PcbLib", tmp_path / "B.PcbDoc"
+    lib.write_bytes(b"x")
+    pcb.write_bytes(b"pcb")
+    fp = {"name": "FP", "pads": [{"x": 0, "y": 0, "xsize": 40, "ysize": 40, "rotation": 0, "name": "1"}], "extent": {}}
+    monkeypatch.setattr(bridge, "read_pcblib", lambda p: {"footprints": [fp]})
+    monkeypatch.setattr(bridge, "_sch_links", lambda prj: {})
+    monkeypatch.setattr(bridge, "_backup", lambda prj, files: str(tmp_path / "bak"))
+    monkeypatch.setattr(bridge, "run_commands", lambda cmds, **kw: ["pcbcheck rect=1 objects=0 parts=0 tracks=0 outline_pts=4 box_mil=0,0,1181,984"])
+    monkeypatch.setattr(bridge, "_stack_count", lambda p: 2)
+    restored = []
+    monkeypatch.setattr(bridge, "_restore", lambda prj, p, backup: restored.append(backup) or True)
+
+    def boom(prj, p, layers):
+        raise bridge.BridgeError("the 4 layer stack-up was not saved")
+    monkeypatch.setattr(bridge, "ensure_stack", boom)
+    with pytest.raises(bridge.BridgeError) as e:
+        bridge.place_on(tmp_path / "P.PrjPcb", pcb, lib, [{"ref": "R1", "footprint": "FP", "lib_ref": "R", "pins": []}], size=(30, 25), layers=4)
+    assert restored == [str(tmp_path / "bak")] and "put back" in str(e.value), str(e.value)

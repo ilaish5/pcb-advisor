@@ -346,19 +346,33 @@ def _package_words(package):
     return fam[:1]
 
 
+def _package_on_page(page, package):
+    """The package is on the page: its full name, or its family word together with its pin count ("SOIC-8", "SOIC8", "8-pin SOIC").
+    The family word alone is on every page of a package chapter, so it counts for nothing."""
+    m = re.search(r"[A-Za-z][-_ ]?(\d{1,3})\b", package or "")
+    n = m.group(1) if m else None
+    if not n or int(n) < 3:
+        return False                       # no pin count in the name: nothing but the family word to go by
+    if re.search(re.escape(package), page, re.I):
+        return True
+    for w in _package_words(package):
+        if re.search(rf"\b{re.escape(w)}[-\s]?{n}\b|\b{n}[-\s]?(?:pin|lead|ball)s?[-\s]+(?:\w+[-\s]+)?{re.escape(w)}", page, re.I):
+            return True
+    return False
+
+
 def candidate_pages(text, package=""):
     """1-based pages of the document that look like the pin table / pinout, best first (at most 5): a page with a pin heading
     scores above a page that only names the package, a page with the pin table itself (Pin No. / Pin Name / I/O) above one with only
     a heading, and the part's package on the same page adds to it. A contents or index page (dot leaders and page numbers) is
     never offered: it lists the headings, not the pins."""
     scored = []
-    words = _package_words(package)
     for n, page in enumerate(text.split("\f"), 1):
         if is_contents_page(page):
             continue
         heads = len(_HEADINGS.findall(page))
         table = len(_PIN_TABLE.findall(page))
-        pkg = bool(package and re.search(re.escape(package), page, re.I)) or any(re.search(rf"\b{re.escape(w)}", page, re.I) for w in words)
+        pkg = _package_on_page(page, package)
         score = 2 * heads + (3 if heads and table else 0) + (1 if pkg else 0) + (1 if heads and pkg else 0)
         if score:
             scored.append((-score, n))

@@ -357,7 +357,6 @@ def test_a_refusal_on_a_routed_board_names_what_a_new_placement_deletes(monkeypa
 
 def _resize_fakes(monkeypatch, tmp_path, old=(0.0, 0.0, 100.0, 80.0), parts=(("U1", 50.0, 40.0), ("J1", 95.0, 70.0)), modified=False, kept=False):
     import altium.pcbdoc as pcbdoc
-    from altium import layout
     pcb = tmp_path / "B.PcbDoc"
     pcb.write_bytes(b"pcb")
     sent, shape, docs = [], {"box": list(old)}, {"tracks": _rect_tracks(*old)}
@@ -453,3 +452,49 @@ def test_the_server_and_the_layout_page_offer_the_resize():
     assert "Set board to" in js and "pcb-outline-resize" in js
     pas = (root / "scripts" / "altium" / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
     assert "OUTLINERESIZE" in pas and "DrawBegin(Field(Line, 1), Field(Line, 2), Field(Line, 3))" in pas
+
+
+def test_resize_outline_uses_the_footprint_not_only_its_origin(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    sent, shape = _resize_fakes(monkeypatch, tmp_path)
+    orig = pcbdoc.read_pcbdoc
+    pad = {"ref": "U1", "x_mm": 58.0, "y_mm": 40.0, "sx_mm": 2.0, "sy_mm": 1.0, "rot": 0.0}
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: {**orig(p, geometry), "components": [{"ref": "U1", "x_mm": 55.0, "y_mm": 40.0}],
+                                                                          "pads": [pad]})
+    assert bridge.resize_outline("p", 60, 50)["outside"] == []     # the pad reaches 59 mm: inside
+    pad["x_mm"] = 59.5                                             # the origin (55) is inside, the pad's edge (60.5) is not
+    assert bridge.resize_outline("p", 60, 50)["outside"] == ["U1"]
+
+
+def test_resize_outline_refuses_when_copper_would_lie_outside_and_warns_when_routed(tmp_path, monkeypatch):
+    import altium.pcbdoc as pcbdoc
+    sent, shape = _resize_fakes(monkeypatch, tmp_path)
+    orig = pcbdoc.read_pcbdoc
+    extra = {"layer": 1, "x1_mm": 10.0, "y1_mm": 10.0, "x2_mm": 90.0, "y2_mm": 10.0, "in_component": False}
+    monkeypatch.setattr(pcbdoc, "read_pcbdoc", lambda p, geometry=False: {**orig(p, geometry), "tracks": list(orig(p, geometry).get("tracks", [])) + [extra]})
+    with pytest.raises(bridge.BridgeError, match="copper.*Nothing was changed"):
+        bridge.resize_outline("p", 60, 50)
+    assert "OUTLINERESIZE" not in [x for run in sent for x in run]
+    res = bridge.resize_outline("p", 120, 90)            # bigger: nothing is cut off, but the student is told the pours stay old
+    assert any("already routed or poured" in w for w in res["warnings"])
+
+
+def test_outline_resize_deletes_only_tracks_on_the_old_corners_and_a_skeleton_keeps_the_sheet_style():
+    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
+    assert "TrackOnCorners(O, ox0, oy0, ox1, oy1)" in pas and "(k = 4)" in pas
+    tb = pas[pas.index("procedure TitleBlock("):]
+    tb = tb[:tb.index("{ The PCB of a path")]
+    assert "SheetHasParts(Sch)" in tb and "SheetSetup(Sch)" in tb and tb.index("SheetHasParts") < tb.index("SheetSetup(Sch)")
+
+
+def test_sheet_fit_says_unknown_not_too_big_when_a_sheet_errors(monkeypatch):
+    monkeypatch.setattr(bridge, "library_paths", lambda p: {"schlib": "x"})
+    monkeypatch.setattr(bridge, "_project_symbols", lambda lp: ({}, ""))
+    monkeypatch.setattr(bridge, "drawn_names", lambda p: {})
+    monkeypatch.setattr(bridge, "_sheets", lambda p: [("01", "T", {"parts": []})])
+
+    def boom(*a, **k):
+        raise RuntimeError("symbol broke")
+    monkeypatch.setattr(bridge, "_sheet_symbols", boom)
+    res = bridge.sheet_fit("p")
+    assert res[0]["fits"] is None and "symbol broke" in res[0]["message"]

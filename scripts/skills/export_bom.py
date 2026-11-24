@@ -53,18 +53,31 @@ def is_dnp(line):
     return bool(line.get("dnp")) or any(DNP_TEXT.search(str(line.get(k) or "")) for k in ("value", "mpn", "comment"))
 
 
+def pcb_refs(project):
+    """The designators placed on the linked PcbDoc (holes and keep-outs are no parts); None when there is no readable PcbDoc with a part."""
+    try:
+        import project as project_mod
+        from altium.pcbdoc import read_pcbdoc
+        pcb = project_mod.altium_link(project).get("pcb_file")
+        if not pcb or not pathlib.Path(pcb).is_file():
+            return None
+        refs = {c.get("ref") for c in read_pcbdoc(pcb).get("components", [])
+                if c.get("ref") and not str(c.get("pattern", "")).startswith("MECH_")}
+        return refs or None
+    except Exception:       # noqa: BLE001 - an unreadable board says nothing: the sheets decide
+        return None
+
+
 def sheet_refs(project):
-    """The designators the schematic holds: on a drawn sheet (store.sheet_docs) once anything is drawn, else on any sheet of the
-    design. None when the design has no sheet with a part (a BOM-only project): then nothing can be compared and nothing is dropped."""
-    drawn = {str(k) for k in store.sheet_docs(project)}
-    refs, drawn_refs = set(), set()
+    """The designators the design holds: the PcbDoc's when the board has parts on it, else those of every sheet that has parts
+    (a hand-drawn sheet is as good as one the agent drew: no part is dropped for the way its sheet was made). None when neither has a
+    part (a BOM-only project): then nothing can be compared and nothing is dropped."""
+    refs = pcb_refs(project)
+    if refs:
+        return refs
+    refs = set()
     for sh in store.sheet_ids(project):
-        got = {p.get("ref") for p in store.load_sheet(project, sh).get("parts", []) if p.get("ref")}
-        refs |= got
-        if str(sh) in drawn:
-            drawn_refs |= got
-    if drawn:
-        return drawn_refs
+        refs |= {p.get("ref") for p in store.load_sheet(project, sh).get("parts", []) if p.get("ref")}
     return refs or None
 
 

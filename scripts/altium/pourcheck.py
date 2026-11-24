@@ -341,14 +341,15 @@ def _check(doc, net, layer, out):
                 islands.append({"layer": sh["layer"], "bbox_mm": [round(v, 3) for v in sh["box"]], "points": len(sh["poly"]),
                                 "area_mm2": round(max(area, 0.0), 3), "polygon": sh["name"], "remove_dead": sh["remove_dead"]})
     unjoined = []
+    plane = bool(pour_layers) and all(2 <= (lay or 0) <= 31 for lay in pour_layers)       # a plane on inner layers: every pad of the net must reach it
     for i, (kind, d, layers, _pr) in enumerate(nodes):
-        if kind != "pad" or not (layers is _ALL or layers & pour_layers):
-            continue
+        if kind != "pad" or not (plane or layers is _ALL or layers & pour_layers):
+            continue                              # (a plane net's pad on the top or bottom layer needs the plane too: through a via)
         root = find(i)
         if root in shapes_in and any(shapes[k]["pour"] for k in shapes_in[root]):
             continue                              # reached by the pour
-        if sum(1 for m in members[root] if m in ("pad", "via")) > 1:
-            continue                              # tied by copper to the rest of the net
+        if not plane and sum(1 for m in members[root] if m in ("pad", "via")) > 1:
+            continue                              # tied by copper to the rest of the net (a plane's pads are each joined to the plane itself)
         unjoined.append({"ref": d.get("ref"), "name": d.get("name"), "x_mm": d["x_mm"], "y_mm": d["y_mm"]})
     if islands or unjoined:
         note = f"{len(islands)} cut-off copper piece(s) and {len(unjoined)} pad(s) of {net} not reached by the pour or a track."

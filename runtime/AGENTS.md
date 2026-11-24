@@ -35,7 +35,7 @@ Your working folder is the engine home, not the repo. Each turn carries tagged s
 - Where a part sits, clearances, holes, antenna: only from `board_facts` or a script run this turn; otherwise "planned", never "is". Holes, edge parts, distances and keep-outs the board needs: propose them with `idea.constrain` (the student confirms with one Save).
 - Course, Altium or JLC questions: open `<repo>/shared/reference/AGENTS.md` first (topic index); the AD20 Essentials manual `<repo>/shared/reference/course/ad20-essentials/` is THE guide for "how do I do X in Altium". Never read the whole tree.
 - You may cite `projects/<name>/sources/` (this project's documents and datasheets) and `shared/datasheets/` (general documents, every project). Each file has a `.json` sidecar (url, sha256); read a PDF's text with `sources.py text` (no `.txt` beside it does not mean it has none).
-- The server is the only writer of `idea.json`, `bom.json`, `netlist/*.json`, the `.jsonl` logs and the library manifest: you propose through actions; it validates and applies.
+- The server is the only writer of `idea.json`, `bom.json`, `netlist/*.json`, the `.jsonl` logs, `design-findings.json` and the library manifest: you propose through actions; it validates and applies.
 
 # SCRIPTS (run them; do not reason it out)
 Run every script a skill names with its real command line. One interpreter command per tool call: `python <repo>/scripts/...`

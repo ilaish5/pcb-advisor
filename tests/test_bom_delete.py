@@ -194,3 +194,31 @@ def test_the_chat_card_of_a_delete_names_what_goes():
     assert "function propDelete(" in CHAT_JS and "if (del) return propDeleteHTML(p, del);" in CHAT_JS
     card = CHAT_JS[CHAT_JS.index("function propDeleteHTML("):CHAT_JS.index("function propSummary(")]
     assert "decide: 'approved'" in card and "decide: 'rejected'" in card and "undo-change" in card
+
+
+# ---------------------------------------------------------------- review fixes: a delete is its own card, an undo names what it cannot bring back
+
+def test_undo_of_a_delete_names_the_pending_changes_it_threw_out(lte):
+    waiting = store.propose_bom(lte, "C100", {"note": "x"})
+    prop = store.delete_bom_line(lte, "C100")
+    assert store.superseded_by_delete(lte, next(p for p in store.proposals(lte) if p["id"] == prop["id"])) == [waiting["id"]]
+    undone = store.undo(lte, prop["id"])
+    assert undone["superseded"] == [waiting["id"]]
+    assert next(p for p in store.proposals(lte) if p["id"] == waiting["id"])["status"] == "rejected"     # not back: the student is told
+    plain = store.delete_bom_line(lte, "C100")
+    assert store.undo(lte, plain["id"])["superseded"] == []
+
+
+def test_approve_all_never_takes_a_delete(server, lte):  # noqa: F811
+    rec = store.propose_bom(lte, "C100", {"deleted": True})
+    other = store.propose_bom(lte, "R1", {"note": "n"}) if "R1" in keys(lte) else None
+    code, body = post(server, "/api/proposals/batch", {"ids": [rec["id"]], "decision": "approved"}, lte)
+    assert code == 200 and body["results"][0]["ok"] is False and "own card" in body["results"][0]["error"]
+    assert "C100" in keys(lte) and next(p for p in store.proposals(lte) if p["id"] == rec["id"])["status"] == "pending"
+    assert other is None or other["status"] == "pending"
+    assert post(server, "/api/proposals/batch", {"ids": [rec["id"]], "decision": "rejected"}, lte)[1]["results"][0]["ok"]      # Keep, in a batch, is fine
+
+
+def test_the_ui_keeps_deletes_out_of_the_group_card_and_toasts_what_an_undo_could_not_restore():
+    assert "pendDel = pending.filter(p => propDelete(p))" in CHAT_JS and "pendDel.map(diffHTML)" in CHAT_JS
+    assert "r.superseded" in CHAT_JS and "dels.map(diffHTML)" in BOM_JS

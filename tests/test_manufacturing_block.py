@@ -118,7 +118,8 @@ def test_a_board_never_routed_or_checked_is_not_ready(server, empty, made):
 def test_unrouted_nets_block_with_the_open_nets_the_drc_count_and_one_next_step(server, empty, made, monkeypatch):
     _fresh(monkeypatch)
     _log(empty, "route", summary={"routed": 3, "failed": 4, "tracks": 0, "vias": 0, "open_nets": ["NET1", "NET2", "NET3", "NET4", "NET5", "NET6", "NET7"]})
-    _log(empty, "drc", drc={"rules": {"Un-Routed Net Constraint": 234}, "total": 370, "unrouted": 234, "clean": False, "complete": True, "violations": []})
+    _log(empty, "drc", drc={"rules": {"Un-Routed Net Constraint": 234}, "total": 370, "unrouted": 234, "clean": False, "complete": True,
+                            "violations": [f"Un-Routed Net Constraint: Net NET{i} between a and b" for i in range(1, 8)]})   # the newer check names the nets
     msg = store.manufacturing_block(empty)
     assert "DRC Un-Routed 234" in msg and "NET1, NET2, NET3, NET4, NET5, NET6 ..." in msg and "7 open" in msg
     assert msg.count("Next:") == 1 and "Route board" in msg and "Check board" in msg
@@ -178,3 +179,22 @@ def test_a_block_never_runs_the_verification(empty, monkeypatch):
     monkeypatch.setattr(verify_part, "verify", lambda *a, **k: pytest.fail("a click on an output must not verify"))
     monkeypatch.setattr(store, "auto_attach", lambda *a, **k: pytest.fail("a click on an output must not attach"))
     assert "U1" in store.pins_warning(empty)
+
+
+@pytest.mark.route_gate
+def test_a_complete_check_newer_than_the_route_decides_the_open_nets(empty, monkeypatch):
+    _fresh(monkeypatch)
+    store.append(empty, "board-log.jsonl", {"ts": "2026-11-24T10:00:00.000", "op": "route", "ok": True, "pcb": "", "pcb_sha256": "", "drc": None,
+                                            "summary": {"routed": 3, "failed": 1, "open_nets": ["OLD1"]}, "warnings": []})
+    store.append(empty, "board-log.jsonl", {"ts": "2026-11-24T11:00:00.000", "op": "drc", "ok": True, "pcb": "", "pcb_sha256": "", "summary": {},
+                                            "warnings": [], "drc": {"rules": {"Un-Routed Net Constraint": 1}, "total": 1, "unrouted": 1, "clean": False,
+                                                                    "complete": True, "violations": ["Un-Routed Net Constraint: Net NEW1 between a and b"]}})
+    st = store.route_state(empty)
+    assert st["open_nets"] == ["NEW1"] and st["unrouted"] == 1
+
+
+def test_the_run_outjob_cli_uses_the_whole_gate(empty, monkeypatch, capsys):
+    monkeypatch.setattr(store, "manufacturing_block", lambda p: "Not made yet: the board has unrouted nets")
+    monkeypatch.setattr(bridge, "run_outjob", lambda p: pytest.fail("the gate was bypassed"))
+    assert bridge.main(["run-outjob", empty]) == 1
+    assert "unrouted nets" in capsys.readouterr().err

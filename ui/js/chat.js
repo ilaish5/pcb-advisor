@@ -314,8 +314,10 @@ function propsHTML(ids) {
   const pending = ps.filter(p => p.status === 'pending');
   const done = ps.filter(p => p.status === 'approved' || p.status === 'undone');
   const other = ps.filter(p => p.status === 'rejected');
+  // a delete is never part of Approve all: each pending delete is its own card (Delete / Keep), the rest is the group card
+  const pendDel = pending.filter(p => propDelete(p)), pendRest = pending.filter(p => !propDelete(p));
   return (done.length > 1 ? propGroupHTML(done, false) : done.map(diffHTML).join('')) +
-    other.map(diffHTML).join('') + (pending.length > 1 ? propGroupHTML(pending, true) : pending.map(diffHTML).join(''));
+    other.map(diffHTML).join('') + (pendRest.length > 1 ? propGroupHTML(pendRest, true) : pendRest.map(diffHTML).join('')) + pendDel.map(diffHTML).join('');
 }
 
 /* ---------- partial turns, denials, queue ---------- */
@@ -997,4 +999,8 @@ onAct('chat-checks', async () => { go('settings'); setTimeout(() => { if (typeof
 onAct('chat-confirm-idea', async () => { setState(await api('/api/idea/confirm', {})); render(true); toast('Idea confirmed'); });
 onAct('review-diagram', async (el, d, e) => { go('workspace', 'idea'); });
 // Undo one applied change: the server appends a compensating entry; if later changes depend on it, it says so (409)
-onAct('undo-change', async (el, d, e) => { setState(await api('/api/undo', {id: d.pid})); render(true); toast('Undone'); });
+onAct('undo-change', async (el, d, e) => {
+  const r = await api('/api/undo', {id: d.pid}); setState(r); render(true);
+  // the delete threw out the pending changes for that line: an undo brings the line back, not those
+  toast(r.superseded && r.superseded.length ? `Undone. ${r.superseded.length} pending change${r.superseded.length === 1 ? '' : 's'} for that line ${r.superseded.length === 1 ? 'was' : 'were'} dropped when it was deleted and ${r.superseded.length === 1 ? 'is' : 'are'} not back` : 'Undone');
+});

@@ -83,6 +83,23 @@ def record(project, step, res, ok=True, error=""):
         return None
 
 
+def rebase_check(project, old_sha, note="the outline was drawn on Mechanical 1 only"):
+    """The newest board check was made on the PcbDoc `old_sha`; the file changed since only by a repair that touches no copper (the
+    outline drawn on Mechanical 1), so the check still holds: a copy of it is recorded against the file as it is now. Returns the
+    new record, or None (no check on that sha, an unchanged file, or a log that cannot be written)."""
+    try:
+        recs = records(project)
+        chk = next((r for r in reversed(recs) if r.get("ok") and r.get("drc") and r["drc"].get("total") is not None), None)
+        pcb, sha = _pcb(project)
+        if not chk or not old_sha or chk.get("pcb_sha256") != old_sha or not sha or sha == old_sha:
+            return None
+        rec = {**{k: v for k, v in chk.items() if k not in ("seq", "stale")}, "ts": store.now_ms(), "pcb": pcb, "pcb_sha256": sha,
+               "warnings": list(chk.get("warnings") or []) + [note]}
+        return store.append(project, LOG, rec)
+    except Exception:       # noqa: BLE001
+        return None
+
+
 def records(project):
     try:
         return store.read_jsonl(store.pdir(project) / LOG)

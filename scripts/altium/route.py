@@ -474,7 +474,7 @@ class Router:
         nx, ny = self.nx, self.ny
         m = max(max(abs(dx), abs(dy)) for dx, dy in offs)
         w = ny + 2 * m
-        pad = bytearray(b"") * ((nx + 2 * m) * w)
+        pad = bytearray(b"\x01") * ((nx + 2 * m) * w)
         for ix in range(nx):
             o = (ix + m) * w + m
             pad[o:o + ny] = arr[ix * ny:(ix + 1) * ny]
@@ -1243,7 +1243,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     rt.cap = max_expansions or max(DEFAULT_EXPANSIONS, EXPANSIONS_PER_CELL * rt.n)
     nets = sorted(n for n, ps in rt.pads.items() if len(ps) >= 2 and (only is None or n in only))
     rt.planes = {n for n in (planes or {}) if n in nets}
-    plane_mask = bytearray(b"") * rt.n                  # a plane is under the whole board: a via may land wherever the rules let one stand
+    plane_mask = bytearray(b"\x01") * rt.n                  # a plane is under the whole board: a via may land wherever the rules let one stand
     pour = pour_net if pour_net in nets and not rt.planes else None
     pour_state = {"net": pour, "mode": None, "note": "", "links": {}}
     region = [None]

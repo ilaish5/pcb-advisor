@@ -40,7 +40,7 @@ def test_opening_opposite_the_pad_rows_offset():
 
 
 def test_a_screw_terminal_opens_across_its_pad_row():
-    f = fp("TB2", row(2, pitch=5.08), extent={"silk": [-5, -4.2, 5, 3.6]})     # 0.3 mm off: the outline does not tell
+    f = fp("TB2", row(2, pitch=5.08), extent={"silk": [-5, -4.7, 5, 3.6]})     # 0.55 mm off: the outline does not tell
     assert layout.opening_dir(f) is None
     assert layout.opening_guess(f, {"ref": "J5", "bom_description": "screw terminal block 5.08 mm"}) == (270, "kind")
 
@@ -169,3 +169,37 @@ def test_library_rf_keywords_cover_cellular_modules():
     for t in ("A7670G LTE Cat-1", "SIM7600E-H", "WH-LTE-7S1", "nRF52840 module", "ESP32-S3"):
         assert partlib_mech.RF_RE.search(t), t
     assert not partlib_mech.RF_RE.search("LM1117 regulator SOT-223")
+
+
+# ---------------------------------------------------------------- review fixes
+
+def test_a_body_offset_along_the_pad_row_does_not_turn_a_screw_terminal():
+    """Kiln PcbLib CONN-TH_2P-P5.00_WJ500V-5.08-2P: pads at x=+-2.54, body box x -8.22..2.54: the body offset is along the row."""
+    f = fp("CONN-TH_2P-P5.00_WJ500V-5.08-2P", [("1", -2.54, 0, 1.8, 1.8), ("2", 2.54, 0, 1.8, 1.8)],
+           extent={"body": [-8.22, -4.0, 2.54, 4.0]})
+    deg, src = layout.opening_guess(f, {"ref": "J3", "bom_description": "screw terminal block"})
+    assert deg in (90, 270), (deg, src)
+    # a body that reaches across the rows still counts
+    g = fp("TB", [("1", -2.54, 0, 1.8, 1.8), ("2", 2.54, 0, 1.8, 1.8)], extent={"body": [-8.22, -6.0, 2.54, 2.0]})
+    assert layout.opening_guess(g) == (270, "3d body")
+
+
+def test_text_that_names_a_radio_module_does_not_make_a_support_part_one():
+    fps = {"R0603": R0603, "MOD": _module()}
+    for role in ("100nF decoupling for LTE module", "bulk cap for SIM7600 VBAT", "ferrite bead WiFi supply",
+                 "level shifter for ESP32 UART", "BLE antenna matching inductor"):
+        rf = layout.rf_rules([part("C1", "R0603", ["X", "GND"], bom_role=role, role=role)], fps)
+        assert not rf["edge"] and not rf["antenna"], role
+        # a real module with that text still counts, a many-pad part named by its role only does not
+    rf = layout.rf_rules([part("U1", "MOD", ["X"] * 32, bom_role="level shifter for ESP32 UART")], fps)
+    assert not rf["edge"] and not rf["antenna"]
+    rf = layout.rf_rules([part("U1", "MOD", ["X"] * 32, bom_value="SIM7600E")], fps)
+    assert "U1" in rf["edge"] or "U1" in rf["antenna"]
+
+
+def test_a_2x5_idc_header_with_silk_noise_is_a_confirmed_guess():
+    pads = [(str(i * 2 + j + 1), (i - 2) * 2.54, (j - 0.5) * 2.54, 1.7, 1.7) for i in range(5) for j in range(2)]
+    f = fp("IDC2x5", pads, extent={"silk": [-7, -3.2, 7, 3.2], "body": [-7, -3.2, 7, 3.2]})
+    f["extent"]["silk"][1] += 0.3                                  # 0.15 mm of silk offset: noise
+    deg, src = layout.opening_guess(f, {"ref": "J1", "bom_description": "IDC header 2x5"})
+    assert src == "guess"

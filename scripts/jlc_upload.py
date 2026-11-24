@@ -26,6 +26,7 @@ from typing import Any
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import dfm  # noqa: E402
 import gerber_check  # noqa: E402
+from outputs_check import is_side_file  # noqa: E402
 import project as project_mod  # noqa: E402
 import workspace  # noqa: E402
 
@@ -118,6 +119,8 @@ def outputs_summary(project: str) -> dict[str, Any]:
             # an outputs folder is shallow: a link to a whole drive must not be walked
             dirs[:] = [] if rel != "." else [d for d in dirs if d.lower() != ".advisor-backup"][:50]
             for n in names[:2000]:
+                if is_side_file(n):
+                    continue
                 try:
                     mt = pathlib.Path(dirpath, n).stat().st_mtime
                 except OSError:
@@ -167,6 +170,8 @@ def _walk(roots: list[pathlib.Path]):
         for dirpath, dirs, files in os.walk(root):
             dirs[:] = [d for d in dirs if d.lower() not in SKIP_DIRS]
             for name in files:
+                if is_side_file(name):           # Altium's aperture macro file and run reports are no outputs
+                    continue
                 seen += 1
                 if seen > MAX_WALK:
                     return

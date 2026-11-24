@@ -107,3 +107,13 @@ def test_drc_without_the_unrouted_rule_is_not_ready(monkeypatch):
     assert not st["ready"] and "Un-Routed Net rule" in st["why"]
     drc["rules"]["Un-Routed Net Constraint ( (All) )"] = 0
     assert store.route_state("x")["ready"]
+
+
+def test_a_hand_drawn_sheet_drops_no_part_and_the_pcbdoc_decides_when_there_is_one(empty, monkeypatch):
+    _sheet(empty)                          # U1, R1 on sheet 01, never recorded as drawn by the agent (hand-drawn)
+    _add(empty, "J2", "USB-C")             # on no sheet
+    res = export_bom.export(empty, "jlc")
+    assert sorted(r[1] for r in _csv(empty)[1:]) == ["R1", "U1"] and [x["refs"] for x in res["off_sheet"]] == [["J2"]]
+    monkeypatch.setattr(export_bom, "pcb_refs", lambda p: {"U1", "R1", "J2"})      # the board carries J2: it is a part
+    res = export_bom.export(empty, "jlc")
+    assert sorted(r[1] for r in _csv(empty)[1:]) == ["J2", "R1", "U1"] and res["off_sheet"] == []

@@ -412,12 +412,14 @@ def opening_guess(fp, part=None):
     pads = [_pad_rect(p) for p in fp.get("pads", []) if "x" in p]
     px = sum((b[0] + b[2]) / 2 for b in pads) / len(pads)
     py = sum((b[1] + b[3]) / 2 for b in pads) / len(pads)
+    axis, rows = _pad_rows(fp)
     body = (fp.get("extent") or {}).get("body")
     if body:
         bx, by = (body[0] + body[2]) / 2 * MIL - px, (body[1] + body[3]) / 2 * MIL - py
+        if axis and rows:                   # a part with pad rows opens across them: the body offset along the rows tells nothing
+            bx, by = (0.0, by) if axis == "x" else (bx, 0.0)
         if math.hypot(bx, by) >= OPEN_MIN_MM:
             return _dir_of(bx, by), "3d body"
-    axis, rows = _pad_rows(fp)
     text = part_text(part or {}) + " " + str(fp.get("name") or "") + " " + str(fp.get("description") or "")
     ref = str((part or {}).get("ref") or "")
     kind = bool(_TERMINAL.search(text) or _HEADER.search(text) or re.match(r"^TERM\d", ref, re.I))
@@ -430,7 +432,7 @@ def opening_guess(fp, part=None):
     reach = {0: ext[2] - px, 180: px - ext[0], 90: ext[3] - py, 270: py - ext[1]}
     if axis and rows and kind:              # the short axis, and the side the body (the wire entry) reaches farther out to; a tie tells nothing
         a, b = (90, 270) if axis == "x" else (0, 180)
-        if abs(reach[a] - reach[b]) > 0.05:
+        if abs(reach[a] - reach[b]) > OPEN_MIN_MM:
             return (a if reach[a] > reach[b] else b), "kind"
     if ext[2] - ext[0] >= ext[3] - ext[1]:          # long side along x: the opening is +y or -y
         return (90 if reach[90] > reach[270] + 0.05 else 270), "guess"
@@ -504,13 +506,15 @@ def rf_rules(parts, footprints):
         for n in ns:
             on_net.setdefault(n, set()).add(r)
     npads = {p["ref"]: len((footprints.get(p.get("footprint") or "") or {}).get("pads", [])) or len(p.get("pins", [])) for p in parts}
-    text = {p["ref"]: part_text(p) + " " + str(p.get("footprint") or "") + " " + str(p.get("mpn") or p.get("bom_mpn") or "") for p in parts}
+    # the BOM role ("100nF decoupling for LTE module") names the part's job, not what it is: it never makes a radio module
+    text = {p["ref"]: " ".join(str(p.get(k) or "") for k in ("bom_value", "value", "bom_description", "description", "lib_ref", "symbol", "comment"))
+            + " " + str(p.get("footprint") or "") + " " + str(p.get("mpn") or p.get("bom_mpn") or "") for p in parts}
     why = {}
     for p in parts:
         r = p["ref"]
         if is_connector(r):
             continue
-        if RF_MODULE.search(text[r]):
+        if RF_MODULE.search(text[r]) and npads[r] > 4:
             why[r] = "a radio module by its BOM text"
         elif any(ANT_PIN.match(str(q.get("name") or "")) for q in p.get("pins", [])) and npads[r] > 4:
             why[r] = "it has an antenna pin"
