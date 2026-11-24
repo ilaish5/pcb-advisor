@@ -277,6 +277,7 @@ class Router:
         self.tht = {}                                   # net id -> cells of its through hole pads (a change of layer there needs no via)
         self.status = "none"                            # why the last astar() found nothing: none | limit | budget | time
         self._cols = None                               # bit masks of the grid's columns (see _connected)
+        self.planes = set()                             # nets that lie on an inner plane (4 layers): joined to it by a stub and a via per pad
         self.pour_lenient = False                       # a poured net: a pad that cannot be joined is left out and named (pour_unjoined), not a failure
         self.pour_unjoined = []                         # [(pad tag, why)] of the last pour routing
         self.pour_tree = {}                             # {(layer, cell): pad tag} of the copper the last pour routing drew or found (see _route_pour)
@@ -489,12 +490,12 @@ class Router:
             out[ix * ny:(ix + 1) * ny] = raw[o:o + ny]
         return out
 
-    def astar(self, net, sources, goals, width, relaxed=False, deadline=None, max_pops=None, margin=0.0, goal_bot=None):
+    def astar(self, net, sources, goals, width, relaxed=False, deadline=None, max_pops=None, margin=0.0, goal_bot=None, goal_layer=BOT):
         """Cheapest path (list of (layer, cell)) from any source cell to any goal cell, or None (self.status says why: "none" there is
         no way, "limit" the search limit was reached, "time" the time given ran out). relaxed: tracks routed so far are passable (used
         to find which nets are in the way). margin: extra distance kept from everything (used to re-route a net the exact check found
-        too close to something). goal_bot: a mask over the grid; a bottom layer cell it marks is a goal too (a net that is poured on
-        the bottom layer: a via into the pour ends the search). The expansions are counted in self.spent; at self.cap the search
+        too close to something). goal_bot: a mask over the grid; a cell of layer goal_layer (the bottom layer unless said) it marks is a goal too (a net that
+        is poured on that layer or lies on an inner plane: a via to it ends the search). The expansions are counted in self.spent; at self.cap the search
         stops with status "budget"; that is the deterministic limit, the clock is only a safety cap."""
         ny, nx, n = self.ny, self.nx, self.n
         max_pops = max_pops or max(300000, 4 * n)
@@ -558,13 +559,13 @@ class Router:
                 return None
             if pops == CHECK_POPS and not checked:
                 checked = True
-                if not self._connected(net, sources, goals, base, wide, vblock, tht, relaxed, goal_bot):
+                if not self._connected(net, sources, goals, base, wide, vblock, tht, relaxed, goal_bot, goal_layer):
                     return None
             if deadline and pops % 2000 == 0 and time.time() > deadline:
                 self.status = "time"
                 return None
             l, i = divmod(k, n)
-            if (l, i) in goalset or (goal_bot is not None and l == BOT and goal_bot[i]):
+            if (l, i) in goalset or (goal_bot is not None and l == goal_layer and goal_bot[i]):
                 path = [(l, i)]
                 while k in parent:
                     k = parent[k]
@@ -621,7 +622,7 @@ class Router:
         """A per cell bytearray (0 / nonzero) as one big integer with bit i set when cell i is."""
         return int(bytes(arr).translate(_TO01)[::-1], 2)
 
-    def _connected(self, net, sources, goals, base, wide, vblock, tht, relaxed, goal_bot=None):
+    def _connected(self, net, sources, goals, base, wide, vblock, tht, relaxed, goal_bot=None, goal_layer=BOT):
         """A cheap flood fill (4 neighbours, vias where they could be) from the sources: is any goal reachable at all? A search that
         has no way would otherwise try every cell of the board before saying so. Done on bit sets (one big integer per layer, a bit
         per cell): a step of the fill is a few shifts of the whole grid instead of a visit of each cell."""
@@ -643,7 +644,7 @@ class Router:
         for l, i in goals:
             goal[l] |= 1 << i
         if goal_bot is not None:
-            goal[BOT] |= self._bits(goal_bot)
+            goal[goal_layer] |= self._bits(goal_bot)
         r0, r1 = r
         while True:
             if (r0 & goal[0]) | (r1 & goal[1]):
@@ -827,6 +828,7 @@ class Router:
         paths = []
         self.pour_links = links = {}
         self.pour_unjoined = unjoined = []
+        plane = any(self.netid.get(n) == nid for n in self.planes)      # the net lies on an inner plane: a pad of either outer layer drops to it
         if tie is not None:
             tree = dict(tie[0])
             only = set(tie[1])
@@ -834,7 +836,7 @@ class Router:
         else:
             tree = {}
             for pad in pads:
-                if len(pad["layers"]) == 2 or pad["layers"][0] == BOT:      # in the pour by itself
+                if len(pad["layers"]) == 2 or (pad["layers"][0] == BOT and not plane):      # in the pour by itself (an inner plane: a through hole pad only)
                     for l, cs in pad["cells"].items():
                         for c in cs:
                             tree[(l, c)] = pad["tag"]
@@ -843,7 +845,9 @@ class Router:
         self.pour_tree = tree
         for pad in todo:
             src = start(pad)
-            path = self.astar(nid, src, set(tree), width, relaxed=relaxed, deadline=deadline, margin=margin, goal_bot=pour_mask) if src else None
+            to = BOT if not plane else 1 - pad["layers"][0]            # the layer a via lands on: the pour's, or the other outer layer for a plane
+            path = (self.astar(nid, src, set(tree), width, relaxed=relaxed, deadline=deadline, margin=margin, goal_bot=pour_mask, goal_layer=to)
+                    if src else None)
             if not src:
                 self.status = "none"
             if path is None and pour_mask is not None and not relaxed and self.status not in ("time", "budget"):
@@ -908,10 +912,10 @@ class Router:
         pad's long axis or straight) and a via in the pour by exact geometry instead of the grid's keep-off, which is wider than the rules
         ask (it grows every obstacle by the sampling error). Nearest via first; kept only when the stub and the via keep the clearance
         from everything routed so far. Returns (path [(top, cell), (bottom, cell)], stub dict) or None."""
-        if len(pad["layers"]) != 1 or pad["layers"][0] != TOP:
+        if len(pad["layers"]) != 1 or (pad["layers"][0] != TOP and not any(self.netid.get(n) == nid for n in self.planes)):
             return None
         net = next(k for k, v in self.netid.items() if v == nid)
-        l, px, py = TOP, pad["x"], pad["y"]
+        l, px, py = pad["layers"][0], pad["x"], pad["y"]
         r = pad["rect"]
         vert = (r[3] - r[1]) >= (r[2] - r[0])
         half = ((r[3] - r[1]) if vert else (r[2] - r[0])) / 2
@@ -940,7 +944,7 @@ class Router:
                         routes.append([(px, py), axis(t), (round(x, 4), round(y, 4))])
             for pts in routes:
                 if self._clean(net, l, pts, width, margin, False):
-                    return [(l, i), (BOT, i)], {"escape": pts, "layer": l, "cell": i, "tag": pad["tag"]}
+                    return [(l, i), (1 - l, i)], {"escape": pts, "layer": l, "cell": i, "tag": pad["tag"]}
         return None
 
     def pour_region(self, nid, neck=POUR_NECK):
@@ -1218,7 +1222,7 @@ def _width_report(nets, plan_w, routed):
 
 
 def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None,
-                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False, ground_early=False, second_pass=False):
+                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False, ground_early=False, second_pass=False, planes=None):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1].
     Returns {"items", "routed", "failed": [(net, reason)], "stats"}. Nets with one pad are not routed. Order: rails (wide) first, then
     signals shortest first, ground last. A net that is blocked rips up the nets in its way and everything is retried (`rounds`: 8 or twice the nets that failed first, whichever is more).
@@ -1228,14 +1232,19 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     (`max_expansions`, the same for the same board); `seconds` is only a safety cap and, when it really runs out, it says so.
     pour_net: a net that will be poured on the bottom layer (the caller draws the pour): its top layer pads are joined to the pour
     by a short stub and a via each instead of by tracks to each other; where that cannot be done the net is routed by tracks as
-    usual. The result's "pour" says which."""
+    usual. The result's "pour" says which.
+    planes: {net: inner layer name} of a 4 layer board (see plane_nets_for): those nets are not routed by tracks: each of their pads
+    is joined to the plane by a short stub and a via (a through hole pad is in the plane by itself), laid before every other net.
+    The result's "planes" lists them."""
     rules = rules or rules_from_doc(doc)
     t0 = t0 or time.time()
     deadline = t0 + seconds
     rt = Router(doc, box, rules, pitch, sampling)
     rt.cap = max_expansions or max(DEFAULT_EXPANSIONS, EXPANSIONS_PER_CELL * rt.n)
     nets = sorted(n for n, ps in rt.pads.items() if len(ps) >= 2 and (only is None or n in only))
-    pour = pour_net if pour_net in nets else None
+    rt.planes = {n for n in (planes or {}) if n in nets}
+    plane_mask = bytearray(b"") * rt.n                  # a plane is under the whole board: a via may land wherever the rules let one stand
+    pour = pour_net if pour_net in nets and not rt.planes else None
     pour_state = {"net": pour, "mode": None, "note": "", "links": {}}
     region = [None]
 
@@ -1250,10 +1259,11 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     from . import pair as _pair
     pair_state = _pair.pre_route(rt, rules, nets, deadline, doc)
     _pair.fallback_ties(rt, rules, pair_state)       # an uncoupled pair: the pads of a net at the connector are tied first
-    order = [n for n in order if n not in pair_state["done"] and n != pour]
+    order = [n for n in order if n not in pair_state["done"] and n != pour and n not in rt.planes]
     # --- end hook
     rank = {n: k for k, n in enumerate(first)}                 # nets that failed in an earlier attempt are laid first (see plan_routes)
     order = sorted(order, key=lambda n: rank.get(n, len(rank)))        # a stable sort: the rest keeps its order
+    order = sorted(rt.planes, key=lambda n: (planes[n], n)) + order      # the plane nets' stubs and vias first: they are short and the signals go round them
 
     from altium import netcurrent
     plan_w = netcurrent.net_widths(nets, rules, rules.get("net_current"), rules.get("net_estimate"), rules.get("copper_oz") or 1.0,
@@ -1280,6 +1290,8 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
         return rt.status in ("time", "budget")
 
     def try_route(n, margin=0.0):
+        if n in rt.planes:
+            return _try_widths(n, margin, plane_mask)
         if n == pour and pour_state["mode"] != "tracks":
             region[0] = rt.pour_region(rt.netid[pour])[0]                  # the pour as it is with the tracks drawn so far
             r = _try_widths(n, margin, region[0])
@@ -1380,7 +1392,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
             n = cand[0]
             failed.remove(n)
             paths, esc_stubs, reason = rt.route_net(n, rules["width"], relaxed=True, deadline=deadline,
-                                                    pour_mask=(rt.pour_region(rt.netid[n])[0] if n == pour and pour_state["mode"] != "tracks" else None))
+                                                    pour_mask=(plane_mask if n in rt.planes else rt.pour_region(rt.netid[n])[0] if n == pour and pour_state["mode"] != "tracks" else None))
             if paths is None:
                 why[n] = reason + (": blocked by fixed copper (pads, board edge), not by other tracks" if not stopped() else "")
                 if not stopped():
@@ -1602,6 +1614,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     return {"pairs": _pair.report(rt, rules, pair_state, items),     # pair.py hook
             "items": items, "routed": sorted(n for n in rt.routed if n not in partial), "failed": [(n, explain(n, why.get(n) or last_msg.get(n) or "no path")) for n in failed],
             "widths": (rep := _width_report(nets, plan_w, rt.routed)), "width_problems": netcurrent.width_problems(rep),
+            "planes": {n: planes[n] for n in sorted(rt.planes)},
             "pour": {"net": pour, "mode": pour_state["mode"] if pour in rt.routed else None, "note": pour_state["note"]} if pour else None,
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch,
@@ -1614,7 +1627,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
 STRATEGIES = ((SAMPLING, False, False, False), (SAMPLING_TIGHT, False, True, True), (SAMPLING_TIGHT, True, True, False),
               (SAMPLING_TIGHT, True, False, False))
 
-def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None):
+def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None, planes=None):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1]; the arguments and the result are those of
     _plan_routes_once. A net left open that is not blocked by fixed copper alone is a search that went wrong, not a board that cannot be
     routed (the search is greedy: one net's track can close a fine pitch pad's only way out): the whole plan is then made again, by the
@@ -1634,7 +1647,7 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         info = {}
         t1 = time.time()
         res = _plan_routes_once(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, first=first, t0=t0, info=info,
-                                sampling=sampling, spans_last=spans_last, ground_early=ground_early, second_pass=tried > 0)
+                                sampling=sampling, spans_last=spans_last, ground_early=ground_early, second_pass=tried > 0, planes=planes)
         tried += 1
         took = time.time() - t1
         if best is None or len(res["failed"]) < len(best["failed"]):
@@ -1674,10 +1687,11 @@ def pour_rects(box, keepouts=(), edge=0.3):
     return [r for r in rects if r[2] - r[0] >= POUR_MIN_PIECE_MM and r[3] - r[1] >= POUR_MIN_PIECE_MM]
 
 
-def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3, keepouts=None):
+def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3, keepouts=None, planes=None):
     """Script lines: ROUTEBEGIN doc replace, TRACK doc layer x1 y1 x2 y2 width net, VIA doc x y dia hole net, then, for pour_net, POLY
     doc layer net x0 y0 x1 y1 (a pour on the bottom layer over the box; one POLY per rectangle of the box less the `keepouts`,
-    see pour_rects), PCBSAVE doc."""
+    see pour_rects), PCBSAVE doc. planes ({net: "mid1" | "mid2"}, a 4 layer board): one POLY per net on its inner layer, over the whole box
+    less the keep-outs of the same kind (a plane has no copper in an antenna keep-out either), after the tracks and vias."""
     d = str(pcb)
     cmds = [("ROUTEBEGIN", d, "1" if replace else "0")]
     for it in items:
@@ -1689,8 +1703,34 @@ def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3,
     if pour_net and box:
         for r in (pour_rects(box, keepouts, edge) if keepouts else [[box[0] + edge, box[1] + edge, box[2] - edge, box[3] - edge]]):
             cmds.append(("POLY", d, "bottom", pour_net, f"{r[0]:.4f}", f"{r[1]:.4f}", f"{r[2]:.4f}", f"{r[3]:.4f}"))
+    if planes and box:
+        for net, layer in sorted(planes.items(), key=lambda kv: (kv[1], kv[0])):
+            for r in pour_rects(box, keepouts, edge) if keepouts else [[box[0] + edge, box[1] + edge, box[2] - edge, box[3] - edge]]:
+                cmds.append(("POLY", d, layer, net, f"{r[0]:.4f}", f"{r[1]:.4f}", f"{r[2]:.4f}", f"{r[3]:.4f}"))
     cmds.append(("PCBSAVE", d))
     return cmds
+
+
+PLANE_LAYERS = ("mid1", "mid2")        # the inner copper layers of the 4 layer stack: Mid-Layer 1 (ground) and Mid-Layer 2 (the main supply)
+PLANE_CODES = {"mid1": 2, "mid2": 3}   # their Altium layer codes
+
+
+def plane_nets_for(doc, rules=None):
+    """{net: "mid1" | "mid2"} for a 4 layer board: the ground net (pour_net_for: a ground-named net of at least 3 pads) is the plane on
+    the first inner layer, the main supply (the rail-named net, not ground, with the most pads, at least 3) the plane on the second.
+    A board with no such net gets the planes it has; none is invented."""
+    cnt = {}
+    for p in doc.get("pads", []):
+        if p.get("net") and p.get("ref"):
+            cnt[p["net"]] = cnt.get(p["net"], 0) + 1
+    out = {}
+    g = pour_net_for(doc, rules)
+    if g:
+        out[g] = PLANE_LAYERS[0]
+    rails = sorted((n for n in cnt if _RAIL.match(n) and not _is_gnd(n) and cnt[n] >= 3 and n != g), key=lambda n: (-cnt[n], n))
+    if rails:
+        out[rails[0]] = PLANE_LAYERS[1]
+    return out
 
 
 def pour_net_for(doc, rules=None):
@@ -1842,17 +1882,20 @@ def _is_bga(pads):
     return interior >= 2
 
 
-def capability_check(doc, rules=None, box=None, pitch=0.1, warnings=None):
+def capability_check(doc, rules=None, box=None, pitch=0.1, warnings=None, layers=2):
     """What the router cannot do on this board, said BEFORE routing: a list of plain texts (empty = nothing found that it cannot do;
     it never means the board is routable). Each text says what to do instead. Only what is certain from the file is refused:
     copper on an inner layer (more than 2 layers), an area array (BGA), pads closer than FINE_PITCH_MM between nets, an enabled
     impedance / length-matching / length rule on nets other than the USB pair, and a board of more than MAX_CELLS grid cells.
     A rule whose scope cannot be resolved to nets (a net class, a differential pair, any other expression) is no refusal: a text
-    "not checked, verify the rule by hand" is appended to `warnings` (a list, when given)."""
+    "not checked, verify the rule by hand" is appended to `warnings` (a list, when given). layers=4: the pours on the two inner layers
+    (what this tool drew before) are no refusal; any other copper there is."""
     out = []
     doc = doc or {}
+    plane_codes = set(PLANE_CODES.values()) if layers == 4 else set()
     inner = sorted({o.get("layer") for k in ("pads", "tracks", "arcs", "vias", "fills", "regions") for o in doc.get(k, [])
-                    if isinstance(o, dict) and o.get("layer") in _INNER_COPPER and not o.get("in_component")})
+                    if isinstance(o, dict) and o.get("layer") in _INNER_COPPER and not o.get("in_component")
+                    and not (o.get("layer") in plane_codes and k == "regions" and o.get("polygon"))})
     if inner:
         out.append(f"the board has copper on inner layers (layer codes {', '.join(map(str, inner))}): this router draws two copper layers only; {HAND}")
     by_ref = {}

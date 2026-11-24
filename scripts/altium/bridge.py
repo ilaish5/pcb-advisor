@@ -276,7 +276,7 @@ def _stat(path):
         return None
 
 
-READ_ONLY = {"PING", "PROJECT", "PCBCHECK", "PCBEXTENT", "FPINFO", "DRAWCHECK", "CHECKINST", "DRC", "DOCSTATE"}   # all other commands change Altium
+READ_ONLY = {"PING", "PROJECT", "PCBCHECK", "PCBEXTENT", "FPINFO", "DRAWCHECK", "CHECKINST", "DRC", "DOCSTATE", "STACKINFO"}   # all other commands change Altium
 _server = False
 
 
@@ -1388,6 +1388,51 @@ def _clearance_mm(project):
         return 0.0
 
 
+def _stack_count(pcb):
+    """Copper layers of the board file, None when it cannot be read."""
+    from altium import pcbdoc
+    try:
+        return pcbdoc.copper_layer_count(pcb)
+    except (AltiumReadError, OSError):
+        return None
+
+
+def stack_mismatch(layers, have):
+    """Why a board whose file holds `have` copper layers cannot be worked on as a `layers` layer board ("" when it can: the same count,
+    or a 2 layer file that gets its two inner layers added). Taking layers away is not done by this tool."""
+    if have is None and layers == 2:
+        return ""                          # a file whose stack-up record is not there is the default 2 layer board
+    if have is None:
+        return "the stack-up of the board file could not be read, so its number of copper layers is not known"
+    if have == layers or (layers == 4 and have == 2):
+        return ""
+    return (f"the project says {layers} copper layers but the board file has {have}: " +
+            ("this tool does not take inner layers out of a board; make a new board for a 2 layer design" if have > layers else
+             "this tool only adds the two inner layers of the 4 layer stack-up to a 2 layer board"))
+
+
+def ensure_stack(prj, pcb, layers):
+    """The board file is made a `layers` layer board: a 2 layer file of a 4 layer project gets Mid-Layer 1 and 2 (the STACK command, the
+    JLC04161H stack-up) and is saved. The caller has backed the file up and the board is not open with unsaved changes. Returns True
+    when layers were added. Raises BridgeError (the board is closed without saving) when the file does not end up with the count."""
+    from altium import pcbdoc
+    have = _stack_count(pcb)
+    why = stack_mismatch(layers, have)
+    if why:
+        raise BridgeError(why[0].upper() + why[1:] + ". Nothing was changed.")
+    if have == layers:
+        return False
+    try:
+        run_commands([("PROJECT", str(prj)), ("STACK", str(pcb), str(layers)), ("PCBSAVE", str(pcb))])
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+        got = pcbdoc.copper_layer_count(pcb)
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        raise BridgeError(f"the {layers} layer stack-up could not be set in Altium ({exc})" + _revert(prj, pcb, "set up")) from exc
+    if got != layers:
+        raise BridgeError(f"the {layers} layer stack-up was not saved (the file has {got} copper layers)" + _revert(prj, pcb, "set up"))
+    return True
+
+
 def _revert(prj, pcb, what):
     try:
         run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
@@ -1640,7 +1685,7 @@ def _routing_words(lost):
 
 
 def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3,
-             constraint_items=None, refs_lines=None):
+             constraint_items=None, refs_lines=None, layers=2):
     """Place `parts` ([{ref, footprint, lib_ref, pins}]) from the PcbLib on the PcbDoc, create the outline from `size` when the board
     only has the placeholder outline of a new PcbDoc (an outline somebody drew is kept), save, and read the file back.
     Refuses a board that already has parts or copper unless replace is true; the PcbDoc is copied to .advisor-backup first.
@@ -1662,6 +1707,11 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
         raise Fixable("prereq.library_not_built", f"No footprint in the project library for {', '.join(missing[:8])}: run library.build first.")
     lost = _routing_lost(pcb) if pathlib.Path(pcb).is_file() else {}
     routed = _routing_words(lost)
+    if pathlib.Path(pcb).is_file():
+        from altium import pcbdoc as pcbdoc_mod
+        why_stack = stack_mismatch(layers, _stack_count(pcb))
+        if why_stack:
+            raise BridgeError(why_stack[0].upper() + why_stack[1:] + ". Nothing was changed.")
     try:
         log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
     except BridgeError as exc:
@@ -1714,6 +1764,8 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
                                         "label": [k["x"], k["y"]], "label_h": layout.LABEL_H, "label_rot": 0} for k in keepouts]
     parts = parts + holes + keepouts
     backup = _backup(prj, [pcb])
+    if layers == 4:          # the stack-up is set before anything is placed (the backup above holds the board as it was)
+        ensure_stack(prj, pcb, 4)
     links = _sch_links(prj)
     parts = [dict(p, uid=links[p["ref"]][0], sheet=links[p["ref"]][1]) if p["ref"] in links else p for p in parts]
     try:                                                 # did somebody already draw the outline? (it is then never touched)
@@ -1794,8 +1846,9 @@ def place_pcb(project, replace=False):
     fit = board_fit_check(project)                       # the same estimate the BOM approval gave; the figures also go in the refusal
     import constraints
     items = constraints.confirmed(store.load_idea(project))      # the SAVED idea: only what the student confirmed with Save
+    import project as projects_mod
     res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace,
-                   constraint_items=items, refs_lines=constraints.known_refs(project) if items else None)
+                   layers=projects_mod.layers(project), constraint_items=items, refs_lines=constraints.known_refs(project) if items else None)
     if not res["problems"]:
         _record_board_facts(project, pcb, outline=res["outline"])
     if res.get("mechanical", {}).get("holes") or res.get("mechanical", {}).get("keepouts"):
@@ -1845,7 +1898,7 @@ def _partial_ok(problem, failed=()):
 
 
 def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None,
-             keepout_fn=None):
+             keepout_fn=None, layers=2):
     """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
     script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
     Altium's batch design rule check (no new clearance / short / width / un-routed violations over the check made before routing).
@@ -1854,6 +1907,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     import tempfile
     from altium import layout, route
     from altium.pcbdoc import read_pcbdoc, poured_copper
+    from altium import pcbdoc as pcbdoc_mod
     prj, pcb = pathlib.Path(prj), pathlib.Path(pcb)
     log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0", "route")])   # unsaved / existing copper
     info = _pcbcheck_info(log)
@@ -1873,6 +1927,13 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                    regions=[g for g in doc.get("regions", []) if g.get("in_component")])
     if not doc.get("nets"):
         raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
+    mismatch = stack_mismatch(layers, _stack_count(pcb))
+    if mismatch:
+        return {"routed": [], "failed": [], "tracks": 0, "vias": 0, "stats": {}, "rules": {}, "widths": {}, "backup": "",
+                "problems": ["not routed, nothing was drawn: " + mismatch], "refusals": [mismatch], "restored": False,
+                "drc_before": {}, "drc_after": {}, "drc_line": "unchecked (not run)", "drc_clean": False, "drills": [], "written": False,
+                "pour": None, "pour_warning": "", "pour_warnings": [],
+                "summary": "not routed, nothing was drawn: " + mismatch}
     rules = route.rules_from_doc(doc)
     rules.update(net_current=currents or {}, net_estimate=estimates or {}, allow_narrow=bool(keep_partial), **(copper or {}))      # widths by current (netcurrent.py)
     cap_warn = []
@@ -1880,7 +1941,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if keepout_fn:          # the keep-outs this program holds itself: obstacles of the router and cut-outs of the pour, whatever Altium keeps
         py_keepouts = keepout_fn(box, doc)
         rules["keepout_rects"] = py_keepouts
-    refused = route.capability_check(doc, rules, box, pitch, warnings=cap_warn)      # what this router cannot do is said before anything is run or drawn
+    refused = route.capability_check(doc, rules, box, pitch, warnings=cap_warn, layers=layers)      # what this router cannot do is said before anything is run or drawn
     if refused:
         return {"routed": [], "failed": [], "tracks": 0, "vias": 0, "stats": {}, "rules": {}, "widths": {}, "backup": "",
                 "problems": ["not routed, nothing was drawn: " + "; ".join(refused)], "refusals": refused, "restored": False,
@@ -1890,12 +1951,15 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
     drc_before_full = run_drc(prj, pcb, tmp / "before.txt")
     drc_before = _drc_counts(drc_before_full)
-    pour_net = route.pour_net_for(doc) if pour else None
-    shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
+    planes = route.plane_nets_for(doc) if layers == 4 else {}        # 4 layers: ground and the main supply are planes on the inner layers
+    pour_net = route.pour_net_for(doc) if pour and not planes else None      # (the bottom layer then carries signals only)
+    if layers == 4 and not planes:
+        cap_warn.append("no ground net with 3 pads or more, so the inner layers have no plane: both are left empty")
+    shape = _shape_differs(pcb, box) if (pour_net or planes) else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     # The ground is planned as poured (each pad dropped to the pour by a short stub and a via) only when the pour is certain to be drawn
     # as planned: a board shape that has to be rewritten first could fail, and then the ground would have no copper; that board is
     # planned with the ground routed by tracks (the pour is still drawn on top).
-    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds, pour_net=None if shape else pour_net)
+    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds, pour_net=None if shape else pour_net, planes=planes)
     pour_dep = bool(plan.get("pour") and plan["pour"].get("mode") == "drops")       # some ground pad is joined by the pour alone
     names = names or {}                  # {drawn name: netlist name}: the PcbDoc carries the drawn names, the student knows the netlist's
     shown = {names.get(n, n): w for n, w in plan["widths"].items()}
@@ -1904,7 +1968,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": shown, "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped,
            "pour_warnings": [], "capability_warnings": cap_warn, "drc_line": "unchecked (not run)", "drc_clean": False,
-           "keepouts_held": len(py_keepouts)}
+           "keepouts_held": len(py_keepouts), "planes": dict(planes), "layers": layers}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
@@ -1928,6 +1992,10 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
         if shape:       # the board is closed and saved: set the shape it holds to the outline (backup taken above), then pour as usual
             why = _write_shape(pcb, box)
+            if why and planes:      # the planes are the ground and the supply: without them the board is not connected
+                raise BridgeError(f"the inner planes cannot be poured: the board shape Altium holds ({', '.join(f'{v:g}' for v in shape)} mm) is "
+                                  f"not the board outline ({', '.join(f'{v:g}' for v in box)} mm) and could not be set ({why}). Redefine the "
+                                  "board shape in Altium (Design > Board Shape > Redefine Board Shape) and route again")
             if why:
                 name, pour_net, res["pour"] = pour_net, None, None
                 res["pour_warning"] = (f"no {name} pour: the board shape Altium holds ({', '.join(f'{v:g}' for v in shape)} mm) is not the board "
@@ -1935,8 +2003,11 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                                                       "board shape in Altium (Design > Board Shape > Redefine Board Shape) and route again if you want a ground plane")
             else:
                 res["shape_fixed"] = [round(v, 3) for v in box]
+        if layers == 4 and ensure_stack(prj, pcb, 4):
+            res["stack_added"] = True
         run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
-                                                                     edge=rules["edge"], keepouts=_footprint_keepouts(doc) + py_keepouts), total_timeout=1500)
+                                                                     edge=rules["edge"], keepouts=_footprint_keepouts(doc) + py_keepouts,
+                                                                     planes=planes), total_timeout=1500)
     except BridgeError as exc:
         if str(exc).startswith("The board is open in Altium with unsaved changes"):      # nothing was drawn: leave the student's edits alone
             raise
@@ -1950,6 +2021,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         open_nets = layout.unrouted(saved)
         if pour_dep:      # unrouted() does not read pours: the ground pads that the pour joins show as open here; the pour is checked below
             open_nets = [(n, t) for n, t in open_nets if n != pour_net]
+        if planes:        # likewise the plane nets: their pads are joined by stub, via and the inner pour, checked below (pourcheck, DRC)
+            open_nets = [(n, t) for n, t in open_nets if n not in planes]
         if open_nets:
             probs.append("the saved board still has open nets: " + "; ".join(f"{n} ({', '.join(t[:4])})" for n, t in open_nets[:5]))
         try:    # Altium checks connectivity from what it loaded: close the board (saved, nothing lost) so the check reads the file again
@@ -2029,6 +2102,18 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
             res["pour"] = None
             res["pour_warning"] = (f"the {pour_net} pour was drawn but Altium did not fill it (no copper): repour it in Altium with "
                                    "Tools > Polygon Pours > Repour All, or route without it")
+    for pn, pl in sorted(planes.items(), key=lambda kv: kv[1]):      # fail closed: a plane net is joined by its inner pour alone
+        try:
+            filled = poured_copper(pcb, layer=route.PLANE_CODES[pl])
+        except (AltiumReadError, OSError):
+            filled = None
+        if not filled:
+            probs.append(f"the {pn} plane on {pl.replace('mid', 'Mid-Layer ')} was drawn but is not in the saved board as copper "
+                         f"({'could not be checked' if filled is None else 'Altium did not fill it'}): the {pn} pads are not connected")
+        else:
+            pc_probs, pc_warns = _pour_findings(saved, pn)
+            probs += pc_probs
+            res["pour_warnings"] = list(res.get("pour_warnings", [])) + pc_warns
     if pour_dep and not res["pour"]:       # fail closed: the ground was routed to the pour, so without the pour it is not routed at all
         probs.append(f"{pour_net} was routed to the pour on the bottom layer but the pour is not in the saved board (see the pour warning): "
                      f"the {pour_net} pads are not connected")
@@ -2049,7 +2134,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if probs and not (keep_partial and all(_partial_ok(p, plan["failed"]) for p in probs)):
         res["restored"] = _restore(prj, pcb, res["backup"])
     res["summary"] = (f"{len(plan['routed'])} nets routed with {res['tracks']} tracks and {res['vias']} vias"
-                      + (f", {pour_net} poured on the bottom layer" if res["pour"] else "") + f", saved; own check: "
+                      + (f", {pour_net} poured on the bottom layer" if res["pour"] else "")
+                      + (", planes: " + ", ".join(f"{n} on {pl}" for n, pl in sorted(planes.items(), key=lambda kv: kv[1])) if planes else "") + f", saved; own check: "
                       f"{'no open nets' if not open_nets else str(len(open_nets)) + ' open nets'}; Altium DRC: "
                       f"{res['drc_line']} ({drc_before.get('Clearance Constraint', 0)} clearance before routing)"
                       + ("; " + wl if (wl := _width_line(shown)) else ""))
@@ -2187,7 +2273,8 @@ def route_pcb(project, replace=False, keep_partial=False):
     except Exception:
         stale = None
     caps = capabilities_cached()
-    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, **net_current_inputs(project),
+    import project as projects_mod
+    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, layers=projects_mod.layers(project), **net_current_inputs(project),
                    keepout_fn=lambda box, doc: python_keepouts(project, doc, box))
     if caps is not None and not caps.get("keepout_layer", True) and res.get("keepouts_held"):
         res.setdefault("capability_warnings", []).append(keepout_notice(caps))

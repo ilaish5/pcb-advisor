@@ -2104,7 +2104,7 @@ begin
     PCBServer.PostProcess;
 end;
 
-{ POLY path layer net x0 y0 x1 y1: a solid copper pour of the net on the layer over the box, poured over the same net only, dead copper
+{ POLY path layer net x0 y0 x1 y1: a solid copper pour of the net on the layer (top, bottom, mid1 or mid2) over the box, poured over the same net only, dead copper
   removed, poured once the tracks are there (the pour keeps the board's clearance rule around everything else) }
 procedure PcbPoly(Path: String; Layer: String; NetName: String; X0, Y0, X1, Y1: String);
 var
@@ -2123,7 +2123,10 @@ begin
     P.PolyHatchStyle := ePolySolid;
     P.PourOver := ePolygonPourOver_SameNet;
     P.RemoveDead := True;
-    if (Layer = 'bottom') then P.Layer := eBottomLayer else P.Layer := eTopLayer;
+    if (Layer = 'bottom') then P.Layer := eBottomLayer
+    else if (Layer = 'mid1') then P.Layer := eMidLayer1
+    else if (Layer = 'mid2') then P.Layer := eMidLayer2
+    else P.Layer := eTopLayer;
     P.PointCount := 4;
     for i := 0 to 3 do
     begin
@@ -2515,6 +2518,119 @@ begin
     else Log('docstate open modified=' + IntToStr(DocDirty(Path)));
 end;
 
+{ Walks the layer stack top to bottom and logs "stacklayer <name>" for each copper layer, then "stack <signal layers>". }
+procedure StackWalk(LS: IDispatch);
+var
+    L : IDispatch;
+    n : Integer;
+begin
+    L := LS.FirstLayer;
+    n := 0;
+    while (L <> nil) and (n < 40) do
+    begin
+        Log('stacklayer ' + L.Name);
+        L := LS.NextLayer(L);
+        n := n + 1;
+    end;
+    Log('stack ' + IntToStr(LS.SignalLayerCount));
+end;
+
+{ STACKINFO path: the copper layers of the board's stack (read only) }
+procedure PcbStackInfo(Path: String);
+var
+    B : IDispatch;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    StackWalk(B.LayerStack_V7);
+end;
+
+{ Sets what the stack-up of the JLC 4 layer board says about one layer: its name, the copper thickness and the dielectric below it
+  (a failed property is logged, not fatal: the layer count is what the board needs, the thicknesses are a model for impedance). }
+procedure StackLayerProps(L: IDispatch; Name: String; CopMil, DielMil, Er: String; Material: String; Core: Boolean);
+var
+    D : IDispatch;
+begin
+    Log('stackprop name ' + Name);
+    try L.Name := Name; except Log('stackwarn name of ' + Name + ' not set'); end;
+    Log('stackprop copper ' + Name);
+    try L.CopThickness := MilsToCoord(SFloat(CopMil)); except Log('stackwarn copper thickness of ' + Name + ' not set'); end;
+    if (DielMil <> '') then
+    begin
+        Log('stackprop dielectric ' + Name);
+        try D := L.Dielectric; except Log('stackwarn dielectric of ' + Name + ' not reachable'); end;
+        if (D <> nil) then
+        begin
+            try if Core then D.DielectricType := 1 else D.DielectricType := 2; except Log('stackwarn dielectric type of ' + Name + ' not set'); end;
+            Log('stackprop height ' + Name);
+            try D.DielectricHeight := MilsToCoord(SFloat(DielMil)); except Log('stackwarn dielectric height of ' + Name + ' not set'); end;
+            Log('stackprop constant ' + Name);
+            try D.DielectricConstant := SFloat(Er); except Log('stackwarn dielectric constant of ' + Name + ' not set'); end;
+            Log('stackprop material ' + Name);
+            try D.DielectricMaterial := Material; except Log('stackwarn dielectric material of ' + Name + ' not set'); end;
+        end;
+    end;
+end;
+
+{ STACK path layers: a 4 layer board gets the two inner copper layers (Mid-Layer 1 and 2, signal layers: the planes of this tool are
+  pours on them) under the top layer, with the JLC04161H-7628 numbers (shared/reference/jlc/pcb-capabilities.en.md): 7628 prepreg
+  0.2104 mm (8.2835 mil, Er 4.4), core 1.065 mm (41.929 mil, Er 4.6), copper 1.6 mil outside and 0.6 mil inside. A board that has
+  the layers already is left as it is. Saves nothing: the caller saves. Logs "stack N". }
+procedure PcbStack(Path: String; Count: String);
+var
+    B, LS, Top, Bot, M1, M2, R : IDispatch;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    LS := B.LayerStack_V7;
+    if (Count = '2') then
+    begin
+        if (LS.SignalLayerCount <> 2) then Say('ERR the board has ' + IntToStr(LS.SignalLayerCount) + ' copper layers; taking layers out is not done by this tool');
+        StackWalk(LS);
+        Exit;
+    end;
+    if (Count <> '4') then
+    begin
+        Say('ERR a stack of ' + Count + ' layers is not supported (2 or 4)');
+        Exit;
+    end;
+    if (LS.SignalLayerCount = 4) then
+    begin
+        Log('stack already has 4 layers');
+        StackWalk(LS);
+        Exit;
+    end;
+    if (LS.SignalLayerCount <> 2) then
+    begin
+        Say('ERR the board has ' + IntToStr(LS.SignalLayerCount) + ' copper layers; only a 2 layer board gets its inner layers added');
+        Exit;
+    end;
+    Top := LS.LayerObject_V7[eTopLayer];
+    Bot := LS.LayerObject_V7[eBottomLayer];
+    Log('stack step: top and bottom found');
+    M1 := LS.FirstAvailableSignalLayer;
+    Log('stack step: first inner layer ' + M1.Name);
+    R := LS.InsertInStackBelow(Top, M1);
+    Log('stack step: first inner layer inserted');
+    M2 := LS.FirstAvailableSignalLayer;
+    Log('stack step: second inner layer ' + M2.Name);
+    R := LS.InsertInStackBelow(M1, M2);
+    Log('stack step: second inner layer inserted');
+    { StackLayerProps(Top, 'Top Layer', '1.6', '8.2835', '4.4', 'FR-4 7628', False); }
+    { StackLayerProps(M1, 'Mid-Layer 1', '0.6', '41.929', '4.6', 'FR-4 core', True); }
+    { StackLayerProps(M2, 'Mid-Layer 2', '0.6', '8.2835', '4.4', 'FR-4 7628', False); }
+    { StackLayerProps(Bot, 'Bottom Layer', '1.6', '', '', '', False); }
+    StackWalk(LS);
+end;
+
 procedure DispatchStep(Line: String);
 var
     Cmd : String;
@@ -2586,6 +2702,8 @@ begin
     else if (Cmd = 'PCBSAVE') then SaveByPath(Field(Line, 1))
     else if (Cmd = 'DRC') then PcbDrc(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'DOCSTATE') then DocState(Field(Line, 1))
+    else if (Cmd = 'STACK') then PcbStack(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'STACKINFO') then PcbStackInfo(Field(Line, 1))
     else if (Cmd = 'PING') then Log('ping')
     else Say('ERR unknown command ' + Cmd);
 end;
@@ -2599,7 +2717,7 @@ begin
     Cmd := Field(Line, 0);
     Was := 0;
     { a read-only step must leave the document as it found it: the batch DRC and the read-backs can mark an unchanged document modified }
-    if (Cmd = 'DRC') or (Cmd = 'PCBEXTENT') or (Cmd = 'PCBCHECK') or (Cmd = 'FPINFO') or (Cmd = 'DRAWCHECK') or (Cmd = 'RULESIN') then Was := DocDirty(Field(Line, 1)) + 1;
+    if (Cmd = 'DRC') or (Cmd = 'STACKINFO') or (Cmd = 'PCBEXTENT') or (Cmd = 'PCBCHECK') or (Cmd = 'FPINFO') or (Cmd = 'DRAWCHECK') or (Cmd = 'RULESIN') then Was := DocDirty(Field(Line, 1)) + 1;
     DispatchStep(Line);
     if (Was = 1) and (not Failed) then
     begin

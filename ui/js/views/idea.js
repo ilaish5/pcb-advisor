@@ -218,6 +218,12 @@ function descHTML() {
     </div>`;
 }
 
+// The copper layer count the project holds (board.layers in project.json): 2 or 4; anything else reads as 2, the tool's default.
+function boardLayers() {
+  const n = Number(((S && S.board) || {}).layers);
+  return n === 4 ? 4 : 2;
+}
+
 // The board size, typed directly: it does not wait for "Confirm idea". Placement reads it from the saved idea.
 function boardSizeHTML() {
   const b = ((S && S.idea) || {}).board || {};
@@ -230,6 +236,10 @@ function boardSizeHTML() {
       <span class="board-size-unit">mm</span>
       ${has && b.source === 'text' ? '<span class="muted board-size-src" title="Read from the board size the idea states; Set with other numbers to choose your own">from the idea text</span>' : ''}
       ${btn('Set', {size: 'sm', kind: 'line', act: 'set-board-size', title: 'Use this board size (10 to 500 mm per side); no need to confirm the idea first'})}
+      <span class="board-size-label board-layers-label">Copper layers</span>
+      <select class="in board-layers" aria-label="Copper layers" title="2: top and bottom. 4: signal, ground plane, power plane, signal (JLC 4-layer stack-up). Other counts are not built by this tool.">
+        ${[2, 4].map(n => `<option value="${n}"${n === boardLayers() ? ' selected' : ''}>${n}</option>`).join('')}
+      </select>
     </div>`;
 }
 
@@ -660,6 +670,17 @@ onAct('set-board-size', async (el) => {
     // rejected: the fields show the saved size again, never the refused value
     if (e instanceof TypeError) { toast("Couldn't reach the server"); return; }       // nothing was refused: what was typed stays
     showSaved();      // api() already showed the server's reason
+  }
+});
+onChange(t => t.classList && t.classList.contains('board-layers'), async e => {
+  const sel = e.target;
+  try {
+    setState(await api('/api/idea/layers', {layers: Number(sel.value)}));
+    ideaRedraw();
+    toast(`Board set to ${sel.value} copper layers`);
+  } catch (err) {
+    if (err instanceof TypeError) { toast("Couldn't reach the server"); return; }
+    sel.value = String(boardLayers());       // refused: the select shows the saved count again (api() showed the reason)
   }
 });
 onAct('confirmidea', async () => {
