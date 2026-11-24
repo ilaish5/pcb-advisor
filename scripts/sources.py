@@ -76,6 +76,18 @@ def reference_path(name):
     return reference_files().get(name)
 
 
+def document_path(project, name):
+    """The file a document name resolves to for `project` (its sources/, then the shared datasheets, then the reference
+    listing), or None when no such file is on this machine (a sidecar-only record has no file). One lookup for the
+    /api/source route and for what the pin dialog offers, so a link shown is a link that opens."""
+    if "/" in name or "\\" in name:
+        found = [reference_path(name)]
+    else:
+        base = pathlib.Path(name).name
+        found = [workspace.project_dir(project) / "sources" / base, workspace.datasheets_dir() / base, reference_path(name)]
+    return next((f for f in found if f is not None and f.exists() and f.is_file()), None)
+
+
 _sha_memo = {}
 
 

@@ -142,6 +142,9 @@ def _accept(project, key, evidence=None, reason="", wrong=None, basis=None):
         return {"ok": True, "line": key, "decision": standing, "changed": False}
     evidence = [{"doc": str(e.get("doc") or ""), "sha256": str(e.get("sha256") or ""), "page": int(e["page"]) if str(e.get("page") or "").isdigit() else 0}
                 for e in (evidence or []) if isinstance(e, dict)]
+    # a page of a file nobody could open is no evidence: a record with no hash and no file stays a blind decision
+    import sources
+    evidence = [e for e in evidence if e["sha256"] or sources.document_path(project, e["doc"]) is not None]
     dec = {"id": f"pd-{store.now_ms()}", "status": "accepted", "basis": basis if basis in BASES else _basis(line, evidence),
            "reason": str(reason or "").strip()[:300], "evidence": evidence, "fingerprint": fingerprint(project, line), "fpv": FP_VERSION, "ts": store.now()}
     store.add_library(project, key, {"pin_decision": dec, "pins_accepted": False}, by="student")
@@ -336,6 +339,15 @@ def confirm_data(project, key):
     line = store._line_of(project, key)
     folder = sources.folder_of(project)
     ds = line.get("datasheet") or sources.find_for(project, line.get("mpn")) or ""
+    missing = ""
+    if ds and sources.document_path(project, ds) is None:
+        # linked, but the file is not on this machine (a sidecar-only record, or a deleted file): another document of the
+        # same part may be, else the dialog says so instead of showing an empty page
+        alt = sources.find_for(project, line.get("mpn"))
+        if alt and sources.document_path(project, alt) is not None:
+            ds = alt
+        else:
+            missing, ds = ds, ""
     docs = []
     if ds:
         try:
@@ -347,7 +359,7 @@ def confirm_data(project, key):
                      "candidate_pages": candidate_pages(text, line.get("package") or ""), "quality": sources.quality(text)})
     st = next((l for l in store.bom(project, write=False) if l["key"] == line["key"]), {})
     return {"line": line["key"], "refs": line.get("refs", []), "mpn": line.get("mpn") or "", "package": line.get("package") or "",
-            "pins": _pins_of(project, line), "wired": store.has_wired_pins(project, line), "docs": docs,
+            "pins": _pins_of(project, line), "wired": store.has_wired_pins(project, line), "docs": docs, "missing_doc": missing,
             "status": st.get("pins_status", ""), "issues": st.get("pins_issues", ""),
             "polarised": store._polarised_only(line), "group_refs": [r for g in [group_lines(project, line["key"])] for k in g
                                                                       for r in (store._line_of(project, k).get("refs") or [k])]}

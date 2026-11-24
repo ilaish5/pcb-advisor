@@ -173,6 +173,23 @@ def test_confirm_data_offers_the_pin_table_pages(empty):
     assert [(p["num"], p["name"]) for p in d["pins"]] == [("1", "VCC"), ("2", "GND")]
 
 
+def test_a_linked_datasheet_with_no_file_is_not_offered_as_a_page(empty):
+    """A sidecar-only record (the BOM names a datasheet whose file never came) must not give the dialog an iframe that 404s,
+    and a page of it is never evidence."""
+    _sheet(empty)
+    folder = sources.folder_of(empty)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "gone.pdf.json").write_text('{"name": "gone.pdf", "note": "sidecar only"}', encoding="utf-8")
+    store.edit_bom(empty, "U1", "datasheet", "gone.pdf")
+    d = pin_decisions.confirm_data(empty, "U1")
+    assert d["docs"] == [] and d["missing_doc"] == "gone.pdf"
+    (folder / "ABCD1234_datasheet.pdf").write_bytes(b"%PDF-1.4 x")                     # the same part's document is here: it stands in
+    d = pin_decisions.confirm_data(empty, "U1")
+    assert d["docs"][0]["name"] == "ABCD1234_datasheet.pdf" and d["missing_doc"] == ""
+    r = pin_decisions.accept(empty, "U1", evidence=[{"doc": "gone.pdf", "sha256": "", "page": 3}])
+    assert r["decision"]["evidence"] == [] and r["decision"]["basis"] != "datasheet_page"
+
+
 def test_routes_confirm_revoke_and_accept_all(server, empty):
     _sheet(empty)
     code, body = call(server, "GET", "/api/pins/confirm-data?line=U1", empty)
