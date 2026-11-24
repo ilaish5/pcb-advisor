@@ -1,8 +1,9 @@
 # Computer-use round (private account)
 
 Checks that need control of the Windows desktop: Altium windows, native file dialogs, a clean install. Everything else was
-already checked in the browser or by tests (`docs/VERIFY-LOCAL-2026-11-24.md`, CI). Run this after the draft-schematic and
-merged Parts table branches are in `main`.
+already checked in the browser or by tests (`docs/VERIFY-LOCAL-2026-11-24.md`, CI). Both prerequisites are in `main`
+(4773f40): the draft schematic and the merged parts table (the Library page is now part of the BOM page: Models, Supply and
+Status columns; Build library and Check stock in its header).
 
 ## How to run
 
@@ -37,12 +38,13 @@ Ledger numbers refer to `docs/LEDGER-2026-11-23.md`.
 
 | # | Check | What passes | Ledger |
 |---|---|---|---|
-| A1 | **Build library** (Library / Parts page) | The project IntLib exists and Altium lists it. Open the SchLib and PcbLib: every built part has a symbol and a footprint; 3D bodies sit on the footprint (not offset, not floating) | 9 |
+| A1 | **Build library** (BOM page header) | The project IntLib exists and Altium lists it. Open the SchLib and PcbLib: every built part has a symbol and a footprint; 3D bodies sit on the footprint (not offset, not floating) | 9 |
 | A2 | **Draw schematic**, draft mode (some parts without a symbol) | Sheets open in Altium; parts with a symbol drawn, the rest as marked placeholders; every pin has a wire stub to a net label or power port; NC pins carry a No-ERC cross; the UI says draft and lists the placeholders | draft-schematic |
 | A3 | Schematic readability | No overlapping labels; sheet titles from the plan (not a bare "Main"); SW1/SW2 have their nets | 35, 33, 11 |
 | A4 | **Redraw** after the parts get symbols | Placeholders replaced by real symbols; the old SchDoc is in `.advisor-backup`; nothing the student added by hand is lost silently | draft-schematic, 70 |
 | A5 | **Unsaved changes**: move one part in an open SchDoc in Altium, do not save, press Draw again | The system saves or stops with a clear message; nothing is lost | 70 |
-| A6 | **Place** | Mounting holes H1-H4 on the board; keep-out under the ESP32 antenna; SHT40 kept away from the module; J1 at the board edge facing out; no duplicate designators | 1, 2, 3, 6, 10 |
+| A5b | **Place while the schematic is a draft** | Place is refused with one clear next step (build the library, draw again); the Layout stage says so. Note whether this feels too strict | draft-schematic |
+| A6 | **Place** (after a full, non-draft draw) | Mounting holes H1-H4 on the board; keep-out under the ESP32 antenna; SHT40 kept away from the module; J1 at the board edge facing out; no duplicate designators | 1, 2, 3, 6, 10 |
 | A7 | **Place on a routed board** | A warning names what will be lost, with one confirmation | 12 |
 | A8 | **Route and pour** | No copper inside the antenna keep-out; widths follow current | 3 |
 | A9 | **Check board (DRC)** | Altium's DRC count and categories match the UI's DRC line and DFM list (slivers, annular ring, silk) | 7, 8, 51 |
@@ -54,7 +56,8 @@ Ledger numbers refer to `docs/LEDGER-2026-11-23.md`.
 | B2 | **Export / downloads** | Files land in the real Windows Downloads folder; the UI shows that path at once | 27, 28 |
 | B3 | **DFM: Upload report** | The file dialog opens; the JLC DFM report is read into the DFM page | 25 |
 | C1 | **Clean install, as the examiner** | Fresh clone into a new folder, follow `README` / `docs/SUBMISSION.md` install steps; time from clone to the first page and to a first drawn schematic; every prompt and error noted | priority 2 |
-| C2 | **Chrome on Windows, real display** | Parts table (merged), model icons, 3D preview, chat composer and steps, Next slot render right at 1280 and 1920 px | UI |
+| C2 | **Chrome on Windows, real display** | BOM page (merged table, Supply card, model icons, 3D preview), chat composer and steps, Next slot render right at 1280 and 1920 px | UI |
+| C3 | **Chat answers match the screen** | Ask "What blocks the outputs?" while the Outputs banner shows a block: the answer names the same reason | draft-schematic task 2 |
 
 ## After the round
 
