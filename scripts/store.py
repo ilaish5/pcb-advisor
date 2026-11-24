@@ -235,12 +235,13 @@ def _has_offset(v):
 
 def bom_lines(project):
     """Fold bom-log.jsonl into lines, in the order they first appeared."""
-    lines = {}
+    lines, first = {}, {}
     for ev in read_jsonl(pdir(project) / "bom-log.jsonl"):
         key = ev.get("line")
         if not key:
             continue
-        if ev.get("removed"):                # an undo of a line the log had added
+        first.setdefault(key, len(first))     # a deleted line that is restored comes back in its old place
+        if ev.get("removed"):                # an undo of a line the log had added, or a deleted line
             lines.pop(key, None)
             continue
         line = lines.setdefault(key, {"key": key, "refs": []})
@@ -254,7 +255,7 @@ def bom_lines(project):
         # a line approved without references is still known by its key when that is a designator
         if not line.get("refs") and re.fullmatch(r"[A-Za-z]+\d+", line["key"]):
             line["refs"] = [line["key"]]
-    return list(lines.values())
+    return sorted(lines.values(), key=lambda l: first[l["key"]])
 
 
 def _supply_fits(ev, line):
@@ -443,6 +444,8 @@ def _bom(project, write):
         l["pins_basis"] = pins_basis(project, l, entry, l["pins_status"])
         l["pin_decision"] = _decision_view(project, l, entry) if l["pins_status"] == "accepted" else None
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
+        # refs no netlist sheet places, while sheets exist: an orphan line shows "not on any sheet" with Delete at hand
+        l["off_sheet"] = [r for r in l.get("refs", []) if r not in sheets] if sheets else []
         l["role"] = l.get("role") or ""
 
         b = best_offer(l)
@@ -609,7 +612,11 @@ def cpl_rotation_value(value):
 
 def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False, reserved=()):
     """Record a proposal. Nothing about the BOM changes until the student approves.
-    `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty)."""
+    `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty).
+    changes {"deleted": true} deletes the line, {"remove": ["R3"]} takes refs off it (propose_bom_delete)."""
+    if isinstance(changes, dict) and (changes.get("deleted") or changes.get("remove")):
+        return propose_bom_delete(project, line, None if changes.get("deleted") else changes.get("remove"),
+                                  reason=reason, sources=sources, session=session)
     if "cpl_rotation" in changes:
         changes = {**changes, "cpl_rotation": cpl_rotation_value(changes["cpl_rotation"])}
     existing = {l["key"]: l for l in bom_lines(project)}
@@ -656,6 +663,122 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if cleared is not None:
         rec["clears_offset"] = cleared          # the card says the approval clears it
     return append(project, "proposals.jsonl", rec)
+
+
+# ---- deleting a BOM line (or some refs of it). Always a proposal ("critical": the student's click in every mode), so it
+# shows in the history and Undo puts the line back as it was (the whole line is kept in bom-log.jsonl `before`).
+
+def _split_refs(refs):
+    if refs is None or refs is True:
+        return None
+    if isinstance(refs, str):
+        refs = re.split(r"[\s,;]+", refs)
+    if not isinstance(refs, (list, tuple)):
+        raise ValueError("refs must be a list of designators")
+    out = []
+    for r in refs:
+        r = str(r).strip()
+        if r and r not in out:
+            out.append(r)
+    return out or None
+
+
+def _line_snapshot(line):
+    return {k: v for k, v in line.items() if k != "key"}
+
+
+def delete_spec(prop):
+    """None when `prop` deletes nothing; else the refs it takes off its line, or None inside ("whole", None) for the whole line.
+    A BOM proposal with changes.deleted / changes.remove, or a proposal whose kind starts with "delete" on a BOM line."""
+    kind = prop.get("kind") or "bom"
+    ch = prop.get("changes") or {}
+    if kind == "bom" and (ch.get("deleted") or ch.get("remove")):
+        refs = None if ch.get("deleted") else _split_refs(ch.get("remove"))
+    elif kind.startswith("delete") and prop.get("line"):
+        refs = _split_refs(ch.get("remove") or ch.get("refs"))
+    else:
+        return None
+    return ("refs", refs) if refs else ("whole", None)
+
+
+def propose_bom_delete(project, line, refs=None, reason="", sources=(), session=None, origin="agent"):
+    """A proposal to delete BOM line `line`, or only `refs` of it (all of its refs is the whole line). It changes nothing until
+    approved. KeyError for an unknown line, ValueError for a ref the line does not hold."""
+    cur = next((l for l in bom_lines(project) if l["key"] == line), None)
+    if cur is None:
+        raise KeyError(f"no BOM line {line!r}")
+    refs = _split_refs(refs)
+    have = list(cur.get("refs") or [])
+    if refs:
+        missing = [r for r in refs if r not in have]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not on line {line} "
+                             f"(its refs: {', '.join(have) or 'none'})")
+        if set(refs) == set(have):
+            refs = None
+    changes = {"remove": [r for r in have if r in refs]} if refs else {"deleted": True}
+    rec = {"id": _new_proposal_id(project), "ts": now_ms(), "kind": "bom", "line": line, "new": False,
+           "changes": changes, "before": _line_snapshot(cur), "reason": reason, "sources": list(sources or ()),
+           "library": None, "session": session, "status": "pending", "origin": origin}
+    return append(project, "proposals.jsonl", rec)
+
+
+def delete_bom_line(project, line, refs=None):
+    """The student's Delete: applied at once (by=student), recorded as a proposal so the history lists it and Undo restores it.
+    Returns the proposal (its id is what /api/undo takes)."""
+    rec = propose_bom_delete(project, line, refs, reason="deleted by the student", origin="student")
+    return decide(project, rec["id"], "approved", by="student")
+
+
+def _apply_bom_delete(project, prop, spec, by):
+    """Approve a delete proposal: one bom-log.jsonl entry that holds the line as it was. Refused (ValueError) when the line or
+    the refs are gone already, so nothing half-applies."""
+    line = prop["line"]
+    cur = next((l for l in bom_lines(project) if l["key"] == line), None)
+    if cur is None:
+        raise ValueError(f"line {line} is no longer in the BOM")
+    have = list(cur.get("refs") or [])
+    refs = spec[1]
+    keep = have
+    if refs:
+        missing = [r for r in refs if r not in have]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} no longer on line {line}")
+        keep = [r for r in have if r not in refs]
+    who = "student" if by == "student" and prop.get("origin") == "student" else "agent-approved"
+    append(project, "proposals.jsonl", {"id": prop["id"], "ts": now_ms(), "status": "approved", "by": by})
+    entry = {"ts": now_ms(), "by": who, "line": line, "reason": prop.get("reason"), "sources": prop.get("sources"),
+             "proposal": prop["id"]}
+    if refs and keep:
+        append(project, "bom-log.jsonl", {**entry, "changes": {"refs": keep}, "before": {"refs": have}, "deleted": refs})
+        return
+    append(project, "bom-log.jsonl", {**entry, "removed": True, "changes": {}, "before": _line_snapshot(cur), "deleted": have})
+    for p in proposals(project):        # a change still waiting for the deleted line has nothing left to change
+        if p.get("status") == "pending" and p.get("line") == line and (p.get("kind") or "bom") == "bom" and not p.get("new"):
+            append(project, "proposals.jsonl", {"id": p["id"], "ts": now_ms(), "status": "rejected", "by": "superseded"})
+
+
+def _undo_bom_delete(project, entry):
+    line, refs = entry["line"], entry.get("deleted") or []
+    lines = bom_lines(project)
+    cur = next((l for l in lines if l["key"] == line), None)
+    taken = {r: l["key"] for l in lines if l["key"] != line for r in (l.get("refs") or [])}
+    clash = [f"{r} (line {taken[r]})" for r in refs if r in taken]
+    if clash:
+        raise UndoRefused(f"{', '.join(clash)} {'is' if len(clash) == 1 else 'are'} in the BOM again; "
+                          "delete or change that first, then undo")
+    if entry.get("removed"):
+        if cur is not None:
+            raise UndoRefused(f"a line {line} is in the BOM again; delete it first, then undo")
+        changes = dict(entry.get("before") or {})
+    else:
+        if cur is None:
+            raise UndoRefused(f"line {line} no longer exists")
+        if list(cur.get("refs") or []) != list((entry.get("changes") or {}).get("refs") or []):
+            raise UndoRefused(f"the refs of {line} were changed after this; undo that later change first")
+        changes = {"refs": (entry.get("before") or {}).get("refs") or []}
+    append(project, "bom-log.jsonl", {"ts": now_ms(), "by": "undo", "line": line, "undoes": entry.get("proposal"),
+                                      "changes": changes, "before": entry.get("changes"), "reason": "undo of " + str(entry.get("proposal"))})
 
 
 def validate_diagram(data):
@@ -1281,6 +1404,8 @@ def _decide(project, pid, decision, by):
             append(project, "net-currents.jsonl", {"ts": now_ms(), "by": by, "net": prop["line"],
                                                    "current_a": (prop.get("changes") or {}).get("current_a"),
                                                    "before": net_currents(project).get(prop["line"]), "proposal": pid})   # the value at approval time
+        elif delete_spec(prop) is not None:
+            _apply_bom_delete(project, prop, delete_spec(prop), by)
         else:
             append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by})
             changes, note, fresh = dict(prop["changes"]), "", False
@@ -1452,6 +1577,10 @@ def undo_proposal(project, pid, by="student"):
         entry = next((e for e in read_jsonl(pdir(project) / "bom-log.jsonl") if e.get("proposal") == pid), None)
         if not entry:
             raise UndoRefused("this change left no BOM entry to undo")
+        if "deleted" in entry:
+            _undo_bom_delete(project, entry)
+            append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": "undone", "by": by})
+            return prop
         cur = next((l for l in bom_lines(project) if l["key"] == entry["line"]), None)
         if cur is None:
             raise UndoRefused(f"line {entry['line']} no longer exists")
@@ -1611,8 +1740,11 @@ def history(project, limit=40):
     for p in proposals(project):
         if p.get("status") not in ("approved", "undone"):
             continue
+        spec = delete_spec(p)
         if p.get("kind") == "idea_diagram":
             label = "Diagram changed"
+        elif spec is not None:
+            label = f"{p.get('line')}: " + (f"removed {', '.join(spec[1])}" if spec[1] else "deleted")
         else:
             label = f"{p.get('line')}: " + (", ".join(p.get("changes") or {}) or "change")
         out.append({"id": p["id"], "kind": p.get("kind") or "bom", "label": label, "ts": p.get("decided_at") or p["ts"],
