@@ -146,6 +146,9 @@ def _summary(model):
     if reference:
         s["reference_library"] = (f"{len(reference)} course, JLC and IPC files in <repo>/shared/reference/, citable by their path "
                                   "there; open its AGENTS.md (the topic index) to find one")
+    gate = _outputs_gate(model)
+    if gate:
+        s["outputs_blocked"] = gate        # the one gate of the Outputs button, banner and DFM page, nearly whole (the stage row is cut short)
     waiting = _pins_waiting(model)
     if waiting:
         # the DFM page's Unverified parts: the Gerber zip and the OutJob wait until the student resolves each (rule 7, rule 11)
@@ -166,6 +169,17 @@ def _summary(model):
 
 
 STAGE_REASON_CUT = 240
+GATE_CUT = 900
+
+
+def _outputs_gate(model):
+    """store.manufacturing_warning as the Outputs button shows it ('' when the outputs are not blocked), from the model's stage row
+    (stages.outputs_stage: one gate for the button, the dot, the banner and the agent). The agent answered "nothing blocks the outputs"
+    from lineage.py and partlib.py once, while the banner showed an unfinished schematic: this text is what answers that question."""
+    for st in model.get("stages") or []:
+        if isinstance(st, dict) and st.get("id") == "outputs" and (st.get("gate") or {}).get("blocked"):
+            return _clip((st.get("gate") or {}).get("why") or st.get("reason"), GATE_CUT)
+    return ""
 
 
 def _pins_waiting(model):

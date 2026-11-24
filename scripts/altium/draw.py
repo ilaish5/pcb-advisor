@@ -384,6 +384,9 @@ def part_cell(part, symbol):
     for lp in symbol["pins"]:
         xs += [lp["x"], tip(lp)[0]]
         ys += [lp["y"], tip(lp)[1]]
+    if not xs and symbol.get("body"):            # a placeholder of a part the netlist lists no pins for: just its rectangle
+        b = symbol["body"]
+        xs, ys = [b[0], b[2]], [b[1], b[3]]
     wired = [(lp, net) for lp, net in pins if net and not is_nc(net)]
     todo = []
     for lp, net in pins:
@@ -854,11 +857,108 @@ def text_problems(sheet, parts, symbols):
     return sorted(set(bad))
 
 
-def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
+# ---------------------------------------------------------------- draft: a placeholder for a part that has no usable symbol yet
+# A draft draw never stops for a part the library cannot give a symbol (none built, none for the part, one that does not fit the
+# netlist's pins): the part is drawn as a plain rectangle with the netlist's own pins, wire stubs and net labels as for any part, so
+# every net stays connected on the sheet. The symbol is made from the netlist alone (partlib_generate.box_symbol, all pins Passive:
+# nothing is known about them), lives in a draft SchLib of its own (never in the project library, whose build starts from the
+# template), and is named in its comment. The sheet's heading and store.manufacturing_warning say "draft"; a later draw with the
+# real symbol replaces it.
+
+PLACEHOLDER_PREFIX = "PH_"
+PLACEHOLDER_WORD = "PLACEHOLDER"
+NO_SYMBOL = "no library symbol yet"
+BAD_SYMBOL = "library symbol does not match the netlist pins"
+MULTI_SYMBOL = "multi-part library symbol, draw it by hand"
+_PIN_NUM = re.compile(r"[A-Za-z0-9]{1,6}")
+_ORIENT = {"eRotate0": 0, "eRotate90": 1, "eRotate180": 2, "eRotate270": 3}
+
+
+def symbol_problems(part, symbol):
+    """Why the part cannot be drawn from this library symbol ([] = it can): the pin comparison's errors and a symbol of several parts."""
+    errors = list(pin_nets(part, symbol)[2])
+    ids = {int(p.get("part_id", 1)) for p in symbol["pins"]} - {0, -1}
+    if ids - {1}:
+        errors.append(f"{part['ref']}: library symbol {symbol['name']} has several parts")
+    return errors
+
+
+def placeholder_name(ref):
+    return PLACEHOLDER_PREFIX + (re.sub(r"[^A-Za-z0-9]+", "_", str(ref)).strip("_")[:50] or "part")
+
+
+def placeholder_comment(why):
+    return f"{PLACEHOLDER_WORD}: {why}"
+
+
+def _pin_text(text, fallback):
+    from partlib_convert import clean
+    plain = clean(transliterate(str(text or "").strip()), 40)
+    return plain if plain and _plain(plain) else fallback
+
+
+def placeholder(part, why, name):
+    """The placeholder of one netlist part: {"part": the part with a drawable, unique number on every pin, "symbol": the symbol as
+    lib.read_schlib reads it, "spec": the lines SYMBATCH makes it from, "props": the SYMPROPS line, "warnings": [...]}.
+    A pin with no number, a number the library cannot hold or a number already taken gets the next free whole number (a warning
+    says so); the netlist itself is never changed."""
+    from partlib_generate import box_symbol
+    ref = str(part["ref"])
+    pins, taken, warn = [], set(), []
+    for p in part.get("pins", []):
+        if not isinstance(p, dict):
+            continue
+        num = str(p.get("num", p.get("number", "")) or "").strip()
+        good = bool(_PIN_NUM.fullmatch(num)) and num not in taken
+        if good:
+            taken.add(num)
+        pins.append([p, num if good else ""])
+    nxt = 0
+    for entry in pins:
+        if entry[1]:
+            continue
+        nxt += 1
+        while str(nxt) in taken:
+            nxt += 1
+        was = str(entry[0].get("num", entry[0].get("number", "")) or "").strip()
+        entry[1] = str(nxt)
+        taken.add(entry[1])
+        warn.append(f"{ref}: pin {entry[0].get('name') or '(no name)'} has " + (f"no usable pin number ({was!r})" if was else "no pin number")
+                    + f" in the netlist; the placeholder numbers it {nxt}")
+    planned = []
+    for p, num in pins:
+        q = {k: v for k, v in p.items() if k != "number"}
+        q["num"], q["name"] = num, _pin_text(p.get("name"), num)
+        planned.append(q)
+    sym_pins, gfx, _ = box_symbol("U", [{"num": q["num"], "name": q["name"], **({"side": q["side"]} if q.get("side") else {})} for q in planned], [])
+    for sp in sym_pins:
+        sp["type"] = "Passive"
+    prefix = (re.match(r"[A-Za-z]+", ref) or [""])[0].upper()[:6] or "U"
+    comment = placeholder_comment(why)
+    xs0, ys0, xs1, ys1 = (gfx[0][4], gfx[0][5], gfx[0][6], gfx[0][7]) if gfx else (0, 0, 0, 0)
+    symbol = {"name": name, "description": comment, "designator": f"{prefix}?", "comment": comment, "params": {}, "footprints": [],
+              "pinned_paths": [], "graphics": len(gfx), "joined": [], "body": (xs0, ys0, xs1, ys1),
+              "pins": [{"number": sp["num"], "name": sp["name"], "electrical": "Passive", "x": int(sp["x"]), "y": int(sp["y"]),
+                        "length": int(sp["len"]), "orientation": _ORIENT.get(sp["orient"], 0),
+                        "conglomerate": _ORIENT.get(sp["orient"], 0) | 8 | 16, "show_name": True, "show_number": True, "part_id": 1}
+                       for sp in sym_pins]}
+    from partlib_convert import clean
+    spec = [f"SYMBOL|{name}|{clean(comment)}|1"]
+    spec += ["GRAPHIC|" + "|".join(str(v) for v in g) for g in gfx]
+    spec += [f"PIN|{clean(sp['num'], 20)}|{clean(sp['name'], 60)}|eElectricPassive|{sp['orient']}|{sp['x']}|{sp['y']}|1|{sp['len']}" for sp in sym_pins]
+    return {"part": {**part, "pins": planned}, "symbol": symbol, "spec": spec, "props": f"{name}={prefix}|{clean(comment)}",
+            "warnings": warn, "why": why}
+
+
+def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None, placeholders=None):
     """Plan one netlist sheet.
     sheet: the netlist sheet dict; symbols: {ref: symbol dict from read_schlib}; schlib / doc: file paths.
+    placeholders (a draft draw): {ref: {"why", "name", "schlib"}}: those parts are drawn from placeholder() (symbol `name` in the draft
+    SchLib `schlib`) instead of `symbols`; a part with neither is an error, as ever.
     Returns {"commands": [...], "parts": [{ref, symbol, pins, x, y}], "expected": {net: [tags]}, "no_erc": [tags],
-             "warnings": [...], "errors": [...]}."""
+             "warnings": [...], "errors": [...], "placeholders": [{ref, why, section}]}."""
+    placeholders = placeholders or {}
+    symbols = dict(symbols)
     parts = [p for p in sheet.get("parts", []) if isinstance(p, dict) and p.get("ref")]
     if aliases is None:
         aliases = net_aliases(pin.get("net") for p in parts for pin in p.get("pins", []) if isinstance(pin, dict))
@@ -871,13 +971,23 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
     errors, warnings, cells = [], [], []
     why = set()          # which kinds of refusal there are: one mechanical kind (see altium.bridge.NEUTRAL_CODES) is "fix_code", else None
     warnings += [f"net {n!r} drawn as {a!r} (the schematic is plain ASCII; the netlist keeps its name)" for n, a in sorted(renamed.items())]
+    drafted = {}
     for p in parts:
         sym = symbols.get(p["ref"])
-        if sym is None:
+        ph = placeholders.get(p["ref"])
+        if ph is not None:
+            e = placeholder(p, ph["why"], ph["name"])
+            p, sym = e["part"], e["symbol"]
+            symbols[p["ref"]] = sym
+            warnings += [f"{p['ref']}: drawn as a placeholder ({ph['why']})"] + e["warnings"]
+        elif sym is None:
             errors.append(f"{p['ref']}: no symbol in the project library (run library.build first)")
             why.add("prereq.library_not_built")
             continue
         c = part_cell(p, sym)
+        if ph is not None:
+            c["placeholder"] = ph
+            drafted[p["ref"]] = ph["why"]
         c["unverified"] = p.get("pins_source") == "agent"
         c["accepted"] = p.get("pins_source") == "student"
         warnings += c["warnings"]
@@ -891,7 +1001,8 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
     errors += texts_bad
     if texts_bad:
         why.add("other")
-    out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors, "renamed": renamed}
+    out = {"commands": [], "parts": [], "expected": {}, "no_erc": [], "warnings": warnings, "errors": errors, "renamed": renamed,
+           "placeholders": [{"ref": r, "why": w} for r, w in drafted.items()]}
     if errors:
         out["fix_code"] = next(iter(why)) if len(why) == 1 and "other" not in why else None
         return out
@@ -915,12 +1026,19 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
             accepted.setdefault(sid, []).append(c["ref"])
     out["accepted_pins"] = sorted(r for refs in accepted.values() for r in refs)
     texts = {}
-    for sid in ids:
+    draft = {}
+    for sid, c in cells:                        # a draft sheet says so in the heading of the section that holds a placeholder
+        if c.get("placeholder"):
+            draft.setdefault(sid, []).append(c["ref"])
+    for sid in ids | ({""} if draft.get("") else set()):
         refs = unverified.get(sid) or []         # the title strip wraps; a long list is cut, the advisor has all of it
         note = f" | pins not checked against a datasheet: {', '.join(refs[:6])}" + (f" +{len(refs) - 6}" if len(refs) > 6 else "") if refs else ""
         acc = accepted.get(sid) or []
         if acc:
             note += f" | pins accepted by student, not verified: {', '.join(acc[:6])}" + (f" +{len(acc) - 6}" if len(acc) > 6 else "")
+        dr = draft.get(sid) or []
+        if dr:
+            note += f" | DRAFT, placeholder parts: {', '.join(dr[:6])}" + (f" +{len(dr) - 6}" if len(dr) > 6 else "")
         texts[sid] = frame_text(head_names.get(sid, sid), titles.get(sid, ""), note)
     pos, heads, problems = layout(cells, sections, texts=texts)
     if problems:
@@ -931,7 +1049,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
     d = str(doc)
     cmds = [("DRAWBEGIN", d, "1" if replace else "0")]
     for (fx, fy, fw, fh), sid in heads:         # one frame around the whole section, its title at the top (a text frame starts its text there)
-        if sid:
+        if sid or texts.get(sid):
             cmds.append(("FRAME", d, str(fx), str(fy), str(fw), str(fh), texts[sid]))
     for _, c in cells:
         ox, oy = pos[c["ref"]]
@@ -939,8 +1057,9 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None):
         for k in ("des", "com"):
             t = c["texts"].get(k)
             spots += [str(ox + t[0]), str(oy + t[1])] if t else ["", ""]
-        cmds.append(("PLACE", d, c["ref"], c["symbol"], str(schlib), str(ox), str(oy), str(c["pins"]), *spots))
-        out["parts"].append({"ref": c["ref"], "symbol": c["symbol"], "pins": c["pins"], "x": ox, "y": oy})
+        cmds.append(("PLACE", d, c["ref"], c["symbol"], str((c.get("placeholder") or {}).get("schlib") or schlib), str(ox), str(oy), str(c["pins"]), *spots))
+        out["parts"].append({"ref": c["ref"], "symbol": c["symbol"], "pins": c["pins"], "x": ox, "y": oy,
+                             **({"placeholder": True} if c.get("placeholder") else {})})
         for s in c["stubs"]:
             tx, ty = ox + s["tip"][0], oy + s["tip"][1]
             tag = f"{c['ref']}-{s['pin']}"

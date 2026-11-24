@@ -269,3 +269,41 @@ def test_a_server_round_sends_the_last_exchange_not_the_whole_conversation(lte, 
     assert convo.splitlines() == ["user: draw it yourself please", "agent: Drawing sheet 01.", "agent: Retry: building the library first."]
     p = _prompt(lte, monkeypatch, tmp_path, message="and now?", history=chat)
     assert "old question 2" in p.split("\n<conversation>\n")[1]
+
+
+# ---------------------------------------------------------------- what blocks the outputs: the UI's gate, word for word
+
+
+def test_the_agent_context_carries_the_outputs_gate_the_ui_shows(empty):
+    """UX-E2E-ESP32C3 (2026-11-24): the Outputs banner said an unfinished schematic blocks the outputs, the agent said "nothing is
+    blocking". One gate (store.manufacturing_warning, through stages.outputs_stage) feeds the button, the dot, the banner and the
+    agent's CURRENT STATE."""
+    import agent
+    import model
+    import store
+    from test_unverified_pins import _sheet
+    _sheet(empty)                                   # a part whose pins nobody checked: the outputs are blocked
+    gate = store.manufacturing_warning(empty)
+    assert gate
+    m = model.build(project=empty)
+    outputs = next(s for s in m["stages"] if s["id"] == "outputs")
+    assert outputs["gate"]["blocked"] and outputs["gate"]["why"] == gate      # the banner's text
+    state = json.loads(agent._summary(m))
+    assert state["outputs_blocked"] == gate                                      # the agent's text is the same, whole
+    assert next(r for r in state["stages"] if r["id"] == "outputs")["blocked"]
+
+
+def test_the_outputs_gate_is_not_cut_in_the_middle_and_absent_when_nothing_blocks():
+    import agent
+    text = "Not made yet: " + "A" * 300 + " J1 pin A8 (SBU1), J1 pin B8 (SBU2). Open Schematic: connect each pin or mark them all NC in one click."
+    state = json.loads(agent._summary({"project": "", "stages": [{"id": "outputs", "state": "blocked", "reason": text,
+                                                                   "gate": {"blocked": True, "why": text}}]}))
+    assert state["outputs_blocked"] == text          # longer than a stage row's cut (240), still whole
+    free = json.loads(agent._summary({"project": "", "stages": [{"id": "outputs", "state": "clean", "reason": "3 files",
+                                                                  "gate": {"blocked": False, "why": ""}}]}))
+    assert "outputs_blocked" not in free
+
+
+def test_the_agent_is_told_where_the_outputs_answer_is():
+    text = AGENTS.read_text(encoding="utf-8")
+    assert "`outputs_blocked`" in text

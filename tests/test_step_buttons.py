@@ -452,7 +452,6 @@ def test_the_note_carries_the_preparations_then_the_step_and_marks_warnings(serv
     ("place", {"schlib": False, "pcb": False}, "build_library", [], "Building the library failed: boom. The parts were not placed."),
     ("place", {"schlib": False, "pcb": False}, "add_pcb", ["build_library"], "The library was built. Adding the PcbDoc failed: boom. The parts were not placed."),
     ("route", {"rules": ["X"]}, "import_rules", [], "Importing the JLC rules failed: boom. The board was not routed."),
-    ("draw", {"schlib": False}, "build_library", [], "Building the library failed: boom. The schematic was not drawn."),
 ])
 def test_a_failing_preparation_stops_the_chain(server, empty, world, step, setup, fail, done, error):
     world.update(setup)
@@ -607,6 +606,42 @@ def test_the_page_that_was_reloaded_never_stays_busy_and_long_refusals_are_cut_r
 def test_a_body_that_is_not_an_object_runs_the_plain_step_and_touches_no_older_record(empty, world):
     code, body, run_id = serve.run_step_button(empty, None, "route", ["replace"])
     assert code == 200 and ran(world) == ["route_pcb"] and world["log"][0][2] is False and run_id
+
+
+def test_a_draft_draw_goes_on_when_the_library_build_fails(server, empty, world, monkeypatch):
+    """No library, and the build fails: the draw is not stopped, the parts it has no symbol for are placeholders (bridge.draw_schematic)."""
+    world.update(schlib=False)
+    world["sync"]()
+    world["fail"]["build_library"] = "boom. "
+    marks, real_mark = [], serve._run_mark
+    monkeypatch.setattr(serve, "_run_mark", lambda p, key, state, note="": (marks.append((key, state)), real_mark(p, key, state, note))[1])
+    code, body = call(server, "POST", ENDPOINTS["draw"], empty, {"replace": True})
+    assert code == 200 and ran(world) == ["build_library", "draw_schematic"] and not serve.STEP_LOCK.locked()
+    assert "the library build failed - boom" in body["summary"] and "placeholders" in body["summary"]
+    assert serve.warning_of(body["summary"]).endswith("so the parts it could not give a symbol are placeholders")      # the chat chip carries the cause, not a cut-off tail
+    assert "prepared" not in body                                    # the build did not happen: it is not listed as done
+    assert ("library.build", "failed") in marks and ("altium.draw_schematic", "running") in marks
+
+
+def test_a_part_without_a_symbol_in_an_old_library_builds_it_first_and_the_draw_goes_on_if_that_fails(server, empty, world, monkeypatch):
+    monkeypatch.setattr(bridge, "draw_needs_library", lambda p, sheet=None: True)
+    world["stale"] = True
+    code, body = call(server, "POST", ENDPOINTS["draw"], empty, {})
+    assert code == 200 and ran(world) == ["build_library", "draw_schematic"] and body["prepared"][0].startswith("library.build: ")
+    world["log"].clear()
+    world["fail"]["build_library"] = "boom. "
+    code, body = call(server, "POST", ENDPOINTS["draw"], empty, {})
+    assert code == 200 and ran(world) == ["build_library", "draw_schematic"] and "the library build failed" in body["summary"]
+    monkeypatch.setattr(bridge, "draw_needs_library", lambda p, sheet=None: False)        # nothing to gain from a build: it is not run
+    world["log"].clear()
+    assert call(server, "POST", ENDPOINTS["draw"], empty, {})[0] == 200 and ran(world) == ["draw_schematic"]
+
+
+def test_the_draw_summary_says_draft_and_names_the_placeholders():
+    res = {**DRAWN, "placeholders": [{"ref": "U1"}, {"ref": "J2"}]}
+    said = serve.draw_summary(res)
+    assert "as a DRAFT: 2 parts are placeholders (U1, J2)" in said and "outputs stay blocked" in said
+    assert serve.draw_summary(DRAWN) == "3 parts and 2 nets drawn on 1 sheet(s), saved and checked against the netlist (1 warnings: w1)"
 
 
 def test_a_part_missing_from_the_library_makes_the_step_build_it_and_try_once_more(empty, world):
