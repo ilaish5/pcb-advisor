@@ -435,6 +435,10 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
     elif prop.get("kind") == "idea_diagram":
         say(project, sess, {"ts": now(), "role": "agent",
                             "text": "Approved diagram changes. The block diagram has been updated.", **decided})
+    elif store.delete_spec(prop) is not None:
+        spec = store.delete_spec(prop)
+        what = f"{', '.join(spec[1])} removed from line {prop['line']}" if spec[1] else f"Line {prop['line']} deleted from the BOM"
+        say(project, sess, {"ts": now(), "role": "agent", "text": f"Approved. {what}. Undo puts it back.", **decided})
     else:
         ref = next((l["refs"][0] for l in store.bom_lines(project) if l["key"] == prop["line"] and l.get("refs")),
                    prop["line"])
@@ -1107,6 +1111,8 @@ def bom_value_warning(project, a):
     """' (warning: ...)' when a bom.propose line for a resistor, capacitor or inductor has no value ('5.1k'), else ''.
     The student sees the value, not the MPN; the proposal still goes through."""
     ch = a.get("changes") or {}
+    if ch.get("deleted") or ch.get("remove"):       # a delete names no value
+        return ""
     refs = ch.get("refs") if isinstance(ch.get("refs"), list) and ch.get("refs") else [a["line"]]
     if not re.match(r"[RCL]\d", str(refs[0]).upper()):
         return ""
@@ -1949,6 +1955,11 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                                         sess, new=bool(a.get("new")), reserved=reserved)
                 proposals.append(rec["id"])
                 applied.append(f"bom.propose:{a['line']}" + bom_value_warning(project, a))
+                maybe_auto(rec)
+            elif kind == "bom.delete" and a.get("line"):      # = bom.propose with changes.deleted / remove: always the student's click
+                rec = store.propose_bom_delete(project, a["line"], a.get("refs") or None, a.get("reason", ""), a.get("sources", []), sess)
+                proposals.append(rec["id"])
+                applied.append(f"bom.propose:{a['line']}")
                 maybe_auto(rec)
             elif kind == "net.set_current" and a.get("net"):      # a proposal like a BOM change: the student's click in ask / important mode
                 if "amps" not in a:             # a missing amount is a mistake; clearing needs an explicit "amps": null
@@ -3863,6 +3874,20 @@ class Handler(BaseHTTPRequestHandler):
                 redraw(proj)
                 project_mod.touch(proj)
             return self._send(200, state())
+
+        # the student deletes a BOM line, or some refs of it: applied at once, undoable with /api/undo and the returned id
+        if path == "/api/bom/delete":
+            try:
+                prop = store.delete_bom_line(proj, data.get("line"), data.get("refs") or None)
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc).strip("'\"")})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            spec = store.delete_spec(prop)
+            redraw(proj)
+            project_mod.touch(proj)
+            return self._send(200, {**state(), "deleted": {"id": prop["id"], "line": prop["line"],
+                                                           "refs": spec[1] or (prop.get("before") or {}).get("refs") or []}})
 
         if path == "/api/bom/import":
             import bom_import

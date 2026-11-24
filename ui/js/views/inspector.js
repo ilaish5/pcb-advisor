@@ -225,6 +225,11 @@ function inspPartHTML(l) {
     {label: 'Show on layout', act: 'show-pcb', attrs: {key: l.key}, disabled: !inspHasPcb()},
     ...(l.datasheet ? [{label: 'Open datasheet', attrs: {src: l.datasheet}}]
       : [{label: 'Get datasheet', act: 'get-datasheet', attrs: {line: l.key}}, {label: 'Choose datasheet file', act: 'datasheet-file', attrs: {line: l.key}}]),
+    'sep',
+    // a line with some refs on no sheet: removing just those is one click; the whole line is the other
+    ...((l.off_sheet || []).length && l.off_sheet.length < refs.length
+      ? [{label: `Remove ${refsLabel(l.off_sheet)} (not on any sheet)`, act: 'bom-delete', danger: true, attrs: {line: l.key, refs: l.off_sheet.join(',')}}] : []),
+    {label: 'Delete from BOM', act: 'bom-delete', danger: true, attrs: {line: l.key}},
   ];
   const acts = btn('Ask', {kind: 'pri', size: 'sm', act: 'insp-ask', key: l.key}) + menu({icon: 'more', size: 'sm', title: 'More'}, items);
   const field = (name, label, value, ph, mono) => [label, `<input class="in quiet${mono ? ' m' : ''}" data-edit="${name}" data-line="${esc(l.key)}" value="${esc(value || '')}" placeholder="${ph}" aria-label="${label}" autocomplete="off" spellcheck="false">`, true];
