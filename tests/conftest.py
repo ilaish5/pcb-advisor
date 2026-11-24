@@ -38,6 +38,17 @@ def no_network(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def routed_board(request, monkeypatch):
+    """The board gate (store.route_state: unrouted nets, a board never routed or checked) reads board-log.jsonl, which a test
+    project has none of. Tests about anything else stand on a routed, clean board; a test of the gate itself is marked route_gate
+    and reads the real record."""
+    if request.node.get_closest_marker("route_gate"):
+        return
+    import store
+    monkeypatch.setattr(store, "route_state", lambda project: {"ready": True, "why": "", "unrouted": 0, "open_nets": []})
+
+
+@pytest.fixture(autouse=True)
 def engine_home(tmp_path_factory, monkeypatch):
     """The engine's folder, never the real one in the user's app data. It must sit
     outside any git tree (the pack refuses otherwise); pytest's temp dir does."""

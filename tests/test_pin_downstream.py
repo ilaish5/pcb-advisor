@@ -16,11 +16,11 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 
 
 def test_rules_match_gate():
-    """Rule 11: R/C/L/crystal never ask; connectors, diodes and LEDs are confirmed before manufacturing files."""
+    """Rule 11: R/C/L/crystal never ask; connectors, diodes and LEDs are confirmed before ordering (a warning, not a block)."""
     text = (REPO / "runtime" / "AGENTS.md").read_text(encoding="utf-8")
     rule = text[text.index("\n11. "):text.index("\n# HOW TO ANSWER")]
     assert "R/C/L/crystal need no datasheet" in rule and "Connectors, diodes and LEDs" in rule
-    assert "confirms pin numbers/polarity before manufacturing" in rule
+    assert "confirm pin numbers/polarity before ordering" in rule and "never a block" in rule
     gated = set(store.CONNECTOR_PREFIXES) | set(store.POLARISED_PREFIXES)
     assert gated == {"J", "P", "D", "LED"} and gated <= set(store.SIMPLE_PREFIXES)
     for prefix in ("R", "C", "L", "Y", "XTAL"):        # never asked: no datasheet and no decision still gives ""

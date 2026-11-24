@@ -7,10 +7,11 @@ const OUT_OUTJOB = 'The OutJob makes Gerber RS-274X, NC drill, BOM, pick and pla
 
 const outFlashed = new Set();                 // 'name|written' of the files that have flashed already
 
-/* The manufacturing files (Altium's outputs, the Gerber zip) are refused by the server while a part's pins are unverified. The page says so
-   before the click: the same parts the DFM page lists (S.bom already carries each line's pins_status, so this asks the server nothing). */
-/* The one gate is the server's: stages[] 'outputs' is blocked exactly when store.manufacturing_warning is not empty (unverified pins, open pins,
-   pins missing from the netlist). Its text lists everything at once; the open pins come with one "Mark all N as NC" and an "Ask the agent" each. */
+/* The manufacturing files (Altium's outputs, the Gerber zip) are refused by the server while the board has unrouted nets (or was never
+   routed or checked) or the design is unfinished. Unverified or conflicting pins are a WARNING only (owner decision 24/11/2026): the page
+   names the parts (stage 'outputs' pins_warning) and the files are made all the same. */
+/* The one gate is the server's: stages[] 'outputs' is blocked exactly when store.manufacturing_block is not empty (unrouted nets, open pins,
+   pins missing from the netlist, a draft). Its text lists everything at once; the open pins come with one "Mark all N as NC" and an "Ask the agent" each. */
 function outGate() {
   const st = typeof stageOf === 'function' ? stageOf('outputs') : null;
   return st && st.gate && st.gate.blocked ? st.gate : null;
@@ -41,13 +42,24 @@ function outNcProposal(g) {
     btn('Dismiss', {kind: 'link', size: 'sm', act: 'nc-dismiss'});
   return `<div data-nc-prop="1">${banner({tone: 'info', html: `${esc(text)}<ul>${rows}</ul>`, actions: acts})}</div>`;
 }
+const OUT_GATE_PAGE = {sch: 'Open Schematic', pcb: 'Open Layout', checks: 'Open DFM'};
+/* the pins warning (never a block): the parts whose pins nobody checked or that differ from the datasheet, named by the server */
+function outPinsWarn() {
+  const st = typeof stageOf === 'function' ? stageOf('outputs') : null;
+  return (st && st.pins_warning) || '';
+}
+function outPinsWarnNote() {
+  const w = outPinsWarn();
+  if (!w) return '';
+  const acts = (typeof pinsConfirmAllBtn === 'function' ? pinsConfirmAllBtn() : '') + btn('Open DFM', {kind: 'link', page: 'checks'});
+  return `<div data-pins-warn="1">${banner({tone: 'warn', text: w, actions: acts})}</div>`;
+}
 function outBlockNote() {
   const g = outGate();
   if (!g) return '';
   const items = outGapItems(g);
   const acts = (items.length ? btn(`Mark all ${items.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks every one of these pins no-connect in the netlist (a No ERC cross when drawn). Connect any pin that is not meant to be NC first.'}) : '')
-    + (typeof pinsConfirmAllBtn === 'function' ? pinsConfirmAllBtn() : '')      // the waiting parts: the same one click as on the Library and DFM pages
-    + btn(g.page === 'sch' ? 'Open Schematic' : 'Open DFM', {kind: 'link', page: g.page === 'sch' ? 'sch' : 'checks'});
+    + btn(OUT_GATE_PAGE[g.page] || OUT_GATE_PAGE.checks, {kind: 'link', page: OUT_GATE_PAGE[g.page] ? g.page : 'checks'});
   const list = items.length ? `<details class="pv-more"><summary>Show the ${items.length} ${items.length === 1 ? 'pin' : 'pins'}</summary><ul>${items.map(outGapRow).join('')}</ul></details>` : '';
   return `${outNcProposal(g)}${banner({tone: 'warn', html: `${esc(g.why)}${list}`, actions: acts})}`;
 }
@@ -197,7 +209,8 @@ function outLinked() {       // only when an Altium project is linked; the link 
   return !!(ALTIUM_DATA && ALTIUM_DATA.linked && ALTIUM_DATA.linked.project_file);
 }
 /* The automatic route is the primary one: Altium writes the files (a step button with the live list and Stop). Without a linked Altium
-   project the manual route (the OutJob to copy) stays primary. While a part's pins are unverified the generate button is held back, with the reason. */
+   project the manual route (the OutJob to copy) stays primary. While the server's gate is closed (an unrouted board, an unfinished design) the
+   generate button is held back, with the reason; unverified pins do not hold it. */
 function outAltiumBtn(primary) {
   if (!outLinked()) return '';
   const why = outBlockWhy();
@@ -268,10 +281,10 @@ function outTable(files, a, timed) {
   return `<table class="tbl rows out-tbl"><thead><tr><th>Name</th>${showTimes ? '<th class="c-mod">Modified</th>' : ''}${showLin ? '<th class="c-lin">Status</th>' : ''}<th class="num">Size</th><th><span class="sr">Actions</span></th></tr></thead>
     <tbody>${files.map(f => outRow(f, showTimes, showLin)).join('')}${outAltRows(a, showTimes, showLin)}</tbody></table>`;
 }
-function outLimits(linked) {                  // only the reasons that are true now: no Altium project linked, unverified pins
+function outLimits(linked) {                  // only the reasons that are true now: no Altium project linked, the server's gate
   const r = [];
   if (!linked) r.push('The automatic run needs a linked Altium project.');
-  if (typeof dfmUnverified === 'function' && dfmUnverified().length) r.push("The Altium outputs and the Gerber zip are refused while a part's pins are unverified (see above).");
+  if (outBlockWhy()) r.push('The Altium outputs and the Gerber zip are refused until the blocker above is fixed.');
   return r.join(' ');
 }
 const outPinRisks = () => (typeof pinRisksHTML === 'function' ? `<div class="vb out-risks">${pinRisksHTML()}</div>` : '').replace('<div class="vb out-risks"></div>', '');       // the accepted pin risks stay in view where the files are made
@@ -279,15 +292,15 @@ function outputsHTML(container) {
   const files = S.exports || [];
   const a = outAltState(), note = outAltNoteHTML(files);
   if (!files.length && a) {
-    return outHeader([], true) + pvStepNote('outputs') + outBlockNote() + outPinRisks() + `<div class="vb">${note}${outTable([], a)}</div>`;
+    return outHeader([], true) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + `<div class="vb">${note}${outTable([], a)}</div>`;
   }
   if (!files.length) {
     const linked = outLinked();
-    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinRisks() + (note ? `<div class="vb">${note}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + (note ? `<div class="vb">${note}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
       outLimits(linked));
   }
-  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinRisks()}<div class="vb">${note}${outTable(files, a, files.some(f => f.modified))}</div>`;
+  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinsWarnNote()}${outPinRisks()}<div class="vb">${note}${outTable(files, a, files.some(f => f.modified))}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

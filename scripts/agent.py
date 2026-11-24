@@ -151,8 +151,12 @@ def _summary(model):
         s["outputs_blocked"] = gate        # the one gate of the Outputs button, banner and DFM page, nearly whole (the stage row is cut short)
     waiting = _pins_waiting(model)
     if waiting:
-        # the DFM page's Unverified parts: the Gerber zip and the OutJob wait until the student resolves each (rule 7, rule 11)
+        # the DFM page's Unverified parts: a WARNING only (owner decision 24/11/2026), the outputs are made all the same; the student
+        # should still verify, fix or accept each before ordering (rule 7, rule 11)
         s["pins_waiting"] = waiting
+    warn = _pins_warning(model)
+    if warn:
+        s["pins_warning"] = warn            # the Outputs page's warning text, the same words: never call it a block
     checks_summary = []
     for c in model.get("checks", []):
         stem = c.get("stem")
@@ -173,7 +177,7 @@ GATE_CUT = 900
 
 
 def _outputs_gate(model):
-    """store.manufacturing_warning as the Outputs button shows it ('' when the outputs are not blocked), from the model's stage row
+    """store.manufacturing_block as the Outputs button shows it ('' when the outputs are not blocked), from the model's stage row
     (stages.outputs_stage: one gate for the button, the dot, the banner and the agent). The agent answered "nothing blocks the outputs"
     from lineage.py and partlib.py once, while the banner showed an unfinished schematic: this text is what answers that question."""
     for st in model.get("stages") or []:
@@ -182,8 +186,16 @@ def _outputs_gate(model):
     return ""
 
 
+def _pins_warning(model):
+    """The Outputs stage's pins warning (store.pins_warning through stages.outputs_stage), '' when none: not a block."""
+    for st in model.get("stages") or []:
+        if isinstance(st, dict) and st.get("id") == "outputs":
+            return _clip(st.get("pins_warning") or "", GATE_CUT)
+    return ""
+
+
 def _pins_waiting(model):
-    """The parts the manufacturing gate waits on (store.pins_to_resolve: unverified AND conflicting with the datasheet, DNP left out),
+    """The parts the pins warning names (store.pins_to_resolve: unverified AND conflicting with the datasheet, DNP left out),
     with their status; without a project, the model's pin_decisions.remaining (unverified only)."""
     rows = None
     if model.get("project"):

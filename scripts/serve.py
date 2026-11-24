@@ -1447,9 +1447,28 @@ def step_plan(project, step):
     return plan
 
 
+def _with_pins_warning(project, res):
+    """The outputs result with the pins warning (store.pins_warning: unverified or conflicting parts, named) as its first warning and as
+    `pins_warning`: the files are made, the student is told which parts rest on unchecked pins. The order manifest is kept current."""
+    try:
+        warn = store.pins_warning(project)
+    except Exception:       # noqa: BLE001 - a warning that cannot be worked out never stops the files
+        warn = ""
+    try:
+        import pin_decisions
+        pin_decisions.write_manifest(project)
+    except Exception:       # noqa: BLE001
+        pass
+    res = dict(res or {})
+    if warn:
+        res["pins_warning"] = warn
+        res["warnings"] = [warn, *[w for w in (res.get("warnings") or []) if w != warn]]
+    return res
+
+
 def step_refusal(project, step):
-    """Why a step must not start at all (checked at plan time, before anything runs), or "". Outputs: unverified pins block the files."""
-    return button_words(store.manufacturing_warning(project)) if step == "outputs" else ""
+    """Why a step must not start at all (checked at plan time, before anything runs), or "". Outputs: store.manufacturing_block (an unrouted board, an unfinished design); unverified pins only warn."""
+    return button_words(store.manufacturing_block(project)) if step == "outputs" else ""
 
 
 _RUN_SEQ = itertools.count(1)
@@ -1818,6 +1837,8 @@ def _run_step(project, sess, step, data, bridge):
         res = {**res, "added": True}          # the same answer as when the bridge adds the OutJob itself
     if skipped:            # a warning of the result, so the summary's tail (the amber chip in the chat) carries it
         res = {**res, "warnings": [*(res.get("warnings") or []), "the library build failed - " + _short(skipped[0][1]) + " - so the parts it could not give a symbol are placeholders"]}
+    if step == "outputs":
+        res = _with_pins_warning(project, res)
     summary = STEP_SUMMARY[step](res)
     # the agent reads this conversation on its next turn: a note there says the step is done, so it does not offer it again.
     # "applied" makes it an applied action like the chat's: consent given in words before it is used up (earlier_student_messages)
@@ -2106,7 +2127,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(f"{kind}: " + import_rules_summary(res))
                     continue
                 elif kind == "altium.run_outjob":
-                    unv = store.manufacturing_warning(project)     # unverified pins block the files
+                    unv = store.manufacturing_block(project)       # an unrouted board or an unfinished design blocks the files (pins only warn)
                     if unv:
                         refused.append(f"{kind}: {unv}")
                         continue
@@ -2120,6 +2141,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                         refused.append(f"{kind}: {exc}")
                         continue
                     _record_board(project, "outputs", res)
+                    res = _with_pins_warning(project, res)
                     applied.append(f"{kind}: {len(res['files'])} files" + (" (OutJob added to the project)" if res["added"] else "")
                                    + "".join(f". WARNING: {w}" for w in res.get("warnings", [])))
                     continue
@@ -2128,12 +2150,12 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 applied.append(kind + (f":{a['name']}" if kind == "altium.add_sheet" else ""))
             elif kind == "jlc.gerber_zip":
                 import jlc_upload
-                unv = store.manufacturing_warning(project)         # unverified pins block the zip
+                unv = store.manufacturing_block(project)           # an unrouted board or an unfinished design blocks the zip (pins only warn)
                 try:
                     if unv:
                         refused.append(f"jlc.gerber_zip: {unv}")
                         continue
-                    res = jlc_upload.gerber_zip(project)
+                    res = _with_pins_warning(project, jlc_upload.gerber_zip(project))
                 except jlc_upload.UploadError as exc:
                     refused.append(f"jlc.gerber_zip: {exc}")
                 else:
@@ -4558,11 +4580,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/jlc/gerber-zip":            # build exports/<p>_gerbers.zip from the linked Altium outputs (read only)
             import jlc_upload
-            unv = store.manufacturing_warning(proj)          # unverified pins block the zip
+            unv = store.manufacturing_block(proj)            # an unrouted board or an unfinished design blocks the zip (pins only warn)
             if unv:
                 return self._send(400, {"error": button_words(unv)})
             try:
-                res = jlc_upload.gerber_zip(proj)
+                res = _with_pins_warning(proj, jlc_upload.gerber_zip(proj))
                 return self._send(200, res)
             except jlc_upload.UploadError as exc:
                 return self._send(400, {"error": str(exc)})

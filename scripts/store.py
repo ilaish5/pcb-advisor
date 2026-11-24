@@ -3639,42 +3639,111 @@ def draft_text(items, cut=12):
             f"(no real library symbol yet): {', '.join(refs[:cut])}{' ...' if len(refs) > cut else ''}")
 
 
+def _ref_list(rows, cut=12):
+    names = [ref for r in rows for ref in (r.get("refs") or [r["line"]])]
+    return names, f"{', '.join(names[:cut])}{' ...' if len(names) > cut else ''}"
+
+
 def manufacturing_warning(project):
-    """"" when every part on the board has verified or accepted pins and no pin is left undecided; else the refusal that stops the
-    manufacturing outputs (Altium OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list,
-    without DNP / do-not-buy lines), then the open pins (no net, not NC) and the pins of a built symbol the netlist does not list.
-    The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins);
-    a pin by a net or by NC (mark_pins_nc). A BOM part whose library footprint is in error (footprint_errors) blocks too, named first.
-    So does a drawn schematic that is still a DRAFT (draft_parts): a placeholder part is not the library symbol, so the board it
-    would give is not the board that is ordered; the redraw with the real symbol is what lifts it."""
+    """"" when nothing in the design itself stops the manufacturing outputs (Altium OutJob, Gerber zip); else the refusal. It names
+    the parts whose library footprint is in error (footprint_errors, first), the open pins (no net, not NC) and the pins of a built
+    symbol the netlist does not list, and a drawn schematic that is still a DRAFT (draft_parts: a placeholder part is not the library
+    symbol, so the board it would give is not the board that is ordered). A pin is resolved by a net or by NC (mark_pins_nc).
+    Unverified or conflicting pins are NOT here (owner decision, 16/11 and 24/11/2026): they are a warning only, pins_warning.
+    The board itself (unrouted nets) is route_block; manufacturing_block is the whole gate."""
     fp_msg = footprint_error_text(footprint_error_parts(project, buyable=True), "Not made yet")
-    rows = pins_to_resolve(project)
     gaps = pin_gap_text(pin_gaps(project))
     draft = draft_parts(project)
-    if not rows and not gaps and not draft:
+    if not gaps and not draft:
         return fp_msg
-    said = []
-    bad = [r for r in rows if r["status"] == "mismatch"]
-    refs = lambda rs: [ref for r in rs for ref in (r.get("refs") or [r["line"]])]
-    def part(rs, what):
-        names = refs(rs)
-        return f"{len(names)} {'part has' if len(names) == 1 else 'parts have'} {what}: {', '.join(names[:12])}{' ...' if len(names) > 12 else ''}"
-    if rows and len(bad) < len(rows):
-        said.append(part([r for r in rows if r["status"] != "mismatch"], "pins nobody checked against a datasheet"))
-    if bad:
-        said.append(part(bad, "pins that differ from the datasheet"))
+    said, tail = [], []
     if gaps:
         said.append(gaps)
-    if draft:
-        said.append(draft_text(draft))
-    tail = []
-    if rows:
-        tail.append("Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
-    if gaps:
         tail.append("Open Schematic: connect each pin or mark them all NC in one click.")
     if draft:
+        said.append(draft_text(draft))
         tail.append("Build the library so each placeholder part gets its real symbol, then draw the schematic again (Schematic page).")
     return (fp_msg + " Also: " if fp_msg else "Not made yet: ") + "; ".join(said) + ". " + " ".join(tail)
+
+
+def pins_warning(project, rows=None):
+    """"" or the warning (never a block) that names the parts whose pins nobody checked against a datasheet and the parts whose pins
+    differ from it (pins_to_resolve: DNP / do-not-buy lines left out). Shown on the Outputs page, in the outputs result and in the
+    order manifest, so a student orders knowing which parts rest on unchecked pins."""
+    rows = pins_to_resolve(project) if rows is None else rows
+    if not rows:
+        return ""
+    bad = [r for r in rows if r.get("status") == "mismatch"]
+    unv = [r for r in rows if r.get("status") != "mismatch"]
+    said = []
+    for rs, what in ((unv, "pins nobody checked against a datasheet"), (bad, "pins that differ from the datasheet")):
+        if rs:
+            names, text = _ref_list(rs)
+            said.append(f"{len(names)} {'part has' if len(names) == 1 else 'parts have'} {what}: {text}")
+    return ("Warning (the outputs are still made): " + "; ".join(said)
+            + ". Check them in DFM > Unverified parts before you order: verify, fix or accept each.")
+
+
+ROUTE_NEXT = "Next: press Route board, or route by hand in Altium and press Check board."
+
+
+def route_state(project):
+    """What the board log says about the copper of the linked PcbDoc: {"ready": bool, "why": str, "unrouted": n|None,
+    "open_nets": [net]}. Read from board_results (the route and design rule check records of board-log.jsonl), never guessed:
+    a board never routed or never checked is not ready, and neither is one whose PcbDoc changed since its last check, one whose last
+    check was not read in full, one whose DRC counts an Un-Routed Net, or one whose last route left nets open."""
+    import board_results
+    try:
+        lt = board_results.latest(project)
+    except Exception:       # noqa: BLE001 - no log is no check
+        lt = {}
+    chk = lt.get("board_check")
+    route = lt.get("route")
+    out = {"ready": False, "why": "", "unrouted": None, "open_nets": []}
+    if route and route.get("ok") and not route.get("stale"):
+        out["open_nets"] = [str(n) for n in ((route.get("summary") or {}).get("open_nets") or [])]
+    if not chk:
+        out["why"] = ("the board was never checked: no route or design rule check of the PcbDoc is on record" if not route
+                      else "the board was routed but never checked: no design rule check of the PcbDoc is on record")
+        return out
+    d = chk.get("drc") or {}
+    out["unrouted"] = int(d.get("unrouted") or 0)
+    if not out["open_nets"]:
+        for v in d.get("violations") or []:
+            if str(v).startswith("Un-Routed"):
+                m = re.search(r"\bNet\s+([^\s,()]+)", str(v).split(":", 1)[-1])
+                if m and m.group(1) not in out["open_nets"]:
+                    out["open_nets"].append(m.group(1))
+    if chk.get("stale"):
+        out["why"] = (f"the board changed since its last check (that check counted DRC Un-Routed {out['unrouted']}), "
+                      "so nothing on record says the copper is complete")
+        return out
+    if d.get("complete") is False:
+        out["why"] = "the last design rule check was not read in full, so the unrouted nets are not known"
+        return out
+    if out["unrouted"] or out["open_nets"]:
+        nets = out["open_nets"]
+        shown = f"; open nets: {', '.join(nets[:6])}{' ...' if len(nets) > 6 else ''}" if nets else ""
+        out["why"] = (f"the board has unrouted nets (DRC Un-Routed {out['unrouted']}" + (f", {len(nets)} open" if nets else "") + ")" + shown)
+        return out
+    out["ready"] = True
+    return out
+
+
+def route_block(project):
+    """"" when the board on record has no unrouted net; else the refusal (why, the open nets, the DRC Un-Routed count, one next step)."""
+    st = route_state(project)
+    return "" if st["ready"] else f"Not made yet: {st['why']}. {ROUTE_NEXT}"
+
+
+def manufacturing_block(project):
+    """The one gate of Generate outputs, the OutJob run and the Gerber zip (and the Outputs stage, banner and agent context): the
+    design's own refusal (manufacturing_warning) and the board's (route_block), in one text; "" when both are clear. Pins are a
+    warning only (pins_warning), never a block."""
+    design, board = manufacturing_warning(project), route_block(project)
+    if design and board:
+        return design + " Also: " + board[len("Not made yet: "):]
+    return design or board
 
 
 def accept_pins(project, key):

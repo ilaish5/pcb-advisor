@@ -482,7 +482,8 @@ onAct('export', async (el, d, e) => {
   if (r.state) setState(r.state);      // the Outputs view lists the new file
   render(true);
   const res = r.result || {}, file = String(res.file || '').split(/[\\/]/).pop(), miss = res.needs_lcsc || [];
-  toast(`${name} exported${miss.length ? `. No LCSC number for ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ' +' + (miss.length - 3) : ''} (run Check stock)` : ''}`,
+  const gone = res.left_out_text ? '. ' + res.left_out_text.replace(/\.$/, '') : '';      // DNP lines and parts on no drawn sheet: named, never silent
+  toast(`${name} exported${miss.length ? `. No LCSC number for ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ' +' + (miss.length - 3) : ''} (run Check stock)` : ''}${gone}`,
     file ? {label: 'Download', onClick: () => bomDownload(file)} : undefined);
   return;
 });

@@ -536,50 +536,24 @@ def test_run_outjob_has_no_design_warning_for_a_matching_board(lte, fake, monkey
     assert bridge.design_problems(lte) == []
 
 
-# ---- manufacturing outputs are refused while parts are unverified (the full cases: test_manufacturing_block.py)
+# ---- unverified parts only warn (owner decision 24/11/2026); the board gate is in test_manufacturing_block.py
 
-def test_manufacturing_outputs_are_refused_while_parts_are_unverified(lte, fake, monkeypatch):
-    from http.server import ThreadingHTTPServer
-    import serve
+def test_manufacturing_outputs_are_not_refused_while_parts_are_unverified_they_warn(lte, fake, monkeypatch):
     monkeypatch.setattr(store, "manufacturing_warning", _REAL_WARNING)
-    monkeypatch.setattr(serve, "QUIET", True)
     _linked_with_rules_board(lte, fake)
-    msg = store.manufacturing_warning(lte)
-    assert msg.startswith("Not made yet: 2 parts have pins nobody checked against a datasheet: ") and "1 part has pins that differ from the datasheet: " in msg and msg.endswith("or accept it if you checked it yourself.")
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{httpd.server_address[1]}"
-
-    def post(path):
-        req = urllib.request.Request(f"{base}{path}?project={lte}", method="POST", data=b"{}",
-                                     headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                return r.status, json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read())
-
-    try:
-        for path in ("/api/altium/run-outjob", "/api/jlc/gerber-zip"):
-            code, body = post(path)
-            assert code == 400 and body["error"] == msg
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-    fake.runs.clear()
-    applied, _, refused = serve.apply_actions(lte, [{"type": "altium.run_outjob"}, {"type": "jlc.gerber_zip"}])
-    assert not applied and not fake.runs and refused == [f"altium.run_outjob: {msg}", f"jlc.gerber_zip: {msg}"]
+    msg = store.pins_warning(lte)
+    assert msg.startswith("Warning (the outputs are still made): 2 parts have pins nobody checked against a datasheet: ") and "1 part has pins that differ from the datasheet: " in msg
+    assert "pins nobody checked" not in store.manufacturing_warning(lte)
 
 
 def test_no_warning_without_unverified_parts_and_do_not_buy_lines_do_not_count(lte, monkeypatch):
-    monkeypatch.setattr(store, "manufacturing_warning", _REAL_WARNING)
     rows = [{"line": "k1", "refs": ["D1"], "mpn": "", "status": "unverified", "issues": ""},
             {"line": "k2", "refs": ["R9"], "mpn": "", "status": "unverified", "issues": ""}]
     monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: rows)
     monkeypatch.setattr(store, "bom", lambda project, write=True: [{"key": "k2", "dnp": True}])
-    assert "1 part has pins nobody checked against a datasheet: D1." in store.manufacturing_warning(lte)
+    assert "1 part has pins nobody checked against a datasheet: D1." in store.pins_warning(lte)
     monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: [])
-    assert store.manufacturing_warning(lte) == ""
+    assert store.pins_warning(lte) == ""
 
 
 def test_api_altium_outputs_lists_the_folder_altium_wrote(lte, tmp_path, monkeypatch):

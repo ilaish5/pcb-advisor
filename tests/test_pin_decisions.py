@@ -81,7 +81,7 @@ def test_a_changed_pin_or_mpn_ends_the_decision(empty):
     _redraw(empty, "VDD")
     row = store.unverified_parts(empty)[0]
     assert row["status"] == "unverified" and "accepted on" in row["issues"] and "pins changed since" in row["issues"]
-    assert store.manufacturing_warning(empty)
+    assert "U1" in store.pins_warning(empty)        # named in the warning; never a block
     pin_decisions.accept(empty, "U1")                       # decided again against the new pins
     assert store.unverified_parts(empty) == []
     store.propose_bom(empty, "U1", {"mpn": "OTHER9999"})
@@ -89,12 +89,12 @@ def test_a_changed_pin_or_mpn_ends_the_decision(empty):
     assert [u["line"] for u in store.unverified_parts(empty)] == ["U1"]
 
 
-def test_revoke_closes_the_gate_again_and_is_idempotent(empty):
+def test_revoke_brings_the_warning_back_and_is_idempotent(empty):
     _sheet(empty)
     pin_decisions.accept(empty, "U1")
     assert pin_decisions.revoke(empty, "U1")["changed"] is True
     assert pin_decisions.revoke(empty, "U1")["changed"] is False
-    assert store.manufacturing_warning(empty)
+    assert "U1" in store.pins_warning(empty) and not store.manufacturing_block(empty)
     assert store.load_sheet(empty, "01")["parts"][0]["pins_source"] == "agent"
 
 
@@ -130,7 +130,7 @@ def test_the_agent_cannot_write_a_decision(empty):
     dec = {"status": "accepted", "basis": "blind", "fingerprint": pin_decisions.fingerprint(empty, "U1")}
     serve.apply_actions(empty, [{"type": "library.add", "line": "U1", "changes": {"pin_decision": dec, "pins_accepted": True}}])
     assert "pin_decision" not in store.library_parts(empty).get("U1", {})
-    assert store.manufacturing_warning(empty)
+    assert "U1" in store.pins_warning(empty)
 
 
 def test_simple_passives_are_never_asked(empty):
