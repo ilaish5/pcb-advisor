@@ -166,3 +166,14 @@ def test_wrong_side_and_unknown_subject_are_findings(proj):
 def test_no_edge_finding_from_other_text(proj, text):
     p = proj(items=[], text=text)
     assert coverage.edge_findings(store.load_idea(p), BOM) == []
+
+
+def test_the_bom_decision_binds_the_names(proj, monkeypatch):
+    p = proj()
+    prop = {"id": "p1", "status": "approved", "line": "J2", "changes": {}}
+    monkeypatch.setattr(store, "decide", lambda *a, **k: {})
+    monkeypatch.setattr(store, "proposals", lambda x: [prop])
+    monkeypatch.setattr(serve.project_mod, "touch", lambda x: None)
+    monkeypatch.setattr(serve, "recheck_missing", lambda x: None)
+    serve.decide_and_note(p, None, "p1", "approved", note=False, redraw_now=False)
+    assert _targets(p) == {"e_usb": "J1", "a_ldo": "U1", "a_sht": "U2"}
