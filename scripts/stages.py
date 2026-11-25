@@ -300,7 +300,7 @@ def _gate_gaps(project):
     gaps, pads, kinds = store.pin_gaps(project), store.pad_gaps(project), store.pad_kinds(project)
 
     def tag(i):
-        k = kinds.get((i["ref"], i["num"]))
+        k = kinds.get(store.pad_key(i["ref"], i["num"]))
         if not k:
             return {**i, "kind": "", "twin_net": "", "suggest_net": "", "wirable": True}
         suggest = k["net"] or ("GND" if k["kind"] == "shell" and store._net_known(project, "GND") else "")

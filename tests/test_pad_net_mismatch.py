@@ -321,3 +321,60 @@ def test_usb_twins_come_from_the_footprint_pad_names_when_the_symbol_names_nothi
     rows = {r["num"]: r for r in pin_model.pad_report(empty)["unnetted"]}
     assert rows["B9"]["kind"] == "duplicate" and rows["B9"]["net"] == "VBUS" and rows["B12"]["net"] == "GND"
     assert next(i for i in stages._gate_gaps(empty)["pads"] if i["num"] == "B9")["suggest_net"] == "VBUS"
+
+
+def test_a_two_row_pin_header_with_a_b_pad_names_is_not_a_usb_plug(empty):
+    def rows(*numbers):
+        return [f"{side}{n}" for side in "AB" for n in numbers]
+    for pads in (rows(*range(1, 7)), rows(*range(1, 9)), rows(*range(1, 11)), rows(*range(1, 17))):
+        assert not pin_model._usb_c(["HDR-TH_2XN"], pads), pads
+    for pads in (rows(5, 9, 12), rows(1, 4, 5, 6, 7, 8, 9, 12), rows(*range(1, 13)), ["A1B12", "A4B9", "1"]):
+        assert pin_model._usb_c(["CONN"], pads), pads
+    assert pin_model._usb_c(["CONN", None, "Type-C power input"], rows(1, 4))
+    _add(empty, "J3", "HDR2X10")
+    _sheet(empty, {"J3": [("A4", "A4", "+3V3"), ("A6", "A6", "SDA")]})
+    _library(empty, {"J3": ("SYM_J3", "HDR-TH_2X10", [_pad(n, tht=True) for n in rows(*range(1, 11))], [("A4", "A4"), ("A6", "A6")], "generated")})
+    got = {r["num"]: r for r in pin_model.pad_report(empty)["unnetted"]}
+    for num in ("B9", "B6"):
+        assert (got[num]["kind"], got[num]["net"]) == ("pad", ""), got[num]
+    assert not any(i["suggest_net"] for i in stages._gate_gaps(empty)["pads"])
+
+
+def _ep(empty, net):
+    _add(empty, "U3", "ABCD1234")
+    _sheet(empty, {"U3": [("1", "IN", "X"), ("2", "GND", "GND"), ("ep", "EP", net)]})
+    _library(empty, {"U3": ("SYM_U3", "FP3", [_pad("1"), _pad("2"), _pad("EP", 200, 200)], [("1", "IN"), ("2", "GND"), ("EP", "EP")], "easyeda")})
+
+
+def _u3_pins(empty):
+    return [(p["num"], p["net"]) for p in store.load_sheet(empty, "01")["parts"][0]["pins"]]
+
+
+def test_a_pin_spelled_in_another_case_is_one_gap_that_keeps_its_kind(empty, server):
+    _ep(empty, "")
+    gate = stages._gate_gaps(empty)
+    found = gate["open"] + gate["unlisted"] + gate["pads"]
+    assert [(i["num"], i["kind"]) for i in found] == [("ep", "thermal")] and not gate["nopad"]
+    warning = store.manufacturing_warning(empty)
+    assert "missing from the netlist" not in warning and "footprint pad" not in warning
+    assert call(server, "POST", "/api/nc/mark", empty, {})[1]["marked"] == 0          # an exposed pad is never swept up
+    assert call(server, "POST", "/api/nc/mark", empty, {"items": [{"sheet": "01", "ref": "U3", "num": "EP"}]})[1]["marked"] == 1
+    assert _u3_pins(empty) == [("1", "X"), ("2", "GND"), ("ep", "NC")]                # no second pin
+
+
+def test_the_agents_nc_in_another_case_is_held_and_approved(empty):
+    _ep(empty, "")
+    data = store.load_sheet(empty, "01")
+    data["parts"][0]["pins"][2] = {"num": "EP", "name": "EP", "net": "NC"}
+    data, held = store.hold_nc_marks(empty, "01", data)
+    assert [(i["ref"], i["num"]) for i in held] == [("U3", "ep")]
+    assert store.write_sheet(empty, "01", data)["ok"]
+    store.propose_nc(empty, held)
+    assert len(store.nc_proposal(empty)) == 1 and store.approve_nc(empty)["marked"] == 1
+    assert _u3_pins(empty) == [("1", "X"), ("2", "GND"), ("EP", "NC")]
+
+
+def test_a_netted_pin_in_another_case_leaves_no_gap(empty):
+    _ep(empty, "GND")
+    gate = stages._gate_gaps(empty)
+    assert not any(gate[k] for k in ("open", "unlisted", "pads", "nopad"))
