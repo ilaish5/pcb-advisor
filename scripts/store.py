@@ -484,10 +484,12 @@ def qty(line):
     return 0 if (line.get("dnp") or line.get("nobuy")) else len(line.get("refs", []))
 
 
-def role_findings(lines, waiting=()):
+def role_findings(lines, waiting=(), extra=()):
     """{line key: finding} where a line holds fewer parts than its role names (role_refs). With `waiting` (pending BOM
     proposals) each of those is judged as the BOM would read with all of them approved, and the keys are their ids."""
     state = {l["key"]: {"key": l["key"], "role": l.get("role"), "refs": l.get("refs")} for l in lines}
+    for row in extra:            # the lines the same turn proposes, not recorded yet: their parts count for a line judged before them
+        state.setdefault(row["key"], dict(row))
     waiting = [p for p in waiting if not delete_spec(p)]
     for p in waiting:
         row = state.setdefault(p["line"], {"key": p["line"], "role": "", "refs": []})
@@ -495,6 +497,12 @@ def role_findings(lines, waiting=()):
     rows = list(state.values())
     judged = [(p["id"], state[p["line"]]) for p in waiting] if waiting else [(r["key"], r) for r in rows]
     return {k: f for k, row in judged for f in [role_refs.finding(row, rows)] if f}
+
+
+def proposal_role_finding(project, pid, extra=()):
+    """The role finding of one pending proposal, counting the lines `extra` ({key, role, refs}: the rest of its turn)."""
+    waiting = [p for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending" and p.get("line")]
+    return role_findings(bom_lines(project), waiting, extra).get(pid, "")
 
 
 def best_offer(line, supply=None):
@@ -639,6 +647,20 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     """Record a proposal. Nothing about the BOM changes until the student approves.
     `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty).
     changes {"deleted": true} deletes the line, {"remove": ["R3"]} takes refs off it (propose_bom_delete)."""
+    if isinstance(changes, dict) and changes.get("remove") and not changes.get("deleted"):
+        pend = [p for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
+                and p.get("new") and p.get("line") == line]
+        if pend and line not in {l["key"] for l in bom_lines(project)}:       # refs of a line not in the BOM yet: off the card
+            drop = set(_split_refs(changes["remove"]) or [])
+            old = dict(pend[-1].get("changes") or {})
+            keep = [r for r in old.get("refs") or [] if r not in drop]
+            if not keep:
+                raise ValueError(f"{line} would have no refs left: reject its card instead")
+            old["refs"] = keep
+            if "qty" in old:
+                old["qty"] = len(keep)
+            return propose_bom(project, line, old, reason=reason or pend[-1].get("reason") or "", sources=sources,
+                               library=library, session=session, new=True, reserved=reserved)
     if isinstance(changes, dict) and (changes.get("deleted") or changes.get("remove")):
         return propose_bom_delete(project, line, None if changes.get("deleted") else changes.get("remove"),
                                   reason=reason, sources=sources, session=session)
@@ -650,7 +672,13 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
         waiting = [p for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
                    and p.get("new") and p.get("line") == line]
         if waiting:
-            changes, library, new = {**(waiting[-1].get("changes") or {}), **changes}, library or waiting[-1].get("library"), True
+            old = waiting[-1].get("changes") or {}
+            asked = changes
+            changes, library, new = {**old, **changes}, library or waiting[-1].get("library"), True
+            if "qty" in asked and "refs" not in asked and isinstance(old.get("refs"), list):
+                # the refs the earlier card got from its qty follow the new qty (more are added below, fewer are cut here)
+                want_n = asked["qty"] if isinstance(asked["qty"], int) else int(asked["qty"]) if str(asked["qty"]).strip().isdigit() else 0
+                changes["refs"] = old["refs"][:want_n] if want_n >= 1 else old["refs"]
             for p in waiting:
                 append(project, "proposals.jsonl", {"id": p["id"], "ts": now_ms(), "status": "rejected", "by": "superseded"})
     if line not in existing and not new:
@@ -666,6 +694,8 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     # The quantity is the number of refs; "qty": 6 with one ref would order one. Add free refs of the same prefix, for a
     # new line and for an existing one (R1 qty 2 -> R1, R2). A quantity that cannot be applied is an error, never dropped.
     want = changes.get("qty")
+    if isinstance(want, str) and want.strip().isdigit():
+        want = int(want)
     if "qty" in changes:
         if isinstance(want, bool) or not isinstance(want, int) or want < 1:
             raise ValueError(f"qty must be a whole number of parts, 1 or more, not {want!r}")
@@ -680,6 +710,8 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
             taken = {r for l in existing.values() for r in (l.get("refs") or [])}
             taken |= {r for q in proposals(project) if q.get("kind") == "bom" and q.get("status") == "pending"
                       for r in ((q.get("changes") or {}).get("refs") or [])}
+            for sh in sheet_ids(project):         # a ref drawn on a sheet but not in the BOM yet is not free either
+                taken |= {pt.get("ref") for pt in load_sheet(project, sh).get("parts", [])}
             taken |= set(refs) | set(reserved)
             refs, n = list(refs), 1
             while len(refs) < want:

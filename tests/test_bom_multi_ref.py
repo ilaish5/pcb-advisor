@@ -14,7 +14,7 @@ import store
     ("CC1/CC2 pull-downs", 2), ("SDA/SCL pull-ups", 2), ("LDO input/output caps", 2), ("LDO input and output capacitors", 2),
     ("USB-C CC1/CC2 pull-down", 2), ("pull-ups on SDA and SCL", 2), ("USB D+/D- series resistors", 2),
     ("MOSI/MISO/SCK series resistors", 3), ("USB_DP/USB_DM series resistors", 2), ("2x 100nF decoupling", 2),
-    ("decoupling x4", 4), ("I2C pull-up pair", 2), ("pair of load caps", 2), ("two I2C pull-ups", 2), ("pull-ups on both lines", 2),
+    ("100nF x4 decoupling", 4), ("I2C pull-up pair", 2), ("pair of load caps", 2), ("two I2C pull-ups", 2), ("pull-ups on both lines", 2),
 ])
 def test_roles_that_name_several_parts(role, n):
     assert role_refs.parts_named(role) == n
@@ -24,7 +24,7 @@ def test_roles_that_name_several_parts(role, n):
     "I2C/SMBus pull-up", "I2C/SMBus pull-ups", "USB D+ pull-up to 3V3", "BOOT0 pull-down", "decoupling", "Crystal load caps",
     "CANH/CANL termination resistor", "D+/D- termination resistor", "resistor between CANH and CANL", "differential pair termination",
     "OSC_IN/OSC_OUT feedback resistor", "3V3/5V select resistor", "RE/DE pull-down", "ESD and EMI filter caps", "sets 2x gain",
-    "SDA/SCL", "USB-C power and data", "SPI/I2C select resistor",
+    "SDA/SCL", "X2 safety capacitor", "Mains X2 cap 100nF", "Load capacitor for crystal X2", "Y2 safety cap", "USB-C power and data", "SPI/I2C select resistor",
 ])
 def test_roles_that_do_not(role):
     assert role_refs.parts_named(role) < 2
@@ -109,10 +109,61 @@ def test_a_qty_that_cannot_be_applied_is_an_error_not_a_drop(empty):
     _approved_line(empty)
     store.propose_bom(empty, "R1", {"refs": ["R1", "R2"]})
     store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
-    for qty in (1, 0, "2", 2.5, True):
+    for qty in (1, 0, "x", 2.5, True):
         with pytest.raises(ValueError, match="qty"):
             store.propose_bom(empty, "R1", {"qty": qty})
     applied, _, refused = serve.apply_actions(empty, [{"type": "bom.propose", "line": "R1", "changes": {"qty": 1}}])
     assert not applied and refused and "qty 1" in refused[0]
     with pytest.raises(ValueError, match="designator"):
         store.propose_bom(empty, "USBC", {"qty": 2, "value": "x"}, new=True)
+
+
+def test_one_line_judged_before_its_twin_of_the_same_turn_still_applies(empty, monkeypatch):
+    monkeypatch.setattr(store, "autonomy", lambda: "auto")
+    acts = [act("C1", ["C1"], "Input/output caps", "10uF"), act("C2", ["C2"], "Input/output caps", "10uF")]
+    applied, _, refused = serve.apply_actions(empty, acts)
+    assert not refused and applied == ["bom.propose:C1", "bom.propose:C2"]
+    assert {p["status"] for p in store.proposals(empty)} == {"approved"}
+    assert not any(l["role_finding"] for l in store.bom(empty, write=False))
+
+
+def test_roles_naming_designators_count_them_anywhere(empty):
+    for key, part in (("R1", "top"), ("R2", "bottom")):
+        store.propose_bom(empty, key, {"refs": [key], "value": "10k", "role": f"Feedback divider resistors R1/R2 ({part})"}, new=True)
+        store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
+    assert not any(l["role_finding"] for l in store.bom(empty, write=False))
+    store.propose_bom(empty, "R5", {"refs": ["R5"], "value": "10k", "role": "Divider resistors R5/R6"}, new=True)
+    assert "names 2 parts" in store.proposals(empty)[-1]["role_finding"]
+
+
+def test_a_ref_drawn_on_a_sheet_is_not_free_for_a_qty_bump(empty):
+    _approved_line(empty)
+    d = store.netlist_dir(empty)             # drawn on a sheet (the agent wrote it before the BOM line existed)
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "01.json").write_text('{"id": "01", "parts": [{"ref": "R2", "pins": []}]}', encoding="utf-8")
+    rec = store.propose_bom(empty, "R1", {"qty": 2})
+    assert rec["changes"]["refs"] == ["R1", "R3"]
+
+
+def test_a_digit_string_qty_is_a_qty(empty):
+    _approved_line(empty)
+    assert store.propose_bom(empty, "R1", {"qty": "2"})["changes"]["refs"] == ["R1", "R2"]
+
+
+def test_a_lower_qty_on_a_waiting_new_line_cuts_its_refs(empty):
+    store.propose_bom(empty, "R1", {"qty": 3, "value": "1k"}, new=True)
+    assert store.proposals(empty)[-1]["changes"]["refs"] == ["R1", "R2", "R3"]
+    assert store.propose_bom(empty, "R1", {"qty": 2})["changes"]["refs"] == ["R1", "R2"]
+    assert store.propose_bom(empty, "R1", {"qty": 4})["changes"]["refs"] == ["R1", "R2", "R3", "R4"]
+    rec = store.propose_bom(empty, "R1", {"remove": ["R2"]})
+    assert rec["new"] and rec["changes"]["refs"] == ["R1", "R3", "R4"] and rec["changes"]["value"] == "1k"
+    assert [p["status"] for p in store.proposals(empty) if p["status"] == "pending"] == ["pending"]
+
+
+def test_undo_of_a_qty_extended_existing_line_restores_the_refs(empty, monkeypatch):
+    _approved_line(empty)
+    rec = store.propose_bom(empty, "R1", {"qty": 2})
+    store.decide(empty, rec["id"], "approved")
+    assert store.bom(empty, write=False)[0]["refs"] == ["R1", "R2"]
+    store.undo_proposal(empty, rec["id"])
+    assert store.bom(empty, write=False)[0]["refs"] == ["R1"]

@@ -1153,14 +1153,19 @@ def _warnings_suffix(value_warning, role_finding):
     return f" ({'warnings' if len(texts) > 1 else 'warning'}: {'; '.join(texts)})"
 
 
-def idea_kept_note(idea, a):
-    """' (added as "Power (2)"; "Power" is unchanged)' when an idea.propose did not touch the row of its topic."""
-    topic, text = str(a.get("topic")).strip(), str(a.get("text")).strip()
-    rows = {i.get("topic"): i.get("text") for i in (idea or {}).get("agreed", [])}
-    if topic not in rows or rows[topic] == text:
+def idea_kept_note(before, idea, a):
+    """What an idea.propose did to a topic that existed: ' (added as "Power (2)"; "Power" is unchanged)' when it got a row of its
+    own, ' ("Power" is unchanged: it already says this)' when nothing changed; '' for a new topic or a row that was updated."""
+    topic = str(a.get("topic")).strip()
+    if topic not in before:
         return ""
-    other = next((t for t, x in rows.items() if x == text and t != topic), "")
-    return f' (added as "{other}"; "{topic}" is unchanged)' if other else f' ("{topic}" is unchanged)'
+    rows = {i.get("topic"): i.get("text") for i in (idea or {}).get("agreed", [])}
+    added = [t for t in rows if t not in before]
+    if added:
+        return f' (added as "{added[0]}"; "{topic}" is unchanged)'
+    if rows == before:
+        return f' ("{topic}" is unchanged: it already says this)'
+    return ""
 
 
 def _renumber_by_name(part, symbol, why=None):
@@ -1968,6 +1973,17 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 for r in [a.get("line"), *(((a.get("changes") or {}).get("refs") or []) if isinstance(a.get("changes"), dict) else [])]
                 if isinstance(r, str)}
 
+    def _batch_row(a):
+        ch, refs = a["changes"], a["changes"].get("refs")
+        if not (isinstance(refs, list) and refs):
+            n = int(ch["qty"]) if str(ch.get("qty")).isdigit() else 1
+            refs = [a["line"]] + [f"{a['line']}+{i}" for i in range(1, n)]
+        return {"key": a["line"], "role": ch.get("role"), "refs": refs}
+
+    # the lines this turn proposes, so one judged before the others of its role still counts their parts
+    batch_rows = [_batch_row(a) for a in actions or [] if isinstance(a, dict) and a.get("type") == "bom.propose"
+                  and isinstance(a.get("line"), str) and isinstance(a.get("changes"), dict) and a["changes"].get("role")]
+
     def maybe_auto(rec):
         if not allow_auto or not store.may_auto_apply(rec):       # allow_auto=False (the follow-up turn): a proposal always waits for the student
             return
@@ -1993,8 +2009,9 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
             if kind == "idea.propose" and a.get("topic") and a.get("text"):
                 # an existing requirement is replaced only when the student asked, quoted from what they just wrote
                 replace = _truthy(a.get("replace")) and _quote_holds(a.get("student_said"), last_user)
+                before_rows = {i.get("topic"): i.get("text") for i in store.load_idea_working(project).get("agreed", [])}
                 idea = store.propose_idea(project, a["topic"], a["text"], by="agent", replace=replace)
-                applied.append(f"idea.propose:{a['topic']}" + idea_kept_note(idea, a))
+                applied.append(f"idea.propose:{a['topic']}" + idea_kept_note(before_rows, idea, a))
             elif kind == "idea.describe" and isinstance(a.get("text"), str):
                 store.set_idea_goal(project, a["text"], by="agent")
                 applied.append("idea.describe")
@@ -2018,7 +2035,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                                         a.get("sources", []), _agent_may_set_library(a.get("library")) or None,
                                         sess, new=bool(a.get("new")), reserved=reserved)
                 proposals.append(rec["id"])
-                short = next((p.get("role_finding") for p in store.proposals(project) if p["id"] == rec["id"]), "")
+                short = store.proposal_role_finding(project, rec["id"], batch_rows)
                 applied.append(f"bom.propose:{a['line']}" + _warnings_suffix(bom_value_warning(project, a), short))
                 if not short:                   # fewer parts than the role names: it waits for the student, never applied unasked
                     maybe_auto(rec)

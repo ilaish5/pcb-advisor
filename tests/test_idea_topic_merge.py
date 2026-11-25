@@ -84,3 +84,13 @@ def test_the_action_replaces_only_on_the_students_own_words(empty):
     assert rows(empty)[0] == ("Power", USB) and not serve.warned_map(applied)
     applied, _, _ = serve.apply_actions(empty, [{**act, "text": "2x AA"}], last_user="please change the power to 2x AA")
     assert applied == ["idea.propose:Power"] and rows(empty)[0] == ("Power", "2x AA")
+
+
+def test_the_note_says_what_really_happened(empty):
+    def run(text):
+        applied, _, _ = serve.apply_actions(empty, [{"type": "idea.propose", "topic": "Power", "text": text}])
+        return applied[0]
+    assert run(USB) == "idea.propose:Power"
+    assert run(USB) == 'idea.propose:Power ("Power" is unchanged: it already says this)'
+    assert run(USB + ", plus a fuse") == "idea.propose:Power"
+    assert run(LDO).startswith('idea.propose:Power (added as "Power (2)"')

@@ -18,9 +18,11 @@ _PLURAL_RE = re.compile(rf"\b{_PLURAL}\b", re.I)
 _BRIDGES = re.compile(r"\b(?:between|across)\b", re.I)
 
 # "2x VDD" counts parts; "2x gain" does not
+# "100nF x2" counts only after a value ("X2" alone is the safety-capacitor class or a crystal's pin 2)
 _TIMES = (re.compile(r"(?<![\w.])([2-9]|1\d)\s*[x×]\s+(?=[A-Za-z0-9])", re.I),
-          re.compile(r"(?<![\w.])[x×]\s?([2-9]|1\d)(?![\w.])", re.I))
-_RATIO = re.compile(r"gain|attenuat|oversampl|multipli|\bAAA?\b", re.I)
+          re.compile(r"(?<![\w.])\d[\w.µΩ%]*\s+[x×]\s?([2-9]|1\d)(?![\w.])", re.I))
+_RATIO = re.compile(r"gain|attenuat|oversampl|multipli|\bAAA?\b|safety|mains|class\s*[XY]", re.I)
+_DESIGNATOR = re.compile(r"(?:R|C|L|FB)\d+", re.I)
 _PAIR = re.compile(r"(?<!differential )(?<!diff )(?<!twisted )\bpair of\b|\b(?:caps?|capacitors?|resistors?|pull[- ]?(?:up|down)s?) pair\b", re.I)
 _WORDS = {"two": 2, "three": 3, "four": 4}
 _WORD_COUNT = re.compile(rf"\b(two|three|four)\s+(?:[\w-]+\s+){{0,2}}?{_PLURAL}\b", re.I)
@@ -63,6 +65,15 @@ def parts_named(role):
     return max(counts)
 
 
+def designators(role):
+    """The designators ("R1/R2") an enumeration of the role names: the parts are named, so they count wherever they are."""
+    out = set()
+    for run in _RUN.finditer(str(role or "")):
+        items = re.findall(_ITEM, run.group(0))
+        out |= {x.upper() for x in items if _DESIGNATOR.fullmatch(x)}
+    return out
+
+
 def _key(role):
     return " ".join(str(role or "").split()).casefold()
 
@@ -74,6 +85,9 @@ def finding(line, lines=()):
     if not refs or not all(PASSIVE.fullmatch(str(r)) for r in refs):
         return ""
     want = parts_named(role)
+    # a role that names designators (R1/R2 on R1, "(top)" / "(bottom)"): one held by another line of the BOM is not missing
+    elsewhere = {str(r).upper() for o in lines for r in (o.get("refs") or []) if o.get("key") != line.get("key")}
+    want -= len(designators(role) & elsewhere - {str(r).upper() for r in refs})
     if len(refs) >= want:
         return ""
     held = len(refs) + sum(len(o.get("refs") or []) for o in lines
