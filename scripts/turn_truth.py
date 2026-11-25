@@ -13,7 +13,7 @@ _CARD_NOUN = r"(?:cards?|proposals?|כרטיסים|כרטיס|הצעות)"
 _LINE_NOUN = r"(?:lines?|rows?|שורות|שורה)"
 _CLAIM = re.compile(rf"(?<![\w.])(\d{{1,3}})\s+(?:new\s+|BOM\s+|more\s+)*({_CARD_NOUN}|{_LINE_NOUN})(?!\w)", re.I)
 # verb forms only, on word boundaries: "You have 3 proposals waiting" / "3 updates" are nouns, not a claim of work done
-_VERB = re.compile(r"\b(?:propos(?:e|ed|es|ing)|pick(?:ed|s|ing)?|chose|chosen|select(?:ed|s|ing)?|list(?:ed|s|ing)?|suggest(?:ed|s|ing)?|add(?:ed|ing|s)?|creat(?:e|ed|es|ing)|queue[ds]?|queuing|sent|wrote|put|updat(?:e|ed|ing))\b"
+_VERB = re.compile(r"\b(?:propos(?:e|ed|es|ing)|picked|chose|selected|listed|suggested|add(?:ed|ing|s)?|creat(?:e|ed|es|ing)|queue[ds]?|queuing|sent|wrote|put|updat(?:e|ed|ing))\b"
                    r"|הצעתי|בחרתי|הוספתי|יצרתי|שלחתי|עדכנתי", re.I)
 _LINE_CTX = re.compile(r"\bBOM\b|propos|cards?|כרטיס|הצע", re.I)
 

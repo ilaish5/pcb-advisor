@@ -309,15 +309,38 @@ def _gate_gaps(project):
             "pads": [tag(i) for i in pads["pads"]], "nopad": pads["nopad"]}
 
 
+_PCB_MEMO = {}
+
+
+def _pcb_content(project):
+    """(parts, copper) of the linked PcbDoc: has it components, has it routed tracks. A board placed or routed by hand in Altium leaves
+    nothing in the board log. Unreadable or not linked: (False, False). Memoised on the file's stat."""
+    pcb = _linked_pcb(project)
+    if not pcb:
+        return False, False
+    key = (str(pcb), _stat(pcb))
+    hit = _PCB_MEMO.get(project)
+    if hit and hit[0] == key:
+        return hit[1]
+    try:
+        from altium import read_pcbdoc
+        doc = read_pcbdoc(pcb)
+        res = (bool(doc.get("components")), any(t.get("net") for t in doc.get("tracks") or []))
+    except Exception:       # noqa: BLE001 - never a guess
+        res = (False, False)
+    _PCB_MEMO[project] = (key, res)
+    return res
+
+
 def _board_started(project, model):
-    """True once a board was placed, routed or checked (the board log, or an Altium step that succeeded)."""
+    """True once a board was placed, routed or checked (the board log, an Altium step that succeeded, or parts / tracks in the linked PcbDoc)."""
     import board_results
     try:
         lt = board_results.latest(project)
     except Exception:       # noqa: BLE001
         lt = {}
     ok_log = model.get("altium_ok") or {}
-    return bool(lt.get("place") or lt.get("route") or lt.get("board_check") or ok_log.get("place-pcb") or ok_log.get("route-pcb"))
+    return bool(lt.get("place") or lt.get("route") or lt.get("board_check") or ok_log.get("place-pcb") or ok_log.get("route-pcb")) or any(_pcb_content(project))
 
 
 def outputs_stage(project, model):
@@ -351,8 +374,9 @@ def outputs_stage(project, model):
         if has_pins:
             gate["gaps"] = gaps
             gate["nc_proposal"] = store.nc_proposal(project)
+        label = ("Check the board" if _pcb_content(project)[1] else "Route the board") if page == "pcb" else "Resolve the blocker"
         st = _stage("outputs", "blocked", why, "bad", len(gaps["open"]) + len(gaps["unlisted"]) + len(gaps["pads"]) + len(gaps["nopad"]) or 1, gate=gate,
-                    next_={"label": "Route the board" if page == "pcb" else "Resolve the blocker", "act": "go:" + page})
+                    next_={"label": label, "act": "go:" + page})
         st["pins_warning"] = warn
         return st
     ex = model.get("exports") or []

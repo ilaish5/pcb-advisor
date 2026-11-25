@@ -240,6 +240,13 @@ function propTicked(id) {
   const p = (S.proposals || []).find(x => x.id === id);
   return !(p && propIsUnverified(p));
 }
+/* the line's own code stands beside the proposal only while the MPN stays; a code that names another part (code_mismatch) never does */
+function propKnownLcsc(c, known) {
+  if (c.mpn && c.mpn !== known.mpn) return '';
+  const sup = Object.values(known.supply || {}).filter(Boolean);
+  if (sup.some(v => v.code_mismatch)) return '';
+  return known.lcsc || ((sup.find(v => v.code) || {}).code) || '';
+}
 function propRowOf(p, extra) {
   const c = p.changes || {}, f = k => (c[k] === undefined || c[k] === null ? '' : propShow(c[k], k));
   if (p.kind === 'idea_diagram') return {id: p.id, ref: 'Diagram', role: 'Diagram changes', reason: p.reason, checked: propTicked(p.id), ...extra};
@@ -247,8 +254,8 @@ function propRowOf(p, extra) {
   if (del) return {id: p.id, ref: del.refs[0] || p.line, role: propDeleteText(p, del), reason: p.reason, checked: propTicked(p.id), ...extra};
   const ref = (Array.isArray(c.refs) && c.refs[0]) || ((lineByKey(p.line) || {}).refs || [p.line])[0];
   // the LCSC code the proposal does not carry is the one the line already has, or the code the stock check found (the export has it too)
-  const known = lineByKey(p.line) || lineOfRef(ref) || {}, sup = known.supply || {};
-  const lcsc = f('lcsc') || known.lcsc || ((Object.values(sup).find(v => v && v.code) || {}).code) || '';
+  const known = lineByKey(p.line) || lineOfRef(ref) || {};
+  const lcsc = f('lcsc') || propKnownLcsc(c, known) || p.lcsc_match || '';
   return {id: p.id, ref, isNew: !!p.new, mpn: f('mpn'), manufacturer: f('manufacturer'), package: f('package'), lcsc, value: f('value'),
     role: f('role'), reason: p.reason, short: p.role_finding, unverified: propIsUnverified(p), checked: propTicked(p.id), ...extra};
 }
@@ -459,16 +466,17 @@ onAct('chat-act-open', async (el, d) => {
   const pend = (S.proposals || []).find(p => p.status === 'pending' && (p.line === ref || ((p.changes || {}).refs || []).includes(ref)));
   if (!pend && l) { select(l.key); return; }
   if (!pend) { toast(`${ref} is not in the BOM and no proposal for it is waiting`, null, {bad: false}); return; }
-  go('workspace', 'bom');
   const flash = () => {
-    const row = document.querySelector(`#view tr[data-pid="${CSS.escape(pend.id)}"]`) || document.querySelector(`tr[data-pid="${CSS.escape(pend.id)}"]`);
+    const row = document.querySelector(`tr[data-pid="${CSS.escape(pend.id)}"]`);
     if (!row) return false;
     row.scrollIntoView({block: 'center'});
     row.classList.add('flash');
     setTimeout(() => row.classList.remove('flash'), 1800);
     return true;
   };
-  if (!flash()) setTimeout(flash, 150);
+  if (flash()) return;                       // the card is in the chat: stay (on a phone another view would hide it)
+  go('workspace', 'bom');
+  setTimeout(flash, 150);
 });
 function chatActLabel(a) {
   const s = String(a), m = s.match(/^([a-z_]+(?:\.[a-z_]+)+)\s*(?::\s*(.*))?$/is);
