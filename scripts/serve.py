@@ -1208,6 +1208,7 @@ def netlist_symbol_errors(project, data, notes=None):
     A part whose numbers the symbol lacks but whose pin names each match one symbol pin is renumbered in data from the symbol
     (a note goes to `notes`). A symbol built for an older MPN/LCSC of the line is skipped."""
     import partlib
+    import pin_model
     from altium import draw
     spec = partlib._spec_symbols(partlib.library_dir(project) / "build" / "symbols_spec.txt")
     if not spec:
@@ -1227,6 +1228,11 @@ def netlist_symbol_errors(project, data, notes=None):
         if any(entry.get(f) and line.get(f) and str(entry[f]).strip().lower() != str(line[f]).strip().lower() for f in ("mpn", "lcsc")):
             continue                  # the part changed since the build: the symbol is stale, library.build comes first
         symbol = {"name": name, "pins": [{"number": p["num"], "name": p["name"]} for p in spec[name]["pins"]]}
+        if partlib.symbol_from_netlist(entry):
+            # a symbol generated from the netlist gets the pins the netlist names at the next build: a pad of the built footprint it
+            # does not show yet (an exposed pad, a shell leg) may be listed now, or the netlist could never name it
+            have = {str(p["number"]) for p in symbol["pins"]}
+            symbol["pins"] += [{"number": n, "name": ""} for n in pin_model._footprint_pad_table(project).get(entry.get("footprint") or "", {}) if n not in have]
         try:
             errs = draw.pin_nets(part, symbol)[2]
             cause = []
@@ -1325,7 +1331,18 @@ def library_build_summary(project, res):
     """What library.build says it did: the same words in the chat and in a button's preparation."""
     issues = library_issue_count(project)
     return (f"{res['built']} of {res['lines']} lines built, IntLib installed" + (f" ({issues} with issues)" if issues else "")
-            + "".join(" " + n for n in res.get("notices", [])))
+            + "".join(" " + n for n in res.get("notices", [])) + pad_note(project))
+
+
+def pad_note(project):
+    """" Pads the netlist does not answer for: ..." (pin_model.pad_report) or "": said right after a library build and after a netlist
+    write, so the agent and the student read it in the turn that made it. The Schematic page and the outputs gate keep it blocking."""
+    import pin_model
+    try:
+        said = pin_model.pad_text(pin_model.pad_report(project))
+    except Exception:       # noqa: BLE001  a note is never a reason to fail the build or the write; the gate computes it again
+        return ""
+    return f" BLOCKS THE OUTPUTS until each has a net or NC: {said}." if said else ""
 
 
 def import_rules_summary(res):
@@ -2048,6 +2065,8 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     # pin numbers filled from the library symbol are how it is meant to work, not a warning: one short remark, no amber chip
                     filled = [n.split(":")[0] for n in notes if "matched by pin name" in n]
                     warns = [*(n for n in notes if "matched by pin name" not in n), *(res.get("warnings") or [])]
+                    if pad_note(project):
+                        warns.append(pad_note(project).strip())
                     note = (f", pin numbers of {', '.join(filled[:12])}{' ...' if len(filled) > 12 else ''} matched by pin name to the library symbols" if filled else "") + (f" (warnings: {'; '.join(warns[:8])})" if warns else "")
                     applied.append(f"netlist.write:{res['sheet']}{note}")
                 else:

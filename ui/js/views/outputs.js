@@ -20,15 +20,32 @@ function outBlockWhy() {
   const g = outGate();
   return g ? g.why : '';
 }
+const OUT_RISKY = ['shell', 'thermal', 'duplicate'];      // pin_model.RISKY_KINDS: never swept up by "Mark all as NC"
 function outGapItems(g) {
   const gaps = (g && g.gaps) || {};
-  return [...(gaps.open || []).map(i => ({...i, kind: 'open'})), ...(gaps.unlisted || []).map(i => ({...i, kind: 'unlisted'}))];
+  return [...(gaps.open || []).map(i => ({...i, gap: 'open'})), ...(gaps.unlisted || []).map(i => ({...i, gap: 'unlisted'})),
+    ...(gaps.pads || []).map(i => ({...i, gap: 'pad'})), ...(gaps.nopad || []).map(i => ({...i, gap: 'nopad'}))];
 }
+// the pins one click may mark NC: not a pin naming no pad (nothing to mark), not a pad only the footprint has, not a shell / exposed / duplicate pad (each is its own decision)
+const outBulkItems = g => outGapItems(g).filter(i => i.gap !== 'nopad' && i.gap !== 'pad' && !OUT_RISKY.includes(i.kind));
+const OUT_KIND = {
+  shell: 'is a shell / mounting pad: connect it to GND or mark it no-connect',
+  thermal: 'is an exposed pad or a tab: it almost certainly needs a net',
+  duplicate: 'has the same function as a connected pad of this part: it almost certainly needs the same net',
+};
 function outGapRow(i) {
-  const what = i.kind === 'open' ? 'has no net and is not marked NC' : 'is in the library symbol but missing from the netlist';
-  return `<li><span class="m">${esc(i.ref)}</span> pin ${esc(i.num || i.name)}${i.name && i.num && i.name !== i.num ? ` (${esc(i.name)})` : ''} ${what} ` +
-    btn('Mark NC', {kind: 'link', size: 'sm', act: 'nc-mark-one', sh: i.sheet, ref: i.ref, num: i.num, title: 'Marks just this pin no-connect'}) + ' ' +
-    btn('Ask the agent', {kind: 'link', size: 'sm', act: 'nc-ask', ref: i.ref, num: i.num, pname: i.name, why: i.kind}) + '</li>';
+  const pin = `<span class="m">${esc(i.ref)}</span> ${i.gap === 'pad' || i.kind ? 'pad' : 'pin'} ${esc(i.num || i.name)}${i.name && i.num && i.name !== i.num ? ` (${esc(i.name)})` : ''}`;
+  const ask = btn('Ask the agent', {kind: 'link', size: 'sm', act: 'nc-ask', ref: i.ref, num: i.num, pname: i.name, why: i.gap});
+  if (i.gap === 'nopad') {
+    const shown = (i.pads || []).slice(0, 12).join(', ') + ((i.pads || []).length > 12 ? ' ...' : '');
+    return `<li>${pin}${i.net ? ` on net ${esc(i.net)}` : ''} is in the netlist, but footprint ${esc(i.footprint)} has no such pad (its pads: ${esc(shown)}) ${ask}</li>`;
+  }
+  const what = OUT_KIND[i.kind] || (i.gap === 'open' ? 'has no net and is not marked NC' : i.gap === 'unlisted' ? 'is in the library symbol but missing from the netlist' : 'is on the footprint but in no net');
+  const net = i.twin_net || (i.kind === 'shell' ? 'GND' : '');
+  const conn = net && i.wirable !== false ? btn(`Connect to ${net}`, {kind: 'link', size: 'sm', act: 'net-set-one', sh: i.sheet, ref: i.ref, num: i.num, net, title: `Puts ${i.ref} pad ${i.num || i.name} on ${net}`}) + ' ' : '';
+  const why = i.wirable === false ? ' The library symbol has no pin for it, so it cannot be wired: pick another LCSC code if it needs a net.' : '';
+  return `<li>${pin} ${what}.${why} ${conn}` +
+    btn('Mark NC', {kind: 'link', size: 'sm', act: 'nc-mark-one', sh: i.sheet, ref: i.ref, num: i.num, title: 'Marks just this pin no-connect'}) + ' ' + ask + '</li>';
 }
 const ncItem = i => ({sheet: i.sheet, ref: i.ref, num: i.num});
 /* The agent's NC proposal: pins it wants NC, held until the student approves. One click for the whole list; untick a pin to leave it out. */
@@ -57,8 +74,8 @@ function outPinsWarnNote() {
 function outBlockNote() {
   const g = outGate();
   if (!g) return '';
-  const items = outGapItems(g);
-  const acts = (items.length ? btn(`Mark all ${items.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks every one of these pins no-connect in the netlist (a No ERC cross when drawn). Connect any pin that is not meant to be NC first.'}) : '')
+  const items = outGapItems(g), bulk = outBulkItems(g);
+  const acts = (bulk.length ? btn(`Mark all ${bulk.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks these pins no-connect in the netlist (a No ERC cross when drawn). Shell, exposed and duplicate pads are not in it: decide each one. Connect any pin that is not meant to be NC first.'}) : '')
     + btn(OUT_GATE_PAGE[g.page] || OUT_GATE_PAGE.checks, {kind: 'link', page: OUT_GATE_PAGE[g.page] ? g.page : 'checks'});
   const list = items.length ? `<details class="pv-more"><summary>Show the ${items.length} ${items.length === 1 ? 'pin' : 'pins'}</summary><ul>${items.map(outGapRow).join('')}</ul></details>` : '';
   return `${outNcProposal(g)}${banner({tone: 'warn', html: `${esc(g.why)}${list}`, actions: acts})}`;
@@ -70,7 +87,13 @@ async function outNcPost(path, items, said) {
   await refresh(true);
 }
 const outMarked = r => `Marked ${r.marked} ${r.marked === 1 ? 'pin' : 'pins'} NC`;
-onAct('nc-mark-all', () => outNcPost('/api/nc/mark', outGapItems(outGate()).map(ncItem), outMarked));     // exactly the pins the note lists
+onAct('nc-mark-all', () => outNcPost('/api/nc/mark', outBulkItems(outGate()).map(ncItem), outMarked));     // exactly the pins the button counts
+onAct('net-set-one', async (el, d) => {      // a shell pad to GND, a duplicate pad to its twin's net
+  const r = await api('/api/nc/mark', {items: [{sheet: d.sh, ref: d.ref, num: d.num}], net: d.net}, {soft: true});
+  if (!r || r.error) { toast((r && r.error) || "Couldn't set the net.", null, {bad: true}); return; }
+  toast(`${d.ref} pad ${d.num} is on ${d.net}`);
+  await refresh(true);
+});
 onAct('nc-mark-one', (el, d) => outNcPost('/api/nc/mark', [{sheet: d.sh, ref: d.ref, num: d.num}], outMarked));
 onAct('nc-approve', el => {
   const box = el.closest('[data-nc-prop]');
@@ -79,8 +102,8 @@ onAct('nc-approve', el => {
 });
 onAct('nc-dismiss', () => outNcPost('/api/nc/dismiss', null, () => 'Dropped the NC proposal'));
 onAct('nc-ask', (el, d) => {
-  const what = d.why === 'open' ? 'has no net and is not marked NC' : 'is in the library symbol but missing from the netlist';
-  askAbout({kind: 'part', id: d.ref, label: d.ref, text: `Pin ${d.num || d.pname} (${d.pname || ''}) of ${d.ref} ${what}. Should it be NC, or connected? If NC, propose the NC list for all such pins in one go.`});
+  const what = d.why === 'open' ? 'has no net and is not marked NC' : d.why === 'nopad' ? 'is in the netlist but is not a pad of the footprint' : d.why === 'pad' ? 'is a pad of the footprint with no net' : 'is in the library symbol but missing from the netlist';
+  askAbout({kind: 'part', id: d.ref, label: d.ref, text: `Pin ${d.num || d.pname} (${d.pname || ''}) of ${d.ref} ${what}. Which net does it belong to, or should it be NC? If NC, propose the NC list for all such pins in one go.`});
 });
 
 function outSize(n) {                         // 7467 -> "7.3 KB"

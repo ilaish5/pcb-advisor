@@ -3600,15 +3600,48 @@ def pin_gap_text(gaps):
     return "; ".join(said)
 
 
-def mark_pins_nc(project, items=None):
+def pad_gaps(project):
+    """The footprint pads the netlist does not answer for (pin_model.pad_report), minus what pin_gaps already lists:
+    {"pads": [{sheet, ref, num, name, kind, net, listed, wirable, footprint}], "nopad": [{sheet, ref, num, name, net, footprint, pads}]}.
+    pads: a pad of the built footprint with no net and no NC (a symbol generated from the netlist never shows it). nopad: a netlist pin
+    that names a pad the footprint does not have (S1 for pads 1-4)."""
+    import pin_model
+    rep = pin_model.pad_report(project)
+    return {"pads": [r for r in rep["unnetted"] if not r["covered"]], "nopad": rep["nopad"]}
+
+
+def pad_kinds(project):
+    """{(ref, pad): the pad_report row} of EVERY unnetted pad (also those pin_gaps lists): the kind decides what one click may do."""
+    import pin_model
+    return {(r["ref"], r["num"]): r for r in pin_model.pad_report(project)["unnetted"]}
+
+
+def _gap_todo(project):
+    """[(kind, item)] of every pin a net or NC can settle: open and unlisted (pin_gaps) and the footprint pads (pad_gaps)."""
+    gaps, pads = pin_gaps(project), pad_gaps(project)
+    return [("open", i) for i in gaps["open"]] + [("unlisted", i) for i in gaps["unlisted"]] + [("pad", i) for i in pads["pads"]]
+
+
+def _net_known(project, net):
+    return any(p.get("net") == net for sh in sheet_ids(project) for part in load_sheet(project, sh).get("parts", []) for p in part.get("pins", []))
+
+
+def mark_pins_nc(project, items=None, net="NC"):
     """Mark pins no-connect (net "NC", the netlist's own NC: the drawing puts a No ERC cross on it): every open and unlisted pin when
-    items is None, else only the {sheet, ref, num} given. An unlisted pin is added to the part's pins with net NC. Returns
-    {"marked": n, "sheets": [...]}. Nothing else in a sheet changes."""
-    gaps = pin_gaps(project)
-    todo = [("open", i) for i in gaps["open"]] + [("unlisted", i) for i in gaps["unlisted"]]
+    items is None, else only the {sheet, ref, num} given. An unlisted pin, or a footprint pad the netlist never named, is added to the
+    part's pins with net NC. Without items a footprint pad the symbol has no pin for, and a shell / thermal / duplicate pad, is never marked
+    (pin_model.RISKY_KINDS: each is its own decision). With items and another `net` (a net the netlist already has, or GND) the same pins get that net instead of NC.
+    Returns {"marked": n, "sheets": [...]}. Nothing else in a sheet changes."""
+    import pin_model
+    todo = _gap_todo(project)
+    if net != "NC" and (items is None or not (net == "GND" or _net_known(project, net))):
+        raise ValueError("a net other than NC needs the pins listed and a net the design has (or GND)")
     if items is not None:
         want = {(str(i.get("sheet")), str(i.get("ref")), str(i.get("num"))) for i in items}
         todo = [(k, i) for k, i in todo if (str(i["sheet"]), str(i["ref"]), str(i["num"])) in want]
+    else:
+        kinds = pad_kinds(project)      # a pad only the footprint has is never swept up either: nothing says what it is (an unnamed second VBUS)
+        todo = [(k, i) for k, i in todo if k != "pad" and (kinds.get((i["ref"], i["num"])) or {}).get("kind") not in pin_model.RISKY_KINDS]
     by_sheet = {}
     for kind, i in todo:
         by_sheet.setdefault(i["sheet"], []).append((kind, i))
@@ -3619,13 +3652,13 @@ def mark_pins_nc(project, items=None):
             part = next((p for p in sheet.get("parts", []) if p.get("ref") == i["ref"]), None)
             if part is None:
                 continue
-            if kind == "open":
-                pin = next((p for p in part.get("pins", []) if _pin_num(p) == i["num"] and not (p.get("net") or "").strip()), None)
-                if pin is None:
-                    continue
-                pin["net"] = "NC"
+            pin = next((p for p in part.get("pins", []) if _pin_num(p) == i["num"] and not (p.get("net") or "").strip()), None)
+            if pin is not None:
+                pin["net"] = net
+            elif kind == "open":
+                continue
             else:
-                part.setdefault("pins", []).append({"num": i["num"], "name": i.get("name", ""), "net": "NC"})
+                part.setdefault("pins", []).append({"num": i["num"], "name": i.get("name") or i["num"], "net": net})
             marked += 1
         res = write_sheet(project, sh, sheet)
         if not res.get("ok"):
@@ -3645,9 +3678,7 @@ def hold_nc_marks(project, sheet_id, data):
     (listed with no net) or an unlisted pin (in the built symbol, not in the netlist) is put back as it was (open / not listed) and
     returned in `held` as [{sheet, ref, num, name, kind}]. NC on a new part or on a pin that already had a net is not touched."""
     sid = workspace.safe_name(sheet_id)
-    gaps = pin_gaps(project)
-    want = {(i["ref"], i["num"]): ("open", i) for i in gaps["open"] if i["sheet"] == sid}
-    want.update({(i["ref"], i["num"]): ("unlisted", i) for i in gaps["unlisted"] if i["sheet"] == sid})
+    want = {(i["ref"], i["num"]): (k, i) for k, i in _gap_todo(project) if i["sheet"] == sid}      # a footprint pad no net answers for too
     if not want or not isinstance(data.get("parts"), list):
         return data, []
     held, parts = [], []
@@ -3661,7 +3692,7 @@ def hold_nc_marks(project, sheet_id, data):
             hit = want.get((part.get("ref"), _pin_num(pin))) if isinstance(pin, dict) else None
             if hit and pinnames.is_nc_net(pin.get("net")):
                 held.append({"sheet": sid, "ref": part["ref"], "num": hit[1]["num"], "name": hit[1].get("name", ""), "kind": hit[0]})
-                if hit[0] == "open":
+                if hit[0] == "open" or (hit[0] == "pad" and hit[1].get("listed")):
                     keep.append({**pin, "net": ""})
                 continue                    # an unlisted pin the agent adds as NC: not added
             keep.append(pin)
@@ -3695,8 +3726,7 @@ def nc_proposal(project):
     stored = _nc_stored(project)
     if not stored:
         return []
-    gaps = pin_gaps(project)
-    now_open = {_nc_key(i) for i in gaps["open"] + gaps["unlisted"]}
+    now_open = {_nc_key(i) for _, i in _gap_todo(project)}
     return [i for i in stored if _nc_key(i) in now_open]
 
 
@@ -3827,15 +3857,16 @@ def manufacturing_warning(project):
     symbol, so the board it would give is not the board that is ordered). A pin is resolved by a net or by NC (mark_pins_nc).
     Unverified or conflicting pins are NOT here (owner decision, 16/11 and 24/11/2026): they are a warning only, pins_warning.
     The board itself (unrouted nets) is route_block; manufacturing_block is the whole gate."""
+    import pin_model
     fp_msg = footprint_error_text(footprint_error_parts(project, buyable=True), "Not made yet")
-    gaps = pin_gap_text(pin_gaps(project))
+    gaps = "; ".join(x for x in (pin_gap_text(pin_gaps(project)), pin_model.pad_text(pin_model.pad_report(project))) if x)
     draft = draft_parts(project)
     if not gaps and not draft:
         return fp_msg
     said, tail = [], []
     if gaps:
         said.append(gaps)
-        tail.append("Open Schematic: connect each pin or mark them all NC in one click.")
+        tail.append("Open Schematic: connect each pin or mark them all NC in one click; a shell, exposed or duplicate pad is decided one by one.")
     if draft:
         said.append(draft_text(draft))
         tail.append("Build the library so each placeholder part gets its real symbol, then draw the schematic again (Schematic page).")

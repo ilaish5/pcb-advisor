@@ -117,8 +117,14 @@ def pin_nets(part, symbol):
         errors.append(f"{ref}: netlist pin {nm or '(no name)'} has no pin number" + (
             f", and the name {nm} could not be matched by name to one pin of library symbol {symbol['name']}"
             if nm else "") + ". Give the pin number")
+    lib_names_up = {str(lp.get("name") or "").strip().upper() for lp in symbol["pins"]}
     for num in by_num:
-        if num not in lib_nums:
+        nm = str(by_num[num].get("name") or "").strip()
+        if num not in lib_nums and is_nc(str(by_num[num].get("net") or "")) and (not nm or nm == num or nm.upper() not in lib_names_up):
+            # a footprint pad the symbol never had (an exposed pad, a shell leg) marked no-connect: it touches no copper, so it is no
+            # wiring error (a name the symbol does have is a renumbering case and stays one)
+            warn.append(f"{ref}: pad {num} is marked NC but is not a pin of library symbol {symbol['name']}: nothing to draw for it")
+        elif num not in lib_nums:
             errors.append(f"{ref}: netlist pin {num} ({by_num[num].get('name') or ''}) has no pin in library symbol {symbol['name']}")
     for lp in symbol["pins"]:
         num = str(lp["number"])
