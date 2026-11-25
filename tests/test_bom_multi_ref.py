@@ -78,3 +78,41 @@ def test_both_warnings_share_one_suffix(empty):
     applied, _, _ = serve.apply_actions(empty, [a])
     text = serve.warned_map(applied)[applied[0]]
     assert "has no value" in text and "names 2 parts" in text and "(warning" not in text
+
+
+def _approved_line(project, key="R1"):
+    store.propose_bom(project, key, {"mpn": "", "refs": [key], "value": "5.1k", "role": "CC1/CC2 pull-downs"}, new=True)
+    store.decide(project, store.proposals(project)[-1]["id"], "approved")
+
+
+def test_an_existing_line_goes_from_qty_1_to_2(empty, monkeypatch):
+    monkeypatch.setattr(store, "autonomy", lambda: "auto")
+    _approved_line(empty)
+    applied, proposals, refused = serve.apply_actions(empty, [
+        {"type": "bom.propose", "line": "R1", "changes": {"qty": 2, "value": "5.1k"}}])
+    assert not refused and applied == ["bom.propose:R1"]
+    prop = store.proposals(empty)[-1]
+    assert prop["changes"]["refs"] == ["R1", "R2"] and "qty" not in prop["changes"] and prop["before"]["refs"] == ["R1"]
+    assert prop["status"] == "approved"                      # autonomy "auto" applies it; before, it was dropped
+    assert store.bom(empty, write=False)[0]["refs"] == ["R1", "R2"]
+    assert not store.bom(empty, write=False)[0]["role_finding"]
+
+
+def test_the_extra_ref_skips_refs_taken(empty):
+    _approved_line(empty, "R1")
+    _approved_line(empty, "R2")
+    rec = store.propose_bom(empty, "R1", {"qty": 2})
+    assert rec["changes"]["refs"] == ["R1", "R3"]
+
+
+def test_a_qty_that_cannot_be_applied_is_an_error_not_a_drop(empty):
+    _approved_line(empty)
+    store.propose_bom(empty, "R1", {"refs": ["R1", "R2"]})
+    store.decide(empty, store.proposals(empty)[-1]["id"], "approved")
+    for qty in (1, 0, "2", 2.5, True):
+        with pytest.raises(ValueError, match="qty"):
+            store.propose_bom(empty, "R1", {"qty": qty})
+    applied, _, refused = serve.apply_actions(empty, [{"type": "bom.propose", "line": "R1", "changes": {"qty": 1}}])
+    assert not applied and refused and "qty 1" in refused[0]
+    with pytest.raises(ValueError, match="designator"):
+        store.propose_bom(empty, "USBC", {"qty": 2, "value": "x"}, new=True)

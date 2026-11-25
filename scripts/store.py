@@ -663,14 +663,23 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):
         changes = {**changes, "refs": [line]}
         before = {**before, "refs": None}
-    # The quantity is the number of refs; "qty": 6 with one ref would order one. Add free refs of the same prefix.
-    refs, want = changes.get("refs"), changes.get("qty")
-    if new and isinstance(refs, list) and refs and isinstance(want, int) and want > len(refs):
-        m = re.fullmatch(r"([A-Za-z]+)\d+", str(refs[0]))
-        if m:
+    # The quantity is the number of refs; "qty": 6 with one ref would order one. Add free refs of the same prefix, for a
+    # new line and for an existing one (R1 qty 2 -> R1, R2). A quantity that cannot be applied is an error, never dropped.
+    want = changes.get("qty")
+    if "qty" in changes:
+        if isinstance(want, bool) or not isinstance(want, int) or want < 1:
+            raise ValueError(f"qty must be a whole number of parts, 1 or more, not {want!r}")
+        refs = changes.get("refs") if isinstance(changes.get("refs"), list) and changes.get("refs") else list(existing.get(line, {}).get("refs") or [])
+        if want < len(refs):
+            raise ValueError(f"qty {want} is fewer than the {len(refs)} refs of {line} ({', '.join(map(str, refs))}): "
+                             "remove the refs you do not want (changes.remove) instead")
+        if want > len(refs):
+            m = re.fullmatch(r"([A-Za-z]+)\d+", str(refs[0])) if refs else None
+            if not m:
+                raise ValueError(f"qty {want} for {line}: it has no designator to number the extra parts from; send changes.refs with all {want}")
             taken = {r for l in existing.values() for r in (l.get("refs") or [])}
-            taken |= {r for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
-                      for r in ((p.get("changes") or {}).get("refs") or [])}
+            taken |= {r for q in proposals(project) if q.get("kind") == "bom" and q.get("status") == "pending"
+                      for r in ((q.get("changes") or {}).get("refs") or [])}
             taken |= set(refs) | set(reserved)
             refs, n = list(refs), 1
             while len(refs) < want:
@@ -678,6 +687,9 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
                     refs.append(f"{m.group(1)}{n}")
                 n += 1
             changes = {**changes, "refs": refs}
+            before = {**before, "refs": existing.get(line, {}).get("refs") if line in existing else None}
+        if line in existing:
+            changes = {k: v for k, v in changes.items() if k != "qty"}      # not a stored field: the refs are the quantity
     pid = _new_proposal_id(project)
     rec = {"id": pid, "ts": now_ms(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),
