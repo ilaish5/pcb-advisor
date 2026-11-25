@@ -236,10 +236,16 @@ def test_connector_opens_out_with_pads_off_the_edge_and_body_inside():
     plan = layout.plan_placement(BIG_PARTS, BIG, [0, 0, 40, 30])
     j = next(p for p in plan["places"] if p["ref"] == "J1")
     box = real(plan, "J1")
-    assert j["rot"] == 0 and 0 <= box[1] <= 0.5          # opening (-y) at the bottom edge, nothing outside
+    W, H = 40, 30
+    # the opening is -y at rotation 0; the placer picks the edge (the shortest wiring among equally good plans), the opening faces it
+    face = (270 + j["rot"]) % 360
+    gap = {270: box[1], 90: H - box[3], 180: box[0], 0: W - box[2]}[face]
+    assert 0 <= gap <= 0.5                               # flush with the edge the opening faces, nothing outside
     pads = layout._moved(layout.rot_box(layout.pads_box(BIG["USBC"]), j["rot"]), j["x"], j["y"])
-    assert pads[1] >= layout.EDGE_COPPER_MM - 1e-6       # pad copper keeps the edge clearance
-    assert abs((box[0] + box[2]) / 2 - 20) < 1.0         # centred along its edge, not in the corner
+    pad_gap = {270: pads[1], 90: H - pads[3], 180: pads[0], 0: W - pads[2]}[face]
+    assert pad_gap >= layout.EDGE_COPPER_MM - 1e-6       # pad copper keeps the edge clearance
+    mid, half = ((box[0] + box[2]) / 2, W / 2) if face in (90, 270) else ((box[1] + box[3]) / 2, H / 2)
+    assert abs(mid - half) < 1.0                         # centred along its edge, not in the corner
 
 
 def test_parts_use_the_board_not_one_corner():
