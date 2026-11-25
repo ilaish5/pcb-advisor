@@ -109,7 +109,7 @@ function bomRow(l) {
     <td class="num">${l.dnp ? 'DNP' : q || '—'}</td>
     <td class="c-mdl">${bomModels(l)}</td>
     <td class="c-sup">${supCell}</td>
-    <td class="c-st">${tag(st.text, st.tone, st.say + (st.tone ? ' Click the row for the details.' : ''))}${orphan ? tag('not on any sheet', 'warn', `${label} is on no schematic sheet. If it is not part of the design, delete it (Undo puts it back).`) : ''}</td>
+    <td class="c-st">${tag(st.text, st.tone, st.say + (st.tone ? ' Click the row for the details.' : ''))}${l.role_finding ? tag('Check qty', 'warn', l.role_finding) : ''}${orphan ? tag('not on any sheet', 'warn', `${label} is on no schematic sheet. If it is not part of the design, delete it (Undo puts it back).`) : ''}</td>
     <td><div class="row-acts">${orphan ? btn('', {icon: 'trash', size: 'sm', title: `Delete ${label} from the BOM`, act: 'bom-delete', line: l.key}) : ''}${btn('', {icon: 'chat', size: 'sm', title: `Ask about ${label}`, act: 'ask-part', line: l.key})}${btn('', {html: BOM_SWAP, cls: 'icon', size: 'sm', title: 'Alternatives', 'aria-label': `Alternatives for ${label}`, act: 'alts', line: l.key})}</div></td></tr>`;
 }
 /* Two header buttons, side by side and always there: Check stock (the BOM's) and Build library (the models'). viewHeader has one

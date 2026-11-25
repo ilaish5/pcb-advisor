@@ -31,6 +31,7 @@ import board_layers  # noqa: E402
 import diagram_route  # noqa: E402
 import pinnames  # noqa: E402
 import project_guard  # noqa: E402
+import role_refs  # noqa: E402
 import workspace  # noqa: E402
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -462,6 +463,9 @@ def _bom(project, write):
             l["code"] = lcsc_sup["code"]
         if lcsc_sup.get("datasheet_url") and not l.get("datasheet_url"):
             l["datasheet_url"] = lcsc_sup["datasheet_url"]
+    short = role_findings(lines)
+    for l in lines:
+        l["role_finding"] = short.get(l["key"], "")
     if write:
         # only a real change is written: the page reads the state (and so this) on every view, which must not touch the file
         p = pdir(project) / "bom.json"
@@ -478,6 +482,27 @@ def _bom(project, write):
 
 def qty(line):
     return 0 if (line.get("dnp") or line.get("nobuy")) else len(line.get("refs", []))
+
+
+def role_findings(lines, waiting=(), extra=()):
+    """{line key: finding} where a line holds fewer parts than its role names (role_refs). With `waiting` (pending BOM
+    proposals) each of those is judged as the BOM would read with all of them approved, and the keys are their ids."""
+    state = {l["key"]: {"key": l["key"], "role": l.get("role"), "refs": l.get("refs")} for l in lines}
+    for row in extra:            # the lines the same turn proposes, not recorded yet: their parts count for a line judged before them
+        state.setdefault(row["key"], dict(row))
+    waiting = [p for p in waiting if not delete_spec(p)]
+    for p in waiting:
+        row = state.setdefault(p["line"], {"key": p["line"], "role": "", "refs": []})
+        row.update({k: v for k, v in (p.get("changes") or {}).items() if k in ("role", "refs")})
+    rows = list(state.values())
+    judged = [(p["id"], state[p["line"]]) for p in waiting] if waiting else [(r["key"], r) for r in rows]
+    return {k: f for k, row in judged for f in [role_refs.finding(row, rows)] if f}
+
+
+def proposal_role_finding(project, pid, extra=()):
+    """The role finding of one pending proposal, counting the lines `extra` ({key, role, refs}: the rest of its turn)."""
+    waiting = [p for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending" and p.get("line")]
+    return role_findings(bom_lines(project), waiting, extra).get(pid, "")
 
 
 def best_offer(line, supply=None):
@@ -561,6 +586,13 @@ def proposals(project):
                 r["note"] = f"now {now_a:g} A; this sets {r['changes']['current_a']:g} A" if now_a is not None and r["changes"].get("current_a") is not None \
                     else f"changed since it was proposed: now {'no current' if now_a is None else format(now_a, 'g') + ' A'}"
             r["before"] = {"current_a": now_a}
+    waiting = [r for r in rows.values()
+               if (r.get("kind") or "bom") == "bom" and r.get("status") == "pending" and r.get("line") and not delete_spec(r)]
+    if waiting:                         # the card says when the line would hold fewer parts than its role names
+        short = role_findings(bom_lines(project), waiting)
+        for r in waiting:
+            if r["id"] in short:
+                r["role_finding"] = short[r["id"]]
     return list(rows.values())
 
 
@@ -615,6 +647,20 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     """Record a proposal. Nothing about the BOM changes until the student approves.
     `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty).
     changes {"deleted": true} deletes the line, {"remove": ["R3"]} takes refs off it (propose_bom_delete)."""
+    if isinstance(changes, dict) and changes.get("remove") and not changes.get("deleted"):
+        pend = [p for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
+                and p.get("new") and p.get("line") == line]
+        if pend and line not in {l["key"] for l in bom_lines(project)}:       # refs of a line not in the BOM yet: off the card
+            drop = set(_split_refs(changes["remove"]) or [])
+            old = dict(pend[-1].get("changes") or {})
+            keep = [r for r in old.get("refs") or [] if r not in drop]
+            if not keep:
+                raise ValueError(f"{line} would have no refs left: reject its card instead")
+            old["refs"] = keep
+            if "qty" in old:
+                old["qty"] = len(keep)
+            return propose_bom(project, line, old, reason=reason or pend[-1].get("reason") or "", sources=sources,
+                               library=library, session=session, new=True, reserved=reserved)
     if isinstance(changes, dict) and (changes.get("deleted") or changes.get("remove")):
         return propose_bom_delete(project, line, None if changes.get("deleted") else changes.get("remove"),
                                   reason=reason, sources=sources, session=session)
@@ -626,7 +672,13 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
         waiting = [p for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
                    and p.get("new") and p.get("line") == line]
         if waiting:
-            changes, library, new = {**(waiting[-1].get("changes") or {}), **changes}, library or waiting[-1].get("library"), True
+            old = waiting[-1].get("changes") or {}
+            asked = changes
+            changes, library, new = {**old, **changes}, library or waiting[-1].get("library"), True
+            if "qty" in asked and "refs" not in asked and isinstance(old.get("refs"), list):
+                # the refs the earlier card got from its qty follow the new qty (more are added below, fewer are cut here)
+                want_n = asked["qty"] if isinstance(asked["qty"], int) else int(asked["qty"]) if str(asked["qty"]).strip().isdigit() else 0
+                changes["refs"] = old["refs"][:want_n] if want_n >= 1 else old["refs"]
             for p in waiting:
                 append(project, "proposals.jsonl", {"id": p["id"], "ts": now_ms(), "status": "rejected", "by": "superseded"})
     if line not in existing and not new:
@@ -639,14 +691,27 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if new and line not in existing and "refs" not in changes and re.fullmatch(r"[A-Za-z]+\d+", line):
         changes = {**changes, "refs": [line]}
         before = {**before, "refs": None}
-    # The quantity is the number of refs; "qty": 6 with one ref would order one. Add free refs of the same prefix.
-    refs, want = changes.get("refs"), changes.get("qty")
-    if new and isinstance(refs, list) and refs and isinstance(want, int) and want > len(refs):
-        m = re.fullmatch(r"([A-Za-z]+)\d+", str(refs[0]))
-        if m:
+    # The quantity is the number of refs; "qty": 6 with one ref would order one. Add free refs of the same prefix, for a
+    # new line and for an existing one (R1 qty 2 -> R1, R2). A quantity that cannot be applied is an error, never dropped.
+    want = changes.get("qty")
+    if isinstance(want, str) and want.strip().isdigit():
+        want = int(want)
+    if "qty" in changes:
+        if isinstance(want, bool) or not isinstance(want, int) or want < 1:
+            raise ValueError(f"qty must be a whole number of parts, 1 or more, not {want!r}")
+        refs = changes.get("refs") if isinstance(changes.get("refs"), list) and changes.get("refs") else list(existing.get(line, {}).get("refs") or [])
+        if want < len(refs):
+            raise ValueError(f"qty {want} is fewer than the {len(refs)} refs of {line} ({', '.join(map(str, refs))}): "
+                             "remove the refs you do not want (changes.remove) instead")
+        if want > len(refs):
+            m = re.fullmatch(r"([A-Za-z]+)\d+", str(refs[0])) if refs else None
+            if not m:
+                raise ValueError(f"qty {want} for {line}: it has no designator to number the extra parts from; send changes.refs with all {want}")
             taken = {r for l in existing.values() for r in (l.get("refs") or [])}
-            taken |= {r for p in proposals(project) if p.get("kind") == "bom" and p.get("status") == "pending"
-                      for r in ((p.get("changes") or {}).get("refs") or [])}
+            taken |= {r for q in proposals(project) if q.get("kind") == "bom" and q.get("status") == "pending"
+                      for r in ((q.get("changes") or {}).get("refs") or [])}
+            for sh in sheet_ids(project):         # a ref drawn on a sheet but not in the BOM yet is not free either
+                taken |= {pt.get("ref") for pt in load_sheet(project, sh).get("parts", [])}
             taken |= set(refs) | set(reserved)
             refs, n = list(refs), 1
             while len(refs) < want:
@@ -654,6 +719,9 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
                     refs.append(f"{m.group(1)}{n}")
                 n += 1
             changes = {**changes, "refs": refs}
+            before = {**before, "refs": existing.get(line, {}).get("refs") if line in existing else None}
+        if line in existing:
+            changes = {k: v for k, v in changes.items() if k != "qty"}      # not a stored field: the refs are the quantity
     pid = _new_proposal_id(project)
     rec = {"id": pid, "ts": now_ms(), "kind": "bom", "line": line, "new": bool(new and line not in existing),
            "changes": changes, "before": before, "reason": reason, "sources": list(sources),
@@ -2182,13 +2250,52 @@ def sync_layers_from_idea(project, idea):
         return None
 
 
-def propose_idea(project, topic, text, by="agent"):
+def _plain_requirement(text):
+    """A requirement's text for comparing: case, spaces, the "(assumed)" mark and closing punctuation do not count."""
+    s = re.sub(r"\(assumed\)", " ", str(text or ""), flags=re.I).casefold()
+    return re.sub(r"\s+([.,;:])", r"\1", " ".join(s.split())).strip(" .;,")
+
+
+def _extends(new, old):
+    """True when `new` still says all of `old`: the old text stands in it as whole clauses ("old, plus more"), not as
+    words inside another sentence ("no <old>" is the opposite of old)."""
+    new, old = _plain_requirement(new), _plain_requirement(old)
+    return bool(old) and re.search(r"(?:^|[.;]\s+)" + re.escape(old) + r"(?=$|[;,+]|\.(?:\s|$)|\s[(+])", new) is not None
+
+
+def propose_idea(project, topic, text, by="agent", replace=False):
     """A requirement, written into the live draft at once (the student's Save is the gate). 'proposed' only
-    survives in projects made before the draft existed; Accept all / Dismiss all clear those."""
+    survives in projects made before the draft existed; Accept all / Dismiss all clear those.
+
+    The agent never loses a requirement: under a topic that exists it changes that row only when the new text still
+    says all of the old one, or with `replace` (the student asked for the change); else the new text gets a row of its
+    own, "<topic> (2)", right after the topic's rows. A text a row of the topic already says changes nothing."""
     topic, text = validate_idea_item(topic, text)
     idea = load_idea_working(project)
-    item = next((i for i in idea["agreed"] if i["topic"] == topic), None)
+    items = idea["agreed"]
+    item = next((i for i in items if i["topic"] == topic), None)
     status = "confirmed"
+    if by == "agent" and item and not replace:
+        base = re.sub(r" \(\d+\)$", "", topic)
+        row = re.compile(re.escape(base) + r"(?: \(\d+\))?")
+        family = [i for i in items if row.fullmatch(str(i.get("topic") or ""))]
+        same = next((i for i in family if _plain_requirement(i.get("text")) == _plain_requirement(text)), None)
+        grown = next((i for i in family if _extends(text, i.get("text"))), None)
+        if same:
+            # only dropping the "(assumed)" mark is a change worth writing
+            if "(assumed)" in text.casefold() or "(assumed)" not in str(same.get("text")).casefold():
+                return idea
+            item, topic = same, same["topic"]
+        elif grown:
+            item, topic = grown, grown["topic"]
+        elif item.get("text"):
+            taken = {i.get("topic") for i in items}
+            n = 2
+            while (new_topic := f"{base[:60 - len(f' ({n})')].rstrip()} ({n})") in taken:
+                n += 1
+            items.insert(items.index(family[-1]) + 1,
+                         {"topic": new_topic, "text": text, "by": by, "status": status, "ts": now_ms()})
+            return save_idea_draft(project, idea)
     if item:
         if by == "agent" and item.get("text") and item["text"] != text:
             item["prev_text"] = item["text"]

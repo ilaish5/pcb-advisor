@@ -107,6 +107,8 @@ def _summary(model):
                "library": l.get("library")}
         if l.get("role"):
             row["role"] = l["role"]
+        if l.get("role_finding"):
+            row["check"] = l["role_finding"]
         if l.get("dnp") or l.get("nobuy"):
             row["not_bought"] = True
         sup = l.get("supply")
@@ -138,7 +140,8 @@ def _summary(model):
         "totals": model.get("totals"),
         "bom": bom,
         "sheets": [{"id": sh["id"], "title": sh["title"], "parts": len(sh["parts"])} for sh in model.get("sheets", [])],
-        "pending_proposals": [{"id": p["id"], "line": p["line"], "changes": p["changes"]}
+        "pending_proposals": [{"id": p["id"], "line": p["line"], "changes": p["changes"],
+                               **({"check": p["role_finding"]} if p.get("role_finding") else {})}
                               for p in model.get("proposals", []) if p["status"] == "pending"],
         # the project's own documents (and shared datasheets) by name; the course/JLC/IPC reference library only as a pointer
         "sources": [x["name"] for x in sources if x.get("origin") != "Reference library"],

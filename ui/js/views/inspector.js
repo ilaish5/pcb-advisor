@@ -238,6 +238,7 @@ function inspPartHTML(l) {
     inspHead(refsLabel(refs) || l.key, sub, acts) +
     `<div class="drawer-b">` +
     `<div>${kv([field('mpn', 'MPN', l.mpn, 'MPN', true), field('role', 'Role', l.role, 'Add a role'), field('note', 'Note', l.note, 'Add a note'), ['LCSC', l.lcsc ? l.lcsc + (bomLibType(l) ? ' · ' + bomLibType(l) : '') : null], ['CPL rotation', Number(l.cpl_rotation) ? `+${l.cpl_rotation}° added in the CPL` : null]])}` +
+    `${l.role_finding ? `<p class="insp-desc" dir="auto">${tag('Check qty', 'warn')} ${esc(l.role_finding)}</p>` : ''}` +
     `${inspDesc(l) ? `<p class="insp-desc">${esc(inspDesc(l))}</p>` : ''}</div>` +
     `<div id="insp-where-h">${dyn.where}</div><div id="insp-nets-h">${dyn.nets}</div>` +
     inspStockHTML(l) + inspLibHTML(l) + inspDatasheetHTML(l) + (typeof pinsInspHTML === 'function' ? pinsInspHTML(l) : '') +

@@ -186,10 +186,10 @@ def test_one_failing_action_is_refused_and_the_turn_goes_on(empty, monkeypatch):
     import struct
     real = serve.store.propose_idea
 
-    def boom(project, topic, text, by="agent"):
+    def boom(project, topic, text, by="agent", replace=False):
         if topic == "bad":
             raise struct.error("unpack requires a buffer of 4 bytes")
-        return real(project, topic, text, by=by)
+        return real(project, topic, text, by=by, replace=replace)
     monkeypatch.setattr(serve.store, "propose_idea", boom)
     acts = [{"type": "idea.propose", "topic": "bad", "text": "x"}, {"type": "idea.propose", "topic": "good", "text": "y"}]
     applied, _, refused = serve.apply_actions(empty, acts, last_user="hi", chat=[{"role": "user", "text": "hi"}])

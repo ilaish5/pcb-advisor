@@ -440,12 +440,12 @@ def test_requirements_endpoints(empty, server):
 
 
 def test_agent_proposal_preserves_student_prev_text(empty):
-    """The agent's change to a student's topic lands in the draft at once; the old text is kept in prev_text."""
+    """A change the student asked for lands in the draft at once; the old text is kept in prev_text."""
     store.propose_idea(empty, "Memory", "64MB SPI NOR Flash", by="student")
     assert store.load_idea_working(empty)["agreed"][0]["status"] == "confirmed"
 
     # Agent proposes update
-    store.propose_idea(empty, "Memory", "32MB SPI NOR Flash is enough", by="agent")
+    store.propose_idea(empty, "Memory", "32MB SPI NOR Flash is enough", by="agent", replace=True)
     item = store.load_idea_working(empty)["agreed"][0]
     assert item["status"] == "confirmed" and item["by"] == "agent"
     assert item["text"] == "32MB SPI NOR Flash is enough"
