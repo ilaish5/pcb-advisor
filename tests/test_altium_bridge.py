@@ -43,13 +43,18 @@ class FakeAltium:
                     fh.write(f"\r\n[Document{n}]\r\nDocumentPath={os.path.relpath(c[2], self.prj.parent)}\r\n")
             elif c[0] == "DOCSTATE":
                 out_lines.append(f"docstate open modified={1 if pathlib.Path(c[1]).name in self.unsaved else 0}")
+            elif c[0] == "OUTJOB" and (c[4:5] or ("",))[0] == "Publish":      # the PDF container: only a publish prints it
+                if not self.only_gerbers:
+                    out = self.prj.parent / f"Project Outputs for {self.prj.stem}"
+                    out.mkdir(parents=True, exist_ok=True)
+                    (out / f"{self.prj.stem}_Schematics.pdf").write_bytes(b"%PDF-1.4 x")
             elif c[0] == "OUTJOB":                  # Altium's own folder next to the project: one Gerber per layer
                 out = self.prj.parent / f"Project Outputs for {self.prj.stem}" / "Gerber"
                 out.mkdir(parents=True, exist_ok=True)
                 for ext in ("GTL", "GBL", "GTS", "GBS", "GTO", "GBO", "GTP", "GBP", "GM1"):
                     (out / f"{self.prj.stem}.{ext}").write_text("G04 x*\nM02*\n")
-                if not self.only_gerbers:               # the rest of the OutJob's set: schematic PDF, drill, pick and place
-                    (out.parent / f"{self.prj.stem}_Schematics.pdf").write_bytes(b"%PDF-1.4 x")
+                (out / f"{self.prj.stem}-macro.APR_LIB").write_text("")        # Altium's aperture side file: empty, no output
+                if not self.only_gerbers:               # the rest of the OutJob's set: drill, pick and place
                     (out / f"{self.prj.stem}-Plated.TXT").write_text("M48\n")
                     (out.parent / f"Pick Place for {self.prj.stem}.txt").write_text("Designator\n")
         return out_lines
@@ -319,10 +324,11 @@ def test_run_outjob_adds_ours_when_the_project_has_none(lte, fake):
     prj, _ = _linked_with_rules_board(lte, fake)
     res = bridge.run_outjob(lte)
     out = prj.parent / f"{prj.stem}.OutJob"
-    assert res["added"] and out.is_file() and res["containers"] == ["Folder Structure"]
-    cmds = fake.flat()
-    assert [c[0] for c in cmds] == ["PROJECT", "ADDDOC", "SAVEPRJ", "OUTJOB"]
+    assert res["added"] and out.is_file() and res["containers"] == ["Folder Structure", "PDF"]
+    cmds = [c for c in fake.flat() if c[0] != "UNMARK"]
+    assert [c[0] for c in cmds] == ["PROJECT", "ADDDOC", "SAVEPRJ", "OUTJOB", "OUTJOB"]
     assert cmds[1][1:] == (str(prj), str(out)) and cmds[3][1:3] == (str(out), "Folder Structure")
+    assert cmds[3][4] == "GeneratedFiles" and cmds[4][2] == "PDF" and cmds[4][4] == "Publish"     # E14: the PDF container is published
     assert (pathlib.Path(res["backup"]) / prj.name).is_file()                  # the project file is copied first
     assert any(f.endswith(".GTL") for f in res["files"])
 
@@ -333,7 +339,7 @@ def test_run_outjob_uses_the_projects_own_outjob_and_the_gerber_set_is_found(lte
     bridge.run_outjob(lte)                       # the fake adds the OutJob to the project file, as Altium does
     fake.runs.clear()
     res = bridge.run_outjob(lte)
-    assert not res["added"] and [c[0] for c in fake.flat()] == ["PROJECT", "OUTJOB"]
+    assert not res["added"] and [c[0] for c in fake.flat() if c[0] != "UNMARK"] == ["PROJECT", "OUTJOB", "OUTJOB"]
     got = jlc_upload.find_set(lte)
     assert {p.suffix.upper() for p, _ in got["gerbers"]} >= {".GTL", ".GBL", ".GTS", ".GBS"}
 
@@ -536,50 +542,24 @@ def test_run_outjob_has_no_design_warning_for_a_matching_board(lte, fake, monkey
     assert bridge.design_problems(lte) == []
 
 
-# ---- manufacturing outputs are refused while parts are unverified (the full cases: test_manufacturing_block.py)
+# ---- unverified parts only warn (owner decision 24/11/2026); the board gate is in test_manufacturing_block.py
 
-def test_manufacturing_outputs_are_refused_while_parts_are_unverified(lte, fake, monkeypatch):
-    from http.server import ThreadingHTTPServer
-    import serve
+def test_manufacturing_outputs_are_not_refused_while_parts_are_unverified_they_warn(lte, fake, monkeypatch):
     monkeypatch.setattr(store, "manufacturing_warning", _REAL_WARNING)
-    monkeypatch.setattr(serve, "QUIET", True)
     _linked_with_rules_board(lte, fake)
-    msg = store.manufacturing_warning(lte)
-    assert msg.startswith("Not made yet: 2 parts have pins nobody checked against a datasheet: ") and "1 part has pins that differ from the datasheet: " in msg and msg.endswith("or accept it if you checked it yourself.")
-    httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{httpd.server_address[1]}"
-
-    def post(path):
-        req = urllib.request.Request(f"{base}{path}?project={lte}", method="POST", data=b"{}",
-                                     headers={"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=20) as r:
-                return r.status, json.loads(r.read())
-        except urllib.error.HTTPError as e:
-            return e.code, json.loads(e.read())
-
-    try:
-        for path in ("/api/altium/run-outjob", "/api/jlc/gerber-zip"):
-            code, body = post(path)
-            assert code == 400 and body["error"] == msg
-    finally:
-        httpd.shutdown()
-        httpd.server_close()
-    fake.runs.clear()
-    applied, _, refused = serve.apply_actions(lte, [{"type": "altium.run_outjob"}, {"type": "jlc.gerber_zip"}])
-    assert not applied and not fake.runs and refused == [f"altium.run_outjob: {msg}", f"jlc.gerber_zip: {msg}"]
+    msg = store.pins_warning(lte)
+    assert msg.startswith("Warning (the outputs are still made): 2 parts have pins nobody checked against a datasheet: ") and "1 part has pins that differ from the datasheet: " in msg
+    assert "pins nobody checked" not in store.manufacturing_warning(lte)
 
 
 def test_no_warning_without_unverified_parts_and_do_not_buy_lines_do_not_count(lte, monkeypatch):
-    monkeypatch.setattr(store, "manufacturing_warning", _REAL_WARNING)
     rows = [{"line": "k1", "refs": ["D1"], "mpn": "", "status": "unverified", "issues": ""},
             {"line": "k2", "refs": ["R9"], "mpn": "", "status": "unverified", "issues": ""}]
     monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: rows)
     monkeypatch.setattr(store, "bom", lambda project, write=True: [{"key": "k2", "dnp": True}])
-    assert "1 part has pins nobody checked against a datasheet: D1." in store.manufacturing_warning(lte)
+    assert "1 part has pins nobody checked against a datasheet: D1." in store.pins_warning(lte)
     monkeypatch.setattr(store, "unverified_parts", lambda project, verify_new=True: [])
-    assert store.manufacturing_warning(lte) == ""
+    assert store.pins_warning(lte) == ""
 
 
 def test_api_altium_outputs_lists_the_folder_altium_wrote(lte, tmp_path, monkeypatch):

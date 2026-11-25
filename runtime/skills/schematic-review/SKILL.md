@@ -67,6 +67,8 @@ A finding without a datasheet page is not a finding; it is a question to the stu
   not a wiring mistake. Fix the library symbol; do not paper over it with a No-ERC cross.
 - An unconnected pin is fine only if the datasheet says "NC / leave open". Otherwise tie it as the datasheet says (for example
   an enable or a mode pin). Unused inputs must not float.
+- Interface pins (SIM_*, VSIM, USB D+/D-, ANT/RF, SWD, BOOT0, a modem's UART) go NC "because the module has it on board"
+  only with the datasheet page that says so, cited. A BOM note is not proof. The DFM page flags such a group until marked intended.
 - Absolute maximum is not an operating point. Check recommended operating conditions, and the margin on 5 V signals into 3.3 V pins.
 - Datasheet revisions and package variants differ (letters at the end of the part number). Confirm the exact variant and package.
 

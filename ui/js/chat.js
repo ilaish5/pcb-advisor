@@ -110,6 +110,17 @@ const propLower = s => /^[A-Z]{2,}/.test(s) ? s : s.charAt(0).toLowerCase() + s.
 const propShow = (v, k) => k === 'cpl_rotation' ? (Number(v) ? `${Number(v) > 0 ? '+' : ''}${Number(v)}°` : 'none') : Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'yes' : 'no') : (v === null || v === undefined) ? '' : String(v);
 const propPlural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
 
+/* A delete proposal (store.delete_spec): null, or {whole, refs} - the refs it takes off its line (all of them for the whole line). */
+function propDelete(p) {
+  if (!p || p.kind === 'idea_diagram') return null;
+  const c = p.changes || {};
+  if (!(c.deleted || c.remove || String(p.kind || '').startsWith('delete'))) return null;
+  const all = (p.before && p.before.refs) || ((lineByKey(p.line) || {}).refs) || [p.line];
+  const part = Array.isArray(c.remove) ? c.remove : Array.isArray(c.refs) ? c.refs : null;
+  return part && part.length && part.length < all.length ? {whole: false, refs: part} : {whole: true, refs: all};
+}
+const propDeleteText = (p, del) => del.whole ? `delete line ${p.line} (${del.refs.join(', ')})` : `remove ${del.refs.join(', ')} from line ${p.line}`;
+
 /* The fields a proposal really changes: a value equal to the current one (after trimming) is not a change and is not listed or counted. */
 function propChangedKeys(p) {
   const keys = Object.keys(p.changes || {});
@@ -153,6 +164,8 @@ function diffHTML(p) {
   const ref = diagram ? '' : ((lineByKey(p.line) || {}).refs || [p.line])[0];
   const refBtn = ref ? `<button type="button" class="ref" data-ref="${esc(ref)}">${esc(p.new ? p.line : ref)}</button>` : '';
   const labels = keys.map(k => propLabel(k));
+  const del = propDelete(p);
+  if (del) return propDeleteHTML(p, del);
   const what = labels.length > 2 ? propPlural(labels.length, 'field') : labels.map(propLower).join(' and ');
   if (p.status === 'approved' || p.status === 'rejected' || p.status === 'undone') {
     const ok = p.status === 'approved', undone = p.status === 'undone';
@@ -182,9 +195,28 @@ function diffHTML(p) {
   return `<div class="prop" data-pid="${pid}"><h4>${refBtn}: ${esc(title)}</h4><div class="chg">${rows.join('')}</div>${why}${srcs}${acts()}</div>`;
 }
 
+/* A delete card: what goes (the line, its part, its refs). Approve is always the student's click (store: critical). */
+function propDeleteHTML(p, del) {
+  const text = propDeleteText(p, del);
+  if (p.status === 'approved' || p.status === 'rejected' || p.status === 'undone') {
+    const ok = p.status === 'approved', undone = p.status === 'undone';
+    const word = undone ? 'Undone' : ok ? 'Approved' : 'Rejected';
+    const undo = ok ? btn('Undo', {kind: 'link', size: 'sm', icon: 'undo', act: 'undo-change', pid: p.id, title: 'Put the line back'}) : '';
+    return `<div class="prop-done ${ok ? 'ok' : 'no'}"><span class="${ok ? 'ok-t' : ''}">${icon(ok ? 'check' : 'x', 's')}</span><span>${word}: ${esc(text)}</span>${undo}</div>`;
+  }
+  const b = p.before || {}, name = [b.value || b.description, b.mpn].filter(v => v && !/^[-–—\s]+$/.test(v)).join(' · ');
+  const why = p.reason ? `<p class="why" dir="auto">${esc(p.reason)}</p>` : '';
+  const lead = chatLead === null || chatLead === p.id;
+  return `<div class="prop" data-pid="${esc(p.id)}"><h4>${esc(text.charAt(0).toUpperCase() + text.slice(1))}</h4>` +
+    `<div class="chg"><div class="row" dir="auto"><s>${esc(name || p.line)}</s></div></div>${why}` +
+    `<div class="acts">${btn(del.whole ? 'Delete' : 'Remove', {kind: lead ? 'pri' : 'line', size: 'sm', decide: 'approved', pid: p.id})}${btn('Keep', {size: 'sm', decide: 'rejected', pid: p.id})}</div></div>`;
+}
+
 /* One-line summary of a proposal, for the lists inside a group. */
 function propSummary(p) {
   if (p.kind === 'idea_diagram') return 'Diagram changes';
+  const del = propDelete(p);
+  if (del) return propDeleteText(p, del);
   const ref = ((lineByKey(p.line) || {}).refs || [p.line])[0];
   const keys = propChangedKeys(p).filter(k => k !== 'refs' || p.new);
   return `${p.new ? 'New ' : ''}${ref}: ${keys.map(k => propLabel(k).toLowerCase() + ' ' + propShow(p.changes[k], k)).join(', ')}`;
@@ -210,6 +242,8 @@ function propTicked(id) {
 function propRowOf(p, extra) {
   const c = p.changes || {}, f = k => (c[k] === undefined || c[k] === null ? '' : propShow(c[k], k));
   if (p.kind === 'idea_diagram') return {id: p.id, ref: 'Diagram', role: 'Diagram changes', reason: p.reason, checked: propTicked(p.id), ...extra};
+  const del = propDelete(p);
+  if (del) return {id: p.id, ref: del.refs[0] || p.line, role: propDeleteText(p, del), reason: p.reason, checked: propTicked(p.id), ...extra};
   const ref = (Array.isArray(c.refs) && c.refs[0]) || ((lineByKey(p.line) || {}).refs || [p.line])[0];
   return {id: p.id, ref, isNew: !!p.new, mpn: f('mpn'), manufacturer: f('manufacturer'), package: f('package'), lcsc: f('lcsc'), value: f('value'),
     role: f('role'), reason: p.reason, unverified: propIsUnverified(p), checked: propTicked(p.id), ...extra};
@@ -280,8 +314,10 @@ function propsHTML(ids) {
   const pending = ps.filter(p => p.status === 'pending');
   const done = ps.filter(p => p.status === 'approved' || p.status === 'undone');
   const other = ps.filter(p => p.status === 'rejected');
+  // a delete is never part of Approve all: each pending delete is its own card (Delete / Keep), the rest is the group card
+  const pendDel = pending.filter(p => propDelete(p)), pendRest = pending.filter(p => !propDelete(p));
   return (done.length > 1 ? propGroupHTML(done, false) : done.map(diffHTML).join('')) +
-    other.map(diffHTML).join('') + (pending.length > 1 ? propGroupHTML(pending, true) : pending.map(diffHTML).join(''));
+    other.map(diffHTML).join('') + (pendRest.length > 1 ? propGroupHTML(pendRest, true) : pendRest.map(diffHTML).join('')) + pendDel.map(diffHTML).join('');
 }
 
 /* ---------- partial turns, denials, queue ---------- */
@@ -963,4 +999,8 @@ onAct('chat-checks', async () => { go('settings'); setTimeout(() => { if (typeof
 onAct('chat-confirm-idea', async () => { setState(await api('/api/idea/confirm', {})); render(true); toast('Idea confirmed'); });
 onAct('review-diagram', async (el, d, e) => { go('workspace', 'idea'); });
 // Undo one applied change: the server appends a compensating entry; if later changes depend on it, it says so (409)
-onAct('undo-change', async (el, d, e) => { setState(await api('/api/undo', {id: d.pid})); render(true); toast('Undone'); });
+onAct('undo-change', async (el, d, e) => {
+  const r = await api('/api/undo', {id: d.pid}); setState(r); render(true);
+  // the delete threw out the pending changes for that line: an undo brings the line back, not those
+  toast(r.superseded && r.superseded.length ? `Undone. ${r.superseded.length} pending change${r.superseded.length === 1 ? '' : 's'} for that line ${r.superseded.length === 1 ? 'was' : 'were'} dropped when it was deleted and ${r.superseded.length === 1 ? 'is' : 'are'} not back` : 'Undone');
+});

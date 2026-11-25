@@ -87,12 +87,14 @@ def test_dfm_with_no_report_or_an_untriaged_one_is_never_clean(empty):
 
 def test_outputs_is_blocked_exactly_when_the_manufacturing_gate_is(empty):
     assert by_id(empty)[0]["outputs"]["gate"]["blocked"] is False and store.manufacturing_warning(empty) == ""
-    _sheet(empty)
+    _sheet(empty)                                     # unverified pins: a warning on the stage, no gate
     st = by_id(empty)[0]["outputs"]
-    assert store.manufacturing_warning(empty) and st["state"] == "blocked" and st["gate"]["blocked"] and st["gate"]["why"] == store.manufacturing_warning(empty)
-    store.accept_pins(empty, "U1")
+    assert store.manufacturing_block(empty) == "" and st["state"] != "blocked" and not st["gate"]["blocked"] and "U1" in st["pins_warning"]
+    sh = store.load_sheet(empty, "01")
+    sh["parts"][0]["pins"][-1]["net"] = ""            # an open pin does block
+    store.write_sheet(empty, "01", sh)
     st = by_id(empty)[0]["outputs"]
-    assert store.manufacturing_warning(empty) == "" and st["state"] != "blocked" and not st["gate"]["blocked"]
+    assert store.manufacturing_warning(empty) and st["state"] == "blocked" and st["gate"]["blocked"] and st["gate"]["why"] == store.manufacturing_block(empty)
 
 
 def test_open_pins_block_and_one_click_marks_them_all_nc(server, empty):
@@ -160,7 +162,7 @@ def test_rev_changes_when_a_log_grows_and_never_hashes_the_pcb(empty, pcb, monke
 def test_every_state_is_one_of_the_five_and_blocked_has_a_reason(empty):
     st, _ = by_id(empty)
     for s in st.values():
-        assert s["state"] in stages.STATES and set(s) == {"id", "state", "severity", "reason", "open", "gate", "next", "primary"}
+        assert s["state"] in stages.STATES and set(s) - {"pins_warning"} == {"id", "state", "severity", "reason", "open", "gate", "next", "primary"}
 
 
 # ---- the page: the dots read S.stages only

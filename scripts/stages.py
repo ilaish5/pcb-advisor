@@ -284,28 +284,42 @@ def rules_stage(project):
 
 
 def outputs_stage(project, model):
-    """Blocked exactly when store.manufacturing_warning says so: one gate for the button, the dot, the banner and the agent."""
-    why = ""
+    """Blocked exactly when store.manufacturing_block says so: one gate for the button, the dot, the banner and the agent. That is the
+    design (store.manufacturing_warning: footprints, open pins, a draft) and the board (store.route_block: unrouted nets, or a board
+    never routed or checked). Unverified or conflicting pins never block: they ride along as `pins_warning` (store.pins_warning)."""
+    why = design = ""
     try:
-        why = store.manufacturing_warning(project)
+        design = store.manufacturing_warning(project)
+        why = store.manufacturing_block(project)
     except Exception:       # noqa: BLE001
         why = ""
+    try:
+        warn = store.pins_warning(project)
+    except Exception:       # noqa: BLE001
+        warn = ""
     if why:
         gaps = store.pin_gaps(project)
         has_pins = bool(gaps["open"] or gaps["unlisted"])
-        gate = {"blocked": True, "why": why, "page": "sch" if has_pins or store.draft_parts(project) else "checks"}
+        page = "sch" if has_pins or store.draft_parts(project) else ("checks" if design else "pcb")
+        gate = {"blocked": True, "why": why, "page": page}
         if has_pins:
             gate["gaps"] = gaps
             gate["nc_proposal"] = store.nc_proposal(project)
-        return _stage("outputs", "blocked", why, "bad", len(gaps["open"]) + len(gaps["unlisted"]) or 1, gate=gate,
-                      next_={"label": "Resolve the blocker", "act": "go:" + gate["page"]})
+        st = _stage("outputs", "blocked", why, "bad", len(gaps["open"]) + len(gaps["unlisted"]) or 1, gate=gate,
+                    next_={"label": "Route the board" if page == "pcb" else "Resolve the blocker", "act": "go:" + page})
+        st["pins_warning"] = warn
+        return st
     ex = model.get("exports") or []
     if not ex:
-        return _stage("outputs", "not_started", "Nothing generated yet", next_={"label": "Generate outputs", "act": "go:outputs"})
-    old = [e for e in ex if (e.get("lineage") or {}).get("status") in ("stale", "edited")]
-    if old:
-        return _stage("outputs", "issues", f"{_plural(len(old), 'file')} out of date with the design: export again", "warn", len(old), next_={"label": "Export again", "act": "go:outputs"})
-    return _stage("outputs", "clean", _plural(len(ex), "file"), next_=_go("checks", "Next: DFM"))
+        st = _stage("outputs", "not_started", "Nothing generated yet", next_={"label": "Generate outputs", "act": "go:outputs"})
+    else:
+        old = [e for e in ex if (e.get("lineage") or {}).get("status") in ("stale", "edited")]
+        if old:
+            st = _stage("outputs", "issues", f"{_plural(len(old), 'file')} out of date with the design: export again", "warn", len(old), next_={"label": "Export again", "act": "go:outputs"})
+        else:
+            st = _stage("outputs", "clean", _plural(len(ex), "file"), next_=_go("checks", "Next: DFM"))
+    st["pins_warning"] = warn
+    return st
 
 
 def checks_stage(model):

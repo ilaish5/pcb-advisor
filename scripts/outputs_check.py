@@ -56,6 +56,16 @@ def outjob_kinds(outjob) -> list[tuple[str, str]]:
     return out
 
 
+# files Altium writes next to the outputs that are not outputs: the Gerber aperture macro library (<project>-macro.APR_LIB, empty
+# whenever the apertures are embedded in the RS-274X files, as ours are), the run's status / report logs (E14)
+_SIDE_FILE = re.compile(r"\.(?:apr_lib|apr|log|rep|drr|extrep)$|^status report\b", re.I)
+
+
+def is_side_file(name) -> bool:
+    """A file Altium writes beside the outputs that is not one of them (never listed, never checked as empty, never zipped)."""
+    return bool(_SIDE_FILE.search(pathlib.PurePath(str(name)).name))
+
+
 def is_bom_path(path) -> bool:
     """A BOM file by its own name or by its folder, whatever OutJob wrote it (ours: BOM/<project>.csv, a student's:
     Assembly/Bill of Materials-X.xlsx). The one classifier: bridge's BOM fallback and kind_of() both ask it."""
@@ -97,7 +107,7 @@ def verify(project: str, files, outjob=None, options: dict | None = None, extra=
         for k in ("bom", "cpl"):
             if k not in [w[0] for w in wanted]:
                 wanted.append((k, LABEL[k]))
-    paths = [pathlib.Path(f) for f in list(files or []) + list(extra or [])]
+    paths = [pathlib.Path(f) for f in list(files or []) + list(extra or []) if not is_side_file(f)]
     absent = sorted({p.name for p in paths if not p.is_file()})
     empty = sorted({p.name for p in paths if p.is_file() and p.stat().st_size == 0})
     good = [p for p in paths if p.is_file() and p.stat().st_size > 0]

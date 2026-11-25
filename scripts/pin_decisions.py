@@ -228,11 +228,11 @@ def group_lines(project, key):
     return out
 
 
-def questions(project):
+def questions(project, rows=None):
     """What the student is asked, one entry per question: [{id, lines, refs, mpn, status, issues, kind, blind, own_look, count}].
     A mismatch is always its own question (never grouped, never part of a bulk accept); identical unverified parts are one.
     `blind`: nothing but the student's word can settle it (an IC with no datasheet check): the bulk confirm names these first."""
-    rows = store.pins_to_resolve(project)
+    rows = store.pins_to_resolve(project) if rows is None else rows
     bom = {l["key"]: l for l in store.bom(project, write=False)}
     groups = {}
     for r in rows:
@@ -275,15 +275,18 @@ def row_buttons(row, line):
 def waiting(project):
     """The one summary every page that shows the waiting parts reads (S.pin_decisions.waiting):
     {questions, lines, own_look, auto_verified, fetchable, groups, bulk, blind, lib_buttons}.
-      questions       how many things the student is asked (groups: identical parts are one)
+      parts, to_confirm, conflicts, lines   store.pin_counts: THE numbers every page shows (parts are designators)
+      questions       how many rows the student is asked (groups: identical parts are one); a layout number, never shown as a count
       own_look        of those, how many need their own look (a mismatch): the only rows with their own button
       bulk            the lines one "Confirm all" settles (every unverified question, no mismatch)
       blind           the refs among them nothing but the student's word settles (an IC with no datasheet check)
       auto_verified   lines the library model verified by itself (pin_model)"""
-    qs = questions(project)
+    rows = store.pins_to_resolve(project)
+    qs = questions(project, rows)
     bom = {l["key"]: l for l in store.bom(project, write=False)}
     bulk = [ln for q in qs if not q["own_look"] for ln in q["lines"]]
-    return {"questions": len(qs), "lines": sum(len(q["lines"]) for q in qs), "own_look": sum(1 for q in qs if q["own_look"]),
+    # one count for every place that shows it (E11): parts (designators), from the same rows the gate refuses on
+    return {**store.pin_counts(rows), "questions": len(qs), "own_look": sum(1 for q in qs if q["own_look"]),
             "auto_verified": sum(1 for l in bom.values() if l.get("pins_basis") == "library_model"),
             "fetchable": sum(1 for q in qs if q["fetchable"]), "groups": qs, "bulk": bulk,
             "blind": [r for q in qs if q["blind"] for r in q["refs"]],
@@ -323,12 +326,54 @@ def _pins_of(project, line):
     return out
 
 
+# a contents or index line: a title, a run of dot leaders, a page number ("Pin Configuration ........ 5")
+_LEADER = re.compile(r"(?:\.\s?){4,}\s*\d{1,3}\s*$|(?:\s\.){3,}\s*\d{1,3}\s*$|…{2,}\s*\d{1,3}\s*$", re.M)
+_CONTENTS = re.compile(r"^\s*(?:table\s+of\s+contents|contents|index)\s*$", re.I | re.M)
+_PIN_TABLE = re.compile(r"pin\s*(?:no\.?|number|#|name)\b|\bI\s*/\s*O\b|\bpin\s+description", re.I)
+
+
+def is_contents_page(page):
+    """A table of contents or an index: several lines that end in dot leaders and a page number. It names every pin heading of the
+    datasheet and every package, so without this check it outscores the pin page it only points to (E13: W25Q128JV page 2)."""
+    leaders = len(_LEADER.findall(page))
+    return leaders >= 4 or (leaders >= 2 and bool(_CONTENTS.search(page)))
+
+
+def _package_words(package):
+    """The package family and pin count to look for ("SOIC-8" -> SOIC, 8; "WSON-8 6x5" -> WSON, 8): a datasheet writes
+    "8-pin SOIC 208-mil", never the library's "SOIC-8"."""
+    fam = [w for w in re.findall(r"[A-Za-z]{2,}", package or "") if w.lower() not in ("mm", "mil", "pin", "pins", "x")]
+    return fam[:1]
+
+
+def _package_on_page(page, package):
+    """The package is on the page: its full name, or its family word together with its pin count ("SOIC-8", "SOIC8", "8-pin SOIC").
+    The family word alone is on every page of a package chapter, so it counts for nothing."""
+    m = re.search(r"[A-Za-z][-_ ]?(\d{1,3})\b", package or "")
+    n = m.group(1) if m else None
+    if not n or int(n) < 3:
+        return False                       # no pin count in the name: nothing but the family word to go by
+    if re.search(re.escape(package), page, re.I):
+        return True
+    for w in _package_words(package):
+        if re.search(rf"\b{re.escape(w)}[-\s]?{n}\b|\b{n}[-\s]?(?:pin|lead|ball)s?[-\s]+(?:\w+[-\s]+)?{re.escape(w)}", page, re.I):
+            return True
+    return False
+
+
 def candidate_pages(text, package=""):
     """1-based pages of the document that look like the pin table / pinout, best first (at most 5): a page with a pin heading
-    scores above a page that only names the package."""
+    scores above a page that only names the package, a page with the pin table itself (Pin No. / Pin Name / I/O) above one with only
+    a heading, and the part's package on the same page adds to it. A contents or index page (dot leaders and page numbers) is
+    never offered: it lists the headings, not the pins."""
     scored = []
     for n, page in enumerate(text.split("\f"), 1):
-        score = 2 * len(_HEADINGS.findall(page)) + (1 if package and re.search(re.escape(package), page, re.I) else 0)
+        if is_contents_page(page):
+            continue
+        heads = len(_HEADINGS.findall(page))
+        table = len(_PIN_TABLE.findall(page))
+        pkg = _package_on_page(page, package)
+        score = 2 * heads + (3 if heads and table else 0) + (1 if pkg else 0) + (1 if heads and pkg else 0)
         if score:
             scored.append((-score, n))
     return [n for _, n in sorted(scored)[:5]]
@@ -384,13 +429,14 @@ def risks(project):
 
 
 def write_manifest(project):
-    """exports/<project>_order_manifest.json: {accepted_risks, unverified, verified_by_library_model, board_check, generated}, beside the Gerber zip, never inside it.
+    """exports/<project>_order_manifest.json: {warning, accepted_risks, unverified, verified_by_library_model, board_check, generated}, beside the Gerber zip, never inside it.
     Written when there is anything to say (or an older one to keep current); the JLC BOM CSV is not touched."""
     import json
 
     import workspace
     path = store.pdir(project) / "exports" / f"{workspace.safe_name(project)}_order_manifest.json"
     acc, unv = risks(project), store.pins_to_resolve(project)
+    warn = store.pins_warning(project, rows=unv)            # named, never a block: the order goes out with it in plain words
     try:
         import pin_model
         lib = pin_model.verified_lines(project)
@@ -405,12 +451,12 @@ def write_manifest(project):
         board = None
     try:
         old = json.loads(path.read_text(encoding="utf-8"))
-        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str))
+        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str)) and old.get("warning", "") == warn
     except (OSError, ValueError):
         same = False
     if not same:
         path.parent.mkdir(parents=True, exist_ok=True)
-        doc = {"accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
+        doc = {"warning": warn, "accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
         store._write_text(path, json.dumps(doc, ensure_ascii=False, indent=2, default=str))
     return str(path)
 

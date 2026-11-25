@@ -12,7 +12,7 @@ import store
 import workspace
 from altium import bridge, draw
 from test_altium_bridge import FakeAltium
-from test_altium_draw import IC, RES, SHEET, SYMS, symbol
+from test_altium_draw import SHEET, SYMS
 
 
 # ---------------------------------------------------------------- the placeholder symbol (pure)

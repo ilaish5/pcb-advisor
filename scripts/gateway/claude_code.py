@@ -127,7 +127,7 @@ class _Turn:
                         self.calls.append({"id": part.get("id"), "ts": events.now_iso(), "tool": name, "label": lab, "input": _clip_input(inp), "failed": False})
                     else:
                         self.calls_dropped += 1
-                    self.steps.append(lab)
+                    self.steps.append(events.human(lab))      # the thread lists plain steps; the full label stays in self.calls
                     if events.is_script_run(name, inp):
                         self.runs.append({"id": part.get("id"), "label": lab, "failed": False})
                     self._emit("tool", events.human(lab), name)

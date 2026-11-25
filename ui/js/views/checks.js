@@ -134,7 +134,7 @@ function dfmRemakeAll() {       // more than one output to make again: one butto
 function dfmHeader(reports) {
   if (!reports) return viewHeader({title: 'DFM'});
   const t = dfmTotals();
-  const unv = dfmUnverified().length;
+  const unv = dfmUnverifiedCount();
   const gaps = dfmGaps();
   const old = outOld(S.exports || []).length;
   const ready = t.known && t.n > 0 && !t.open && !t.real && !unv && !gaps.open_pins.length && !gaps.parts.length && !old;     // reports alone do not make a board ready: every finding is judged, every output is current
@@ -157,6 +157,10 @@ function dfmHeader(reports) {
 function dfmUnverified() {
   return (S.bom || []).filter(l => (l.refs || []).length && (l.on_sheet || []).length && !l.dnp && !l.nobuy && (l.pins_status === 'unverified' || l.pins_status === 'mismatch'));
 }
+// THE number of parts waiting on their pins (E11): the server's store.pin_counts, the same on every page; the BOM lines above are the list
+function dfmUnverifiedCount() {
+  return typeof pinsWaiting === 'function' && pinsWaiting() ? pinsCount('parts') : dfmUnverified().reduce((a, l) => a + (l.refs || []).length, 0);
+}
 function dfmUnverifiedHTML() {
   const rows = dfmUnverified();
   if (!rows.length) return '';
@@ -168,7 +172,7 @@ function dfmUnverifiedHTML() {
     <span class="unv-why" title="${esc(l.pins_issues || '')}">${l.pins_status === 'mismatch' ? 'Pins conflict with ' + esc(l.datasheet || 'the datasheet') + ': ' + esc(l.pins_issues || '') : esc(l.pins_issues || 'Pins not checked against a datasheet')}</span>
     ${btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: l.key, title: 'See the datasheet page next to the pins; one click records your decision'})}
     ${docs.length ? `<select class="in quiet" data-pick-ds="${esc(l.key)}" aria-label="Pick a datasheet for ${esc(refsLabel(l.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}"${d === l.datasheet ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
-  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${rows.length}) to resolve before ordering</span></h3>
+  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${dfmUnverifiedCount()}) to resolve before ordering</span></h3>
     <p class="muted">Drop each datasheet in Sources and re-check, or confirm the pins yourself (one click, undoable).</p>
     <ul>${rows.map(item).join('')}</ul>${btn(dfmRecheckBusy ? 'Checking…' : 'Re-check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy})} ${typeof pinsAcceptAllBtn === 'function' ? pinsAcceptAllBtn() : ''}</section>`;
 }
@@ -181,7 +185,7 @@ function dfmWaitingHTML(w) {
     ${g.own_look ? btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: g.id, title: 'See the conflict next to the pins; one click records your decision'}) : ''}
     ${g.kind === 'ic' && docs.length ? `<select class="in quiet" data-pick-ds="${esc(g.id)}" aria-label="Pick a datasheet for ${esc(refsLabel(g.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
   const recheck = btn(dfmRecheckBusy ? 'Checking…' : 'Check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy, title: 'Fetches the datasheets it can find itself and checks the pins against them'});
-  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${w.questions}) to resolve before ordering</span></h3>
+  return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${pinsNum(pinsCount('parts'))}) to resolve before ordering</span></h3>
     ${pinsWaitingBar()}<ul>${w.groups.map(item).join('')}</ul>${recheck}</section>`;
 }
 // The order: how many boards, and whether JLC assembles them (then the outputs must hold the BOM and the CPL).
@@ -228,6 +232,29 @@ function dfmStaleHTML() {        // an order must not go out with files the desi
   return `<section class="dfm-unv"><h3>Outputs out of date <span class="muted">(${rows.length}) to export again before ordering</span></h3>
     <p class="muted">Each was made from a design that has changed since, or was edited after the tool wrote it. Make each again here (Gerbers: Altium writes them first).</p><ul>${rows.map(item).join('')}</ul></section>`;
 }
+/* Design findings (checks/coverage.py): interface pins left NC, Idea requirements whose parts are on no sheet. One click marks one
+   intended; it comes back if the finding changes. The agent sees the open ones. */
+function dfmDesignHTML() {
+  const df = S.design_findings || {};
+  const open = df.open || [], done = df.intended || [];
+  if (!open.length && !done.length) return '';
+  const row = f => `<li class="unv-row"><span class="m">${esc((f.refs || []).join(', '))}</span> ${esc(f.message)} <span class="unv-why">${esc(f.fix || '')}</span> ` +
+    btn('Intended', {kind: 'link', size: 'sm', act: 'design-intended', key: f.key, title: 'This is on purpose: hide it until the finding changes'}) + '</li>';
+  const back = f => `<li class="unv-row done"><span class="m">${esc((f.refs || []).join(', '))}</span> ${esc(f.message)} ` +
+    btn('Undo', {kind: 'link', size: 'sm', act: 'design-unintended', key: f.key, title: 'Show this finding again'}) + '</li>';
+  const more = done.length ? `<details class="pv-more"><summary>Marked intended (${done.length})</summary><ul>${done.map(back).join('')}</ul></details>` : '';
+  return `<section class="dfm-unv"><h3>Design review <span class="muted">(${open.length}) from the netlist and the Idea</span></h3>
+    <p class="muted">Interface pins left NC, and requirements whose parts are in the BOM but on no sheet.</p><ul>${open.map(row).join('')}</ul>${more}</section>`;
+}
+async function dfmDesignMark(key, intended) {
+  let r;
+  try { r = await api('/api/design-findings/intended', {key, intended}, {soft: true}); } catch (err) { dfmFail(err); return; }
+  if (!r || r.error) { toast((r && r.error) || 'The finding could not be marked.', null, {bad: true}); return; }
+  toast(intended ? 'Marked intended' : 'Shown again');
+  await refresh(true);
+}
+onAct('design-intended', (el, d) => dfmDesignMark(d.key, true));
+onAct('design-unintended', (el, d) => dfmDesignMark(d.key, false));
 function dfmGapsHTML() {
   const g = dfmGaps();
   if (!g.open_pins.length && !g.parts.length) return '';
@@ -249,11 +276,15 @@ onChange(t => t.dataset && t.dataset.pickDs !== undefined, async e => {
 onAct('recheck-pins', async () => {
   if (dfmRecheckBusy) return;
   dfmRecheckBusy = true;
+  if (typeof pinsBusy !== 'undefined') pinsBusy++;      // the counts on screen are old until the fresh state is in (E11)
   if (dfmVisible()) renderCenter(true);
   let r = null;
-  try { r = await api('/api/final/unverified', {}); } catch (err) { dfmFail(err); }      // a POST: it links documents, verifies and writes logs
-  dfmRecheckBusy = false;
-  await refresh(true);
+  try {
+    try { r = await api('/api/final/unverified', {}); } catch (err) { dfmFail(err); }      // a POST: it links documents, verifies and writes logs
+    dfmRecheckBusy = false;
+    await refresh(true);
+  } finally { dfmRecheckBusy = false; if (typeof pinsBusy !== 'undefined') pinsBusy--; }
+  render(true);
   if (r && r.message) toast(r.message);
 });
 function dfmUpload(trigger) {
@@ -343,7 +374,7 @@ function dfmGuideHTML(empty) {
   dfmZipSync();
   if (dfmFolderAsked !== PROJECT) dfmFolderLoad();
   const folder = dfmFolder ? `<span class="m">${esc(dfmFolder)}</span>` : 'your Downloads folder';
-  const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // unverified pins: the server refuses the zip, so the button says why before the click
+  const held = typeof outBlockWhy === 'function' ? outBlockWhy() : '';      // the server's gate (unrouted board, unfinished design): the zip is refused, so the button says why before the click
   const zipBtn = btn(dfmZip && dfmZip.exists ? 'Make it again' : 'Get the zip', {kind: 'line', size: 'sm', act: 'dfm-zip', disabled: dfmZipBusy || !!held, title: held || undefined});
   const steps = [
     dfmStep('Get the Gerber zip', zipBtn, (held ? banner({tone: 'warn', cls: 'dfm-zip-why', text: held}) : '') + dfmZipBody()),
@@ -462,7 +493,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -481,7 +512,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

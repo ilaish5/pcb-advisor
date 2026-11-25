@@ -7,7 +7,6 @@ import pytest
 
 import serve
 import session as session_mod
-import store
 from altium import bridge
 from test_chat_turns import call, server  # noqa: F401
 from test_step_buttons import BUILT, IMPORTED, PLACED, spy, world  # noqa: F401
@@ -180,18 +179,24 @@ def test_an_outjob_that_cannot_be_added_stops_the_run_before_the_outputs(empty, 
     assert [x["state"] for x in serve.step_status(empty)["steps"]] == ["failed", "skipped"] and _free()
 
 
-def test_the_outputs_run_is_refused_at_plan_time_while_a_part_is_unverified_and_passes_after_accept(empty, world, monkeypatch):
+def test_the_outputs_run_is_not_refused_for_unverified_pins_it_warns_and_names_the_part(empty, world, monkeypatch):
     ran = []
     monkeypatch.setattr(bridge, "run_outjob", lambda p: ran.append(1) or dict(RAN))
-    _sheet(empty)
+    _sheet(empty)                                              # U1: pins nobody checked
     code, body, _ = serve.run_step_button(empty, None, "outputs", {})
-    assert code == 400 and body["error"].startswith("Not made yet: 1 part has pins nobody checked") and "DFM > Unverified parts" in body["error"]
+    assert code == 200 and ran == [1] and _free()
+    assert "U1" in body["pins_warning"] and body["warnings"][0] == body["pins_warning"]        # owner decision 24/11/2026: warn, never block
+
+
+@pytest.mark.route_gate
+def test_the_outputs_run_is_refused_at_plan_time_while_the_board_is_not_routed(empty, world, monkeypatch):
+    ran = []
+    monkeypatch.setattr(bridge, "run_outjob", lambda p: ran.append(1) or dict(RAN))
+    code, body, _ = serve.run_step_button(empty, None, "outputs", {})
+    assert code == 400 and body["error"].startswith("Not made yet: the board was never checked") and "Route board" in body["error"]
     assert ran == [] and _free()
     st = serve.step_status(empty)                              # a refusal is an answer: the page that reloads finds it
     assert st["running"] is False and st["error"] == body["error"] and [x["state"] for x in st["steps"]] == ["failed"]
-    store.accept_pins(empty, "U1")
-    code, body, _ = serve.run_step_button(empty, None, "outputs", {})
-    assert code == 200 and ran == [1]
 
 
 # ---- the page
@@ -221,15 +226,15 @@ def test_outputs_primary_is_the_altium_route_and_the_outjob_is_secondary():
     assert "label: 'Generate outputs in Altium'" in ui_js()
 
 
-def test_the_generate_buttons_are_disabled_with_the_reason_while_pins_are_unverified():
+def test_the_generate_buttons_are_disabled_with_the_reason_while_the_gate_is_closed():
     outputs = (REPO / "ui" / "js" / "views" / "outputs.js").read_text(encoding="utf-8")
     checks = (REPO / "ui" / "js" / "views" / "checks.js").read_text(encoding="utf-8")
     gate = outputs[outputs.index("function outGate"):outputs.index("function outGapItems")]
     assert "stageOf('outputs')" in gate and "st.gate.blocked" in gate and "g.why" in gate      # the server's one gate (manufacturing_warning via stages): its text is the reason
     assert "await" not in gate and "fetch" not in gate                                            # read from the loaded stages: no server call per render
-    assert "page: g.page === 'sch' ? 'sch' : 'checks'" in outputs[outputs.index("function outBlockNote"):][:1200]      # the link to Schematic or DFM
+    assert "OUT_GATE_PAGE[g.page]" in outputs[outputs.index("function outBlockNote"):][:1200] and "sch: 'Open Schematic'" in outputs and "pcb: 'Open Layout'" in outputs      # the link to Schematic or DFM
     stages = (REPO / "scripts" / "stages.py").read_text(encoding="utf-8")
-    assert "store.manufacturing_warning(project)" in stages[stages.index("def outputs_stage"):][:400]
+    assert "store.manufacturing_block(project)" in stages[stages.index("def outputs_stage"):][:1400]
     alt = outputs[outputs.index("function outAltiumBtn"):outputs.index("const outOutjobBtn")]
     assert "disabled: !!why" in alt and "title: why" in alt
     items = outputs[outputs.index("const outExportItems"):]

@@ -88,3 +88,29 @@ def test_route_drc_completeness_comes_from_the_result_not_a_constant():
     assert board_results._drc_of("route", {**base, "drc_complete": False})["complete"] is False
     assert board_results._drc_of("route", {**base, "drc_complete": True})["complete"] is True
     assert board_results._drc_of("route", base)["complete"] is False       # a result that does not say is not counted as a complete check
+
+
+def test_an_outline_only_repair_keeps_the_board_check_valid(empty, pcb):
+    board_results.record(empty, "drc", CLEAN)
+    old = lineage.sha256_file(pcb)
+    pcb.write_bytes(b"v1 + outline tracks on Mechanical 1")              # repair_outline drew the outline
+    assert board_results.latest(empty)["board_check"]["stale"] is True
+    assert board_results.rebase_check(empty, old)
+    assert board_results.latest(empty)["board_check"]["stale"] is False
+    pcb.write_bytes(b"v3 somebody moved a part")
+    assert board_results.latest(empty)["board_check"]["stale"] is True
+    assert board_results.rebase_check(empty, old) is None               # a check that is not on that file is never rebased
+
+
+def test_run_outjob_rebases_the_check_when_it_drew_the_outline(empty, pcb, monkeypatch):
+    board_results.record(empty, "drc", CLEAN)
+    def draw(prj, f):
+        f.write_bytes(b"v1 + outline")
+        return {"drawn": True, "backup": "", "warning": "", "box": [0, 0, 1, 1]}
+    monkeypatch.setattr(bridge, "repair_outline", draw)
+    def stop(prj):
+        raise bridge.BridgeError("stop here")
+    monkeypatch.setattr(bridge, "read_prjpcb", stop)                     # the run ends right after the repair
+    with pytest.raises(bridge.BridgeError):
+        bridge.run_outjob(empty)
+    assert board_results.latest(empty)["board_check"]["stale"] is False

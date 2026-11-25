@@ -45,7 +45,7 @@ def _run(body):
     pages = "".join(_line(PAGES, s) for s in ("const PG_LIB =", "const PG_SOURCE =", "const MIC_ICON =", "const MIC_WORD =", "const MIC_NAME =")) + "".join(
         _fn(PAGES, n) for n in ("libRowOf", "libPinsState", "libModelStates", "libIconsHTML", "libBuildTag"))
     bom = "".join(_line(BOM, s) for s in ("const CODE_RISK =", "const BOM_EXPORTS =", "const BOM_SWAP =", "const bomLibType =", "const bomExt =", "const bomLibRow =")) + "".join(
-        _fn(BOM, n) for n in ("bomSupply", "bomStatus", "bomModels", "bomRow", "bomHeader", "bomSupCardHTML"))
+        _fn(BOM, n) for n in ("bomSupply", "bomStatus", "bomModels", "bomOrphan", "bomRow", "bomHeader", "bomSupCardHTML"))
     script = ("globalThis.addEventListener = () => {}; globalThis.document = {addEventListener() {}};\n" + KIT + "\n" + core +
               "const LIBTXT = {};\nlet S = {library: [], bom: []}, sel = null, bomDrawer = null, bomChecking = false, bomSupOpen = null, libBusy = '', CONFIG = null;\n"
               "const STAGES = [['idea', 'Idea'], ['bom', 'BOM'], ['sch', 'Schematic']];\n"

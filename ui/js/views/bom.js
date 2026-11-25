@@ -86,6 +86,11 @@ function bomModels(l) {
   if (!r && l.library === 'std') return '<span class="muted" title="Altium default library: no models of its own">·</span>';
   return libIconsHTML(r || libRowOf(l), {built: false});
 }
+/* A line whose refs are on no netlist sheet while sheets exist (store: l.off_sheet): it shows "not on any sheet" and a Delete. */
+function bomOrphan(l) {
+  const refs = l.refs || [], off = l.off_sheet || [];
+  return refs.length > 0 && off.length === refs.length;
+}
 function bomRow(l) {
   const q = qty(l), b = best(l), refs = l.refs || [], label = refsLabel(refs);
   const real = v => (v && !/^[-–—\s]+$/.test(v)) ? v : '';        // "-" and an em dash stand for "none"
@@ -94,6 +99,7 @@ function bomRow(l) {
   const sub = mpn && mpn !== main ? mpn : maker;
   const sup = bomSupply(l, q, b), st = bomStatus(l);
   const picked = sel === l.key || (bomDrawer && bomDrawer.line === l.key);
+  const orphan = bomOrphan(l);
   const supCell = sup.text ? `<button type="button" class="sup-btn" data-act="sup-open" data-line="${esc(l.key)}" aria-haspopup="dialog" aria-expanded="${bomSupOpen === l.key}" aria-label="${esc(`Supply of ${label}: ${sup.text}. Open the stock and supplier details`)}" title="${esc(sup.title + '. Click for every supplier')}">${tag(sup.text, sup.tone)}</button>` +
       (sup.risks.length ? tag('+' + sup.risks.length, 'warn', sup.risks.map(x => x.text).join(', ') + '. Click the supply tag to see why.') : '')
     : '<span class="muted">·</span>';
@@ -103,8 +109,8 @@ function bomRow(l) {
     <td class="num">${l.dnp ? 'DNP' : q || '—'}</td>
     <td class="c-mdl">${bomModels(l)}</td>
     <td class="c-sup">${supCell}</td>
-    <td class="c-st">${tag(st.text, st.tone, st.say + (st.tone ? ' Click the row for the details.' : ''))}</td>
-    <td><div class="row-acts">${btn('', {icon: 'chat', size: 'sm', title: `Ask about ${label}`, act: 'ask-part', line: l.key})}${btn('', {html: BOM_SWAP, cls: 'icon', size: 'sm', title: 'Alternatives', 'aria-label': `Alternatives for ${label}`, act: 'alts', line: l.key})}</div></td></tr>`;
+    <td class="c-st">${tag(st.text, st.tone, st.say + (st.tone ? ' Click the row for the details.' : ''))}${orphan ? tag('not on any sheet', 'warn', `${label} is on no schematic sheet. If it is not part of the design, delete it (Undo puts it back).`) : ''}</td>
+    <td><div class="row-acts">${orphan ? btn('', {icon: 'trash', size: 'sm', title: `Delete ${label} from the BOM`, act: 'bom-delete', line: l.key}) : ''}${btn('', {icon: 'chat', size: 'sm', title: `Ask about ${label}`, act: 'ask-part', line: l.key})}${btn('', {html: BOM_SWAP, cls: 'icon', size: 'sm', title: 'Alternatives', 'aria-label': `Alternatives for ${label}`, act: 'alts', line: l.key})}</div></td></tr>`;
 }
 /* Two header buttons, side by side and always there: Check stock (the BOM's) and Build library (the models'). viewHeader has one
    primary, so Build library is the primary and Check stock the last action; the stage's Next keeps its own slot. */
@@ -126,7 +132,7 @@ function bomHeader(t) {
     {n: t.checking, label: 'not checked', tone: 'warn', title: 'Lines with no stock answer yet'},
     {n: t.out_of_stock, label: 'out of stock', tone: 'bad', title: 'Lines no supplier has enough of'},
     {n: t.library_error, label: 'footprint error', tone: 'bad', title: 'Parts whose footprint has errors: they are not drawn, placed or made until you pick another LCSC code or let the tool generate the footprint.'},
-    {n: t.to_verify, label: 'to verify', tone: 'warn', title: 'Parts whose symbol, footprint or 3D model nobody has confirmed yet. Open each part (its Status says what is left) and accept or fix it.'},
+    {n: t.to_verify, label: 'to verify (library)', tone: 'warn', title: 'BOM lines whose symbol, footprint or 3D model nobody has confirmed yet (lines, not parts; the pins waiting for you are counted in the line below the header). Open each line (its Status says what is left) and accept or fix it.'},
   ]);
   const actions = menu({label: 'Export', iconAfter: 'chev'}, [
       {label: BOM_EXPORTS.jlc, act: 'export', attrs: {fmt: 'jlc'}},
@@ -234,7 +240,10 @@ function bomPending() { return (S.proposals || []).filter(p => p.status === 'pen
 // The pending BOM proposals: the shared proposal table (chat.js propListHTML), one row and one tick per part, with the
 // same three buttons as the chat card. Ticks are shared with the chat card by proposal id.
 function bomPendingBox(pend, cls) {
-  return `<div class="bom-pend ${cls || ''}" data-pids="${esc(pend.map(p => p.id).join(','))}">${propListHTML(pend)}${propActsHTML(pend.map(p => p.id), true)}</div>`;
+  // a delete is never part of Approve all: it gets its own card (Delete / Keep) under the list
+  const dels = pend.filter(p => propDelete(p)), rest = pend.filter(p => !propDelete(p));
+  const list = rest.length ? `<div class="bom-pend ${cls || ''}" data-pids="${esc(rest.map(p => p.id).join(','))}">${propListHTML(rest)}${propActsHTML(rest.map(p => p.id), true)}</div>` : '';
+  return list + dels.map(diffHTML).join('');
 }
 function bomPendingNote(pend) {
   return pend.length ? `<div class="pv-note">${banner({tone: 'info', cls: 'bom-pend-note', html: `${esc(bomPl(pend.length, 'proposed change'))} waiting for your approval.${bomPendingBox(pend)}`})}</div>` : '';
@@ -482,7 +491,8 @@ onAct('export', async (el, d, e) => {
   if (r.state) setState(r.state);      // the Outputs view lists the new file
   render(true);
   const res = r.result || {}, file = String(res.file || '').split(/[\\/]/).pop(), miss = res.needs_lcsc || [];
-  toast(`${name} exported${miss.length ? `. No LCSC number for ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ' +' + (miss.length - 3) : ''} (run Check stock)` : ''}`,
+  const gone = res.left_out_text ? '. ' + res.left_out_text.replace(/\.$/, '') : '';      // DNP lines and parts on no drawn sheet: named, never silent
+  toast(`${name} exported${miss.length ? `. No LCSC number for ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ' +' + (miss.length - 3) : ''} (run Check stock)` : ''}${gone}`,
     file ? {label: 'Download', onClick: () => bomDownload(file)} : undefined);
   return;
 });
@@ -607,6 +617,27 @@ onAct('get-datasheet', async (el, d, e) => {
   render(true);
   toast('Datasheet added to ' + lineKey);
   return;
+});
+
+/* Delete a BOM line (data-line), or only some refs of it (data-refs="R22,R23"): one confirmation that names the line and refs,
+   then an Undo toast. The server records it as an applied change, so the history's Undo restores it too. */
+onAct('bom-delete', async (el, d, e) => {
+  const l = lineByKey(d.line); if (!l) return;
+  const all = l.refs || [], refs = d.refs ? d.refs.split(',').filter(Boolean) : all;
+  const whole = refs.length === all.length;
+  const name = [l.value || l.description, l.mpn].filter(v => v && !/^[-–—\s]+$/.test(v)).join(' · ');
+  const yes = await askChoice({title: whole ? `Delete ${refsLabel(all) || l.key} from the BOM?` : `Remove ${refsLabel(refs)} from line ${l.key}?`,
+    text: `${whole ? 'Line ' + l.key : 'Line ' + l.key + ' keeps ' + all.filter(r => !refs.includes(r)).join(', ')}${name ? ' (' + name + ')' : ''}. You can undo it.`,
+    list: [`Refs: ${refs.join(', ') || l.key}`], yes: whole ? 'Delete' : 'Remove', no: false});
+  if (!yes) return;
+  let r;
+  try { r = await api('/api/bom/delete', whole ? {line: l.key} : {line: l.key, refs}); } catch (err) { return; }      // toasted
+  if (sel === l.key && whole && typeof closeInspector === 'function') closeInspector();
+  setState(r); render(true);
+  const what = whole ? `${refsLabel(all) || l.key} deleted` : `${refsLabel(refs)} removed from ${l.key}`;
+  toast(what, {label: 'Undo', onClick: async () => {
+    try { setState(await api('/api/undo', {id: r.deleted.id})); render(true); toast(`${refsLabel(refs) || l.key} is back in the BOM`); } catch (err) { /* toasted */ }
+  }});
 });
 
 /* Role, note and MPN are edited in the inspector (<input data-edit="role|note|mpn" data-line="KEY">); a change is saved

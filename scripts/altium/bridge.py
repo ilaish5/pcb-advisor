@@ -55,6 +55,7 @@ SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import board_layers  # noqa: E402
 import jlc_upload  # noqa: E402
 import outjob  # noqa: E402
 import partlib  # noqa: E402
@@ -276,7 +277,7 @@ def _stat(path):
         return None
 
 
-READ_ONLY = {"PING", "PROJECT", "PCBCHECK", "PCBEXTENT", "FPINFO", "DRAWCHECK", "CHECKINST", "DRC", "DOCSTATE"}   # all other commands change Altium
+READ_ONLY = {"PING", "PROJECT", "PCBCHECK", "PCBEXTENT", "FPINFO", "DRAWCHECK", "CHECKINST", "DRC", "DOCSTATE", "STACKINFO"}   # all other commands change Altium
 _server = False
 
 
@@ -1008,6 +1009,36 @@ def _close_draft_library(project):
         pass
 
 
+def sheet_fit(project, sheet=None):
+    """Does each netlist sheet fit a drawn sheet? The same layout check Draw makes (draw.plan_sheet), without touching Altium or any
+    file: [{"sheet", "fits", "size": "A4" | "A3" | None, "message"}]. A part that does not fit A4 is drawn on A3 by itself ("size");
+    fits False = too big even for A3 (message says why and how the design could be split); None = not known (an error reading the
+    sheet or its symbols). Never raises for one bad sheet."""
+    from altium import draw
+    lp = library_paths(project)
+    lib_symbols, lib_why = _project_symbols(lp)
+    aliases = drawn_names(project)
+    out = []
+    for sid, _title, sh in _sheets(project):
+        if sheet is not None and str(sid) != str(sheet):
+            continue
+        try:
+            syms = _sheet_symbols(project, sh, lib_symbols)
+            phs = _placeholder_reasons(sh, syms, lib_why)
+            for k, (ref, ph) in enumerate(phs.items(), 1):
+                ph["name"], ph["schlib"], ph["sheet"] = draw.placeholder_name(ref) + f"_{k}", str(draft_library_path(project)), sid
+            plan = draw.plan_sheet(sh, syms, lp["schlib"], pathlib.Path("fit-check.SchDoc"), aliases=aliases, placeholders=phs)
+        except Exception as exc:     # noqa: BLE001 - one bad sheet is no verdict on the fit: unknown (None), never "too big", never a crash
+            out.append({"sheet": sid, "fits": None, "size": None, "message": f"{type(exc).__name__}: {exc}"})
+            continue
+        too_big = plan.get("fix_code") == "sheet.too_big"
+        size = plan.get("sheet_size")
+        # fits: True / False; None = the layout was not reached (another error, e.g. a pin that is not mapped, comes first)
+        out.append({"sheet": sid, "fits": True if size else (False if too_big else None), "size": size,
+                    "message": f"fits on an {size} sheet" if size else "; ".join(plan["errors"][:4]), "too_big": too_big})
+    return out
+
+
 def draw_schematic(project, sheet=None, replace=False):
     """Draw the netlist sheet(s) of the project in Altium: every part from the project SchLib, a wire stub on every connected pin
     ending in a power port or a net label, a No ERC cross on NC pins. Then the saved SchDoc is read back and compared with the netlist.
@@ -1035,6 +1066,7 @@ def draw_schematic(project, sheet=None, replace=False):
     key = {r: l["key"] for l in store.bom_lines(project) for r in (l.get("refs") or [l["key"]])}
     plans, existing, new_docs, adopted = [], [], [], set()
     draft_items, draft_names = {}, set()
+    skipped = []             # [(sheet id, why)]: sheets too big even for A3, not drawn
     # one drawn name per net for the whole design (a net on two sheets keeps one name; two names never share one)
     aliases = drawn_names(project)
     for sid, title, sh in planned:
@@ -1057,23 +1089,36 @@ def draw_schematic(project, sheet=None, replace=False):
         syms = _sheet_symbols(project, sh, lib_symbols)
         phs = _placeholder_reasons(sh, syms, lib_why)
         by_ref = {p.get("ref"): p for p in sh.get("parts", []) if isinstance(p, dict)}
+        names, mine = set(draft_names), {}
         for ref, ph in phs.items():
             name, n = draw.placeholder_name(ref), 1
-            while name in draft_names:
+            while name in names:
                 n += 1
                 name = f"{draw.placeholder_name(ref)}_{n}"
-            draft_names.add(name)
+            names.add(name)
             ph["name"], ph["schlib"], ph["sheet"] = name, str(draft_library_path(project)), sid
-            draft_items[name] = draw.placeholder(by_ref[ref], ph["why"], name)
+            mine[name] = draw.placeholder(by_ref[ref], ph["why"], name)
         plan = draw.plan_sheet(sh, syms, lp["schlib"], doc, replace=replace and doc not in adopted,
                                aliases=aliases, placeholders=phs)      # a sheet taken over as empty is never wiped: anything on it stops the draw
         if plan["errors"]:
             msg = f"Sheet {sid} cannot be drawn: " + "; ".join(plan["errors"][:8])
+            if plan.get("fix_code") == "sheet.too_big":
+                # too big even for A3: this sheet is reported and the others are still drawn (one bad sheet never blocks the Draw)
+                skipped.append((sid, msg))
+                for lst in (existing, new_docs):
+                    if doc in lst:
+                        lst.remove(doc)
+                adopted.discard(doc)
+                continue
             raise Fixable(plan["fix_code"], msg) if plan.get("fix_code") in NEUTRAL_CODES else BridgeError(msg)
+        draft_names |= set(mine)
+        draft_items.update(mine)
         plan["draft"] = [{"sheet": sid, "ref": r, "why": ph["why"], "detail": ph["detail"]} for r, ph in phs.items()]
         # a footprint link is checked on the sheet only for a part that has one: a placeholder has none, and a footprint in error was never
         # written to the PcbLib (the part's schematic symbol is fine; the placement refuses it)
         plans.append((sid, doc, plan, {r: (None if r in phs or r in fp_bad else (manifest.get(key.get(r)) or {}).get("footprint")) for r in key}))
+    if not plans:            # every sheet asked for is too big: nothing to draw, and the reason of the first one is the answer
+        raise Fixable("sheet.too_big", " | ".join(m for _s, m in skipped))
     saved_first = save_open_sheets(prj, existing) if existing else []      # before the backup, so the backup holds the student's latest edits
     backup = _backup(prj, existing + ([prj] if new_docs else []))
     if existing:        # Altium's own view first: anything on the sheet stops the run before it touches anything
@@ -1115,7 +1160,10 @@ def draw_schematic(project, sheet=None, replace=False):
     _log(project, "sheet-docs", sheet_docs={sid: d.name for sid, d, _, _ in plans}, created=[str(d) for d in new_docs])
     if new_docs:
         ensure_sheets_in_project(prj, new_docs)      # every new sheet, not only the first one, must be in the saved project
-    problems, warnings, parts, nets = [], [], 0, set()
+    problems, parts, nets = [], 0, set()
+    warnings = [f"{m} The sheet was NOT drawn; the other sheets were." for _s, m in skipped]
+    big = {sid: plan.get("sheet_size") for sid, _d, plan, _fp in plans if plan.get("sheet_size") not in (None, "A4")}
+    warnings += [f"sheet {sid} is drawn on an {size} sheet (its parts do not fit on A4)" for sid, size in big.items()]
     for sid, doc, plan, fps in plans:
         warnings += plan["warnings"] + circular_pin_warnings(project, [p["ref"] for p in plan["parts"] if isinstance(p, dict) and p.get("ref")])
         parts += len(plan["parts"])
@@ -1144,7 +1192,8 @@ def draw_schematic(project, sheet=None, replace=False):
     renamed = {n: a for _, _, plan, _ in plans for n, a in plan.get("renamed", {}).items()}
     res = {"sheets": [str(d) for _, d, _, _ in plans], "parts": parts, "nets": sorted(nets), "warnings": warnings,
            "problems": problems, "backup": backup, "created": [str(d) for d in new_docs], "saved_first": saved_first,
-           "renamed_nets": renamed, "placeholders": drafted, "footprint_errors": fp_listed}
+           "renamed_nets": renamed, "placeholders": drafted, "footprint_errors": fp_listed,
+           "sheet_sizes": {sid: plan.get("sheet_size") for sid, _d, plan, _fp in plans}, "skipped": [{"sheet": s, "why": m} for s, m in skipped]}
     if not problems:
         res["stale"] = remove_stale_sheets(project, prj)
         res["warnings"] += [f"{x['name']} was left in the project: {x['why']}" for x in res["stale"]["left"] if x["name"]]
@@ -1340,6 +1389,51 @@ def _clearance_mm(project):
         return 0.0
 
 
+def _stack_count(pcb):
+    """Copper layers of the board file, None when it cannot be read."""
+    from altium import pcbdoc
+    try:
+        return pcbdoc.copper_layer_count(pcb)
+    except (AltiumReadError, OSError):
+        return None
+
+
+def stack_mismatch(layers, have):
+    """Why a board whose file holds `have` copper layers cannot be worked on as a `layers` layer board ("" when it can: the same count,
+    or a 2 layer file that gets its two inner layers added). Taking layers away is not done by this tool."""
+    if have is None and layers == 2:
+        return ""                          # a file whose stack-up record is not there is the default 2 layer board
+    if have is None:
+        return "the stack-up of the board file could not be read, so its number of copper layers is not known"
+    if have == layers or (layers == 4 and have == 2):
+        return ""
+    return (f"the project says {layers} copper layers but the board file has {have}: " +
+            ("this tool does not take inner layers out of a board; make a new board for a 2 layer design" if have > layers else
+             "this tool only adds the two inner layers of the 4 layer stack-up to a 2 layer board"))
+
+
+def ensure_stack(prj, pcb, layers):
+    """The board file is made a `layers` layer board: a 2 layer file of a 4 layer project gets Mid-Layer 1 and 2 (the STACK command, the
+    JLC04161H stack-up) and is saved. The caller has backed the file up and the board is not open with unsaved changes. Returns True
+    when layers were added. Raises BridgeError (the board is closed without saving) when the file does not end up with the count."""
+    from altium import pcbdoc
+    have = _stack_count(pcb)
+    why = stack_mismatch(layers, have)
+    if why:
+        raise BridgeError(why[0].upper() + why[1:] + ". Nothing was changed.")
+    if have == layers:
+        return False
+    try:
+        run_commands([("PROJECT", str(prj)), ("STACK", str(pcb), str(layers)), ("PCBSAVE", str(pcb))])
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
+        got = pcbdoc.copper_layer_count(pcb)
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        raise BridgeError(f"the {layers} layer stack-up could not be set in Altium ({exc})" + _revert(prj, pcb, "set up")) from exc
+    if got != layers:
+        raise BridgeError(f"the {layers} layer stack-up was not saved (the file has {got} copper layers)" + _revert(prj, pcb, "set up"))
+    return True
+
+
 def _revert(prj, pcb, what):
     try:
         run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
@@ -1424,6 +1518,169 @@ def _fit_shape(prj, pcb, box):
     return _write_shape(pcb, box)
 
 
+def outline_status(project):
+    """The idea's board size against the board shape of the PcbDoc (read from the file, Altium is not asked):
+    {"idea": [w, h] | None, "pcb": [w, h] | None, "box": [x0, y0, x1, y1] | None, "differs": bool, "parts": n}. differs is True only when
+    both sizes are known and one side is off by more than 0.1 mm: the Layout page then offers "Set board to W x H mm"."""
+    from altium.pcbdoc import board_shape_box, read_pcbdoc
+    size = _board_size(project)
+    out = {"idea": [round(size[0], 3), round(size[1], 3)] if size else None, "pcb": None, "box": None, "differs": False, "parts": 0}
+    try:
+        pcb = _project_pcb(project)
+        if not pcb or not pathlib.Path(pcb).is_file():
+            return out
+        box = board_shape_box(pcb)
+        out["parts"] = len(read_pcbdoc(pathlib.Path(pcb)).get("components", []))
+    except Exception:                                    # a status line must never stop a page
+        return out
+    if box:
+        out["box"] = [round(v, 3) for v in box]
+        out["pcb"] = [round(box[2] - box[0], 3), round(box[3] - box[1], 3)]
+    if out["idea"] and out["pcb"]:
+        out["differs"] = any(abs(a - b) > 0.1 for a, b in zip(out["idea"], out["pcb"]))
+    return out
+
+
+def _footprint_boxes(doc):
+    """{ref: [x0, y0, x1, y1] mm}: the box of each part's pads (the footprint's extent as far as the saved board tells it); a part with
+    no pad is its origin."""
+    boxes = {}
+    for p in doc.get("pads", []):
+        ref, x, y = p.get("ref"), p.get("x_mm"), p.get("y_mm")
+        if not ref or x is None or y is None:
+            continue
+        sx, sy = float(p.get("sx_mm") or 0.0) / 2, float(p.get("sy_mm") or 0.0) / 2
+        if round(float(p.get("rot") or 0.0) / 90.0) % 2:
+            sx, sy = sy, sx
+        b = boxes.setdefault(ref, [x - sx, y - sy, x + sx, y + sy])
+        b[:] = [min(b[0], x - sx), min(b[1], y - sy), max(b[2], x + sx), max(b[3], y + sy)]
+    for c in doc.get("components", []):
+        if c.get("ref") and c["ref"] not in boxes and c.get("x_mm") is not None:
+            boxes[c["ref"]] = [c["x_mm"], c["y_mm"], c["x_mm"], c["y_mm"]]
+    return boxes
+
+
+def _parts_outside(pcb, box):
+    """Refs of the parts of the saved PcbDoc whose footprint (its pads, not just its origin) is not wholly inside the rectangle `box` (mm)."""
+    from altium.pcbdoc import read_pcbdoc
+    x0, y0, x1, y1 = box
+    doc = read_pcbdoc(pathlib.Path(pcb))
+    boxes = _footprint_boxes(doc)
+    return sorted(c["ref"] for c in doc.get("components", [])
+                  if c.get("ref") and c["ref"] in boxes
+                  and not (x0 - 0.01 <= boxes[c["ref"]][0] and boxes[c["ref"]][2] <= x1 + 0.01
+                           and y0 - 0.01 <= boxes[c["ref"]][1] and boxes[c["ref"]][3] <= y1 + 0.01))
+
+
+def _copper_of(pcb):
+    """(tracks, vias, polygons) on the copper layers of the saved PcbDoc, the tracks and polygons as lists of points (mm): what a new
+    outline does not move."""
+    from altium.pcbdoc import read_pcbdoc
+    doc = read_pcbdoc(pathlib.Path(pcb))
+    tracks = [[(t["x1_mm"], t["y1_mm"]), (t["x2_mm"], t["y2_mm"])] for t in doc.get("tracks", [])
+              if 1 <= (t.get("layer") or 0) <= 32 and not t.get("in_component") and t.get("x1_mm") is not None]
+    vias = [[(v["x_mm"], v["y_mm"])] for v in doc.get("vias", []) if v.get("x_mm") is not None]
+    polys = [[tuple(p) for p in r.get("points_mm") or []] for r in doc.get("regions", [])
+             if r.get("polygon") and 1 <= (r.get("layer") or 0) <= 32 and not r.get("in_component")]
+    return tracks, vias, polys
+
+
+def resize_outline(project, width_mm=None, height_mm=None):
+    """Change the board outline of the project's existing PcbDoc to width x height mm (default: the idea's board size), the lower
+    left corner stays where it is. The PcbDoc is copied to .advisor-backup first; a board that is open in Altium with unsaved changes
+    is refused (nothing is changed); parts stay where they are and those that fall outside the new outline are named in `warnings`.
+    The four outline corners and the outline drawing on Mechanical 1 (when it is our own four tracks) are set in Altium, the board
+    shape a pour is clipped to is written in the closed file (_write_shape), then the file is read back.
+    Returns {"box", "old_box", "backup", "outside", "warnings", "problems", "restored"}."""
+    from altium import layout
+    from altium.pcbdoc import board_shape_box, read_pcbdoc
+    prj, pcb = _linked(project), _project_pcb(project)
+    if not pcb or not pathlib.Path(pcb).is_file():
+        raise BridgeError("The project has no PcbDoc yet: place the parts first (altium.place_pcb). Nothing was changed.")
+    if width_mm is None or height_mm is None:
+        size = _board_size(project)
+        width_mm, height_mm = size if size else (None, None)
+    try:
+        w, h = float(width_mm), float(height_mm)
+    except (TypeError, ValueError):
+        raise BridgeError("Give the board width and height in mm. Nothing was changed.") from None
+    if layout.plan_outline((w, h)) is None:
+        raise BridgeError("The board must be between 10 and 500 mm on each side. Nothing was changed.")
+    state = run_commands([("PROJECT", str(prj)), ("DOCSTATE", str(pcb))])
+    if any(l.startswith("docstate open modified=1") for l in state):
+        raise BridgeError("The board is open in Altium with unsaved changes; save or close it first (click the PCB tab in Altium and press "
+                          "Ctrl+S). Nothing was changed.")
+    info = _pcbcheck_info(run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1")]))
+    if info is None:
+        raise BridgeError("Altium did not report the state of the board. Nothing was changed.")
+    if not info["rect"]:
+        raise BridgeError("The board outline is not a rectangle, so I cannot resize it: change it in Altium (Design > Board Shape). "
+                          "Nothing was changed.")
+    old = [round(v * MM_PER_MIL, 3) for v in info["box_mil"]]
+    box = [old[0], old[1], round(old[0] + w, 3), round(old[1] + h, 3)]
+    warnings = []
+    try:
+        outside = _parts_outside(pcb, box)
+    except (AltiumReadError, OSError, KeyError):
+        outside = []
+        warnings.append("the parts could not be read to check that they fit inside the new outline: look at the board")
+    if outside:
+        warnings.append(f"{len(outside)} part{'s' if len(outside) != 1 else ''} fall{'s' if len(outside) == 1 else ''} outside the new "
+                        f"{w:g} x {h:g} mm outline: {', '.join(outside[:12])}{' ...' if len(outside) > 12 else ''}. Parts are not moved; "
+                        "place again (Replace) or move them in Altium")
+    try:
+        tracks, vias, polys = _copper_of(pcb)
+    except (AltiumReadError, OSError, KeyError):
+        tracks, vias, polys = [], [], []
+        warnings.append("the copper of the board could not be read to check it against the new outline: look at the board")
+    x0, y0, x1, y1 = box
+    out_copper = [pts for pts in tracks + vias + polys
+                  if any(not (x0 - 0.01 <= px <= x1 + 0.01 and y0 - 0.01 <= py <= y1 + 0.01) for px, py in pts)]
+    if out_copper:         # tracks and pours do not move with the outline: a smaller outline would leave copper beyond the board edge
+        raise BridgeError(f"The board already has copper (tracks, vias or pours) and {len(out_copper)} of them would lie outside the new "
+                          f"{w:g} x {h:g} mm outline: routing and pours are not moved. Place the board again (Replace) at the new size and "
+                          "route again, or choose a size that holds the copper. Nothing was changed.")
+    if tracks or vias or polys:
+        warnings.append("the board is already routed or poured: its copper stays as it is and a pour keeps its old shape; "
+                        "route again (Replace) after the new size so the pours and the clearances to the edge are redone")
+    backup = _backup(prj, [pcb])
+    cmds = [("PROJECT", str(prj)), ("OUTLINERESIZE", str(pcb)) + tuple(f"{v:g}" for v in box) + (f"{layout.OUTLINE_WIDTH_MM:g}",),
+            ("PCBSAVE", str(pcb))]
+    try:
+        log = run_commands(cmds)
+        run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])      # closed: the board shape below is written in the file
+    except BridgeError as exc:
+        raise BridgeError(str(exc) + _revert(prj, pcb, "resized") + (f" The earlier file is in {backup}." if backup else "")) from exc
+    if any("outlineresize drawn=0 kept=" in l for l in log):
+        warnings.append("the outline on Mechanical 1 is a drawing of your own (not our four lines), so it was left as it was: redraw it "
+                        "in Altium (Design > Board Shape > Create Primitives From Board Shape)")
+    problems = []
+    why = _write_shape(pcb, box)
+    if why:
+        warnings.append(f"The board shape Altium holds could not be set ({why}). A ground pour would stay empty: redefine the board "
+                        "shape in Altium (Design > Board Shape > Redefine Board Shape) before routing")
+    try:
+        got = board_shape_box(pcb)
+        saved = read_pcbdoc(pathlib.Path(pcb), geometry=True)
+        after = _pcbcheck_info(run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1")]))
+        if after is None or any(abs(v * MM_PER_MIL - b) > 0.05 for v, b in zip(after["box_mil"], box)) or not after["rect"]:
+            problems.append(f"the saved board outline is not {w:g} x {h:g} mm")
+        if got is None or any(abs(a - b) > 0.1 for a, b in zip(got, box)):
+            problems.append("the saved board shape is not the new outline")
+        if not any("kept=" in l for l in log):
+            problems += layout.outline_drawing_problems(saved, box)
+    except (BridgeError, AltiumReadError, OSError) as exc:
+        problems.append(f"the resized board could not be read back: {exc}")
+    restored = False
+    if problems and backup:
+        restored = _restore(prj, pcb, backup)
+    _log(project, "resize-outline", box=box, old_box=old, backup=backup, outside=outside, problems=problems, warnings=warnings, restored=restored)
+    if problems:
+        raise BridgeError("The board was resized but did not check out: " + "; ".join(problems[:4])
+                          + (" The board file was put back as it was before (backup kept)." if restored else f" The backup is in {backup}."))
+    return {"box": box, "old_box": old, "backup": backup, "outside": outside, "warnings": warnings, "problems": problems, "restored": restored}
+
+
 def _mechanical_parts(items, outline, fps, parts, refs_lines=None, size=None):
     """The mounting holes (H1..) and keep-outs (KO1..) of the student's confirmed constraints for a board outline, as extra parts to
     place, plus the placement rules the constraints give the planner. Returns (holes, keepouts, rules, warnings): holes and keepouts
@@ -1480,7 +1737,7 @@ def _routing_words(lost):
 
 
 def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False, connector_dirs=None, edge_copper_mm=0.3,
-             constraint_items=None, refs_lines=None):
+             constraint_items=None, refs_lines=None, layers=2):
     """Place `parts` ([{ref, footprint, lib_ref, pins}]) from the PcbLib on the PcbDoc, create the outline from `size` when the board
     only has the placeholder outline of a new PcbDoc (an outline somebody drew is kept), save, and read the file back.
     Refuses a board that already has parts or copper unless replace is true; the PcbDoc is copied to .advisor-backup first.
@@ -1502,6 +1759,10 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
         raise Fixable("prereq.library_not_built", f"No footprint in the project library for {', '.join(missing[:8])}: run library.build first.")
     lost = _routing_lost(pcb) if pathlib.Path(pcb).is_file() else {}
     routed = _routing_words(lost)
+    if pathlib.Path(pcb).is_file():
+        why_stack = stack_mismatch(layers, _stack_count(pcb))
+        if why_stack:
+            raise BridgeError(why_stack[0].upper() + why_stack[1:] + ". Nothing was changed.")
     try:
         log = run_commands([("PROJECT", str(prj)), ("PCBCHECK", str(pcb), "1" if replace else "0")])     # Altium's own view first
     except BridgeError as exc:
@@ -1539,6 +1800,12 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
     derived = {p["ref"]: layout.opening_dir(fps[p["footprint"]]) for p in parts if layout.is_connector(p["ref"]) and p.get("footprint") in fps}
     connector_dirs = {**{r: d for r, d in derived.items() if d is not None}, **(connector_dirs or {})}
     holes, keepouts, rules, mech_warnings = _mechanical_parts(constraint_items or [], outline, fps, parts, refs_lines, size)
+    rf = layout.rf_rules(parts, fps)         # a radio module / antenna connector gets its rule without anybody asking (kiln LTE run, E6)
+    for r, d in rf["antenna"].items():
+        rules["antenna"].setdefault(r, d)
+    rules["edge"].update({r: s for r, s in rf["edge"].items() if r not in rules["antenna"] and r not in rules["edge"]})
+    rules["apart"] += rf["apart"]
+    mech_warnings = mech_warnings + rf["notes"]
     plan = layout.plan_placement(parts + holes, fps, outline, clearance_mm=clearance_mm, connector_dirs=connector_dirs,
                                  edge_copper_mm=edge_copper_mm, rules=rules)
     if plan["errors"]:
@@ -1548,6 +1815,12 @@ def place_on(prj, pcb, pcblib, parts, size=None, clearance_mm=0.0, replace=False
                                         "label": [k["x"], k["y"]], "label_h": layout.LABEL_H, "label_rot": 0} for k in keepouts]
     parts = parts + holes + keepouts
     backup = _backup(prj, [pcb])
+    if layers == 4:          # the stack-up is set before anything is placed (the backup above holds the board as it was)
+        try:
+            ensure_stack(prj, pcb, 4)
+        except BridgeError as exc:           # a stack-up that failed halfway must not leave the file changed
+            back = _restore(prj, pcb, backup) if backup else False
+            raise BridgeError(str(exc) + (" The board file was put back as it was before (backup kept)." if back else f" The backup is in {backup}.")) from exc
     links = _sch_links(prj)
     parts = [dict(p, uid=links[p["ref"]][0], sheet=links[p["ref"]][1]) if p["ref"] in links else p for p in parts]
     try:                                                 # did somebody already draw the outline? (it is then never touched)
@@ -1628,8 +1901,9 @@ def place_pcb(project, replace=False):
     fit = board_fit_check(project)                       # the same estimate the BOM approval gave; the figures also go in the refusal
     import constraints
     items = constraints.confirmed(store.load_idea(project))      # the SAVED idea: only what the student confirmed with Save
+    import project as projects_mod
     res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace,
-                   constraint_items=items, refs_lines=constraints.known_refs(project) if items else None)
+                   layers=projects_mod.layers(project), constraint_items=items, refs_lines=constraints.known_refs(project) if items else None)
     if not res["problems"]:
         _record_board_facts(project, pcb, outline=res["outline"])
     if res.get("mechanical", {}).get("holes") or res.get("mechanical", {}).get("keepouts"):
@@ -1638,6 +1912,9 @@ def place_pcb(project, replace=False):
             "schematic: Altium's Update PCB will offer to remove them. Do not accept those removals."]
     if fit and fit["text"]:
         res["warnings"] = [fit["text"]] + list(res["warnings"])
+    bad_layers = board_layers.stored_problem(projects_mod.board(project))
+    if bad_layers:                                       # an invalid stored count is built as 2 layers: never silently
+        res["warnings"] = [bad_layers] + list(res["warnings"])
     _log(project, "place-pcb", pcb=str(pcb), parts=len(res["placed"]), outline=res["outline"], replace=bool(replace),
          backup=res["backup"], problems=res["problems"], warnings=res["warnings"])
     res["warnings"] = list(dict.fromkeys(res["warnings"] + [f"drill check: {m}" for m in res["drill_findings"][:6]]
@@ -1662,13 +1939,24 @@ def _drc_counts(res):
     return out
 
 
-def _partial_ok(problem):
-    """A problem that a partly routed board (agreed with the student) has by definition: nets left open."""
-    return problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem
+def _partial_ok(problem, failed=()):
+    """A problem that a partly routed board (agreed with the student) has by definition: nets left open. With `failed` (the nets
+    the router left open, plan["failed"] names or (name, why) pairs) also a problem that follows from one of those nets alone: a pad
+    of a failed net the pour does not join (the kiln run: GND failed, "pad J1-1 (GND) is not joined by the pour or a track" restored
+    678 tracks), or a ground routed to a pour that is missing when that ground is itself a failed net. A new clearance, short or
+    width violation is never one of them."""
+    if problem.startswith(("not routed", "too narrow")) or "open nets" in problem or "un-routed connection" in problem:
+        return True
+    nets = {f[0] if isinstance(f, (list, tuple)) else f for f in failed or ()}
+    m = re.match(r"pad \S+ \((.+?)\) is not joined by the pour or a track$", problem)
+    if m:
+        return m.group(1) in nets
+    m = re.match(r"(\S+) was routed to the pour .* the \1 pads are not connected$", problem)
+    return bool(m) and m.group(1) in nets
 
 
 def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None,
-             keepout_fn=None):
+             keepout_fn=None, layers=2):
     """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
     script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
     Altium's batch design rule check (no new clearance / short / width / un-routed violations over the check made before routing).
@@ -1696,6 +1984,13 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                    regions=[g for g in doc.get("regions", []) if g.get("in_component")])
     if not doc.get("nets"):
         raise BridgeError("The board has no nets: the pads carry none, so there is nothing to route (place the parts again).")
+    mismatch = stack_mismatch(layers, _stack_count(pcb))
+    if mismatch:
+        return {"routed": [], "failed": [], "tracks": 0, "vias": 0, "stats": {}, "rules": {}, "widths": {}, "backup": "",
+                "problems": ["not routed, nothing was drawn: " + mismatch], "refusals": [mismatch], "restored": False,
+                "drc_before": {}, "drc_after": {}, "drc_line": "unchecked (not run)", "drc_clean": False, "drills": [], "written": False,
+                "pour": None, "pour_warning": "", "pour_warnings": [],
+                "summary": "not routed, nothing was drawn: " + mismatch}
     rules = route.rules_from_doc(doc)
     rules.update(net_current=currents or {}, net_estimate=estimates or {}, allow_narrow=bool(keep_partial), **(copper or {}))      # widths by current (netcurrent.py)
     cap_warn = []
@@ -1703,7 +1998,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     if keepout_fn:          # the keep-outs this program holds itself: obstacles of the router and cut-outs of the pour, whatever Altium keeps
         py_keepouts = keepout_fn(box, doc)
         rules["keepout_rects"] = py_keepouts
-    refused = route.capability_check(doc, rules, box, pitch, warnings=cap_warn)      # what this router cannot do is said before anything is run or drawn
+    refused = route.capability_check(doc, rules, box, pitch, warnings=cap_warn, layers=layers)      # what this router cannot do is said before anything is run or drawn
     if refused:
         return {"routed": [], "failed": [], "tracks": 0, "vias": 0, "stats": {}, "rules": {}, "widths": {}, "backup": "",
                 "problems": ["not routed, nothing was drawn: " + "; ".join(refused)], "refusals": refused, "restored": False,
@@ -1713,12 +2008,15 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
     drc_before_full = run_drc(prj, pcb, tmp / "before.txt")
     drc_before = _drc_counts(drc_before_full)
-    pour_net = route.pour_net_for(doc) if pour else None
-    shape = _shape_differs(pcb, box) if pour_net else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
+    planes = route.plane_nets_for(doc) if layers == 4 else {}        # 4 layers: ground and the main supply are planes on the inner layers
+    pour_net = route.pour_net_for(doc) if pour and not planes else None      # (the bottom layer then carries signals only)
+    if layers == 4 and not planes:
+        cap_warn.append("no ground net with 3 pads or more, so the inner layers have no plane: both are left empty")
+    shape = _shape_differs(pcb, box) if (pour_net or planes) else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     # The ground is planned as poured (each pad dropped to the pour by a short stub and a via) only when the pour is certain to be drawn
     # as planned: a board shape that has to be rewritten first could fail, and then the ground would have no copper; that board is
     # planned with the ground routed by tracks (the pour is still drawn on top).
-    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds, pour_net=None if shape else pour_net)
+    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds, pour_net=None if shape else pour_net, planes=planes)
     pour_dep = bool(plan.get("pour") and plan["pour"].get("mode") == "drops")       # some ground pad is joined by the pour alone
     names = names or {}                  # {drawn name: netlist name}: the PcbDoc carries the drawn names, the student knows the netlist's
     shown = {names.get(n, n): w for n, w in plan["widths"].items()}
@@ -1727,7 +2025,7 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
            "stats": plan["stats"], "rules": {k: v for k, v in rules.items() if k not in ("net_width", "net_current", "net_estimate")}, "widths": shown, "backup": "", "problems": [],
            "restored": False, "drc_before": drc_before, "drc_after": {}, "drills": [], "written": False, "pour": pour_net, "pour_warning": pour_skipped,
            "pour_warnings": [], "capability_warnings": cap_warn, "drc_line": "unchecked (not run)", "drc_clean": False,
-           "keepouts_held": len(py_keepouts)}
+           "keepouts_held": len(py_keepouts), "planes": dict(planes), "layers": layers}
     if plan["failed"] and not keep_partial:
         res["summary"] = "no tracks drawn: could not route " + "; ".join(f"{n} ({why})" for n, why in plan["failed"])
         return res
@@ -1751,6 +2049,10 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])
         if shape:       # the board is closed and saved: set the shape it holds to the outline (backup taken above), then pour as usual
             why = _write_shape(pcb, box)
+            if why and planes:      # the planes are the ground and the supply: without them the board is not connected
+                raise BridgeError(f"the inner planes cannot be poured: the board shape Altium holds ({', '.join(f'{v:g}' for v in shape)} mm) is "
+                                  f"not the board outline ({', '.join(f'{v:g}' for v in box)} mm) and could not be set ({why}). Redefine the "
+                                  "board shape in Altium (Design > Board Shape > Redefine Board Shape) and route again")
             if why:
                 name, pour_net, res["pour"] = pour_net, None, None
                 res["pour_warning"] = (f"no {name} pour: the board shape Altium holds ({', '.join(f'{v:g}' for v in shape)} mm) is not the board "
@@ -1758,12 +2060,18 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
                                                       "board shape in Altium (Design > Board Shape > Redefine Board Shape) and route again if you want a ground plane")
             else:
                 res["shape_fixed"] = [round(v, 3) for v in box]
+        if layers == 4 and ensure_stack(prj, pcb, 4):
+            res["stack_added"] = True
         run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
-                                                                     edge=rules["edge"], keepouts=_footprint_keepouts(doc) + py_keepouts), total_timeout=1500)
+                                                                     edge=rules["edge"], keepouts=_footprint_keepouts(doc) + py_keepouts,
+                                                                     planes=planes), total_timeout=1500)
     except BridgeError as exc:
         if str(exc).startswith("The board is open in Altium with unsaved changes"):      # nothing was drawn: leave the student's edits alone
             raise
-        raise BridgeError(str(exc) + _revert(prj, pcb, "routed")) from exc
+        # the board shape and the stack-up are written to the file before the route is drawn: the backup goes back, not just a close
+        back = _restore(prj, pcb, res["backup"]) if res.get("backup") else False
+        raise BridgeError(str(exc) + (" The board file was put back as it was before (backup kept)." if back
+                                      else _revert(prj, pcb, "routed") + f" The backup is in {res['backup']}.")) from exc
     res["written"] = True
     probs = []
     open_nets = []
@@ -1773,6 +2081,8 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         open_nets = layout.unrouted(saved)
         if pour_dep:      # unrouted() does not read pours: the ground pads that the pour joins show as open here; the pour is checked below
             open_nets = [(n, t) for n, t in open_nets if n != pour_net]
+        if planes:        # likewise the plane nets: their pads are joined by stub, via and the inner pour, checked below (pourcheck, DRC)
+            open_nets = [(n, t) for n, t in open_nets if n not in planes]
         if open_nets:
             probs.append("the saved board still has open nets: " + "; ".join(f"{n} ({', '.join(t[:4])})" for n, t in open_nets[:5]))
         try:    # Altium checks connectivity from what it loaded: close the board (saved, nothing lost) so the check reads the file again
@@ -1852,6 +2162,18 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
             res["pour"] = None
             res["pour_warning"] = (f"the {pour_net} pour was drawn but Altium did not fill it (no copper): repour it in Altium with "
                                    "Tools > Polygon Pours > Repour All, or route without it")
+    for pn, pl in sorted(planes.items(), key=lambda kv: kv[1]):      # fail closed: a plane net is joined by its inner pour alone
+        try:
+            filled = poured_copper(pcb, layer=route.PLANE_CODES[pl])
+        except (AltiumReadError, OSError):
+            filled = None
+        if not filled:
+            probs.append(f"the {pn} plane on {pl.replace('mid', 'Mid-Layer ')} was drawn but is not in the saved board as copper "
+                         f"({'could not be checked' if filled is None else 'Altium did not fill it'}): the {pn} pads are not connected")
+        else:
+            pc_probs, pc_warns = _pour_findings(saved, pn)
+            probs += pc_probs
+            res["pour_warnings"] = list(res.get("pour_warnings", [])) + pc_warns
     if pour_dep and not res["pour"]:       # fail closed: the ground was routed to the pour, so without the pour it is not routed at all
         probs.append(f"{pour_net} was routed to the pour on the bottom layer but the pour is not in the saved board (see the pour warning): "
                      f"the {pour_net} pads are not connected")
@@ -1869,10 +2191,11 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
         probs.append("not routed: " + "; ".join(f"{n} ({why})" for n, why in plan["failed"]))
     res["problems"] = probs
     res["saved_open"] = [n for n, _ in open_nets]        # nets still open on the saved board (the route plan's own "failed" list may name fewer)
-    if probs and not (keep_partial and all(_partial_ok(p) for p in probs)):
+    if probs and not (keep_partial and all(_partial_ok(p, plan["failed"]) for p in probs)):
         res["restored"] = _restore(prj, pcb, res["backup"])
     res["summary"] = (f"{len(plan['routed'])} nets routed with {res['tracks']} tracks and {res['vias']} vias"
-                      + (f", {pour_net} poured on the bottom layer" if res["pour"] else "") + f", saved; own check: "
+                      + (f", {pour_net} poured on the bottom layer" if res["pour"] else "")
+                      + (", planes: " + ", ".join(f"{n} on {pl}" for n, pl in sorted(planes.items(), key=lambda kv: kv[1])) if planes else "") + f", saved; own check: "
                       f"{'no open nets' if not open_nets else str(len(open_nets)) + ' open nets'}; Altium DRC: "
                       f"{res['drc_line']} ({drc_before.get('Clearance Constraint', 0)} clearance before routing)"
                       + ("; " + wl if (wl := _width_line(shown)) else ""))
@@ -2010,7 +2333,8 @@ def route_pcb(project, replace=False, keep_partial=False):
     except Exception:
         stale = None
     caps = capabilities_cached()
-    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, **net_current_inputs(project),
+    import project as projects_mod
+    res = route_on(prj, pcb, replace=replace, keep_partial=keep_partial, stale_library=stale, layers=projects_mod.layers(project), **net_current_inputs(project),
                    keepout_fn=lambda box, doc: python_keepouts(project, doc, box))
     if caps is not None and not caps.get("keepout_layer", True) and res.get("keepouts_held"):
         res.setdefault("capability_warnings", []).append(keepout_notice(caps))
@@ -2034,6 +2358,9 @@ def route_pcb(project, replace=False, keep_partial=False):
             err.open_nets = open_nets          # the page offers "route the rest and leave these open": the student's click is the consent
         raise err
     res["warnings"] = ([res["pour_warning"]] if res.get("pour_warning") and not res["restored"] else []) + res.get("pour_warnings", []) + res.get("capability_warnings", []) + [f"drill check: {m}" for m in res["drills"][:6]] + [f"footprint: {m}" for m in res.get("footprint_findings", [])[:6]] + [f"design vs board: {m}" for m in design_problems(project)[:6]]
+    bad_layers = board_layers.stored_problem(projects_mod.board(project))
+    if bad_layers:
+        res["warnings"] = [bad_layers] + list(res["warnings"])
     res["warnings"] += [f"track width: {m}" for m in netcurrent.width_warnings(res["widths"])]
     res["warnings"] += [f"not in the route's pass criteria, got worse: {m}" for m in res.get("new_unwatched", [])]
     _record_board_facts(project, pcb, drc_total=res.get("drc_total"))
@@ -2303,19 +2630,35 @@ def import_rules(project):
 # ---------------------------------------------------------------- the OutJob
 
 def outjob_containers(path):
-    """[(medium name, base path)] of the OutJob's Folder Structure containers: the ones that write files."""
+    """[(medium name, base path, kind)] of the OutJob's containers that write files: "GeneratedFiles" (Folder Structure: Gerbers,
+    drill, BOM, pick and place) first, then "Publish" (PDF: the schematic prints). A PDF container is run by another Altium process
+    than a folder one (WorkspaceManager:Print, not GenerateReport): leaving it out is why the Schematic PDF was never made (E14)."""
     cp = configparser.RawConfigParser(strict=False, interpolation=None)
     cp.optionxform = str
     cp.read(str(path), encoding="latin-1")
     out = []
-    for sec in cp.sections():
-        if not sec.startswith("OutputGroup"):
-            continue
-        for key, val in cp.items(sec):
-            m = re.fullmatch(r"OutputMedium(\d+)", key)
-            if m and cp.get(sec, key + "_Type", fallback="") == "GeneratedFiles" and val not in [o[0] for o in out]:
-                out.append((val, cp.get("PublishSettings", f"OutputBasePath{m.group(1)}", fallback="")))
+    for kind in ("GeneratedFiles", "Publish"):
+        for sec in cp.sections():
+            if not sec.startswith("OutputGroup"):
+                continue
+            for key, val in cp.items(sec):
+                m = re.fullmatch(r"OutputMedium(\d+)", key)
+                if m and cp.get(sec, key + "_Type", fallback="") == kind and val not in [o[0] for o in out] and _medium_used(cp, sec, m.group(1)):
+                    out.append((val, cp.get("PublishSettings", f"OutputBasePath{m.group(1)}", fallback=""), kind))
     return out
+
+
+def _medium_used(cp, sec, n):
+    """Whether any enabled output of the group is sent to medium n (OutputEnabledK_OutputMediumN=1). A group with no such keys at all
+    (an OutJob written by hand) counts every medium as used."""
+    keys = [k for k, _ in cp.items(sec) if re.fullmatch(r"OutputEnabled\d+_OutputMedium\d+", k)]
+    if not keys:
+        return True
+    for k in keys:
+        out_n = re.fullmatch(r"OutputEnabled(\d+)_OutputMedium(\d+)", k)
+        if out_n.group(2) == n and cp.get(sec, k).strip() == "1" and cp.get(sec, f"OutputEnabled{out_n.group(1)}", fallback="1").strip() == "1":
+            return True
+    return False
 
 
 def repair_outline(prj, pcb):
@@ -2382,16 +2725,36 @@ def add_outjob(project):
     return {"file": str(target), "backup": backup}
 
 
+def _project_docs(prj):
+    """The project's sheets and boards that are on the disk, then the project file itself."""
+    summary = read_prjpcb(prj)
+    docs = [prj.parent / pathlib.Path(rel.replace("\\", "/")) for rel in summary["sheets"] + summary["pcbs"]]
+    return [d for d in docs if d.is_file()] + [prj]
+
+
 def unsaved_documents(prj):
     """Names of the project's documents that Altium holds open with unsaved changes (DOCSTATE, read only), [] when all are
     saved. Raises BridgeError when Altium cannot be asked. Outputs made then may not match the files on disk."""
-    summary = read_prjpcb(prj)
-    docs = [prj.parent / pathlib.Path(rel.replace("\\", "/")) for rel in summary["sheets"] + summary["pcbs"]]
-    docs = [d for d in docs if d.is_file()] + [prj]
+    docs = _project_docs(prj)
     state = [l for l in run_commands([("PROJECT", str(prj))] + [("DOCSTATE", str(d)) for d in docs]) if l.startswith("docstate ")]
     if len(state) != len(docs):
         return []                                      # an answer that does not match what was asked says nothing
     return [d.name for d, l in zip(docs, state) if "modified=1" in l]
+
+
+def _pcb_sha(project):
+    try:
+        import lineage
+        pcb = lineage.linked_pcb(project)
+        return lineage.sha256_file(pcb) if pcb else ""
+    except Exception:       # noqa: BLE001 - no hash is no rebase
+        return ""
+
+
+def _rebase_board_check(project, old_sha):
+    """repair_outline changed the PcbDoc (outline tracks on Mechanical 1 only): keep the board check made on the file before it valid."""
+    import board_results
+    board_results.rebase_check(project, old_sha)
 
 
 def run_outjob(project):
@@ -2405,9 +2768,11 @@ def run_outjob(project):
             pcb_file = _project_pcb(project)
         except BridgeError:
             pcb_file = None                              # no PcbDoc in the project: nothing to repair
+        sha_before = _pcb_sha(project) if pcb_file else ""
         fix = repair_outline(prj, pcb_file) if pcb_file else {"drawn": False, "warning": ""}
         outline_drawn = fix["drawn"]
         if fix["drawn"]:
+            _rebase_board_check(project, sha_before)       # the outline is no copper: the board check made before still holds
             outline_note.append(f"The outline layer (Mechanical 1) was empty: drew the board shape {fix['box']} mm there (backup {fix['backup']}).")
         elif fix["warning"]:
             outline_note.append(fix["warning"])
@@ -2420,7 +2785,7 @@ def run_outjob(project):
         if cand.is_file() and outjob_containers(cand):
             target = cand
             break
-    unsaved = []
+    unsaved = None                                       # None: not known; then nothing is marked saved below
     try:                                                 # outputs made from a project with unsaved edits do not match its files
         unsaved = unsaved_documents(prj)
     except BridgeError as exc:
@@ -2434,15 +2799,22 @@ def run_outjob(project):
         cmds += add_cmds
         added = True
     boxes = outjob_containers(target)
-    cmds += [("OUTJOB", str(target), medium, base) for medium, base in boxes]
+    cmds += [("OUTJOB", str(target), medium, base, kind) for medium, base, kind in boxes]
+    # making outputs changes no design, but Altium can mark the board or a sheet modified while it plots them: a document that was
+    # saved before the run is marked saved again, so the next step does not report unsaved changes the student never made (E14)
+    # only when the unsaved check answered: without it a document the student really left unsaved would lose Altium's prompt
+    if unsaved is not None:
+        cmds += [("UNMARK", str(d)) for d in _project_docs(prj) if d.name not in unsaved]
     t0 = time.time() - 2
     run_commands(cmds, total_timeout=600)
+    import outputs_check
     roots = jlc_upload._roots(project) or [prj.parent / "Outputs"]     # the linked folder, Altium's "Project Outputs for ..."
     files = []
     for root in roots:
         for dirpath, dirs, names in os.walk(root):
             dirs[:] = [d for d in dirs if d.lower() != BACKUP_DIR]
-            files += [str(pathlib.Path(dirpath, n)) for n in names if pathlib.Path(dirpath, n).stat().st_mtime >= t0]
+            files += [str(pathlib.Path(dirpath, n)) for n in names if pathlib.Path(dirpath, n).stat().st_mtime >= t0
+                      and not outputs_check.is_side_file(n)]     # Altium's aperture macro file and reports are no outputs (E14)
     if not files:
         raise BridgeError(f"Altium ran the OutJob but wrote no files under {roots[0]}. Open the OutJob in Altium and check its containers.")
     bom_files, bom_notes = _bom_into_outputs(project, roots, files)
@@ -2488,7 +2860,7 @@ def run_outjob(project):
     warnings = list(check["warnings"]) + warnings          # what is missing comes first: it decides whether the step did its job
     _log(project, "run-outjob", outjob=str(target), added=added, files=len(files), backup=backup, rules_missing=missing,
          missing=check["missing"], empty=check["empty"], unsaved=unsaved)
-    return {"outjob": str(target), "added": added, "containers": [m for m, _ in boxes], "files": sorted(files), "backup": backup,
+    return {"outjob": str(target), "added": added, "containers": [m for m, _, _ in boxes], "files": sorted(files), "backup": backup,
             "warnings": warnings, "outline_drawn": outline_drawn, "outputs_check": check}
 
 
@@ -2522,7 +2894,7 @@ def _bom_into_outputs(project, roots, written):
         shutil.copyfile(src, dest)
         note = (f"Altium wrote no BOM, so {dest.parent.name}/{dest.name} is the advisor's JLC BOM (the one Export writes)"
                 + (f"; {len(res['needs_lcsc'])} line(s) have no LCSC number ({', '.join(res['needs_lcsc'][:5])}): run Check stock"
-                   if res.get("needs_lcsc") else "") + ".")
+                   if res.get("needs_lcsc") else "") + "." + (" " + res["left_out_text"] if res.get("left_out_text") else ""))
         return [str(dest)], [note]
     except Exception as exc:
         return [], [f"Altium wrote no BOM and the advisor's could not be made ({type(exc).__name__}: {exc}). Export it on the BOM page."]
@@ -2705,7 +3077,20 @@ def python_keepouts(project, doc, outline):
                                          c["x_mm"], c["y_mm"]))
     except Exception:                       # noqa: BLE001
         pass
+    try:            # a radio module the library did not mark (found by its antenna pin or its U.FL connector): the antenna strip of its footprint
+        rects += _derived_rf_keepouts(project, doc, {r for r in by_ref if ((man.get(by_ref[r]) or {}).get("rf") or {}).get("keepout_box")})
+    except Exception:                       # noqa: BLE001
+        pass
     return rects
+
+
+def _derived_rf_keepouts(project, doc, done=()):
+    """Board boxes of the antenna keep-outs layout.rf_rules finds for the placed components (refs in `done` already have one)."""
+    from altium import layout
+    fps = {f["name"]: f for f in read_pcblib(library_paths(project)["pcblib"])["footprints"]}
+    boxes = layout.rf_rules(_netlist_parts(project), fps)["keepouts"]
+    return [_rotate_box(boxes[c["ref"]], float(c.get("rotation") or 0), str(c.get("layer") or "").lower().startswith("bottom"),
+                        c["x_mm"], c["y_mm"]) for c in doc.get("components", []) if c.get("ref") in boxes and c["ref"] not in done]
 
 
 def library_paths(project):
@@ -3157,7 +3542,7 @@ def main(argv=None):
         elif a.op == "import-rules":
             res = import_rules(a.project)
         elif a.op == "run-outjob":
-            blocked = store.manufacturing_warning(a.project)
+            blocked = store.manufacturing_block(a.project)           # the design's refusal and the board's (unrouted nets); pins only warn
             if blocked:
                 print(f"Error: {blocked}", file=sys.stderr)
                 return 1

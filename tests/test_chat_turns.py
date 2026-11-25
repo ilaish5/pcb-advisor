@@ -86,8 +86,9 @@ def test_progress_while_a_turn_runs_then_idle(server, empty, monkeypatch):
     assert started.wait(5)
     code, p = call(server, "GET", "/api/chat/progress", empty)
     assert code == 200 and p["running"] is True
-    assert [s["label"] for s in p["steps"]] == ["Running calc.py a", "Reading datasheet.pdf"]
-    assert p["current"] == "Reading datasheet.pdf" and p["seconds"] >= 0 and "idle_seconds" in p
+    # the student sees plain words (gateway.events.human, E13-E19): never the command line or the file name
+    assert [s["label"] for s in p["steps"]] == ["Calculating", "Reading the datasheet"]
+    assert p["current"] == "Reading the datasheet" and p["seconds"] >= 0 and "idle_seconds" in p
     assert call(server, "POST", "/api/chat/stop", empty)[0] == 200
     t.join(10)
     assert call(server, "GET", "/api/chat/progress", empty)[1]["running"] is False

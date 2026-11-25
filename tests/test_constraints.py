@@ -293,3 +293,8 @@ def test_capabilities_probe_with_fake_altium(tmp_path, monkeypatch):
     bad = bridge.capabilities(force=True, runner=lambda *a, **k: None, cache=cache)
     assert not bad["keepout_layer"] and bad["problems"]
 
+
+
+def test_rf_module_ignores_role_text_and_small_parts():
+    pads = ["PAD|%d|%s|0|0|0|0|0|0|0|0|1|1" % (i, i) for i in range(2)]
+    assert partlib_mech.rf_module({"mpn": "C0603", "role": "decoupling for LTE module"}, {"name": "C0603", "lines": pads}) is None

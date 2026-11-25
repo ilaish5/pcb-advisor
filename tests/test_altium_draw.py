@@ -69,7 +69,7 @@ def test_every_part_is_placed_with_its_library_pin_count():
     places = {c[2]: c for c in p["commands"] if c[0] == "PLACE"}
     assert set(places) == {"U1", "R1", "R2"}
     assert places["U1"][3] == "IC1" and places["U1"][4] == "lib.SchLib" and places["U1"][7] == "5" and places["R1"][7] == "2"
-    assert p["commands"][0] == ("DRAWBEGIN", "sheet.SchDoc", "0") and p["commands"][-1] == ("SAVE", "sheet.SchDoc")
+    assert p["commands"][0] == ("DRAWBEGIN", "sheet.SchDoc", "0", "0") and p["commands"][-1] == ("SAVE", "sheet.SchDoc")
 
 
 def test_connected_pins_get_a_stub_with_a_label_or_power_port_and_nc_a_no_erc_cross():
@@ -888,3 +888,77 @@ def test_a_net_name_clash_never_fails_open(drawn, monkeypatch):
     assert bridge.rules_never_imported(project) is True
     msgs = bridge.design_problems(project)
     assert len(msgs) == 1 and "could not be compared" in msgs[0]
+
+
+# ---------------------------------------------------------------- E7: a sheet is drawn on A4, or on A3 when its part does not fit A4
+
+TALL = symbol("TALL", [(str(i), f"P{i}", -300, -100 * i, 2) for i in range(1, 63)])         # a 62 pin single column symbol (A7670G)
+TALL_SHEET = {"id": "03", "title": "Modem", "sections": [{"id": "M", "title": "Modem"}],
+              "parts": [{"ref": "U9", "section": "M", "pins": [{"num": str(i), "name": f"P{i}", "net": f"SIG{i}"} for i in range(1, 63)]}]}
+
+
+def _pw(sheet, syms, **kw):
+    return draw.plan_sheet(sheet, syms, "lib.SchLib", "sheet.SchDoc", **kw)
+
+
+def test_a_sheet_that_fits_a4_stays_on_a4():
+    p = plan()
+    assert p["sheet_size"] == "A4" and p["commands"][0][3] == "0"
+
+
+def test_a_tall_symbol_lands_on_a3_and_the_layout_uses_the_a3_area():
+    p = _pw(TALL_SHEET, {"U9": TALL})
+    assert not p["errors"] and p["sheet_size"] == "A3"
+    begin = p["commands"][0]
+    assert begin[0] == "DRAWBEGIN" and begin[3] == str(draw.SHEETS["A3"]["style"]) == "1"
+    x0, y0, x1, y1 = draw.sheet_area("A3")
+    frames = [c for c in p["commands"] if c[0] == "FRAME"]
+    assert frames and all(int(f[3]) >= y0 and int(f[3]) + int(f[5]) <= y1 + 1 for f in frames)      # inside the A3 area, above the title block
+    assert max(int(f[3]) + int(f[5]) for f in frames) > draw.AREA[3]                               # and it really needed more than A4 has
+    assert _pw(TALL_SHEET, {"U9": TALL}, sheet_size="A4")["fix_code"] == "sheet.too_big"          # forced to A4 it is refused, as before
+
+
+def test_suggest_sheets_takes_the_size_it_is_given():
+    cells = [("M", draw.part_cell(TALL_SHEET["parts"][0], TALL))]
+    secs = TALL_SHEET["sections"]
+    assert draw.suggest_sheets(cells, secs)[1] == ["U9"]                             # A4 only: the part is too big alone
+    assert draw.suggest_sheets(cells, secs, area=draw.sheet_area("A3"))[1] == []
+    assert draw.suggest_sheets(cells, secs, area=None)[1] == []                      # None: A4 or A3, whichever holds it
+
+
+def test_a_part_too_big_even_for_a3_is_refused_with_a_message_naming_a3():
+    pins = [(str(i), f"P{i}", -300, -100 * i, 2) for i in range(1, 140)]
+    sheet = {"id": "09", "sections": [{"id": "M", "title": "Huge"}],
+             "parts": [{"ref": "U8", "section": "M", "pins": [{"num": str(i), "name": f"P{i}", "net": f"S{i}"} for i in range(1, 140)]}]}
+    p = _pw(sheet, {"U8": symbol("HUGE", pins)})
+    assert p["commands"] == [] and p["sheet_size"] is None and p["fix_code"] == "sheet.too_big"
+    assert "A3" in p["errors"][0] and "U8" in p["errors"][0]
+
+
+def test_the_fit_check_reports_each_sheet_before_draw(drawn, monkeypatch):
+    project, fake, saved = drawn
+    store.write_sheet(project, "03", TALL_SHEET)
+    syms = {**SYMS, "U9": TALL}
+    monkeypatch.setattr(bridge, "read_schlib", lambda path: {"symbols": list(syms.values())})
+    monkeypatch.setattr(store, "bom_lines", lambda project: [{"key": r, "refs": [r]} for r in syms])
+    monkeypatch.setattr(store, "library_manifest", lambda project: {r: {"symbol": syms[r]["name"], "footprint": "FP"} for r in syms})
+    fit = {f["sheet"]: f for f in bridge.sheet_fit(project)}
+    assert fit["01"]["size"] == "A4" and fit["03"]["size"] == "A3" and fit["03"]["fits"] is True
+    assert [f["sheet"] for f in bridge.sheet_fit(project, "03")] == ["03"]
+    assert not [c for c in fake.flat() if c[0] in ("DRAWBEGIN", "PLACE")]          # the check never touches Altium
+
+
+def test_one_sheet_too_big_even_for_a3_does_not_block_the_others(drawn, monkeypatch):
+    project, fake, saved = drawn
+    huge = {"id": "02", "title": "Huge", "sections": [{"id": "H", "title": "Huge"}],
+            "parts": [{"ref": f"R{i}", "section": "H", "pins": [{"num": "1", "net": f"LONG_NET_NUMBER_{i}_LONG"}, {"num": "2", "net": "GND"}]}
+                      for i in range(10, 700)]}
+    store.write_sheet(project, "02", huge)
+    refs = ["U1", "R1", "R2"] + [p["ref"] for p in huge["parts"]]
+    monkeypatch.setattr(store, "bom_lines", lambda project: [{"key": r, "refs": [r]} for r in refs])
+    monkeypatch.setattr(store, "library_manifest", lambda project: {r: {"symbol": (SYMS.get(r) or SYMS["R1"])["name"], "footprint": "FP"} for r in refs})
+    res = bridge.draw_schematic(project)
+    assert [s["sheet"] for s in res["skipped"]] == ["02"] and "Sheet 02 cannot be drawn" in res["skipped"][0]["why"]
+    assert res["parts"] == 3 and set(res["sheet_sizes"]) == {"01"}                      # sheet 01 was drawn
+    assert any("NOT drawn" in w and "02" in w for w in res["warnings"])
+    assert [c[0] for c in fake.flat()].count("PLACE") == 3

@@ -27,6 +27,7 @@ import time
 from collections import defaultdict
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import board_layers  # noqa: E402
 import diagram_route  # noqa: E402
 import pinnames  # noqa: E402
 import project_guard  # noqa: E402
@@ -235,12 +236,13 @@ def _has_offset(v):
 
 def bom_lines(project):
     """Fold bom-log.jsonl into lines, in the order they first appeared."""
-    lines = {}
+    lines, first = {}, {}
     for ev in read_jsonl(pdir(project) / "bom-log.jsonl"):
         key = ev.get("line")
         if not key:
             continue
-        if ev.get("removed"):                # an undo of a line the log had added
+        first.setdefault(key, len(first))     # a deleted line that is restored comes back in its old place
+        if ev.get("removed"):                # an undo of a line the log had added, or a deleted line
             lines.pop(key, None)
             continue
         line = lines.setdefault(key, {"key": key, "refs": []})
@@ -254,7 +256,7 @@ def bom_lines(project):
         # a line approved without references is still known by its key when that is a designator
         if not line.get("refs") and re.fullmatch(r"[A-Za-z]+\d+", line["key"]):
             line["refs"] = [line["key"]]
-    return list(lines.values())
+    return sorted(lines.values(), key=lambda l: first[l["key"]])
 
 
 def _supply_fits(ev, line):
@@ -443,6 +445,8 @@ def _bom(project, write):
         l["pins_basis"] = pins_basis(project, l, entry, l["pins_status"])
         l["pin_decision"] = _decision_view(project, l, entry) if l["pins_status"] == "accepted" else None
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
+        # refs no netlist sheet places, while sheets exist: an orphan line shows "not on any sheet" with Delete at hand
+        l["off_sheet"] = [r for r in l.get("refs", []) if r not in sheets] if sheets else []
         l["role"] = l.get("role") or ""
 
         b = best_offer(l)
@@ -500,8 +504,8 @@ def totals(lines):
     for l in lines:
         q = qty(l)
         t["parts"] += q
-        if l.get("library") in ("review", "missing"):
-            t["to_verify"] += 1
+        if l.get("library") in ("review", "missing") and not (l.get("dnp") or l.get("nobuy")):
+            t["to_verify"] += 1          # lines whose library models wait for a look (not pins: pin_counts is that number)
         if l.get("library") == "error":
             t["library_error"] += 1
         if not q:
@@ -609,7 +613,11 @@ def cpl_rotation_value(value):
 
 def propose_bom(project, line, changes, reason="", sources=(), library=None, session=None, new=False, reserved=()):
     """Record a proposal. Nothing about the BOM changes until the student approves.
-    `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty)."""
+    `reserved`: refs other proposals of the same turn use (kept free when refs are added for a qty).
+    changes {"deleted": true} deletes the line, {"remove": ["R3"]} takes refs off it (propose_bom_delete)."""
+    if isinstance(changes, dict) and (changes.get("deleted") or changes.get("remove")):
+        return propose_bom_delete(project, line, None if changes.get("deleted") else changes.get("remove"),
+                                  reason=reason, sources=sources, session=session)
     if "cpl_rotation" in changes:
         changes = {**changes, "cpl_rotation": cpl_rotation_value(changes["cpl_rotation"])}
     existing = {l["key"]: l for l in bom_lines(project)}
@@ -656,6 +664,122 @@ def propose_bom(project, line, changes, reason="", sources=(), library=None, ses
     if cleared is not None:
         rec["clears_offset"] = cleared          # the card says the approval clears it
     return append(project, "proposals.jsonl", rec)
+
+
+# ---- deleting a BOM line (or some refs of it). Always a proposal ("critical": the student's click in every mode), so it
+# shows in the history and Undo puts the line back as it was (the whole line is kept in bom-log.jsonl `before`).
+
+def _split_refs(refs):
+    if refs is None or refs is True:
+        return None
+    if isinstance(refs, str):
+        refs = re.split(r"[\s,;]+", refs)
+    if not isinstance(refs, (list, tuple)):
+        raise ValueError("refs must be a list of designators")
+    out = []
+    for r in refs:
+        r = str(r).strip()
+        if r and r not in out:
+            out.append(r)
+    return out or None
+
+
+def _line_snapshot(line):
+    return {k: v for k, v in line.items() if k != "key"}
+
+
+def delete_spec(prop):
+    """None when `prop` deletes nothing; else the refs it takes off its line, or None inside ("whole", None) for the whole line.
+    A BOM proposal with changes.deleted / changes.remove, or a proposal whose kind starts with "delete" on a BOM line."""
+    kind = prop.get("kind") or "bom"
+    ch = prop.get("changes") or {}
+    if kind == "bom" and (ch.get("deleted") or ch.get("remove")):
+        refs = None if ch.get("deleted") else _split_refs(ch.get("remove"))
+    elif kind.startswith("delete") and prop.get("line"):
+        refs = _split_refs(ch.get("remove") or ch.get("refs"))
+    else:
+        return None
+    return ("refs", refs) if refs else ("whole", None)
+
+
+def propose_bom_delete(project, line, refs=None, reason="", sources=(), session=None, origin="agent"):
+    """A proposal to delete BOM line `line`, or only `refs` of it (all of its refs is the whole line). It changes nothing until
+    approved. KeyError for an unknown line, ValueError for a ref the line does not hold."""
+    cur = next((l for l in bom_lines(project) if l["key"] == line), None)
+    if cur is None:
+        raise KeyError(f"no BOM line {line!r}")
+    refs = _split_refs(refs)
+    have = list(cur.get("refs") or [])
+    if refs:
+        missing = [r for r in refs if r not in have]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} not on line {line} "
+                             f"(its refs: {', '.join(have) or 'none'})")
+        if set(refs) == set(have):
+            refs = None
+    changes = {"remove": [r for r in have if r in refs]} if refs else {"deleted": True}
+    rec = {"id": _new_proposal_id(project), "ts": now_ms(), "kind": "bom", "line": line, "new": False,
+           "changes": changes, "before": _line_snapshot(cur), "reason": reason, "sources": list(sources or ()),
+           "library": None, "session": session, "status": "pending", "origin": origin}
+    return append(project, "proposals.jsonl", rec)
+
+
+def delete_bom_line(project, line, refs=None):
+    """The student's Delete: applied at once (by=student), recorded as a proposal so the history lists it and Undo restores it.
+    Returns the proposal (its id is what /api/undo takes)."""
+    rec = propose_bom_delete(project, line, refs, reason="deleted by the student", origin="student")
+    return decide(project, rec["id"], "approved", by="student")
+
+
+def _apply_bom_delete(project, prop, spec, by):
+    """Approve a delete proposal: one bom-log.jsonl entry that holds the line as it was. Refused (ValueError) when the line or
+    the refs are gone already, so nothing half-applies."""
+    line = prop["line"]
+    cur = next((l for l in bom_lines(project) if l["key"] == line), None)
+    if cur is None:
+        raise ValueError(f"line {line} is no longer in the BOM")
+    have = list(cur.get("refs") or [])
+    refs = spec[1]
+    keep = have
+    if refs:
+        missing = [r for r in refs if r not in have]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} no longer on line {line}")
+        keep = [r for r in have if r not in refs]
+    who = "student" if by == "student" and prop.get("origin") == "student" else "agent-approved"
+    append(project, "proposals.jsonl", {"id": prop["id"], "ts": now_ms(), "status": "approved", "by": by})
+    entry = {"ts": now_ms(), "by": who, "line": line, "reason": prop.get("reason"), "sources": prop.get("sources"),
+             "proposal": prop["id"]}
+    if refs and keep:
+        append(project, "bom-log.jsonl", {**entry, "changes": {"refs": keep}, "before": {"refs": have}, "deleted": refs})
+        return
+    append(project, "bom-log.jsonl", {**entry, "removed": True, "changes": {}, "before": _line_snapshot(cur), "deleted": have})
+    for p in proposals(project):        # a change still waiting for the deleted line has nothing left to change
+        if p.get("status") == "pending" and p.get("line") == line and (p.get("kind") or "bom") == "bom" and not p.get("new"):
+            append(project, "proposals.jsonl", {"id": p["id"], "ts": now_ms(), "status": "rejected", "by": "superseded"})
+
+
+def _undo_bom_delete(project, entry):
+    line, refs = entry["line"], entry.get("deleted") or []
+    lines = bom_lines(project)
+    cur = next((l for l in lines if l["key"] == line), None)
+    taken = {r: l["key"] for l in lines if l["key"] != line for r in (l.get("refs") or [])}
+    clash = [f"{r} (line {taken[r]})" for r in refs if r in taken]
+    if clash:
+        raise UndoRefused(f"{', '.join(clash)} {'is' if len(clash) == 1 else 'are'} in the BOM again; "
+                          "delete or change that first, then undo")
+    if entry.get("removed"):
+        if cur is not None:
+            raise UndoRefused(f"a line {line} is in the BOM again; delete it first, then undo")
+        changes = dict(entry.get("before") or {})
+    else:
+        if cur is None:
+            raise UndoRefused(f"line {line} no longer exists")
+        if list(cur.get("refs") or []) != list((entry.get("changes") or {}).get("refs") or []):
+            raise UndoRefused(f"the refs of {line} were changed after this; undo that later change first")
+        changes = {"refs": (entry.get("before") or {}).get("refs") or []}
+    append(project, "bom-log.jsonl", {"ts": now_ms(), "by": "undo", "line": line, "undoes": entry.get("proposal"),
+                                      "changes": changes, "before": entry.get("changes"), "reason": "undo of " + str(entry.get("proposal"))})
 
 
 def validate_diagram(data):
@@ -1281,6 +1405,8 @@ def _decide(project, pid, decision, by):
             append(project, "net-currents.jsonl", {"ts": now_ms(), "by": by, "net": prop["line"],
                                                    "current_a": (prop.get("changes") or {}).get("current_a"),
                                                    "before": net_currents(project).get(prop["line"]), "proposal": pid})   # the value at approval time
+        elif delete_spec(prop) is not None:
+            _apply_bom_delete(project, prop, delete_spec(prop), by)
         else:
             append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by})
             changes, note, fresh = dict(prop["changes"]), "", False
@@ -1425,6 +1551,17 @@ def _restore_value(key, v):
     return [] if key == "refs" else False if key in ("dnp", "nobuy") else ""
 
 
+def superseded_by_delete(project, prop):
+    """Ids of the pending proposals for the deleted line that the delete threw out (rejected "superseded" when it was approved): an undo
+    puts the line back but not these, so the student is told."""
+    if not delete_spec(prop):
+        return []
+    since = str(prop.get("decided_at") or "")
+    return [p["id"] for p in proposals(project)
+            if p.get("line") == prop.get("line") and p.get("id") != prop.get("id") and p.get("status") == "rejected"
+            and p.get("decided_by") == "superseded" and str(p.get("decided_at") or "") >= since]
+
+
 def undo_proposal(project, pid, by="student"):
     prop = next((p for p in proposals(project) if p["id"] == pid), None)
     if not prop:
@@ -1452,6 +1589,11 @@ def undo_proposal(project, pid, by="student"):
         entry = next((e for e in read_jsonl(pdir(project) / "bom-log.jsonl") if e.get("proposal") == pid), None)
         if not entry:
             raise UndoRefused("this change left no BOM entry to undo")
+        if "deleted" in entry:
+            gone = superseded_by_delete(project, prop)        # read before the undo: what the delete threw out, still not asked again
+            _undo_bom_delete(project, entry)
+            append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": "undone", "by": by})
+            return {**prop, "superseded": gone}
         cur = next((l for l in bom_lines(project) if l["key"] == entry["line"]), None)
         if cur is None:
             raise UndoRefused(f"line {entry['line']} no longer exists")
@@ -1611,8 +1753,11 @@ def history(project, limit=40):
     for p in proposals(project):
         if p.get("status") not in ("approved", "undone"):
             continue
+        spec = delete_spec(p)
         if p.get("kind") == "idea_diagram":
             label = "Diagram changed"
+        elif spec is not None:
+            label = f"{p.get('line')}: " + (f"removed {', '.join(spec[1])}" if spec[1] else "deleted")
         else:
             label = f"{p.get('line')}: " + (", ".join(p.get("changes") or {}) or "change")
         out.append({"id": p["id"], "kind": p.get("kind") or "bom", "label": label, "ts": p.get("decided_at") or p["ts"],
@@ -1918,6 +2063,7 @@ def save_idea_from_draft(project, by="student"):
     import constraints            # noqa: PLC0415
     constraints.confirm_all(draft)          # the Save is the one confirmation of what the agent proposed
     board_from_text(draft)
+    sync_layers_from_idea(project, draft)
     save_idea(project, draft)
     _push_idea_version(project, draft, by, f"{changes} change{'s' if changes != 1 else ''} saved")
     revert_idea_draft(project)
@@ -2015,6 +2161,25 @@ def validate_idea_item(topic, text):
     if not text or not isinstance(text, str) or not text.strip() or len(text.strip()) > 1000:
         raise ValueError("text must be 1-1000 chars")
     return topic.strip(), text.strip()
+
+
+def sync_layers_from_idea(project, idea):
+    """The Save / Confirm of the Idea sets `board.layers` in project.json from the requirements (so what the Idea says and what the
+    stack-up, router and outputs build cannot differ, E9): the newest requirement that states an "N-layer board / PCB" or is about
+    the board and says "N layers" (board_layers.from_text). Only 2 or 4 is stored; another count, or no count, changes nothing.
+    Never raises. Returns the count stored or None."""
+    best, best_ts = None, ""
+    for it in (idea or {}).get("agreed", []):
+        n = board_layers.from_text(it.get("topic"), it.get("text"))
+        if n in board_layers.LAYER_CHOICES and str(it.get("ts") or "") >= best_ts:
+            best, best_ts = n, str(it.get("ts") or "")
+    if best is None:
+        return None
+    try:
+        import project as project_mod
+        return project_mod.set_layers(project, best)
+    except (ValueError, OSError):
+        return None
 
 
 def propose_idea(project, topic, text, by="agent"):
@@ -2165,6 +2330,7 @@ def confirm_idea(project):
     idea["confirmed"] = True
     idea["confirmed_at"] = now()
     board_from_text(idea)
+    sync_layers_from_idea(project, idea)
     return save_idea(project, idea)
 
 
@@ -3265,6 +3431,16 @@ def pins_to_resolve(project, verify_new=False, checked=None):
     return [r for r in rows if r["line"] not in skip]
 
 
+
+def pin_counts(rows):
+    """THE count of parts waiting on their pins, from pins_to_resolve rows: every page, the Confirm all button, its dialog, the DFM
+    heading, the Outputs banner and the agent's context read these numbers, never their own. A part is a designator (U1), so five
+    identical LEDs on one line are five parts. {parts, to_confirm (no conflict: what Confirm all settles), conflicts, lines}."""
+    refs = lambda rs: [ref for r in rs for ref in (r.get("refs") or [r.get("line")])]
+    ok = [r for r in rows if r.get("status") != "mismatch"]
+    bad = [r for r in rows if r.get("status") == "mismatch"]
+    return {"parts": len(refs(rows)), "to_confirm": len(refs(ok)), "conflicts": len(refs(bad)), "lines": len(rows)}
+
 def _checked_outcome(line, entry):
     """(status, words) of a part just checked again, from its own library entry and pins_status: verified only on a pin-table pass."""
     st = line.get("pins_status") or ""
@@ -3639,42 +3815,119 @@ def draft_text(items, cut=12):
             f"(no real library symbol yet): {', '.join(refs[:cut])}{' ...' if len(refs) > cut else ''}")
 
 
+def _ref_list(rows, cut=12):
+    names = [ref for r in rows for ref in (r.get("refs") or [r["line"]])]
+    return names, f"{', '.join(names[:cut])}{' ...' if len(names) > cut else ''}"
+
+
 def manufacturing_warning(project):
-    """"" when every part on the board has verified or accepted pins and no pin is left undecided; else the refusal that stops the
-    manufacturing outputs (Altium OutJob, Gerber zip): the parts whose pins nobody checked (the DFM page's Unverified parts list,
-    without DNP / do-not-buy lines), then the open pins (no net, not NC) and the pins of a built symbol the netlist does not list.
-    The name is kept from when this only warned. A part is resolved by a datasheet table pass or by the student's accept (accept_pins);
-    a pin by a net or by NC (mark_pins_nc). A BOM part whose library footprint is in error (footprint_errors) blocks too, named first.
-    So does a drawn schematic that is still a DRAFT (draft_parts): a placeholder part is not the library symbol, so the board it
-    would give is not the board that is ordered; the redraw with the real symbol is what lifts it."""
+    """"" when nothing in the design itself stops the manufacturing outputs (Altium OutJob, Gerber zip); else the refusal. It names
+    the parts whose library footprint is in error (footprint_errors, first), the open pins (no net, not NC) and the pins of a built
+    symbol the netlist does not list, and a drawn schematic that is still a DRAFT (draft_parts: a placeholder part is not the library
+    symbol, so the board it would give is not the board that is ordered). A pin is resolved by a net or by NC (mark_pins_nc).
+    Unverified or conflicting pins are NOT here (owner decision, 16/11 and 24/11/2026): they are a warning only, pins_warning.
+    The board itself (unrouted nets) is route_block; manufacturing_block is the whole gate."""
     fp_msg = footprint_error_text(footprint_error_parts(project, buyable=True), "Not made yet")
-    rows = pins_to_resolve(project)
     gaps = pin_gap_text(pin_gaps(project))
     draft = draft_parts(project)
-    if not rows and not gaps and not draft:
+    if not gaps and not draft:
         return fp_msg
-    said = []
-    bad = [r for r in rows if r["status"] == "mismatch"]
-    refs = lambda rs: [ref for r in rs for ref in (r.get("refs") or [r["line"]])]
-    def part(rs, what):
-        names = refs(rs)
-        return f"{len(names)} {'part has' if len(names) == 1 else 'parts have'} {what}: {', '.join(names[:12])}{' ...' if len(names) > 12 else ''}"
-    if rows and len(bad) < len(rows):
-        said.append(part([r for r in rows if r["status"] != "mismatch"], "pins nobody checked against a datasheet"))
-    if bad:
-        said.append(part(bad, "pins that differ from the datasheet"))
+    said, tail = [], []
     if gaps:
         said.append(gaps)
-    if draft:
-        said.append(draft_text(draft))
-    tail = []
-    if rows:
-        tail.append("Open DFM > Unverified parts: verify or fix each, or accept it if you checked it yourself.")
-    if gaps:
         tail.append("Open Schematic: connect each pin or mark them all NC in one click.")
     if draft:
+        said.append(draft_text(draft))
         tail.append("Build the library so each placeholder part gets its real symbol, then draw the schematic again (Schematic page).")
     return (fp_msg + " Also: " if fp_msg else "Not made yet: ") + "; ".join(said) + ". " + " ".join(tail)
+
+
+def pins_warning(project, rows=None):
+    """"" or the warning (never a block) that names the parts whose pins nobody checked against a datasheet and the parts whose pins
+    differ from it (pins_to_resolve: DNP / do-not-buy lines left out). Shown on the Outputs page, in the outputs result and in the
+    order manifest, so a student orders knowing which parts rest on unchecked pins."""
+    rows = pins_to_resolve(project) if rows is None else rows
+    if not rows:
+        return ""
+    bad = [r for r in rows if r.get("status") == "mismatch"]
+    unv = [r for r in rows if r.get("status") != "mismatch"]
+    said = []
+    for rs, what in ((unv, "pins nobody checked against a datasheet"), (bad, "pins that differ from the datasheet")):
+        if rs:
+            names, text = _ref_list(rs)
+            said.append(f"{len(names)} {'part has' if len(names) == 1 else 'parts have'} {what}: {text}")
+    return ("Warning (the outputs are still made): " + "; ".join(said)
+            + ". Check them in DFM > Unverified parts before you order: verify, fix or accept each.")
+
+
+ROUTE_NEXT = "Next: press Route board, or route by hand in Altium and press Check board."
+
+
+def route_state(project):
+    """What the board log says about the copper of the linked PcbDoc: {"ready": bool, "why": str, "unrouted": n|None,
+    "open_nets": [net]}. Read from board_results (the route and design rule check records of board-log.jsonl), never guessed:
+    a board never routed or never checked is not ready, and neither is one whose PcbDoc changed since its last check, one whose last
+    check was not read in full, one whose DRC counts an Un-Routed Net, or one whose last route left nets open."""
+    import board_results
+    try:
+        lt = board_results.latest(project)
+    except Exception:       # noqa: BLE001 - no log is no check
+        lt = {}
+    chk = lt.get("board_check")
+    route = lt.get("route")
+    out = {"ready": False, "why": "", "unrouted": None, "open_nets": []}
+    newer_check = bool(chk and route and chk is not route and (chk.get("drc") or {}).get("complete") is not False
+                       and (chk.get("ts") or 0) > (route.get("ts") or 0))
+    if route and route.get("ok") and not route.get("stale") and not newer_check:     # a complete check newer than the route: its count and nets only
+        out["open_nets"] = [str(n) for n in ((route.get("summary") or {}).get("open_nets") or [])]
+    if not chk:
+        out["why"] = ("the board was never checked: no route or design rule check of the PcbDoc is on record" if not route
+                      else "the board was routed but never checked: no design rule check of the PcbDoc is on record")
+        return out
+    d = chk.get("drc") or {}
+    out["unrouted"] = int(d.get("unrouted") or 0)
+    if not out["open_nets"]:
+        for v in d.get("violations") or []:
+            if str(v).startswith("Un-Routed"):
+                m = re.search(r"\bNet\s+([^\s,()]+)", str(v).split(":", 1)[-1])
+                if m and m.group(1) not in out["open_nets"]:
+                    out["open_nets"].append(m.group(1))
+    if chk.get("stale"):
+        out["why"] = (f"the board changed since its last check (that check counted DRC Un-Routed {out['unrouted']}), "
+                      "so nothing on record says the copper is complete")
+        return out
+    if d.get("complete") is False:
+        out["why"] = "the last design rule check was not read in full, so the unrouted nets are not known"
+        return out
+    rules = d.get("rules")
+    if isinstance(rules, dict) and rules and not any(str(k).startswith("Un-Routed Net") for k in rules):
+        # a DRC without the Un-Routed Net rule (disabled, or not in the batch) says nothing about the copper: a board with no
+        # tracks would read as complete (review 24/11/2026)
+        out["why"] = "the last design rule check did not run the Un-Routed Net rule, so it cannot tell whether every net is routed"
+        return out
+    if out["unrouted"] or out["open_nets"]:
+        nets = out["open_nets"]
+        shown = f"; open nets: {', '.join(nets[:6])}{' ...' if len(nets) > 6 else ''}" if nets else ""
+        out["why"] = (f"the board has unrouted nets (DRC Un-Routed {out['unrouted']}" + (f", {len(nets)} open" if nets else "") + ")" + shown)
+        return out
+    out["ready"] = True
+    return out
+
+
+def route_block(project):
+    """"" when the board on record has no unrouted net; else the refusal (why, the open nets, the DRC Un-Routed count, one next step)."""
+    st = route_state(project)
+    return "" if st["ready"] else f"Not made yet: {st['why']}. {ROUTE_NEXT}"
+
+
+def manufacturing_block(project):
+    """The one gate of Generate outputs, the OutJob run and the Gerber zip (and the Outputs stage, banner and agent context): the
+    design's own refusal (manufacturing_warning) and the board's (route_block), in one text; "" when both are clear. Pins are a
+    warning only (pins_warning), never a block."""
+    design, board = manufacturing_warning(project), route_block(project)
+    if design and board:
+        return design + " Also: " + board[len("Not made yet: "):]
+    return design or board
 
 
 def accept_pins(project, key):

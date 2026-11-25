@@ -189,9 +189,12 @@ def render_md(d: dict[str, Any]) -> str:
     if not c["dfm"]:
         L.append("- JLC DFM: no report added")
     L.append("")
-    L += ["## Accepted risks (decided by the student, not by a datasheet)"]
-    L += [f"- {', '.join(r['refs'])} {r.get('mpn') or ''}: {r.get('reason') or r.get('basis') or 'accepted'} ({r.get('ts', '')})"
-          for r in d["accepted_risks"]] or ["- none"]
+    row = lambda r: f"- {', '.join(r['refs'])} {r.get('mpn') or ''}: {r.get('reason') or r.get('basis') or 'accepted'} ({r.get('ts', '')})"
+    paged = [r for r in d["accepted_risks"] if r.get("basis") == "datasheet_page"]      # looked at a datasheet page: not "not by a datasheet"
+    if paged:
+        L += ["## Pins checked by the student against a datasheet page", *map(row, paged), ""]
+    L += ["## Accepted risks (decided by the student without a datasheet page)"]
+    L += [row(r) for r in d["accepted_risks"] if r.get("basis") != "datasheet_page"] or ["- none"]
     if d["unavailable"]:
         L += ["", "## Not available", *[f"- {g}" for g in d["unavailable"]]]
     return "\n".join(L) + "\n"

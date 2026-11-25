@@ -246,15 +246,16 @@ def test_a_part_with_no_wired_pin_is_not_waiting_and_blocks_nothing(empty):
     assert w["questions"] == 1 and w["groups"][0]["refs"] == ["U1"] and w["bulk"] == ["U1"] and w["blind"] == ["U1"]
     assert [r["line"] for r in pin_decisions.remaining(empty)] == ["U1"]
     assert all(w["lib_buttons"].get(k, 0) == 0 for k in ("U7", "U8", "U9"))
+    warn = store.pins_warning(empty)
+    assert "pins nobody checked against a datasheet: U1" in warn and "U7" not in warn and "U9" not in warn      # a warning, never a block
     msg = store.manufacturing_warning(empty)
-    assert "pins nobody checked against a datasheet: U1;" in msg and "U7" not in msg and "U9" not in msg
-    assert "U8 pin 1" in msg              # its listed pins are open (no net, no NC): that is the open-pin gate, which stays
+    assert "pins nobody checked" not in msg and "U8 pin 1" in msg      # its listed pins are open (no net, no NC): that is the open-pin gate, which stays
 
 
 def test_only_empty_parts_leave_the_gate_open_and_nothing_to_confirm(empty):
     _ics(empty, wired=False)
     assert store.pins_to_resolve(empty) == [] and pin_decisions.waiting(empty)["questions"] == 0
-    assert "pins nobody checked" not in store.manufacturing_warning(empty)
+    assert store.pins_warning(empty) == "" and "pins nobody checked" not in store.manufacturing_warning(empty)
     assert pin_decisions.accept_all(empty)["accepted"] == []
 
 

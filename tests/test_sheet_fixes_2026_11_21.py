@@ -179,12 +179,17 @@ def test_the_area_is_derived_from_the_sheet_and_frames_stay_inside_its_inner_bor
 
 
 def test_the_bridge_sets_the_sheet_the_drawing_assumes_when_it_draws_or_makes_a_skeleton():
-    assert f"Sch.SheetStyle := {draw.SHEET_STYLE};" in PAS
+    # since E7 the sheet is per drawing (A4, or A3 when a part does not fit): SheetSetupStyle takes the style, SheetSetup is the A4
+    # default, and DRAWBEGIN's 4th field (draw.SHEETS[size]["style"]) picks it
+    assert "Sch.SheetStyle := Style;" in PAS
+    assert f"SheetSetupStyle(Sch, {draw.SHEET_STYLE});" in PAS[PAS.index("procedure SheetSetup("):]
     assert f"Sch.SnapGridSize := MilsToCoord({draw.GRID});" in PAS and f"Sch.VisibleGridSize := MilsToCoord({draw.GRID});" in PAS
     assert "Sch.SnapGridOn := True;" in PAS
     seg = PAS[PAS.index("procedure DrawBegin"):]
     seg = seg[:seg.index("\nend;")]
-    assert "SheetSetup(Sch);" in seg and seg.index("SheetSetup(Sch);") < seg.index("ClearFrames(Path);")
+    for sheet in draw.SHEETS.values():
+        assert f"SheetSetupStyle(Sch, {sheet['style']})" in seg
+    assert seg.index("SheetSetupStyle(Sch,") < seg.index("ClearFrames(Path);")
     seg = PAS[PAS.index("procedure TitleBlock"):]
     assert "SheetSetup(Sch);" in seg[:seg.index("\nend;")]
     assert all(ord(ch) < 128 for ch in PAS)

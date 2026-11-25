@@ -9,10 +9,13 @@ import pytest
 import stm32_board_fixture as fx
 from altium import layout, route
 
-# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 4-7 s placement, 17 s routing alone (28 s under a loaded machine)
+# CPU budgets (this process's CPU time, so a busy machine does not fail the test): measured 4-7 s placement. Routing was 17 s alone
+# (28 s under a loaded machine) while the USB-C was turned sideways for lack of a footprint outline; since the opening is read from
+# the shell pads (layout.opening_guess, kiln LTE E4) its mouth faces out of the board and its pad row runs along the edge, a harder
+# fan-out: 57 s alone (2026-11-25, cloud), all nets routed. The budget and the deadline were raised for that, not for a worse router.
 PLACE_BUDGET_S = 15.0
-ROUTE_BUDGET_S = 45.0
-ROUTE_SECONDS = 50.0                      # the router's own deadline (it then says what ran out of time)
+ROUTE_BUDGET_S = 75.0
+ROUTE_SECONDS = 80.0                      # the router's own deadline (it then says what ran out of time)
 RULES = dict(clearance=0.127, width=0.127, width_min=0.127, width_max=10, via_dia=0.6, via_hole=0.3, edge=0.3)
 POUR_NET = "GND"                         # the ground net is poured on the bottom layer: its pads are dropped to the pour by vias
 RAIL_AMPS = 1.5                           # a current set by the student on +3V3: IPC-2221 wants about 0.5 mm, more than the 0.127 default

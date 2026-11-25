@@ -97,3 +97,14 @@ def test_real_fixture_is_stable():
     assert bottom == [[76.293, 33.041, 77.427, 41.18], [78.173, 32.783, 79.764, 41.18]]
     assert pourcheck.check(d, layer=32)["islands"] == [i for i in r["islands"] if i["layer"] == 32]
     assert pourcheck.check(d) == r
+
+
+def test_a_plane_nets_top_pad_needs_a_via_to_the_inner_plane():
+    plane = rect(0, 0, 30, 10, layer=2)
+    smd = [pad(5, 5, layer=1, ref="U1", name="1"), pad(15, 5, layer=1, ref="U1", name="2"), pad(25, 5, layer=1, ref="U1", name="3")]
+    r = pourcheck.check(doc([plane], smd))
+    assert r["checked"] and not r["ok"] and len(r["unjoined_pads"]) == 3        # no via: nothing joins the top pads to the plane
+    vias = [{"net": "GND", "x_mm": x, "y_mm": 5, "dia_mm": 0.6} for x in (5, 15, 25)]
+    assert pourcheck.check(doc([plane], smd, vias=vias))["ok"]
+    two = pourcheck.check(doc([plane], smd, vias=vias[:2]))
+    assert [(p["ref"], p["name"]) for p in two["unjoined_pads"]] == [("U1", "3")]

@@ -11,7 +11,7 @@
   start.flag is written once the script runs and end.flag once, at the very end: Python only stats log.txt while
   the script runs (it must never open these files then; Altium saves them without sharing) and reads them after end.flag.
 
-  Commands:  PROJECT prj | SCH path | PCB path | SAVEPRJ prj | CLEAR path | PARAM path name value
+  Commands:  PROJECT prj | SCH path | PCB path | SAVEPRJ prj | CLEAR path | PARAM path name value | OUTJOB path medium base kind | UNMARK path
              FRAME path x y w h text | TITLEBLOCK path | SAVE path | PING
              RULE pcb kind name scope1 scope2 priority prop=value... | RULESIN pcb | ADDDOC prj path | OUTJOB path medium basepath
 
@@ -21,7 +21,7 @@
              SYMPARAMS schlib paramsfile | HIDEPINS schlib hidefile | ATTACH3D spec | SAVELIB path kind
              COMPILE libpkg intlib | CHECKINST intlib
 
-  Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace | PLACE path ref libref schlib x y pins [desx desy comx comy]
+  Drawing a sheet (scripts/altium/draw.py makes the lines): DRAWCHECK path replace | REVERT path (close without saving) | DRAWBEGIN path replace [style: 0 = A4, 1 = A3] | PLACE path ref libref schlib x y pins [desx desy comx comy]
              WIRE path x1 y1 x2 y2 | NETLABEL path x y rot text | POWER path x y rot style text | NOERC path x y
 
   The create-footprints-batch and create-symbols-batch code below (LibFootprintsBatch, LibMakeSymbol,
@@ -205,15 +205,21 @@ end;
 { The sheet the drawing code (draw.py: SHEET_STYLE, AREA, GRID) assumes: A4 (SheetStyle 0) on a 100 mil snap and visible grid. A new
   sheet keeps Altium's default (Letter, a 5 mm snap grid), so every object placed on the 100 mil grid was reported off grid and frames
   crossed the border. Set when a sheet is drawn (DRAWBEGIN) and when its skeleton is made (TITLEBLOCK). }
-procedure SheetSetup(Sch: IDispatch);
+procedure SheetSetupStyle(Sch: IDispatch; Style: Integer);
 begin
     Sch.UseCustomSheet := False;
-    Sch.SheetStyle := 0;
+    Sch.SheetStyle := Style;
     Sch.SnapGridSize := MilsToCoord(100);
     Sch.VisibleGridSize := MilsToCoord(100);
     Sch.SnapGridOn := True;
     Sch.VisibleGridOn := True;
-    Log('sheet A4, 100 mil grid');
+    Log('sheet style ' + IntToStr(Style) + ', 100 mil grid');
+end;
+
+{ A4 (style 0) unless a drawing asks for a bigger sheet (DRAWBEGIN's 4th field: 1 = A3) }
+procedure SheetSetup(Sch: IDispatch);
+begin
+    SheetSetupStyle(Sch, 0);
 end;
 
 { Removes every text frame whose text starts with the advisor tag (one at a time, an iterator does not survive a removal) }
@@ -288,6 +294,18 @@ begin
     Log('frame at ' + IntToStr(X) + ',' + IntToStr(Y));
 end;
 
+{ True when the sheet holds a component: its size was chosen for what is drawn on it (an A3 sheet stays A3) }
+function SheetHasParts(Sch: IDispatch): Boolean;
+var
+    It, O : IDispatch;
+begin
+    It := Sch.SchIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(eSchComponent));
+    O := It.FirstSchObject;
+    Result := (O <> nil);
+    Sch.SchIterator_Destroy(It);
+end;
+
 procedure TitleBlock(Path: String);
 var
     Sch : IDispatch;
@@ -298,7 +316,11 @@ begin
         Say('ERR could not open ' + Path);
         Exit;
     end;
-    SheetSetup(Sch);
+    { a skeleton run on a sheet that is already drawn must not reset an A3 sheet to A4: only a sheet with no part gets the standard style }
+    if SheetHasParts(Sch) then
+        Log('sheet style kept: the sheet has parts')
+    else
+        SheetSetup(Sch);
     Sch.TitleBlockOn := True;
     Log('title block on');
 end;
@@ -594,7 +616,7 @@ begin
 end;
 
 { OUTJOB path medium basepath: generate the files of one Folder Structure container of the OutJob }
-procedure RunOutJob(Path: String; Medium: String; Base: String);
+procedure RunOutJob(Path: String; Medium: String; Base: String; Kind: String);
 var
     P, D : IDispatch;
 begin
@@ -628,12 +650,38 @@ begin
         Exit;
     end;
     ResetParameters;
+    if (Kind = 'Publish') then
+    begin
+        { a PDF container is published, not generated: GenerateReport on it prints nothing ("Documents Printed: 0") }
+        AddStringParameter('Action', 'PublishToPDF');
+        AddStringParameter('OutputMedium', Medium);
+        AddStringParameter('ObjectKind', 'OutputBatch');
+        AddStringParameter('DisableDialog', 'True');
+        RunProcess('WorkspaceManager:Print');
+        Log('outjob published ' + Medium);
+        Exit;
+    end;
     AddStringParameter('Action', 'Run');
     AddStringParameter('OutputMedium', Medium);
     AddStringParameter('ObjectKind', 'OutputBatch');
     AddStringParameter('OutputBasePath', Base);
     RunProcess('WorkspaceManager:GenerateReport');
     Log('outjob ran ' + Medium);
+end;
+
+{ UNMARK path: a document the advisor's own step left marked modified without changing the design (plotting the outputs) is
+  marked saved again. Sent only for a document that was saved before that step. Changes nothing on the disk. }
+procedure Unmark(Path: String);
+var
+    D : IDispatch;
+begin
+    D := Client.GetDocumentByPath(Path);
+    if (D = nil) then Exit;
+    if (IntToStr(D.Modified) <> '0') then
+    begin
+        D.SetModified(False);
+        Log('cleared the modified mark the outputs left on ' + Path);
+    end;
 end;
 
 procedure SaveLib(Path: String; Kind: String);
@@ -1665,7 +1713,7 @@ begin
 end;
 
 { DRAWBEGIN path replace: the sheet is wiped only when replace is 1 (DRAWCHECK ran before, this is the second lock) }
-procedure DrawBegin(Path: String; Replace: String);
+procedure DrawBegin(Path: String; Replace: String; Style: String);
 var
     Sch : IDispatch;
     n   : Integer;
@@ -1692,7 +1740,7 @@ begin
         RemoveKind(Sch, eJunction);
         RemoveKind(Sch, ePort);
     end;
-    SheetSetup(Sch);
+    if (Style = '1') then SheetSetupStyle(Sch, 1) else SheetSetupStyle(Sch, 0);      { only A4 and A3 are drawn }
     ClearFrames(Path);
     Log('drawbegin ' + IntToStr(n) + ' objects removed');
 end;
@@ -2072,7 +2120,7 @@ begin
     PCBServer.PostProcess;
 end;
 
-{ POLY path layer net x0 y0 x1 y1: a solid copper pour of the net on the layer over the box, poured over the same net only, dead copper
+{ POLY path layer net x0 y0 x1 y1: a solid copper pour of the net on the layer (top, bottom, mid1 or mid2) over the box, poured over the same net only, dead copper
   removed, poured once the tracks are there (the pour keeps the board's clearance rule around everything else) }
 procedure PcbPoly(Path: String; Layer: String; NetName: String; X0, Y0, X1, Y1: String);
 var
@@ -2091,7 +2139,10 @@ begin
     P.PolyHatchStyle := ePolySolid;
     P.PourOver := ePolygonPourOver_SameNet;
     P.RemoveDead := True;
-    if (Layer = 'bottom') then P.Layer := eBottomLayer else P.Layer := eTopLayer;
+    if (Layer = 'bottom') then P.Layer := eBottomLayer
+    else if (Layer = 'mid1') then P.Layer := eMidLayer1
+    else if (Layer = 'mid2') then P.Layer := eMidLayer2
+    else P.Layer := eTopLayer;
     P.PointCount := 4;
     for i := 0 to 3 do
     begin
@@ -2263,6 +2314,86 @@ begin
     Log('outlinedraw drawn=4 existing=0');
 end;
 
+{ OUTLINERESIZE path x0 y0 x1 y1 width: a board that is already placed gets another rectangle: the four corners move (OUTLINE) and, when
+  Mechanical 1 holds exactly four free tracks and each of them runs between corners of the old outline (our own rectangle drawing), they
+  are removed and drawn again at the new size
+  (OUTLINEDRAW). A drawing of any other kind (arcs, more or fewer tracks) is never touched: the log says "outlineresize drawn=0
+  kept=N" and the caller warns. Parts, tracks and pours stay where they are. Logs "outlineresize drawn=4|0 ...". }
+function NearCoord(A, B: Integer): Boolean;
+begin
+    Result := (Abs(A - B) <= MilsToCoord(1));
+end;
+
+{ a free track whose two ends both sit on corners of the old outline rectangle (ox0..ox1, oy0..oy1): our own drawing of the board shape }
+function TrackOnCorners(T: IDispatch; ox0, oy0, ox1, oy1: Integer): Boolean;
+begin
+    Result := (NearCoord(T.X1, ox0) or NearCoord(T.X1, ox1)) and (NearCoord(T.Y1, oy0) or NearCoord(T.Y1, oy1))
+          and (NearCoord(T.X2, ox0) or NearCoord(T.X2, ox1)) and (NearCoord(T.Y2, oy0) or NearCoord(T.Y2, oy1));
+end;
+
+procedure PcbOutlineResize(Path: String; X0, Y0, X1, Y1, W: String);
+var
+    B, It, O : IDispatch;
+    L        : TInterfaceList;
+    i, n, k  : Integer;
+    ox0, oy0, ox1, oy1 : Integer;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    if (B.BoardOutline.PointCount <> 4) then
+    begin
+        Say('ERR the board outline has ' + IntToStr(B.BoardOutline.PointCount) + ' points, not the 4 of a rectangle; nothing was changed');
+        Exit;
+    end;
+    { the corners of the outline as it is now: only tracks on those corners are our drawing of it }
+    ox0 := B.BoardOutline.Segments[0].vx; ox1 := ox0; oy0 := B.BoardOutline.Segments[0].vy; oy1 := oy0;
+    for i := 1 to 3 do
+    begin
+        if (B.BoardOutline.Segments[i].vx < ox0) then ox0 := B.BoardOutline.Segments[i].vx;
+        if (B.BoardOutline.Segments[i].vx > ox1) then ox1 := B.BoardOutline.Segments[i].vx;
+        if (B.BoardOutline.Segments[i].vy < oy0) then oy0 := B.BoardOutline.Segments[i].vy;
+        if (B.BoardOutline.Segments[i].vy > oy1) then oy1 := B.BoardOutline.Segments[i].vy;
+    end;
+    PcbOutline(Path, X0, Y0, X1, Y1);
+    n := PcbOutlineLayerCount(B);
+    L := TInterfaceList.Create;
+    It := B.BoardIterator_Create;
+    It.AddFilter_ObjectSet(MkSet(eTrackObject));
+    It.AddFilter_LayerSet(MkSet(eMechanical1));
+    It.AddFilter_Method(eProcessAll);
+    O := It.FirstPCBObject;
+    while (O <> nil) do
+    begin
+        if (not O.InComponent) then L.Add(O);
+        O := It.NextPCBObject;
+    end;
+    B.BoardIterator_Destroy(It);
+    k := 0;
+    for i := 0 to L.Count - 1 do
+    begin
+        O := L.Items[i];
+        if TrackOnCorners(O, ox0, oy0, ox1, oy1) then k := k + 1;
+    end;
+    if (n = 4) and (L.Count = 4) and (k = 4) then
+    begin
+        PCBServer.PreProcess;
+        for i := 0 to L.Count - 1 do
+        begin
+            O := L.Items[i];
+            B.RemovePCBObject(O);
+        end;
+        PCBServer.PostProcess;
+        PcbOutlineDraw(Path, X0, Y0, X1, Y1, W);
+    end
+    else
+        Log('outlineresize drawn=0 kept=' + IntToStr(n));
+    L.Free;
+end;
+
 { PLACEFP path ref footprint pcblib x y rot libref: the footprint comes from the project PcbLib and is linked the way Update PCB
   links it (designator, source designator, library reference, footprint library) so that a later Update PCB matches it }
 procedure PcbPlace(Path: String; Ref: String; Pattern: String; PcbLib: String; X, Y, Rot, LibRef, Value, LX, LY, LH, LLine, SrcId, SrcPath, LRot: String);
@@ -2432,6 +2563,119 @@ begin
     else Log('docstate open modified=' + IntToStr(DocDirty(Path)));
 end;
 
+{ Walks the layer stack top to bottom and logs "stacklayer <name>" for each copper layer, then "stack <signal layers>". }
+procedure StackWalk(LS: IDispatch);
+var
+    L : IDispatch;
+    n : Integer;
+begin
+    L := LS.FirstLayer;
+    n := 0;
+    while (L <> nil) and (n < 40) do
+    begin
+        Log('stacklayer ' + L.Name);
+        L := LS.NextLayer(L);
+        n := n + 1;
+    end;
+    Log('stack ' + IntToStr(LS.SignalLayerCount));
+end;
+
+{ STACKINFO path: the copper layers of the board's stack (read only) }
+procedure PcbStackInfo(Path: String);
+var
+    B : IDispatch;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    StackWalk(B.LayerStack_V7);
+end;
+
+{ Sets what the stack-up of the JLC 4 layer board says about one layer: its name, the copper thickness and the dielectric below it
+  (a failed property is logged, not fatal: the layer count is what the board needs, the thicknesses are a model for impedance). }
+procedure StackLayerProps(L: IDispatch; Name: String; CopMil, DielMil, Er: String; Material: String; Core: Boolean);
+var
+    D : IDispatch;
+begin
+    Log('stackprop name ' + Name);
+    try L.Name := Name; except Log('stackwarn name of ' + Name + ' not set'); end;
+    Log('stackprop copper ' + Name);
+    try L.CopThickness := MilsToCoord(SFloat(CopMil)); except Log('stackwarn copper thickness of ' + Name + ' not set'); end;
+    if (DielMil <> '') then
+    begin
+        Log('stackprop dielectric ' + Name);
+        try D := L.Dielectric; except Log('stackwarn dielectric of ' + Name + ' not reachable'); end;
+        if (D <> nil) then
+        begin
+            try if Core then D.DielectricType := 1 else D.DielectricType := 2; except Log('stackwarn dielectric type of ' + Name + ' not set'); end;
+            Log('stackprop height ' + Name);
+            try D.DielectricHeight := MilsToCoord(SFloat(DielMil)); except Log('stackwarn dielectric height of ' + Name + ' not set'); end;
+            Log('stackprop constant ' + Name);
+            try D.DielectricConstant := SFloat(Er); except Log('stackwarn dielectric constant of ' + Name + ' not set'); end;
+            Log('stackprop material ' + Name);
+            try D.DielectricMaterial := Material; except Log('stackwarn dielectric material of ' + Name + ' not set'); end;
+        end;
+    end;
+end;
+
+{ STACK path layers: a 4 layer board gets the two inner copper layers (Mid-Layer 1 and 2, signal layers: the planes of this tool are
+  pours on them) under the top layer, with the JLC04161H-7628 numbers (shared/reference/jlc/pcb-capabilities.en.md): 7628 prepreg
+  0.2104 mm (8.2835 mil, Er 4.4), core 1.065 mm (41.929 mil, Er 4.6), copper 1.6 mil outside and 0.6 mil inside. A board that has
+  the layers already is left as it is. Saves nothing: the caller saves. Logs "stack N". }
+procedure PcbStack(Path: String; Count: String);
+var
+    B, LS, Top, Bot, M1, M2, R : IDispatch;
+begin
+    B := BoardOf(Path);
+    if (B = nil) then
+    begin
+        Say('ERR could not open ' + Path);
+        Exit;
+    end;
+    LS := B.LayerStack_V7;
+    if (Count = '2') then
+    begin
+        if (LS.SignalLayerCount <> 2) then Say('ERR the board has ' + IntToStr(LS.SignalLayerCount) + ' copper layers; taking layers out is not done by this tool');
+        StackWalk(LS);
+        Exit;
+    end;
+    if (Count <> '4') then
+    begin
+        Say('ERR a stack of ' + Count + ' layers is not supported (2 or 4)');
+        Exit;
+    end;
+    if (LS.SignalLayerCount = 4) then
+    begin
+        Log('stack already has 4 layers');
+        StackWalk(LS);
+        Exit;
+    end;
+    if (LS.SignalLayerCount <> 2) then
+    begin
+        Say('ERR the board has ' + IntToStr(LS.SignalLayerCount) + ' copper layers; only a 2 layer board gets its inner layers added');
+        Exit;
+    end;
+    Top := LS.LayerObject_V7[eTopLayer];
+    Bot := LS.LayerObject_V7[eBottomLayer];
+    Log('stack step: top and bottom found');
+    M1 := LS.FirstAvailableSignalLayer;
+    Log('stack step: first inner layer ' + M1.Name);
+    R := LS.InsertInStackBelow(Top, M1);
+    Log('stack step: first inner layer inserted');
+    M2 := LS.FirstAvailableSignalLayer;
+    Log('stack step: second inner layer ' + M2.Name);
+    R := LS.InsertInStackBelow(M1, M2);
+    Log('stack step: second inner layer inserted');
+    { StackLayerProps(Top, 'Top Layer', '1.6', '8.2835', '4.4', 'FR-4 7628', False); }
+    { StackLayerProps(M1, 'Mid-Layer 1', '0.6', '41.929', '4.6', 'FR-4 core', True); }
+    { StackLayerProps(M2, 'Mid-Layer 2', '0.6', '8.2835', '4.4', 'FR-4 7628', False); }
+    { StackLayerProps(Bot, 'Bottom Layer', '1.6', '', '', '', False); }
+    StackWalk(LS);
+end;
+
 procedure DispatchStep(Line: String);
 var
     Cmd : String;
@@ -2453,7 +2697,8 @@ begin
     else if (Cmd = 'RULE') then ApplyRule(Line)
     else if (Cmd = 'RULESIN') then RulesIn(Field(Line, 1))
     else if (Cmd = 'ADDDOC') then AddDocument(Field(Line, 1), Field(Line, 2))
-    else if (Cmd = 'OUTJOB') then RunOutJob(Field(Line, 1), Field(Line, 2), Field(Line, 3))
+    else if (Cmd = 'OUTJOB') then RunOutJob(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
+    else if (Cmd = 'UNMARK') then Unmark(Field(Line, 1))
     else if (Cmd = 'LIBCLOSE') then LibClose(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
     else if (Cmd = 'FPBATCH') then LibFootprintsBatch(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'FPREMOVE') then LibFootprintRemove(Field(Line, 1), Field(Line, 2))
@@ -2471,7 +2716,7 @@ begin
     else if (Cmd = 'FPINFO') then LibFootprintInfo(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'DRAWCHECK') then DrawCheck(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'REVERT') then CloseDocByPath(Field(Line, 1))
-    else if (Cmd = 'DRAWBEGIN') then DrawBegin(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'DRAWBEGIN') then DrawBegin(Field(Line, 1), Field(Line, 2), Field(Line, 3))
     else if (Cmd = 'PLACE') then
         PlacePart(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), StrToInt(Field(Line, 5)),
                   StrToInt(Field(Line, 6)), StrToInt(Field(Line, 7)), Field(Line, 8), Field(Line, 9), Field(Line, 10), Field(Line, 11))
@@ -2492,6 +2737,7 @@ begin
     else if (Cmd = 'POLYDEL') then PcbPolyDelete(Field(Line, 1))
     else if (Cmd = 'PCBBEGIN') then PcbBegin(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'OUTLINE') then PcbOutline(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5))
+    else if (Cmd = 'OUTLINERESIZE') then PcbOutlineResize(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
     else if (Cmd = 'OUTLINEDRAW') then PcbOutlineDraw(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6))
     else if (Cmd = 'PLACEFP') then
         PcbPlace(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4), Field(Line, 5), Field(Line, 6), Field(Line, 7), Field(Line, 8),
@@ -2501,6 +2747,8 @@ begin
     else if (Cmd = 'PCBSAVE') then SaveByPath(Field(Line, 1))
     else if (Cmd = 'DRC') then PcbDrc(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'DOCSTATE') then DocState(Field(Line, 1))
+    else if (Cmd = 'STACK') then PcbStack(Field(Line, 1), Field(Line, 2))
+    else if (Cmd = 'STACKINFO') then PcbStackInfo(Field(Line, 1))
     else if (Cmd = 'PING') then Log('ping')
     else Say('ERR unknown command ' + Cmd);
 end;
@@ -2514,7 +2762,7 @@ begin
     Cmd := Field(Line, 0);
     Was := 0;
     { a read-only step must leave the document as it found it: the batch DRC and the read-backs can mark an unchanged document modified }
-    if (Cmd = 'DRC') or (Cmd = 'PCBEXTENT') or (Cmd = 'PCBCHECK') or (Cmd = 'FPINFO') or (Cmd = 'DRAWCHECK') then Was := DocDirty(Field(Line, 1)) + 1;
+    if (Cmd = 'DRC') or (Cmd = 'STACKINFO') or (Cmd = 'PCBEXTENT') or (Cmd = 'PCBCHECK') or (Cmd = 'FPINFO') or (Cmd = 'DRAWCHECK') or (Cmd = 'RULESIN') then Was := DocDirty(Field(Line, 1)) + 1;
     DispatchStep(Line);
     if (Was = 1) and (not Failed) then
     begin

@@ -57,10 +57,15 @@ def test_ticks_are_one_state_by_proposal_id():
     assert "propSyncUI" in CHAT and "onChange(t => t.dataset && t.dataset.ptick" in CHAT
 
 
+def _code(src):
+    """The source without its comments: a comment may name a button ("a delete is never part of Approve all") without drawing it."""
+    return re.sub(r"(^|[^:\\'\"])//[^\n]*", r"\1", re.sub(r"/\*.*?\*/", "", src, flags=re.S))
+
+
 def test_same_three_buttons_everywhere():
     a = fn(CHAT, "propActsHTML")
     assert "Approve selected (${n})" in a and "Reject selected" in a and "Approve all" in a
-    assert "Approve all" not in BOM and "bom-approve-pending" not in BOM and "batch-decide" not in CHAT
+    assert "Approve all" not in _code(BOM) and "bom-approve-pending" not in BOM and "batch-decide" not in CHAT
 
 
 def test_click_delegate_has_a_busy_guard():

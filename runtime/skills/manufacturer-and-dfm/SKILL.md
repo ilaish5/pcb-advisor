@@ -16,7 +16,8 @@ description: Prepares the JLC manufacturing package (OutJob, Gerber zip, BOM, CP
 ## Steps
 1. The board passed DRC: `drc_total` in `board_facts` or the route result says so, else ask the student (board-review; the
    physical checks are `python <repo>/scripts/checks/board.py <pcbdoc> --design <project>`). Every fitted BOM line has an LCSC number.
-   Parts in `pins_waiting` (CURRENT STATE) hold the OutJob and the Gerber zip: say so first.
+   `outputs_blocked` (CURRENT STATE) holds the OutJob and the Gerber zip (an unrouted board, an unfinished design): say so first. Parts in
+   `pins_waiting` are a warning only: name them, never as a block.
    Run `python <repo>/scripts/lineage.py <project> status` before files go out.
 2. OutJob. With a linked Altium project send `altium.run_outjob` (adds the OutJob and generates Gerber, NC Drill, Pick and Place,
    BOM). Without one run `python <repo>/scripts/outjob.py <project>` (writes `projects/<project>/exports/`; the student copies it

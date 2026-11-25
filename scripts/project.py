@@ -15,6 +15,7 @@ import sys
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import project_guard  # noqa: E402
 import session  # noqa: E402
+import board_layers  # noqa: E402
 import store  # noqa: E402
 import workspace  # noqa: E402
 
@@ -216,6 +217,25 @@ def touch(name, **fields):
 def board(name):
     """This board's engineering settings, with the global defaults underneath."""
     return {**workspace.get("engineering_defaults", {}), **(load_meta(name).get("board") or {})}
+
+
+def layers(name):
+    """The board's copper layer count, 2 or 4 (board_layers): what the Idea chose; 2 when nothing valid is stored."""
+    return board_layers.of_board(board(name))
+
+
+def set_layers(name, value):
+    """Store the copper layer count in project.json (`board.layers`): 2 or 4, anything else is refused with ValueError and nothing is
+    written. Returns the int. The single writer the Idea page, the agent's requirement text and the meta endpoint share."""
+    n = board_layers.check(value)
+    meta = load_meta(name)
+    brd = dict(meta.get("board") or {})
+    if brd.get("layers") == n:
+        return n
+    brd["layers"] = n
+    meta["board"] = brd
+    save_meta(name, meta)
+    return n
 
 
 # ---------------------------------------------------------------- listing

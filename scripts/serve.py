@@ -32,6 +32,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE / "skills"))
 import agent             # noqa: E402
+import board_layers      # noqa: E402
 import ext               # noqa: E402
 import gateway           # noqa: E402
 import model             # noqa: E402
@@ -105,8 +106,9 @@ def _turn_event(key, ev):
         if not turn:
             return
         turn["last"] = now_t
-        label = str(ev.get("label") or ev.get("tool") or ev.get("kind") or "")
-        turn["current"] = label or turn["current"]
+        from gateway import events as gw_events
+        label = gw_events.human(str(ev.get("label") or ev.get("tool") or ev.get("kind") or "")) if (ev.get("label") or ev.get("tool") or ev.get("kind")) else ""
+        turn["current"] = label or turn["current"]       # plain words only: no tool name, pattern or path reaches the student (E17)
         if ev.get("kind") != "text" and label:
             turn["steps"].append({"label": label, "ts": ev.get("ts") or now_t})
             del turn["steps"][:-50]
@@ -435,6 +437,10 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
     elif prop.get("kind") == "idea_diagram":
         say(project, sess, {"ts": now(), "role": "agent",
                             "text": "Approved diagram changes. The block diagram has been updated.", **decided})
+    elif store.delete_spec(prop) is not None:
+        spec = store.delete_spec(prop)
+        what = f"{', '.join(spec[1])} removed from line {prop['line']}" if spec[1] else f"Line {prop['line']} deleted from the BOM"
+        say(project, sess, {"ts": now(), "role": "agent", "text": f"Approved. {what}. Undo puts it back.", **decided})
     else:
         ref = next((l["refs"][0] for l in store.bom_lines(project) if l["key"] == prop["line"] and l.get("refs")),
                    prop["line"])
@@ -569,6 +575,25 @@ _NEG = r"(?:don[’']?t|do not|never|אל)"
 _NEG_OTHER = re.compile(_NEG + r"\s+(?:\S+\s+){0,2}?(?:" + _OTHER_VERB.pattern + ")", re.I)
 
 
+# An inability or an unwillingness to do it oneself ("I cannot draw by hand", "I can't do it myself", "אני לא יכול לשרטט בעצמי"): the student
+# says they CANNOT, so the agent is the one to do it. It is the opposite of "I'll do it myself" and must never be read as that (E18).
+_CANT = re.compile(
+    # "can't" / "cannot" count only directly before the action or "myself" / "by hand" ("I can't wait", "I can't see the pins" say nothing of doing it)
+    r"\b(?:cannot|can[’']?t|cant|couldn[’']?t|unable(?:\s+to)?|not\s+able(?:\s+to)?|incapable(?:\s+of)?)\s+(?:(?:really|actually|just|it|this|that)\s+)?"
+    r"(?:do|draw|sketch|place|position|lay\s?out|route|mark|handle|manage|myself|by\s+hand|by\s+myself|manually)\b"
+    r"|\b(?:no\s+way\s+to|don[’']?t\s+know\s+how|do\s+not\s+know\s+how"
+    r"|(?:don[’']?t|do\s+not)\s+want\s+to|(?:don[’']?t|do\s+not)\s+feel\s+like)\b"
+    r"|(?<!\w)(?:אני\s+|אנחנו\s+)?(?:לא|אינ(?:ני|י))\s+(?:יכול|יכולה|יכולים|מסוגל|מסוגלת|מצליח|מצליחה|יודע|יודעת|בקיא|בקיאה|רוצה\s+ל|מעוניין\s+ל|מעוניינת\s+ל)(?!\w)",
+    re.I)
+# what stays a "do not" aimed at the agent even in a clause that also says "cannot" ("I can't wait, don't draw it")
+_PROHIBIT = re.compile(r"\bdon[’']?t\s+(?:draw|place|route|mark)\b|\bdo\s+not\s+(?:draw|place|route|mark)\b|אל\s+ת\S+|(?<!\w)לא\s+(?:ל(?:שרטט|צייר|מקם|נתב|סמן)|ת(?:שרטט|צייר|מקם|נתב|סמן))|אני\s+לא\s+רוצה\s+ש", re.I)
+
+
+def says_cannot(clause):
+    """True when the clause says the student cannot / will not do it themselves, and is no instruction to the agent to hold back."""
+    return bool(_CANT.search(clause)) and not _PROHIBIT.search(clause)
+
+
 class _Stops:
     """The student's words that say no, wait or stop. The unambiguous words (stop, wait, don't, עצור ...) count anywhere; a bare
     "no"/"לא" only as a short reply (the clause is at most three words: "no", "no thanks", "לא עכשיו"), never inside a sentence
@@ -584,7 +609,7 @@ class _Stops:
             if _STOP.search(clause):
                 return True
             words = clause.strip().split()
-            if words and len(words) <= 3 and _STOP_BARE.match(words[0]):
+            if words and len(words) <= 3 and _STOP_BARE.match(words[0]) and not _CANT.search(clause):       # "לא יכול לשרטט" is not "no"
                 return True
         return False
 
@@ -627,6 +652,8 @@ def _self_verdict(kind, text):
     for clause in _CLAUSE.split(str(text or "")):
         if not self_re.search(clause):
             continue
+        if says_cannot(clause):
+            continue              # "I cannot draw by myself": the student cannot, so the agent does it (E18)
         if _ACTION_ANY[kind].search(clause):
             return "self"
         if _OTHER_ACTION[kind].search(clause):
@@ -1107,6 +1134,8 @@ def bom_value_warning(project, a):
     """' (warning: ...)' when a bom.propose line for a resistor, capacitor or inductor has no value ('5.1k'), else ''.
     The student sees the value, not the MPN; the proposal still goes through."""
     ch = a.get("changes") or {}
+    if ch.get("deleted") or ch.get("remove"):       # a delete names no value
+        return ""
     refs = ch.get("refs") if isinstance(ch.get("refs"), list) and ch.get("refs") else [a["line"]]
     if not re.match(r"[RCL]\d", str(refs[0]).upper()):
         return ""
@@ -1447,9 +1476,28 @@ def step_plan(project, step):
     return plan
 
 
+def _with_pins_warning(project, res):
+    """The outputs result with the pins warning (store.pins_warning: unverified or conflicting parts, named) as its first warning and as
+    `pins_warning`: the files are made, the student is told which parts rest on unchecked pins. The order manifest is kept current."""
+    try:
+        warn = store.pins_warning(project)
+    except Exception:       # noqa: BLE001 - a warning that cannot be worked out never stops the files
+        warn = ""
+    try:
+        import pin_decisions
+        pin_decisions.write_manifest(project)
+    except Exception:       # noqa: BLE001
+        pass
+    res = dict(res or {})
+    if warn:
+        res["pins_warning"] = warn
+        res["warnings"] = [warn, *[w for w in (res.get("warnings") or []) if w != warn]]
+    return res
+
+
 def step_refusal(project, step):
-    """Why a step must not start at all (checked at plan time, before anything runs), or "". Outputs: unverified pins block the files."""
-    return button_words(store.manufacturing_warning(project)) if step == "outputs" else ""
+    """Why a step must not start at all (checked at plan time, before anything runs), or "". Outputs: store.manufacturing_block (an unrouted board, an unfinished design); unverified pins only warn."""
+    return button_words(store.manufacturing_block(project)) if step == "outputs" else ""
 
 
 _RUN_SEQ = itertools.count(1)
@@ -1818,6 +1866,8 @@ def _run_step(project, sess, step, data, bridge):
         res = {**res, "added": True}          # the same answer as when the bridge adds the OutJob itself
     if skipped:            # a warning of the result, so the summary's tail (the amber chip in the chat) carries it
         res = {**res, "warnings": [*(res.get("warnings") or []), "the library build failed - " + _short(skipped[0][1]) + " - so the parts it could not give a symbol are placeholders"]}
+    if step == "outputs":
+        res = _with_pins_warning(project, res)
     summary = STEP_SUMMARY[step](res)
     # the agent reads this conversation on its next turn: a note there says the step is done, so it does not offer it again.
     # "applied" makes it an applied action like the chat's: consent given in words before it is used up (earlier_student_messages)
@@ -1949,6 +1999,11 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                                         sess, new=bool(a.get("new")), reserved=reserved)
                 proposals.append(rec["id"])
                 applied.append(f"bom.propose:{a['line']}" + bom_value_warning(project, a))
+                maybe_auto(rec)
+            elif kind == "bom.delete" and a.get("line"):      # = bom.propose with changes.deleted / remove: always the student's click
+                rec = store.propose_bom_delete(project, a["line"], a.get("refs") or None, a.get("reason", ""), a.get("sources", []), sess)
+                proposals.append(rec["id"])
+                applied.append(f"bom.propose:{a['line']}")
                 maybe_auto(rec)
             elif kind == "net.set_current" and a.get("net"):      # a proposal like a BOM change: the student's click in ask / important mode
                 if "amps" not in a:             # a missing amount is a mistake; clearing needs an explicit "amps": null
@@ -2106,7 +2161,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     applied.append(f"{kind}: " + import_rules_summary(res))
                     continue
                 elif kind == "altium.run_outjob":
-                    unv = store.manufacturing_warning(project)     # unverified pins block the files
+                    unv = store.manufacturing_block(project)       # an unrouted board or an unfinished design blocks the files (pins only warn)
                     if unv:
                         refused.append(f"{kind}: {unv}")
                         continue
@@ -2120,6 +2175,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                         refused.append(f"{kind}: {exc}")
                         continue
                     _record_board(project, "outputs", res)
+                    res = _with_pins_warning(project, res)
                     applied.append(f"{kind}: {len(res['files'])} files" + (" (OutJob added to the project)" if res["added"] else "")
                                    + "".join(f". WARNING: {w}" for w in res.get("warnings", [])))
                     continue
@@ -2128,12 +2184,12 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 applied.append(kind + (f":{a['name']}" if kind == "altium.add_sheet" else ""))
             elif kind == "jlc.gerber_zip":
                 import jlc_upload
-                unv = store.manufacturing_warning(project)         # unverified pins block the zip
+                unv = store.manufacturing_block(project)           # an unrouted board or an unfinished design blocks the zip (pins only warn)
                 try:
                     if unv:
                         refused.append(f"jlc.gerber_zip: {unv}")
                         continue
-                    res = jlc_upload.gerber_zip(project)
+                    res = _with_pins_warning(project, jlc_upload.gerber_zip(project))
                 except jlc_upload.UploadError as exc:
                     refused.append(f"jlc.gerber_zip: {exc}")
                 else:
@@ -3141,6 +3197,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, turn_progress((proj, self.session(proj))))
         if path == "/api/altium":
             return self._send(200, _altium_state(self.project()))
+        if path in ("/api/altium/outline", "/api/altium/sheet-fit"):    # read only: the Layout page's board size offer; the fit of each sheet before Draw
+            proj = self.project()
+            if not project_mod.exists(proj):
+                return self._send(404, {"error": f"no such project: {proj}"})
+            from altium import bridge
+            try:
+                if path.endswith("/outline"):
+                    return self._send(200, bridge.outline_status(proj))
+                return self._send(200, {"sheets": bridge.sheet_fit(proj, self.query("sheet") or None)})
+            except bridge.BridgeError as exc:
+                return self._send(409, {"error": str(exc)})
         if path == "/api/bom/import/candidates":
             proj = self.project()
             if not project_mod.exists(proj):
@@ -3817,6 +3884,9 @@ class Handler(BaseHTTPRequestHandler):
             results = []
             for pid in ids:
                 try:
+                    if decision == "approved" and store.delete_spec(next((p for p in store.proposals(proj) if p["id"] == pid), {})):
+                        results.append({"id": pid, "ok": False, "error": "a delete is approved on its own card, never with Approve all"})
+                        continue
                     got = decide_and_note(proj, sess, pid, decision, note=False, redraw_now=False)      # store.decide says "already" under its lock
                     results.append({"id": pid, "ok": True, **({"already": True} if got.get("already") else {})})
                 except (KeyError, ValueError) as exc:
@@ -3846,9 +3916,14 @@ class Handler(BaseHTTPRequestHandler):
                 recheck_async(proj, prop["line"])
             redraw(proj)
             project_mod.touch(proj)
+            gone = (prop.get("superseded") if isinstance(prop, dict) else None) or []
             say(proj, sess, {"ts": now(), "role": "agent", "decision": "undone", "proposal": data.get("id"),
-                             "text": f"The student undid change {data.get('id')}; it is back to how it was."})
-            return self._send(200, state())
+                             "text": f"The student undid change {data.get('id')}; it is back to how it was."
+                                     + (f" Pending changes for that line ({', '.join(gone)}) were dropped when it was deleted and are not back: propose them again if still wanted." if gone else "")})
+            out = state()
+            if gone:
+                out["superseded"] = gone
+            return self._send(200, out)
 
         if path == "/api/bom/edit":
             try:
@@ -3863,6 +3938,20 @@ class Handler(BaseHTTPRequestHandler):
                 redraw(proj)
                 project_mod.touch(proj)
             return self._send(200, state())
+
+        # the student deletes a BOM line, or some refs of it: applied at once, undoable with /api/undo and the returned id
+        if path == "/api/bom/delete":
+            try:
+                prop = store.delete_bom_line(proj, data.get("line"), data.get("refs") or None)
+            except KeyError as exc:
+                return self._send(404, {"error": str(exc).strip("'\"")})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            spec = store.delete_spec(prop)
+            redraw(proj)
+            project_mod.touch(proj)
+            return self._send(200, {**state(), "deleted": {"id": prop["id"], "line": prop["line"],
+                                                           "refs": spec[1] or (prop.get("before") or {}).get("refs") or []}})
 
         if path == "/api/bom/import":
             import bom_import
@@ -4100,6 +4189,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(exc).strip("'")})
             return self._send(200, state())
 
+        if path == "/api/idea/board/read":      # read only: the size a text states, so the fields fill while it is typed (E19)
+            from altium import layout
+            size = layout.board_size({"goal": str(data.get("text") or "")[:3000]})
+            return self._send(200, {"width_mm": size[0], "height_mm": size[1]} if size else {})
+        if path == "/api/idea/layers":      # the copper layer count chosen in the Idea: 2 or 4, anything else is refused with the reason
+            try:
+                project_mod.set_layers(proj, data.get("layers"))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+            return self._send(200, state())
+
         if path == "/api/idea/board":      # the board size typed in directly: no confirmed idea needed (validation in the store)
             try:
                 store.set_board_size(proj, data.get("width"), data.get("height"), data.get("unit") or "mm")
@@ -4324,6 +4424,19 @@ class Handler(BaseHTTPRequestHandler):
             step_ack(proj, run_id)        # this run's record only; a page that was reloaded mid-run finds "finished" or nothing, and says so
             return
 
+        if path == "/api/altium/outline-resize":     # the Layout page's "Set board to W x H mm": the idea's size (or the numbers sent) on the PcbDoc
+            from altium import bridge
+            if not STEP_LOCK.acquire(blocking=False):      # one Altium step at a time, the same lock the step buttons take
+                return self._send(409, {"error": "Altium is busy with another step; try again when it is done."})
+            try:
+                with project_busy(proj):
+                    res = bridge.resize_outline(proj, data.get("width"), data.get("height"))
+            except bridge.BridgeError as exc:
+                return self._send(409, {"error": str(exc)})
+            finally:
+                STEP_LOCK.release()
+            return self._send(200, res)
+
         if path == "/api/altium/step-stop":        # the Stop button of the live list: the run ends before its next step
             if not step_stop(proj):
                 return self._send(409, {"error": "no button run is going on"})
@@ -4452,6 +4565,11 @@ class Handler(BaseHTTPRequestHandler):
                 if key in data:
                     meta[key] = data[key]
             if isinstance(data.get("board"), dict):
+                if "layers" in data["board"]:
+                    try:
+                        data["board"] = {**data["board"], "layers": board_layers.check(data["board"]["layers"])}
+                    except ValueError as exc:
+                        return self._send(400, {"error": str(exc)})
                 meta["board"] = {**(meta.get("board") or {}), **data["board"]}
             project_mod.save_meta(proj, meta)
             project_mod.touch(proj)
@@ -4534,6 +4652,13 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self._send(400, {"error": f"could not ingest DFM report: {exc}"})
 
+        if path == "/api/design-findings/intended":   # the student's one click on a design finding (checks.coverage)
+            from checks import coverage
+            try:
+                return self._send(200, coverage.mark(proj, str(data.get("key") or ""), data.get("intended", True) is not False))
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
+
         if path == "/api/checks/triage":
             stem = data.get("stem")
             rows = data.get("rows")
@@ -4558,11 +4683,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/jlc/gerber-zip":            # build exports/<p>_gerbers.zip from the linked Altium outputs (read only)
             import jlc_upload
-            unv = store.manufacturing_warning(proj)          # unverified pins block the zip
+            unv = store.manufacturing_block(proj)            # an unrouted board or an unfinished design blocks the zip (pins only warn)
             if unv:
                 return self._send(400, {"error": button_words(unv)})
             try:
-                res = jlc_upload.gerber_zip(proj)
+                res = _with_pins_warning(proj, jlc_upload.gerber_zip(proj))
                 return self._send(200, res)
             except jlc_upload.UploadError as exc:
                 return self._send(400, {"error": str(exc)})

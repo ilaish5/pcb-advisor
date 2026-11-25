@@ -429,6 +429,30 @@ function pvStopBtn() {       // the run stops before its next step; the last ste
     title: 'Ends the run before its next step. The step Altium is working on finishes first.'});
 }
 const PV_LOG_OP = {draw: 'draw-schematic', place: 'place-pcb', route: 'route-pcb'};
+/* A failure note is a message about a cause. When the cause is gone from the current state the note goes, with no click (E16):
+   "There is no netlist sheet to draw" only while there is none; "Sheet 03 cannot be drawn" only while that sheet is there as it was
+   when the draw refused it (a changed or removed sheet is a new question the next draw answers). pvNoteCause reads the cause once, from the
+   words, and keeps what it was about; pvCauseGone looks at the state now. */
+const pvNetlistSheets = () => (S && S.sheets || []).filter(x => !x.altium);
+const pvSheetSig = id => { const x = pvNetlistSheets().find(y => String(y.id) === String(id)); return x ? JSON.stringify([x.sections, x.parts]) : ''; };
+function pvNoteCause(n) {
+  if (!n || n.cause !== undefined) return n;
+  const t = String(n.text || '');
+  if (n.kind === 'ok') n.cause = null;
+  else if (/There is no netlist sheet to draw/.test(t)) n.cause = {kind: 'no_netlist'};
+  else {
+    const ids = [...t.matchAll(/Sheet (\S+) cannot be drawn/g)].map(m => m[1]);
+    n.cause = ids.length ? {kind: 'sheets', sigs: Object.fromEntries(ids.map(id => [id, pvSheetSig(id)]))} : null;
+  }
+  return n;
+}
+function pvCauseGone(n) {
+  const c = n && n.cause;
+  if (!c || !S) return false;
+  if (c.kind === 'no_netlist') return pvNetlistSheets().some(x => Object.keys(x.parts || {}).length);
+  if (c.kind === 'sheets') return Object.entries(c.sigs).every(([id, sig]) => pvSheetSig(id) !== sig);
+  return false;
+}
 function pvLaterOk(n) {        // the same step succeeded after this note was made: the note is stale
   const ok = (S && S.altium_ok) || {}, t = n.step && ok[PV_LOG_OP[n.step]];
   if (!(t && n.at && new Date(t).getTime() > n.at)) return false;
@@ -444,7 +468,7 @@ function pvStepNote(page, busyOnly, slim) {       // under the header: Altium is
   pvResume();
   const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
   const busy = pvBusy && PV_STEPS[pvBusy].page === page && slim ? pvRunSlim() : pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${esc(PV_STEPS[pvBusy].busy)} ${pvElapsedHTML()}</div>`}<div class="acts">${pvStopBtn()}</div></div>` : '';
-  if (pvNote[page] && pvNote[page].kind !== 'ok' && pvLaterOk(pvNote[page])) delete pvNote[page];
+  if (pvNote[page] && pvNote[page].kind !== 'ok' && (pvLaterOk(pvNote[page]) || pvCauseGone(pvNote[page]))) delete pvNote[page];
   const n = pvNote[page] || pvSeedNote(page);
   if (busy || !n || busyOnly) return busy;
   const acts = (n.partial ? btn('Route the rest and leave ' + n.partial.join(', ') + ' open', {size: 'sm', kind: 'line', act: 'altium-step', step: 'route', partial: '1', disabled: pvBusy ? true : undefined,
@@ -563,6 +587,7 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
     if (pvNote[c.page]) { pvNote[c.page].step = step; pvNote[c.page].at = at0; }       // lets a later success (by button or chat) retire a failure note
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
     try { await refresh(true); } catch (err) { /* the note still says what happened */ }
+    if (pvNote[c.page]) pvNoteCause(pvNote[c.page]);       // the cause as the fresh state shows it: the note leaves when that changes (E16)
     if (typeof loadAltium === 'function') loadAltium(true);      // a draw can add a sheet to the project
     svgCache = {key: '', text: ''}; pvSchErr = ''; pcbSvgCache = {key: '', text: ''}; pvPcbErr = '';       // the picture is read again
   }
@@ -749,7 +774,41 @@ async function loadPcb(container) {
   root.outerHTML = pcbHTML();                               // the empty state and the picture have different frames
   afterPcb();
 }
+/* The idea's board size differs from the outline the PcbDoc holds (the placer reads the size only when there is no outline): Layout offers
+   to set the board to the idea's size. The change backs the PcbDoc up first and names parts that would fall outside. */
+let pcbOutline = null;
+function pcbOutlineOfferHTML() {
+  const o = pcbOutline;
+  if (!o || !o.differs || !o.idea || !o.pcb || !pvAltiumLinked()) return '';
+  const mm = v => Math.round(v * 10) / 10;
+  return `<div class="pv-note" id="pcb-outline-offer">${banner({tone: 'warn',
+    html: `The board in Altium is ${mm(o.pcb[0])} × ${mm(o.pcb[1])} mm, the idea says ${mm(o.idea[0])} × ${mm(o.idea[1])} mm.`,
+    actions: btn(`Set board to ${mm(o.idea[0])} × ${mm(o.idea[1])} mm`, {size: 'sm', kind: 'line', act: 'pcb-outline-resize', disabled: pvBusy ? true : undefined,
+      title: 'Changes the board outline in the PcbDoc; the file is backed up first and the parts stay where they are'})})}</div>`;
+}
+async function loadPcbOutline() {
+  const root = $('.pv[data-pv="pcb"]');
+  if (!root || !pvAltiumLinked()) return;
+  try { pcbOutline = await api('/api/altium/outline'); } catch (e) { pcbOutline = null; }
+  const old = $('#pcb-outline-offer'), html = pcbOutlineOfferHTML();
+  if (old) old.remove();
+  const head = root.querySelector('header.vh');
+  if (html && head) head.insertAdjacentHTML('afterend', html);
+}
+onAct('pcb-outline-resize', async (el) => {
+  const o = pcbOutline;
+  if (!o || !o.idea) return;
+  el.disabled = true;
+  try {
+    const r = await api('/api/altium/outline-resize', {width: o.idea[0], height: o.idea[1]});
+    toast(r.warnings && r.warnings.length ? 'Board resized. ' + r.warnings[0] : 'Board resized to ' + o.idea[0] + ' × ' + o.idea[1] + ' mm');
+    pcbSvgCache.key = '';                       // the picture is read again
+    await loadPcb();
+  } catch (err) { toast(err.message || 'The board could not be resized'); el.disabled = false; }
+  await loadPcbOutline();
+});
 function afterPcb() {
+  loadPcbOutline();
   const wrap = $('#pcbwrap');
   const svg = wrap && wrap.querySelector('svg');
   if (!svg) return;

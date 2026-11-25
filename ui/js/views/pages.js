@@ -502,7 +502,7 @@ async function libRun(kind, path, done) {         // build or prepare (the BOM p
 }
 onAct('libbuild', async (el, d, e) => {
   await libRun('build', '/api/library/build', r => `Library built: ${r.built} of ${r.lines} lines, IntLib installed in Altium` +
-    (r.issues_lines ? `. ${r.issues_lines} ${r.issues_lines === 1 ? 'line has' : 'lines have'} issues, see their status.` : '.') +
+    (r.issues_lines ? `. ${r.issues_lines} ${r.issues_lines === 1 ? 'line has' : 'lines have'} library issues, see their status.` : '.') +
     (r.notices && r.notices.length ? ' ' + r.notices.join(' ') : ''));
 });
 onAct('libprepare', async (el, d, e) => {
