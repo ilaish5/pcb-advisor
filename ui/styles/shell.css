@@ -149,9 +149,9 @@ body.resizing-col{cursor:col-resize !important;user-select:none !important}
 .upd-dlg p{margin:0 0 10px}
 
 /* readiness banner (ready.js): what is not ready on open, one fix each */
-.ready{position:fixed;left:50%;top:10px;transform:translateX(-50%);z-index:70;width:min(720px,calc(100% - 32px))}
+.ready{flex:none;padding:8px 8px 0}      /* in the flow of the main sheet: never over its buttons */
 .ready[hidden]{display:none}
-.ready-bar{display:flex;align-items:flex-start;gap:12px;padding:10px 14px;border-radius:10px;background:var(--btn);color:var(--btn-ink);font-size:13px;box-shadow:var(--float)}
+.ready-bar{display:flex;align-items:flex-start;gap:12px;padding:10px 14px;border-radius:10px;background:var(--btn);color:var(--btn-ink);font-size:13px}
 .ready-bar ul{list-style:none;margin:0;padding:0;display:grid;gap:6px;flex:1}
 .ready-fix{opacity:.85}
 .ready-bar button{color:inherit;font-weight:600;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}

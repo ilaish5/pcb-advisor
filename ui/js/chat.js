@@ -245,7 +245,10 @@ function propRowOf(p, extra) {
   const del = propDelete(p);
   if (del) return {id: p.id, ref: del.refs[0] || p.line, role: propDeleteText(p, del), reason: p.reason, checked: propTicked(p.id), ...extra};
   const ref = (Array.isArray(c.refs) && c.refs[0]) || ((lineByKey(p.line) || {}).refs || [p.line])[0];
-  return {id: p.id, ref, isNew: !!p.new, mpn: f('mpn'), manufacturer: f('manufacturer'), package: f('package'), lcsc: f('lcsc'), value: f('value'),
+  // the LCSC code the proposal does not carry is the one the line already has, or the code the stock check found (the export has it too)
+  const known = lineByKey(p.line) || lineOfRef(ref) || {}, sup = known.supply || {};
+  const lcsc = f('lcsc') || known.lcsc || ((Object.values(sup).find(v => v && v.code) || {}).code) || '';
+  return {id: p.id, ref, isNew: !!p.new, mpn: f('mpn'), manufacturer: f('manufacturer'), package: f('package'), lcsc, value: f('value'),
     role: f('role'), reason: p.reason, unverified: propIsUnverified(p), checked: propTicked(p.id), ...extra};
 }
 /* pending list: one row per proposal, with its tick */
@@ -442,6 +445,30 @@ const CHAT_ACT_LABELS = {
   'altium.route_pcb': 'Altium: route', 'altium.skeleton': 'Altium: project skeleton', 'altium.add_sheet': 'Altium: sheet added',
   'jlc.gerber_zip': 'Gerber zip made', 'jlc.pickup': 'JLC report picked up', 'order.check': 'Order check', 'dfm.triage': 'DFM findings sorted',
 };
+/* A chip that names a part ("BOM proposal: R1") is a button: it opens the part, or the card that waits for it. Other chips stay text. */
+const CHAT_ACT_REF = /^bom\.propose\s*:\s*([A-Za-z]+\d+[A-Za-z0-9_]*)/i;
+function chatActChip(a, cls, tip) {
+  const m = CHAT_ACT_REF.exec(String(a));
+  const label = esc(chatActLabel(a));
+  return m ? `<button type="button" class="chat-act ${cls}" data-act="chat-act-open" data-ref="${esc(m[1])}" title="${esc(tip || 'Show it')}">${label}</button>`
+    : `<span class="chat-act ${cls}" title="${esc(tip || a)}">${label}</span>`;
+}
+onAct('chat-act-open', async (el, d) => {
+  const ref = d.ref, l = lineOfRef(ref);
+  const pend = (S.proposals || []).find(p => p.status === 'pending' && (p.line === ref || ((p.changes || {}).refs || []).includes(ref)));
+  if (!pend && l) { select(l.key); return; }
+  if (!pend) { toast(`${ref} is not in the BOM and no proposal for it is waiting`, null, {bad: false}); return; }
+  go('workspace', 'bom');
+  const flash = () => {
+    const row = document.querySelector(`#view tr[data-pid="${CSS.escape(pend.id)}"]`) || document.querySelector(`tr[data-pid="${CSS.escape(pend.id)}"]`);
+    if (!row) return false;
+    row.scrollIntoView({block: 'center'});
+    row.classList.add('flash');
+    setTimeout(() => row.classList.remove('flash'), 1800);
+    return true;
+  };
+  if (!flash()) setTimeout(flash, 150);
+});
 function chatActLabel(a) {
   const s = String(a), m = s.match(/^([a-z_]+(?:\.[a-z_]+)+)\s*(?::\s*(.*))?$/is);
   if (!m) return s.length > 120 ? s.slice(0, 120) + '…' : s;
@@ -482,7 +509,7 @@ function msgHTML(m, undoTs) {
     if (m.by === 'button') {                    // the note the server wrote for the agent after a button step: its text is not for the student, the chips are
       const chips = (m.applied || []).map(a => (m.warned || {})[a]
         ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(chatActLabel(a.split(/[:( ]/)[0]))} applied with warnings:</b> ${esc(m.warned[a])}</span>`
-        : `<span class="chat-act ok" title="${esc(a)}">${esc(chatActLabel(a))}</span>`).join('');
+        : chatActChip(a, 'ok', a)).join('');
       return chips ? `<div class="msg agent note"><div class="acts">${chips}</div></div>` : '';
     }
     const props = propsHTML(m.proposals || (m.proposal ? [m.proposal] : []));
@@ -495,7 +522,7 @@ function msgHTML(m, undoTs) {
     const warned = m.warned || {};
     const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => warned[a]
       ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(a.split(/[:( ]/)[0])} applied with warnings:</b> ${esc(warned[a])}</span>`
-      : `<span class="chat-act ok" title="${esc(a)}">${esc(chatActLabel(a))}</span>`)
+      : chatActChip(a, 'ok', a))
       .concat((m.refused || []).map(a => chatRefusedHTML(a) +
         (/^(altium|library)\./.test(a) && live ? btn('Retry', {kind: 'link', size: 'sm', act: 'suggest', text: 'Run this again: ' + String(a).slice(0, 300)}) : '')));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';

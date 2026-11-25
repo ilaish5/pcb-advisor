@@ -54,14 +54,18 @@ function outPinsWarnNote() {
   const acts = (typeof pinsConfirmAllBtn === 'function' ? pinsConfirmAllBtn() : '') + btn('Open DFM', {kind: 'link', page: 'checks'});
   return `<div data-pins-warn="1">${banner({tone: 'warn', text: w, actions: acts})}</div>`;
 }
-function outBlockNote() {
+function outBlockNote(where) {
   const g = outGate();
   if (!g) return '';
+  // a board that was never placed, routed or checked is "not started", not an error: neutral on Outputs, and nothing at all on the Schematic page
+  if (g.quiet) return where === 'sch' ? '' : banner({tone: 'info', text: 'Not started yet: the board has not been placed, routed or checked. The manufacturing files are made once it is routed and checked.'});
+  const why = where === 'sch' && g.board_started === false ? g.design : g.why;      // on the Schematic page only the design's own blockers count, not the board that is not there yet
+  if (!why) return '';
   const items = outGapItems(g);
   const acts = (items.length ? btn(`Mark all ${items.length} as NC`, {kind: 'line', size: 'sm', act: 'nc-mark-all', title: 'Marks every one of these pins no-connect in the netlist (a No ERC cross when drawn). Connect any pin that is not meant to be NC first.'}) : '')
     + btn(OUT_GATE_PAGE[g.page] || OUT_GATE_PAGE.checks, {kind: 'link', page: OUT_GATE_PAGE[g.page] ? g.page : 'checks'});
   const list = items.length ? `<details class="pv-more"><summary>Show the ${items.length} ${items.length === 1 ? 'pin' : 'pins'}</summary><ul>${items.map(outGapRow).join('')}</ul></details>` : '';
-  return `${outNcProposal(g)}${banner({tone: 'warn', html: `${esc(g.why)}${list}`, actions: acts})}`;
+  return `${outNcProposal(g)}${banner({tone: 'warn', html: `${esc(why)}${list}`, actions: acts})}`;
 }
 async function outNcPost(path, items, said) {
   const r = await api(path, items ? {items} : {}, {soft: true});

@@ -103,7 +103,7 @@ def test_the_part_column_takes_what_is_left_so_the_table_never_outgrows_its_shee
     """Bug: with a fixed 200px for the part name the table needed 973px in a 930px sheet (1600x1000, chat open): a thin
     horizontal scrollbar. The column that is cut with an ellipsis must be the one that gives way."""
     flat = CSS.replace(" ", "")
-    assert ".bom-tbl.c-part{width:100%;max-width:0}" in flat
+    assert ".bom-tbl.c-part{width:100%;max-width:0;min-width:96px}" in flat
     main = re.search(r"\.bom-tbl \.main,\.bom-tbl \.sub\{([^}]*)\}", CSS).group(1)
     assert "max-width" not in main and "text-overflow:ellipsis" in main
     assert '<th class="c-part">Part</th>' in _fn("bomHTML") and '<td class="c-part"' in _fn("bomRow")

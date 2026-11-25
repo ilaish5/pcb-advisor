@@ -18,6 +18,24 @@ function readyBannerHTML(problems) {
   return `<div class="ready-bar" role="alert"><ul>${rows}</ul><button type="button" class="ready-x" data-ready-x aria-label="Dismiss">Dismiss</button></div>`;
 }
 
+/* A problem the student cannot act on from where they are (the project is not linked to Altium) is shown ONCE per project and instance,
+   not on every page load: the keys already shown on an earlier load are remembered, those shown on this load stay until dismissed. */
+const READY_ONCE_IDS = ['link'];
+const READY_SHOWN_KEY = () => 'pcb-ready-shown:' + (PROJECT || '');
+let readyShownBefore = null, readyShownNow = new Set();
+function readySeenBefore() {
+  if (readyShownBefore === null) {
+    try { const v = JSON.parse(localStorage.getItem(READY_SHOWN_KEY()) || '[]'); readyShownBefore = new Set(Array.isArray(v) ? v : []); } catch (err) { readyShownBefore = new Set(); }
+  }
+  return readyShownBefore;
+}
+function readyRemember(keys) {
+  const fresh = keys.filter(k => !readyShownNow.has(k));
+  if (!fresh.length) return;
+  fresh.forEach(k => readyShownNow.add(k));
+  try { localStorage.setItem(READY_SHOWN_KEY(), JSON.stringify([...new Set([...readySeenBefore(), ...readyShownNow])])); } catch (err) { /* it shows again next time */ }
+}
+const readyOnceHidden = p => READY_ONCE_IDS.includes(p.id) && readySeenBefore().has(readyKey(p)) && !readyShownNow.has(readyKey(p));
 const READY_ALTIUM_IDS = ['altium', 'link'], READY_ALTIUM_VIEWS = ['sch', 'pcb', 'rules', 'outputs', 'checks', 'settings'];
 let readyAll = [];
 let readyRev = null, readyBusy = false;
@@ -27,8 +45,9 @@ function readyShow() {       // Altium problems show only on an Altium step (Sch
   if (S && S.rev && readyRev !== null && S.rev !== readyRev && !readyBusy) { readyRev = S.rev; readyLoad(); }       // the project changed under the banner: ask again
   const onAltium = typeof mainView === 'function' && (READY_ALTIUM_VIEWS.includes(mainView()) || (typeof sideView === 'function' && READY_ALTIUM_VIEWS.includes(sideView())));
   const seen = readyDismissed();
-  const problems = readyAll.filter(p => !seen.includes(readyKey(p)) && (onAltium || !READY_ALTIUM_IDS.includes(p.id)));
+  const problems = readyAll.filter(p => !seen.includes(readyKey(p)) && !readyOnceHidden(p) && (onAltium || !READY_ALTIUM_IDS.includes(p.id)));
   if (!problems.length) { if (!host.hidden) { host.hidden = true; host.innerHTML = ''; host.dataset.k = ''; } return; }
+  readyRemember(problems.filter(p => READY_ONCE_IDS.includes(p.id)).map(readyKey));
   const html = readyBannerHTML(problems);
   if (host.dataset.k !== html) { host.dataset.k = html; host.innerHTML = html; }
   host.hidden = false;
@@ -46,5 +65,9 @@ async function readyLoad() {
   try { r = await api('/api/readiness', undefined, {soft: true}); } catch (err) { return; } finally { readyBusy = false; }
   if (!r || !Array.isArray(r.problems)) return;
   readyAll = r.problems;
+  const gone = new Set(readyAll.map(readyKey));      // a problem that was fixed is forgotten: if it comes back, it is shown again
+  readyShownNow.forEach(k => { if (!gone.has(k)) readyShownNow.delete(k); });
+  readyShownBefore = new Set([...readySeenBefore()].filter(k => gone.has(k)));
+  try { localStorage.setItem(READY_SHOWN_KEY(), JSON.stringify([...new Set([...readyShownBefore, ...readyShownNow])])); } catch (err) { /* ignored */ }
   readyShow();
 }

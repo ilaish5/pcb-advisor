@@ -199,7 +199,7 @@ def test_request_is_ascii_and_tabbed(monkeypatch, tmp_path):
     assert (tmp_path / "request.txt").read_bytes() == b"FRAME\tp\t1\t2\t3\t4\tcafe\\nline\r\n"
 
 
-def test_non_windows_says_so(monkeypatch):
+def test_non_windows_says_so(monkeypatch, real_host_check):
     monkeypatch.setattr(bridge.sys, "platform", "linux")
     with pytest.raises(bridge.BridgeError, match="Windows"):
         bridge.run_commands([("PING",)])

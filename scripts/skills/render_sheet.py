@@ -24,6 +24,7 @@ Two-pin parts: pins[0] is the top (or left) end, pins[1] the bottom (or right) e
 import html
 import pathlib
 import sys
+import textwrap
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 import store      # noqa: E402
@@ -304,9 +305,11 @@ def layout_section(sec, parts, notes, bom_by_ref, status=None):
         row_h = max(row_h, h)
     y += row_h + 8
     note_svg = ""
+    per_line = max(24, int(inner / (CW + 0.6)))          # a note is cut at the frame's width, never run past it
     for n in notes:
-        note_svg += T(pad, y + 6, n["text"], "note")
-        y += 14
+        for part in (textwrap.wrap(str(n["text"]), per_line, break_long_words=True) or [""]):
+            note_svg += T(pad, y + 6, part, "note")
+            y += 14
     w_total, h_total = inner + 2 * pad, y + 10
     body = ""
     for p, svg, px, py in out:
