@@ -1242,7 +1242,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                           for p, (_, _, n) in i["pads"].items() if n == net and i["names"].get(p, "").strip() and pin_ok(o, p))
             rail_caps = [c for c in caps if _decap_rail(info[c]) == net and (cap_farads(part_value(info[c]["part"])) is None
                                                                              or cap_farads(part_value(info[c]["part"])) <= BULK_F)]
-            todo = sorted((c for c in rail_caps if c not in placed and may(c, ic)), key=lambda c: c not in owners)   # this IC's own caps first
+            todo = sorted((c for c in rail_caps if c not in placed and may(c, ic)), key=lambda c: c not in hints)    # the caps the BOM names for a part first; else the usual order
             if not mine or not todo:
                 continue
             allpins = max(allpins, len(mine))                                       # an IC that is not a U/IC/M/MOD (a Q...) counts too
@@ -1626,7 +1626,7 @@ _ROLE_FIELDS = ("bom_role", "role", "bom_description", "description")   # a cap'
 _NAME_FIELDS = ("bom_mpn", "mpn", "bom_value", "value", "lib_ref", "symbol")    # what a part is called (never its role: that names others)
 _REG_KIND = r"(?:ldo|regulator|buck(?:-boost)?|boost|dc-?dc|converter)"
 # "LDO output cap", "regulator's input", "output capacitor for the 3.3 V LDO"; not "rail from the LDO" (where the rail comes from)
-_REG_HINT = re.compile(rf"\b(?:{_REG_KIND}(?:'s)?[\s-]+)*{_REG_KIND}(?:'s)?[\s-]+(?:input|output|caps?|capacitors?|decoupling|bypass|stability)\b"
+_REG_HINT = re.compile(rf"\b(?:{_REG_KIND}(?:'s)?[\s-]+)*{_REG_KIND}(?:'s)?[\s-]+(?:input|output|in/out|in-out|caps?|capacitors?|decoupling|bypass|stability)\b"
                        rf"|\b(?:input|output|caps?|capacitors?|decoupling|bypass)\s+(?:of|for|on|at)\s+(?:the\s+)?(?:[\d.]+\s*V\d*\s+)?{_REG_KIND}\b",
                        re.I)
 
@@ -1675,12 +1675,52 @@ def _names_part(text, part):
                and sources.mentions_part(text, n) for n in names)
 
 
+_SW_KIND = re.compile(r"buck|boost|dc-?dc|\bswitch(?:er|ing)\b", re.I)
+_LDO_KIND = re.compile(r"\bldo\b|linear", re.I)
+_REF_NOTE = re.compile(r"\bC\d{1,3}\b")           # only a cap designator makes a note: "(U2)" names the cap's part
+REG_CAP_F = 1e-6            # from this value up (and up to BULK_F) a cap is the kind a regulator's input/output wants
+
+
+def _reg_kind(part):
+    """'sw' or 'ldo' when the part's text says one of the two; None (any kind word fits) when it says both or neither."""
+    kinds = [k for k, rx in (("sw", _SW_KIND), ("ldo", _LDO_KIND)) if rx.search(part_text(part))]
+    return kinds[0] if len(kinds) == 1 else None
+
+
+def _role_clauses(text):
+    """(notes, shared): a BOM line that annotates caps by designator ("TXS0102 (C16 on V_PAD, C17), modem +3V8 (C18)") says
+    what each named cap is for: notes = {cap ref: the words before its note}; shared = the words nothing is annotated for (the
+    caps of the line that are not named). A line with no notes: ({}, the whole text)."""
+    if not re.search(r"\([^()]*" + _REF_NOTE.pattern + r"[^()]*\)", text):
+        return {}, text
+    masked = re.sub(r"\([^()]*\)", lambda m: "(" + "x" * (len(m.group()) - 2) + ")", text)
+    cuts, last = [], 0
+    for m in re.finditer(r"\s*[,;]\s*|\s+and\s+", masked):
+        cuts.append(text[last:m.start()])
+        last = m.end()
+    cuts.append(text[last:])
+    notes, shared = {}, []
+    for item in cuts:
+        m = re.search(r"\(([^()]*)\)\s*$", item)
+        refs = _REF_NOTE.findall(m.group(1)) if m else []
+        if refs:
+            for r in refs:
+                notes[r] = item[:m.start()].strip()
+        elif item.strip():
+            shared.append(item.strip())
+    return notes, ", ".join(shared)
+
+
 def decap_hints(parts):
     """{cap ref: [(IC ref, pin number)]} for the decoupling caps whose BOM role or description names the part they serve: the
     supply pins, on the cap's rail, of the part(s) named ("SHT31 decoupling", "U2 bypass"), or, when no part is named, of the
-    regulators ("LDO output cap"). A named part with no pin on the cap's rail is not its owner. No entry: the text says nothing."""
+    regulators of the kind the words say ("LDO output cap" is a linear regulator's, "buck output" a switcher's, "regulator" any
+    one's; no regulator of that kind with a pin on the rail: no hint). A named part with no pin on the cap's rail is not its
+    owner. A line that annotates caps by designator ("TXS0102 (C17)") speaks for those caps only; the others share what is left.
+    One line for many caps: the line names its parts' supply pins on the rail and that many caps are tied to them, the
+    first ones in BOM order (the rest of the line may serve parts it does not name). No entry: the text says nothing."""
     ics = [p for p in parts if _DECAP_IC.match(p["ref"])]
-    out = {}
+    wanted = {}                                           # (rail, field, clause) -> [(cap, [(ic, pin)])] in BOM order
     for cap in parts:
         rail, _ = _cap_pad(cap)
         if rail is None:
@@ -1693,29 +1733,40 @@ def decap_hints(parts):
             if good:
                 on_rail[ic["ref"]] = (ic, [q for q in pins if _reg_pin(reg, q.get("name"))], good)
         for field in _ROLE_FIELDS:
-            text = str(cap.get(field) or "")
+            notes, shared = _role_clauses(str(cap.get(field) or ""))
+            text = notes[cap["ref"]] if cap["ref"] in notes else shared
             named = [r for r, (ic, _, _) in on_rail.items() if text and _names_part(text, ic)]
+            found = []
+            hit = None if named else _REG_HINT.search(text)
             if named:
-                out[cap["ref"]] = [(r, _num(q)) for r in named for q in on_rail[r][2]]
-                break
-            if _REG_HINT.search(text):                   # the kind of part, never by the word alone: the part must have a regulator pin here
+                found = [(r, _num(q)) for r in named for q in on_rail[r][2]]
+            elif hit:                                        # the kind of part, never by the word alone: a regulator pin of that kind here
                 direction = _IN_PIN if re.search(r"\binput\b", text, re.I) and not re.search(r"\boutput\b", text, re.I) else \
                     _OUT_PIN if re.search(r"\boutput\b", text, re.I) and not re.search(r"\binput\b", text, re.I) else None
-                found = []
-                for r, (_, rpins, _) in on_rail.items():
+                kinds = {k for k, rx in (("sw", _SW_KIND), ("ldo", _LDO_KIND)) if rx.search(hit.group(0))}
+                for r, (ic, rpins, _) in on_rail.items():
+                    if kinds and _reg_kind(ic) not in (kinds | {None}):
+                        continue
                     mine = [q for q in rpins if direction is None or direction.match(str(q.get("name") or "").strip())] or rpins
                     found += [(r, _num(q)) for q in mine]
-                if found:
-                    out[cap["ref"]] = found
-                    break
+            if found:
+                wanted.setdefault((rail, field, text.strip().lower()), []).append((cap["ref"], found))
+                break
+    out = {}
+    for group in wanted.values():
+        pins = {pin for _, found in group for pin in found}
+        for cap, found in group[:len(pins)] if len(group) > len(pins) else group:
+            out[cap] = found
     return out
 
 
 def decap_owners(parts, hints):
     """{cap ref: set of IC refs} the parts each cap goes to. A cap with a hint: the parts it names, and no other. Without one (a
-    preference: another pin takes it when none of these is within reach), on a
-    rail that feeds both regulators and other ICs: bulk caps (above BULK_F) go to the regulators first; the others, smallest first,
-    to the other ICs' supply pins and only then to a regulator. A cap with no entry goes wherever it fits best."""
+    preference: another pin takes it when none of these is within reach), on a rail that feeds both regulators and other ICs
+    (a regulator's slot is one of its input/output pins; an IC counts as "other" with more than 4 pins, unless it is a regulator
+    that has an input/output pin: a part that only says "converter" or sits in a SOT-23-5 gets caps for its VDD / VCC): bulk caps (above BULK_F) go to the regulators first; then, for each regulator left, the largest cap from REG_CAP_F
+    up to BULK_F (a regulator's usual 1-10 uF); the others, smallest first, to the other ICs' supply pins and only then to a
+    regulator. A cap with no entry goes wherever it fits best."""
     out = {c: {ic for ic, _ in pins} for c, pins in hints.items()}
     plain, regs, caps = {}, {}, {}                      # rail -> supply pins of other ICs / regulators / [(farads, ref)]
     for part in parts:
@@ -1725,11 +1776,13 @@ def decap_owners(parts, hints):
         if not _DECAP_IC.match(part["ref"]):
             continue
         reg = is_regulator(part)
+        real = reg and any(_REG_PIN.match(str(q.get("name") or "").strip()) for q in part.get("pins", []))
+        checked = len(part.get("pins", [])) > 4 and not real      # a "converter" with no in/out pin is an ordinary IC
         for q in part.get("pins", []):
             if is_rail(_net(q)) and _cap_pin_ok(q.get("name"), reg):
                 if _reg_pin(reg, q.get("name")):
                     regs.setdefault(_net(q), set()).add(part["ref"])
-                else:
+                elif checked:
                     plain.setdefault(_net(q), []).append(part["ref"])
     for rail, mine in caps.items():
         if rail not in plain or rail not in regs:
@@ -1739,10 +1792,15 @@ def decap_owners(parts, hints):
         slots = len([r for r in regs[rail] if not any(r in o for _, o in served)])
         free = sorted(((f, c) for f, c in mine if c not in out), key=lambda t: float("inf") if t[0] is None else t[0])
         bulk = [c for f, c in free if f is not None and f > BULK_F]
-        small = [c for f, c in free if f is None or f <= BULK_F]
+        small = [(f, c) for f, c in free if f is None or f <= BULK_F]
         for c in bulk[:slots]:                                  # a regulator wants the big one
             out[c] = set(regs[rail])
         slots -= min(slots, len(bulk))
+        mid = [(f, c) for f, c in small if f is not None and f >= REG_CAP_F][::-1][:slots]     # then the largest of its usual size
+        for _, c in mid:
+            out[c] = set(regs[rail])
+        slots -= len(mid)
+        small = [c for _, c in small if c not in out]
         for c in small[:pins]:                                  # the smallest, one for each supply pin of the other ICs
             out[c] = set(plain[rail])
         left = small[pins:]

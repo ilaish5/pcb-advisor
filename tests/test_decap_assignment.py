@@ -170,6 +170,7 @@ def hints_for(role, parts=None, description=""):
 def test_role_matching():
     assert hints_for("SHT31 decoupling") == {"U2", "U21"}
     assert hints_for("U2 bypass") == {"U2"}                                       # not U21
+    assert hints_for("SHT31 decoupling (U2)") == {"U2", "U21"} and hints_for("decoupling (U2)") == {"U2"}   # an IC in brackets is no note
     assert hints_for("AMS1117 output cap") == {"U1"}
     assert hints_for("LDO output cap") == {"U1"}
     assert hints_for("100nF decoupling") == set()
@@ -218,3 +219,62 @@ def test_input_and_output_words_pick_the_regulator_pins():
     assert {n for _, n in layout.decap_hints(parts)["C3"]} == {"2", "4"}      # no IN pin on the rail: every regulator pin on it
     parts = board() + [cap("C5", "VBUS", "100nF", "regulator input")]
     assert {n for _, n in layout.decap_hints(parts)["C5"]} == {"3"}
+
+
+def mcu(ref="U3"):
+    names = [("VDD" if i % 4 == 1 else "VSS" if i % 4 == 3 else f"PA{i}") for i in range(1, 17)]
+    nets = [("+3V3" if n == "VDD" else "GND" if n == "VSS" else f"S{i}") for i, n in enumerate(names)]
+    return part(ref, "QFN16", nets, names, bom_value="STM32F411", bom_mpn="STM32F411RET6", bom_role="main controller")
+
+
+def test_a_line_shared_by_more_caps_than_the_named_pins_does_not_lock_them_all():
+    """One BOM line "SHT31 decoupling" for five caps: the sensor has one supply pin, so one cap is its; the unnamed MCU keeps the rest."""
+    parts = [sensor(), mcu()] + [cap(f"C{i}", "+3V3", "100nF", "SHT31 decoupling") for i in range(1, 6)]
+    hints = layout.decap_hints(parts)
+    assert set(hints) == {"C1"} and {ic for ic, _ in hints["C1"]} == {"U2"}
+    fps = dict(FPS, QFN16=fp("QFN16", _QFN16))
+    plan = layout.plan_placement(parts, fps, OUT)
+    assert not plan["errors"] and not plan["findings"], plan
+
+    def xy(ref, num):
+        p = next(q for q in plan["places"] if q["ref"] == ref)
+        q = next(q for q in fps[next(x for x in parts if x["ref"] == ref)["footprint"]]["pads"] if q["name"] == num)
+        rx, ry = layout.rot_point(q["x"] * MIL, q["y"] * MIL, p["rot"])
+        return p["x"] + rx, p["y"] + ry
+
+    for ic, pin in [("U2", VDD)] + [("U3", str(n)) for n in (1, 5, 9, 13)]:
+        assert min(math.dist(xy(f"C{i}", "1"), xy(ic, pin)) for i in range(1, 6)) <= NEAR, (ic, pin)
+
+
+def test_designator_notes_in_a_shared_line_speak_for_their_caps():
+    parts = [regulator(), sensor(), sensor("U21")]
+    line = "Decoupling: U2, U21 (C9 on VDD), LDO in/out (C7, C8)"
+    caps = [cap("C6", "+3V3", "100nF", line), cap("C9", "+3V3", "100nF", line), cap("C7", "VBUS", "1uF", line),
+            cap("C8", "+3V3", "1uF", line)]
+    hints = layout.decap_hints(parts + caps)
+    assert {ic for ic, _ in hints["C9"]} == {"U21"} and {ic for ic, _ in hints["C6"]} == {"U2"}
+    assert {n for _, n in hints["C7"]} == {"3"} and {n for _, n in hints["C8"]} == {"2", "4"}       # "in/out": both sides
+
+
+def test_a_kind_word_binds_only_to_a_regulator_of_that_kind():
+    buck = part("U4", "DFN8", ["VBUS2", "SW", "BST", "EN", "FB", "VCC", "NC", "GND"], ["IN", "SW", "BST", "EN", "FB", "VCC", "NC", "GND"],
+                bom_value="MP2315", bom_mpn="MP2315GJ-Z", bom_role="buck 12 V to 3.8 V")
+    parts = [regulator(), buck]
+    assert hints_for("buck output cap", parts) == set()                       # the buck has no pin on +3V3, the LDO is not a buck
+    assert hints_for("LDO output cap", parts) == {"U1"}
+    assert hints_for("regulator output cap", parts) == {"U1"}
+    fed = dict(regulator(), bom_role="LDO fed by the buck")                    # says both kinds: any kind word fits
+    assert hints_for("LDO output cap", [fed, buck]) == {"U1"}
+
+
+def test_a_supervisor_in_a_regulator_package_gets_plain_caps():
+    sup = part("U5", "SOT-23-5", ["RST", "GND", "MR", "WDI", "+3V3"], ["RESET", "GND", "MR", "WDI", "VDD"],
+               bom_value="TPS3823-33", bom_mpn="TPS3823-33DBVR", bom_role="supervisor")
+    parts = [regulator(), sensor(), sup, cap("C4", "+3V3", "100nF"), cap("C5", "+3V3", "100nF")]
+    assert layout.decap_owners(parts, layout.decap_hints(parts))["C4"] == {"U2", "U5"}
+
+
+def test_a_regulator_gets_its_microfarad_cap_before_the_small_ones_go_out():
+    parts = [regulator(), sensor(), cap("C4", "+3V3", "100nF"), cap("C5", "+3V3", "1uF")]
+    owners = layout.decap_owners(parts, {})
+    assert owners["C5"] == {"U1"} and owners["C4"] == {"U2"}
