@@ -423,6 +423,12 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
         return {**next(p for p in store.proposals(project) if p["id"] == pid), "already": True}      # decided that way before: nothing more to do
     project_mod.touch(project)
     prop = next(p for p in store.proposals(project) if p["id"] == pid)
+    if prop.get("kind") != "idea_diagram":
+        try:
+            import constraints
+            constraints.bind_when_bom_settled(project)       # part names written at Idea time become references
+        except Exception as exc:          # noqa: BLE001 - the decision stands; place binds again and blocks on what is left
+            runlog.exception("exception", exc, where="constraints.bind", project=project)
     if decision == "approved" and prop.get("kind") != "idea_diagram":
         if "mpn" in prop.get("changes", {}):
             recheck_async(project, prop["line"])
@@ -1497,6 +1503,10 @@ def _with_pins_warning(project, res):
 
 def step_refusal(project, step):
     """Why a step must not start at all (checked at plan time, before anything runs), or "". Outputs: store.manufacturing_block (an unrouted board, an unfinished design); unverified pins only warn."""
+    if step == "place":            # a confirmed constraint that names no one part is settled before anything runs
+        import constraints
+        constraints.bind_all(project)
+        return button_words(constraints.blocking(project))
     return button_words(store.manufacturing_block(project)) if step == "outputs" else ""
 
 

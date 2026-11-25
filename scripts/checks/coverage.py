@@ -8,6 +8,9 @@
    sheet: "Requirement 'nano-SIM': J3 (Nano-SIM socket) is in the BOM but on no sheet". A requirement no keyword matches, or a
    keyword no BOM line names, gets no finding: nothing is guessed. requirement_coverage() also gives the covered rows.
 
+3. edge_uncovered: a confirmed requirement says "<part> on the <side> edge" and no confirmed edge constraint holds it. Needs
+   only the BOM, not the sheets.
+
 Pure functions over plain data (sheets: [{"id", "parts": [{"ref", "pins": [{"name", "num", "net"}]}]}], BOM lines as
 store.bom_lines gives them, the idea dict). design_findings(project) reads the project and leaves out what the student marked
 "intended" (dismiss(), kept in design-findings.json per finding key and instance: the same finding with other words comes back).
@@ -201,6 +204,62 @@ def coverage_findings(rows):
     return out
 
 
+# ------------------------------------------------------------------ 3. "X on the left edge" with no constraint holding it
+
+# "side" only for left / right: "all parts on the top side" is the assembly side of the board, not an edge
+_EDGE_RE = re.compile(r"\b(?:on|at|along)\s+(?:the\s+)?(?:(left|right)(?:[- ]hand)?\s+(?:board\s+)?(?:edge|side)"
+                      r"|(top|bottom)\s+(?:board\s+)?edge)\b", re.I)
+_NOT_A_PART = re.compile(r"\b(?:no|not|nothing|never|clear|free|holes?)\b", re.I)
+_LEAD = re.compile(r"^(?:(?:and|with|place|put|keep|the|a|an|one|its)\b\s*)+", re.I)
+_TAIL = re.compile(r"(?:\s*\b(?:must|should|will|shall|to|be|is|are|sits?|goes|placed|mounted|located|sitting)\b)+$", re.I)
+
+
+def _subjects(text):
+    """[(subject, side)] of the "<part> on the <side> edge" phrases of a requirement."""
+    out = []
+    for clause in re.split(r"[;\n]|\.(?=\s|$)", text):
+        start = 0
+        for m in _EDGE_RE.finditer(clause):
+            subject = clause[start:m.start()].split(":")[-1].strip(" ,-")
+            start = m.end()
+            subject = _TAIL.sub("", _LEAD.sub("", subject)).strip(" ,-")
+            if subject and not _NOT_A_PART.search(subject):
+                out.append((subject, (m.group(1) or m.group(2)).lower()))
+    return out
+
+
+def edge_findings(idea, bom):
+    """One finding per part a confirmed requirement puts at a named edge while no confirmed edge constraint holds it there: the
+    placer reads constraints only. [] while there is no BOM."""
+    import constraints
+    bom = [l for l in bom or [] if l.get("refs")]
+    if not bom:
+        return []
+    blocks = (idea or {}).get("blocks") or []
+    held = []                     # (refs, the target as written, side)
+    for it in constraints.confirmed(idea):
+        if it["kind"] == "edge":
+            got = constraints.match_part(it["target"], bom, blocks)["refs"]
+            held.append((set(got), it["target"].lower(), it["side"]))
+    out = {}
+    for a in (idea or {}).get("agreed") or []:
+        if not isinstance(a, dict) or a.get("status") not in (None, "confirmed"):
+            continue
+        for subject, side in _subjects(str(a.get("text") or "")):
+            pieces = [p for p in (_LEAD.sub("", x).strip() for x in re.split(r",|&|\band\b", subject)) if p]
+            named = [(p, constraints.match_part(p, bom, blocks)["refs"]) for p in pieces]
+            for name, refs in [n for n in named if n[1]] or [(subject, [])]:
+                if any(s == side and (set(refs) <= got if refs else target == name.lower()) for got, target, s in held):
+                    continue
+                who = ", ".join(refs) or name
+                why = ("Add the edge constraint (one click on the Layout page), or mark this intended." if refs else
+                       f"\"{name}\" is not one part of the BOM: pick it on the Layout page, or mark this intended.")
+                out[f"edge_uncovered:{who}:{side}"] = {
+                    "id": "edge_uncovered", "key": f"edge_uncovered:{who}:{side}", "severity": "warning", "refs": refs,
+                    "side": side, "message": f"Requirement says {who} on the {side} edge, no constraint holds it", "fix": why}
+    return list(out.values())
+
+
 # ------------------------------------------------------------------ project level, with the student's "intended" marks
 
 def _instance(f):
@@ -226,10 +285,11 @@ def _sheets(project):
 
 
 def all_findings(project):
-    """Every finding of both checks, each with its key, instance and "intended" (the student marked this very one)."""
+    """Every finding of these checks, each with its key, instance and "intended" (the student marked this very one)."""
     import store
     sheets, bom = _sheets(project), store.bom_lines(project)
-    found = interface_nc(sheets, bom) + coverage_findings(requirement_coverage(store.load_idea(project), bom, sheets))
+    idea = store.load_idea(project)
+    found = interface_nc(sheets, bom) + coverage_findings(requirement_coverage(idea, bom, sheets)) + edge_findings(idea, bom)
     marks = _marks(project)
     for f in found:
         f["instance"] = _instance(f)
