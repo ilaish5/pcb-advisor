@@ -1346,7 +1346,7 @@ def _netlist_parts(project):
                           "lib_ref": m.get("symbol") or "", "pins": p.get("pins", []),
                           # the BOM line, for the placement rules (cap value, regulator, crystal); not "value": PLACEFP sets that into Altium
                           "bom_value": line.get("value") or "", "bom_description": line.get("description") or "",
-                          "bom_role": line.get("role") or "",
+                          "bom_role": line.get("role") or "", "bom_mpn": line.get("mpn") or "",
                           # a radio module's antenna side (library manifest rf, a heuristic): the placer puts it at an edge, antenna out
                           "rf_antenna_deg": partlib_mech.rf_side_degrees(m.get("rf"))})
     from altium import draw
