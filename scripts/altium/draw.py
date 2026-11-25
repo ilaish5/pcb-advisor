@@ -759,12 +759,13 @@ def fit_size(cells, sections, texts=None, sizes=SHEET_ORDER):
     return None, pos, heads, problems
 
 
-def suggest_sheets(cells, sections, area=AREA, texts=None):
+def suggest_sheets(cells, sections, area=AREA, texts=None, sizes=SHEET_ORDER):
     """How the design could be spread over several sheets so that EVERY sheet fits: ([sheet], [ref that does not fit alone]); a sheet
     is [(section id, [refs] or None for the whole section)]. Every candidate sheet goes through layout(), the very check plan_sheet
     makes (cell boxes with their stubs, labels and the part texts, the frames and their title strips, the sheet border), so a
     suggested sheet is never refused when it is drawn. Whole sections are kept together and in order; a section that is too big alone
-    is cut by parts (in the netlist's order), each piece a sheet or the start of the next."""
+    is cut by parts (in the netlist's order), each piece a sheet or the start of the next. area=None: each sheet on the first of
+    `sizes` that holds it."""
     sec = {s["id"]: s for s in sections}
     have = {sid for sid, _ in cells}
     order = [i for i in ([s["id"] for s in sections] or [""]) if i in have]
@@ -778,7 +779,7 @@ def suggest_sheets(cells, sections, area=AREA, texts=None):
         secs = [sec.get(i, {"id": i}) for i in sids]
         if not sel:
             return False
-        return fit_size(sel, secs, texts)[0] is not None if area is None else not layout(sel, secs, area, texts)[2]
+        return fit_size(sel, secs, texts, sizes)[0] is not None if area is None else not layout(sel, secs, area, texts)[2]
     sheets, hopeless, cur = [], [], []
     for sid in order:
         if cur and fits(cur + [(sid, None)]):
@@ -826,8 +827,19 @@ def suggest_sheets(cells, sections, area=AREA, texts=None):
     return sheets, hopeless
 
 
-def _too_big_message(cells, sections, texts=None):
-    sheets, hopeless = suggest_sheets(cells, sections, area=None, texts=texts)
+def _too_big_message(cells, sections, texts=None, sizes=SHEET_ORDER):
+    """Why the design is refused and how to split it, for the sheet sizes that were tried (`sizes`: A4 then A3, or the one size asked
+    for): a forced A4 never claims A3 was tried, and says so when A3 would hold the whole design."""
+    sizes = tuple(sizes)
+    sheets, hopeless = suggest_sheets(cells, sections, area=None, texts=texts, sizes=sizes)
+    if sizes == tuple(SHEET_ORDER):
+        head = "the design does not fit on one A4 sheet, nor on A3"          # SHEET_ORDER: A4, then A3
+    else:
+        head = f"the design does not fit on one {' or '.join(sizes)} sheet (the size asked for)"
+        other = [n for n in SHEET_ORDER if n not in sizes and fit_size(cells, sections, texts, (n,))[0]]
+        if other:
+            head += f"; it fits on one {other[0]} sheet if that size is allowed"
+    biggest = sizes[-1]
     titles = {s["id"]: str(s.get("title") or "").strip() for s in sections}
     refs = {}
     for sid, c in cells:
@@ -853,13 +865,13 @@ def _too_big_message(cells, sections, texts=None):
     shared = sorted(n for n, where in by_net.items() if len(where) > 1)
     cut = [sid for sid in dict.fromkeys(s_ for s_, _ in cells) if sum(1 for sh in sheets for i, r in sh if i == sid and r is not None)]
     if hopeless:
-        return (f"the design does not fit on one A4 sheet, nor on A3, and {', '.join(hopeless[:6])} does not fit on an A3 sheet even by itself "
+        return (f"{head}, and {', '.join(hopeless[:6])} does not fit on an {biggest} sheet even by itself "
                 "(too many pins or too long net names): split the part's connections differently or draw it by hand.")
     if len(sheets) <= 1:       # one sheet is all there is and it is still refused: there is nothing to move to a second sheet
-        return (f"the design does not fit on one A4 sheet, nor on A3, and it is a single section ({', '.join(label(i) for i, _ in (sheets[0] if sheets else []))}) "
+        return (f"{head}, and it is a single section ({', '.join(label(i) for i, _ in (sheets[0] if sheets else []))}) "
                 "that is too big for a sheet by itself: it must be split into several sections (and sheets) in the netlist. "
                 "The tool does not yet draw the nets that run between sheets (that needs ports), so each sheet is a netlist sheet of its own.")
-    msg = (f"the design does not fit on one A4 sheet, nor on A3. It needs about {len(sheets)} sheets (each one checked to fit): "
+    msg = (f"{head}. It needs about {len(sheets)} sheets (each one checked to fit): "
            + "; ".join(f"sheet {k}: {', '.join(label(i, r) for i, r in sh)}" for k, sh in enumerate(sheets, 1)) + ". ")
     if cut:
         msg += f"Section {', '.join(label(x) for x in cut)} is too big for one sheet, so it is cut by parts above. "
@@ -1068,7 +1080,7 @@ def plan_sheet(sheet, symbols, schlib, doc, replace=False, aliases=None, placeho
     size, pos, heads, problems = fit_size(cells, sections, texts, (sheet_size,) if sheet_size else SHEET_ORDER)
     out["sheet_size"] = size
     if problems:
-        errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections, texts))
+        errors.append(problems[0] + (f" (+{len(problems) - 1} more)" if len(problems) > 1 else "") + ": " + _too_big_message(cells, sections, texts, (sheet_size,) if sheet_size else SHEET_ORDER))
         out["fix_code"] = "sheet.too_big"
     if errors:
         return out

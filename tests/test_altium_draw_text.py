@@ -296,7 +296,11 @@ def test_a_section_too_big_for_a_sheet_is_cut_by_parts_into_sheets_that_each_dra
     p = draw.plan_sheet(big, lib, "l", "d")
     # since E7 a section that does not fit A4 is drawn on A3 (DRAWBEGIN's style field 1), not refused
     assert p["errors"] == [] and p["sheet_size"] == "A3" and p["commands"][0] == ("DRAWBEGIN", "d", "0", str(draw.SHEETS["A3"]["style"]))
-    assert draw.plan_sheet(big, lib, "l", "d", sheet_size="A4")["commands"] == []          # it really does not fit A4
+    a4 = draw.plan_sheet(big, lib, "l", "d", sheet_size="A4")                               # it really does not fit A4
+    assert a4["commands"] == [] and a4["errors"]
+    msg = a4["errors"][0]                     # forced to A4: says so, never claims A3 was tried, and splits for A4 sheets
+    assert "nor on A3" not in msg and "(the size asked for)" in msg and "fits on one A3 sheet" in msg
+    assert "needs about" in msg and "1 sheets" not in msg and "cut by parts" in msg
     cells = [(x["section"], draw.part_cell(x, lib[x["ref"]])) for x in big["parts"]]
     sheets, hopeless = draw.suggest_sheets(cells, big["sections"])
     assert len(sheets) >= 2 and hopeless == []
