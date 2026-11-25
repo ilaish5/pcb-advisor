@@ -101,7 +101,9 @@ def sch_stage(project, model):
     sg = model.get("sheet_gaps") or {}
     missing_parts = list(sg.get("parts") or [])
     n_open, n_unl = len(gaps["open"]), len(gaps["unlisted"])
-    opened = n_open + n_unl + len(missing_parts)
+    pads = store.pad_gaps(project)          # footprint pads no net answers for, and netlist pins naming no pad (pin_model.pad_report)
+    n_pad, n_nopad = len(pads["pads"]), len(pads["nopad"])
+    opened = n_open + n_unl + n_pad + n_nopad + len(missing_parts)
     draft = store.draft_parts(project)
     if opened:
         said = []
@@ -109,6 +111,10 @@ def sch_stage(project, model):
             said.append(f"{_plural(n_open, 'open pin')}")
         if n_unl:
             said.append(f"{_plural(n_unl, 'pin')} missing from the netlist")
+        if n_pad:
+            said.append(f"{_plural(n_pad, 'footprint pad')} with no net and no NC")
+        if n_nopad:
+            said.append(f"{_plural(n_nopad, 'netlist pin')} naming a pad the footprint does not have")
         if missing_parts:
             said.append(f"{_plural(len(missing_parts), 'part')} not in the BOM or not approved yet")
         if draft:
@@ -283,6 +289,23 @@ def rules_stage(project):
     return _stage("rules", "clean", "The rule set matches the JLC preset", next_=nxt)
 
 
+def _gate_gaps(project):
+    """Everything a net or an NC mark must still settle, for the gate and the Schematic page: pin_gaps' open and unlisted pins and the
+    footprint pads / netlist pins of pin_model.pad_report. Each pin carries what the page needs to offer the right click: `kind`
+    (shell | thermal | duplicate | pad: the first three are never swept up by "Mark all as NC"), `net` (the net of its same-named
+    twin), `wirable` (the library symbol can carry a net on it)."""
+    gaps, pads, kinds = store.pin_gaps(project), store.pad_gaps(project), store.pad_kinds(project)
+
+    def tag(i):
+        k = kinds.get((i["ref"], i["num"]))
+        if not k:
+            return {**i, "kind": "", "twin_net": "", "suggest_net": "", "wirable": True}
+        suggest = k["net"] or ("GND" if k["kind"] == "shell" and store._net_known(project, "GND") else "")
+        return {**i, "kind": k["kind"], "twin_net": k["net"], "suggest_net": suggest, "wirable": k["wirable"]}
+    return {"open": [tag(i) for i in gaps["open"]], "unlisted": [tag(i) for i in gaps["unlisted"]],
+            "pads": [tag(i) for i in pads["pads"]], "nopad": pads["nopad"]}
+
+
 def outputs_stage(project, model):
     """Blocked exactly when store.manufacturing_block says so: one gate for the button, the dot, the banner and the agent. That is the
     design (store.manufacturing_warning: footprints, open pins, a draft) and the board (store.route_block: unrouted nets, or a board
@@ -298,14 +321,14 @@ def outputs_stage(project, model):
     except Exception:       # noqa: BLE001
         warn = ""
     if why:
-        gaps = store.pin_gaps(project)
-        has_pins = bool(gaps["open"] or gaps["unlisted"])
+        gaps = _gate_gaps(project)
+        has_pins = bool(gaps["open"] or gaps["unlisted"] or gaps["pads"] or gaps["nopad"])
         page = "sch" if has_pins or store.draft_parts(project) else ("checks" if design else "pcb")
         gate = {"blocked": True, "why": why, "page": page}
         if has_pins:
             gate["gaps"] = gaps
             gate["nc_proposal"] = store.nc_proposal(project)
-        st = _stage("outputs", "blocked", why, "bad", len(gaps["open"]) + len(gaps["unlisted"]) or 1, gate=gate,
+        st = _stage("outputs", "blocked", why, "bad", len(gaps["open"]) + len(gaps["unlisted"]) + len(gaps["pads"]) + len(gaps["nopad"]) or 1, gate=gate,
                     next_={"label": "Route the board" if page == "pcb" else "Resolve the blocker", "act": "go:" + page})
         st["pins_warning"] = warn
         return st
@@ -389,8 +412,9 @@ def _model(project, model):
 
 @ext.register("post")
 def _post(handler, path, body):
-    """POST /api/nc/mark {items?: [{sheet, ref, num}]}: mark the open and unlisted pins NC (all of them without items; the UI always
-    sends the exact list it shows). POST /api/nc/approve {items?}: the student's one click on the agent's NC proposal (items = the
+    """POST /api/nc/mark {items?: [{sheet, ref, num}], net?}: mark the open and unlisted pins and the footprint pads NC (all of them without
+    items, except shell / exposed / duplicate pads; the UI always sends the exact list it shows). With items, net sets that net (GND or one
+    the design has) instead of NC: the click that connects a shell pad to GND or a duplicate pad to its twin's net. POST /api/nc/approve {items?}: the student's one click on the agent's NC proposal (items = the
     ones left ticked; none = all). POST /api/nc/dismiss: drop the proposal."""
     if path not in ("/api/nc/mark", "/api/nc/approve", "/api/nc/dismiss"):
         return None
@@ -401,8 +425,11 @@ def _post(handler, path, body):
     if path == "/api/nc/dismiss":
         store.clear_nc_proposal(project)
         return {"ok": True}
+    net = str(body.get("net") or "NC").strip() if isinstance(body, dict) else "NC"
+    if net != "NC" and (path != "/api/nc/mark" or items is None):
+        raise ext.HTTPError(400, "\"net\" other than NC is only for /api/nc/mark with the listed pins")
     try:
-        res = store.approve_nc(project, items) if path == "/api/nc/approve" else store.mark_pins_nc(project, items)
+        res = store.approve_nc(project, items) if path == "/api/nc/approve" else store.mark_pins_nc(project, items, net=net)
     except ValueError as exc:
         raise ext.HTTPError(400, str(exc))
     return {"ok": True, **res}

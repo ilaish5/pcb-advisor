@@ -284,6 +284,214 @@ def _check(project, line):
     return _dec("agree", f"pins match the library model of LCSC {mdl['lcsc']}", **ev)
 
 
+# ---------------------------------------------------------------- the built footprint's pads against the netlist, EVERY part
+# check() above only covers diodes, LEDs and connectors with an EasyEDA model. This one covers every part on a sheet and every
+# library source: the copper that is built is footprints_spec.txt, so its pads are what the netlist has to answer for, in both
+# directions. A symbol generated from the netlist cannot show a pad the netlist never named (E2E 25/11/2026: a USB-C receptacle's
+# second VBUS / GND pads and shell pads, a regulator's tab, a sensor's exposed pad reached the board with no net and nothing said so).
+#
+# EVERY plated, named pad with no net and no NC mark blocks. The kind only chooses the words and the offered fix, never whether it
+# blocks: an unrecognised duplicate pad must still be seen on the next board.
+# Ignored, on purpose: a pad with an EMPTY name and an unplated hole (a mechanical peg or locating hole): neither can carry a net.
+
+RISKY_KINDS = ("shell", "thermal", "duplicate")      # never swept up by "mark all as NC": each is its own decision
+_SHELL_NAME = re.compile(r"(SH|SHELL|SHIELD|SHLD|EH|MH|MP|MNT|MOUNT(ING)?|CASE|CHASSIS|HOUSING)[_ -]?\d*", re.I)
+_THERMAL_NAME = re.compile(r"(EP|EPAD|E[_ -]?PAD|PPAD|DAP|PAD|TAB|(EXPOSED|THERMAL)([_ -]?PAD)?)[_ -]?\d*", re.I)
+_SHELL_PREFIXES = ("J", "P", "CN", "USB", "X")
+_BIG_PAD = 2.5                  # times the median pad area: an exposed pad, a tab or a shell leg
+_PAD_MEMO = {}                  # footprints_spec.txt path -> (size, mtime_ns, {footprint: {pad: {...}}}): asked on every poll
+
+
+def _footprint_pad_table(project):
+    """{footprint: {pad name: {"area", "tht"}}} of the built library: every named pad that can carry a net."""
+    import partlib
+    path = partlib.library_dir(project) / "build" / "footprints_spec.txt"
+    try:
+        st = path.stat()
+    except OSError:
+        return {}
+    hit = _PAD_MEMO.get(str(path))
+    if hit and hit[:2] == (st.st_size, st.st_mtime_ns):
+        return hit[2]
+    table = {}
+    for name, fp in partlib._spec_footprints(path).items():
+        pads = table[name] = {}
+        for ln in fp["lines"]:
+            f = ln.split("|")           # PAD|name|x|y|rot|layer|plated|hole|htype|hw|hrot|w|h|shape|pct
+            if f[0] != "PAD" or len(f) < 2 or not f[1].strip():
+                continue
+            try:
+                plated, hole, area = int(float(f[6])), float(f[7]), float(f[11]) * float(f[12])
+            except (ValueError, IndexError):
+                plated, hole, area = 1, 0.0, 0.0          # unreadable numbers: still a pad that needs a net
+            if not plated and hole:
+                continue
+            pad = pads.setdefault(f[1].strip(), {"area": 0.0, "tht": False})
+            pad["area"] += area
+            pad["tht"] = pad["tht"] or hole > 0
+    _PAD_MEMO[str(path)] = (st.st_size, st.st_mtime_ns, table)
+    return table
+
+
+def _pad_kind(prefix, num, name, pads, netted, twins):
+    """"shell" | "thermal" | "duplicate" | "pad" for an unnetted pad. `netted`: the pad numbers that have a net."""
+    words = [w for w in (name, num) if w]
+    areas = sorted(p["area"] for p in pads.values())
+    median = areas[len(areas) // 2] if len(areas) >= 3 else 0
+    big = median > 0 and pads[num]["area"] >= _BIG_PAD * median
+    if any(_SHELL_NAME.fullmatch(w) for w in words):
+        return "shell"
+    if any(_THERMAL_NAME.fullmatch(w) for w in words):
+        return "thermal"
+    if twins:
+        return "duplicate"
+    if prefix in _SHELL_PREFIXES and (big or (pads[num]["tht"] and any(n in pads and not pads[n]["tht"] for n in netted))):
+        return "shell"
+    return "thermal" if big else "pad"
+
+
+_USB_TWIN_SUM = 13              # USB-C receptacle: A1/B12, A4/B9, A9/B4, A12/B1 are the same GND and VBUS pins on the flipped side
+_USB_TWIN_SAME = (6, 7)         # A6/B6 and A7/B7: D+ and D-
+
+
+def _usb_twin(a, b):
+    """True when two pad names of a connector footprint are the two sides of one USB-C function: the double pads (A4B9 and B4A9) or the
+    single ones (A4 and B9). Only the power, ground and data pins: CC and SBU differ between the sides."""
+    ta, tb = re.findall(r"[AB]\d+", a.upper()), re.findall(r"[AB]\d+", b.upper())
+    if a.upper() == b.upper() or not ta or not tb or "".join(ta) != a.upper() or "".join(tb) != b.upper() or len(ta) != len(tb):
+        return False
+    if len(ta) > 1:             # A4B9 / B4A9: every token with its letter swapped is a token of the other
+        return {("B" if x[0] == "A" else "A") + x[1:] for x in ta} == set(tb)
+    (la, na), (lb, nb) = (ta[0][0], int(ta[0][1:])), (tb[0][0], int(tb[0][1:]))
+    return la != lb and (na + nb == _USB_TWIN_SUM or (na == nb and na in _USB_TWIN_SAME))
+
+
+def pads_against_pins(prefix, pins, pads, symbol):
+    """The pure comparison for one part. pins: [{num, name, net}] as the sheets list them (every sheet together); pads: the
+    footprint's table; symbol: {number: name} of the built symbol. Pad numbers match case-folded and are reported as the footprint
+    spells them; a pin with a name only is matched to the pads through the symbol, and every pin that hit gets `pad` (the footprint's
+    pad names it stands for).
+    -> (unnetted: {pad: {name, kind, net, via}}, nopad: the pins naming no pad). net of an unnetted pad = the one net its same-named
+    pads are on ("" when none or several); via = the pin that lists the pad with no net, or None."""
+    fold = {n.casefold(): n for n in pads}
+    sym = {k.casefold(): v for k, v in symbol.items()}
+    listed, nopad = {}, []
+    for p in pins:
+        nums = [p["num"]] if p["num"] else [n for n, nm in symbol.items() if p["name"] and _norm(nm) == _norm(p["name"])]
+        hit = [fold[n.casefold()] for n in nums if n.casefold() in fold]
+        p["pad"] = hit
+        for n in hit:
+            if p["net"] or n not in listed:
+                listed[n] = p
+        if not hit and not pinnames.is_nc_net(p["net"]):           # NC on a pad that is not there touches no copper
+            nopad.append(p)
+    netted = {n for n, p in listed.items() if _wired(p)}
+    unnetted = {}
+    for num in pads:
+        if num in listed and listed[num]["net"]:
+            continue
+        name = sym.get(num.casefold()) or (listed.get(num) or {}).get("name") or ""
+        name = "" if name.casefold() == num.casefold() else name
+        twins = [n for n in netted if name and not _numeric(name) and _same_name(name, sym.get(n.casefold()) or listed[n]["name"])]
+        if prefix in _SHELL_PREFIXES:           # a generated symbol names no unlisted pad: the footprint's own pad names say who the twin is
+            twins += [n for n in netted if n not in twins and _usb_twin(num, n)]
+        nets = {listed[n]["net"] for n in twins}
+        unnetted[num] = {"name": name, "kind": _pad_kind(prefix, num, name, pads, netted, twins),
+                         "net": nets.pop() if len(nets) == 1 else "", "via": listed.get(num)}
+    return unnetted, nopad
+
+
+def pad_report(project):
+    """Every part on a sheet against its built footprint: {"unnetted": [{sheet, ref, num, name, kind, net, listed, wirable,
+    footprint}], "nopad": [{sheet, ref, num, name, net, footprint, pads}], "matched": [[ref, pad]] of the pads a pin has a net on}. Live: read from the sheets and the built library, so it
+    is current right after a library build and after every netlist change. DNP and do-not-buy lines are skipped, and so is a part
+    whose library was built for another MPN / LCSC (library.build comes first). `listed`: the netlist already has the pin (with no
+    net). `wirable`: the schematic symbol can carry a net on that pad (it has the pin, or it is generated from the netlist and gets
+    it at the next build). `covered`: pin_gaps lists the pad already (open or unlisted), so only its kind is new."""
+    return store.memoised(("pad_report", project), lambda: _pad_report(project))
+
+
+def _pad_report(project):
+    import partlib
+    out = {"unnetted": [], "nopad": [], "matched": []}
+    table = _footprint_pad_table(project)
+    if not table:
+        return out
+    man, spec = store.library_manifest(project), store._built_symbols(project)
+    gaps = store.pin_gaps(project)
+    said = {(g["ref"], g["num"]) for g in gaps["open"] + gaps["unlisted"]}      # pin_gaps already says these: counted once
+    said_named = {(g["ref"], g["name"]) for g in gaps["open"] if not g["num"]}
+    lines = store.bom_lines(project)
+    skip = {r for l in lines if l.get("dnp") or l.get("nobuy") for r in (l.get("refs") or [])}
+    by_ref = {r: l for l in lines for r in (l.get("refs") or [l["key"]])}
+    parts = {}
+    for sh in store.sheet_ids(project):
+        for part in store.load_sheet(project, sh).get("parts", []):
+            ref = part.get("ref")
+            if ref and ref not in skip:
+                got = parts.setdefault(ref, {"sheet": sh, "pins": []})
+                got["pins"] += [{"sheet": sh, "num": store._pin_num(p), "name": str(p.get("name") or "").strip(),
+                                 "net": str(p.get("net") or "").strip()} for p in part.get("pins", [])]
+    for ref, part in parts.items():
+        line = by_ref.get(ref) or {}
+        entry = man.get(line.get("key")) or {}
+        footprint = entry.get("footprint") or ""
+        pads = table.get(footprint)
+        if not pads or any(entry.get(f) and line.get(f) and str(entry[f]).strip().lower() != str(line[f]).strip().lower()
+                           for f in ("mpn", "lcsc")):
+            continue
+        symbol = {str(p["num"]).strip(): str(p["name"]).strip() for p in (spec.get(entry.get("symbol") or "") or {}).get("pins", [])}
+        unnetted, nopad = pads_against_pins(store._prefix_of(ref), part["pins"], pads, symbol)
+        out["matched"] += [[ref, n] for p in part["pins"] if p["net"] for n in p["pad"] if n not in unnetted]   # a pad some pin (by number or by name) has a net on
+        for num, u in unnetted.items():
+            via = u.pop("via")
+            nameless = bool(via) and not via["num"]            # listed by name only: pin_gaps lists that pin, once
+            out["unnetted"].append({"sheet": (via or part)["sheet"], "ref": ref, "num": num, **u, "listed": via is not None,
+                                    "via_name": via["name"] if nameless else "", "footprint": footprint,
+                                    "wirable": num.casefold() in {k.casefold() for k in symbol} or partlib.symbol_from_netlist(entry),
+                                    "covered": (ref, num) in said or (nameless and (ref, via["name"]) in said_named)})
+        out["nopad"] += [{"sheet": p["sheet"], "ref": ref, "num": p["num"], "name": p["name"], "net": p["net"],
+                          "footprint": footprint, "pads": list(pads)} for p in nopad]
+    return out
+
+
+_KIND_WORD = {"shell": "shell / mounting pad: connect it to GND or mark it no-connect",
+              "thermal": "exposed pad or tab: almost certainly needs a net", "duplicate": "same function as a connected pad",
+              "pad": ""}
+
+
+def pad_words(r):
+    """What is wrong with one unnetted pad of pad_report, in words."""
+    why = _KIND_WORD[r["kind"]] + (f" (its twin is on {r['net']})" if r["net"] else "")
+    if not r["wirable"]:
+        why += (", " if why else "") + "the library symbol has no pin for it, so it cannot be wired: pick another LCSC code if it needs a net"
+    return why
+
+
+def pad_text(report, limit=20):
+    """The sentence of the findings, "" when the report is empty."""
+    def cut(rows, say):
+        return "; ".join(say(r) for r in rows[:limit]) + (f"; and {len(rows) - limit} more" if len(rows) > limit else "")
+
+    def unnetted(r):
+        why = pad_words(r)
+        return f"{r['ref']} pad {r['num']}" + (f" ({r['name']})" if r["name"] else "") + (f": {why}" if why else "")
+
+    def missing(r):
+        shown = ", ".join(r["pads"][:12]) + (" ..." if len(r["pads"]) > 12 else "")
+        return (f"{r['ref']} pin {r['num'] or r['name']}" + (f" on net {r['net']}" if r["net"] else "")
+                + f": footprint {r['footprint']} has no such pad (its pads: {shown})")
+
+    said, fresh = [], [r for r in report["unnetted"] if not r.get("covered")]
+    if fresh:
+        n = len(fresh)
+        said.append(f"{n} {'footprint pad has' if n == 1 else 'footprint pads have'} no net and no NC mark: " + cut(fresh, unnetted))
+    if report["nopad"]:
+        n = len(report["nopad"])
+        said.append(f"{n} netlist {'pin names a pad' if n == 1 else 'pins name pads'} that the footprint does not have: " + cut(report["nopad"], missing))
+    return "; ".join(said)
+
+
 # ---------------------------------------------------------------- what the rest of the system reads
 
 def digest(chk):
