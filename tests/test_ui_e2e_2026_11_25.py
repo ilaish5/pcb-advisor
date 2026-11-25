@@ -146,6 +146,24 @@ def test_a_new_card_gets_the_lcsc_code_of_exactly_its_mpn_and_the_change_is_unto
     assert prop.get("lcsc_match") == shown and prop["status"] == "pending" and "lcsc" not in prop["changes"]
 
 
+def test_the_match_reaches_the_browser_state_through_the_real_search_shape(server, empty, monkeypatch, real_lcsc_lookup):    # noqa: F811
+    import jlc
+    import serve
+    monkeypatch.setattr(jlc, "search", lambda *a, **k: [{"mpn": "RC0603FR-0710KL", "code": "C25804", "stock": 5, "price_breaks": []}])
+    monkeypatch.setattr(background, "STOCK_GAP", 0)
+    monkeypatch.setattr(serve, "recheck_async", lambda project, key: None)
+    pid = _new_card(empty, "RC0603FR-0710KL")
+    serve.recheck_missing(empty)                    # the one sweep every proposal source ends in
+    assert background.wait_idle(10)
+    _, state = call(server, "GET", "/api/state", empty)
+    assert next(p for p in state["proposals"] if p["id"] == pid)["lcsc_match"] == "C25804"
+
+
+def test_a_late_answer_for_a_card_that_is_gone_makes_no_row(empty):
+    store.append(empty, "proposals.jsonl", {"id": "p-gone", "ts": store.now_ms(), "lcsc_match": "C1"})
+    assert not [p for p in store.proposals(empty) if p["id"] == "p-gone"]
+
+
 # ---- U9: an approval links the datasheet that is already in Sources, once per click
 def test_approving_a_card_links_a_datasheet_already_in_sources(server, empty, monkeypatch):    # noqa: F811
     seen = []
@@ -202,9 +220,10 @@ def test_u8_the_code_beside_a_card_is_never_another_parts(tmp_path):
 const known = {mpn: 'A', lcsc: 'C1', supply: {LCSC: {code: 'C1'}}};
 const bad = {mpn: 'A', lcsc: 'C9', supply: {LCSC: {code: 'C9', code_mismatch: 'C9 is another part'}}};
 console.log(JSON.stringify([propKnownLcsc({}, known), propKnownLcsc({mpn: 'A'}, known), propKnownLcsc({mpn: 'B'}, known),
-  propKnownLcsc({}, bad), propKnownLcsc({}, {supply: {LCSC: {code: 'C5'}}}), propKnownLcsc({mpn: 'B'}, {})]));
+  propKnownLcsc({}, bad), propKnownLcsc({}, {supply: {LCSC: {code: 'C5'}}}), propKnownLcsc({mpn: 'B'}, {}),
+  propKnownLcsc({}, {supply: {Mouser: {code: '603-RC0603'}}})]));
 """, tmp_path)
-    assert out == ["C1", "C1", "", "", "C5", ""]
+    assert out == ["C1", "C1", "", "", "C5", "", ""]
 
 
 @pytest.mark.parametrize("card_shown", [True, False])
@@ -212,8 +231,9 @@ def test_u11_the_chip_stays_on_the_card_it_finds(tmp_path, card_shown):
     out = _node("""
 const log = [], ACT = {}; const onAct = (n, f) => { ACT[n] = f; };
 let shown = %s;
-const row = {scrollIntoView: () => log.push('scroll'), classList: {add: c => log.push(c), remove() {}}};
-globalThis.document = {querySelector: () => shown ? row : null}; globalThis.CSS = {escape: x => x};
+const row = {scrollIntoView: () => log.push('scroll'), classList: {add: c => log.push(c), remove() {}}, getClientRects: () => [1], closest: () => null};
+const hidden = {getClientRects: () => [], scrollIntoView: () => log.push('hidden')};     // the same card on a view that is not shown
+globalThis.document = {querySelectorAll: () => shown ? [hidden, row] : [hidden]}; globalThis.CSS = {escape: x => x};
 globalThis.setTimeout = f => f();
 const S = {proposals: [{id: 'p1', status: 'pending', line: 'R1', changes: {}}]};
 const lineOfRef = () => null, select = () => log.push('select'), toast = () => log.push('toast');

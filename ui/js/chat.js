@@ -243,9 +243,9 @@ function propTicked(id) {
 /* the line's own code stands beside the proposal only while the MPN stays; a code that names another part (code_mismatch) never does */
 function propKnownLcsc(c, known) {
   if (c.mpn && c.mpn !== known.mpn) return '';
-  const sup = Object.values(known.supply || {}).filter(Boolean);
-  if (sup.some(v => v.code_mismatch)) return '';
-  return known.lcsc || ((sup.find(v => v.code) || {}).code) || '';
+  const s = (known.supply || {}).LCSC || {};          // only LCSC's answer: another supplier's code is its own part number
+  if (s.code_mismatch) return '';
+  return known.lcsc || s.code || '';
 }
 function propRowOf(p, extra) {
   const c = p.changes || {}, f = k => (c[k] === undefined || c[k] === null ? '' : propShow(c[k], k));
@@ -467,7 +467,9 @@ onAct('chat-act-open', async (el, d) => {
   if (!pend && l) { select(l.key); return; }
   if (!pend) { toast(`${ref} is not in the BOM and no proposal for it is waiting`, null, {bad: false}); return; }
   const flash = () => {
-    const row = document.querySelector(`tr[data-pid="${CSS.escape(pend.id)}"]`);
+    // the same card can also be listed on a page that is not shown (a phone shows one at a time): only a row on screen counts, the chat's first
+    const rows = [...document.querySelectorAll(`tr[data-pid="${CSS.escape(pend.id)}"]`)].filter(r => r.getClientRects().length);
+    const row = rows.find(r => r.closest('.chat')) || rows[0];
     if (!row) return false;
     row.scrollIntoView({block: 'center'});
     row.classList.add('flash');

@@ -47,6 +47,21 @@ def altium_host_ok(monkeypatch, request):
     monkeypatch.setattr(bridge, "_host_check", lambda: None)
 
 
+@pytest.fixture(autouse=True)
+def no_lcsc_lookup(monkeypatch, request):
+    """The LCSC lookup of a proposal's card runs in the background queue; left on, it outlives the test that proposed the card.
+    A test that asks for `real_lcsc_lookup` gets the real queueing."""
+    if "real_lcsc_lookup" in request.fixturenames:
+        return
+    import background
+    monkeypatch.setattr(background, "proposal_lcsc_async", lambda *a, **k: None)
+
+
+@pytest.fixture
+def real_lcsc_lookup():
+    return True
+
+
 @pytest.fixture
 def real_host_check():
     return True
