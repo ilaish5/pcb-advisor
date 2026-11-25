@@ -31,6 +31,7 @@ import board_layers  # noqa: E402
 import diagram_route  # noqa: E402
 import pinnames  # noqa: E402
 import project_guard  # noqa: E402
+import role_refs  # noqa: E402
 import workspace  # noqa: E402
 
 ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -462,6 +463,9 @@ def _bom(project, write):
             l["code"] = lcsc_sup["code"]
         if lcsc_sup.get("datasheet_url") and not l.get("datasheet_url"):
             l["datasheet_url"] = lcsc_sup["datasheet_url"]
+    short = role_findings(lines)
+    for l in lines:
+        l["role_finding"] = short.get(l["key"], "")
     if write:
         # only a real change is written: the page reads the state (and so this) on every view, which must not touch the file
         p = pdir(project) / "bom.json"
@@ -478,6 +482,19 @@ def _bom(project, write):
 
 def qty(line):
     return 0 if (line.get("dnp") or line.get("nobuy")) else len(line.get("refs", []))
+
+
+def role_findings(lines, waiting=()):
+    """{line key: finding} where a line holds fewer parts than its role names (role_refs). With `waiting` (pending BOM
+    proposals) each of those is judged as the BOM would read with all of them approved, and the keys are their ids."""
+    state = {l["key"]: {"key": l["key"], "role": l.get("role"), "refs": l.get("refs")} for l in lines}
+    waiting = [p for p in waiting if not delete_spec(p)]
+    for p in waiting:
+        row = state.setdefault(p["line"], {"key": p["line"], "role": "", "refs": []})
+        row.update({k: v for k, v in (p.get("changes") or {}).items() if k in ("role", "refs")})
+    rows = list(state.values())
+    judged = [(p["id"], state[p["line"]]) for p in waiting] if waiting else [(r["key"], r) for r in rows]
+    return {k: f for k, row in judged for f in [role_refs.finding(row, rows)] if f}
 
 
 def best_offer(line, supply=None):
@@ -561,6 +578,13 @@ def proposals(project):
                 r["note"] = f"now {now_a:g} A; this sets {r['changes']['current_a']:g} A" if now_a is not None and r["changes"].get("current_a") is not None \
                     else f"changed since it was proposed: now {'no current' if now_a is None else format(now_a, 'g') + ' A'}"
             r["before"] = {"current_a": now_a}
+    waiting = [r for r in rows.values()
+               if (r.get("kind") or "bom") == "bom" and r.get("status") == "pending" and r.get("line") and not delete_spec(r)]
+    if waiting:                         # the card says when the line would hold fewer parts than its role names
+        short = role_findings(bom_lines(project), waiting)
+        for r in waiting:
+            if r["id"] in short:
+                r["role_finding"] = short[r["id"]]
     return list(rows.values())
 
 
@@ -2182,13 +2206,52 @@ def sync_layers_from_idea(project, idea):
         return None
 
 
-def propose_idea(project, topic, text, by="agent"):
+def _plain_requirement(text):
+    """A requirement's text for comparing: case, spaces, the "(assumed)" mark and closing punctuation do not count."""
+    s = re.sub(r"\(assumed\)", " ", str(text or ""), flags=re.I).casefold()
+    return re.sub(r"\s+([.,;:])", r"\1", " ".join(s.split())).strip(" .;,")
+
+
+def _extends(new, old):
+    """True when `new` still says all of `old`: the old text stands in it as whole clauses ("old, plus more"), not as
+    words inside another sentence ("no <old>" is the opposite of old)."""
+    new, old = _plain_requirement(new), _plain_requirement(old)
+    return bool(old) and re.search(r"(?:^|[.;]\s+)" + re.escape(old) + r"(?=$|[;,+]|\.(?:\s|$)|\s[(+])", new) is not None
+
+
+def propose_idea(project, topic, text, by="agent", replace=False):
     """A requirement, written into the live draft at once (the student's Save is the gate). 'proposed' only
-    survives in projects made before the draft existed; Accept all / Dismiss all clear those."""
+    survives in projects made before the draft existed; Accept all / Dismiss all clear those.
+
+    The agent never loses a requirement: under a topic that exists it changes that row only when the new text still
+    says all of the old one, or with `replace` (the student asked for the change); else the new text gets a row of its
+    own, "<topic> (2)", right after the topic's rows. A text a row of the topic already says changes nothing."""
     topic, text = validate_idea_item(topic, text)
     idea = load_idea_working(project)
-    item = next((i for i in idea["agreed"] if i["topic"] == topic), None)
+    items = idea["agreed"]
+    item = next((i for i in items if i["topic"] == topic), None)
     status = "confirmed"
+    if by == "agent" and item and not replace:
+        base = re.sub(r" \(\d+\)$", "", topic)
+        row = re.compile(re.escape(base) + r"(?: \(\d+\))?")
+        family = [i for i in items if row.fullmatch(str(i.get("topic") or ""))]
+        same = next((i for i in family if _plain_requirement(i.get("text")) == _plain_requirement(text)), None)
+        grown = next((i for i in family if _extends(text, i.get("text"))), None)
+        if same:
+            # only dropping the "(assumed)" mark is a change worth writing
+            if "(assumed)" in text.casefold() or "(assumed)" not in str(same.get("text")).casefold():
+                return idea
+            item, topic = same, same["topic"]
+        elif grown:
+            item, topic = grown, grown["topic"]
+        elif item.get("text"):
+            taken = {i.get("topic") for i in items}
+            n = 2
+            while (new_topic := f"{base[:60 - len(f' ({n})')].rstrip()} ({n})") in taken:
+                n += 1
+            items.insert(items.index(family[-1]) + 1,
+                         {"topic": new_topic, "text": text, "by": by, "status": status, "ts": now_ms()})
+            return save_idea_draft(project, idea)
     if item:
         if by == "agent" and item.get("text") and item["text"] != text:
             item["prev_text"] = item["text"]

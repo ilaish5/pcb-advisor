@@ -90,7 +90,7 @@ def test_the_agents_requirements_go_straight_into_the_draft(empty):
     assert store.load_idea(empty)["agreed"] == [], "the saved idea waits for Save"
     assert store.idea_draft_info(empty)["marks"]["items"] == {"Power": "new"}
     store.save_idea_from_draft(empty)
-    store.propose_idea(empty, "Power", "2x AA", by="agent")
+    store.propose_idea(empty, "Power", "2x AA", by="agent", replace=True)
     assert store.idea_draft_info(empty)["marks"]["items"] == {"Power": "changed"}
 
 

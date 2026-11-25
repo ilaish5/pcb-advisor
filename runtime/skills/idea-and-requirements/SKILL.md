@@ -14,7 +14,7 @@ description: Turns a rough project idea into a first draft plus the few requirem
 ## Steps
 1. Read the idea and notes of the current project (`idea.json`, `notes.md`; paths are in the WORKSPACE section). Do not re-ask what is written.
 2. Draft first, then ask. On the first message about a new board write a full first draft AT ONCE, in one turn: the
-   description (`idea.describe`), the block diagram (`idea.diagram.edit`), and one `idea.propose` per requirement. Mark
+   description (`idea.describe`), the block diagram (`idea.diagram.edit`), and one `idea.propose` per requirement, each under its own topic. Mark
    every guess "(assumed)" in the requirement text. The edits land in a live draft the student sees and can Save or Revert,
    so a wrong guess costs one click. Never open with a questionnaire.
    `{"type": "idea.describe", "text": "..."}` is the board in plain words (what it is, what it is for, the diagram as text).

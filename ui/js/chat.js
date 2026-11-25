@@ -192,7 +192,8 @@ function diffHTML(p) {
   if (p.clears_offset) rows.push(`<div class="row"><span class="k">${esc(propLabel('cpl_rotation'))}</span> <span class="t">${esc(propShow(p.clears_offset, 'cpl_rotation'))} will be cleared (the part changes)</span></div>`);
   if (p.library) rows.push(`<div class="row"><span class="k">Library</span> <span class="t">Model from ${esc(p.library.model_source || 'the agent')}, needs your check</span></div>`);
   const title = p.new ? 'add a new line' : keys.length ? 'change the ' + what : 'change';
-  return `<div class="prop" data-pid="${pid}"><h4>${refBtn}: ${esc(title)}</h4><div class="chg">${rows.join('')}</div>${why}${srcs}${acts()}</div>`;
+  const short = p.role_finding ? `<p class="why" dir="auto">${tag('Check qty', 'warn')} ${esc(p.role_finding)}</p>` : '';
+  return `<div class="prop" data-pid="${pid}"><h4>${refBtn}: ${esc(title)}</h4><div class="chg">${rows.join('')}</div>${short}${why}${srcs}${acts()}</div>`;
 }
 
 /* A delete card: what goes (the line, its part, its refs). Approve is always the student's click (store: critical). */
@@ -246,7 +247,7 @@ function propRowOf(p, extra) {
   if (del) return {id: p.id, ref: del.refs[0] || p.line, role: propDeleteText(p, del), reason: p.reason, checked: propTicked(p.id), ...extra};
   const ref = (Array.isArray(c.refs) && c.refs[0]) || ((lineByKey(p.line) || {}).refs || [p.line])[0];
   return {id: p.id, ref, isNew: !!p.new, mpn: f('mpn'), manufacturer: f('manufacturer'), package: f('package'), lcsc: f('lcsc'), value: f('value'),
-    role: f('role'), reason: p.reason, unverified: propIsUnverified(p), checked: propTicked(p.id), ...extra};
+    role: f('role'), reason: p.reason, short: p.role_finding, unverified: propIsUnverified(p), checked: propTicked(p.id), ...extra};
 }
 /* pending list: one row per proposal, with its tick */
 function propListHTML(ps, cls) { return proposalTable(ps.map(p => propRowOf(p)), {cls}); }

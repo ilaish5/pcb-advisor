@@ -1145,6 +1145,24 @@ def bom_value_warning(project, a):
     return f' (warning: {a["line"]} has no value such as "5.1k" or "100nF"; the student sees only the MPN)'
 
 
+def _warnings_suffix(value_warning, role_finding):
+    """One ' (warning: ...)' for a bom.propose line from its value warning and its role finding."""
+    texts = [t for t in (value_warning.removeprefix(" (warning: ").removesuffix(")"), role_finding) if t]
+    if not texts:
+        return ""
+    return f" ({'warnings' if len(texts) > 1 else 'warning'}: {'; '.join(texts)})"
+
+
+def idea_kept_note(idea, a):
+    """' (added as "Power (2)"; "Power" is unchanged)' when an idea.propose did not touch the row of its topic."""
+    topic, text = str(a.get("topic")).strip(), str(a.get("text")).strip()
+    rows = {i.get("topic"): i.get("text") for i in (idea or {}).get("agreed", [])}
+    if topic not in rows or rows[topic] == text:
+        return ""
+    other = next((t for t, x in rows.items() if x == text and t != topic), "")
+    return f' (added as "{other}"; "{topic}" is unchanged)' if other else f' ("{topic}" is unchanged)'
+
+
 def _renumber_by_name(part, symbol, why=None):
     """Rewrite the netlist pin numbers of a part from the symbol when every pin NAME matches the symbol's pins (case-insensitive:
     by the exact name, else by another spelling of it (RESET for RST, ~RST, and on a two-pin part K for "-"), see pinnames.py).
@@ -1973,8 +1991,10 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
             on_step(STEP_LABELS[kind])
         try:
             if kind == "idea.propose" and a.get("topic") and a.get("text"):
-                store.propose_idea(project, a["topic"], a["text"], by="agent")
-                applied.append(f"idea.propose:{a['topic']}")
+                # an existing requirement is replaced only when the student asked, quoted from what they just wrote
+                replace = _truthy(a.get("replace")) and _quote_holds(a.get("student_said"), last_user)
+                idea = store.propose_idea(project, a["topic"], a["text"], by="agent", replace=replace)
+                applied.append(f"idea.propose:{a['topic']}" + idea_kept_note(idea, a))
             elif kind == "idea.describe" and isinstance(a.get("text"), str):
                 store.set_idea_goal(project, a["text"], by="agent")
                 applied.append("idea.describe")
@@ -1998,8 +2018,10 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                                         a.get("sources", []), _agent_may_set_library(a.get("library")) or None,
                                         sess, new=bool(a.get("new")), reserved=reserved)
                 proposals.append(rec["id"])
-                applied.append(f"bom.propose:{a['line']}" + bom_value_warning(project, a))
-                maybe_auto(rec)
+                short = next((p.get("role_finding") for p in store.proposals(project) if p["id"] == rec["id"]), "")
+                applied.append(f"bom.propose:{a['line']}" + _warnings_suffix(bom_value_warning(project, a), short))
+                if not short:                   # fewer parts than the role names: it waits for the student, never applied unasked
+                    maybe_auto(rec)
             elif kind == "bom.delete" and a.get("line"):      # = bom.propose with changes.deleted / remove: always the student's click
                 rec = store.propose_bom_delete(project, a["line"], a.get("refs") or None, a.get("reason", ""), a.get("sources", []), sess)
                 proposals.append(rec["id"])
