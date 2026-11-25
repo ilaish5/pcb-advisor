@@ -298,7 +298,10 @@ def _gate_gaps(project):
 
     def tag(i):
         k = kinds.get((i["ref"], i["num"]))
-        return {**i, "kind": k["kind"], "twin_net": k["net"], "wirable": k["wirable"]} if k else {**i, "kind": "", "twin_net": "", "wirable": True}
+        if not k:
+            return {**i, "kind": "", "twin_net": "", "suggest_net": "", "wirable": True}
+        suggest = k["net"] or ("GND" if k["kind"] == "shell" and store._net_known(project, "GND") else "")
+        return {**i, "kind": k["kind"], "twin_net": k["net"], "suggest_net": suggest, "wirable": k["wirable"]}
     return {"open": [tag(i) for i in gaps["open"]], "unlisted": [tag(i) for i in gaps["unlisted"]],
             "pads": [tag(i) for i in pads["pads"]], "nopad": pads["nopad"]}
 

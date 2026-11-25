@@ -26,8 +26,8 @@ function outGapItems(g) {
   return [...(gaps.open || []).map(i => ({...i, gap: 'open'})), ...(gaps.unlisted || []).map(i => ({...i, gap: 'unlisted'})),
     ...(gaps.pads || []).map(i => ({...i, gap: 'pad'})), ...(gaps.nopad || []).map(i => ({...i, gap: 'nopad'}))];
 }
-// the pins one click may mark NC: not a pin naming no pad (nothing to mark), not a pad only the footprint has, not a shell / exposed / duplicate pad (each is its own decision)
-const outBulkItems = g => outGapItems(g).filter(i => i.gap !== 'nopad' && i.gap !== 'pad' && !OUT_RISKY.includes(i.kind));
+// the pins one click may mark NC: not a pin naming no pad (nothing to mark), not a shell / exposed / duplicate pad (each is its own decision)
+const outBulkItems = g => outGapItems(g).filter(i => i.gap !== 'nopad' && !OUT_RISKY.includes(i.kind));
 const OUT_KIND = {
   shell: 'is a shell / mounting pad: connect it to GND or mark it no-connect',
   thermal: 'is an exposed pad or a tab: it almost certainly needs a net',
@@ -41,7 +41,7 @@ function outGapRow(i) {
     return `<li>${pin}${i.net ? ` on net ${esc(i.net)}` : ''} is in the netlist, but footprint ${esc(i.footprint)} has no such pad (its pads: ${esc(shown)}) ${ask}</li>`;
   }
   const what = OUT_KIND[i.kind] || (i.gap === 'open' ? 'has no net and is not marked NC' : i.gap === 'unlisted' ? 'is in the library symbol but missing from the netlist' : 'is on the footprint but in no net');
-  const net = i.twin_net || (i.kind === 'shell' ? 'GND' : '');
+  const net = i.suggest_net || '';
   const conn = net && i.wirable !== false ? btn(`Connect to ${net}`, {kind: 'link', size: 'sm', act: 'net-set-one', sh: i.sheet, ref: i.ref, num: i.num, net, title: `Puts ${i.ref} pad ${i.num || i.name} on ${net}`}) + ' ' : '';
   const why = i.wirable === false ? ' The library symbol has no pin for it, so it cannot be wired: pick another LCSC code if it needs a net.' : '';
   return `<li>${pin} ${what}.${why} ${conn}` +

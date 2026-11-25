@@ -350,15 +350,36 @@ def _pad_kind(prefix, num, name, pads, netted, twins):
     return "thermal" if big else "pad"
 
 
+_USB_TWIN_SUM = 13              # USB-C receptacle: A1/B12, A4/B9, A9/B4, A12/B1 are the same GND and VBUS pins on the flipped side
+_USB_TWIN_SAME = (6, 7)         # A6/B6 and A7/B7: D+ and D-
+
+
+def _usb_twin(a, b):
+    """True when two pad names of a connector footprint are the two sides of one USB-C function: the double pads (A4B9 and B4A9) or the
+    single ones (A4 and B9). Only the power, ground and data pins: CC and SBU differ between the sides."""
+    ta, tb = re.findall(r"[AB]\d+", a.upper()), re.findall(r"[AB]\d+", b.upper())
+    if a.upper() == b.upper() or not ta or not tb or "".join(ta) != a.upper() or "".join(tb) != b.upper() or len(ta) != len(tb):
+        return False
+    if len(ta) > 1:             # A4B9 / B4A9: every token with its letter swapped is a token of the other
+        return {("B" if x[0] == "A" else "A") + x[1:] for x in ta} == set(tb)
+    (la, na), (lb, nb) = (ta[0][0], int(ta[0][1:])), (tb[0][0], int(tb[0][1:]))
+    return la != lb and (na + nb == _USB_TWIN_SUM or (na == nb and na in _USB_TWIN_SAME))
+
+
 def pads_against_pins(prefix, pins, pads, symbol):
     """The pure comparison for one part. pins: [{num, name, net}] as the sheets list them (every sheet together); pads: the
-    footprint's table; symbol: {number: name} of the built symbol.
-    -> (unnetted: {pad: {name, kind, net}}, nopad: the pins naming no pad). net of an unnetted pad = the one net its same-named
-    pads are on ("" when none or several)."""
+    footprint's table; symbol: {number: name} of the built symbol. Pad numbers match case-folded and are reported as the footprint
+    spells them; a pin with a name only is matched to the pads through the symbol, and every pin that hit gets `pad` (the footprint's
+    pad names it stands for).
+    -> (unnetted: {pad: {name, kind, net, via}}, nopad: the pins naming no pad). net of an unnetted pad = the one net its same-named
+    pads are on ("" when none or several); via = the pin that lists the pad with no net, or None."""
+    fold = {n.casefold(): n for n in pads}
+    sym = {k.casefold(): v for k, v in symbol.items()}
     listed, nopad = {}, []
     for p in pins:
         nums = [p["num"]] if p["num"] else [n for n, nm in symbol.items() if p["name"] and _norm(nm) == _norm(p["name"])]
-        hit = [n for n in nums if n in pads]
+        hit = [fold[n.casefold()] for n in nums if n.casefold() in fold]
+        p["pad"] = hit
         for n in hit:
             if p["net"] or n not in listed:
                 listed[n] = p
@@ -369,18 +390,20 @@ def pads_against_pins(prefix, pins, pads, symbol):
     for num in pads:
         if num in listed and listed[num]["net"]:
             continue
-        name = symbol.get(num) or (listed.get(num) or {}).get("name") or ""
-        name = "" if name == num else name
-        twins = [n for n in netted if name and not _numeric(name) and _same_name(name, symbol.get(n) or listed[n]["name"])]
+        name = sym.get(num.casefold()) or (listed.get(num) or {}).get("name") or ""
+        name = "" if name.casefold() == num.casefold() else name
+        twins = [n for n in netted if name and not _numeric(name) and _same_name(name, sym.get(n.casefold()) or listed[n]["name"])]
+        if prefix in _SHELL_PREFIXES:           # a generated symbol names no unlisted pad: the footprint's own pad names say who the twin is
+            twins += [n for n in netted if n not in twins and _usb_twin(num, n)]
         nets = {listed[n]["net"] for n in twins}
         unnetted[num] = {"name": name, "kind": _pad_kind(prefix, num, name, pads, netted, twins),
-                         "net": nets.pop() if len(nets) == 1 else ""}
+                         "net": nets.pop() if len(nets) == 1 else "", "via": listed.get(num)}
     return unnetted, nopad
 
 
 def pad_report(project):
     """Every part on a sheet against its built footprint: {"unnetted": [{sheet, ref, num, name, kind, net, listed, wirable,
-    footprint}], "nopad": [{sheet, ref, num, name, net, footprint, pads}]}. Live: read from the sheets and the built library, so it
+    footprint}], "nopad": [{sheet, ref, num, name, net, footprint, pads}], "matched": [[ref, pad]] of the pads a pin has a net on}. Live: read from the sheets and the built library, so it
     is current right after a library build and after every netlist change. DNP and do-not-buy lines are skipped, and so is a part
     whose library was built for another MPN / LCSC (library.build comes first). `listed`: the netlist already has the pin (with no
     net). `wirable`: the schematic symbol can carry a net on that pad (it has the pin, or it is generated from the netlist and gets
@@ -390,13 +413,14 @@ def pad_report(project):
 
 def _pad_report(project):
     import partlib
-    out = {"unnetted": [], "nopad": []}
+    out = {"unnetted": [], "nopad": [], "matched": []}
     table = _footprint_pad_table(project)
     if not table:
         return out
     man, spec = store.library_manifest(project), store._built_symbols(project)
     gaps = store.pin_gaps(project)
     said = {(g["ref"], g["num"]) for g in gaps["open"] + gaps["unlisted"]}      # pin_gaps already says these: counted once
+    said_named = {(g["ref"], g["name"]) for g in gaps["open"] if not g["num"]}
     lines = store.bom_lines(project)
     skip = {r for l in lines if l.get("dnp") or l.get("nobuy") for r in (l.get("refs") or [])}
     by_ref = {r: l for l in lines for r in (l.get("refs") or [l["key"]])}
@@ -418,11 +442,14 @@ def _pad_report(project):
             continue
         symbol = {str(p["num"]).strip(): str(p["name"]).strip() for p in (spec.get(entry.get("symbol") or "") or {}).get("pins", [])}
         unnetted, nopad = pads_against_pins(store._prefix_of(ref), part["pins"], pads, symbol)
+        out["matched"] += [[ref, n] for p in part["pins"] if p["net"] for n in p["pad"] if n not in unnetted]   # a pad some pin (by number or by name) has a net on
         for num, u in unnetted.items():
-            on = next((p["sheet"] for p in part["pins"] if p["num"] == num), None)
-            out["unnetted"].append({"sheet": on or part["sheet"], "ref": ref, "num": num, **u, "listed": on is not None,
-                                    "footprint": footprint, "wirable": num in symbol or partlib.symbol_from_netlist(entry),
-                                    "covered": (ref, num) in said})
+            via = u.pop("via")
+            nameless = bool(via) and not via["num"]            # listed by name only: pin_gaps lists that pin, once
+            out["unnetted"].append({"sheet": (via or part)["sheet"], "ref": ref, "num": num, **u, "listed": via is not None,
+                                    "via_name": via["name"] if nameless else "", "footprint": footprint,
+                                    "wirable": num.casefold() in {k.casefold() for k in symbol} or partlib.symbol_from_netlist(entry),
+                                    "covered": (ref, num) in said or (nameless and (ref, via["name"]) in said_named)})
         out["nopad"] += [{"sheet": p["sheet"], "ref": ref, "num": p["num"], "name": p["name"], "net": p["net"],
                           "footprint": footprint, "pads": list(pads)} for p in nopad]
     return out

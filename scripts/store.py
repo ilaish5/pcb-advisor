@@ -3623,6 +3623,7 @@ def _gap_todo(project):
 
 
 def _net_known(project, net):
+    """True when a pin of some sheet is on `net` (GND too: a design without a ground net has nothing to connect a pad to)."""
     return any(p.get("net") == net for sh in sheet_ids(project) for part in load_sheet(project, sh).get("parts", []) for p in part.get("pins", []))
 
 
@@ -3634,14 +3635,19 @@ def mark_pins_nc(project, items=None, net="NC"):
     Returns {"marked": n, "sheets": [...]}. Nothing else in a sheet changes."""
     import pin_model
     todo = _gap_todo(project)
-    if net != "NC" and (items is None or not (net == "GND" or _net_known(project, net))):
-        raise ValueError("a net other than NC needs the pins listed and a net the design has (or GND)")
+    if net != "NC" and (items is None or not _net_known(project, net)):
+        raise ValueError(f"a net other than NC needs the pins listed and a net the design has ({net!r} is on no pin of any sheet)")
+    kinds = pad_kinds(project)
+    have = {tuple(m) for m in pin_model.pad_report(project)["matched"]}
+    todo = [(k, i) for k, i in todo if k == "open" or (i["ref"], i["num"]) not in have]     # a pin listed by name only already has the pad
     if items is not None:
         want = {(str(i.get("sheet")), str(i.get("ref")), str(i.get("num"))) for i in items}
         todo = [(k, i) for k, i in todo if (str(i["sheet"]), str(i["ref"]), str(i["num"])) in want]
-    else:
-        kinds = pad_kinds(project)      # a pad only the footprint has is never swept up either: nothing says what it is (an unnamed second VBUS)
-        todo = [(k, i) for k, i in todo if k != "pad" and (kinds.get((i["ref"], i["num"])) or {}).get("kind") not in pin_model.RISKY_KINDS]
+        stuck = [i for _, i in todo if net != "NC" and (kinds.get((i["ref"], i["num"])) or {}).get("wirable") is False]
+        if stuck:       # the library symbol has no pin for it: the draw would refuse the net, so it is refused here
+            raise ValueError(f"{stuck[0]['ref']} pad {stuck[0]['num']} cannot be put on {net}: the library symbol has no pin for it (pick another LCSC code, or mark it NC)")
+    else:               # a shell, exposed or duplicate pad is its own decision; a plain footprint-only pad of a generated symbol is not
+        todo = [(k, i) for k, i in todo if (kinds.get((i["ref"], i["num"])) or {}).get("kind") not in pin_model.RISKY_KINDS]
     by_sheet = {}
     for kind, i in todo:
         by_sheet.setdefault(i["sheet"], []).append((kind, i))
@@ -3653,6 +3659,12 @@ def mark_pins_nc(project, items=None, net="NC"):
             if part is None:
                 continue
             pin = next((p for p in part.get("pins", []) if _pin_num(p) == i["num"] and not (p.get("net") or "").strip()), None)
+            via = (kinds.get((i["ref"], i["num"])) or {}).get("via_name")
+            if pin is None and kind != "open" and via:       # listed by name only: that pin takes the pad number, no second pin is added
+                pin = next((p for p in part.get("pins", []) if not _pin_num(p) and str(p.get("name") or "").strip() == via
+                            and not (p.get("net") or "").strip()), None)
+                if pin is not None:
+                    pin["num"] = i["num"]
             if pin is not None:
                 pin["net"] = net
             elif kind == "open":

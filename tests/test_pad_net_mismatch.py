@@ -40,6 +40,10 @@ def _sheet(empty, parts):
         {"ref": ref, "section": "A", "pins": [{"num": n, "name": nm, "net": net} for n, nm, net in pins]} for ref, pins in parts.items()]})
 
 
+def _clean(rep):
+    return not rep["unnetted"] and not rep["nopad"]
+
+
 def _pads(rep):
     return {(r["ref"], r["num"]): r for r in rep["unnetted"]}
 
@@ -144,7 +148,7 @@ def test_an_empty_name_pad_and_an_unplated_hole_are_ignored(empty):
     pads = [_pad("1"), _pad("2"), _pad("", tht=True), _pad("MH1", tht=True, plated=False)]
     _sheet(empty, {"U3": [("1", "A", "X"), ("2", "B", "Y")]})
     _library(empty, {"U3": ("SYM_U3", "FP3", pads, [("1", "A"), ("2", "B")], "generated")})
-    assert pin_model.pad_report(empty) == {"unnetted": [], "nopad": []}
+    assert _clean(pin_model.pad_report(empty))
 
 
 def test_nc_on_a_pad_the_footprint_lacks_touches_no_copper_but_a_wired_one_blocks(empty):
@@ -159,7 +163,7 @@ def test_a_part_with_pins_by_name_only_is_matched_to_the_symbol_not_flooded(empt
     _add(empty, "U4", "ABCD1234")
     _sheet(empty, {"U4": [("", "VCC", "+3V3"), ("", "GND", "GND")]})
     _library(empty, {"U4": ("SYM_U4", "FP4", [_pad("1"), _pad("2")], [("1", "VCC"), ("2", "GND")], "easyeda")})
-    assert pin_model.pad_report(empty) == {"unnetted": [], "nopad": []}
+    assert _clean(pin_model.pad_report(empty))
 
 
 def test_dnp_lines_and_a_library_built_for_another_mpn_are_skipped(empty):
@@ -238,3 +242,82 @@ def test_the_page_offers_connect_buttons_and_leaves_the_risky_pads_out_of_mark_a
     src = (REPO / "ui" / "js" / "views" / "outputs.js").read_text(encoding="utf-8")
     assert "OUT_RISKY" in src and "outBulkItems" in src and "'net-set-one'" in src and "Connect to " in src
     assert "i.gap !== 'nopad'" in src and "(gaps.pads || [])" in src and "(gaps.nopad || [])" in src
+
+
+# ---- review fixes: mixed mark-all, case, name-only pins, non-wirable pads, GND, USB twins
+
+def test_mark_all_takes_open_pins_and_plain_footprint_pads_but_not_shell_exposed_or_duplicate_pads(empty):
+    _usbc(empty)
+    _add(empty, "U5", "ABCD1234")
+    sheet = store.load_sheet(empty, "01")
+    sheet["parts"].append({"ref": "U5", "section": "A", "pins": [{"num": "1", "name": "A", "net": "X"}, {"num": "2", "name": "B", "net": ""}]})
+    store.write_sheet(empty, "01", sheet)
+    lib = json.loads((store.pdir(empty) / "library" / "manifest.json").read_text())
+    lib["U5"] = {"symbol": "SYM_U5", "footprint": "FP5", "source": "generated", "symbol_from": "netlist"}
+    (store.pdir(empty) / "library" / "manifest.json").write_text(json.dumps(lib))
+    build = store.pdir(empty) / "library" / "build"
+    with open(build / "symbols_spec.txt", "a", encoding="cp1252") as f:
+        f.write("SYMBOL|SYM_U5\nPIN|1|A|eElectricPassive|0|0|0|0|10\nPIN|2|B|eElectricPassive|0|0|0|0|10\n")
+    with open(build / "footprints_spec.txt", "a", encoding="cp1252") as f:
+        f.write("\n".join(["FOOTPRINT|FP5|x", _pad("1"), _pad("2"), _pad("3"), _pad("4", 300, 300)]) + "\n")
+    kinds = {(r["ref"], r["num"]): r["kind"] for r in pin_model.pad_report(empty)["unnetted"]}
+    assert kinds["U5", "3"] == "pad" and kinds["U5", "4"] == "thermal" and kinds["J1", "B4A9"] == "duplicate" and kinds["J1", "1"] == "shell"
+    assert store.mark_pins_nc(empty)["marked"] == 2                                    # U5 pin 2 (open) and U5 pad 3
+    nets = {p["num"]: p["net"] for p in store.load_sheet(empty, "01")["parts"][1]["pins"]}
+    assert nets == {"1": "X", "2": "NC", "3": "NC"}
+    left = {(r["ref"], r["num"]) for r in pin_model.pad_report(empty)["unnetted"]}
+    assert ("U5", "4") in left and ("J1", "B4A9") in left and ("J1", "1") in left and ("U5", "3") not in left
+    st = stages._gate_gaps(empty)
+    assert all(i["kind"] != "pad" for i in st["pads"]) and next(i for i in st["pads"] if i["num"] == "B4A9")["suggest_net"] == "VBUS"
+
+
+def test_pad_numbers_match_case_folded_and_are_reported_as_the_footprint_spells_them(empty):
+    _add(empty, "U6", "ABCD1234")
+    _sheet(empty, {"U6": [("1", "VCC", "+3V3"), ("ep", "GND", "GND")]})
+    _library(empty, {"U6": ("SYM_U6", "FP6", [_pad("1"), _pad("EP", 200, 200)], [("1", "VCC"), ("EP", "GND")], "easyeda")})
+    assert _clean(pin_model.pad_report(empty))
+    _sheet(empty, {"U6": [("1", "VCC", "+3V3"), ("ep", "GND", "")]})
+    row = pin_model.pad_report(empty)["unnetted"][0]
+    assert row["num"] == "EP" and pin_model.pad_report(empty)["nopad"] == []
+
+
+def test_a_pin_listed_by_name_only_is_one_finding_and_marking_it_adds_no_second_pin(empty):
+    _add(empty, "U4", "ABCD1234")
+    _sheet(empty, {"U4": [("", "VCC", "+3V3"), ("", "GND", "")]})
+    _library(empty, {"U4": ("SYM_U4", "FP4", [_pad("1"), _pad("2")], [("1", "VCC"), ("2", "GND")], "easyeda")})
+    rep = pin_model.pad_report(empty)
+    assert [(r["num"], r["covered"], r["via_name"]) for r in rep["unnetted"]] == [("2", True, "GND")]
+    assert [g["num"] for g in store.pin_gaps(empty)["unlisted"]] == ["1", "2"] and store.pad_gaps(empty)["pads"] == []   # pin_gaps counts by number
+    assert store.mark_pins_nc(empty)["marked"] == 1                                    # pad 1 has VCC's net by name: only pad 2 takes the mark
+    pins = store.load_sheet(empty, "01")["parts"][0]["pins"]
+    assert len(pins) == 2 and pins[1]["net"] == "NC" and not pin_model.pad_report(empty)["unnetted"]
+    # a name-only pin whose pad pin_gaps does not list (a second pad of the same function): marking sets that pin's number, adds none
+    _sheet(empty, {"U4": [("", "VCC", "+3V3"), ("", "GND", "")]})
+    store.write_sheet(empty, "01", {**store.load_sheet(empty, "01"), "parts": [
+        {"ref": "U4", "section": "A", "pins": [{"num": "", "name": "VCC", "net": "+3V3"}, {"num": "2", "name": "GND", "net": ""}]}]})
+    assert [r["num"] for r in pin_model.pad_report(empty)["unnetted"]] == ["2"]
+
+
+def test_a_net_is_refused_for_a_pad_the_symbol_cannot_carry_and_gnd_needs_a_gnd_net(empty, server):
+    _add(empty, "U3", "ABCD1234")
+    _sheet(empty, {"U3": [("1", "A", "X"), ("2", "B", "Y")]})
+    _library(empty, {"U3": ("SYM_U3", "FP3", [_pad("1"), _pad("2"), _pad("3", 200, 100)], [("1", "A"), ("2", "B")], "easyeda")})
+    item = {"sheet": "01", "ref": "U3", "num": "3"}
+    code, body = call(server, "POST", "/api/nc/mark", empty, {"items": [item], "net": "X"})
+    assert code == 400 and "no pin for it" in body["error"]
+    code, body = call(server, "POST", "/api/nc/mark", empty, {"items": [item], "net": "GND"})
+    assert code == 400 and "GND" in body["error"]                                         # the design has no GND net
+    assert call(server, "POST", "/api/nc/mark", empty, {"items": [item]})[0] == 200       # NC stays the way out
+
+
+def test_usb_twins_come_from_the_footprint_pad_names_when_the_symbol_names_nothing(empty):
+    for a, b in (("A4B9", "B4A9"), ("A1B12", "B1A12"), ("A4", "B9"), ("B12", "A1"), ("A6", "B6")):
+        assert pin_model._usb_twin(a, b), (a, b)
+    for a, b in (("A5", "B5"), ("A4", "B4"), ("A4B9", "A4B9"), ("A4B9", "B1A12"), ("1", "2"), ("A8", "B8")):
+        assert not pin_model._usb_twin(a, b), (a, b)
+    _add(empty, "J2", "TYPE-C")
+    _sheet(empty, {"J2": [("A4", "VBUS", "VBUS"), ("A1", "GND", "GND")]})
+    _library(empty, {"J2": ("SYM_J2", "USBC2", [_pad(n) for n in ("A4", "B9", "A1", "B12")], [("A4", "VBUS"), ("A1", "GND")], "generated")})
+    rows = {r["num"]: r for r in pin_model.pad_report(empty)["unnetted"]}
+    assert rows["B9"]["kind"] == "duplicate" and rows["B9"]["net"] == "VBUS" and rows["B12"]["net"] == "GND"
+    assert next(i for i in stages._gate_gaps(empty)["pads"] if i["num"] == "B9")["suggest_net"] == "VBUS"
