@@ -93,7 +93,11 @@ def test_empty_states_state_the_limits():
     assert "split into several separate blocks" in pv and "too big for one A4 sheet" in pv and "sub-parts" not in pv and "between two sheets are not drawn" in pv
     assert "two-layer boards, with no differential pairs" in pv
     out = (ui / "views" / "outputs.js").read_text(encoding="utf-8")
-    assert "Altium outputs and the Gerber zip are refused while a part" in out and "production files" not in out
+    # since E1/E3/E12 the one gate is the server's (unrouted nets, open pins, a draft); unverified pins only warn
+    assert "Altium outputs and the Gerber zip are refused until the blocker above is fixed" in out and "production files" not in out
+    lim = out[out.index("function outLimits"):]
+    lim = lim[:lim.index("\n}")]
+    assert "if (outBlockWhy()) r.push('The Altium outputs" in lim       # said only while the gate is closed
     # each claim is enforced in code
     draw = (REPO / "scripts" / "altium" / "draw.py").read_text(encoding="utf-8")
     assert "multi-part symbols cannot be drawn" in draw and "does not fit on one A4 sheet" in draw

@@ -162,7 +162,7 @@ STREAM = "\n".join([
 def test_parse_stream_json_lines_with_denials_merged_by_id():
     text, meta, err = ClaudeCodeProvider._parse(STREAM)
     assert err == "" and text == "Sorry, it needs approval."
-    assert meta["steps"] == ["Running ls /tmp && pwd"]
+    assert meta["steps"] == ["Running a command"]                 # the student's words (events.human): the command line is in calls
     assert meta["usage"] == {"input_tokens": 5, "output_tokens": 7} and meta["turns"] == 2
     den = meta["denied"]
     assert len(den) == 2                                      # t1 merged, t2 added from the result
@@ -224,7 +224,7 @@ def test_stop_and_timeouts_keep_the_partial_text(home, monkeypatch, ended, kind,
                         name="claude_code")
     assert not res.ok and res.text == "Sorry, it needs approval."
     assert res.meta["partial"] is True and res.meta["error_kind"] == kind
-    assert res.meta["steps"] == ["Running ls /tmp && pwd"] and res.meta["denied"]
+    assert res.meta["steps"] == ["Running a command"] and res.meta["denied"]
 
 
 def test_not_logged_in_and_usage_limit_kinds(home, monkeypatch):

@@ -490,13 +490,16 @@ class Router:
             out[ix * ny:(ix + 1) * ny] = raw[o:o + ny]
         return out
 
-    def astar(self, net, sources, goals, width, relaxed=False, deadline=None, max_pops=None, margin=0.0, goal_bot=None, goal_layer=BOT):
+    def astar(self, net, sources, goals, width, relaxed=False, deadline=None, max_pops=None, margin=0.0, goal_bot=None, goal_layer=BOT,
+              stay_off=None):
         """Cheapest path (list of (layer, cell)) from any source cell to any goal cell, or None (self.status says why: "none" there is
         no way, "limit" the search limit was reached, "time" the time given ran out). relaxed: tracks routed so far are passable (used
         to find which nets are in the way). margin: extra distance kept from everything (used to re-route a net the exact check found
         too close to something). goal_bot: a mask over the grid; a cell of layer goal_layer (the bottom layer unless said) it marks is a goal too (a net that
         is poured on that layer or lies on an inner plane: a via to it ends the search). The expansions are counted in self.spent; at self.cap the search
-        stops with status "budget"; that is the deterministic limit, the clock is only a safety cap."""
+        stops with status "budget"; that is the deterministic limit, the clock is only a safety cap. stay_off: a layer the path may not run
+        along, only change to (a poured net on the bottom: a pad drops by a via that lands in the pour, and a tie for a pad the pour does
+        not reach runs on the top; a track of its own on the pour layer would only bridge a pocket the pour itself does not reach)."""
         ny, nx, n = self.ny, self.nx, self.n
         max_pops = max_pops or max(300000, 4 * n)
         extra = max(0.0, (width - self.wb) / 2) + margin
@@ -575,7 +578,7 @@ class Router:
             bl, wl = base[l], wide[l]
             d = came[k]
             fl = foreign[l]
-            for nd, dx, dy, step in dirs:
+            for nd, dx, dy, step in (() if l == stay_off else dirs):
                 a, b = ix + dx, iy + dy
                 if not (0 <= a < nx and 0 <= b < ny):
                     continue
@@ -846,7 +849,8 @@ class Router:
         for pad in todo:
             src = start(pad)
             to = BOT if not plane else 1 - pad["layers"][0]            # the layer a via lands on: the pour's, or the other outer layer for a plane
-            path = (self.astar(nid, src, set(tree), width, relaxed=relaxed, deadline=deadline, margin=margin, goal_bot=pour_mask, goal_layer=to)
+            path = (self.astar(nid, src, set(tree), width, relaxed=relaxed, deadline=deadline, margin=margin, goal_bot=pour_mask, goal_layer=to,
+                               stay_off=None if plane else BOT)
                     if src else None)
             if not src:
                 self.status = "none"

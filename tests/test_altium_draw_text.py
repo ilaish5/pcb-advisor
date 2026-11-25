@@ -294,9 +294,9 @@ def test_a_section_too_big_for_a_sheet_is_cut_by_parts_into_sheets_that_each_dra
     big = _one_section(["Core", "Clock", "Periph"])
     lib = _lib_for(big)
     p = draw.plan_sheet(big, lib, "l", "d")
-    assert p["commands"] == [] and p["errors"]
-    msg = p["errors"][0]
-    assert "needs about" in msg and "1 sheets" not in msg and "cut by parts" in msg
+    # since E7 a section that does not fit A4 is drawn on A3 (DRAWBEGIN's style field 1), not refused
+    assert p["errors"] == [] and p["sheet_size"] == "A3" and p["commands"][0] == ("DRAWBEGIN", "d", "0", str(draw.SHEETS["A3"]["style"]))
+    assert draw.plan_sheet(big, lib, "l", "d", sheet_size="A4")["commands"] == []          # it really does not fit A4
     cells = [(x["section"], draw.part_cell(x, lib[x["ref"]])) for x in big["parts"]]
     sheets, hopeless = draw.suggest_sheets(cells, big["sections"])
     assert len(sheets) >= 2 and hopeless == []
@@ -305,7 +305,8 @@ def test_a_section_too_big_for_a_sheet_is_cut_by_parts_into_sheets_that_each_dra
         refs = [r for _, rs in sh for r in (rs or [])]
         seen += refs
         sub = {"id": "x", "sections": big["sections"], "parts": [x for x in big["parts"] if x["ref"] in refs]}
-        assert draw.plan_sheet(sub, lib, "l", "d")["errors"] == [], refs
+        q = draw.plan_sheet(sub, lib, "l", "d")
+        assert q["errors"] == [] and q["sheet_size"] == "A4", refs
     assert sorted(seen) == sorted(x["ref"] for x in big["parts"])        # nothing lost, nothing twice
     # the live run put RP2040, the crystal and 15 capacitors on one sheet: not any more (that sheet is refused by plan_sheet)
     u1 = next(rs for sh in sheets for _, rs in sh if "U1" in rs)

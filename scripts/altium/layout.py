@@ -625,6 +625,25 @@ def _label_rect(box, ref, side):
     return [cx - w / 2, box[1] - LABEL_GAP - h, cx + w / 2, box[1] - LABEL_GAP]
 
 
+def wirelength(places, parts, footprints):
+    """The placement's estimated wiring, mm: the sum over the signal and supply nets (ground is left out: it goes to the pour) of the
+    half perimeter of the box round the net's pads. Used to choose between plans that are equally good otherwise."""
+    nets_of = {p["ref"]: {str(q.get("num", q.get("number", ""))): str(q.get("net") or "") for q in p.get("pins", [])} for p in parts}
+    boxes = {}
+    for pl in places:
+        fp = footprints.get(pl.get("footprint") or "") or {}
+        nets = nets_of.get(pl["ref"], {})
+        for q in fp.get("pads", []):
+            n = nets.get(q.get("name"), "")
+            if "x" not in q or not n or is_gnd(n) or n.upper() in ("NC", "N/C"):
+                continue
+            rx, ry = rot_point(q["x"] * MIL, q["y"] * MIL, pl.get("rot", 0))
+            x, y = pl["x"] + rx, pl["y"] + ry
+            b = boxes.get(n)
+            boxes[n] = [x, y, x, y] if b is None else [min(b[0], x), min(b[1], y), max(b[2], x), max(b[3], y)]
+    return sum(b[2] - b[0] + b[3] - b[1] for b in boxes.values())
+
+
 def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, connector_dirs=None, edge_copper_mm=EDGE_COPPER_MM, rules=None):
     """The placement (see _plan_placement). Connectors go to the edges first and a big one can take the room a regulator needs for its
     caps: when a decoupling cap does not get next to its supply pin, the crystal is farther than XTAL_NEAR_MM from the oscillator pins
@@ -633,7 +652,8 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
     room beside the MCU). When no plan is free of findings, the same plans are made once more with the MCU (any IC with a crystal or
     caps to place beside it) tried at other places and turns: where the board edge leaves room for them beside its pins (a first place
     that leaves a crystal or a supply pin without room is the usual reason for a finding). The best plan is returned: fewest errors,
-    then caps too far, then crystals too far, then findings; the first one on a tie.
+    then caps too far, then crystals too far, then findings, then the shortest wiring (wirelength); the first one on a tie. The first
+    pass makes every connector start, the second (MCU trials) stops at the first plan free of findings.
     rules = the student's confirmed physical constraints (constraints.plan_for_board), all keys optional:
       "fixed"    {ref: (x, y, rot)} parts placed first, where they are (mounting holes: they are in "places" too, unlike `keep`)
       "keepouts" [[x0, y0, x1, y1]] board areas no part may enter
@@ -642,18 +662,23 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
       "antenna"  {ref: degrees} the way a radio module's antenna faces at rotation 0: the module goes to an edge, antenna outwards"""
     rules = rules or {}
     edge_refs = set(rules.get("edge") or {}) | set(rules.get("antenna") or {})
-    best, best_key = None, None
+    best, best_key, best_wire = None, None, None
     for trials in (False, True):
         for shift in range(4 if any(is_connector(p["ref"]) or p["ref"] in edge_refs for p in parts) else 1):
-            plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift, best_key, trials, rules)
+            # the first pass makes every connector start (they are cheap) and keeps, among the plans as good as the best, the one with
+            # the shortest wiring: the first clean plan can put a connector on the edge far from the MCU pins its nets go to (a USB-C
+            # turned the right way at the bottom while D-/D+ leave the MCU on its right side: three times the routing time)
+            plan = _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_dirs, edge_copper_mm, shift,
+                                   best_key if trials else None, trials, rules)
             if plan is None:                        # cannot beat the best so far
                 continue
             far = sum(1 for f in plan.get("findings", []) if f["level"] == "error")
             xfar = sum(1 for c in plan.get("crystals", []) if c["max_mm"] > XTAL_NEAR_MM)
             key = (len(plan["errors"]), far, xfar, len(plan.get("findings", [])))
-            if best is None or key < best_key:
-                best, best_key = plan, key
-            if key == (0, 0, 0, 0):
+            wire = wirelength(plan.get("places", []), parts, footprints)
+            if best is None or key < best_key or (key == best_key and wire < best_wire - 1e-6):
+                best, best_key, best_wire = plan, key, wire
+            if trials and key == (0, 0, 0, 0):
                 break                               # nothing left to improve
         if best_key == (0, 0, 0, 0):
             break
