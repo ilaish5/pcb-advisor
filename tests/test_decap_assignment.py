@@ -180,3 +180,41 @@ def test_role_matching():
     assert hints_for("U7 bypass") == set()
     # a part with no pin on the cap's rail is not its owner
     assert {ic for ic, _ in layout.decap_hints([regulator(), sensor(), cap("C9", "VBUS", "100nF", "SHT31 decoupling")]).get("C9", [])} == set()
+
+
+_QFN16 = [(str(1 + i), -2.0 + 1.0 * i, -3.0, 0.3, 0.8) for i in range(4)] + [(str(5 + i), 3.0, -2.0 + 1.0 * i, 0.8, 0.3) for i in range(4)] + \
+         [(str(9 + i), 2.0 - 1.0 * i, 3.0, 0.3, 0.8) for i in range(4)] + [(str(13 + i), -3.0, 2.0 - 1.0 * i, 0.8, 0.3) for i in range(4)]
+
+
+def test_a_part_that_only_says_converter_is_not_the_regulator():
+    """A USB-UART bridge (its text says "converter") has VCC on the 3V3 rail: "LDO output cap" is still the AMS1117's, and the plain
+    100 nF goes to the bridge's VCC, not to the regulator."""
+    fps = dict(FPS, QFN16=fp("QFN16", _QFN16))
+    names = ["VCC"] + [f"P{i}" for i in range(2, 9)] + ["GND"] + [f"P{i}" for i in range(10, 17)]
+    nets = ["+3V3"] + [f"S{i}" for i in range(2, 9)] + ["GND"] + [f"S{i}" for i in range(10, 17)]
+    bridge = part("U3", "QFN16", nets, names, bom_value="CH340C", bom_mpn="CH340C", bom_description="USB to UART converter")
+    parts = [regulator(), sensor(), bridge, cap("C1", "VBUS", "10uF", "LDO input cap"), cap("C2", "+3V3", "10uF", "LDO output cap"),
+             cap("C3", "+3V3", "100nF", "SHT31 decoupling"), cap("C4", "+3V3", "100nF")]
+    assert {ic for ic, _ in layout.decap_hints(parts)["C2"]} == {"U1"}
+    assert layout.decap_owners(parts, layout.decap_hints(parts))["C4"] == {"U2", "U3"}                  # never the regulator
+    plan = layout.plan_placement(parts, fps, OUT)
+    assert not plan["errors"] and not plan["findings"], plan
+    fps_of = dict(FPS, QFN16=fps["QFN16"])
+
+    def d(c, ic, pin):
+        p = next(q for q in plan["places"] if q["ref"] == ic)
+        q = next(q for q in fps_of[next(x for x in parts if x["ref"] == ic)["footprint"]]["pads"] if q["name"] == pin)
+        rx, ry = layout.rot_point(q["x"] * MIL, q["y"] * MIL, p["rot"])
+        a = next(q for q in plan["places"] if q["ref"] == c)
+        b = next(q for q in fps_of["C0402"]["pads"] if q["name"] == "1")
+        cx, cy = layout.rot_point(b["x"] * MIL, b["y"] * MIL, a["rot"])
+        return math.hypot(a["x"] + cx - p["x"] - rx, a["y"] + cy - p["y"] - ry)
+
+    assert min(d("C2", "U1", p) for p in OUT_PINS) <= NEAR and d("C3", "U2", VDD) <= NEAR
+
+
+def test_input_and_output_words_pick_the_regulator_pins():
+    parts = board("LDO output cap", "LDO input cap")        # C3 is on 3V3 (the output), the word "input" finds no input pin there
+    assert {n for _, n in layout.decap_hints(parts)["C3"]} == {"2", "4"}      # no IN pin on the rail: every regulator pin on it
+    parts = board() + [cap("C5", "VBUS", "100nF", "regulator input")]
+    assert {n for _, n in layout.decap_hints(parts)["C5"]} == {"3"}
