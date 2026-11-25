@@ -36,6 +36,8 @@
   <!-- CENTRE: the main sheet and, when asked for, a side sheet -->
   <div class="panes" id="panes">
     <main class="pane work" id="work" aria-label="Workspace">
+      <!-- the readiness note sits in the flow above the sheet, so it can never cover the header's buttons -->
+      <div class="ready" id="ready" hidden></div>
       <div class="view" id="view"></div>
       <aside class="detail" id="detail" hidden></aside>
     </main>
@@ -80,7 +82,6 @@
   <!-- the way back while the chat is hidden (shell.css shows it only then) -->
   <button type="button" class="chat-tab" data-act="toggle-chat" title="Show chat (Ctrl J)" aria-label="Show chat (Ctrl J)"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg></button>
 </div>
-<div class="ready" id="ready" hidden></div>
 <div class="toast" id="toast" role="status" hidden></div>
 <input type="file" id="filepick" hidden>
 <input type="file" id="dfmpick" accept=".pdf" hidden>

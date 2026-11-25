@@ -162,3 +162,7 @@
 .msg .eng{margin-top:4px;font-size:var(--t-sm);color:var(--ink-4)}
 .runs li .raw{font-family:var(--mono,monospace);word-break:break-all}
 .msg.agent.note{background:none;padding:0}
+
+button.chat-act{border:0;font:inherit;font-size:var(--t-xs);cursor:pointer;text-align:left}
+button.chat-act:hover{text-decoration:underline}
+tr.ptr.flash td{background:var(--sig-soft);transition:background .3s}

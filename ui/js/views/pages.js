@@ -561,11 +561,20 @@ onChange(t => t.id === 'filepick', async e => {
   e.target.value = '';
 });
 
+/* The link to the Altium project changed (linked, created, unlinked): everything that depends on it is read again, so no banner or
+   picture waits for a reload: the BOM's import state, the pictures, the state (stage dots, Next buttons) and the readiness banner. */
+async function pgLinkChanged() {
+  impFor = null;                              // the BOM asks again whether a project is linked
+  svgCache = {key: '', text: ''}; pcbSvgCache = {key: '', text: ''}; pvSchErr = ''; pvPcbErr = '';
+  if (libNote && /No Altium project is linked/.test(libNote.text)) libNote = null;      // the build note on the BOM page is answered
+  await refresh(true);
+  renderCenter(true);
+  if (typeof readyLoad === 'function') readyLoad();
+}
 async function pgLink(path) {
   ALTIUM_DATA = await api('/api/altium/link', {path});
   ALTIUM_ERR = null;
-  renderCenter(true);
-  impFor = null;                              // the BOM asks again whether a project is linked
+  await pgLinkChanged();
 }
 onAct('altium-link', async (el, d, e) => { if (d.path) await pgLink(d.path); });
 onAct('altium-browse', async (el, d, e) => {
@@ -579,21 +588,18 @@ onAct('altium-create', async (el, d, e) => {
   try {
     ALTIUM_DATA = await api('/api/altium/create', {});
     ALTIUM_ERR = null;
-    impFor = null;                            // the BOM asks again whether a project is linked
-    if (libNote && /No Altium project is linked/.test(libNote.text)) libNote = null;      // the build note on the BOM page is answered
     toast('Altium project created: ' + pgBase(ALTIUM_DATA.linked.project_file)
       + (ALTIUM_DATA.warning ? '. ' + ALTIUM_DATA.warning : ''));
   } catch (err) {
     // a failure can come after Altium already wrote and linked the project: show what is there now
-    try { ALTIUM_DATA = await api('/api/altium'); impFor = null; } catch (e2) { /* keep the old view */ }
+    try { ALTIUM_DATA = await api('/api/altium'); } catch (e2) { /* keep the old view */ }
   }
   el.disabled = false;
-  renderCenter(true);
+  await pgLinkChanged();
 });
 onAct('altium-unlink', async (el, d, e) => {
   ALTIUM_DATA = await api('/api/altium/unlink', {});
-  renderCenter(true);
-  impFor = null;
+  await pgLinkChanged();
 });
 onAct('altium-retry', async (el, d, e) => { await loadAltium(true); });
 onAct('settings-retry', async (el, d, e) => { await loadConfig(); });

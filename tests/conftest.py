@@ -38,6 +38,21 @@ def no_network(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def altium_host_ok(monkeypatch, request):
+    """The bridge refuses a host that is not Windows before it writes anything (bridge._host_check). The stubbed-Altium tests run on any
+    machine, so the check is off for them; a test that asks for the `real_host_check` fixture gets the real one."""
+    if "real_host_check" in request.fixturenames:
+        return
+    from altium import bridge
+    monkeypatch.setattr(bridge, "_host_check", lambda: None)
+
+
+@pytest.fixture
+def real_host_check():
+    return True
+
+
+@pytest.fixture(autouse=True)
 def routed_board(request, monkeypatch):
     """The board gate (store.route_state: unrouted nets, a board never routed or checked) reads board-log.jsonl, which a test
     project has none of. Tests about anything else stand on a routed, clean board; a test of the gate itself is marked route_gate

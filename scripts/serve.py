@@ -433,6 +433,10 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
         if "mpn" in prop.get("changes", {}):
             recheck_async(project, prop["line"])
         recheck_missing(project)           # a new line, or one whose MPN came with a library change
+        try:
+            store.auto_attach(project)     # a datasheet already in Sources is linked to the line just approved, not only after Check datasheets
+        except Exception as exc:           # noqa: BLE001 - a link that fails is made later by Check datasheets
+            print(f"(datasheet link failed: {exc})")
         if redraw_now:
             redraw(project)
     if not note:

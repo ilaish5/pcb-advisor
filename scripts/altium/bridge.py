@@ -106,9 +106,14 @@ class Fixable(BridgeError):
 
 # ---------------------------------------------------------------- Altium side
 
-def _exe():
+def _host_check():
+    """Refuse first, write nothing: the bridge works only on Windows (new_project asks before it makes a folder or a file)."""
     if sys.platform != "win32":
         raise BridgeError("The Altium bridge works on Windows with Altium Designer installed; this computer is not Windows.")
+
+
+def _exe():
+    _host_check()
     path = workspace.get("altium.install_path", "")
     if path and (pathlib.Path(path) / "X2.EXE").is_file():
         return str(pathlib.Path(path) / "X2.EXE")
@@ -637,6 +642,7 @@ def ensure_sheets_in_project(prj, files):
 
 def new_project(project):
     """Create the Altium project for an advisor project: PrjPcb, one PcbDoc, one SchDoc per sheet. Links it."""
+    _host_check()
     meta = project_mod.load_meta(project)
     name = _file_name(meta.get("title") or project, _file_name(project, "Project"))
     folder = altium_base() / name

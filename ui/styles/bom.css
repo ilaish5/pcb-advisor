@@ -16,7 +16,7 @@
 /* The Part column takes the width the others leave and is cut with an ellipsis (the row's tooltip has the whole text), so the
    table never needs more than its sheet. The other columns are sized to their content: at 1280px with the chat open the sheet
    is about 670px wide, and the seven columns fit it with the Part column still readable. */
-.bom-tbl .c-part{width:100%;max-width:0}
+.bom-tbl .c-part{width:100%;max-width:0;min-width:96px}      /* never narrower than 96px: a phone scrolls the table sideways instead of cutting Part to a letter */
 .bom-tbl .main,.bom-tbl .sub{display:block;overflow:hidden;text-overflow:ellipsis}
 .bom-tbl .sub{font-size:12px;color:var(--ink-3)}
 .bom-tbl td.bom-ref{max-width:120px;overflow:hidden;text-overflow:ellipsis;font-family:var(--f-mono);font-weight:600}
@@ -34,6 +34,9 @@
 .bom-top{display:grid;gap:8px;padding:2px 0 6px}
 .bom-top:empty{display:none}
 .bom-top>*{margin:0}
+
+@media (max-width:520px){.bom-scroll{padding:0 10px}}
+@container (max-width:480px){.bom-tbl th,.bom-tbl td{padding-left:5px;padding-right:5px}}
 
 /* a narrow sheet: the action icons give way to the row click (the part panel has Ask and Alternatives) */
 @container (max-width:560px){.bom-tbl th:last-child,.bom-tbl td:last-child{display:none}}

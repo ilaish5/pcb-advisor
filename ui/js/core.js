@@ -229,8 +229,17 @@ function renderDetail() {
   d.hidden = !html;
   d.innerHTML = html;
 }
+/* A redraw between the mouse going down and coming up on a button replaces that button, and the browser then sends no click (the first
+   click on "Next: BOM" right after "Confirm idea" was lost this way). A background redraw waits for the release; the one that
+   follows an action (force) never waits. */
+let uiPressed = false;
+document.addEventListener('pointerdown', e => { uiPressed = !!(e.target.closest && e.target.closest('button, [data-act], tr[data-key]')); }, true);
+const uiRelease = () => { if (!uiPressed) return; uiPressed = false; setTimeout(() => { if (S) render(); }, 0); };     // after the click of this press has run
+document.addEventListener('pointerup', uiRelease, true);
+document.addEventListener('pointercancel', uiRelease, true);
 function render(force) {
   if (!S) return;
+  if (uiPressed && !force) return;
   // Never rebuild what is under an open menu, the palette or a dialog. A forced render that had to wait runs afterwards.
   if (uiBusy()) { pendingRender = pendingRender || !!force; return; }
   if (pendingRender) { force = true; pendingRender = false; }

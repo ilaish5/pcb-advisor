@@ -66,7 +66,10 @@ def bom_stage(model):
         elif l.get("library") in ("review", "missing"):
             review += 1
     if not total:
-        return _stage("bom", "not_started", "No parts yet", next_=_go("idea"))
+        # the next step is the idea only while it is not confirmed; after that the parts are the work (the chat chip said "Idea" for ever)
+        if (model.get("idea") or {}).get("confirmed"):
+            return _stage("bom", "not_started", "No parts yet", next_={"label": "Propose the parts", "act": "go:bom"})
+        return _stage("bom", "not_started", "No parts yet", next_={"label": "Confirm the idea", "act": "go:idea"})
     parts = []
     if out:
         parts.append(f"{out} out of stock")
@@ -306,6 +309,17 @@ def _gate_gaps(project):
             "pads": [tag(i) for i in pads["pads"]], "nopad": pads["nopad"]}
 
 
+def _board_started(project, model):
+    """True once a board was placed, routed or checked (the board log, or an Altium step that succeeded)."""
+    import board_results
+    try:
+        lt = board_results.latest(project)
+    except Exception:       # noqa: BLE001
+        lt = {}
+    ok_log = model.get("altium_ok") or {}
+    return bool(lt.get("place") or lt.get("route") or lt.get("board_check") or ok_log.get("place-pcb") or ok_log.get("route-pcb"))
+
+
 def outputs_stage(project, model):
     """Blocked exactly when store.manufacturing_block says so: one gate for the button, the dot, the banner and the agent. That is the
     design (store.manufacturing_warning: footprints, open pins, a draft) and the board (store.route_block: unrouted nets, or a board
@@ -321,10 +335,19 @@ def outputs_stage(project, model):
     except Exception:       # noqa: BLE001
         warn = ""
     if why:
+        started = _board_started(project, model)
+        if not design and not started:
+            # nothing to do wrong yet: no board was placed, routed or checked. The files stay refused (the gate says why), but the stage is
+            # "not started", neutral, with no count: a new project must not open on a red 1
+            st = _stage("outputs", "not_started", "Not started yet: the board has not been placed, routed or checked",
+                        gate={"blocked": True, "why": why, "page": "pcb", "quiet": True, "design": "", "board_started": False},
+                        next_={"label": "Place parts", "act": "go:pcb"})
+            st["pins_warning"] = warn
+            return st
         gaps = _gate_gaps(project)
         has_pins = bool(gaps["open"] or gaps["unlisted"] or gaps["pads"] or gaps["nopad"])
         page = "sch" if has_pins or store.draft_parts(project) else ("checks" if design else "pcb")
-        gate = {"blocked": True, "why": why, "page": page}
+        gate = {"blocked": True, "why": why, "page": page, "quiet": False, "design": design, "board_started": started}
         if has_pins:
             gate["gaps"] = gaps
             gate["nc_proposal"] = store.nc_proposal(project)
