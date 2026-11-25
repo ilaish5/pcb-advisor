@@ -9,7 +9,9 @@ agent states a board fact only from what check_requirements measured on the save
                      (from the board's lower left corner)
       (a part = a reference, or - before there are references - the part's name: constraints are written at Idea time; match_part
                      says which BOM line a name means, bind_all rewrites it to the reference)
-      edge           target (a part), side: any|left|right|top|bottom
+      edge           target (a part), side: any|left|right|top|bottom, holds? [requirement subjects the student pointed at the part]
+      names?         {field: the name a field was written with}: set when bind_all makes the field a reference, and checked
+                     again at Place (the BOM may have changed since)
       keep_apart     a, b (parts), min_mm
       keepout        rect_mm [x0, y0, x1, y1] from the board's lower left corner, or edge + depth_mm (a strip along a whole edge)
       attr           target, attr: heat_source|heat_sensitive|rf_antenna   (recorded; nothing on the board can prove it)
@@ -94,6 +96,15 @@ def _validate_item(item):
            "status": item.get("status") if item.get("status") in STATUS else "proposed"}
     if item.get("note"):
         out["note"] = str(item["note"])[:200]
+    if kind in ("edge", "keep_apart", "attr"):
+        if isinstance(item.get("names"), dict):          # the name a field was written with before bind_all made it a reference
+            names = {k: " ".join(v.split())[:48] for k, v in item["names"].items() if k in ("target", "a", "b") and isinstance(v, str) and v.strip()}
+            if names:
+                out["names"] = names
+        if kind == "edge" and isinstance(item.get("holds"), list):      # requirement subjects the student pointed at this part
+            holds = [" ".join(x.split())[:48] for x in item["holds"] if isinstance(x, str) and x.strip()][:8]
+            if holds:
+                out["holds"] = holds
     if kind == "mounting_hole":
         out["diameter_mm"] = _num(item, "diameter_mm", DEFAULTS["hole_dia_mm"], 0.5, 10)
         if item.get("points_mm") not in (None, []):
@@ -320,10 +331,11 @@ def _tiers(t, rows):
                         and (worded(l, base) or any(_prefix(v, base) for v in values(l)))]
 
 
-def match_part(target, bom, blocks=()):
+def match_part(target, bom, blocks=(), loose=False):
     """{"refs": [...], "rule": str, "candidates": [BOM lines]} for a part named by reference, line key, value / part number (exact,
     then prefix), words of its role or description, or an Idea block. The first rule that hits anything decides: one line gives its
-    references, several give none (never a guess) and are the candidates."""
+    references, several give none (never a guess) and are the candidates. Support passives ("LDO input capacitor") never count as
+    the part their role names. loose: words picked out of a sentence, so the role rule (too weak for that) is left out."""
     t = _norm(target)
     rows = [l for l in bom or [] if l.get("refs")]
     nothing = {"refs": [], "rule": "", "candidates": []}
@@ -344,10 +356,11 @@ def match_part(target, bom, blocks=()):
               if isinstance(b, dict) and _norm(b.get("id")) == t and _norm(b.get("label")) not in ("", t)]
     for name in names:
         for rule, hits in _tiers(name, rows):
+            if rule == "role":
+                hits = [] if loose else [l for l in hits if not _helper_only(l, name)]
             if not hits:
                 continue
-            one = len(hits) == 1 and not (rule == "role" and _helper_only(hits[0], name))
-            return {"refs": list(hits[0]["refs"]) if one else [], "rule": rule if name == t else "block", "candidates": hits}
+            return {"refs": list(hits[0]["refs"]) if len(hits) == 1 else [], "rule": rule if name == t else "block", "candidates": hits}
     return nothing
 
 
@@ -385,10 +398,15 @@ def unresolved(project):
     for it in items:
         got = {f: resolve(it[f], refs, lines) for f in _fields(it)}
         for f, found in got.items():
+            name = (it.get("names") or {}).get(f)
             if not found:
-                m = match_part(it[f], lines.rows, lines.blocks)
+                m = match_part(name or it[f], lines.rows, lines.blocks)
                 add(it, f, [c for l in m["candidates"] for c in _choices(l)],
                     f"{it[f]} could be more than one part" if len(m["candidates"]) > 1 else f"{it[f]} is not a part of the BOM")
+            elif name and sorted(resolve(name, refs, lines)) != sorted(found):      # bound once: is the name still that part?
+                m = match_part(name, lines.rows, lines.blocks)
+                add(it, f, [c for l in m["candidates"] for c in _choices(l)],
+                    f"{name} was bound to {it[f]}, but the BOM changed and {name} no longer means only that part")
         if it["kind"] == "keep_apart" and got["a"] and got["a"] == got["b"]:
             add(it, "b", [], f"{it['a']} and {it['b']} are the same part")
     return out
@@ -439,12 +457,13 @@ def bind_all(project):
     def change(items):
         hit = False
         for it in items:
-            new = {f: bound(it[f]) for f in _fields(it)}
-            if it["kind"] == "keep_apart" and new["a"] == new["b"]:
+            new = {f: bound(it[f]) for f in _fields(it) if f not in (it.get("names") or {})}
+            if it["kind"] == "keep_apart" and new.get("a", it["a"]) == new.get("b", it["b"]):
                 continue
             for f, v in new.items():
                 if v != it[f]:
                     done.append(f"{it[f]} -> {v}")
+                    it.setdefault("names", {})[f] = it[f]          # kept: Place checks the name still means this part
                     it[f], hit = v, True
         return hit
     _rewrite(project, change)
@@ -477,6 +496,9 @@ def bind_one(project, cid, field, ref):
                 if it["kind"] == "keep_apart" and it["b" if field == "a" else "a"].upper() == ref.upper():
                     raise ValueError("the two parts of a distance cannot be the same part")
                 it[field] = ref
+                (it.get("names") or {}).pop(field, None)          # the student's pick, not a guess of ours: nothing to re-check
+                if not it.get("names"):
+                    it.pop("names", None)
                 hit.append(cid)
                 return True
         return False
@@ -493,24 +515,28 @@ def remove_one(project, cid):
     _rewrite(project, change)
 
 
-def hold_edge(project, ref, side):
+def hold_edge(project, ref, side, subject=""):
     """The student's one click on a requirement no constraint holds: a confirmed edge constraint for that part and side."""
     ref = _known(project, ref)
     if side not in SIDE_LETTER:
         raise ValueError("side must be left, right, top or bottom")
     refs, lines = known_refs(project)
+    subject = " ".join(str(subject or "").split())
 
     def change(items):
         mine = [i for i in items if i["kind"] == "edge" and resolve(i["target"], refs, lines) == [ref]]
         if mine:
             mine[0].update(target=ref, side=side, status="confirmed", by="student")
             items[:] = [i for i in items if i is mine[0] or i not in mine]
+            hold = mine[0]
         else:
             ids, n = {i["id"] for i in items}, 1
             while f"edge-{ref}-{n}" in ids:
                 n += 1
-            items.append({"id": f"edge-{ref}-{n}", "kind": "edge", "target": ref, "side": side, "by": "student",
-                          "status": "confirmed"})
+            hold = {"id": f"edge-{ref}-{n}", "kind": "edge", "target": ref, "side": side, "by": "student", "status": "confirmed"}
+            items.append(hold)
+        if subject and subject not in hold.get("holds", []):
+            hold["holds"] = hold.get("holds", []) + [subject]
         return True
     _rewrite(project, change)
 
@@ -680,7 +706,10 @@ def _summary(project, s):
                                          "copper_under_keepout", "drc_total", "requirements")}}
     if facts and facts.get("stale"):
         res["board_facts"]["note"] = "the board file changed since this was measured"
-    open_targets = unresolved(project) if project else []
+    try:
+        open_targets = unresolved(project) if project else []
+    except Exception:       # noqa: BLE001 - the agent's context must always build
+        open_targets = []
     if open_targets:
         res["constraints_without_a_part"] = [f["message"] for f in open_targets]
     return res
@@ -732,7 +761,7 @@ def _post(handler, path, data):
         d, proj = data or {}, handler.project()
         try:
             if path.endswith("/hold-edge"):
-                hold_edge(proj, d.get("ref"), d.get("side"))
+                hold_edge(proj, d.get("ref"), d.get("side"), d.get("subject"))
             elif d.get("remove"):
                 remove_one(proj, str(d.get("id") or ""))
             else:

@@ -1899,7 +1899,7 @@ def place_pcb(project, replace=False):
                           + ": draw it first (altium.draw_schematic, with the student's agreement). A part placed without the link to its "
                           "schematic symbol is duplicated by the first Update PCB. Nothing was changed.")
     import constraints
-    constraints.bind_all(project)
+    constraints.bind_when_bom_settled(project)
     unbound = constraints.blocking(project)      # a confirmed constraint with no part would be silently dropped by the placer
     if unbound:
         raise BridgeError(unbound)

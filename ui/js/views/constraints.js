@@ -41,7 +41,7 @@ function constraintFixHTML() {
     btn('Remove constraint', {size: 'sm', kind: 'link', act: 'cons-drop', 'data-cid': f.id}) + '</li>';
   const hold = f => `<li class="unv-row">${esc(f.message)} ` +
     (f.refs.length ? btn('Hold ' + f.refs.join(', ') + ' there', {size: 'sm', kind: 'line', act: 'cons-hold', 'data-refs': f.refs.join(' '), 'data-side': f.side})
-      : pick(`data-cons-pick="hold" data-side="${esc(f.side)}"`)) + ' ' +
+      : pick(`data-cons-pick="hold" data-side="${esc(f.side)}" data-subject="${esc(f.subject || '')}"`)) + ' ' +
     btn('Intended', {size: 'sm', kind: 'link', act: 'design-intended', key: f.key, title: 'This is on purpose: hide it until the finding changes'}) + '</li>';
   const head = open.length ? `Placement is blocked: ${open.length} constraint${open.length > 1 ? 's name' : ' names'} no one part` : 'Requirements no constraint holds';
   return `<section class="dfm-unv cons-fix" aria-label="Constraints to settle"><h3>${esc(head)}</h3><ul>${open.map(bind).join('')}${edges.map(hold).join('')}</ul></section>`;
@@ -57,7 +57,7 @@ onAct('cons-hold', el => consSettle('/api/idea/constraints/hold-edge', el.getAtt
 onChange(t => t.dataset && t.dataset.consPick !== undefined, async e => {
   const t = e.target, ref = t.value;
   if (!ref) return;
-  if (t.dataset.consPick === 'hold') await consSettle('/api/idea/constraints/hold-edge', [{ref, side: t.dataset.side}]);
+  if (t.dataset.consPick === 'hold') await consSettle('/api/idea/constraints/hold-edge', [{ref, side: t.dataset.side, subject: t.dataset.subject || ''}]);
   else await consSettle('/api/idea/constraints/bind', [{id: t.dataset.cid, field: t.dataset.field, ref}]);
 });
 

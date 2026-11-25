@@ -1504,8 +1504,7 @@ def _with_pins_warning(project, res):
 def step_refusal(project, step):
     """Why a step must not start at all (checked at plan time, before anything runs), or "". Outputs: store.manufacturing_block (an unrouted board, an unfinished design); unverified pins only warn."""
     if step == "place":            # a confirmed constraint that names no one part is settled before anything runs
-        import constraints
-        constraints.bind_all(project)
+        import constraints            # reads only (names resolve in memory); place_pcb does the binding
         return button_words(constraints.blocking(project))
     return button_words(store.manufacturing_block(project)) if step == "outputs" else ""
 

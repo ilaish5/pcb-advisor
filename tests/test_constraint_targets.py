@@ -40,25 +40,26 @@ def _refs(target, bom=BOM):
     ("I2C connector", ["J2"]),                          # words of the role
     ("USB-C receptacle", ["J1"]),                       # connector noun
     ("usb", ["J1"]), ("conn", ["J2"]),                  # block id -> label
+    ("LDO", ["U1"]),                                    # its input / output capacitors are support parts, not the LDO
 ])
 def test_each_rule(target, want):
     assert _refs(target) == want
 
 
-@pytest.mark.parametrize("target", ["LDO", "5.1k", "I2C", "U9", "C10", "flux capacitor", "10", ""])
+@pytest.mark.parametrize("target", ["5.1k", "I2C", "U9", "C10", "flux capacitor", "10", ""])
 def test_no_guess(target):
     assert _refs(target) == []
 
 
 def test_two_lines_are_candidates_not_a_binding():
-    got = constraints.match_part("LDO", BOM)
-    assert got["refs"] == [] and [l["key"] for l in got["candidates"]] == ["U1", "C1", "C2"]
+    got = constraints.match_part("5.1k", BOM)
+    assert got["refs"] == [] and [l["key"] for l in got["candidates"]] == ["R1", "R2"]
     assert _refs("USB-C", BOM + [_line("J3", "USB-C 16P", "data port")]) == []
 
 
 def test_a_helper_passive_is_not_the_part_it_serves():
     got = constraints.match_part("SHT31", [l for l in BOM if l["key"] != "U2"])
-    assert got["refs"] == [] and [l["key"] for l in got["candidates"]] == ["C3"]
+    assert got["refs"] == [] and got["candidates"] == []
 
 
 def test_line_key_gives_all_refs():
@@ -124,13 +125,13 @@ def test_no_binding_while_a_bom_proposal_waits(proj, monkeypatch):
 
 
 def test_unbound_constraints_block_with_candidates_until_one_click(proj):
-    p = proj([{"id": "a1", "kind": "attr", "target": "LDO", "attr": "heat_source"},
+    p = proj([{"id": "a1", "kind": "attr", "target": "5.1k", "attr": "heat_source"},
               {"id": "k1", "kind": "keep_apart", "a": "U1", "b": "flux capacitor"}])
     found = constraints.unresolved(p)
     assert [(f["id"], f["field"], [c["ref"] for c in f["candidates"]]) for f in found] == [
-        ("a1", "target", ["U1", "C1", "C2"]), ("k1", "b", [])]
+        ("a1", "target", ["R1", "R2"]), ("k1", "b", [])]
     why = serve.step_refusal(p, "place")
-    assert "LDO" in why and "U1" in why and "C2" in why and "flux capacitor" in why
+    assert "5.1k" in why and "R1" in why and "R2" in why and "flux capacitor" in why
     with pytest.raises(ValueError):
         constraints.bind_one(p, "k1", "b", "U1")        # the two parts of a distance
     with pytest.raises(ValueError):
@@ -155,7 +156,8 @@ def test_requirement_without_a_constraint_is_a_finding_and_one_click_holds_it(pr
 def test_wrong_side_and_unknown_subject_are_findings(proj):
     p = proj(text="Place the USB-C connector and the battery holder on the right edge.")
     msgs = [f["message"] for f in coverage.edge_findings(store.load_idea(p), BOM)]
-    assert msgs == ["Requirement says J1 on the right edge, no constraint holds it"]
+    assert msgs == ["Requirement says J1 on the right edge, no constraint holds it",
+                    "Requirement says battery holder on the right edge, no constraint holds it"]      # every piece, not only the one that resolves
     p = proj(text="The antenna must be on the top edge")
     [f] = coverage.edge_findings(store.load_idea(p), BOM)
     assert f["refs"] == [] and "antenna on the top edge" in f["message"]
@@ -166,6 +168,55 @@ def test_wrong_side_and_unknown_subject_are_findings(proj):
 def test_no_edge_finding_from_other_text(proj, text):
     p = proj(items=[], text=text)
     assert coverage.edge_findings(store.load_idea(p), BOM) == []
+
+
+HELD = [{"id": "e1", "kind": "edge", "target": "J1", "side": "left"}, {"id": "e2", "kind": "edge", "target": "J2", "side": "right"}]
+
+
+@pytest.mark.parametrize("text", ["Power enters through a USB-C connector on the left edge", "Logo on the left side",
+                                  "Connectors on the left edge: USB-C and I2C",
+                                  "Status LED on the right-hand side so it is visible"])
+def test_no_false_edge_finding_when_the_connectors_are_held(proj, text):
+    p = proj(items=HELD, text=text)
+    assert coverage.edge_findings(store.load_idea(p), BOM) == []
+
+
+def test_a_listed_part_that_resolves_but_is_not_held_is_a_finding(proj):
+    p = proj(items=HELD, text="Connectors on the left edge: USB-C and I2C connector")
+    assert [f["message"] for f in coverage.edge_findings(store.load_idea(p), BOM)] == ["Requirement says J2 on the left edge, no constraint holds it"]
+
+
+def test_a_picked_part_for_an_unknown_subject_clears_the_finding(proj):
+    p = proj(items=HELD, text="The antenna must be on the top edge")
+    [f] = coverage.edge_findings(store.load_idea(p), BOM)
+    assert f["subject"] == "antenna"
+    constraints.hold_edge(p, "U2", "top", f["subject"])
+    assert coverage.edge_findings(store.load_idea(p), BOM) == []
+
+
+def test_a_bound_name_is_checked_again_when_the_bom_changes(proj, monkeypatch):
+    p = proj()
+    constraints.bind_all(p)
+    assert constraints.unresolved(p) == []
+    item = {i["id"]: i for i in constraints.confirmed(store.load_idea(p))}["e_usb"]
+    assert item["target"] == "J1" and item["names"] == {"target": "USB-C"}
+    monkeypatch.setattr(store, "bom_lines", lambda x: [dict(l) for l in BOM] + [_line("J3", "USB-C 16P", "data port")])
+    [f] = constraints.unresolved(p)
+    assert f["id"] == "e_usb" and "USB-C was bound to J1" in f["message"] and [c["ref"] for c in f["candidates"]] == ["J1", "J3"]
+    assert "USB-C was bound to J1" in serve.step_refusal(p, "place")
+    constraints.bind_one(p, "e_usb", "target", "J3")            # the student's pick settles it for good
+    assert constraints.unresolved(p) == []
+    monkeypatch.setattr(store, "bom_lines", lambda x: [dict(l) for l in BOM if l["key"] != "J1"] + [_line("J3", "USB-C 16P", "data port")])
+    assert constraints.unresolved(p) == []
+    monkeypatch.setattr(store, "bom_lines", lambda x: [dict(l) for l in BOM if l["key"] != "J3"])
+    assert constraints.unresolved(p) == [] or [f["id"] for f in constraints.unresolved(p)] == ["e_usb"]
+
+
+def test_step_refusal_writes_nothing(proj):
+    p = proj()
+    before = (proj.dir / "idea.json").read_bytes()
+    assert serve.step_refusal(p, "place") == ""
+    assert (proj.dir / "idea.json").read_bytes() == before
 
 
 def test_the_bom_decision_binds_the_names(proj, monkeypatch):
