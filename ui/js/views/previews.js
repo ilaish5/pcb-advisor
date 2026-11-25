@@ -410,6 +410,7 @@ function pvAltiumLinked() {       // only when an Altium project is linked; the 
 function pvStepBtn(step, o) {       // o.disabled / o.title: the page can hold the button back with its reason (Outputs: unverified pins)
   const c = PV_STEPS[step];
   o = o || {};
+  if (step === 'place' && typeof constraintTargetsOpen === 'function' && constraintTargetsOpen().length) o = {...o, disabled: true, title: 'Pick the part of each constraint listed on the Layout page first'};
   return pvAltiumLinked() ? btn(pvBusy === step ? c.doing : c.label, {kind: o.kind || 'line', act: 'altium-step', step, title: o.title || c.title, disabled: pvBusy || o.disabled ? true : undefined}) : '';
 }
 function pvStepText(st, i, all) {       // the words of one step of the live list
@@ -751,7 +752,9 @@ function pcbLayerList(svgText, plan) {
 }
 function pcbHTML(container) {
   const text = pcbSvgCache.text;
-  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout', actions: pvStepBtn('place')})}${pvStepNote('pcb')}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
+  const fix = typeof constraintFixHTML === 'function' ? constraintFixHTML() : '';
+  const fixNote = fix ? `<div class="pv-note">${fix}</div>` : '';
+  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout', actions: pvStepBtn('place')})}${pvStepNote('pcb')}${fixNote}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
   const plan = pvPlan(), b = S.board || {}, cnt = k => plan && Array.isArray(plan[k]) ? plan[k].length : 0;
   const size = Array.isArray(b.size_mm) && b.size_mm.length === 2 ? b.size_mm.map(v => Math.round(v * 10) / 10).join(' × ') + ' mm' : '';
   const cu = text && text.match(/data-copper-layers="(\d+)"/), copper = cu ? +cu[1] : b.layers;
@@ -761,7 +764,7 @@ function pcbHTML(container) {
   const inner = pvPcbErr ? `<div class="pv-note">${errorLine('draw the layout', pvPcbErr, btn('Try again', {size: 'sm', act: 'pcb-retry'}))}</div>` : formatPcbPreview(text);
   const zoom = text || pvPcbErr ? pvZoomHTML('pcb') : '';
   return `<div class="pv" data-pv="pcb">` +
-    viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + pvStepBtn('drc')}) +
+    viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + pvStepBtn('drc')}) + fixNote +
     `<div class="pv-stage"><div class="pv-canvas pcb-canvas" id="pcbwrap" tabindex="0" aria-label="PCB layout. Scroll to zoom, drag to pan.">${inner}</div>${zoom}${pvBarHTML('pcb', pvLayersHTML(layers))}</div></div>`;
 }
 async function loadPcb(container) {

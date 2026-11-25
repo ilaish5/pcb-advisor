@@ -1898,8 +1898,12 @@ def place_pcb(project, replace=False):
         raise BridgeError("The schematic is not drawn in Altium for " + ", ".join(undrawn[:8]) + (" ..." if len(undrawn) > 8 else "")
                           + ": draw it first (altium.draw_schematic, with the student's agreement). A part placed without the link to its "
                           "schematic symbol is duplicated by the first Update PCB. Nothing was changed.")
-    fit = board_fit_check(project)                       # the same estimate the BOM approval gave; the figures also go in the refusal
     import constraints
+    constraints.bind_when_bom_settled(project)
+    unbound = constraints.blocking(project)      # a confirmed constraint with no part would be silently dropped by the placer
+    if unbound:
+        raise BridgeError(unbound)
+    fit = board_fit_check(project)                       # the same estimate the BOM approval gave; the figures also go in the refusal
     items = constraints.confirmed(store.load_idea(project))      # the SAVED idea: only what the student confirmed with Save
     import project as projects_mod
     res = place_on(prj, pcb, lp["pcblib"], parts, size=_board_size(project), clearance_mm=_clearance_mm(project), replace=replace,

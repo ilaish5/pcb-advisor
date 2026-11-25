@@ -7,7 +7,11 @@ agent states a board fact only from what check_requirements measured on the save
     item = {"id", "kind", "by": "agent"|"student", "status": "proposed"|"confirmed", "note"?, ...kind fields}
       mounting_hole  diameter_mm (default 3.2), inset_mm (3.5, centre to each board edge), corners ["BL","BR","TL","TR"] or points_mm [[x, y]]
                      (from the board's lower left corner)
-      edge           target (a part), side: any|left|right|top|bottom
+      (a part = a reference, or - before there are references - the part's name: constraints are written at Idea time; match_part
+                     says which BOM line a name means, bind_all rewrites it to the reference)
+      edge           target (a part), side: any|left|right|top|bottom, holds? [requirement subjects the student pointed at the part]
+      names?         {field: the name a field was written with}: set when bind_all makes the field a reference, and checked
+                     again at Place (the BOM may have changed since)
       keep_apart     a, b (parts), min_mm
       keepout        rect_mm [x0, y0, x1, y1] from the board's lower left corner, or edge + depth_mm (a strip along a whole edge)
       attr           target, attr: heat_source|heat_sensitive|rf_antenna   (recorded; nothing on the board can prove it)
@@ -54,9 +58,9 @@ def _num(item, key, default=None, lo=None, hi=None):
 
 
 def _ref(item, key):
-    v = str(item.get(key) or "").strip()
-    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,23}", v):
-        raise ValueError(f"{item.get('kind')}: {key} must be a part (a reference such as U1, or a BOM line)")
+    v = " ".join(str(item.get(key) or "").split())
+    if not (re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.+/()\u00b5\u03a9-]{0,47}", v) and re.search(r"[A-Za-z]", v)):
+        raise ValueError(f"{item.get('kind')}: {key} must be a part (a reference such as U1, a BOM line, or the part's name)")
     return v
 
 
@@ -92,6 +96,15 @@ def _validate_item(item):
            "status": item.get("status") if item.get("status") in STATUS else "proposed"}
     if item.get("note"):
         out["note"] = str(item["note"])[:200]
+    if kind in ("edge", "keep_apart", "attr"):
+        if isinstance(item.get("names"), dict):          # the name a field was written with before bind_all made it a reference
+            names = {k: " ".join(v.split())[:48] for k, v in item["names"].items() if k in ("target", "a", "b") and isinstance(v, str) and v.strip()}
+            if names:
+                out["names"] = names
+        if kind == "edge" and isinstance(item.get("holds"), list):      # requirement subjects the student pointed at this part
+            holds = [" ".join(x.split())[:48] for x in item["holds"] if isinstance(x, str) and x.strip()][:8]
+            if holds:
+                out["holds"] = holds
     if kind == "mounting_hole":
         out["diameter_mm"] = _num(item, "diameter_mm", DEFAULTS["hole_dia_mm"], 0.5, 10)
         if item.get("points_mm") not in (None, []):
@@ -241,11 +254,18 @@ def library_specs(idea):
     return specs
 
 
+class Lines(dict):
+    """{BOM line key (upper case): [refs]}, plus what a name target is matched against: .rows (BOM lines) and .blocks (Idea)."""
+    rows, blocks = (), ()
+
+
 def known_refs(project):
     """Every part reference the project knows (BOM lines): {REF_UPPER: ref} plus the BOM line keys as {KEY_UPPER: [refs]}."""
     import store
-    refs, lines = {}, {}
-    for l in store.bom_lines(project):
+    refs, lines = {}, Lines()
+    lines.rows = store.bom_lines(project)
+    lines.blocks = store.load_idea(project).get("blocks") or []
+    for l in lines.rows:
         for r in l.get("refs") or []:
             refs[r.upper()] = r
         if l.get("key"):
@@ -254,11 +274,271 @@ def known_refs(project):
 
 
 def resolve(target, refs, lines):
-    """The part references a constraint target names: a reference, or a BOM line key (all its references). [] when unknown."""
+    """The part references a constraint target names: a reference, a BOM line key (all its references), or a name that means
+    exactly one BOM line (match_part). [] when unknown or when it could mean several."""
     t = str(target or "").upper()
     if t in refs:
         return [refs[t]]
-    return list(lines.get(t, []))
+    if lines and t in lines:
+        return list(lines[t])
+    rows = getattr(lines, "rows", None)
+    return match_part(target, rows, lines.blocks)["refs"] if rows else []
+
+
+# ---------------------------------------------------------------- a part named by name
+
+_CONNECTOR_NOUN = re.compile(r"\s+(?:connector|receptacle|socket|header|jack|port|plug)$")
+_CONNECTOR_REF = re.compile(r"^(?:J|P|X|CN|CON|USB)\d+$", re.I)
+_PASSIVE_REF = re.compile(r"^(?:R|C|L|FB)\d+$", re.I)
+_HELPER = re.compile(r"decoupl|bypass|capacitor|\bcap\b|resistor|pull[- ]?(?:up|down)|filter|series|ferrite|inductor")
+
+
+def _norm(text):
+    return " ".join(str(text or "").lower().split())
+
+
+def _has_phrase(text, phrase):
+    return bool(re.search(rf"(?<![a-z0-9-]){re.escape(phrase)}(?![a-z0-9-])", text))
+
+
+def _prefix(value, t):
+    """The value or part number starts with the name, up to a separator ("SHT31" of "SHT31-DIS"); a name that is itself a part
+    number (5 characters or more with letters and digits) may stop anywhere ("STM32F103" of "STM32F103C8T6")."""
+    if len(t) < 3 or not re.search(r"[a-z]", t) or value == t or not value.startswith(t):
+        return False
+    return not value[len(t)].isalnum() or (len(t) >= 5 and bool(re.search(r"\d", t)) and " " not in t)
+
+
+def _helper_only(line, t):
+    """A passive that only serves another part ("SHT31 VDD decoupling"): naming that part does not mean the passive."""
+    refs = line.get("refs") or []
+    text = _norm(f"{line.get('role') or ''} {line.get('description') or ''}")
+    return bool(refs) and all(_PASSIVE_REF.match(r) for r in refs) and bool(_HELPER.search(text)) and not _HELPER.search(t)
+
+
+def _tiers(t, rows):
+    """(rule, [BOM lines]) from the surest rule to the weakest."""
+    def values(l):
+        return [_norm(l.get(k)) for k in ("value", "mpn")]
+
+    def worded(l, phrase):
+        return any(_has_phrase(_norm(l.get(k)), phrase) for k in ("role", "description", "value"))
+    yield "value", [l for l in rows if t in values(l)]
+    yield "prefix", [l for l in rows if any(_prefix(v, t) for v in values(l))]
+    yield "role", [l for l in rows if len(t) >= 3 and worded(l, t)]
+    base = _CONNECTOR_NOUN.sub("", t)          # "USB-C receptacle": the connector among the lines that say USB-C
+    yield "connector", [l for l in rows if base != t and len(base) >= 3 and any(_CONNECTOR_REF.match(r) for r in l["refs"])
+                        and (worded(l, base) or any(_prefix(v, base) for v in values(l)))]
+
+
+def match_part(target, bom, blocks=(), loose=False):
+    """{"refs": [...], "rule": str, "candidates": [BOM lines]} for a part named by reference, line key, value / part number (exact,
+    then prefix), words of its role or description, or an Idea block. The first rule that hits anything decides: one line gives its
+    references, several give none (never a guess) and are the candidates. Support passives ("LDO input capacitor") never count as
+    the part their role names. loose: words picked out of a sentence, so the role rule (too weak for that) is left out."""
+    t = _norm(target)
+    rows = [l for l in bom or [] if l.get("refs")]
+    nothing = {"refs": [], "rule": "", "candidates": []}
+    if not t:
+        return nothing
+    for l in rows:
+        for r in l["refs"]:
+            if r.lower() == t:
+                return {"refs": [r], "rule": "ref", "candidates": [l]}
+    for l in rows:
+        if _norm(l.get("key")) == t:
+            return {"refs": list(l["refs"]), "rule": "key", "candidates": [l]}
+    shape = re.fullmatch(r"([a-z]{1,3})\d{1,3}", t)
+    if shape and any(re.fullmatch(rf"{shape.group(1)}\d+", r.lower()) for l in rows for r in l["refs"]):
+        return nothing                          # a reference that is not there, not a name
+    names = [t]                                 # an Idea block's id stands for its label
+    names += [_norm(b.get("label")) for b in blocks or []
+              if isinstance(b, dict) and _norm(b.get("id")) == t and _norm(b.get("label")) not in ("", t)]
+    for name in names:
+        for rule, hits in _tiers(name, rows):
+            if rule == "role":
+                hits = [] if loose else [l for l in hits if not _helper_only(l, name)]
+            if not hits:
+                continue
+            return {"refs": list(hits[0]["refs"]) if len(hits) == 1 else [], "rule": rule if name == t else "block", "candidates": hits}
+    return nothing
+
+
+def _fields(item):
+    return ("a", "b") if item["kind"] == "keep_apart" else ("target",) if item["kind"] in ("edge", "attr") else ()
+
+
+def _choices(line):
+    label = " - ".join(str(line.get(k)) for k in ("value", "role") if line.get(k))
+    return [{"ref": r, "label": label} for r in line.get("refs") or []]
+
+
+def _ref_order(choice):
+    return [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", choice["ref"])]
+
+
+def unresolved(project):
+    """The CONFIRMED constraints that name no one part of the BOM: [{id, kind, field, target, candidates: [{ref, label}],
+    choices: [every ref], need, message}]. [] while there is no BOM (nothing to name yet)."""
+    import store
+    items = confirmed(store.load_idea(project))
+    if not items:
+        return []
+    refs, lines = known_refs(project)
+    if not refs:
+        return []
+    every = sorted((c for l in lines.rows for c in _choices(l)), key=_ref_order)
+    out = []
+
+    def add(it, field, candidates, why):
+        names = ", ".join(f"{c['ref']} ({c['label']})" for c in candidates[:6])
+        out.append({"id": it["id"], "kind": it["kind"], "field": field, "target": it[field], "candidates": candidates,
+                    "choices": every, "need": describe(it),
+                    "message": f"Constraint \"{describe(it)}\": {why}" + (f". Candidates: {names}" if names else "")})
+    for it in items:
+        got = {f: resolve(it[f], refs, lines) for f in _fields(it)}
+        for f, found in got.items():
+            name = (it.get("names") or {}).get(f)
+            if not found:
+                m = match_part(name or it[f], lines.rows, lines.blocks)
+                add(it, f, [c for l in m["candidates"] for c in _choices(l)],
+                    f"{it[f]} could be more than one part" if len(m["candidates"]) > 1 else f"{it[f]} is not a part of the BOM")
+            elif name and sorted(resolve(name, refs, lines)) != sorted(found):      # bound once: is the name still that part?
+                m = match_part(name, lines.rows, lines.blocks)
+                add(it, f, [c for l in m["candidates"] for c in _choices(l)],
+                    f"{name} was bound to {it[f]}, but the BOM changed and {name} no longer means only that part")
+        if it["kind"] == "keep_apart" and got["a"] and got["a"] == got["b"]:
+            add(it, "b", [], f"{it['a']} and {it['b']} are the same part")
+    return out
+
+
+def blocking(project):
+    """Why the parts cannot be placed yet (a confirmed constraint would be dropped), or ""."""
+    found = unresolved(project)
+    if not found:
+        return ""
+    return ("The parts were not placed: " + "; ".join(f["message"] for f in found)
+            + ". Pick the part for each on the Layout page (one click), or remove the constraint there. Nothing was changed.")
+
+
+def _rewrite(project, change):
+    """Run change(items) -> bool on the constraint items of the saved idea and of the draft when there is one, and write what
+    changed. Both, so a draft never shows (or saves back) the old target."""
+    import store
+    for path, inner in ((store.pdir(project) / "idea.json", None), (store.idea_draft_path(project), "idea")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            idea = data[inner] if inner else data
+            c = validate(idea.get("constraints"))
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            continue
+        if change(c["items"]):
+            idea["constraints"] = validate(c)
+            store._atomic_write_json(path, data)
+
+
+def bind_all(project):
+    """Rewrite every constraint target that is a name meaning exactly one part into that reference (or BOM line key). Returns
+    ["USB-C -> J1", ...]. A name that could mean several parts, or none, stays as it is (unresolved() reports it)."""
+    refs, lines = known_refs(project)
+    done = []
+    if not refs:
+        return done
+
+    def bound(name):
+        if str(name).upper() in refs or str(name).upper() in lines:
+            return name
+        got = resolve(name, refs, lines)
+        if len(got) == 1:
+            return got[0]
+        key = next((str(l["key"]) for l in lines.rows if got and l.get("key") and list(l.get("refs") or []) == got), "")
+        return key if key and resolve(key, refs, lines) == got else name
+
+    def change(items):
+        hit = False
+        for it in items:
+            new = {f: bound(it[f]) for f in _fields(it) if f not in (it.get("names") or {})}
+            if it["kind"] == "keep_apart" and new.get("a", it["a"]) == new.get("b", it["b"]):
+                continue
+            for f, v in new.items():
+                if v != it[f]:
+                    done.append(f"{it[f]} -> {v}")
+                    it.setdefault("names", {})[f] = it[f]          # kept: Place checks the name still means this part
+                    it[f], hit = v, True
+        return hit
+    _rewrite(project, change)
+    return list(dict.fromkeys(done))
+
+
+def bind_when_bom_settled(project):
+    """After a BOM decision: bind once nothing of the BOM waits any more (a half approved BOM can make a name look unique)."""
+    import store
+    if any(p.get("status") == "pending" and p.get("kind") != "idea_diagram" for p in store.proposals(project)):
+        return []
+    return bind_all(project)
+
+
+def _known(project, ref):
+    got = known_refs(project)[0].get(str(ref or "").upper())
+    if not got:
+        raise ValueError(f"{ref} is not a part of the BOM")
+    return got
+
+
+def bind_one(project, cid, field, ref):
+    """The student's one click: this field of this constraint means this part."""
+    ref = _known(project, ref)
+    hit = []
+
+    def change(items):
+        for it in items:
+            if it["id"] == cid and field in _fields(it):
+                if it["kind"] == "keep_apart" and it["b" if field == "a" else "a"].upper() == ref.upper():
+                    raise ValueError("the two parts of a distance cannot be the same part")
+                it[field] = ref
+                (it.get("names") or {}).pop(field, None)          # the student's pick, not a guess of ours: nothing to re-check
+                if not it.get("names"):
+                    it.pop("names", None)
+                hit.append(cid)
+                return True
+        return False
+    _rewrite(project, change)
+    if not hit:
+        raise ValueError(f"no constraint {cid}")
+
+
+def remove_one(project, cid):
+    def change(items):
+        n = len(items)
+        items[:] = [i for i in items if i["id"] != cid]
+        return len(items) != n
+    _rewrite(project, change)
+
+
+def hold_edge(project, ref, side, subject=""):
+    """The student's one click on a requirement no constraint holds: a confirmed edge constraint for that part and side."""
+    ref = _known(project, ref)
+    if side not in SIDE_LETTER:
+        raise ValueError("side must be left, right, top or bottom")
+    refs, lines = known_refs(project)
+    subject = " ".join(str(subject or "").split())
+
+    def change(items):
+        mine = [i for i in items if i["kind"] == "edge" and resolve(i["target"], refs, lines) == [ref]]
+        if mine:
+            mine[0].update(target=ref, side=side, status="confirmed", by="student")
+            items[:] = [i for i in items if i is mine[0] or i not in mine]
+            hold = mine[0]
+        else:
+            ids, n = {i["id"] for i in items}, 1
+            while f"edge-{ref}-{n}" in ids:
+                n += 1
+            hold = {"id": f"edge-{ref}-{n}", "kind": "edge", "target": ref, "side": side, "by": "student", "status": "confirmed"}
+            items.append(hold)
+        if subject and subject not in hold.get("holds", []):
+            hold["holds"] = hold.get("holds", []) + [subject]
+        return True
+    _rewrite(project, change)
 
 
 def plan_for_board(items, outline, refs=None, lines=None, size=None):
@@ -275,7 +555,7 @@ def plan_for_board(items, outline, refs=None, lines=None, size=None):
             return [target]
         got = resolve(target, refs, lines or {})
         if not got:
-            findings.append(f"constraint {item['id']} has no part: {target} is not a part of this project")
+            findings.append(f"constraint {item['id']} has no part: {target} is not one part of this project")
         return got
     nh = nk = 0
     for it in items:
@@ -404,9 +684,14 @@ def describe(it):
 @ext.register("model")
 def _model(project, out):
     try:
-        return {"requirements": requirement_rows(project, out.get("idea") if isinstance(out.get("idea"), dict) else None)}
+        res = {"requirements": requirement_rows(project, out.get("idea") if isinstance(out.get("idea"), dict) else None)}
     except Exception as exc:       # noqa: BLE001 - the state must always build
-        return {"requirements": [], "requirements_error": str(exc)}
+        res = {"requirements": [], "requirements_error": str(exc)}
+    try:
+        res["constraint_targets"] = unresolved(project)
+    except Exception as exc:       # noqa: BLE001
+        res.update(constraint_targets=[], constraint_targets_error=str(exc))
+    return res
 
 
 @ext.register("summary")
@@ -421,6 +706,12 @@ def _summary(project, s):
                                          "copper_under_keepout", "drc_total", "requirements")}}
     if facts and facts.get("stale"):
         res["board_facts"]["note"] = "the board file changed since this was measured"
+    try:
+        open_targets = unresolved(project) if project else []
+    except Exception:       # noqa: BLE001 - the agent's context must always build
+        open_targets = []
+    if open_targets:
+        res["constraints_without_a_part"] = [f["message"] for f in open_targets]
     return res
 
 
@@ -466,6 +757,18 @@ def _idea_constrain(project, action, ctx):
 
 @ext.register("post")
 def _post(handler, path, data):
+    if path in ("/api/idea/constraints/bind", "/api/idea/constraints/hold-edge"):
+        d, proj = data or {}, handler.project()
+        try:
+            if path.endswith("/hold-edge"):
+                hold_edge(proj, d.get("ref"), d.get("side"), d.get("subject"))
+            elif d.get("remove"):
+                remove_one(proj, str(d.get("id") or ""))
+            else:
+                bind_one(proj, str(d.get("id") or ""), str(d.get("field") or "target"), d.get("ref"))
+        except ValueError as exc:
+            raise ext.HTTPError(400, str(exc)) from exc
+        return {"ok": True}
     if path != "/api/idea/constraints":
         return None
     items = (data or {}).get("items")

@@ -6,3 +6,5 @@
 .cons-add { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .cons-add .in { width: 4.5em; }
 .cons-warn { margin: 6px 0 0; font-size: 12px; }
+.cons-fix .unv-row { flex-wrap: wrap; }
+.cons-fix select { max-width: 200px; }
