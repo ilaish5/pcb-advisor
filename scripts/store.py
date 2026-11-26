@@ -3643,6 +3643,11 @@ def _pin_num(pin):
     return str(pin.get("num", pin.get("number", "")) or "").strip()
 
 
+def pad_key(ref, num):
+    """The identity of one pin or pad: "ep" in the netlist and "EP" in the symbol or footprint are the same one."""
+    return (str(ref), str(num).casefold())
+
+
 def pin_gaps(project):
     """Pins of the drawn design nobody decided, {"open": [...], "unlisted": [...]} (see _pin_gaps); computed once per build_scope."""
     return memoised(("pin_gaps", project), lambda: _pin_gaps(project))
@@ -3663,9 +3668,9 @@ def _pin_gaps(project):
         for part in parts:
             ref = part.get("ref")
             for pin in part.get("pins", []):
-                listed_all.setdefault(ref, set()).add(_pin_num(pin))
+                listed_all.setdefault(ref, set()).add(_pin_num(pin).casefold())
                 if (pin.get("net") or "").strip():
-                    decided.setdefault(ref, set()).add(_pin_num(pin))
+                    decided.setdefault(ref, set()).add(_pin_num(pin).casefold())
     seen_unlisted = set()
     for sh, parts in sheets.items():
         for part in parts:
@@ -3674,7 +3679,7 @@ def _pin_gaps(project):
                 continue
             for pin in part.get("pins", []):
                 num = _pin_num(pin)
-                if not (pin.get("net") or "").strip() and num not in decided.get(ref, ()):
+                if not (pin.get("net") or "").strip() and num.casefold() not in decided.get(ref, ()):
                     out["open"].append({"sheet": sh, "ref": ref, "num": num, "name": str(pin.get("name") or "")})
             if ref in seen_unlisted:
                 continue
@@ -3686,7 +3691,7 @@ def _pin_gaps(project):
             if not sym or any(entry.get(f) and line.get(f) and str(entry[f]).strip().lower() != str(line[f]).strip().lower() for f in ("mpn", "lcsc")):
                 continue
             for pin in sym["pins"]:
-                if str(pin["num"]).strip() not in listed:
+                if str(pin["num"]).strip().casefold() not in listed:
                     out["unlisted"].append({"sheet": sh, "ref": ref, "num": str(pin["num"]).strip(), "name": pin.get("name", "")})
     return out
 
@@ -3718,9 +3723,9 @@ def pad_gaps(project):
 
 
 def pad_kinds(project):
-    """{(ref, pad): the pad_report row} of EVERY unnetted pad (also those pin_gaps lists): the kind decides what one click may do."""
+    """{pad_key: the pad_report row} of EVERY unnetted pad (also those pin_gaps lists): the kind decides what one click may do."""
     import pin_model
-    return {(r["ref"], r["num"]): r for r in pin_model.pad_report(project)["unnetted"]}
+    return {pad_key(r["ref"], r["num"]): r for r in pin_model.pad_report(project)["unnetted"]}
 
 
 def _gap_todo(project):
@@ -3745,16 +3750,16 @@ def mark_pins_nc(project, items=None, net="NC"):
     if net != "NC" and (items is None or not _net_known(project, net)):
         raise ValueError(f"a net other than NC needs the pins listed and a net the design has ({net!r} is on no pin of any sheet)")
     kinds = pad_kinds(project)
-    have = {tuple(m) for m in pin_model.pad_report(project)["matched"]}
-    todo = [(k, i) for k, i in todo if k == "open" or (i["ref"], i["num"]) not in have]     # a pin listed by name only already has the pad
+    have = {pad_key(*m) for m in pin_model.pad_report(project)["matched"]}
+    todo = [(k, i) for k, i in todo if k == "open" or pad_key(i["ref"], i["num"]) not in have]     # a pin listed by name only already has the pad
     if items is not None:
-        want = {(str(i.get("sheet")), str(i.get("ref")), str(i.get("num"))) for i in items}
-        todo = [(k, i) for k, i in todo if (str(i["sheet"]), str(i["ref"]), str(i["num"])) in want]
-        stuck = [i for _, i in todo if net != "NC" and (kinds.get((i["ref"], i["num"])) or {}).get("wirable") is False]
+        want = {_nc_key(i) for i in items}
+        todo = [(k, i) for k, i in todo if _nc_key(i) in want]
+        stuck = [i for _, i in todo if net != "NC" and (kinds.get(pad_key(i["ref"], i["num"])) or {}).get("wirable") is False]
         if stuck:       # the library symbol has no pin for it: the draw would refuse the net, so it is refused here
             raise ValueError(f"{stuck[0]['ref']} pad {stuck[0]['num']} cannot be put on {net}: the library symbol has no pin for it (pick another LCSC code, or mark it NC)")
     else:               # a shell, exposed or duplicate pad is its own decision; a plain footprint-only pad of a generated symbol is not
-        todo = [(k, i) for k, i in todo if (kinds.get((i["ref"], i["num"])) or {}).get("kind") not in pin_model.RISKY_KINDS]
+        todo = [(k, i) for k, i in todo if (kinds.get(pad_key(i["ref"], i["num"])) or {}).get("kind") not in pin_model.RISKY_KINDS]
     by_sheet = {}
     for kind, i in todo:
         by_sheet.setdefault(i["sheet"], []).append((kind, i))
@@ -3765,8 +3770,8 @@ def mark_pins_nc(project, items=None, net="NC"):
             part = next((p for p in sheet.get("parts", []) if p.get("ref") == i["ref"]), None)
             if part is None:
                 continue
-            pin = next((p for p in part.get("pins", []) if _pin_num(p) == i["num"] and not (p.get("net") or "").strip()), None)
-            via = (kinds.get((i["ref"], i["num"])) or {}).get("via_name")
+            pin = next((p for p in part.get("pins", []) if _pin_num(p).casefold() == i["num"].casefold() and not (p.get("net") or "").strip()), None)
+            via = (kinds.get(pad_key(i["ref"], i["num"])) or {}).get("via_name")
             if pin is None and kind != "open" and via:       # listed by name only: that pin takes the pad number, no second pin is added
                 pin = next((p for p in part.get("pins", []) if not _pin_num(p) and str(p.get("name") or "").strip() == via
                             and not (p.get("net") or "").strip()), None)
@@ -3789,7 +3794,7 @@ def mark_pins_nc(project, items=None, net="NC"):
 # (that would clear the open-pin gate without the student): it waits as one list the student approves with one click.
 
 def _nc_key(i):
-    return (str(i.get("sheet")), str(i.get("ref")), str(i.get("num")))
+    return (str(i.get("sheet")), *pad_key(i.get("ref"), i.get("num")))
 
 
 def hold_nc_marks(project, sheet_id, data):
@@ -3797,7 +3802,7 @@ def hold_nc_marks(project, sheet_id, data):
     (listed with no net) or an unlisted pin (in the built symbol, not in the netlist) is put back as it was (open / not listed) and
     returned in `held` as [{sheet, ref, num, name, kind}]. NC on a new part or on a pin that already had a net is not touched."""
     sid = workspace.safe_name(sheet_id)
-    want = {(i["ref"], i["num"]): (k, i) for k, i in _gap_todo(project) if i["sheet"] == sid}      # a footprint pad no net answers for too
+    want = {pad_key(i["ref"], i["num"]): (k, i) for k, i in _gap_todo(project) if i["sheet"] == sid}      # a footprint pad no net answers for too
     if not want or not isinstance(data.get("parts"), list):
         return data, []
     held, parts = [], []
@@ -3808,7 +3813,7 @@ def hold_nc_marks(project, sheet_id, data):
             continue
         keep = []
         for pin in pins:
-            hit = want.get((part.get("ref"), _pin_num(pin))) if isinstance(pin, dict) else None
+            hit = want.get(pad_key(part.get("ref"), _pin_num(pin))) if isinstance(pin, dict) else None
             if hit and pinnames.is_nc_net(pin.get("net")):
                 held.append({"sheet": sid, "ref": part["ref"], "num": hit[1]["num"], "name": hit[1].get("name", ""), "kind": hit[0]})
                 if hit[0] == "open" or (hit[0] == "pad" and hit[1].get("listed")):
