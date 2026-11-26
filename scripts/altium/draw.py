@@ -1162,4 +1162,10 @@ def verify_sheet(plan, doc, footprints=None):
     missing = sorted(set(plan["no_erc"]) - set(got["no_erc_pins"]))
     if missing:
         problems.append(f"No ERC marker missing on {', '.join(missing)}")
+    if "sheet_style" in doc and plan.get("sheet_size") in SHEETS:
+        want_style = SHEETS[plan["sheet_size"]]["style"]
+        if doc["sheet_style"] != want_style:
+            problems.append(f"the saved sheet style is {doc['sheet_style']}, expected {want_style} ({plan['sheet_size']})")
+    if "text_frames" in doc and any(str(t).startswith(f"{TAG} No sheets planned yet") for t in doc["text_frames"]):
+        problems.append("leftover skeleton frame '[advisor] No sheets planned yet' is still on the saved sheet")
     return problems

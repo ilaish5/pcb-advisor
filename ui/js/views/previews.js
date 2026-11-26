@@ -626,7 +626,7 @@ onAct('altium-step-dismiss', async (el, d, e) => {
 });
 
 const SCH_LIMITS = 'Not drawn automatically yet: a part whose library symbol is split into several separate blocks (for example a chip drawn as a power block and a signal block), and a circuit too big for one A4 sheet (it is refused with a plan to split it). Wires that run between two sheets are not drawn either. For these, draw that part by hand in Altium.';
-const PCB_LIMITS = 'Not yet: the router is for small two-layer boards, with no differential pairs and no inner layers.';
+const PCB_LIMITS = 'Not yet: the router is for small 2- and 4-layer boards (inner planes for ground and power), with no differential pairs or length matching.';
 const pvRealSheets = sheets => sheetCounts(sheets).total;       // the server's count (stage_sheets): the plan's sheets, else Altium's; one number on every page
 function schHTML(container) {
   const sheets = S.sheets || [];

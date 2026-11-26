@@ -26,7 +26,7 @@
 .conv .cp.none{color:var(--ink-4)}
 
 /* ---------- the thread ---------- */
-.msgs{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:16px;padding:10px 4px 14px 6px}
+.msgs{min-height:0;overflow:auto;display:flex;flex-direction:column;gap:16px;padding:10px 4px 18px 6px}
 .msgs>*{flex:none}
 /* the thread, then the turn in flight (or a status note), then the starter chips: one scrolling list above the composer */
 .chat-thread{display:flex;flex-direction:column;gap:16px}

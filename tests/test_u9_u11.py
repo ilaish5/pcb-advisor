@@ -91,7 +91,7 @@ def test_empty_states_state_the_limits():
     pv = (ui / "views" / "previews.js").read_text(encoding="utf-8")
     assert "SCH_LIMITS)" in pv and pv.count("PCB_LIMITS)") >= 2
     assert "split into several separate blocks" in pv and "too big for one A4 sheet" in pv and "sub-parts" not in pv and "between two sheets are not drawn" in pv
-    assert "two-layer boards, with no differential pairs" in pv
+    assert "2- and 4-layer boards" in pv and "no differential pairs" in pv
     out = (ui / "views" / "outputs.js").read_text(encoding="utf-8")
     # since E1/E3/E12 the one gate is the server's (unrouted nets, open pins, a draft); unverified pins only warn
     assert "Altium outputs and the Gerber zip are refused until the blocker above is fixed" in out and "production files" not in out

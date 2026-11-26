@@ -15,6 +15,7 @@
 .pv>.vh .acts>.btn:not(.icon){padding:0 9px}      /* the steps stay on one row beside the open inspector (a 380px drawer on a 1270px window) */
 /* the inspector covers the right edge of the sheet: keep the header's controls (side by side, Next) clear of it */
 .work:has(>#detail:not([hidden])) .pv>.vh{padding-right:calc(min(var(--insp-w,380px), 55%) + 24px)}
+.work:has(>#detail:not([hidden])) .pv>.pv-note{padding-right:calc(min(var(--insp-w,380px), 55%) + 20px)}
 .pv-tabs{display:flex;gap:18px;flex:none;margin:-4px 0 10px;padding:0 24px;overflow-x:auto;scrollbar-width:none}
 .pv-tab{position:relative;height:30px;padding:0 1px;font-size:13px;font-weight:500;white-space:nowrap;color:var(--ink-3)}
 .pv-tab:hover,.pv-tab[aria-selected="true"]{color:var(--ink)}

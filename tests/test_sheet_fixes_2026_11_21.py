@@ -577,3 +577,20 @@ def test_the_same_refused_for_rename(said):
 def test_the_that_form_after_want_is_still_a_request(kind, to, said):
     a = {"type": kind, "sheet": "Main", "student_said": said, **({"to": to} if to else {})}
     assert serve._sheet_edit_consent(kind, a, said) == "", said
+
+
+def test_bridge_refreshes_live_sch_on_resize_and_verify_catches_stale_style_or_frame():
+    for fn_name in ("procedure SheetSetupStyle", "procedure ClearFrames", "procedure RemoveKind"):
+        body = PAS[PAS.index(fn_name):]
+        assert "Sch.GraphicallyInvalidate;" in body[:body.index("\nend;")], fn_name
+    disp = PAS[PAS.index("procedure DispatchStep"):]
+    disp = disp[:disp.index("\nend;")]
+    assert "SaveAndRefreshSch(Field(Line, 1))" in disp and ".SCHDOC" in disp
+    import test_altium_draw as td
+    p = td.plan()
+    p["sheet_size"] = "A3"
+    doc = td.simulate(p["commands"])
+    doc["sheet_style"] = 0
+    doc["text_frames"] = ["[advisor] No sheets planned yet\nParts: (none yet)"]
+    probs = " | ".join(draw.verify_sheet(p, doc, {"U1": "FP", "R1": "FP"}))
+    assert "sheet style is 0" in probs and "No sheets planned yet" in probs

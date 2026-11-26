@@ -498,3 +498,18 @@ def test_sheet_fit_says_unknown_not_too_big_when_a_sheet_errors(monkeypatch):
     monkeypatch.setattr(bridge, "_sheet_symbols", boom)
     res = bridge.sheet_fit("p")
     assert res[0]["fits"] is None and "symbol broke" in res[0]["message"]
+
+
+def test_outline_resize_draws_when_mechanical1_is_empty(tmp_path, monkeypatch):
+    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8")
+    seg = pas[pas.index("procedure PcbOutlineResize"):]
+    seg = seg[:seg.index("\nend;")]
+    assert "if (n = 0) then" in seg and "PcbOutlineDraw(Path, X0, Y0, X1, Y1, W)" in seg
+    sent, _ = _resize_fakes(monkeypatch, tmp_path)
+    orig = bridge.run_commands
+    def zero_kept(cmds, **kw):
+        out = orig(cmds, **kw)
+        return ["outlineresize drawn=0 kept=0" if l.startswith("outlineresize") else l for l in out]
+    monkeypatch.setattr(bridge, "run_commands", zero_kept)
+    res = bridge.resize_outline("p", 120, 90)
+    assert not any("drawing of your own" in w for w in res["warnings"])

@@ -213,6 +213,7 @@ begin
     Sch.VisibleGridSize := MilsToCoord(100);
     Sch.SnapGridOn := True;
     Sch.VisibleGridOn := True;
+    Sch.GraphicallyInvalidate;
     Log('sheet style ' + IntToStr(Style) + ', 100 mil grid');
 end;
 
@@ -247,6 +248,7 @@ begin
             n := n + 1;
         end;
     until (Found = nil);
+    if (n > 0) then Sch.GraphicallyInvalidate;
     Log('cleared ' + IntToStr(n) + ' frames in ' + Path);
 end;
 
@@ -716,6 +718,21 @@ begin
         D := Client.GetDocumentByPath(Path);
     end;
     if (n > 0) then Log('closed ' + Path);
+end;
+
+{ Saves a schematic and reloads its open tab in Altium so a changed SheetStyle (A4 -> A3) and removed frames redraw cleanly. }
+procedure SaveAndRefreshSch(Path: String);
+var
+    Sch, D : IDispatch;
+begin
+    Sch := SchServer.GetSchDocumentByPath(Path);
+    if (Sch <> nil) then Sch.GraphicallyInvalidate;
+    SaveByPath(Path);
+    if Failed then Exit;
+    CloseDocByPath(Path);
+    D := Client.OpenDocument('SCH', Path);
+    if (D <> nil) then D.Focus;
+    Log('reopened ' + Path);
 end;
 
 { LIBCLOSE libpkg schlib pcblib intlib: nothing of the old library stays open or installed, so the files can be replaced }
@@ -1674,6 +1691,7 @@ begin
         Sch.SchIterator_Destroy(It);
         if (Found <> nil) then Sch.RemoveSchObject(Found);
     until (Found = nil);
+    Sch.GraphicallyInvalidate;
 end;
 
 { everything the drawing commands make or wipe, counted (a sheet with wires and labels but no part is not empty either) }
@@ -2381,7 +2399,9 @@ begin
         O := L.Items[i];
         if TrackOnCorners(O, ox0, oy0, ox1, oy1) then k := k + 1;
     end;
-    if (n = 4) and (L.Count = 4) and (k = 4) then
+    if (n = 0) then
+        PcbOutlineDraw(Path, X0, Y0, X1, Y1, W)
+    else if (n = 4) and (L.Count = 4) and (k = 4) then
     begin
         PCBServer.PreProcess;
         for i := 0 to L.Count - 1 do
@@ -2689,7 +2709,13 @@ begin
     else if (Cmd = 'SCH') then NewDocument('SCH', Field(Line, 1))
     else if (Cmd = 'PCB') then NewDocument('PCB', Field(Line, 1))
     else if (Cmd = 'SAVEPRJ') then SaveByPath(Field(Line, 1))
-    else if (Cmd = 'SAVE') then SaveByPath(Field(Line, 1))
+    else if (Cmd = 'SAVE') then
+    begin
+        if (Length(Field(Line, 1)) >= 7) and (UpperCase(Copy(Field(Line, 1), Length(Field(Line, 1)) - 6, 7)) = '.SCHDOC') then
+            SaveAndRefreshSch(Field(Line, 1))
+        else
+            SaveByPath(Field(Line, 1));
+    end
     else if (Cmd = 'CLEAR') then ClearFrames(Field(Line, 1))
     else if (Cmd = 'PARAM') then SetParam(Field(Line, 1), Field(Line, 2), Field(Line, 3))
     else if (Cmd = 'TITLEBLOCK') then TitleBlock(Field(Line, 1))

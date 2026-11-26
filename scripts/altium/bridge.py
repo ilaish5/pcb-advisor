@@ -1657,7 +1657,7 @@ def resize_outline(project, width_mm=None, height_mm=None):
         run_commands([("PROJECT", str(prj)), ("REVERT", str(pcb))])      # closed: the board shape below is written in the file
     except BridgeError as exc:
         raise BridgeError(str(exc) + _revert(prj, pcb, "resized") + (f" The earlier file is in {backup}." if backup else "")) from exc
-    if any("outlineresize drawn=0 kept=" in l for l in log):
+    if any("outlineresize drawn=0 kept=" in l and not l.endswith("kept=0") for l in log):
         warnings.append("the outline on Mechanical 1 is a drawing of your own (not our four lines), so it was left as it was: redraw it "
                         "in Altium (Design > Board Shape > Create Primitives From Board Shape)")
     problems = []

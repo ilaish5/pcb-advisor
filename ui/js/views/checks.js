@@ -180,10 +180,16 @@ function dfmUnverifiedHTML() {
 // only when it needs its own look (a mismatch). A part the library model already verified is not listed at all.
 function dfmWaitingHTML(w) {
   const docs = (S.sources || []).filter(s => s.scope === 'project' && s.present !== false && /\.pdf$/i.test(s.name)).map(s => s.name);
-  const item = g => `<li class="unv-row"><span class="m">${esc(refsLabel(g.refs))}</span> ${esc(g.mpn || '')}${g.count > 1 ? ` <span class="muted">×${g.count}</span>` : ''}
+  const item = g => {
+    const line = (S.bom || []).find(b => b.key === g.id) || {};
+    const curDs = line.datasheet || '';
+    const needBtn = g.own_look || (g.kind === 'ic' && curDs);
+    const title = g.own_look ? 'See the conflict next to the pins; one click records your decision' : 'See the datasheet page next to the pins; one click records your decision';
+    return `<li class="unv-row"><span class="m">${esc(refsLabel(g.refs))}</span> ${esc(g.mpn || '')}${g.count > 1 ? ` <span class="muted">×${g.count}</span>` : ''}
     <span class="unv-why" title="${esc(g.issues || '')}">${g.own_look ? 'Pins conflict: ' + esc(g.issues || '') : esc(g.issues || 'Pins not checked against a datasheet')}</span>
-    ${g.own_look ? btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: g.id, title: 'See the conflict next to the pins; one click records your decision'}) : ''}
-    ${g.kind === 'ic' && docs.length ? `<select class="in quiet" data-pick-ds="${esc(g.id)}" aria-label="Pick a datasheet for ${esc(refsLabel(g.refs))}"><option value="">Pick datasheet</option>${docs.map(d => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
+    ${needBtn ? btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: g.id, title}) : ''}
+    ${g.kind === 'ic' && docs.length ? `<select class="in quiet" data-pick-ds="${esc(g.id)}" aria-label="Pick a datasheet for ${esc(refsLabel(g.refs))}"><option value="">${curDs ? 'Change datasheet' : 'Pick datasheet'}</option>${docs.map(d => `<option value="${esc(d)}"${d === curDs ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
+  };
   const recheck = btn(dfmRecheckBusy ? 'Checking…' : 'Check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy, title: 'Fetches the datasheets it can find itself and checks the pins against them'});
   return `<section class="dfm-unv"><h3>Unverified parts <span class="muted">(${pinsNum(pinsCount('parts'))}) to resolve before ordering</span></h3>
     ${pinsWaitingBar()}<ul>${w.groups.map(item).join('')}</ul>${recheck}</section>`;

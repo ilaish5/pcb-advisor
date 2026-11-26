@@ -1216,7 +1216,8 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         within XTAL_NEAR_MM of every oscillator pin, a cap within DECAP_NEAR_MM of its pin (pad to pad), every free place and turn on
         the grid; solve() finds places that do not touch. What it cannot place is left to the later steps. Returns how many of the
         crystals and caps it wanted to place it found no place for."""
-        parts_, doms = [], []
+        parts_out, doms_out = [], []
+        parts_all, doms_all = [], []
         bands = fan_bands()
         wanted = 0
         for yref, links in xtals.items():
@@ -1234,36 +1235,94 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                         if len(dom) >= CSP_DOMAIN:
                             break
             if dom:
-                parts_.append(("x", yref, links))
-                doms.append(dom)
+                item = ("x", yref, links)
+                parts_out.append(item)
+                doms_out.append(dom)
+                parts_all.append(item)
+                doms_all.append(dom)
         for net in sorted({n for _, _, n in info[ic]["pads"].values() if is_rail(n)}):
             mine = [p for p, (_, _, n) in info[ic]["pads"].items() if n == net and info[ic]["names"].get(p, "").strip() and pin_ok(ic, p)]
-            allpins = sum(1 for o, i in info.items() if re.match(r"^(?:U|IC|M|MOD)\d", o, re.I)
-                          for p, (_, _, n) in i["pads"].items() if n == net and i["names"].get(p, "").strip() and pin_ok(o, p))
-            rail_caps = [c for c in caps if _decap_rail(info[c]) == net and (cap_farads(part_value(info[c]["part"])) is None
-                                                                             or cap_farads(part_value(info[c]["part"])) <= BULK_F)]
-            todo = sorted((c for c in rail_caps if c not in placed and may(c, ic)), key=lambda c: c not in hints)    # the caps the BOM names for a part first; else the usual order
-            if not mine or not todo:
+            if not mine:
                 continue
-            allpins = max(allpins, len(mine))                                       # an IC that is not a U/IC/M/MOD (a Q...) counts too
-            quota = max(len(mine), -(-len(rail_caps) * len(mine) // allpins))        # ceil(caps * my pins / all pins), one per pin at least
-            for k, c in enumerate(todo[:quota]):
+            def _nonbulk(c):
+                f = cap_farads(part_value(info[c]["part"]))
+                return f is None or f <= BULK_F
+            def _pins_on(o):
+                return [p for p, (_, _, n) in info[o]["pads"].items() if n == net and info[o]["names"].get(p, "").strip() and pin_ok(o, p)]
+            def _ic_slots(o):
+                n = len(_pins_on(o))
+                return min(1, n) if info[o]["reg"] else n
+            def _ded_nonbulk(o):
+                return sum(1 for c in caps if c not in placed and _decap_rail(info[c]) == net and owners.get(c) == {o} and _nonbulk(c))
+            dedicated = [c for c in caps if c not in placed and _decap_rail(info[c]) == net and c in owners and owners[c] == {ic}
+                         and (c in hints or _nonbulk(c) or info[ic]["reg"])]
+            shared = [c for c in caps if c not in placed and c not in dedicated and _decap_rail(info[c]) == net and may(c, ic)
+                      and _nonbulk(c)]
+            if not dedicated and not shared:
+                continue
+            shared_hinted = [c for c in shared if c in hints]
+            shared_free = [c for c in shared if c not in hints]
+            my_need = _ic_slots(ic)
+            unplaced_h = [o for o in info if o != ic and o not in placed and is_ic_ref(o) and _ic_slots(o) > 0
+                          and any(o in owners.get(c, ()) for c in shared_hinted)]
+            other_h = sum(_ic_slots(o) for o in unplaced_h)
+            if info[ic]["reg"]:
+                take_h = min(my_need, max(0, len(shared_hinted) - other_h))
+            else:
+                reserve_h = other_h if len(shared_hinted) >= my_need + other_h else len(unplaced_h)
+                take_h = min(my_need, max(0, len(shared_hinted) - reserve_h))
+                if len(shared_hinted) > my_need + other_h:
+                    take_h = max(take_h, min(len(shared_hinted) - other_h, -(-len(shared_hinted) * my_need // max(1, my_need + other_h))))
+            my_unmet = max(0, my_need - _ded_nonbulk(ic) - take_h)
+            unplaced_f = [o for o in info if o != ic and o not in placed and is_ic_ref(o)
+                          and max(0, _ic_slots(o) - _ded_nonbulk(o)) > 0 and any(may(c, o) for c in shared_free)]
+            other_f = sum(max(0, _ic_slots(o) - _ded_nonbulk(o)) for o in unplaced_f)
+            if info[ic]["reg"]:
+                take_f = min(my_unmet, max(0, len(shared_free) - other_f))
+            else:
+                reserve_f = other_f if len(shared_free) >= my_unmet + other_f else len(unplaced_f)
+                take_f = min(my_unmet, max(0, len(shared_free) - reserve_f))
+            surplus = len(shared_free) - other_f - take_f
+            if surplus > 0:
+                unplaced_any = [o for o in info if o != ic and o not in placed and is_ic_ref(o)
+                                and len(_pins_on(o)) > 0 and any(may(c, o) for c in shared_free)]
+                if not unplaced_any:
+                    take_f += surplus
+                elif not info[ic]["reg"]:
+                    my_pins = len(mine)
+                    tot_pins = my_pins + sum(len(_pins_on(o)) for o in unplaced_any)
+                    all_pool = len(shared_free) + _ded_nonbulk(ic) + sum(_ded_nonbulk(o) for o in unplaced_any)
+                    want_tot = -(-all_pool * my_pins // max(1, tot_pins))
+                    take_f += max(0, min(surplus, want_tot - _ded_nonbulk(ic) - take_h - take_f))
+            chosen = sorted(shared_hinted[:take_h] + shared_free[:take_f] + dedicated, key=lambda c: (_farads_or_inf(info[c]), c))
+            for k, c in enumerate(chosen):
                 wanted += 1
                 pad = mine[k % len(mine)]
                 rp = next(p for p, (_, _, n) in info[c]["pads"].items() if n == net)
-                dom = []
+                dom_out, dom_in = [], []
                 for x, y, rot, side, cost in near_places(c, [(rp, pad_xy(ic, pad))], DECAP_NEAR_MM + DECAP_TOL_MM, step=FINE_STEP_MM, all_sides=True):
                     e = entry(c, x, y, rot, side, cost)
-                    if not any(_hit(e[5], r, 0) for r in bands):
-                        dom.append(e)
-                        if len(dom) >= CSP_DOMAIN:
-                            break
-                if dom:
-                    parts_.append(("c", c, (ic, pad)))
-                    doms.append(dom)
-        sol = solve(doms)
+                    if any(_hit(e[5], r, 0) for r in bands):
+                        if len(dom_in) < CSP_DOMAIN:
+                            dom_in.append(e)
+                    elif len(dom_out) < CSP_DOMAIN:
+                        dom_out.append(e)
+                    if len(dom_out) >= CSP_DOMAIN and len(dom_in) >= CSP_DOMAIN:
+                        break
+                if dom_out:
+                    parts_out.append(("c", c, (ic, pad)))
+                    doms_out.append(dom_out)
+                comb = (dom_out[:CSP_DOMAIN // 2] + dom_in[:CSP_DOMAIN // 2]) if dom_in and len(dom_out) >= CSP_DOMAIN else (dom_out + dom_in)[:CSP_DOMAIN]
+                if comb:
+                    parts_all.append(("c", c, (ic, pad)))
+                    doms_all.append(comb)
+        sol, used_parts = solve(doms_out), parts_out
+        if len(sol) < wanted and doms_all:
+            sol2 = solve(doms_all)
+            if len(sol2) > len(sol):
+                sol, used_parts = sol2, parts_all
         for i, e in sorted(sol.items()):
-            kind, ref, extra = parts_[i]
+            kind, ref, extra = used_parts[i]
             commit(ref, e[1], e[2], e[3], side=e[4])
             if kind == "c":
                 cap_pin[ref] = extra

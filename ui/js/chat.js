@@ -720,7 +720,7 @@ function chatSugs() {
   const last = S.chat.at(-1);
   const show = !pending && !chatCurrentError() && !(inp && inp.value.trim()) && !chatChip() && (!last || last.role === 'agent' || last.role === 'ctx');
   const html = show ? chatSuggestionItems().map(s => `<button type="button" class="sug${s.quick ? ' quick' : ''}" data-act="suggest" data-text="${esc(s.text)}">${esc(s.text)}</button>`).join('') : '';
-  if (sugs.dataset.html !== html) { sugs.innerHTML = html; sugs.dataset.html = html; }
+  if (sugs.dataset.html !== html) { sugs.innerHTML = html; sugs.dataset.html = html; chatFollow(); }
 }
 /* the local time a usage limit lifts: a clock time today, else the date too */
 function chatResetAt(iso) {
@@ -949,7 +949,8 @@ $('#form').addEventListener('submit', e => { e.preventDefault(); if (pending) ch
 $('#chat-status').addEventListener('toggle', e => { if (e.target.matches('.chat-steps')) { chatStepsOpen = e.target.open; chatFollow(); } }, true);
 $('#msgs').addEventListener('scroll', e => {
   const sc = e.currentTarget;
-  chatAtEnd = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 48;
+  const sugsH = ($('#sugs') && $('#sugs').offsetHeight) || 0;
+  chatAtEnd = sc.scrollHeight - sc.scrollTop - sc.clientHeight < Math.max(48, sugsH + 24);
   const j = $('#chat-jump');
   if (j && j.hidden !== chatAtEnd) j.hidden = chatAtEnd;
 }, {passive: true});

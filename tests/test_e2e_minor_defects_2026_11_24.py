@@ -247,3 +247,12 @@ def test_a_package_family_word_alone_does_not_score_a_page():
     text = "SOIC dimensions\fSOIC thermal notes\fPin Configuration and Functions\n8-pin SOIC\n1 VCC\n"
     assert pin_decisions.candidate_pages(text, "SOIC-8") == [3]
     assert pin_decisions.candidate_pages("SOIC notes\fSOIC notes", "SOIC") == []
+
+
+def test_inspector_clears_pv_note_and_dfm_waiting_offers_confirm_pins_with_selected_ds():
+    pv_css = (UI / "styles" / "previews.css").read_text(encoding="utf-8")
+    assert ".work:has(>#detail:not([hidden])) .pv>.pv-note{padding-right:" in pv_css
+    checks = _js("views/checks.js")
+    fn = _fn(checks, "dfmWaitingHTML")
+    assert "curDs" in fn and "(g.kind === 'ic' && curDs)" in fn
+    assert "Change datasheet" in fn and "${d === curDs ? ' selected' : ''}" in fn

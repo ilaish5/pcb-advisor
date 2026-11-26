@@ -278,3 +278,65 @@ def test_a_regulator_gets_its_microfarad_cap_before_the_small_ones_go_out():
     parts = [regulator(), sensor(), cap("C4", "+3V3", "100nF"), cap("C5", "+3V3", "1uF")]
     owners = layout.decap_owners(parts, {})
     assert owners["C5"] == {"U1"} and owners["C4"] == {"U2"}
+
+
+def test_shared_decap_line_and_dedicated_bulk_caps_all_sit_within_3mm():
+    role = "4x 100nF decoupling capacitors (U3 in/out, U1 VDD, U2 VDD)"
+    mcu1 = part("U1", "QFN16", ["+3V3", "GND"] + [f"S{i}" for i in range(3, 17)],
+                ["VDD", "VSS"] + [f"PA{i}" for i in range(3, 17)],
+                bom_value="STM32G030F6P6", bom_mpn="STM32G030F6P6", bom_role="main controller")
+    parts = [
+        regulator("U3"),
+        mcu1,
+        sensor("U2"),
+        cap("C1", "VBUS", "10uF", "U3 input bulk capacitor"),
+        cap("C4", "VBUS", "100nF", role),
+        cap("C2", "+3V3", "22uF", "U3 output stability capacitor"),
+        cap("C3", "+3V3", "4.7uF", "U1 VDD bulk decoupling capacitor"),
+        cap("C5", "+3V3", "100nF", role),
+        cap("C6", "+3V3", "100nF", role),
+        cap("C7", "+3V3", "100nF", role),
+    ]
+    fps = dict(FPS, QFN16=fp("QFN16", _QFN16))
+    plan = layout.plan_placement(parts, fps, OUT)
+    assert not plan["errors"] and not plan["findings"], plan
+    at = {(p["ref"], q["name"]): layout.rot_point(q["x"] * MIL, q["y"] * MIL, pl["rot"])
+          for pl in plan["places"] for p in parts if p["ref"] == pl["ref"]
+          for q in fps[p["footprint"]]["pads"]}
+    pos = {pl["ref"]: (pl["x"], pl["y"]) for pl in plan["places"]}
+    def pd(c, ic, *pins):
+        ax, ay = pos[c][0] + at[c, "1"][0], pos[c][1] + at[c, "1"][1]
+        return min(math.hypot(ax - (pos[ic][0] + at[ic, pn][0]), ay - (pos[ic][1] + at[ic, pn][1])) for pn in pins)
+    assert pd("C2", "U3", *OUT_PINS) <= NEAR and pd("C3", "U1", "1") <= NEAR
+    assert any(pd(c, "U2", VDD) <= NEAR for c in ("C5", "C6", "C7"))
+    assert any(pd(c, "U3", *OUT_PINS) <= NEAR for c in ("C5", "C6", "C7"))
+    assert any(pd(c, "U1", "1") <= NEAR for c in ("C5", "C6", "C7"))
+
+
+def test_regulator_on_other_rail_does_not_reserve_vdda_caps():
+    nets = ["+3V3" if i == 1 else "GND" if i == 3 else "VDDA" if i == 9 else f"S{i}" for i in range(1, 17)]
+    names = ["VDD" if i == 1 else "VSS" if i == 3 else "VDDA" if i == 9 else f"PA{i}" for i in range(1, 17)]
+    mcu1 = part("U1", "BIG16", nets, names, bom_value="STM32G030F6P6", bom_mpn="STM32G030F6P6", bom_role="main controller")
+    parts = [
+        regulator("U2"),
+        mcu1,
+        cap("C1", "+3V3", "100nF"),
+        cap("C5", "VDDA", "100nF"),
+        cap("C40", "VDDA", "1uF"),
+        cap("C30", "VBUS", "4.7uF"),
+        cap("C31", "+3V3", "4.7uF"),
+    ]
+    fps = dict(FPS, BIG16=fp("BIG16", [(n, x * 1.4, y * 1.4, w, h) for n, x, y, w, h in _QFN16]))
+    plan = layout.plan_placement(parts, fps, OUT)
+    assert not plan["errors"] and not plan["findings"], plan
+    order = [pl["ref"] for pl in plan["places"]]
+    assert order.index("U1") < order.index("C5") < order.index("U2"), order
+    assert order.index("U1") < order.index("C40") < order.index("U2"), order
+    at = {(p["ref"], q["name"]): layout.rot_point(q["x"] * MIL, q["y"] * MIL, pl["rot"])
+          for pl in plan["places"] for p in parts if p["ref"] == pl["ref"]
+          for q in fps[p["footprint"]]["pads"]}
+    pos = {pl["ref"]: (pl["x"], pl["y"]) for pl in plan["places"]}
+    for c in ("C5", "C40"):
+        ax, ay = pos[c][0] + at[c, "1"][0], pos[c][1] + at[c, "1"][1]
+        assert math.hypot(ax - (pos["U1"][0] + at["U1", "9"][0]), ay - (pos["U1"][1] + at["U1", "9"][1])) <= NEAR, c
+

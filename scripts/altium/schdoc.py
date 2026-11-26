@@ -272,6 +272,8 @@ def read_schdoc(path) -> dict:
         "no_erc": no_erc,
         "fonts": _fonts(recs[1]) if len(recs) > 1 else {},
         "system_font": int(recs[1].get("SYSTEMFONT", "1")) if len(recs) > 1 else 1,
+        "sheet_style": int(recs[1].get("SHEETSTYLE", "0")) if len(recs) > 1 else 0,
+        "text_frames": [r.get("TEXT", "") for r in body if r.get("RECORD") == "28"],
         "record_counts": record_counts,
     }
 
