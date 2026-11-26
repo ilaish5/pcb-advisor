@@ -12,6 +12,7 @@
 .bom-tbl td{white-space:nowrap}
 .bom-tbl tbody tr:focus-visible{outline-offset:-2px}
 .bom-tbl tr.off td{color:var(--ink-3)}
+tr.ptr.flash td{background:var(--sig-soft);transition:background .3s}
 .bom-tbl .clip{display:inline-block;max-width:100px;overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
 /* The Part column takes the width the others leave and is cut with an ellipsis (the row's tooltip has the whole text), so the
    table never needs more than its sheet. The other columns are sized to their content: at 1280px with the chat open the sheet

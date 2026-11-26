@@ -198,8 +198,9 @@ def test_library_row_actions_and_keyboard():
 
 def test_link_and_unlink_refresh_the_bom_import_cache():
     """Linking another Altium project changes where the BOM looks for import candidates."""
-    assert func_body(PAGES, "pgLink").count("impFor = null") == 1
-    assert re.search(r"onAct\('altium-unlink'.*?impFor = null", PAGES, re.S)
+    assert func_body(PAGES, "pgLinkChanged").count("impFor = null") == 1
+    assert "pgLinkChanged()" in func_body(PAGES, "pgLink")
+    assert re.search(r"onAct\('altium-unlink'.*?pgLinkChanged\(\)", PAGES, re.S)
 
 
 def test_viewer_documents():
