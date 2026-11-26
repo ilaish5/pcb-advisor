@@ -674,13 +674,13 @@ def plan_placement(parts, footprints, outline, clearance_mm=0.0, keep=None, conn
                 continue
             far = sum(1 for f in plan.get("findings", []) if f["level"] == "error")
             xfar = sum(1 for c in plan.get("crystals", []) if c["max_mm"] > XTAL_NEAR_MM)
-            key = (len(plan["errors"]), far, xfar, len(plan.get("findings", [])))
+            key = (len(plan["errors"]), far, xfar, len(plan.get("findings", [])), plan.get("decap_swaps", 0))
             wire = wirelength(plan.get("places", []), parts, footprints)
             if best is None or key < best_key or (key == best_key and wire < best_wire - 1e-6):
                 best, best_key, best_wire = plan, key, wire
-            if trials and key == (0, 0, 0, 0):
+            if trials and key == (0, 0, 0, 0, 0):
                 break                               # nothing left to improve
-        if best_key == (0, 0, 0, 0):
+        if best_key == (0, 0, 0, 0, 0):
             break
     best.setdefault("findings", [])
     best.setdefault("crystals", [])
@@ -700,6 +700,8 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
     Crystals (a Y part, or crystal/xtal/resonator/MHz in its BOM text, whose nets reach MCU oscillator pins by pin name) are placed
     right after the ICs as close as possible to those pins, their load caps (crystal net to GND) next to them; the crystal-to-pin
     distance is reported in "crystals" and a finding says so above XTAL_NEAR_MM (ST AN2867; the threshold is this tool's).
+    A decoupling cap whose BOM role names a part goes to that part (decap_hints); without one, small caps go to the supply pins of ICs
+    before a regulator's, bulk caps to the regulator first (decap_owners).
     Every supply pin of an IC gets its own nearest decoupling cap while caps are left (smallest value first, so 100 nF is nearest);
     the target is DECAP_NEAR_MM (this tool's threshold) pad to pad, for supply pins by NAME of U parts with more than 4 pads; a regulator only gets a soft warning. "findings" [{level, ref, text}]: level "error" = a cap that is farther than that (also
     copied into "warnings" as 'placement error: ...', since "errors" stops the placement), "warning" = a supply pin without a cap.
@@ -918,6 +920,11 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
 
     caps = [r for r in rest if _decap_rail(info[r])]
     caps.sort(key=lambda r: _farads_or_inf(info[r]))     # smallest value first: the 100 nF gets the pin's nearest place (stable: BOM order on a tie)
+    hints = decap_hints(parts)                  # cap -> the pins of the part its BOM role names
+    owners = decap_owners(parts, hints)         # cap -> the only ICs it may go to
+
+    def may(c, ic):
+        return c not in owners or ic in owners[c]
     findings = []
     crystals = []
     all_ics = [r for r in info if is_ic_ref(r)]          # kept ones too; Q parts are not ICs here
@@ -1040,14 +1047,21 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
         within the window does the old ring search run, for one pin. No IC pin on the rail: the middle of what it shares nets with."""
         rail = _decap_rail(info[ref])
         rp = next(p for p, (_, _, n) in info[ref]["pads"].items() if n == rail)
-        pins = _decap_pins(ref, info, placed, pad_xy, pin_ok)
+        others_ = []                # pins this cap may take only when none of its own is within reach
+        if ref in hints:
+            pins = [(*pad_xy(o, n), o, n) for o, n in hints[ref] if o in placed and n in info[o]["pads"]]
+        else:
+            every = _decap_pins(ref, info, placed, pad_xy, pin_ok)
+            pins = [p for p in every if may(ref, p[2])] or every
+            others_ = [p for p in every if p not in pins]
         if only:
             pins = [p for p in pins if p[2] == only[0] and only[1] in (None, p[3])]
+            others_ = []
         if not pins:
             return None, (None if only else find(ref, *toward_middle(_target(ref, info, placed, centre, (cx, cy)))))
         best, best_far = None, None
-        for cnt in sorted({pin_caps.get((ic, pad), 0) for _, _, ic, pad in pins}):
-            for x, y, ic, pad in pins:
+        for group, cnt in [(g, c) for g in (pins, others_) for c in sorted({pin_caps.get((ic, pad), 0) for _, _, ic, pad in g})]:
+            for x, y, ic, pad in group:
                 if pin_caps.get((ic, pad), 0) != cnt:
                     continue
                 h = find_near(ref, [(rp, (x, y))], DECAP_NEAR_MM + DECAP_WINDOW_MM, step=FINE_STEP_MM)
@@ -1057,7 +1071,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                 if h[4] <= DECAP_NEAR_MM + DECAP_TOL_MM:
                     if best is None or score < best[0] - 1e-9:
                         best = (score, h, ic, pad)
-                elif best_far is None or score < best_far[0] - 1e-9:
+                elif group is pins and (best_far is None or score < best_far[0] - 1e-9):
                     best_far = (score, h, ic, pad)         # a place, but farther than DECAP_NEAR_MM: only when no pin has a better one
             if best:
                 break
@@ -1228,7 +1242,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                           for p, (_, _, n) in i["pads"].items() if n == net and i["names"].get(p, "").strip() and pin_ok(o, p))
             rail_caps = [c for c in caps if _decap_rail(info[c]) == net and (cap_farads(part_value(info[c]["part"])) is None
                                                                              or cap_farads(part_value(info[c]["part"])) <= BULK_F)]
-            todo = [c for c in rail_caps if c not in placed]
+            todo = sorted((c for c in rail_caps if c not in placed and may(c, ic)), key=lambda c: c not in hints)    # the caps the BOM names for a part first; else the usual order
             if not mine or not todo:
                 continue
             allpins = max(allpins, len(mine))                                       # an IC that is not a U/IC/M/MOD (a Q...) counts too
@@ -1322,7 +1336,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                         out[opad] = max(out.get(opad, 0.0), min_dim(yref))
         for net in {n for _, _, n in info[ic]["pads"].values() if is_rail(n)}:
             mine = [p for p, (_, _, n) in info[ic]["pads"].items() if n == net and info[ic]["names"].get(p, "").strip() and pin_ok(ic, p)]
-            todo_c = [c for c in caps if c not in placed and _decap_rail(info[c]) == net
+            todo_c = [c for c in caps if c not in placed and _decap_rail(info[c]) == net and may(c, ic)
                       and (cap_farads(part_value(info[c]["part"])) is None or cap_farads(part_value(info[c]["part"])) <= BULK_F)]
             if mine and len(todo_c) >= len(mine):
                 d = min(min_dim(c) for c in todo_c)
@@ -1430,8 +1444,9 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             cap_pin[ref] = owner
 
     # decoupling findings from the final positions: a cap too far from its supply pin (error; a regulator: warning), a supply pin without a cap
+    covered = set()             # (IC, rail) a cap's own finding already tells about
     for ref in caps:
-        if ref not in cap_pin or ref not in placed:
+        if ref not in cap_pin or ref not in placed or ref in hints:
             continue
         ic, pad = cap_pin[ref]
         name = info[ic]["names"].get(pad, "").strip()
@@ -1446,6 +1461,14 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             level, text = decap_text(ref, d, ic, pad, name, info[ic]["reg"])
             findings.append({"level": level, "ref": ref, "text": text})
             warnings.append(("placement error: " if level == "error" else "") + text)
+            covered.add((ic, rail))
+
+    def placed_pad(ref, num):
+        return pad_xy(ref, num) if ref in placed and num in info[ref]["pads"] else None
+
+    for f in decap_role_findings(parts, hints, placed_pad, covered):
+        findings.append(f)
+        warnings.append(("placement error: " if f["level"] == "error" else "") + f["text"])
     for ic in all_ics:
         if ic not in placed or not checked_ic(ic):
             continue
@@ -1466,8 +1489,9 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
                 warnings.append(text)
     # the plan is judged by the crystal and the caps, which nothing placed after them can change: a variant that cannot beat `bound`
     # (the key of the best so far, see plan_placement) is dropped here, before the other parts take their time
+    swaps = sum(1 for c in caps if c in cap_pin and c in owners and cap_pin[c][0] not in owners[c])   # a cap on a part it did not prefer
     if bound is not None and (len(errors), sum(1 for f in findings if f["level"] == "error"),
-                              sum(1 for c in crystals if c["max_mm"] > XTAL_NEAR_MM), len(findings)) >= bound:
+                              sum(1 for c in crystals if c["max_mm"] > XTAL_NEAR_MM), len(findings), swaps) >= bound:
         return None
     # 4. every other part, by how tied it is to the placed parts, outside the fan-out bands of the fine-pitch ICs (inside them only when
     # there is no other place: a part there walls off the pins beside it)
@@ -1509,7 +1533,7 @@ def _plan_placement(parts, footprints, outline, clearance_mm, keep, connector_di
             else:
                 warnings.append(f"{ref}: connector turned to open out of the board edge (opening read from the "
                                 f"{'footprint outline' if src == 'outline' else src}, {deg} deg): check the mating face in 3D")
-    return {"places": places, "warnings": warnings, "errors": errors, "findings": findings, "crystals": crystals}
+    return {"places": places, "warnings": warnings, "errors": errors, "findings": findings, "crystals": crystals, "decap_swaps": swaps}
 
 
 def _area(i):
@@ -1594,6 +1618,262 @@ def decap_text(cap, d, ic, pad, name, regulator):
         return "warning", f"{cap} is {d:.1f} mm from {pin}: place it as close as possible (see the regulator datasheet's layout section)"
     return "error", (f"{cap} is {d:.1f} mm from {pin}; limit {DECAP_NEAR_MM:g} mm (datasheets ask for decoupling caps as close as possible "
                      f"to each supply pin; {DECAP_NEAR_MM:g} mm is this tool's threshold)")
+
+
+# ---- which part a decoupling cap belongs to (netlist only, no geometry) ----
+_DECAP_IC = re.compile(r"^(?:U|IC|M|MOD)\d", re.I)                      # the parts a decoupling cap can sit beside (Q parts are not ICs)
+_ROLE_FIELDS = ("bom_role", "role", "bom_description", "description")   # a cap's own words about its job, the first that names a part wins
+_NAME_FIELDS = ("bom_mpn", "mpn", "bom_value", "value", "lib_ref", "symbol")    # what a part is called (never its role: that names others)
+_REG_KIND = r"(?:ldo|regulator|buck(?:-boost)?|boost|dc-?dc|converter)"
+# "LDO output cap", "regulator's input", "output capacitor for the 3.3 V LDO"; not "rail from the LDO" (where the rail comes from)
+_REG_HINT = re.compile(rf"\b(?:{_REG_KIND}(?:'s)?[\s-]+)*{_REG_KIND}(?:'s)?[\s-]+(?:input|output|in/out|in-out|caps?|capacitors?|decoupling|bypass|stability)\b"
+                       rf"|\b(?:input|output|caps?|capacitors?|decoupling|bypass)\s+(?:of|for|on|at)\s+(?:the\s+)?(?:[\d.]+\s*V\d*\s+)?{_REG_KIND}\b",
+                       re.I)
+
+
+def _num(pin):
+    return str(pin.get("num", pin.get("number", "")))
+
+
+def _net(pin):
+    return str(pin.get("net") or "").strip()
+
+
+def _cap_pin_ok(name, regulator):
+    """A pin name a decoupling cap may be placed for: a supply pin (VDD, VCC...), a regulator's in/out pin, or no name at all."""
+    name = str(name or "").strip()
+    return not name or is_supply_pin_name(name) or (regulator and bool(_REG_PIN.match(name)))
+
+
+def _reg_pin(regulator, name):
+    """A regulator's own in/out pin (or an unnamed pin of a regulator): a part that merely has "converter" in its text (a USB-UART
+    bridge) is a regulator on a rail only through such a pin, never through its VCC."""
+    name = str(name or "").strip()
+    return bool(regulator) and (not name or bool(_REG_PIN.match(name)))
+
+
+_IN_PIN = re.compile(r"^(?:V?IN\d*|VI|VIN\w*|INPUT)$", re.I)
+_OUT_PIN = re.compile(r"^(?:V?OUT\d*|VO|VOUT\w*|OUTPUT|TAB)$", re.I)
+
+
+def _cap_pad(part):
+    """(rail, pin number) of a decoupling cap (a 2-pin C between a supply rail and ground), else (None, None)."""
+    pins = part.get("pins", [])
+    if not re.match(r"^C\d", part["ref"], re.I) or len(pins) != 2 or not any(is_gnd(_net(q)) for q in pins):
+        return None, None
+    return next(((_net(q), _num(q)) for q in pins if is_rail(_net(q))), (None, None))
+
+
+def _names_part(text, part):
+    """The text names this part: its designator (U2, not U21), or its MPN / part name or family ("SHT31" for SHT31-DIS-B,
+    "AMS1117" for AMS1117-3.3: sources.mentions_part). A value written in words or a rating ("5V 1A") is not a name."""
+    import sources
+    if re.search(rf"(?<![A-Za-z0-9_]){re.escape(part['ref'])}(?![A-Za-z0-9_])", text, re.I):
+        return True
+    names = (str(part.get(k) or "").strip() for k in _NAME_FIELDS)
+    return any(re.search(r"\d", n) and re.search(r"[A-Za-z]{2}|\d{2}[A-Za-z]", n) and not re.search(r"\s", n)
+               and sources.mentions_part(text, n) for n in names)
+
+
+_SW_KIND = re.compile(r"buck|boost|dc-?dc|\bswitch(?:er|ing)\b", re.I)
+_LDO_KIND = re.compile(r"\bldo\b|linear", re.I)
+_REF_NOTE = re.compile(r"\bC\d{1,3}\b")           # only a cap designator makes a note: "(U2)" names the cap's part
+REG_CAP_F = 1e-6            # from this value up (and up to BULK_F) a cap is the kind a regulator's input/output wants
+
+
+def _reg_kind(part):
+    """'sw' or 'ldo' when the part's text says one of the two; None (any kind word fits) when it says both or neither."""
+    kinds = [k for k, rx in (("sw", _SW_KIND), ("ldo", _LDO_KIND)) if rx.search(part_text(part))]
+    return kinds[0] if len(kinds) == 1 else None
+
+
+def _role_clauses(text):
+    """(notes, shared): a BOM line that annotates caps by designator ("TXS0102 (C16 on V_PAD, C17), modem +3V8 (C18)") says
+    what each named cap is for: notes = {cap ref: the words before its note}; shared = the words nothing is annotated for (the
+    caps of the line that are not named). A line with no notes: ({}, the whole text)."""
+    if not re.search(r"\([^()]*" + _REF_NOTE.pattern + r"[^()]*\)", text):
+        return {}, text
+    masked = re.sub(r"\([^()]*\)", lambda m: "(" + "x" * (len(m.group()) - 2) + ")", text)
+    cuts, last = [], 0
+    for m in re.finditer(r"\s*[,;]\s*|\s+and\s+", masked):
+        cuts.append(text[last:m.start()])
+        last = m.end()
+    cuts.append(text[last:])
+    notes, shared = {}, []
+    for item in cuts:
+        m = re.search(r"\(([^()]*)\)\s*$", item)
+        refs = _REF_NOTE.findall(m.group(1)) if m else []
+        if refs:
+            for r in refs:
+                notes[r] = item[:m.start()].strip()
+        elif item.strip():
+            shared.append(item.strip())
+    return notes, ", ".join(shared)
+
+
+def decap_hints(parts):
+    """{cap ref: [(IC ref, pin number)]} for the decoupling caps whose BOM role or description names the part they serve: the
+    supply pins, on the cap's rail, of the part(s) named ("SHT31 decoupling", "U2 bypass"), or, when no part is named, of the
+    regulators of the kind the words say ("LDO output cap" is a linear regulator's, "buck output" a switcher's, "regulator" any
+    one's; no regulator of that kind with a pin on the rail: no hint). A named part with no pin on the cap's rail is not its
+    owner. A line that annotates caps by designator ("TXS0102 (C17)") speaks for those caps only; the others share what is left.
+    One line for many caps: the line names its parts' supply pins on the rail and that many caps are tied to them, the
+    first ones in BOM order (the rest of the line may serve parts it does not name). No entry: the text says nothing."""
+    ics = [p for p in parts if _DECAP_IC.match(p["ref"])]
+    wanted = {}                                           # (rail, field, clause) -> [(cap, [(ic, pin)])] in BOM order
+    for cap in parts:
+        rail, _ = _cap_pad(cap)
+        if rail is None:
+            continue
+        on_rail = {}
+        for ic in ics:
+            pins = [q for q in ic.get("pins", []) if _net(q) == rail]
+            reg = is_regulator(ic)
+            good = [q for q in pins if _cap_pin_ok(q.get("name"), reg)] or pins       # a module's "3V3" pin: still that part
+            if good:
+                on_rail[ic["ref"]] = (ic, [q for q in pins if _reg_pin(reg, q.get("name"))], good)
+        for field in _ROLE_FIELDS:
+            notes, shared = _role_clauses(str(cap.get(field) or ""))
+            text = notes[cap["ref"]] if cap["ref"] in notes else shared
+            named = [r for r, (ic, _, _) in on_rail.items() if text and _names_part(text, ic)]
+            found = []
+            hit = None if named else _REG_HINT.search(text)
+            if named:
+                found = [(r, _num(q)) for r in named for q in on_rail[r][2]]
+            elif hit:                                        # the kind of part, never by the word alone: a regulator pin of that kind here
+                direction = _IN_PIN if re.search(r"\binput\b", text, re.I) and not re.search(r"\boutput\b", text, re.I) else \
+                    _OUT_PIN if re.search(r"\boutput\b", text, re.I) and not re.search(r"\binput\b", text, re.I) else None
+                kinds = {k for k, rx in (("sw", _SW_KIND), ("ldo", _LDO_KIND)) if rx.search(hit.group(0))}
+                for r, (ic, rpins, _) in on_rail.items():
+                    if kinds and _reg_kind(ic) not in (kinds | {None}):
+                        continue
+                    mine = [q for q in rpins if direction is None or direction.match(str(q.get("name") or "").strip())] or rpins
+                    found += [(r, _num(q)) for q in mine]
+            if found:
+                wanted.setdefault((rail, field, text.strip().lower()), []).append((cap["ref"], found))
+                break
+    out = {}
+    for group in wanted.values():
+        pins = {pin for _, found in group for pin in found}
+        for cap, found in group[:len(pins)] if len(group) > len(pins) else group:
+            out[cap] = found
+    return out
+
+
+def decap_owners(parts, hints):
+    """{cap ref: set of IC refs} the parts each cap goes to. A cap with a hint: the parts it names, and no other. Without one (a
+    preference: another pin takes it when none of these is within reach), on a rail that feeds both regulators and other ICs
+    (a regulator's slot is one of its input/output pins; an IC counts as "other" with more than 4 pins, unless it is a regulator
+    that has an input/output pin: a part that only says "converter" or sits in a SOT-23-5 gets caps for its VDD / VCC): bulk caps (above BULK_F) go to the regulators first; then, for each regulator left, the largest cap from REG_CAP_F
+    up to BULK_F (a regulator's usual 1-10 uF); the others, smallest first, to the other ICs' supply pins and only then to a
+    regulator. A cap with no entry goes wherever it fits best."""
+    out = {c: {ic for ic, _ in pins} for c, pins in hints.items()}
+    plain, regs, caps = {}, {}, {}                      # rail -> supply pins of other ICs / regulators / [(farads, ref)]
+    for part in parts:
+        rail, _ = _cap_pad(part)
+        if rail is not None:
+            caps.setdefault(rail, []).append((cap_farads(part_value(part)), part["ref"]))
+        if not _DECAP_IC.match(part["ref"]):
+            continue
+        reg = is_regulator(part)
+        real = reg and any(_REG_PIN.match(str(q.get("name") or "").strip()) for q in part.get("pins", []))
+        checked = len(part.get("pins", [])) > 4 and not real      # a "converter" with no in/out pin is an ordinary IC
+        for q in part.get("pins", []):
+            if is_rail(_net(q)) and _cap_pin_ok(q.get("name"), reg):
+                if _reg_pin(reg, q.get("name")):
+                    regs.setdefault(_net(q), set()).add(part["ref"])
+                elif checked:
+                    plain.setdefault(_net(q), []).append(part["ref"])
+    for rail, mine in caps.items():
+        if rail not in plain or rail not in regs:
+            continue
+        served = [(f, out[c]) for f, c in mine if c in out]
+        pins = max(0, len(plain[rail]) - sum(1 for f, o in served if o <= set(plain[rail]) and (f is None or f <= BULK_F)))
+        slots = len([r for r in regs[rail] if not any(r in o for _, o in served)])
+        free = sorted(((f, c) for f, c in mine if c not in out), key=lambda t: float("inf") if t[0] is None else t[0])
+        bulk = [c for f, c in free if f is not None and f > BULK_F]
+        small = [(f, c) for f, c in free if f is None or f <= BULK_F]
+        for c in bulk[:slots]:                                  # a regulator wants the big one
+            out[c] = set(regs[rail])
+        slots -= min(slots, len(bulk))
+        mid = [(f, c) for f, c in small if f is not None and f >= REG_CAP_F][::-1][:slots]     # then the largest of its usual size
+        for _, c in mid:
+            out[c] = set(regs[rail])
+        slots -= len(mid)
+        small = [c for _, c in small if c not in out]
+        for c in small[:pins]:                                  # the smallest, one for each supply pin of the other ICs
+            out[c] = set(plain[rail])
+        left = small[pins:]
+        for c in left[len(left) - min(slots, len(left)):]:      # then the largest left over for the regulator
+            out[c] = set(regs[rail])
+    return out
+
+
+def _part_label(part):
+    return next((str(part[k]) for k in ("bom_mpn", "mpn", "bom_value", "value") if part.get(k)), "")
+
+
+def decap_role_findings(parts, hints, xy, covered=(), limit=DECAP_NEAR_MM):
+    """[{level, ref, text}] from where the pads are (xy(ref, pin number) -> (x, y) or None), shared by the plan and the read-back:
+    a cap farther than `limit` from the part its BOM role names (an error for a cap up to BULK_F of an IC that is not a regulator),
+    and a regulator input/output net with no capacitor within `limit` of its pins (a warning; skipped for the (regulator, rail)
+    in `covered`, which a cap's own finding already tells)."""
+    by_ref = {p["ref"]: p for p in parts}
+    covered = set(covered)
+    out = []
+
+    def dist(a, b):
+        return math.hypot(a[0] - b[0], a[1] - b[1])
+
+    for ref, pins in hints.items():
+        rail, num = _cap_pad(by_ref[ref])
+        a = xy(ref, num)
+        near = [(dist(a, xy(*q)), q) for q in pins if a is not None and xy(*q) is not None]
+        if not near:
+            continue
+        d, (ic, pad) = min(near)
+        if d <= limit + DECAP_TOL_MM:
+            continue
+        part = by_ref[ic]
+        reg = is_regulator(part)
+        name = next((str(q.get("name") or "") for q in part.get("pins", []) if _num(q) == pad), "")
+        f = cap_farads(part_value(by_ref[ref]))
+        level = "error" if not reg and (f is None or f <= BULK_F) else "warning"
+        if reg:
+            covered.add((ic, rail))
+        label = _part_label(part)
+        out.append({"level": level, "ref": ref, "text":
+                    f"{ref} is {d:.1f} mm from {ic} pin {pad} {name}".rstrip() + (f" ({label})" if label else "")
+                    + f", the part its BOM role names; limit {limit:g} mm (place it as close as possible to that part)"})
+    for part in parts:
+        ic = part["ref"]
+        if not _DECAP_IC.match(ic) or not is_regulator(part):
+            continue
+        nets = {}
+        for q in part.get("pins", []):
+            if is_rail(_net(q)) and _REG_PIN.match(str(q.get("name") or "").strip()) and xy(ic, _num(q)) is not None:
+                nets.setdefault(_net(q), []).append(q)
+        for rail, pins in sorted(nets.items()):
+            if (ic, rail) in covered:
+                continue
+            found = []
+            for cap in parts:
+                crail, num = _cap_pad(cap)
+                if crail == rail and xy(cap["ref"], num) is not None:
+                    found += [(dist(xy(cap["ref"], num), xy(ic, _num(q))), cap["ref"]) for q in pins]
+            names = ", ".join(f"{_num(q)} {q.get('name')}" for q in pins)
+            label = _part_label(part)
+            who = f"regulator {ic}" + (f" ({label})" if label else "")
+            if not found:
+                text = f"{who}: no capacitor on {rail} at its input/output pin {names}; see the regulator datasheet for the one it needs"
+            else:
+                d, cap = min(found)
+                if d <= limit + DECAP_TOL_MM:
+                    continue
+                text = (f"{cap} is {d:.1f} mm from {who} pin {names} and is the nearest capacitor on {rail}: none within {limit:g} mm "
+                        "(see the regulator datasheet's layout section)")
+            out.append({"level": "warning", "ref": ic, "text": text})
+    return out
 
 
 OUTLINE_LAYER = 57          # Mechanical 1: the layer the shipped OutJob plots as the board outline (.GM1; layer id 16908289)
@@ -1793,7 +2073,8 @@ def decap_distance_warnings(doc, plan_parts, limit=DECAP_NEAR_MM):
     between a supply rail and ground, not bulk above BULK_F) whose rail pad is more than `limit` mm (pad centre to pad centre, +
     DECAP_TOL_MM) from the nearest supply pin of a U/IC part on the same rail. Supply pins are told by NAME (VDD, VCC, VBAT, VCAP...: a
     RESET/EN pin is not one), so pins without names are never checked; an IC with 4 pads or fewer is skipped. A regulator
-    gets the softer 'as close as possible' text. Texts are decap_text's."""
+    gets the softer 'as close as possible' text. Texts are decap_text's. A cap whose BOM role names a part is measured to that part
+    instead (any value), and a regulator without a cap at its input/output is told: decap_role_findings."""
     at = {(p.get("ref"), str(p.get("name"))): (p["x_mm"], p["y_mm"]) for p in doc.get("pads", []) if isinstance(p, dict) and "x_mm" in p and p.get("ref")}
     pins = {}                                        # rail -> [(ic, num, name, (x, y), regulator)]
     for part in plan_parts:
@@ -1806,23 +2087,21 @@ def decap_distance_warnings(doc, plan_parts, limit=DECAP_NEAR_MM):
             num, net, name = str(pin.get("num", pin.get("number", ""))), str(pin.get("net") or "").strip(), str(pin.get("name") or "").strip()
             if is_rail(net) and (part["ref"], num) in at and (is_supply_pin_name(name) or (reg and _REG_PIN.match(name))):
                 pins.setdefault(net, []).append((part["ref"], num, name, at[part["ref"], num], reg))
-    out = []
+    out, covered = [], set()
+    hints = decap_hints(plan_parts)
     for part in plan_parts:
-        nets = [str(p.get("net") or "").strip() for p in part.get("pins", [])]
-        if not re.match(r"^C\d", part["ref"], re.I) or len(nets) != 2 or not any(is_gnd(n) for n in nets):
-            continue
-        rail = next((n for n in nets if is_rail(n)), None)
+        rail, cap_num = _cap_pad(part)
         f = cap_farads(part_value(part))
-        if rail is None or rail not in pins or (f is not None and f > BULK_F):
+        if rail is None or rail not in pins or part["ref"] in hints or (f is not None and f > BULK_F):
             continue
-        pin = next(p for p in part["pins"] if str(p.get("net") or "").strip() == rail)
-        xy = at.get((part["ref"], str(pin.get("num", pin.get("number", "")))))
+        xy = at.get((part["ref"], cap_num))
         if xy is None:
             continue
         d, ic, num, name, _, reg = min(((math.hypot(xy[0] - q[3][0], xy[1] - q[3][1]), *q) for q in pins[rail]), key=lambda t: t[0])
         if d > limit + DECAP_TOL_MM:
             out.append(decap_text(part["ref"], d, ic, num, name, reg)[1])
-    return out
+            covered.add((ic, rail))
+    return out + [f["text"] for f in decap_role_findings(plan_parts, hints, lambda r, n: at.get((r, n)), covered, limit)]
 
 
 def verify_layout(doc, plan_parts, outline=None, clearance_mm=0.0, places=None, footprints=None, edge_copper_mm=EDGE_COPPER_MM):
