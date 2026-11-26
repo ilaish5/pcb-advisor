@@ -577,7 +577,9 @@ def proposals(project):
                 rows[pid]["after_hash"] = ev["after_hash"]
         elif pid in rows and ev.get("status") == "undone":
             rows[pid].update(status="undone", undone_at=ev.get("ts"), undone_by=ev.get("by"))
-        elif pid not in rows:
+        elif pid in rows and ev.get("lcsc_match"):
+            rows[pid]["lcsc_match"] = ev["lcsc_match"]        # shown on the card only: approving never writes it into the BOM
+        elif pid not in rows and not ev.get("lcsc_match"):     # a late lookup answer for a card that is gone makes no row
             rows[pid] = dict(ev)
     for r in rows.values():             # a pending net current shows the value as it is NOW, so the card reads "was 2 A, this sets 0.5 A"
         if r.get("kind") == "net_current" and r.get("status") == "pending":

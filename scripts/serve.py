@@ -414,6 +414,14 @@ def board_fit_note(project, sess):
     say(project, sess, {"ts": now(), "role": "agent", "text": fit["text"] + " Change it on the Idea page if you agree."})
 
 
+def link_datasheets(project):
+    """A datasheet already in Sources is linked to a line just approved, not only after Check datasheets."""
+    try:
+        store.auto_attach(project)
+    except Exception as exc:           # noqa: BLE001 - a link that fails is made later by Check datasheets
+        print(f"(datasheet link failed: {exc})")
+
+
 def decide_and_note(project, sess, pid, decision, by="student", note=True, redraw_now=True):
     """Approve or reject one proposal and do what follows (supply re-check, sheet labels, a note the engine
     reads). The click, the batch endpoint and the autonomy setting all come through here, so the logs are
@@ -433,10 +441,8 @@ def decide_and_note(project, sess, pid, decision, by="student", note=True, redra
         if "mpn" in prop.get("changes", {}):
             recheck_async(project, prop["line"])
         recheck_missing(project)           # a new line, or one whose MPN came with a library change
-        try:
-            store.auto_attach(project)     # a datasheet already in Sources is linked to the line just approved, not only after Check datasheets
-        except Exception as exc:           # noqa: BLE001 - a link that fails is made later by Check datasheets
-            print(f"(datasheet link failed: {exc})")
+        if redraw_now:                     # a batch (Approve all, auto-apply) links once at its end
+            link_datasheets(project)
         if redraw_now:
             redraw(project)
     if not note:
@@ -2309,6 +2315,8 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
         except Exception as exc:        # noqa: BLE001 - one action's bug must not lose the other actions of the turn
             runlog.event("op", op="chat.action", phase="error", project=project, action=str(kind), error=f"{type(exc).__name__}: {exc}")
             refused.append(f"{kind}: could not be applied ({type(exc).__name__}: {exc}). The other actions of this turn were not affected")
+    if any(r.get("kind") != "idea_diagram" for r in auto_done):
+        link_datasheets(project)
     if any(x.startswith("netlist") for x in applied) or any(r.get("kind") != "idea_diagram" for r in auto_done):
         redraw(project)
     if auto_done and sess:
@@ -2861,6 +2869,7 @@ def recheck_missing(project):
     try:
         for key in background.lines_missing_stock(project):
             recheck_async(project, key)
+        background.proposal_lcsc_async(project)       # a new part's card gets its LCSC code too
     except Exception as exc:
         print(f"(stock sweep failed: {exc})")
 
@@ -3965,6 +3974,7 @@ class Handler(BaseHTTPRequestHandler):
             done = [r["id"] for r in results if r["ok"] and not r.get("already")]      # a repeat changed nothing: not announced again
             if done:
                 if decision == "approved":
+                    link_datasheets(proj)
                     redraw(proj)
                 say(proj, sess, {"ts": now(), "role": "agent", "decision": decision, "proposal": done[0],
                                  "text": f"{'Approved' if decision == 'approved' else 'Rejected'} {len(done)} proposals: "
@@ -4142,6 +4152,8 @@ class Handler(BaseHTTPRequestHandler):
             sources_list = data.get("sources") or []
             try:
                 rec = store.propose_bom(proj, line_key, changes, reason=reason, sources=sources_list, session=sess)
+                import background
+                background.proposal_lcsc_async(proj)
                 if store.may_auto_apply(rec):
                     decide_and_note(proj, sess, rec["id"], "approved", by="auto")
                 say(proj, sess, {

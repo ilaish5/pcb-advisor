@@ -262,6 +262,43 @@ def stock_line_async(project, line, force=True):
     return submit(stock_key(project, line), lambda: stock_job(project, line, force), rerun=force)
 
 
+def _wants_lcsc(prop):
+    ch = prop.get("changes") or {}
+    return ((prop.get("kind") or "bom") == "bom" and prop.get("status") == "pending" and not prop.get("lcsc_match")
+            and str(ch.get("mpn") or "").strip() not in ("", "—", "-") and not ch.get("lcsc"))
+
+
+def proposal_lcsc_job(project, pid):
+    """The LCSC code of a pending proposal's MPN, for its card. Only a part whose model IS that MPN is recorded; a miss or a supplier
+    that is down leaves the card as it is."""
+    import check_availability
+    import store
+    prop = next((p for p in store.proposals(project) if p["id"] == pid), None)
+    if not prop or not _wants_lcsc(prop):
+        return None
+    mpn = str(prop["changes"]["mpn"]).strip()
+    _tried[(project, "lcsc", pid)] = time.time()
+    try:
+        found = check_availability.lcsc_by_mpn(mpn)
+    except Exception as exc:        # noqa: BLE001
+        print(f"(LCSC lookup for {mpn} failed: {exc})")
+        return None
+    if STOCK_GAP:
+        time.sleep(STOCK_GAP)
+    if not (found and found.get("exact") and found.get("code") and check_availability.mpn_matches(mpn, found.get("model"))):
+        return None
+    return store.append(project, "proposals.jsonl", {"id": pid, "ts": store.now_ms(), "lcsc_match": found["code"]})
+
+
+def proposal_lcsc_async(project, retry_after=RETRY_AFTER):
+    """Queue the lookup for every pending proposal that names an MPN and no LCSC code."""
+    import store
+    for p in store.proposals(project):
+        t = _tried.get((project, "lcsc", p["id"]))
+        if _wants_lcsc(p) and not (t and time.time() - t < retry_after):
+            submit(f"lcsc:{project}:{p['id']}", lambda pid=p["id"]: proposal_lcsc_job(project, pid))
+
+
 def lines_missing_stock(project, retry_after=RETRY_AFTER):
     """BOM lines that want a stock check and have none for their current MPN (a changed MPN drops the old answer),
     minus the ones asked for recently with no answer: JLC does not know them, asking again each turn is noise."""
