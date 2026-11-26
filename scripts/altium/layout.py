@@ -1995,7 +1995,8 @@ def unrouted(doc, tol=0.02):
         parent[find(a)] = find(b)
 
     rects = [rt._pad_rect(p) for p in pads]
-    lay_of = [set(1 if l == rt.TOP else 32 for l in rt._pad_layers(p)) for p in pads]
+    lay_of = [set(range(1, 33)) if len(ls) == 2 else {1 if ls[0] == rt.TOP else 32}      # through hole: every copper layer, inner ones too
+              for ls in (rt._pad_layers(p) for p in pads)]
     tracks = [t for t in doc.get("tracks", []) if t.get("net")]
     vias = [v for v in doc.get("vias", []) if v.get("net")]
     seg = lambda t: ((t["x1_mm"], t["y1_mm"]), (t["x2_mm"], t["y2_mm"]))

@@ -1965,7 +1965,7 @@ def _partial_ok(problem, failed=()):
     return bool(m) and m.group(1) in nets
 
 
-def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None,
+def route_on(prj, pcb, replace=False, seconds=None, keep_partial=False, pitch=0.1, pour=True, currents=None, estimates=None, copper=None, names=None, stale_library=None,
              keepout_fn=None, layers=2):
     """Route the placed PcbDoc with the agent's own router (scripts/altium/route.py; Altium's autorouter cannot be run from a
     script), draw the tracks and vias, save, then check the saved file two ways: our own unrouted() on the read-back file and
@@ -2021,12 +2021,13 @@ def route_on(prj, pcb, replace=False, seconds=120, keep_partial=False, pitch=0.1
     planes = route.plane_nets_for(doc) if layers == 4 else {}        # 4 layers: ground and the main supply are planes on the inner layers
     pour_net = route.pour_net_for(doc) if pour and not planes else None      # (the bottom layer then carries signals only)
     if layers == 4 and not planes:
-        cap_warn.append("no ground net with 3 pads or more, so the inner layers have no plane: both are left empty")
+        cap_warn.append("no ground net with 3 pads or more, so the inner layers have no ground plane (Mid-Layer 1 is left empty; Mid-Layer 2 holds only tracks)")
     shape = _shape_differs(pcb, box) if (pour_net or planes) else None      # a pour is clipped to the board shape Altium holds: set it to the outline below
     # The ground is planned as poured (each pad dropped to the pour by a short stub and a via) only when the pour is certain to be drawn
     # as planned: a board shape that has to be rewritten first could fail, and then the ground would have no copper; that board is
     # planned with the ground routed by tracks (the pour is still drawn on top).
-    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds, pour_net=None if shape else pour_net, planes=planes)
+    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds or route.time_budget(doc), pour_net=None if shape else pour_net,
+                             planes=planes, layers=layers)
     pour_dep = bool(plan.get("pour") and plan["pour"].get("mode") == "drops")       # some ground pad is joined by the pour alone
     names = names or {}                  # {drawn name: netlist name}: the PcbDoc carries the drawn names, the student knows the netlist's
     shown = {names.get(n, n): w for n, w in plan["widths"].items()}
