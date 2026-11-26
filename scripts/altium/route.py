@@ -31,6 +31,7 @@ except ImportError:                                      # pragma: no cover - ru
 
 TOP, BOT = 0, 1
 LAYER_CODE = {TOP: 1, BOT: 32}
+TRACK_LAYERS = {1: "top", 32: "bottom", 3: "mid2"}      # a track item's layer code in the script's words (3: 4 layer boards only)
 KEEPOUT_LAYER = 56
 SQ2 = math.sqrt(2)
 DIRS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
@@ -100,6 +101,8 @@ def rules_from_doc(doc):
             if nets:
                 for n in nets:
                     out["net_width"][n] = w
+                    if mn is not None:
+                        out.setdefault("net_min", {})[n] = mn
             elif str(r.get("SCOPE1EXPRESSION", "All")).strip().lower() == "all":
                 out["width"], out["width_min"], out["width_max"] = w, mn if mn is not None else w, mx if mx is not None else 10.0
     if clear:
@@ -1631,15 +1634,37 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
 STRATEGIES = ((SAMPLING, False, False, False), (SAMPLING_TIGHT, False, True, True), (SAMPLING_TIGHT, True, True, False),
               (SAMPLING_TIGHT, True, False, False))
 
-def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None, planes=None):
+DENSE_PADS = 200          # a board with this many pads goes to the negotiated engine straight away (the greedy plans cannot finish it)
+SECONDS_PER_PAD = 3.0     # the time budget route_on gives grows with the board ...
+SECONDS_MIN, SECONDS_MAX = 120.0, 1200.0      # ... between these
+
+
+def time_budget(doc):
+    """Seconds the routing of this board may take (a safety cap: the searches have their own deterministic budgets)."""
+    return min(SECONDS_MAX, max(SECONDS_MIN, SECONDS_PER_PAD * len(doc.get("pads", []))))
+
+
+def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None, planes=None,
+                layers=2):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1]; the arguments and the result are those of
     _plan_routes_once. A net left open that is not blocked by fixed copper alone is a search that went wrong, not a board that cannot be
     routed (the search is greedy: one net's track can close a fine pitch pad's only way out): the whole plan is then made again, by the
     next of STRATEGIES (the open nets laid first; a tighter keep-off), and the plan with the fewest nets open is returned (ties: the
     earlier). Every plan passes the same exact checks, so a later plan can only complete the route, never weaken it. Each plan has its own
-    budget of cells, so the result is the same for the same board; `seconds` (all plans together) is the safety cap."""
+    budget of cells, so the result is the same for the same board; `seconds` (all plans together) is the safety cap.
+
+    A dense board (DENSE_PADS pads or more) is routed by the negotiated engine (negotiate.plan) instead, and so is a smaller one the
+    greedy plans leave nets open on: that result replaces theirs only when it leaves fewer nets open. layers=4: the negotiated engine
+    may also draw tracks on Mid-Layer 2; the greedy plans use top and bottom only."""
     t0 = time.time()
     rules = rules or rules_from_doc(doc)
+
+    def negotiated(left):
+        from . import negotiate
+        return negotiate.plan(doc, box, rules, pitch=pitch, seconds=left, only=only, pour_net=pour_net, planes=planes, layers=layers,
+                              expansions=max_expansions)
+    if len(doc.get("pads", [])) >= DENSE_PADS:
+        return negotiated(seconds)
     best, info, first, tried, took = None, {}, [], 0, 0.0
     for sampling, promote, spans_last, ground_early in STRATEGIES:
         if best is not None:
@@ -1657,6 +1682,16 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
         if best is None or len(res["failed"]) < len(best["failed"]):
             best = res
     best["stats"]["attempts"] = tried
+    open_ = [n for n, _ in best["failed"] if n not in info.get("hard", ())]
+    left = seconds - (time.time() - t0)
+    if max_expansions and any("budget" in why for _n, why in best["failed"]):
+        open_ = []          # the caller's budget of cells is used up: another engine on top would not be inside it
+    if open_ and left > 5:
+        res = negotiated(left)
+        if len(res["failed"]) < len(best["failed"]):
+            res["stats"]["attempts"] = tried + 1
+            res["stats"]["seconds"] = round(time.time() - t0, 1)
+            return res
     return best
 
 
@@ -1700,7 +1735,7 @@ def route_commands(pcb, items, replace=False, pour_net=None, box=None, edge=0.3,
     cmds = [("ROUTEBEGIN", d, "1" if replace else "0")]
     for it in items:
         if it["kind"] == "track":
-            cmds.append(("TRACK", d, "top" if it["layer"] == 1 else "bottom", f"{it['x1']:.4f}", f"{it['y1']:.4f}", f"{it['x2']:.4f}",
+            cmds.append(("TRACK", d, TRACK_LAYERS[it["layer"]], f"{it['x1']:.4f}", f"{it['y1']:.4f}", f"{it['x2']:.4f}",
                          f"{it['y2']:.4f}", f"{it['width']:g}", it["net"]))
         else:
             cmds.append(("VIA", d, f"{it['x']:.4f}", f"{it['y']:.4f}", f"{it['dia']:g}", f"{it['hole']:g}", it["net"]))
@@ -1787,7 +1822,7 @@ def _violations(shapes, items, rules, box, nets=None):
     via_r = rules["via_dia"] / 2
     tracks = [i for i in items if i["kind"] == "track"]
     vias = [i for i in items if i["kind"] == "via"]
-    lay = {1: TOP, 32: BOT}
+    lay = {1: TOP, 32: BOT, 3: 2}                                # 2: Mid-Layer 2 (a 4 layer board)
     want = (lambda a, b: True) if nets is None else (lambda a, b: a in nets or b in nets)
     sh_idx = _Index([_bbox(sh["geo"]) for sh in shapes])
     pad = clear + 0.01                                           # the reach of a clearance test beyond the copper itself
@@ -1802,7 +1837,9 @@ def _violations(shapes, items, rules, box, nets=None):
                     out.append((f"track of {t['net']} at ({x:.2f}, {y:.2f}) is closer than {edge:g} mm to the board edge", (t["net"],)))
         for k in sh_idx.near((bb[0] - pad, bb[1] - pad, bb[2] + pad, bb[3] + pad)):
             sh = shapes[k]
-            if sh["net"] != t["net"] and lay[t["layer"]] in sh["layers"] and want(t["net"], sh["net"]):
+            on = lay[t["layer"]]
+            through = len(sh["layers"]) == 2                          # a through hole pad, a via, a keep-out: on the inner layer too
+            if sh["net"] != t["net"] and (on in sh["layers"] or (on == 2 and through)) and want(t["net"], sh["net"]):
                 d = _dist(sh["geo"], a, b) - hw
                 if d < clear - 1e-3:
                     out.append((f"track of {t['net']} near {sh['kind']} {sh['tag']} ({sh['net'] or 'no net'}): {d:.3f} mm < {clear:g} mm",

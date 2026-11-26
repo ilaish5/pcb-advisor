@@ -2066,7 +2066,7 @@ begin
     Log('routebegin ' + IntToStr(n) + ' objects removed');
 end;
 
-{ TRACK path layer x1 y1 x2 y2 width net }
+{ TRACK path layer x1 y1 x2 y2 width net: layer is top, bottom, mid1 or mid2 }
 procedure PcbTrack(Path: String; Layer: String; X1, Y1, X2, Y2, W, NetName: String);
 var
     B, T, N : IDispatch;
@@ -2085,7 +2085,10 @@ begin
     T.X2 := MmCoord(X2);
     T.Y2 := MmCoord(Y2);
     T.Width := MmCoord(W);
-    if (Layer = 'bottom') then T.Layer := eBottomLayer else T.Layer := eTopLayer;
+    if (Layer = 'bottom') then T.Layer := eBottomLayer
+    else if (Layer = 'mid1') then T.Layer := eMidLayer1
+    else if (Layer = 'mid2') then T.Layer := eMidLayer2
+    else T.Layer := eTopLayer;
     B.AddPCBObject(T);
     T.Net := N;
     N.AddPCBObject(T);
