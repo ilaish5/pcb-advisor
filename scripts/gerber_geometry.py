@@ -139,6 +139,8 @@ def parse_layer(text):
                 contours.append(pts)
             for c in contours:
                 polys.append((not clear, c))
+                if clear:              # the edge of a cut-out is where copper is NOT: it is no copper edge for the edge check
+                    continue
                 for p, q in zip(c, c[1:] + c[:1]):
                     boundary.append(("seg", p[0], p[1], q[0], q[1], 0.0))
             region, contours, pts = False, [], None
@@ -343,7 +345,8 @@ def _inside(poly, px, py):
 def copper_to_holes(copper, holes, polys=(), limit=NPTH_TO_COPPER_MM):
     """[(gap_mm, (x, y), (hx, hy, dia))]: copper nearer than the limit to the wall of a non-plated hole; (x, y) is the copper's nearest point.
     `copper`: flashes and strokes of one layer; `polys`: its regions [(dark, points)] (a pour is a dark region with clear ones cut out).
-    A flash centred on the hole is the hole's own mark in the copper file (Altium writes one at the hole size) or its own pad: not a neighbour."""
+    A flash centred on the hole AND of the hole's own size (within a tenth of a mm or a tenth of its diameter) is the hole's own mark in the copper
+    file (Altium writes one at the hole size): not a neighbour. A larger or smaller flash on the hole is copper at the hole and is a finding."""
     out = []
     for hx, hy, dia in holes:
         r = dia / 2
@@ -351,7 +354,8 @@ def copper_to_holes(copper, holes, polys=(), limit=NPTH_TO_COPPER_MM):
             x0, y0, x1, y1 = _bbox(s)
             if x0 - limit - r > hx or x1 + limit + r < hx or y0 - limit - r > hy or y1 + limit + r < hy:
                 continue
-            if math.hypot((x0 + x1) / 2 - hx, (y0 + y1) / 2 - hy) < 0.1 and s[1] == s[3] and (s[0] == "rect" or s[2] == s[4]):
+            if (math.hypot((x0 + x1) / 2 - hx, (y0 + y1) / 2 - hy) < 0.1 and s[1] == s[3] and (s[0] == "rect" or s[2] == s[4])
+                    and max(abs((x1 - x0) - dia), abs((y1 - y0) - dia)) <= max(0.1, dia / 10)):
                 continue
             d, p = (_rect_pt(s, hx, hy) if s[0] == "rect" else _seg_pt(s[1], s[2], s[3], s[4], hx, hy))
             d = d - (s[5] if s[0] == "seg" else 0.0) - r

@@ -49,6 +49,26 @@ def test_copper_to_edge_reports_the_middle_of_the_track():
     assert run(edge_d=0.3)[0] == []
 
 
+def test_a_flash_on_an_npth_is_skipped_only_when_it_is_the_hole_size():
+    hole = [(20.0, 20.0, 3.2)]
+    same = [("seg", 20.0, 20.0, 20.0, 20.0, 1.6)]            # the hole's own mark in the copper file
+    pad = [("seg", 20.0, 20.0, 20.0, 20.0, 2.6)]            # copper 1 mm bigger than the hole on it
+    small = [("seg", 20.0, 20.0, 20.0, 20.0, 0.5)]
+    assert gg.copper_to_holes(same, hole) == []
+    assert gg.copper_to_holes(pad, hole) != []
+    assert gg.copper_to_holes(small, hole) != []
+
+
+def test_the_edge_of_a_cut_out_is_not_a_copper_edge_but_a_pour_edge_is():
+    def pour(polarity, x0, y0, x1, y1):
+        return [f"%LP{polarity}*%", "G36*", xy(x0, y0) + "D02*", xy(x1, y0) + "D01*", xy(x1, y1) + "D01*", xy(x0, y1) + "D01*", xy(x0, y0) + "D01*", "G37*"]
+    cutout = G(pour("D", 5, 5, 45, 35) + pour("C", 20, 0.05, 30, 10), {"10": "C,0.250"})
+    msgs, _ = gg.problems({"copper": [cutout], "outline": [OUTLINE]})
+    assert msgs == []
+    near_edge = G(pour("D", 5, 0.05, 45, 35), {"10": "C,0.250"})
+    assert gg.problems({"copper": [near_edge], "outline": [OUTLINE]})[0] != []
+
+
 def test_the_zip_description_lists_geometry_findings_without_blocking(tmp_path):
     import zipfile
     import jlc_upload
