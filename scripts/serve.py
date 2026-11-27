@@ -3788,7 +3788,7 @@ class Handler(BaseHTTPRequestHandler):
                     import schematic_review
                     if schematic_review.is_review_request(text):
                         _review = schematic_review.review(proj)
-                        say(proj, sess, {"ts": now(), "role": "agent", "followup": True, "applied": [], "text": _review["text"]})
+                        say(proj, sess, {"ts": now(), "role": "agent", "followup": True, "applied": [], "text": _review["text"], "not_checked": _review.get("not_checked") or []})
                 except Exception as exc:
                     print(f"[review] the tool's own check failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 m = model.build(project=proj, session=sess)

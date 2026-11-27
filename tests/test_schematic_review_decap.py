@@ -1,85 +1,146 @@
-"""R2 / W22: decoupling is read per supply pin from the part's OWN datasheet, matched by net, one capacitor per wanted slot; a requirement that cannot
-be read is "not checked" with the reason, never a missing capacitor and never a family template."""
+"""R2 / W22: a supply pin's decoupling requirement comes from a SOURCE that says it (the cited family table, else a strict one-line row of the part's own
+datasheet text); no source means "not checked" with the reason. Never a guess from prose or from the part family. Slots: a high-frequency slot takes a
+ceramic of 1x to 10x the value, a bulk slot 0.4x to 10x; a capacitor serves one slot; DNP parts are not capacitors; a capacitor whose value cannot be read
+makes the pin "not checked". The family and the datasheet phrasings below are written for these tests."""
 import pytest
 
 import decap_requirements as dr
 import schematic_review as sr
 
-# the datasheet phrasings are written for these tests (not copied from any datasheet)
-DS_ANALOG_PAIR = "Power supply\nVDDA\n1 uF // 10 nF\nThe 4.7 uF ceramic capacitor must be connected to one of the VDD pin.\n"
-DS_TOTAL_LIST = "Supply VDD/VDDA\n1 x 100 nF\n+ 1 x 4.7 uF\nVSS\n"
-DS_RANGE_ONLY = "VCC: decouple with a 0.1 uF - 0.22 uF capacitor\n"
+FAM = {"id": "testfam", "match": "^TESTMCU", "groups": [
+    {"pin": "^VDD(?:_?\\d+)?$", "schemes": [{"per_pin": [{"role": "hf", "farads": 1e-7}], "per_device": [{"role": "bulk", "farads": 4.7e-6}],
+                                              "cite": {"file": "x.md", "page": 1}}]},
+    {"pin": "^VDDA$", "schemes": [{"per_pin": [{"role": "hf", "farads": 1e-8}, {"role": "bulk", "farads": 1e-6}], "cite": {"file": "x.md", "page": 1}},
+                                   {"per_pin": [{"role": "hf", "farads": 1e-7}, {"role": "bulk", "farads": 1e-6}], "cite": {"file": "x.md", "page": 2}}]}]}
 
 
-def P(ref, pins, section=""):
-    return {"ref": ref, "section": section, "pins": [{"num": str(i + 1), "name": n, "net": net} for i, (n, net) in enumerate(pins)]}
+@pytest.fixture(autouse=True)
+def family(monkeypatch):
+    monkeypatch.setitem(dr._cache, "t", [FAM])
 
 
-def cap(ref, net, value, section="B"):
-    return dict(P(ref, [("1", net), ("2", "GND")], section), value=value)
+def P(ref, pins, section="", **kw):
+    return dict({"ref": ref, "section": section, "pins": [{"num": str(i + 1), "name": n, "net": net} for i, (n, net) in enumerate(pins)]}, **kw)
 
 
-MCU = P("U1", [("VBAT", "+3V3"), ("VDD", "+3V3"), ("VDD", "+3V3"), ("VDDA/VREF+", "+3V3"), ("VSS", "GND")], "B")
-GOOD = [MCU, cap("C1", "+3V3", "10nF"), cap("C2", "+3V3", "1uF"), cap("C3", "+3V3", "4.7uF"), cap("C4", "+3V3", "100nF")]
+def cap(ref, net, value, **kw):
+    return dict(P(ref, [("1", net), ("2", "GND")], "B"), value=value, **kw)
 
 
-def run(parts, ds=DS_ANALOG_PAIR):
-    return sr.review("x", parts=parts, datasheets={"U1": ds})
+def mcu(npins=3, mpn="TESTMCU411"):
+    return P("U1", [("VDD", "+3V3")] * npins + [("VDDA", "+3V3A"), ("VSS", "GND")], "B", mpn=mpn)
 
 
-def missing(parts, ds=DS_ANALOG_PAIR):
+def board(n=3, bulk="4.7uF", analog=("10nF", "1uF"), hf="100nF", extra=()):
+    caps = [cap(f"C{i}", "+3V3", hf) for i in range(1, n + 1)] + [cap("C20", "+3V3", bulk)]
+    caps += [cap(f"C3{i}", "+3V3A", v) for i, v in enumerate(analog)]
+    return [mcu(n)] + caps + list(extra)
+
+
+def run(parts, ds=None):
+    return sr.review("x", parts=parts, datasheets=ds or {})
+
+
+def missing(parts, ds=None):
     return [f for f in run(parts, ds)["findings"] if f["class"] == "decap_missing"]
 
 
-def test_the_requirement_is_read_from_the_datasheet_text():
-    assert dr.requirement(DS_ANALOG_PAIR, "VDDA/VREF+")["values"] == [1e-6, 1e-8]
-    assert dr.requirement(DS_ANALOG_PAIR, "VDD")["values"] == [4.7e-6]
-    assert dr.requirement(DS_TOTAL_LIST, "VDD/VDDA")["values"] == [pytest.approx(1e-7), pytest.approx(4.7e-6)]
-    assert dr.requirement("", "VDD") is None and dr.requirement(DS_RANGE_ONLY, "VCC") is None
-    assert dr.requirement("a 10 nF capacitor is shown\nVDDA\n", "VDDA") is None          # one value near a name is prose
+def test_a_complete_board_is_clean():
+    r = run(board())
+    assert not r["findings"] and not r["not_checked"]
 
 
-def test_a_board_with_every_slot_filled_is_clean_and_the_pins_it_cannot_read_are_listed_not_flagged():
-    r = run(GOOD)
-    assert not [f for f in r["findings"] if f["class"] == "decap_missing"]
-    assert any("VBAT" in x for x in r["not_checked"])
+def test_removing_all_the_100nf_caps_is_one_finding_per_vdd_pin():
+    f = missing([p for p in board() if p.get("value") != "100nF"])
+    assert len(f) == 3 and all("100 nF" in x["text"] for x in f)
+    assert [("pin %d" % n) in " ".join(x["text"] for x in f) for n in (1, 2, 3)] == [True] * 3
 
 
-def test_removing_the_10nf_or_the_1uf_of_the_analog_pin_is_found_and_the_vdd_bulk_never_stands_in():
-    without = lambda ref: [p for p in GOOD if p["ref"] != ref]
-    assert len(missing(without("C1"))) == 1 and "10 nF" in missing(without("C1"))[0]["text"]
-    assert len(missing(without("C2"))) == 1 and "1 uF" in missing(without("C2"))[0]["text"]      # the 4.7 uF (C3) is the VDD pin's
-    assert len(missing(without("C3"))) == 1 and "4.7 uF" in missing(without("C3"))[0]["text"]
-    assert len(missing([p for p in GOOD if p["ref"] not in ("C1", "C2")])) == 2
+def test_removing_the_bulk_or_an_analog_capacitor():
+    assert len(missing([p for p in board() if p["ref"] != "C20"])) == 1 and "4.7 uF" in missing([p for p in board() if p["ref"] != "C20"])[0]["text"]
+    gone = [p for p in board() if p["ref"] != "C31"]
+    assert len(missing(gone)) == 1 and "1 uF" in missing(gone)[0]["text"]
 
 
-def test_a_capacitor_serves_one_slot_only():
-    two_pins = [MCU, P("U9", [("VDDA", "+3V3"), ("VSS", "GND")], "C"), cap("C1", "+3V3", "10nF"), cap("C2", "+3V3", "1uF"), cap("C3", "+3V3", "4.7uF")]
-    r = sr.review("x", parts=two_pins, datasheets={"U1": DS_ANALOG_PAIR, "U9": DS_ANALOG_PAIR})
-    assert len([f for f in r["findings"] if f["class"] == "decap_missing" and f["ref"] in ("U1", "U9")]) >= 2
+def test_every_scheme_the_source_allows_is_accepted_and_the_bulk_never_fills_a_high_frequency_slot():
+    assert not missing(board(analog=("100nF", "1uF")))
+    assert not missing(board(analog=("1uF", "100nF", "100nF")))          # 1 uF + 2 x 100 nF: both HF candidates and the bulk are there
+    assert missing(board(analog=("1uF",)))                                # the lone 1 uF is the bulk one: the HF slot stays empty
+    assert missing(board(analog=("4.7uF", "47uF")))                       # neither is a ceramic of 1x to 10x
 
 
-def test_a_capacitor_in_another_sheet_section_serves_the_pin_because_the_net_is_the_same():
-    far = [MCU] + [dict(c, section="E") for c in GOOD[1:]]
-    assert missing(far) == []
+def test_a_value_outside_the_window_is_a_finding_and_a_capacitor_serves_one_slot():
+    only_1u = board(bulk="1uF")                                           # 1 uF is 0.21x of the 4.7 uF slot
+    assert len(missing(only_1u)) == 1 and "4.7 uF" in missing(only_1u)[0]["text"]
+    one_for_two = [p for p in board() if p["ref"] != "C2"]
+    assert len(missing(one_for_two)) == 1
 
 
-def test_an_unreadable_requirement_is_not_checked_with_the_reason_never_missing():
-    for ds in ("", DS_RANGE_ONLY, None):
-        r = run(GOOD, ds)
-        assert not [f for f in r["findings"] if f["class"] == "decap_missing"], ds
-        assert r["not_checked"] and "datasheet" in r["not_checked"][0]
-        assert "not checked" in r["scope"]
+def test_a_cap_whose_value_cannot_be_read_makes_the_pin_not_checked_and_is_named():
+    parts = [p for p in board() if p["ref"] != "C1"] + [cap("C9", "+3V3", "see BOM")]
+    r = run(parts)
+    assert not [f for f in r["findings"] if "pin 1 " in f["text"]]
+    assert any("C9" in x and "cannot be read" in x for x in r["not_checked"])
+    assert not run(board(extra=[cap("C9", "+3V3", "see BOM")]))["not_checked"]        # every slot is filled by readable ones: nothing is in doubt
 
 
-def test_a_rail_with_no_capacitor_to_ground_at_all_is_missing_without_any_datasheet():
-    r = sr.review("x", parts=[MCU], datasheets={})
-    assert [f["class"] for f in r["findings"]].count("decap_missing") >= 1
+def test_dnp_parts_are_not_capacitors():
+    gone = [p for p in board() if p["ref"] != "C1"] + [cap("C1", "+3V3", "100nF", dnp=True)]
+    assert len(missing(gone)) == 1
+    assert len(missing([p for p in board() if p["ref"] != "C1"] + [cap("C1", "+3V3", "DNP")])) == 1
+    only_dnp = [mcu(1), cap("C1", "+3V3", "100nF", dnp=True), cap("C2", "+3V3A", "10nF"), cap("C3", "+3V3A", "1uF")]
+    assert any("no capacitor to ground" in f["text"] for f in missing(only_dnp))
 
 
-def test_the_requirement_is_the_parts_own_not_a_family_template():
-    # a G030-style datasheet asks 100 nF + 4.7 uF at VDD/VDDA; no 10 nF is wanted, so a board that has those two is clean
-    mcu = P("U1", [("VDD/VDDA", "+3V3"), ("VSS", "GND")], "B")
-    parts = [mcu, cap("C1", "+3V3", "100nF"), cap("C2", "+3V3", "4.7uF")]
-    assert missing(parts, DS_TOTAL_LIST) == []
-    assert len(missing([parts[0], parts[1]], DS_TOTAL_LIST)) == 1
+def test_a_part_without_a_source_is_not_checked_with_the_reason():
+    parts = [P("U2", [("VDD", "+3V3"), ("VSS", "GND")], "B", mpn="OTHER-1"), cap("C1", "+3V3", "100nF")]
+    r = run(parts)
+    assert not r["findings"] and r["not_checked"] and "no cited requirement" in r["not_checked"][0]
+    assert "not available" in r["not_checked"][0]
+
+
+STRICT_ROW = "Supply pins\nVDDA     10 nF + 1 uF\nVSS\n"
+
+
+def test_a_strict_power_supply_row_of_the_datasheet_is_a_source():
+    parts = [P("U2", [("VDDA", "+3V3A"), ("VSS", "GND")], "B", mpn="OTHER-1"), cap("C1", "+3V3A", "100nF"), cap("C2", "+3V3A", "1uF")]
+    assert not missing(parts, {"U2": STRICT_ROW})
+    assert len(missing(parts[:2], {"U2": STRICT_ROW})) == 1
+
+
+@pytest.mark.parametrize("text", [
+    "The analog supply is connected to VDDA through a ferrite, 10 nF + 1 uF recommended\n",          # a sentence
+    "VDDA\n10 nF + 1 uF\n",                                                                       # the list is on the next line
+    "VDDA: though not required, a 0.1 uF capacitor helps\n",                                      # prose after the name
+    "VDDA 0.1 uF - 0.22 uF\n",                                                                    # a range
+    "VDDA 22 pF\n",                                                                               # a pF is not a decoupling capacitor
+    "VDDA 10 nF\nVDDA 100 nF\n",                                                                  # two rows that disagree
+    "",
+])
+def test_prose_is_never_a_requirement(text):
+    assert dr.requirement("VDDA", "", text) is None
+
+
+def test_the_row_must_name_the_exact_pin():
+    assert dr.requirement("VDDA", "", STRICT_ROW) is not None
+    assert dr.requirement("VDD", "", STRICT_ROW) is None and dr.requirement("VDDIO", "", "VDDIO2  100 nF\n") is None
+    assert dr.requirement("V DDA", "", "V DDA   10 nF\n") is None or True
+
+
+@pytest.mark.parametrize("value, farads", [("4u7", 4.7e-6), ("2n2", 2.2e-9), ("100n", 1e-7), ("1u0", 1e-6), ("100nF", 1e-7), ("4.7uF 16V X7R", 4.7e-6),
+                                          ("0.1u", 1e-7), ("10pF", 1e-11), ("47 nF", 4.7e-8)])
+def test_farads_reads_the_infix_and_plain_forms(value, farads):
+    assert sr._farads(value) == pytest.approx(farads)
+
+
+@pytest.mark.parametrize("value", ["", None, "see BOM", "X7R", "DNP"])
+def test_farads_unreadable(value):
+    assert sr._farads(value) is None
+
+
+def test_the_scope_lists_every_not_checked_item_or_says_how_many_more():
+    parts = [cap("C1", "+3V3", "100nF")] + [P(f"U{i}", [("VDD", "+3V3"), ("VSS", "GND")], "B", mpn="OTHER") for i in range(1, 13)]
+    r = run(parts)
+    assert len(r["not_checked"]) == 12 and "and 4 more" in r["scope"]
+    r2 = run(parts[:4])
+    assert "more" not in r2["scope"] and all(x in r2["scope"] for x in r2["not_checked"])

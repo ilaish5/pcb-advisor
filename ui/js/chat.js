@@ -541,6 +541,10 @@ function chatUncheckedClaim(m) {
   }
   return true;
 }
+function chatNotChecked(m) {      // the tool's own review lists what it did not check: a click shows every item, never only the first few
+  const l = m.not_checked || [];
+  return l.length > 8 ? `<details class="chat-act"><summary>All ${l.length} things not checked</summary><ul>${l.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : '';
+}
 function chatEngineFoot(m) {
   const l = chatEngineLabel(m.engine, m.model);
   const claim = chatUncheckedClaim(m);
@@ -584,7 +588,7 @@ function msgHTML(m, undoTs) {
     const nRef = (m.refused || []).length;
     const after = m.followup ? '<div class="chat-followup" role="note">After the results</div>' : '';     // the server's own second turn, written once the actions had answered
     const head = after + (nRef && m.text ? `<div class="acts"><span class="chat-act bad" role="note">Not all of this happened: ${nRef} step${nRef > 1 ? 's' : ''} failed (red, below)</span></div>` : '');
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}${chatEngineFoot(m)}</div>` : '') + props + chatDeniedHTML(m, live);
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${chatNotChecked(m)}${acts}${undo}${ready}${chatEngineFoot(m)}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }
