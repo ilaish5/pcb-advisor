@@ -153,6 +153,18 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
   gets "Altium cannot run scripts right now" with the F9 steps.
 
 
+- **Altium's own ERC (Compile messages) is read from a report file, never from violation objects.** Walking `DM_Violations` /
+  `DM_ErrorLevelString` raised an exception and left the debugger paused, so no script call touches them. `bridge.erc_check` writes a temporary
+  OutJob (`outjob.erc_outjob`) whose single output is Altium's "Electrical Rules Check" (Validation) into a Folder Structure medium, adds it to
+  the open project (`OUTJOB`), takes it out again (`LIBRELEASE`), marks the documents that were saved before as saved (`UNMARK`), copies the
+  HTML report to `projects/<p>/erc/report.html` and removes the OutJob and the report from the student's folder. The OutJob carries the
+  project file's own `[Electrical Rules Check]` levels and `[ERC Connection Matrix]` (Altium's sample defaults for what the project does not
+  set), so the answer is what the student sees in Altium. `bridge.parse_erc` reads the report strictly: a count exists only for a report with
+  the ERC heading, the Class | Document | Message header, a closing `</html>`, only known row classes, and either violation rows or the line
+  "Successful Compile; No Violations Found." Anything else (missing, cut, unknown, both) is "unchecked", never clean. A project with no sheet on the
+  disk is refused (an empty project reports "no violations"). `erc_results` keeps each run in `erc-log.jsonl` (stale when a sheet or the ERC settings
+  change); the Schematic page shows it marked "From Altium", apart from our own checks (`S.erc`, button "Check in Altium", `/api/altium/erc`).
+
 ## 6. Data layout
 
 | where | what | in git |

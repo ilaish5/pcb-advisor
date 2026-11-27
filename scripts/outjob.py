@@ -206,6 +206,99 @@ EnableReload3=0
 """
 
 
+# ---- the Electrical Rules Check output (Validation): Altium writes its own ERC report (an HTML table Class | Document | Message) to a
+# file, the way the batch design rule check writes the DRC report. Found live (Altium 26.8): an OutJob output "Electrical Rules Check"
+# run on the Folder Structure medium writes <base>/ERC/<project>.html. The output reads ITS OWN levels and connection matrix (the
+# project's Error Reporting settings are not used), so erc_outjob copies the project's [Electrical Rules Check] and
+# [ERC Connection Matrix] into it: the report then says what Altium's Compile shows the student.
+# Levels: 0 = no report, 1 = warning, 2 = error, 3 = fatal error. Defaults (types 1..119): Altium's own sample OutJob, used for a
+# project file that has no such section.
+ERC_DEFAULT_LEVELS = ("01200001100210000000000022200002230002220200202202000002222002002322222220200002333332220033222220020221222210001222333")
+ERC_DEFAULT_MATRIX = ("NNNNNNNNNNNWNNNNN", "NNNNNNNNNNNNNNNNN", "NNEENEENENEWNEENN", "NNENNNWEENNWNENNN", "NNNNNNNNNNNNNNNNN", "NNENNNNEENNWNENNN",
+                      "NNEWNNWEENNWNENNN", "NNNENEENEEENNEENN", "NNEENEEEENWNNNNNN", "NNNNNNNENNENNNENN", "NNENNNNEWENNNENNN", "WNWWNWWNNNNNNNNNN",
+                      "NNNNNNNNNNNNNNNNN", "NNEENEEENNENNNNNN", "NNENNNNENENNNNNNN", "NNNNNNNNNNNNNNNNW", "NNNNNNNNNNNNNNNWN")
+ERC_OUTJOB_TEMPLATE = """[OutputJobFile]
+Version=1.0
+Caption=ERC
+Description=Altium's own electrical rules check, for the advisor
+VaultGUID=
+ItemGUID=
+ItemHRID=
+RevisionGUID=
+RevisionId=
+VaultHRID=
+AutoItemHRID=
+NextRevId=
+FolderGUID=
+LifeCycleDefinitionGUID=
+RevisionNamingSchemeGUID=
+
+[OutputGroup1]
+Name=
+Description=
+TargetOutputMedium=Folder Structure
+VariantName=[No Variations]
+VariantScope=0
+CurrentConfigurationName=
+TargetPrinter=Default
+PrinterOptions=Record=PrinterOptions|Copies=1|Duplex=1|TrueTypeOptions=3|Collate=1|PrintJobKind=1|PrintWhat=0
+OutputMedium1=Folder Structure
+OutputMedium1_Type=GeneratedFiles
+
+OutputType1=Electrical Rules Check
+OutputName1=Electrical Rules Check
+OutputCategory1=Validation
+OutputDocumentPath1=
+OutputVariantName1=
+OutputEnabled1=1
+OutputEnabled1_OutputMedium1=1
+OutputDefault1=0
+PageOptions1=Record=PageOptions|CenterHorizontal=True|CenterVertical=True|PrintScale=1.00|XCorrection=1.00|YCorrection=1.00|PrintKind=1|BorderSize=5000000|LeftOffset=0|BottomOffset=0|Orientation=2|PaperLength=1000|PaperWidth=1000|Scale=100|PaperSource=7|PrintQuality=-3|MediaType=1|DitherType=10|PrintScaleMode=1|PaperKind=Letter|PaperIndex=1
+Configuration1_Name1=OutputConfigurationParameter1
+Configuration1_Item1={config}
+
+[PublishSettings]
+OutputFilePath1=
+ReleaseManaged1=0
+OutputBasePath1={base}
+OutputPathMedia1=
+OutputPathMediaValue1=
+OutputPathOutputer1=[Output Type]
+OutputPathOutputerPrefix1=
+OutputPathOutputerValue1=
+OutputFileName1=
+OutputFileNameMulti1=
+UseOutputNameForMulti1=1
+OutputFileNameSpecial1=
+OpenOutput1=0
+
+[GeneratedFilesSettings]
+RelativeOutputPath1=
+OpenOutputs1=0
+AddToProject1=0
+TimestampFolder1=0
+UseOutputName1=0
+"""
+
+
+def erc_outjob(levels=None, matrix=None, base="ERC-out"):
+    """The text of an OutJob with ONE output, Altium's Electrical Rules Check, on a Folder Structure medium that writes under `base`.
+    levels = {violation type number: "0".."3"} and matrix = {row 1..17: 17 letters of N W E F} (the project's own, see
+    bridge.erc_project_settings); what is missing is Altium's default."""
+    lv = {i + 1: c for i, c in enumerate(ERC_DEFAULT_LEVELS)}
+    lv.update({int(k): str(v) for k, v in (levels or {}).items() if str(v) in ("0", "1", "2", "3")})
+    mx = {i + 1: row for i, row in enumerate(ERC_DEFAULT_MATRIX)}
+    mx.update({int(k): v for k, v in (matrix or {}).items() if re.fullmatch(r"[NWEF]{17}", str(v))})
+    kv = {"ERCClassColumnOrder": "0", "ERCClassColumnSort": "0", "ERCClassColumnVisibility": "True", "ERCDocumentColumnOrder": "1",
+          "ERCDocumentColumnSort": "0", "ERCDocumentColumnVisibility": "True", "ERCMessageColumnOrder": "2", "ERCMessageColumnSort": "0",
+          "ERCMessageColumnVisibility": "True", "ERCReportGrouping": "2", "ERCReportMode": "0", "ERCReportSuppressedErrors": "False",
+          "ERCValidationErrorLevel": "1", "Record": "ERCReportView"}
+    kv.update({f"ERCType{i}": v for i, v in lv.items()})
+    kv.update({f"ERCConnectionMatrixL{i}": v for i, v in mx.items()})
+    config = "|".join(f"{k}={kv[k]}" for k in sorted(kv))
+    return ERC_OUTJOB_TEMPLATE.replace("{config}", config).replace("{base}", str(base))
+
+
 # Altium V7 layer ids: Mechanical 1..16 are 16908289..16908304.
 _MECH_BASE = 16908289
 

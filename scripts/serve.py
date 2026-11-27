@@ -1052,7 +1052,7 @@ def _draw_consent(a, last_user, earlier=(), prev_agent=""):
 
 _CONSENT_ACTION = {"draw": "altium.draw_schematic", "place": "altium.place_pcb", "route": "altium.route_pcb",
                    "rules": "altium.import_rules", "outputs": "altium.run_outjob",
-                   "drc": "altium.run_drc"}      # rules / outputs / drc: buttons only, the chat asks no words for them
+                   "drc": "altium.run_drc", "erc": "altium.run_erc"}      # rules / outputs / drc / erc: buttons only, the chat asks no words for them
 
 
 def consent_words(chat, last_user):
@@ -1330,7 +1330,7 @@ STEP_LABELS = {"altium.create_project": "Creating the Altium project", "altium.s
                "altium.place_pcb": "Placing the parts on the board", "altium.import_rules": "Importing the JLC rules",
                "altium.route_pcb": "Routing the board", "netlist.write": "Writing the netlist", "altium.add_pcb": "Adding the PcbDoc",
                "outjob.generate": "Adding the OutJob to the project", "altium.run_outjob": "Generating the outputs in Altium",
-               "altium.run_drc": "Checking the board in Altium"}
+               "altium.run_drc": "Checking the board in Altium", "altium.run_erc": "Checking the schematic in Altium"}
 
 
 def _warn_tail(res):
@@ -1417,8 +1417,13 @@ def drc_summary(res):
     return board_results.drc_summary(res)
 
 
+def erc_summary(res):
+    import erc_results
+    return erc_results.erc_summary(res)
+
+
 STEP_SUMMARY = {"draw": draw_summary, "place": place_summary, "route": route_summary, "rules": import_rules_summary, "outputs": outputs_summary,
-                "drc": drc_summary}
+                "drc": drc_summary, "erc": erc_summary}
 NEEDS_REPLACE = re.compile(r"already has \d+ objects \(parts, wires, labels\)"                 # draw: bridge.draw_schematic / DRAWCHECK
                            r"|the board already has \d+ (?:parts or copper objects|tracks, vias or pours)")   # place / route: PCBCHECK
 
@@ -1461,7 +1466,8 @@ def allowed_hosts(host):
 STEP_LOCK = threading.Lock()
 ALTIUM_BUSY = "Altium is still working on another step; wait for it to finish and try again."
 STEP_NAMES = {"draw": "Drew the schematic", "place": "Placed the parts", "route": "Routed the board",
-              "rules": "Imported the JLC rules", "outputs": "Generated the outputs", "drc": "Checked the board"}
+              "rules": "Imported the JLC rules", "outputs": "Generated the outputs", "drc": "Checked the board",
+              "erc": "Checked the schematic"}
 
 
 def altium_start(project):
@@ -1482,7 +1488,7 @@ PREP_WORDS = {"library.build": ("building the library", "The library was built",
               "outjob.generate": ("adding the OutJob", "The OutJob was added to the project", "Adding the OutJob")}
 STEP_NOT_DONE = {"draw": "The schematic was not drawn.", "place": "The parts were not placed.", "route": "The board was not routed.",
                  "rules": "The rules were not imported.", "outputs": "The outputs were not generated.",
-                 "drc": "The board was not checked."}
+                 "drc": "The board was not checked.", "erc": "The schematic was not checked."}
 STEP_RUNS = {}                # project -> the live list of a button run (see step_plan); kept after the run until the page has the answer
 RUNS_LOCK = threading.Lock()
 
@@ -1791,6 +1797,13 @@ def _record_board(project, step, res, code=200, body=None):
     bridge result of a step that ran, None for one that stopped or failed (then an error record, unless it only refused)."""
     try:
         import board_results
+        if step == "erc":                   # Altium's own ERC of the schematic has its own log (erc-log.jsonl)
+            import erc_results
+            if res is not None:
+                erc_results.record(project, step, res)
+            elif isinstance(body, dict) and body.get("error") and code >= 400 and code != 409:
+                erc_results.record(project, step, {}, ok=False, error=body["error"])
+            return
         if res is not None:
             board_results.record(project, step, res)
         elif isinstance(body, dict) and body.get("error") and not body.get("needs_replace") and code >= 400 and step in ("place", "route", "drc", "outputs") and code != 409:
@@ -1875,6 +1888,9 @@ def _run_step(project, sess, step, data, bridge):
             if step == "drc":
                 import board_results
                 return board_results.run_drc(project, bridge)
+            if step == "erc":
+                import erc_results
+                return erc_results.run_erc(project, bridge)
             # keep_partial only from the "Route the rest and leave X open" button (its click is the consent; the agent's chat path asks for words instead)
             return bridge.route_pcb(project, replace=replace, keep_partial=_truthy(data.get("keep_partial")))
         current = final
@@ -4517,7 +4533,7 @@ class Handler(BaseHTTPRequestHandler):
                 STEP_LOCK.release()
             return self._send(200, {**_altium_state(proj), "warning": res.get("skeleton_error", "")})
 
-        if path in ("/api/altium/draw-schematic", "/api/altium/place", "/api/altium/route", "/api/altium/import-rules", "/api/altium/run-outjob", "/api/altium/drc"):
+        if path in ("/api/altium/draw-schematic", "/api/altium/place", "/api/altium/route", "/api/altium/import-rules", "/api/altium/run-outjob", "/api/altium/drc", "/api/altium/erc"):
             name = path.rsplit("/", 1)[1]
             step = {"draw-schematic": "draw", "import-rules": "rules", "run-outjob": "outputs"}.get(name, name)
             code, body, run_id = run_step_button(proj, sess, step, data)

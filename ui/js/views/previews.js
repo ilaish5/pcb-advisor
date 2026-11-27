@@ -338,6 +338,8 @@ const PV_STEPS = {
           title: 'Draws the tracks and vias on the placed board, plus a ground pour when it can, then checks the result with the design rule check. The PcbDoc is copied to .advisor-backup before it draws, and put back if a check fails.'},
   drc: {url: '/api/altium/drc', page: 'pcb', doing: 'Checking', label: 'Check board', busy: 'Altium is checking the board against every design rule. It may take a minute and flash while it works.',
          title: "Runs Altium's design rule check on the PcbDoc and keeps the answer. Nothing on the board is changed."},
+  erc: {url: '/api/altium/erc', page: 'sch', doing: 'Checking', label: 'Check in Altium', busy: "Altium is running its own electrical rules check (Compile) on the schematic. It may take a minute and flash while it works.",
+        title: "Runs Altium's own electrical rules check on the schematic and shows what Altium says, read from the report file it writes. Nothing in your project is changed."},
   /* Rules (Rules page) and outputs (Outputs page) run the same machinery: the live list, Stop, and the answer after a reload. They never replace. */
   rules: {url: '/api/altium/import-rules', page: 'rules', doing: 'Applying', label: 'Apply rules in Altium', busy: 'Altium is applying the rules. It may take a minute and flash while it works.',
           title: 'Puts these rules into the linked PcbDoc by name; your own rules stay. The PcbDoc is copied to .advisor-backup first.',
@@ -625,6 +627,39 @@ onAct('altium-step-dismiss', async (el, d, e) => {
   renderCenter(true);
 });
 
+/* Altium's own Compile / ERC messages (S.erc, from erc_results.public: the server read the report file Altium wrote). It is marked as coming
+   from Altium, apart from our own checks. A count is shown ONLY when the report was read in full (e.counts); a failed or partly read run
+   says "unchecked", never "clean". The bold title is the answer, the Details expander holds what Altium said, message by message. */
+const ERC_MAX_ROWS = 300;
+function ercDetailsHTML(e) {
+  const rows = (e.rows || []).slice(0, ERC_MAX_ROWS);
+  const lead = [];
+  if (e.error) lead.push(`<p>${esc(e.error)}</p>`);
+  for (const w of e.warnings || []) if (!e.error || !String(e.error).includes(w)) lead.push(`<p>${esc(w)}</p>`);
+  const tbl = rows.length ? `<div class="tbl-wrap"><table class="tbl dense"><thead><tr><th>Level</th><th>What Altium says</th><th>Where</th></tr></thead><tbody>` +
+    rows.map(r => `<tr><td><span class="tag ${r.level === 'error' ? 'bad' : 'warn'}">${esc(r.level === 'error' ? 'Error' : 'Warning')}</span></td><td dir="auto">${esc(r.message)}</td>` +
+      `<td>${esc([r.document, r.object, r.location].filter(Boolean).join(' · '))}</td></tr>`).join('') + `</tbody></table></div>` : '';
+  const more = (e.rows || []).length > ERC_MAX_ROWS ? `<p class="muted">${esc(`${(e.rows || []).length - ERC_MAX_ROWS} more are in Altium's report.`)}</p>` : '';
+  const lv = e.levels_from === 'project' ? `<p class="muted">The levels are the ones set in the project's Electrical Rules Check options.</p>` : e.levels_from ? `<p class="muted">The project has no Electrical Rules Check options of its own: Altium's defaults were used.</p>` : '';
+  return lead.join('') + tbl + more + lv;
+}
+function ercHTML() {
+  if (!pvAltiumLinked()) return '';
+  const e = S && S.erc;
+  const from = '<span class="tag" title="Read from the report file Altium itself writes. It is not one of our own checks.">From Altium</span> ';
+  if (!e) return `<div class="pv-note">${banner({tone: 'info', html: `${from}Altium's own check of the schematic (Compile / ERC) has not run yet. <b>Check in Altium</b> shows what it says.`})}</div>`;
+  const when = e.ts && typeof outAgo === 'function' ? outAgo(/^\d+$/.test(String(e.ts)) ? new Date(Number(e.ts)).toISOString() : String(e.ts)) : '';
+  let tone, title;
+  if (!e.counts) { tone = 'bad'; title = "Electrical rules check could not be read: the schematic is not counted as checked"; }
+  else if (e.state === 'clean') { tone = 'ok'; title = "Electrical rules check: no violations"; }
+  else { tone = e.counts.errors ? 'bad' : 'warn'; title = `Electrical rules check: ${plural(e.counts.errors, 'error')}, ${plural(e.counts.warnings, 'warning')}`; }
+  let tail = '';
+  if (e.stale) { tone = tone === 'ok' ? 'warn' : tone; tail = ' The schematic changed since: check it again.'; }
+  else if (when) tail = ' ' + when + '.';
+  const needs = !!(e.error || (e.warnings || []).length || (e.rows || []).length);
+  const details = needs ? `<details class="pv-more" data-pvk="sch:erc"${pvMoreOpen['sch:erc'] ? ' open' : ''}><summary>Details</summary>${ercDetailsHTML(e)}</details>` : '';
+  return `<div class="pv-note">${banner({tone, html: `${from}<b>${esc(title)}.</b>${esc(tail)}${details}`})}</div>`;
+}
 const SCH_LIMITS = 'Not drawn automatically yet: a part whose library symbol is split into several separate blocks (for example a chip drawn as a power block and a signal block), and a circuit too big for one A4 sheet (it is refused with a plan to split it). Wires that run between two sheets are not drawn either. For these, draw that part by hand in Altium.';
 const PCB_LIMITS = 'Not yet: the router is for small 2- and 4-layer boards (inner planes for ground and power), with no differential pairs or length matching.';
 const pvRealSheets = sheets => sheetCounts(sheets).total;       // the server's count (stage_sheets): the plan's sheets, else Altium's; one number on every page
@@ -639,7 +674,7 @@ function schHTML(container) {
   const tabs = sheets.length > 1 ? `<div class="pv-tabs" role="tablist" aria-label="Sheets">${sheets.map(s =>
     `<button type="button" role="tab" class="pv-tab" aria-selected="${s.id === sheetId}" tabindex="${s.id === sheetId ? 0 : -1}" data-act="sch-sheet" data-sheet="${esc(s.id)}" title="${esc(pvSheetLabel(s) + (s.altium ? ' (read from Altium)' : ' (plan)'))}">${esc(pvTabLabel(s, sheets))}</button>`).join('')}</div>` : '';
   return `<div class="pv" data-pv="sch">` +
-    viewHeader({title: 'Schematic', meta: metaLine([{n: pvRealSheets(sheets), label: pvRealSheets(sheets) === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw')}) + pvDraftNote() + (typeof outBlockNote === 'function' ? outBlockNote('sch') : '') + tabs +
+    viewHeader({title: 'Schematic', meta: metaLine([{n: pvRealSheets(sheets), label: pvRealSheets(sheets) === 1 ? 'sheet' : 'sheets'}]), actions: pvStepBtn('draw') + pvStepBtn('erc')}) + pvDraftNote() + ercHTML() + (typeof outBlockNote === 'function' ? outBlockNote('sch') : '') + tabs +
     `<div class="pv-stage"><div class="pv-canvas sch-canvas" id="schwrap" tabindex="0" aria-label="Schematic sheet ${esc(sheetId)}. Scroll to zoom, drag to pan.">${inner}</div>${pvZoomHTML('sch')}${pvBarHTML('sch')}</div></div>`;
 }
 // a drawn sheet that holds placeholder parts (a rectangle with the netlist's pins, no library symbol yet): one line, the same words as the stage's

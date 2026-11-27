@@ -450,11 +450,20 @@ def rev(project):
     return hashlib.sha1(json.dumps(sorted(rows)).encode("utf-8")).hexdigest()[:16]
 
 
+def _erc(project):
+    """Altium's own ERC result of the schematic (erc_results.public), or None when it was never run / cannot be read: the page then shows no count."""
+    try:
+        import erc_results
+        return erc_results.public(project)
+    except Exception:       # noqa: BLE001 - never a guess: no result, so no count
+        return None
+
+
 @ext.register("model")
 def _model(project, model):
     stages, chk = derive(project, model)
     return {"rev": rev(project), "stages": stages, "stage_sheets": sheets_counts(model), "board_check": chk,
-            "nc_proposal": store.nc_proposal(project), "draft": draft_summary(project)}
+            "nc_proposal": store.nc_proposal(project), "draft": draft_summary(project), "erc": _erc(project)}
 
 
 @ext.register("post")

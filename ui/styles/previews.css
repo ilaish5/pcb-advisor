@@ -127,4 +127,5 @@
 .pv-note .pv-more summary{cursor:pointer;color:var(--muted)}
 .pv-note .pv-more ul,.pv-note .pv-more p{margin:4px 0 0;padding-left:18px;max-height:140px;overflow:auto}
 .pv-note .pv-more p{padding-left:0}
+.pv-note .pv-more .tbl-wrap{max-height:260px;overflow:auto;margin-top:4px}
 .dfm-zip-why{margin:0 0 8px}

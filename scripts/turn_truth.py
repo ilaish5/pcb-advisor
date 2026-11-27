@@ -87,6 +87,7 @@ _DONE = {
     "altium.draw_schematic": ("sheet drawn", "הגיליון צויר"), "altium.place_pcb": ("parts placed", "החלקים הונחו"),
     "altium.route_pcb": ("routed", "הניתוב בוצע"), "altium.run_outjob": ("outputs generated", "הפלטים נוצרו"),
     "altium.run_drc": ("DRC run", "ה-DRC רץ"),
+    "altium.run_erc": ("schematic checked in Altium", "הסכמה נבדקה באלטיום"),
 }
 # a promised verb -> (gerund, imperative, Hebrew gerund)
 _PROMISE_VERB = re.compile(r"\b(draw|place|route|build|writ|send|run|creat|generat|import)\w*|(?:מצייר|אצייר)|(?:אשלח)|(?:אבנה)|(?:אמקם)|(?:אנתב)", re.I)

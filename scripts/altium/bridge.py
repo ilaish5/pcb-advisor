@@ -50,6 +50,7 @@ import subprocess
 import sys
 import threading
 import time
+from html.parser import HTMLParser
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -2585,6 +2586,294 @@ def run_drc(prj, pcb, report):
     res = parse_drc(report)
     if res is None:
         raise BridgeError("Altium did not write the design rule check report.")
+    return res
+
+
+# ---------------------------------------------------------------- Altium's own electrical rules check (the schematic)
+#
+# Altium's ERC (what Compile shows in the Messages panel) is read from the file Altium itself writes: an OutJob output "Electrical
+# Rules Check" on a Folder Structure medium writes <base>/ERC/<project>.html (found live, Altium 26.8). The script never walks
+# DM_Violations / DM_ErrorLevelString: that call raised an exception and left the script debugger paused.
+
+ERC_DIR = ".advisor-erc"                  # inside the Altium project folder, only while the check runs: the OutJob and the report are removed after
+ERC_HEADING = re.compile(r"Electrical Rule Check Report", re.I)
+ERC_CLEAN_ROW = re.compile(r"^Successful Compile; No Violations Found\.?$", re.I)
+
+
+class _ErcHtml(HTMLParser):
+    """The tables of Altium's ERC report as [{"class": the table's class, "rows": [[(cell class, th|td, text)]]}], the page's h1 and whether
+    </html> was seen."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.h1, self.tables, self.closed = [], [], False
+        self._in_h1 = self._cell = self._row = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "h1":
+            self._in_h1 = []
+        elif tag == "table":
+            self.tables.append({"class": dict(attrs).get("class", "") or "", "rows": []})
+        elif tag == "tr" and self.tables:
+            self._row = []
+        elif tag in ("td", "th") and self._row is not None:
+            self._cell = [dict(attrs).get("class", "") or "", tag, []]
+
+    def handle_data(self, data):
+        if self._in_h1 is not None:
+            self._in_h1.append(data)
+        if self._cell is not None:
+            self._cell[2].append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "h1" and self._in_h1 is not None:
+            self.h1.append(" ".join("".join(self._in_h1).split()))
+            self._in_h1 = None
+        elif tag in ("td", "th") and self._cell is not None and self._row is not None:
+            self._row.append((self._cell[0], self._cell[1], " ".join("".join(self._cell[2]).split())))
+            self._cell = None
+        elif tag == "tr" and self._row is not None and self.tables:
+            self.tables[-1]["rows"].append(self._row)
+            self._row = None
+        elif tag == "html":
+            self.closed = True
+
+
+_ERC_NET = re.compile(r"^Net (?P<net>.+?) (?P<what>(?:has|contains|is|with|was|are)(?![A-Za-z]).*)$")
+_ERC_COMPONENT = re.compile(r"^(?P<obj>Component .+?)(?: at (?P<loc>-?[\d.]+\w*,\s*-?[\d.]+\w*))?: (?P<kind>.+)$")
+_ERC_AT = re.compile(r"\s+at\s+\(?(?P<loc>-?[\d.]+\w*\s*,\s*-?[\d.]+\w*)\)?$")
+_ERC_NETS = re.compile(r"^Nets (?P<obj>.+?) (?P<what>has multiple names)$")
+_ERC_SUBJECT = re.compile(r"^(?P<obj>\S+) (?P<what>contains .+)$")
+
+
+def erc_split(message):
+    """(kind, object, location) of an ERC message, best effort and only for grouping: the message itself is always shown as Altium
+    wrote it. "Net CS has only one pin (Pin J4-24)" -> ("Net has only one pin", "Pin J4-24", ""); "Floating Power Object 5V at (3000mil,
+    4300mil)" -> ("Floating Power Object", "5V", "3000mil,4300mil"); "Component C3 at 3320mil,2940mil: Component revision is Out of
+    Date" -> ("Component revision is Out of Date", "Component C3", "3320mil,2940mil")."""
+    m = " ".join(str(message).split())
+    obj = loc = ""
+    comp = _ERC_COMPONENT.match(m)
+    if comp:
+        return comp.group("kind").rstrip(". "), comp.group("obj"), comp.group("loc") or ""
+    m = m.rstrip(" .")
+    if m.endswith(")"):                                   # the details in the last balanced parentheses, nested ones included
+        depth = 0
+        for i in range(len(m) - 1, -1, -1):
+            depth += (m[i] == ")") - (m[i] == "(")
+            if depth == 0:
+                obj, m = m[i + 1:-1].strip(), m[:i].rstrip()
+                break
+    if obj and re.fullmatch(r"-?[\d.]+\w*\s*,\s*-?[\d.]+\w*", obj):   # the parentheses held a place, not an object
+        obj, loc = "", obj
+    if m.endswith(" at"):                                 # "... at (3000mil,4300mil)": the place went with the parentheses
+        m = m[:-3]
+    at = _ERC_AT.search(m)
+    if at:
+        loc, m = at.group("loc").strip(), m[:at.start()]
+    net = _ERC_NET.match(m)
+    if net:
+        return "Net " + net.group("what").rstrip(". "), obj or net.group("net"), loc
+    nets = _ERC_NETS.match(m)
+    if nets:
+        return "Nets have multiple names", nets.group("obj"), loc
+    subject = _ERC_SUBJECT.match(m)
+    if subject:
+        return "Net " + subject.group("what"), obj or subject.group("obj"), loc
+    words = m.split(" ")
+    if len(words) > 2 and (re.search(r"[0-9]", words[-1]) and len(words) > 3 or "?" in words[-1]):          # "Duplicate Component Designators C?", "Floating Power Object 5V"
+        return " ".join(words[:-1]), obj or words[-1], loc
+    return m, obj, loc
+
+
+def parse_erc(path):
+    """Altium's ERC report (the HTML the Electrical Rules Check output writes): None when the file cannot be read, else
+    {"complete": bool, "clean": bool, "rows": [{level, class, document, message, kind, object, location}], "n_errors": n, "n_warnings": n,
+    "total": n, "kinds": {kind: n}, "problems": [why it was not read in full]}.
+    complete is True only when the page is Altium's ERC report (its heading), has its Class | Document | Message header, ends with
+    </html> (a cut file fails this), every row was understood (a class other than Error, Warning or Fatal Error is NOT understood) and
+    the page says exactly one of two things: violation rows, or the line "Successful Compile; No Violations Found." Anything else
+    is unreadable output, never clean. clean = complete and that line. errors / warnings / total / kinds are None unless complete."""
+    try:
+        raw = pathlib.Path(path).read_bytes()
+    except OSError:
+        return None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1252", errors="replace")
+    ps = _ErcHtml()
+    try:
+        ps.feed(text)
+        ps.close()
+    except Exception as exc:      # noqa: BLE001 - the parser's own refusal is a report that was not read
+        return {"complete": False, "clean": False, "rows": [], "n_errors": None, "n_warnings": None, "total": None, "kinds": None,
+                "problems": [f"the report could not be parsed ({type(exc).__name__})"]}
+    problems, rows, marker, header = [], [], False, False
+    if not any(ERC_HEADING.search(h) for h in ps.h1):
+        problems.append("the file is not an Electrical Rule Check report (no heading)")
+    if not ps.closed:
+        problems.append("the report is cut off (no closing </html>)")
+    for table in ps.tables:
+        # the date / time / file name block at the top of the page is no message table (found live); a table is the messages one when it
+        # has the Class | Document | Message header, and any other table is a page this parser does not know
+        if table["class"] == "front_matter" and not any(c[1] == "th" for r in table["rows"] for c in r):
+            continue
+        for row in table["rows"]:
+            cells = [c[2] for c in row]
+            if all(c[1] == "th" for c in row) and [c.lower() for c in cells] == ["class", "document", "message"]:
+                header = True
+            elif all(c[1] == "td" for c in row) and len(row) == 3:
+                cls = cells[0].strip().lower()
+                level = "warning" if cls == "warning" else "error" if cls in ("error", "fatal error") else ""
+                if not level:
+                    problems.append(f"a message of an unknown class: {cells[0]!r}")
+                    continue
+                try:
+                    kind, obj, loc = erc_split(cells[2])
+                except Exception:      # noqa: BLE001 - the grouping is a nicety: the message is kept as Altium wrote it
+                    kind, obj, loc = cells[2], "", ""
+                rows.append({"level": level, "class": cells[0], "document": cells[1], "message": cells[2], "kind": kind, "object": obj,
+                             "location": loc})
+            elif all(c[1] == "td" for c in row) and len(row) == 1 and ERC_CLEAN_ROW.match(cells[0]):
+                marker = True
+            else:
+                problems.append("a row that is not a message: " + " | ".join(cells)[:80])
+    if not header:
+        problems.append("the Class | Document | Message header is missing")
+    if marker and rows:
+        problems.append("the report says both 'no violations' and lists some")
+    if not marker and not rows and not problems:
+        problems.append("the report lists no message and does not say 'No Violations Found'")
+    complete = not problems
+    kinds = {}
+    for r in rows:
+        kinds[r["kind"]] = kinds.get(r["kind"], 0) + 1
+    out = {"complete": complete, "clean": bool(complete and marker), "rows": rows, "problems": problems}
+    out.update({"n_errors": sum(1 for r in rows if r["level"] == "error"), "n_warnings": sum(1 for r in rows if r["level"] == "warning"),
+                "total": len(rows), "kinds": kinds} if complete else {"n_errors": None, "n_warnings": None, "total": None, "kinds": None})
+    return out
+
+
+def erc_line(res):
+    """One sentence, absolute numbers: "3 errors, 28 warnings" / "no violations (clean)" / "unchecked (why)": a count only for a report read in full."""
+    if not isinstance(res, dict) or res.get("complete") is not True:
+        why = "; ".join((res or {}).get("problems") or []) if isinstance(res, dict) else ""
+        return "unchecked (" + (why or "no readable ERC report") + ")"
+    if res.get("clean"):
+        return "no violations (clean)"
+    return f"{res['n_errors']} error{'' if res['n_errors'] == 1 else 's'}, {res['n_warnings']} warning{'' if res['n_warnings'] == 1 else 's'}"
+
+
+def erc_project_settings(prj):
+    """({violation type: level 0-3}, {matrix row: 17 letters}, from_project) of the project file's own [Electrical Rules Check] and
+    [ERC Connection Matrix]: what Compile uses, so the report says what the student sees in Altium. Empty (Altium's defaults) when the
+    file has no such section or cannot be read."""
+    cp = configparser.RawConfigParser(strict=False, interpolation=None)
+    cp.optionxform = str
+    try:
+        cp.read(str(prj), encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError, configparser.Error):
+        return {}, {}, False
+    levels, matrix = {}, {}
+    if cp.has_section("Electrical Rules Check"):
+        for k, v in cp.items("Electrical Rules Check"):
+            m = re.fullmatch(r"Type(\d+)", k)
+            if m and v.strip() in ("0", "1", "2", "3"):
+                levels[int(m.group(1))] = v.strip()
+    if cp.has_section("ERC Connection Matrix"):
+        for k, v in cp.items("ERC Connection Matrix"):
+            m = re.fullmatch(r"L(\d+)", k)
+            if m and re.fullmatch(r"[NWEF]{17}", v.strip()):
+                matrix[int(m.group(1))] = v.strip()
+    return levels, matrix, bool(levels)
+
+
+def erc_inputs(prj):
+    """{sheet file: sha256} of the project's schematic sheets that are on the disk (what an ERC result was made from) - a changed sheet
+    makes the result stale. The ERC settings of the project file are part of it (under its own name)."""
+    import hashlib
+    import lineage
+    prj = pathlib.Path(prj)
+    out = {}
+    for rel in read_prjpcb(prj)["sheets"]:
+        f = prj.parent / pathlib.Path(rel.replace("\\", "/"))
+        if f.is_file():
+            out[rel] = lineage.sha256_file(f)
+    levels, matrix, _ = erc_project_settings(prj)
+    out["(ERC settings)"] = hashlib.sha256(json.dumps([sorted(levels.items()), sorted(matrix.items())]).encode()).hexdigest()
+    return out
+
+
+def erc_check(prj, keep_report):
+    """Altium's own electrical rules check of the Altium project `prj`, read from the report file Altium writes (no script call
+    walks the violations). Our OutJob with the Electrical Rules Check output (the project's own levels and connection matrix) is
+    added to the open project, run, and taken out again; the OutJob and the report are removed from the student's folder (the report
+    is copied to `keep_report` first), and a document that was saved before stays marked saved. Returns parse_erc's dict plus
+    {report, levels_from, unsaved, warnings, line, inputs}. A report Altium did not write, or that cannot be read, is a BridgeError:
+    never a clean result."""
+    prj = pathlib.Path(prj)
+    summary = read_prjpcb(prj)
+    sheets = [prj.parent / pathlib.Path(rel.replace("\\", "/")) for rel in summary["sheets"]]
+    if not any(f.is_file() for f in sheets):
+        raise BridgeError("The Altium project has no schematic sheet on the disk yet: draw the schematic first. (An empty project would "
+                          "be reported as having no violations, which says nothing.)")
+    unsaved = None
+    try:
+        unsaved = unsaved_documents(prj)
+    except BridgeError:
+        pass                                              # not known: nothing is marked saved below
+    levels, matrix, from_project = erc_project_settings(prj)
+    work = prj.parent / ERC_DIR
+    out_dir = work / "report"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+    oj = work / "ERC.OutJob"
+    oj.write_text(outjob.erc_outjob(levels, matrix, base=str(out_dir)), encoding="utf-8")
+    cmds = [("PROJECT", str(prj)), ("OUTJOB", str(oj), "Folder Structure", str(out_dir), "GeneratedFiles"), ("LIBRELEASE", str(prj), str(oj))]
+    if unsaved is not None:
+        cmds += [("UNMARK", str(d)) for d in _project_docs(prj) if d.name not in unsaved]
+    t0 = time.time() - 2
+    released = False
+    try:
+        run_commands(cmds, total_timeout=300)
+        released = True
+    except BridgeError:
+        try:                                              # the OutJob may have joined the open project before the failure: take it out again
+            run_commands([("PROJECT", str(prj)), ("LIBRELEASE", str(prj), str(oj))])
+            shutil.rmtree(work, ignore_errors=True)
+        except BridgeError:
+            pass                                          # the file stays then, so the project does not point at a missing document
+        raise
+    try:
+        reports = sorted(p for p in (out_dir / "ERC").glob("*.html") if p.stat().st_mtime >= t0) if (out_dir / "ERC").is_dir() else []
+        if not reports:
+            raise BridgeError("Altium ran the Electrical Rules Check but wrote no report file. Nothing is counted as checked.")
+        res = parse_erc(reports[0])
+        if res is None:
+            raise BridgeError("Altium wrote the ERC report but it could not be read. Nothing is counted as checked.")
+        keep_report = pathlib.Path(keep_report)
+        keep_report.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(reports[0], keep_report)
+    finally:
+        if released:
+            shutil.rmtree(work, ignore_errors=True)       # the OutJob and the report leave the student's folder
+    warnings = []
+    if unsaved:
+        warnings.append(f"Altium has unsaved changes in {', '.join(unsaved)}: the check may not match the saved files. Save them in Altium and check again.")
+    if not res["complete"]:
+        warnings.append("Altium's ERC report was not read in full, so the schematic is not counted as checked: " + "; ".join(res["problems"]))
+    res = {**res, "report": str(keep_report), "levels_from": "project" if from_project else "default", "unsaved": unsaved,
+           "warnings": warnings, "inputs": erc_inputs(prj)}
+    res["line"] = erc_line(res)
+    return res
+
+
+def run_erc(project):
+    """The Check schematic step: erc_check on the linked Altium project, the report kept under projects/<p>/erc/, the run logged."""
+    res = erc_check(_linked(project), store.pdir(project) / "erc" / "report.html")
+    _log(project, "run-erc", complete=res["complete"], clean=res["clean"], errors=res["n_errors"], warnings_count=res["n_warnings"],
+         problems=res["problems"], levels_from=res["levels_from"], unsaved=res["unsaved"])
     return res
 
 
