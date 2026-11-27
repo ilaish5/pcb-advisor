@@ -192,11 +192,12 @@ def test_request_is_ascii_and_tabbed(monkeypatch, tmp_path):
 
     def altium(*a, **k):
         (tmp_path / "response.txt").write_text("START\nOK 0\nDONE\n")
-        (tmp_path / "start.flag").write_text("start.flag")
-        (tmp_path / "end.flag").write_text("end.flag")
+        bridge.flag_path("start").write_text("start.flag")
+        bridge.flag_path("end").write_text("end.flag")
     monkeypatch.setattr(bridge.subprocess, "Popen", altium)
     bridge.run_commands([("FRAME", "p", "1", "2", "3", "4", "café\\nline")])
-    assert (tmp_path / "request.txt").read_bytes() == b"FRAME\tp\t1\t2\t3\t4\tcafe\\nline\r\n"
+    tok = bridge._RUN["token"].encode()
+    assert (tmp_path / "request.txt").read_bytes() == b"TOKEN\t" + tok + b"\r\nFRAME\tp\t1\t2\t3\t4\tcafe\\nline\r\n"
 
 
 def test_non_windows_says_so(monkeypatch, real_host_check):

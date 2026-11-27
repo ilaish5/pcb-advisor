@@ -105,8 +105,7 @@ class Probe:
         """{running, executor ("ok" / "blocked" / "not tested"), error}: a PING script in the open Altium (bridge.status)."""
         try:
             import altium.bridge as bridge
-            req, end = bridge.EXCHANGE / "request.txt", bridge.EXCHANGE / "end.flag"
-            if req.is_file() and not end.exists() and time.time() - req.stat().st_mtime < 1800:
+            if bridge.run_in_progress():
                 return {"running": True, "executor": "busy", "error": "the app is running a step in Altium now (or one stopped in "
                         "the last 30 minutes); try again when it is done"}
             return bridge.status()

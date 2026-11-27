@@ -300,7 +300,7 @@ def test_the_exchange_files_are_never_opened_while_the_script_runs(monkeypatch, 
     monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
     monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
     monkeypatch.setattr(bridge, "_running", lambda: True)
-    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: (tmp_path / "start.flag").write_text("x"))
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: bridge.flag_path("start").write_text("x"))
     reads, ticks = [], []
 
     def sleep(s):
@@ -308,11 +308,11 @@ def test_the_exchange_files_are_never_opened_while_the_script_runs(monkeypatch, 
         (tmp_path / "log.txt").write_text("> PING\n" * len(ticks))     # the script is writing its log
         if len(ticks) == 3:
             (tmp_path / "response.txt").write_text("START\nOK 0\nDONE\n")
-            (tmp_path / "end.flag").write_text("x")
+            bridge.flag_path("end").write_text("x")
     real_read = bridge._read
 
     def read(path):
-        reads.append((pathlib.Path(path).name, (tmp_path / "end.flag").exists()))
+        reads.append((pathlib.Path(path).name, bridge.flag_path("end").exists()))
         return real_read(path)
     monkeypatch.setattr(bridge.time, "sleep", sleep)
     monkeypatch.setattr(bridge, "_read", read)
@@ -324,7 +324,7 @@ def test_a_script_that_stops_logging_is_released_and_its_dialogs_are_reported(mo
     monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
     monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
     monkeypatch.setattr(bridge, "_running", lambda: True)
-    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: (tmp_path / "start.flag").write_text("x"))
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: bridge.flag_path("start").write_text("x"))
     monkeypatch.setattr(bridge.time, "sleep", lambda s: None)
     monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Error: Cannot create file"])
     with pytest.raises(bridge.BridgeError, match="stopped in the middle.*Cannot create file"):
@@ -472,7 +472,7 @@ def test_an_altium_error_box_ends_the_wait_without_the_stall_timeout(monkeypatch
     monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
     monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
     monkeypatch.setattr(bridge, "_running", lambda: True)
-    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: (tmp_path / "start.flag").write_text("x"))
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: bridge.flag_path("start").write_text("x"))
     clock = [0.0]
     monkeypatch.setattr(bridge.time, "time", lambda: clock[0])
     monkeypatch.setattr(bridge.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + 5))
@@ -496,10 +496,10 @@ def _bridge_files(monkeypatch, tmp_path):
 def _finishing_script(tmp_path, order):
     def popen(*a, **k):
         order.append("RunScript")
-        (tmp_path / "start.flag").write_text("x")
+        bridge.flag_path("start").write_text("x")
         (tmp_path / "response.txt").write_text("START\nDONE\n")
         (tmp_path / "log.txt").write_text("> PING\n")
-        (tmp_path / "end.flag").write_text("x")
+        bridge.flag_path("end").write_text("x")
     return popen
 
 
@@ -537,7 +537,7 @@ def test_a_gone_box_is_not_a_clean_altium_when_the_script_still_does_not_start(m
     _bridge_files(monkeypatch, tmp_path)
     states = iter([{"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": []}] + [{"boxes": [], "foreign": [], "windows": []}] * 9)
     monkeypatch.setattr(bridge, "_script_state", lambda: next(states))
-    monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: bridge._RUN.update(evidence=True) or ["[TMessageForm] Error: OK"])   # evidence of a pause
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)          # RunScript never creates start.flag
     monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 50)).__next__)
     with pytest.raises(bridge.BridgeError) as err:
@@ -563,7 +563,7 @@ def test_the_student_line_says_the_next_step_started_only_after_start_flag(monke
 def test_the_preflight_also_runs_after_an_error(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
-    monkeypatch.setattr(bridge, "release_executor", lambda **kw: [])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: bridge._RUN.update(evidence=True) or [])
     calls = []
     monkeypatch.setattr(bridge, "preflight", lambda strict=False: calls.append("pre"))
     monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 100)).__next__)
@@ -676,10 +676,10 @@ class Release:
 
     def flags(self, start=True, end=False):
         if start:
-            (self.dir / "start.flag").write_text("x")
+            bridge.flag_path("start").write_text("x")
             (self.dir / "log.txt").write_text("> PING\n")
         if end:
-            (self.dir / "end.flag").write_text("x")
+            bridge.flag_path("end").write_text("x")
             (self.dir / "response.txt").write_text("START\nOK 0\nDONE\n")
 
     def steps(self):

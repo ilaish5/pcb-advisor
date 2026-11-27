@@ -15,8 +15,11 @@
   with Say('ERR ...') and Exit, so that no exception is ever raised. Remaining try blocks, none of them avoidable by a check:
   SaveRetry (a file that is locked), LibFootprintsBatch (one primitive line Altium refuses) and StackLayerProps (a property
   this Altium build does not take; it is not called at present).
-  start.flag is written once the script runs and end.flag once, at the very end: Python only stats log.txt while
-  the script runs (it must never open these files then; Altium saves them without sharing) and reads them after end.flag.
+  The first line of request.txt is TOKEN<TAB>x. The script CONSUMES request.txt when it starts (a RunScript that Altium
+  starts late finds none and does nothing, so a request runs at most once), writes start-x.flag once the script runs and
+  end-x.flag once, at the very end: a flag of an earlier run (a paused one that was resumed) is never taken for this
+  run's. Python only stats log.txt while the script runs (it must never open these files then; Altium saves them without
+  sharing) and reads them after the end flag. Without a TOKEN line the flags are start.flag and end.flag.
 
   Commands:  PROJECT prj | SCH path | PCB path | SAVEPRJ prj | CLEAR path | PARAM path name value | OUTJOB path medium base kind | UNMARK path
              FRAME path x y w h text | TITLEBLOCK path | SAVE path | PING
@@ -47,8 +50,9 @@ var
     Dir      : String;
     CurPrj   : String;
     Failed   : Boolean;
+    Token    : String;
 
-{ The other side (Python) only stats these files while the script runs and reads them after end.flag. The retries are a
+{ The other side (Python) only stats these files while the script runs and reads them after the end flag. The retries are a
   second line of defence: a save that finds the file locked would otherwise stop the whole script. }
 procedure SaveRetry(SL: TStringList; Path: String);
 var
@@ -80,6 +84,13 @@ begin
     finally
         F.Free;
     end;
+end;
+
+{ start / end flag of this run: start-x.flag, end-x.flag (x = the token Python wrote), start.flag / end.flag without a token }
+function FlagName(Kind: String): String;
+begin
+    if (Token = '') then Result := Kind + '.flag'
+    else Result := Kind + '-' + Token + '.flag';
 end;
 
 procedure Log(Msg: String);
@@ -2787,6 +2798,13 @@ begin
         Exit;
     end;
     Log('stack step: top and bottom found');
+    { check everything BEFORE the first change: the stack holds at most 32 signal layers, so two more must fit; nothing is inserted
+      unless both inner layers can be }
+    if (LS.SignalLayerCount + 2 > 32) then
+    begin
+        Say('ERR the stack has no room for two more signal layers; nothing was changed');
+        Exit;
+    end;
     M1 := LS.FirstAvailableSignalLayer;
     if (M1 = nil) then
     begin
@@ -2799,7 +2817,7 @@ begin
     M2 := LS.FirstAvailableSignalLayer;
     if (M2 = nil) then
     begin
-        Say('ERR the stack has no free signal layer for the second inner layer');
+        Say('ERR the stack has no free signal layer for the second inner layer (the first inner layer was already inserted in the open board: close it WITHOUT saving)');
         Exit;
     end;
     Log('stack step: second inner layer ' + M2.Name);
@@ -2925,13 +2943,23 @@ var
     i   : Integer;
 begin
     Dir := 'C:\Users\Public\pcb-advisor-bridge\';
+    { a request that is not there (consumed by the run that started first) is nothing to do: no error, so no debugger pause }
+    if (not FileExists(Dir + 'request.txt')) then Exit;
     LogLines := TStringList.Create;
     Resp := TStringList.Create;
     Req := TStringList.Create;
     try
         Req.LoadFromFile(Dir + 'request.txt');
+        DeleteFile(Dir + 'request.txt');
+        Token := '';
+        if (Req.Count > 0) then
+            if (Field(Req[0], 0) = 'TOKEN') then
+            begin
+                Token := Trim(Field(Req[0], 1));
+                Req.Delete(0);
+            end;
         Say('START');
-        Flag('start.flag');
+        Flag(FlagName('start'));
         Failed := False;
         i := 0;
         while (i < Req.Count) and (not Failed) do      { a refused step ends the run: later steps would work on its mess }
@@ -2944,7 +2972,7 @@ begin
             i := i + 1;
         end;
         if (not Failed) then Say('DONE');
-        Flag('end.flag');
+        Flag(FlagName('end'));
     finally
         Req.Free;
     end;

@@ -188,13 +188,22 @@ def proj(tmp_path):
 class FakeAltium:
     """Stands for run_commands: when the OUTJOB command comes, writes the report where Altium would; records every batch."""
 
-    def __init__(self, monkeypatch, text, unsaved=(), fail=None):
-        self.batches, self.text, self.fail = [], text, fail
+    def __init__(self, monkeypatch, text, unsaved=(), fail=None, reach=(True, True), cleanup_fails=False):
+        """reach[n]: the n-th batch really started in Altium (its start flag is there); a batch that did not start touched nothing."""
+        import tempfile
+        self.batches, self.text, self.fail, self.reach, self.cleanup_fails = [], text, fail, reach, cleanup_fails
+        monkeypatch.setattr(bridge, "EXCHANGE", pathlib.Path(tempfile.mkdtemp()))
         monkeypatch.setattr(bridge, "run_commands", self.run)
         monkeypatch.setattr(bridge, "unsaved_documents", lambda prj: list(unsaved))
 
     def run(self, cmds, *a, **kw):
+        n = len(self.batches)
         self.batches.append([tuple(map(str, c)) for c in cmds])
+        bridge._RUN["token"] = f"t{n}"
+        if self.reach[min(n, len(self.reach) - 1)]:
+            bridge.flag_path("start").write_text("x")
+        if n >= 1 and self.cleanup_fails:
+            raise bridge.BridgeError("Altium would not run the cleanup")
         for c in cmds:
             if c[0] == "OUTJOB":
                 if self.fail:
@@ -236,7 +245,8 @@ def test_when_altium_cannot_be_asked_about_unsaved_nothing_is_marked_saved(proj,
         raise bridge.BridgeError("no Altium")
     monkeypatch.setattr(bridge, "unsaved_documents", refuse)
     res = bridge.erc_check(proj, tmp_path / "k.html")
-    assert not any(c[0] == "UNMARK" for c in fake.batches[0]) and res["unsaved"] is None
+    marks = [pathlib.Path(c[1]).name for c in fake.batches[0] if c[0] == "UNMARK"]
+    assert marks == ["P.PrjPcb"] and res["unsaved"] is None, "no sheet or board is marked saved, but the project file's change is ours"
 
 
 def test_the_projects_own_levels_are_used(proj, tmp_path, monkeypatch):
@@ -275,8 +285,65 @@ def test_a_failed_outjob_is_an_error_and_the_outjob_is_taken_out_again(proj, tmp
     fake = FakeAltium(monkeypatch, report(clean=True), fail="Altium stopped")
     with pytest.raises(bridge.BridgeError, match="Altium stopped"):
         bridge.erc_check(proj, tmp_path / "k.html")
-    assert len(fake.batches) == 2 and [c[0] for c in fake.batches[1]] == ["PROJECT", "LIBRELEASE"]
+    assert len(fake.batches) == 2
+    first, second = fake.batches
+    # the script stopped at the OUTJOB error: the cleanup takes the OutJob out AND clears the project's modified mark (and the saved documents')
+    assert [c[0] for c in second][:2] == ["PROJECT", "LIBRELEASE"]
+    marks = [pathlib.Path(c[1]).name for c in second if c[0] == "UNMARK"]
+    assert "P.PrjPcb" in marks and marks == [pathlib.Path(c[1]).name for c in first if c[0] == "UNMARK"]
+    assert [c[0] for c in second].index("LIBRELEASE") < [c[0] for c in second].index("UNMARK"), "the marks are cleared after the OutJob is out"
     assert not (proj.parent / bridge.ERC_DIR).exists()
+
+
+def test_a_failed_outjob_never_marks_a_document_the_owner_had_unsaved(proj, tmp_path, monkeypatch):
+    fake = FakeAltium(monkeypatch, report(clean=True), unsaved=["A.SchDoc", "P.PrjPcb"], fail="Altium stopped")
+    with pytest.raises(bridge.BridgeError):
+        bridge.erc_check(proj, tmp_path / "k.html")
+    for batch in fake.batches:
+        assert [pathlib.Path(c[1]).name for c in batch if c[0] == "UNMARK"] == ["B.PcbDoc"], "the owner's own unsaved changes stay marked"
+
+
+def test_a_failed_outjob_with_unknown_unsaved_state_clears_only_the_project_mark(proj, tmp_path, monkeypatch):
+    fake = FakeAltium(monkeypatch, report(clean=True), fail="Altium stopped")
+    monkeypatch.setattr(bridge, "unsaved_documents", lambda prj: (_ for _ in ()).throw(bridge.BridgeError("no Altium")))
+    with pytest.raises(bridge.BridgeError, match="Altium stopped"):
+        bridge.erc_check(proj, tmp_path / "k.html")
+    assert [pathlib.Path(c[1]).name for c in fake.batches[1] if c[0] == "UNMARK"] == ["P.PrjPcb"]
+
+
+def test_when_the_script_never_started_nothing_reached_altium_and_nothing_is_left_behind(proj, tmp_path, monkeypatch):
+    """A refusal before anything is sent (a question box is open in Altium): no cleanup call, and the OutJob file does not stay."""
+    fake = FakeAltium(monkeypatch, report(clean=True), reach=(False,))
+
+    def refuse(cmds, *a, **kw):
+        fake.batches.append(list(cmds))
+        raise bridge.BridgeError("**A message box is open in Altium**")
+    monkeypatch.setattr(bridge, "run_commands", refuse)
+    with pytest.raises(bridge.BridgeError, match="message box is open"):
+        bridge.erc_check(proj, tmp_path / "k.html")
+    assert len(fake.batches) == 1, "no cleanup call: nothing was sent"
+    assert not (proj.parent / bridge.ERC_DIR).exists() and not list(proj.parent.rglob("*.OutJob"))
+
+
+def test_when_the_cleanup_cannot_run_the_outjob_file_stays_because_the_project_may_point_at_it(proj, tmp_path, monkeypatch):
+    FakeAltium(monkeypatch, report(clean=True), fail="Altium stopped", cleanup_fails=True)
+    with pytest.raises(bridge.BridgeError, match="Altium stopped"):
+        bridge.erc_check(proj, tmp_path / "k.html")
+    assert (proj.parent / bridge.ERC_DIR / "ERC.OutJob").is_file()
+
+
+def test_the_whole_erc_step_is_one_budget_of_two_runmacro(proj, tmp_path, monkeypatch):
+    seen = []
+
+    class Spy(FakeAltium):
+        def run(self, cmds, *a, **kw):
+            seen.append((bridge.macro_budget.depth, bridge.macro_budget.left))
+            return super().run(cmds, *a, **kw)
+    Spy(monkeypatch, report(clean=True))
+    bridge.macro_budget.left = 0                               # whatever an earlier call left over
+    bridge.erc_check(proj, tmp_path / "k.html")
+    assert seen and all(d == 1 and left == 2 for d, left in seen), "one budget for the step, its cleanup and the DOCSTATE read"
+    assert bridge.macro_budget.depth == 0
 
 
 def test_a_stale_report_from_an_earlier_run_is_not_taken(proj, tmp_path, monkeypatch):
@@ -312,3 +379,38 @@ def test_erc_inputs_change_with_a_sheet_and_with_the_settings(proj):
 def test_the_report_is_never_read_by_walking_violation_objects():
     src = pathlib.Path(bridge.__file__).parent.joinpath("bridge", "AdvisorBridge.pas").read_text(encoding="utf-8", errors="replace")
     assert "DM_Violations" not in src and "DM_ErrorLevelString" not in src
+
+
+# ---------------------------------------------------------------- a real Altium Designer 26.8 report (neutral names)
+
+REAL_REPORT = pathlib.Path(__file__).parent / "fixtures" / "altium" / "erc_ad26_report.html"
+
+
+def test_a_real_ad26_report_is_read_in_full():
+    """tests/fixtures/altium/erc_ad26_report.html: the head and structure of a report Altium Designer 26.8 wrote (the OutJob's Electrical
+    Rules Check with ERCReportGrouping=2, which is ONE flat table), trimmed to one row of each message kind seen, names made neutral."""
+    res = bridge.parse_erc(REAL_REPORT)
+    assert res["complete"] is True and res["clean"] is False and res["problems"] == []
+    assert (res["n_errors"], res["n_warnings"], res["total"]) == (4, 8, 12)
+    assert bridge.erc_line(res) == "4 errors, 8 warnings"
+    assert [r["document"] for r in res["rows"][:2]] == ["Sheet_A.SchDoc", "Sheet_B.SchDoc"]
+    assert res["kinds"]["Off grid Port"] == 1 and res["kinds"]["Net has only one pin"] == 2
+    off = [r for r in res["rows"] if r["kind"] == "Off grid Port"][0]
+    assert off["object"] == "NET_FIVE" and off["location"] == "1564.903mil,3500mil"
+    assert all(r["message"] and r["kind"] for r in res["rows"])
+
+
+def test_the_real_report_fixture_holds_no_project_data():
+    text = REAL_REPORT.read_text(encoding="utf-8")
+    for word in ("Processor", "CAN_Interface", "Digital_IO", "Power Supply", "GPIO", "SPI_", "ilaish", "Final-E2E", "erc-live"):
+        assert word not in text
+
+
+def test_the_real_report_cut_off_is_not_complete():
+    text = REAL_REPORT.read_text(encoding="utf-8")
+    cut = text[:text.rindex("</html>")]
+    import tempfile
+    f = pathlib.Path(tempfile.mkdtemp()) / "cut.html"
+    f.write_text(cut, encoding="utf-8")
+    res = bridge.parse_erc(f)
+    assert res["complete"] is False and res["clean"] is False and res["n_errors"] is None

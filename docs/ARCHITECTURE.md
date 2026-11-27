@@ -146,17 +146,22 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
   `AdvisorBridge.pas` checks first (nil, count, object kind) and answers `Say('ERR ...')` plus `Exit`. The few `try` blocks left are the
   ones no check can replace (a locked file in `SaveRetry`, a primitive line Altium refuses in `LibFootprintsBatch`, a property
   `StackLayerProps` may not be able to set). The header comment of the script says the same.
-- **Resuming a paused script** (`release_executor`): F9 is the Altium command `EditScript:RunMacro` (`-REditScript:RunMacro` on the command line; there is no `EditScript:Run`). With evidence of a pause (our RunScript raised an OK-only error box and did not start, or our run started, stopped logging and an OK-only error box is open, and no question box) the bridge presses OK on the OK-only boxes, sends RunMacro, waits a few seconds for our `end.flag`, presses OK on the boxes the resumed script left, and repeats RunMacro once if our run still has not ended: at most two per call. RunMacro with nothing paused would run the active script document and raise a new error box, so it is never sent without that evidence. `-REditScript:Stop` is the last resort. Every step is a run-log record `altium-release`.
+- **One request, one token** (`bridge._RUN`, `flag_path`): the first line of `request.txt` is `TOKEN<TAB>x`. The script deletes `request.txt` as soon as it
+  loads it (a `RunScript` that Altium starts late finds none and does nothing, without an error, so a request runs at most once) and names its flags
+  `start-x.flag` / `end-x.flag`. The bridge waits only for its own flags, so the answer of the old paused run that a RunMacro resumed (its
+  `response.txt`, its end flag) is never taken for the answer to the new request. When the script never started, the bridge takes `request.txt` back
+  before it reports the failure, so nothing can run it afterwards.
+- **Resuming a paused script** (`release_executor`): F9 is the Altium command `EditScript:RunMacro` (`-REditScript:RunMacro` on the command line; there is no `EditScript:Run`). Evidence of a pause is an OK-only error box on a RUNNING Altium (not a cold start, where such a box is a sign-in or licence box) after our RunScript did not start, or after our run stopped logging, and no question box. With evidence the bridge presses OK, waits 2.5 s: a log line or an end flag in that time means the OK alone let the run go on, and nothing more is sent. Otherwise it sends RunMacro, waits a few seconds for an end flag, presses OK on the boxes the resumed script left, and repeats RunMacro once if our run (it had started) still has not ended. RunMacro with nothing paused would run the active script document and raise a new error box, so it is never sent without evidence. The budget is two RunMacro per `macro_budget` block: one `run_commands` call, or one ERC step with its cleanup call. `-REditScript:Stop` is the last resort. Every step is a run-log record `altium-release`.
 - **Pre-flight** (`bridge.preflight`, called by `_run_commands` before each command and after an error): an open OK-only script error box is
-  released (Enter, then `-REditScript:Stop`). A box that asks something (Yes/No/Cancel, "Save changes?") is never pressed: the step stops with
-  "A message box is open in Altium". "Released" is reported only after the next script really started (`start.flag`); otherwise the student
-  gets "Altium cannot run scripts right now" with the F9 steps.
+  released like above (OK, RunMacro, Stop last). A box that asks something (Yes/No/Cancel, "Save changes?") is never pressed: the step stops with
+  "A message box is open in Altium". "Released" is reported only after the next script really started (its start flag); otherwise the student
+  gets the F9 steps when there was evidence of a pause, and "Altium did not start the script ... sign in if it asks you to" when there was not.
 
 
 - **Altium's own ERC (Compile messages) is read from a report file, never from violation objects.** Walking `DM_Violations` /
   `DM_ErrorLevelString` raised an exception and left the debugger paused, so no script call touches them. `bridge.erc_check` writes a temporary
   OutJob (`outjob.erc_outjob`) whose single output is Altium's "Electrical Rules Check" (Validation) into a Folder Structure medium, adds it to
-  the open project (`OUTJOB`), takes it out again (`LIBRELEASE`), marks the documents that were saved before as saved (`UNMARK`), copies the
+  the open project (`OUTJOB`), takes it out again (`LIBRELEASE`), marks the documents that were saved before as saved (`UNMARK`; the project file's own mark, which adding and taking out the OutJob sets, is cleared on every path, a failed run's cleanup included, unless the owner had unsaved changes in it), copies the
   HTML report to `projects/<p>/erc/report.html` and removes the OutJob and the report from the student's folder. The OutJob carries the
   project file's own `[Electrical Rules Check]` levels and `[ERC Connection Matrix]` (Altium's sample defaults for what the project does not
   set), so the answer is what the student sees in Altium. `bridge.parse_erc` reads the report strictly: a count exists only for a report with

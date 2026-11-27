@@ -198,7 +198,10 @@ def test_the_altium_ping_waits_while_the_app_runs_a_step(tmp_path, monkeypatch):
     (tmp_path / "request.txt").write_text("PING")
     st = doctor.Probe().altium_status()
     assert st["executor"] == "busy" and "running a step" in st["error"]
-    (tmp_path / "end.flag").write_text("")
+    (tmp_path / "request.txt").unlink()                  # the script consumed the request when it started
+    (tmp_path / "start-abc.flag").write_text("")
+    assert doctor.Probe().altium_status()["executor"] == "busy"
+    (tmp_path / "end-abc.flag").write_text("")
     monkeypatch.setattr(bridge, "status", lambda: {"running": True, "executor": "ok", "error": ""})
     assert doctor.Probe().altium_status()["executor"] == "ok"
 

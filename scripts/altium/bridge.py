@@ -50,6 +50,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from html.parser import HTMLParser
 
 SCRIPTS_DIR = pathlib.Path(__file__).resolve().parent.parent
@@ -272,6 +273,8 @@ def _close_dialogs(only_look=False):
 BLOCKED = ("**Altium cannot run scripts right now** - a script is paused or blocked in Altium. In Altium, open the script tab "
            "with the highlighted line and press Run (F9) until the highlight is gone, then close any box; if that does not help, "
            "save your work and restart Altium.")
+NOT_STARTED = ("**Altium cannot run scripts right now** - Altium did not start the script. Open Altium, sign in if it asks you to, close any "
+               "message box that is open, and then try again.")
 _SCRIPT_TITLE = re.compile(r"AdvisorBridge|\.PrjScr|\.pas\b", re.I)
 _PAUSED_WORDS = re.compile(r"paus|debug|breakpoint|stopped at", re.I)
 PREFLIGHT_NOTES = []    # one line per paused run released before a command; the server shows them (take_preflight_notes)
@@ -339,7 +342,7 @@ def preflight(strict=False):
     if not state["boxes"]:
         return None
     try:
-        shown = release_executor()
+        shown = release_executor(pause_context=True)      # an OK-only error box is the evidence: resume with RunMacro, Stop last
         left = _script_state()
         # a box that is gone is NOT proof that Altium is clean (seen live: Stop and OK removed the box, the next RunScript still failed):
         # whether the release worked is known only when the next script starts (start.flag); _run_commands says so then
@@ -377,17 +380,80 @@ def _editscript(command):
         pass
 
 
-def _wait_end(seconds):
-    """True when our script's end.flag shows up within the seconds (a resumed run that ran to its end)."""
+# One request, one token. The token is the first line of request.txt (TOKEN<TAB>x). The script names its flags with it (start-x.flag,
+# end-x.flag) and CONSUMES request.txt when it starts: so the flag of an earlier run (the paused one a RunMacro resumed) is never taken
+# for ours, and a RunScript that Altium starts late finds no request and does nothing. A request runs at most once.
+_RUN = {"token": "", "cold": False, "evidence": False}
+
+
+def flag_path(kind, token=None):
+    """The start / end flag of the run this process sent last (or of `token`)."""
+    return EXCHANGE / f"{kind}-{token or _RUN['token']}.flag"
+
+
+def _ended_since(since):
+    """True when some run (ours, or the paused one a RunMacro resumed) wrote an end flag at or after `since` (epoch seconds)."""
+    try:
+        return any(p.stat().st_mtime >= since - 1 for p in EXCHANGE.glob("end-*.flag"))
+    except OSError:
+        return False
+
+
+def _wait_end(seconds, since):
+    """True when a run's end flag shows up within the seconds (a resumed run that ran to its end)."""
     t0 = time.time()
     while time.time() - t0 < seconds:
-        if (EXCHANGE / "end.flag").exists():
+        if _ended_since(since):
             return True
         time.sleep(0.5)
-    return (EXCHANGE / "end.flag").exists()
+    return _ended_since(since)
 
 
-RESUME_WAIT = 6        # seconds a resumed run gets to reach its end.flag
+def _prune_flags():
+    """Flags of runs that are long over (and the old fixed-name ones) go; the recent ones may belong to a run still paused."""
+    try:
+        for pat in ("start-*.flag", "end-*.flag"):
+            for p in EXCHANGE.glob(pat):
+                if time.time() - p.stat().st_mtime > 3600:
+                    p.unlink(missing_ok=True)
+        for name in ("start.flag", "end.flag"):
+            (EXCHANGE / name).unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def run_in_progress(max_age=1800):
+    """True when a request of ours waits for Altium, or a run of ours started and has not ended, in the last max_age seconds: what the
+    doctor reads to say "a step is running now"."""
+    now = time.time()
+    try:
+        req = EXCHANGE / "request.txt"
+        if req.is_file() and now - req.stat().st_mtime < max_age:
+            return True
+        ends = {p.name[len("end-"):] for p in EXCHANGE.glob("end-*.flag")}
+        return any(now - p.stat().st_mtime < max_age and p.name[len("start-"):] not in ends for p in EXCHANGE.glob("start-*.flag"))
+    except OSError:
+        return False
+
+
+class macro_budget:
+    """At most TWO RunMacro for everything inside the block: one _run_commands call, or one ERC step with its cleanup call. Blocks
+    nest; the outermost one counts."""
+    depth, left = 0, 2
+
+    def __enter__(self):
+        if macro_budget.depth == 0:
+            macro_budget.left = 2
+        macro_budget.depth += 1
+        return self
+
+    def __exit__(self, *exc):
+        macro_budget.depth -= 1
+        return False
+
+
+RESUME_WAIT = 6        # seconds a resumed run gets to reach its end flag
+ALIVE_WAIT = 2.5       # seconds after pressing OK in which a log line or an end flag shows that nothing was paused
 
 
 def release_executor(pause_context=False, final=True):
@@ -395,38 +461,57 @@ def release_executor(pause_context=False, final=True):
     pauses at an exception even inside try/except; what resumes it from outside is F9's own command, -REditScript:RunMacro
     (seen live, Altium 26.8; there is no EditScript:Run). The order:
       (a) press OK on the OK-only boxes (never on a box that asks something);
-      (b) only with evidence of a pause (pause_context: our RunScript raised an OK-only error box without starting, or our run
-          started and stopped logging, AND an OK-only error box is open, and no question box): send RunMacro and wait for our
-          end.flag. RunMacro with nothing paused would run the ACTIVE script document and raise a new error box, so it is never
-          sent without that evidence;
+      (b) only with evidence of a pause (pause_context: a RunScript of ours raised an OK-only error box without starting, or our run
+          started and stopped logging, AND an OK-only error box was open, and no question box; never on a cold start, where such a box
+          is a sign-in or licence box): wait ALIVE_WAIT after the OK. A log line or an end flag in that time means nothing was paused
+          (the OK alone let the run go on): no RunMacro. Otherwise send RunMacro and wait for an end flag. RunMacro with nothing paused
+          would run the ACTIVE script document and raise a new error box;
       (c) press OK on the boxes the resumed script left;
-      (d) when our run still has not ended after (b) and it started, repeat (b) once: at most TWO RunMacro per call;
+      (d) when our run still has not ended after (b) and it started, repeat (b) once: at most TWO RunMacro for the whole macro_budget
+          (one command batch, or one ERC step with its cleanup call);
       Stop only as the last resort: when nothing was resumed (no RunMacro sent) or `final` and the run still has not ended.
-    Every step goes to the run log. Returns the dialog texts."""
-    boxes = _dialog_boxes()
-    ok_open = any(b["cls"] == "TMessageForm" and b["ok_only"] for b in boxes)
-    asking = any(b["cls"] == "TMessageForm" and not b["ok_only"] for b in boxes)
-    seen = _close_dialogs()                                                         # (a)
-    runlog.event("altium-release", step="ok-boxes", boxes=seen, evidence=bool(pause_context and ok_open and not asking))
-    macros, resumed = 0, False
-    if pause_context and ok_open and not asking:
-        started = (EXCHANGE / "start.flag").exists() and not (EXCHANGE / "end.flag").exists()
-        limit = 2 if started else 1
-        while macros < limit:
-            macros += 1
-            _editscript("RunMacro")                                                 # (b)
-            resumed = _wait_end(RESUME_WAIT)
-            after = _close_dialogs()                                                # (c)
-            seen += after
-            runlog.event("altium-release", step="runmacro", n=macros, run_ended=resumed, boxes=after)
-            if resumed or not started:                                              # (d) only a run of ours that has not ended is tried again
-                break
-    if not resumed and (macros == 0 or final):
-        _editscript("Stop")                                                         # the last resort
-        time.sleep(2)
-        seen += _close_dialogs()            # the error window can appear only once the executor is stopped
-        runlog.event("altium-release", step="stop", macros=macros)
-    return seen
+    Every step goes to the run log. Returns the dialog texts. _RUN["evidence"] says whether there was evidence of a pause."""
+    with macro_budget():
+        t_rel = time.time()
+        boxes = _dialog_boxes()
+        ok_open = any(b["cls"] == "TMessageForm" and b["ok_only"] for b in boxes)
+        asking = any(b["cls"] == "TMessageForm" and not b["ok_only"] for b in boxes)
+        log0 = _stat(EXCHANGE / "log.txt")
+        started = bool(_RUN["token"]) and flag_path("start").exists() and not flag_path("end").exists()
+        seen = _close_dialogs()                                                     # (a)
+        evidence = bool(pause_context and ok_open and not asking)
+        _RUN["evidence"] = evidence
+        runlog.event("altium-release", step="ok-boxes", boxes=seen, evidence=evidence)
+        macros, resumed, moving = 0, False, False
+        if evidence:
+            t_a = time.time()
+            while time.time() - t_a < ALIVE_WAIT and not (resumed or moving):
+                if _ended_since(t_rel):
+                    resumed = True
+                elif _stat(EXCHANGE / "log.txt") != log0:
+                    moving = True
+                else:
+                    time.sleep(0.25)
+            runlog.event("altium-release", step="alive-check", ended=resumed, moving=moving)
+            if moving:
+                resumed = _wait_end(RESUME_WAIT, t_rel)    # a run that goes on is given time: never RunMacro'd, never stopped
+            limit = 0 if (resumed or moving) else (2 if started else 1)
+            while macros < limit and macro_budget.left > 0:
+                macros += 1
+                macro_budget.left -= 1
+                _editscript("RunMacro")                                             # (b)
+                resumed = _wait_end(RESUME_WAIT, t_rel)
+                after = _close_dialogs()                                            # (c)
+                seen += after
+                runlog.event("altium-release", step="runmacro", n=macros, run_ended=resumed, boxes=after, budget_left=macro_budget.left)
+                if resumed or not started:                                          # (d) only a run of ours that has not ended is tried again
+                    break
+        if not resumed and not moving and (macros == 0 or final):
+            _editscript("Stop")                                                     # the last resort
+            time.sleep(2)
+            seen += _close_dialogs()            # the error window can appear only once the executor is stopped
+            runlog.event("altium-release", step="stop", macros=macros)
+        return seen
 
 
 _PATH_FIELD = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
@@ -501,10 +586,14 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
     names = [str(c[0]) for c in commands]
     project = getattr(runlog.ctx, "project", "") or ""
     try:
-        log = _run_commands(commands, start_timeout, stall_timeout, total_timeout)
+        with macro_budget():           # at most two RunMacro for this batch, its cleanup included
+            try:
+                log = _run_commands(commands, start_timeout, stall_timeout, total_timeout)
+            except BridgeError:
+                if _running():
+                    preflight()        # leave Altium clean for the next command, not only for the one after a timeout
+                raise
     except BaseException as exc:
-        if isinstance(exc, BridgeError) and _running():
-            preflight()                # leave Altium clean for the next command, not only for the one after a timeout
         runlog.event("altium", commands=names, args=_cmd_args(commands), project=project, seconds=round(time.time() - t0, 1), ok=False,
                      error=f"{type(exc).__name__}: {exc}", dialogs=DIALOG_LOG[-10:])
         raise
@@ -516,47 +605,58 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
 def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300):
     """Send command lines (tab separated fields) to Altium, wait for DONE. Returns the script's log lines.
     Raises BridgeError with the last step when the script does not start, stops logging or reports an error.
-    While the script runs we only look at whether start.flag / end.flag exist and whether log.txt grows."""
+    While the script runs we only look at whether our start / end flag exist and whether log.txt grows. The request carries a token
+    (see _RUN): the flags we wait for are this request's own, never those of the run a RunMacro resumed, and the request is removed
+    again when the script did not start, so a late RunScript cannot run it after we reported the failure."""
     _check_writes_allowed(commands)
     exe = _exe()
     script = stage_script()            # a changed script is a new project path: Altium loads it fresh
     with _lock:
         EXCHANGE.mkdir(parents=True, exist_ok=True)
-        for name in ("response.txt", "log.txt", "start.flag", "end.flag"):
+        _prune_flags()
+        for name in ("response.txt", "log.txt"):
             (EXCHANGE / name).unlink(missing_ok=True)
-        body = "\r\n".join("\t".join(_ascii(f) for f in c) for c in commands) + "\r\n"
+        tok = uuid.uuid4().hex[:12]
+        _RUN.update(token=tok, cold=False, evidence=False)
+        body = "TOKEN\t" + tok + "\r\n" + "\r\n".join("\t".join(_ascii(f) for f in c) for c in commands) + "\r\n"
         (EXCHANGE / "request.txt").write_bytes(body.encode("ascii"))     # bytes: text mode would double the CR on Windows
         cold = not _running()          # Altium has to start first: that takes a while
+        _RUN["cold"] = cold
         released = None
-        if not cold:
-            released = preflight(strict=True)     # a run left paused by an earlier error would swallow this one
-        for attempt in (1, 2):
-            subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
-            t0 = time.time()
-            started = False
-            while time.time() - t0 < start_timeout * (8 if cold else 1):
-                if (EXCHANGE / "start.flag").exists():
-                    started = True
+        try:
+            if not cold:
+                released = preflight(strict=True)     # a run left paused by an earlier error would swallow this one
+            for attempt in (1, 2):
+                if attempt == 1 or not flag_path("start").exists():     # a start that came late needs no second RunScript
+                    subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
+                t0 = time.time()
+                started = False
+                while time.time() - t0 < start_timeout * (8 if cold else 1):
+                    if flag_path("start").exists():
+                        started = True
+                        break
+                    time.sleep(0.5)
+                if started:
+                    if released:
+                        _note_release(released)         # the run that was paused is gone: this script started
                     break
-                time.sleep(0.5)
-            if started:
-                if released:
-                    _note_release(released)         # the run that was paused is gone: this script started
-                break
-            shown = release_executor(pause_context=True, final=(attempt == 2))     # a paused executor ignores new scripts: release it and try once more
-            if attempt == 2:
-                if any(s.startswith("[TMessageForm]") for s in shown):
-                    # Altium's own message box: its text is a TLabel (not a window), so it cannot be read. On a cold start the
-                    # usual cause is that Altium is not signed in to an account / licence (seen 2026-11-11).
-                    raise BridgeError(BLOCKED + " Altium did not start the script because a message box in Altium is blocking it (its text cannot "
-                                      "be read from here). Open Altium, sign in if it asks you to, close any message box that is "
-                                      "open, and then try again. Dialog: " + " | ".join(shown))
-                raise BridgeError(BLOCKED + " Altium did not start the script (a script error or a dialog box was blocking it"
-                                  + (f": {' | '.join(shown)}" if shown else "") + "). "
-                                  "I released the script executor and closed dialogs once and tried again.")
+                # a paused executor ignores new scripts: release it and try once more. Only an OK-only error box on a running Altium
+                # (not a cold start: there it is a sign-in or licence box) counts as a pause.
+                shown = release_executor(pause_context=not cold, final=(attempt == 2))
+                if attempt == 2 and not flag_path("start").exists():
+                    if _RUN["evidence"]:
+                        raise BridgeError(BLOCKED + " Altium did not start the script (a script error or a dialog box was blocking it"
+                                          + (f": {' | '.join(shown)}" if shown else "") + "). "
+                                          "I released the script executor and closed dialogs once and tried again.")
+                    raise BridgeError(NOT_STARTED + (" Dialog: " + " | ".join(shown) if shown else "") +
+                                      " (Altium's own message boxes cannot be read from here.)")
+        except BaseException:
+            if not flag_path("start").exists():
+                (EXCHANGE / "request.txt").unlink(missing_ok=True)       # nothing consumed it: nobody may run it now
+            raise
         t_log, last, t0 = time.time(), _stat(EXCHANGE / "log.txt"), time.time()
         t_look = t_log
-        while not (EXCHANGE / "end.flag").exists():
+        while not flag_path("end").exists():
             now = _stat(EXCHANGE / "log.txt")
             if now != last:
                 last, t_log = now, time.time()
@@ -567,7 +667,7 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                 boxed = any(d.startswith("[TMessageForm]") for d in _close_dialogs(only_look=True))
             if boxed or time.time() - t_log > stall_timeout or time.time() - t0 > total_timeout:
                 shown = release_executor(pause_context=True)
-                if (EXCHANGE / "end.flag").exists():
+                if flag_path("end").exists():
                     break                                   # resumed with RunMacro and ran to its end: read its answer as usual
                 log = _read(EXCHANGE / "log.txt")           # the script is stopped now: safe to read
                 raise BridgeError("Altium stopped in the middle of the script, after: "
@@ -2680,6 +2780,9 @@ def erc_split(message):
     subject = _ERC_SUBJECT.match(m)
     if subject:
         return "Net " + subject.group("what"), obj or subject.group("obj"), loc
+    off = re.match(r"^(?P<kind>Off grid \w+) (?P<obj>.+)$", m)       # "Off grid Port NET at 1564.9mil,3500mil": one kind per object type
+    if off:
+        return off.group("kind"), obj or off.group("obj"), loc
     words = m.split(" ")
     if len(words) > 2 and (re.search(r"[0-9]", words[-1]) and len(words) > 3 or "?" in words[-1]):          # "Duplicate Component Designators C?", "Floating Power Object 5V"
         return " ".join(words[:-1]), obj or words[-1], loc
@@ -2806,10 +2909,18 @@ def erc_inputs(prj):
 
 
 def erc_check(prj, keep_report):
+    """The ERC step as ONE unit for the RunMacro budget (the check, its cleanup call and the DOCSTATE read: two RunMacro at most)."""
+    with macro_budget():
+        return _erc_check(prj, keep_report)
+
+
+def _erc_check(prj, keep_report):
     """Altium's own electrical rules check of the Altium project `prj`, read from the report file Altium writes (no script call
     walks the violations). Our OutJob with the Electrical Rules Check output (the project's own levels and connection matrix) is
     added to the open project, run, and taken out again; the OutJob and the report are removed from the student's folder (the report
-    is copied to `keep_report` first), and a document that was saved before stays marked saved. Returns parse_erc's dict plus
+    is copied to `keep_report` first), and a document that was saved before stays marked saved. The project file itself is marked
+    modified by adding and taking out the OutJob: that mark is OURS (unless the owner had unsaved changes in it) and is cleared too, on
+    every path, so Altium does not ask the owner "Save changes?" and nothing rewrites the PrjPcb. Returns parse_erc's dict plus
     {report, levels_from, unsaved, warnings, line, inputs}. A report Altium did not write, or that cannot be read, is a BridgeError:
     never a clean result."""
     prj = pathlib.Path(prj)
@@ -2830,17 +2941,24 @@ def erc_check(prj, keep_report):
     work.mkdir(parents=True, exist_ok=True)
     oj = work / "ERC.OutJob"
     oj.write_text(outjob.erc_outjob(levels, matrix, base=str(out_dir)), encoding="utf-8")
-    cmds = [("PROJECT", str(prj)), ("OUTJOB", str(oj), "Folder Structure", str(out_dir), "GeneratedFiles"), ("LIBRELEASE", str(prj), str(oj))]
-    if unsaved is not None:
-        cmds += [("UNMARK", str(d)) for d in _project_docs(prj) if d.name not in unsaved]
+    # the modified marks to clear once the OutJob is out: every document that was saved before (all of them are cleared only when the state
+    # is known), and ALWAYS the project file, whose change (the OutJob added and removed) is ours; an unknown state marks no sheet or board
+    docs = _project_docs(prj)
+    unmark = [("UNMARK", str(d)) for d in docs if d.name == prj.name or (unsaved is not None and d.name not in unsaved)]
+    if unsaved is not None and prj.name in unsaved:
+        unmark = [c for c in unmark if pathlib.Path(c[1]).name != prj.name]      # the owner's own unsaved change in the project stays
+    cmds = [("PROJECT", str(prj)), ("OUTJOB", str(oj), "Folder Structure", str(out_dir), "GeneratedFiles"), ("LIBRELEASE", str(prj), str(oj)), *unmark]
     t0 = time.time() - 2
     released = False
     try:
         run_commands(cmds, total_timeout=300)
         released = True
     except BridgeError:
-        try:                                              # the OutJob may have joined the open project before the failure: take it out again
-            run_commands([("PROJECT", str(prj)), ("LIBRELEASE", str(prj), str(oj))])
+        if not flag_path("start").exists():
+            shutil.rmtree(work, ignore_errors=True)      # nothing reached Altium (it never started the script): the project cannot point at it
+            raise
+        try:                  # the OutJob may have joined the open project, and the script stopped before taking it out and before the marks
+            run_commands([("PROJECT", str(prj)), ("LIBRELEASE", str(prj), str(oj)), *unmark])
             shutil.rmtree(work, ignore_errors=True)
         except BridgeError:
             pass                                          # the file stays then, so the project does not point at a missing document
