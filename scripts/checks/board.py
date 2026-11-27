@@ -45,7 +45,8 @@ OPENING_MIN_OFFSET_MM = 1.0
 OPENING_MIN_OFFSET_FRAC = 0.2
 
 # Decoupling caps
-DECAP_MAX_DIST_MM = 5.0        # cap rail pad to the nearest supplied pad; matches the "Recommended" text
+DECAP_MAX_DIST_MM = 3.0        # supply pin to its nearest same-net decoupling cap. General knowledge, no course source (owner 27/11); a
+                              # datasheet or application-note value, cited by page, goes in `limits` and replaces it for that part
 DECAP_MAX_PAD_SPAN_MM = 4.0    # pad centre to centre: 0402 ~1 mm, 0805 ~2 mm, 1206 ~3.2 mm; electrolytic/tantalum >= 6 mm
 GROUND_NET = re.compile(r"GND|VSS|GROUND", re.I)
 # +3V3 3V3 +3V3A +3V8 +12V +12V_RLY 5V 1V8 | VDD VCC VDDA AVDD VBAT VBUS VCAP1 VREF VIN VSYS, also as a suffix
@@ -246,14 +247,33 @@ def _is_passive(comp: dict[str, Any], n_pads: int) -> bool:
     return bool(PASSIVE_REF.match(ref)) or (ref[:1].upper() in "RCLDFT" and n_pads <= 2 and not is_connector(comp))
 
 
-def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DIST_MM,
-                          max_pad_span_mm: float = DECAP_MAX_PAD_SPAN_MM) -> list[dict[str, Any]]:
-    """Distance from each decoupling cap to the part it decouples.
+_SUPPLY_NAME = re.compile(r"^(?:[ADP]?V(?:DD|CC|IN|BUS|BAT|BATT|CCA|DDA|DDIO\d*|DDUSB|DDSD|REF\+?|CAP|\d)|VIN|VOUT|VO|\+?\d+V\d*|VS\+?|VP)[A-Z0-9_]*$", re.I)
+_CARD = re.compile(r"sd|sim|card|mmc|tf_|micro_?sd", re.I)
 
-    A decoupling cap is a small ceramic cap (two pads at most max_pad_span_mm apart: 0402..1206, not electrolytic
-    or tantalum) with one pad on a ground net and the other on a power rail net. The distance runs from its rail
-    pad to the nearest pad on that rail of a part that is not a passive (IC, or a connector supplying a card).
-    Caps from a signal net to ground (button debounce, input filters, crystal loads) are not decaps."""
+
+def _supply_pin(q, comp, comp_pads, net):
+    """Is pad q a supply pin of an IC or a card connector? Not on a plain header, a relay coil or a one-pad net part: a pin whose name is a
+    supply name (VDD, VCC, VBAT, VDDA...) of a part with 3+ pads; for a part whose pads carry no names (numbers only) a power-net pad of a
+    3+ pad part when no more than half of its pads sit on that net (a header row of one rail is a connector, not a supplied chip)."""
+    if len(comp_pads) < 3 or (is_connector(comp) and not _CARD.search(f"{comp.get('pattern', '')} {comp.get('lib_ref', '')}")):
+        return False
+    name = str(q.get("name") or "").strip()
+    if name and not name.isdigit() and len(name) > 1:
+        return bool(_SUPPLY_NAME.match(name))
+    return sum(1 for x in comp_pads if x.get("net") == net) * 2 <= len(comp_pads)
+
+
+def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DIST_MM,
+                          max_pad_span_mm: float = DECAP_MAX_PAD_SPAN_MM,
+                          limits: dict[str, tuple[float, str]] | None = None) -> list[dict[str, Any]]:
+    """Per supply pin: the distance from each supply pin of an IC or card connector to the nearest decoupling cap on its net (R2/W23).
+
+    A supply pin is a pad of a part that is not a passive, on a power rail net. A decoupling cap is a two-pad capacitor with one pad on a
+    ground net and the other on that rail (bulk or ceramic: the nearest one on the net is the one measured). A pin whose
+    nearest such cap is farther than the limit, or that has none on its net, is flagged (one finding per pin, so a second pin of the same
+    part is never hidden by the first). The limit is `limits[ref] = (mm, cite)` where the part's datasheet or application note gives one
+    (cited by page), else max_dist_mm, labelled as general knowledge. Caps from a signal net to ground (button debounce, input filters,
+    crystal loads) are not decaps."""
     findings = []
     comps = [c for c in doc.get("components", []) if c.get("ref")]
     comps_by_ref = {c["ref"]: c for c in comps}
@@ -265,32 +285,44 @@ def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DI
         if p.get("net"):
             net_pads.setdefault(p["net"], []).append(p)
 
+    caps: dict[str, list[tuple[str, dict[str, Any]]]] = {}       # rail net -> [(cap ref, its rail pad)]
     for c in comps:
         c_ref = c["ref"]
-        if not CAP_REF.match(c_ref) or is_connector(c) or POLARIZED_CAP.search(f"{c.get('pattern', '')} {c.get('lib_ref', '')}"):
+        if not CAP_REF.match(c_ref) or is_connector(c):
             continue
         cpads = pads_by_ref.get(c_ref, [])
-        if len(cpads) != 2 or math.hypot(cpads[0]["x_mm"] - cpads[1]["x_mm"], cpads[0]["y_mm"] - cpads[1]["y_mm"]) > max_pad_span_mm:
-            continue
+        if len(cpads) != 2:
+            continue                  # any two-pad capacitor between the rail and ground counts: the check measures the nearest cap, whatever its kind
         ground = [p for p in cpads if GROUND_NET.search(p.get("net") or "")]
         rail = [p for p in cpads if p.get("net") and not GROUND_NET.search(p["net"]) and POWER_NET.search(p["net"])]
-        if len(ground) != 1 or len(rail) != 1:
+        if len(ground) == 1 and len(rail) == 1:
+            caps.setdefault(rail[0]["net"], []).append((c_ref, rail[0]))
+
+    for net, pads in sorted(net_pads.items()):
+        if GROUND_NET.search(net) or not POWER_NET.search(net):
             continue
-        cp = rail[0]
-        net = cp["net"]
-        loads = [q for q in net_pads.get(net, []) if q.get("ref") in comps_by_ref
-                 and not _is_passive(comps_by_ref[q["ref"]], len(pads_by_ref.get(q["ref"], [])))]
-        if not loads:
-            continue
-        min_dist, load = min(((math.hypot(cp["x_mm"] - q["x_mm"], cp["y_mm"] - q["y_mm"]), q) for q in loads), key=lambda t: t[0])
-        if min_dist > max_dist_mm:
-            findings.append({
-                "id": "decap_distance_excessive",
-                "severity": "warning",
-                "refs": [c_ref, load["ref"]],
-                "message": f"Decoupling cap {c_ref} on net '{net}' is {min_dist:.1f} mm away from the nearest supplied pad ({load['ref']}-{load.get('name', '')}). Recommended: <= {max_dist_mm:g} mm.",
-                "evidence": f"PcbDoc pad distance: {c_ref} ({cp['x_mm']}, {cp['y_mm']}) to {load['ref']}-{load.get('name', '')} on net {net}",
-            })
+        for q in pads:
+            ref = q.get("ref")
+            if ref not in comps_by_ref or _is_passive(comps_by_ref[ref], len(pads_by_ref.get(ref, []))):
+                continue
+            if not _supply_pin(q, comps_by_ref[ref], pads_by_ref.get(ref, []), net):
+                continue
+            limit, cite = (limits or {}).get(ref) or (max_dist_mm, "general knowledge, no course source")
+            near = sorted(((math.hypot(cp["x_mm"] - q["x_mm"], cp["y_mm"] - q["y_mm"]), cref, cp) for cref, cp in caps.get(net, [])),
+                          key=lambda t: t[0])
+            where = f"{ref}-{q.get('name') or q.get('num') or ''}"
+            if not near:
+                findings.append({
+                    "id": "decap_distance_excessive", "severity": "warning", "refs": [ref],
+                    "message": f"Supply pin {where} on net '{net}' has no decoupling cap on that net. Recommended: <= {limit:g} mm ({cite}).",
+                    "evidence": f"PcbDoc: no ceramic cap from {net} to ground; pin at ({q['x_mm']}, {q['y_mm']})"})
+                continue
+            dist, cref, cp = near[0]
+            if dist > limit:
+                findings.append({
+                    "id": "decap_distance_excessive", "severity": "warning", "refs": [cref, ref],
+                    "message": f"Supply pin {where} on net '{net}': the nearest decoupling cap {cref} is {dist:.1f} mm away. Recommended: <= {limit:g} mm ({cite}).",
+                    "evidence": f"PcbDoc pad distance: {cref} ({cp['x_mm']}, {cp['y_mm']}) to {where} on net {net}"})
 
     return findings
 

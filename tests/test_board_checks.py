@@ -41,11 +41,10 @@ def test_finished_board_checks():
     # Should flag CPL rotation sanity list
     assert "cpl_rotation_sanity" in finding_ids
 
-    # C8 (5V) sits 11 mm from the regulator pad that supplies the rail; C7 (3V3bd) is next to its regulator Reg3
+    # per supply pin (W23): Reg5 pin 4 (5V) has its nearest cap C8 11.4 mm away; a header row of one rail is no supply pin
     decap_findings = ids(res, "decap_distance_excessive")
-    flagged = {f["refs"][0] for f in decap_findings}
-    assert "C8" in flagged and "C7" not in flagged
-    assert next(f for f in decap_findings if f["refs"][0] == "C8")["refs"] == ["C8", "Reg5"]
+    assert ["C8", "Reg5"] in [f["refs"] for f in decap_findings] and "Reg5-4" in next(f for f in decap_findings if f["refs"] == ["C8", "Reg5"])["message"]
+    assert not [f for f in decap_findings if f["refs"][-1].startswith("IOP_")]
 
     # The fixture's headers have no derivable opening direction: no error from a guess
     assert ids(res, "connector_faces_inward") == []
@@ -222,7 +221,7 @@ def test_decap_far_from_its_ic_is_a_warning():
     assert len(found) == 1
     f = found[0]
     assert f["id"] == "decap_distance_excessive" and f["severity"] == "warning" and f["refs"] == ["C1", "U1"]
-    assert "12.0 mm" in f["message"] and "<= 5 mm" in f["message"]
+    assert "12.0 mm" in f["message"] and "<= 3 mm" in f["message"] and "general knowledge" in f["message"]
     assert "U1-7" in f["evidence"]
 
 
@@ -232,7 +231,7 @@ def test_decap_close_to_its_ic_is_fine():
 
 
 def test_decap_limit_is_configurable_and_matches_the_text():
-    assert board.DECAP_MAX_DIST_MM == 5.0
+    assert board.DECAP_MAX_DIST_MM == 3.0
     doc = decap_doc(cap("C1", 0, 0, "+3V3", "GND"), ic("U1", 12.0, 0.0, "+3V3"))
     assert check_decoupling_caps(doc, max_dist_mm=15.0) == []
     f = check_decoupling_caps(doc, max_dist_mm=8.0)
@@ -248,37 +247,47 @@ def test_signal_net_cap_is_not_a_decap(net):
     assert check_decoupling_caps(doc) == []
 
 
-def test_bulk_caps_are_not_decaps():
-    # 100 uF electrolytic (pad span 6.2 mm) and a 7.3x4.3 tantalum (7.0 mm), far from the IC on the same rail
+def test_a_bulk_cap_far_from_the_pin_does_not_hide_it():
+    """A 100 uF electrolytic 25 mm away is the nearest cap of the pin, so the pin is flagged with that distance (W23: per supply pin)."""
     elec = cap("C1", 0, 0, "+12V", "GND", pattern="CAP_EEEFK1E101P", gap=6.2)
-    tant = cap("C30", 0, 10, "+12V", "GND", pattern="CAP-SMD_L7.3-W4.3-R-RD", gap=7.0)
-    doc = decap_doc(elec, tant, ic("U1", 25.0, 0.0, "+12V", pin="2"))
-    assert check_decoupling_caps(doc) == []
-    # the same pad span with a plain ceramic pattern is still too large for a decap; a 0805 is a candidate
-    big = cap("C2", 0, 20, "+12V", "GND", pattern="C0805", gap=6.2)
-    assert check_decoupling_caps(decap_doc(big, ic("U1", 25.0, 20.0, "+12V", pin="2"))) == []
-    small = cap("C3", 0, 20, "+12V", "GND", pattern="C0805", gap=2.0)
-    assert len(check_decoupling_caps(decap_doc(small, ic("U1", 25.0, 20.0, "+12V", pin="2")))) == 1
+    found = check_decoupling_caps(decap_doc(elec, ic("U1", 25.0, 0.0, "+12V", pin="2")))
+    assert [f["refs"] for f in found] == [["C1", "U1"]] and "25.0 mm" in found[0]["message"]
+
+
+def test_a_pin_with_no_cap_on_its_net_is_flagged():
+    found = check_decoupling_caps(decap_doc(ic("U1", 25.0, 0.0, "+12V", pin="2")))
+    assert [f["refs"] for f in found] == [["U1"]] and "no decoupling cap" in found[0]["message"]
+
+
+def test_every_supply_pin_is_checked_not_only_the_nearest_to_a_cap():
+    """U1 has two supply pins on the rail; the cap sits at one of them: the other pin is flagged (the old nearest-pad rule hid it)."""
+    u = ([comp("U1", 0.0, 0.0, pattern="QFN32")], [pad("U1", "VDD", 1.0, 0.0, "+3V3"), pad("U1", "VDDA", 15.0, 0.0, "+3V3"),
+                                                  pad("U1", "VSS", 8.0, 5.0, "GND"), pad("U1", "PA1", 8.0, 6.0, "X")])
+    found = check_decoupling_caps(decap_doc(cap("C1", 0, 0, "+3V3", "GND"), u))
+    assert [f["message"].split(":")[0] for f in found] == ["Supply pin U1-VDDA on net '+3V3'"]
+
+
+def test_a_datasheet_limit_with_its_page_replaces_the_general_one():
+    doc = decap_doc(cap("C1", 0, 0, "+3V3", "GND"), ic("U1", 4.0, 0.0, "+3V3"))
+    assert len(check_decoupling_caps(doc)) == 1
+    assert check_decoupling_caps(doc, limits={"U1": (5.0, "datasheet p.31")}) == []
 
 
 def test_decap_is_measured_to_the_connector_that_it_supplies():
-    """SIM_VDD cap next to the SIM socket J7; the modem pin on the same net is 27 mm away: no finding."""
-    j7 = ([comp("J7", 7.0, 0.0, pattern="MOLEX_104224-0820")], [pad("J7", "S1", 3.5, 0.0, "SIM_VDD"), pad("J7", "G1", 3.5, 3, "GND")])
+    """SIM_VDD cap next to the SIM socket J7 (the card connector's supply pin is checked too); the modem pin 27 mm away is its own pin."""
+    j7 = ([comp("J7", 7.0, 0.0, pattern="MOLEX_104224-0820")],
+          [pad("J7", "S1", 2.0, 0.0, "SIM_VDD"), pad("J7", "G1", 3.5, 3, "GND"), pad("J7", "G2", 3.5, 4, "GND")])
     doc = decap_doc(cap("C42", 0, 0, "SIM_VDD", "GND"), j7, ic("U4", 27.7, 0.0, "SIM_VDD", pin="30"))
-    assert check_decoupling_caps(doc) == []
-    # without the socket the far modem pin is all there is
-    doc = decap_doc(cap("C42", 0, 0, "SIM_VDD", "GND"), ic("U4", 27.7, 0.0, "SIM_VDD", pin="30"))
     assert [f["refs"] for f in check_decoupling_caps(doc)] == [["C42", "U4"]]
 
 
 def test_passives_are_not_loads():
-    """Resistors and other 2-terminal parts (even with a custom designator) on the rail do not count as the supplied part."""
+    """Resistors and other 2-terminal parts (even with a custom designator) on the rail are not supply pins."""
     r1 = ([comp("R1", 2.0, 0.0, pattern="R0603")], [pad("R1", "1", 2.0, 0.0, "+3V3")])
     rl2 = ([comp("RL2", 3.0, 0.0, pattern="0805_L")], [pad("RL2", "1", 3.0, 0.0, "+3V3"), pad("RL2", "2", 3.0, 2.0, "X")])
     other_cap = cap("CC2", 1.0, 3.0, "+3V3", "GND")
     doc = decap_doc(cap("C1", 0, 0, "+3V3", "GND"), r1, rl2, other_cap, ic("U1", 12.0, 0.0, "+3V3"))
-    found = check_decoupling_caps(doc)
-    assert [f["refs"] for f in found] == [["C1", "U1"], ["CC2", "U1"]]
+    assert [f["refs"] for f in check_decoupling_caps(doc)] == [["CC2", "U1"]]
 
 
 @pytest.mark.parametrize("net,rail", [
