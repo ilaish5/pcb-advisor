@@ -1479,6 +1479,11 @@ def _decide(project, pid, decision, by):
         elif delete_spec(prop) is not None:
             _apply_bom_delete(project, prop, delete_spec(prop), by)
         else:
+            new_refs = (prop.get("changes") or {}).get("refs")
+            dup = _duplicate_refs(project, prop["line"], new_refs) if new_refs else []
+            if dup:        # W10: refused before anything is written, both line keys named
+                raise ValueError("Refused: " + ", ".join(f"{r} is already on line {k}" for r, k in dup) +
+                                 f" (the card is for line {prop['line']}); a designator is on one line only. Move it off the other line first")
             append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by})
             changes, note, fresh = dict(prop["changes"]), "", False
             if changes.get("footprint_lock"):       # proven again now: the library may have changed since the proposal
@@ -1490,6 +1495,9 @@ def _decide(project, pid, decision, by):
             changes = _drop_stale_lcsc(project, prop["line"], changes)
             before = prop.get("before")
             cur = next((l for l in bom_lines(project) if l["key"] == prop["line"]), {})
+            changes, rebind_lib = _rebind_datasheet(project, cur, changes)
+            if "datasheet" in changes and "datasheet" not in (before or {}):
+                before = {**(before or {}), "datasheet": cur.get("datasheet")}
             cleared = offset_dropped(cur, changes)
             if cleared is not None:         # kept in `before` so an undo puts the offset back
                 before = {**(before or {}), "cpl_rotation": cleared}
@@ -1511,6 +1519,8 @@ def _decide(project, pid, decision, by):
                 append(project, "library-log.jsonl", {
                     "ts": now_ms(), "by": "agent-approved", "line": prop["line"],
                     "changes": prop["library"], "proposal": pid})
+            if rebind_lib:
+                add_library(project, prop["line"], rebind_lib, by="agent-approved")
     else:
         append(project, "proposals.jsonl", {"id": pid, "ts": now_ms(), "status": decision, "by": by})
     return prop
@@ -1849,6 +1859,45 @@ def _drop_stale_lcsc(project, line, changes):
     return changes
 
 
+def _names_part(project, doc, mpn):
+    """Does the document name this part number (its file name or its text, case and punctuation ignored)?"""
+    import sources
+    key = sources._key(mpn)
+    if len(key) < 4:
+        return False
+    if key in sources._key(doc):
+        return True
+    try:
+        return key in sources._key(sources.text_of(doc, sources.folder_of(project)))
+    except (OSError, ValueError):
+        return False
+
+
+def _rebind_datasheet(project, cur, changes):
+    """R2/W12: in the same write that changes the MPN, the datasheet follows. A bound document that does not name the new MPN is
+    rebound to the project's document that does (find_for), or unbound; either way the pins are not checked against it any more
+    (library verify "unchecked", evidence dropped) and the reason says so. Returns (changes, library changes or None)."""
+    if not cur or "datasheet" in changes:
+        return changes, None
+    new_mpn = changes.get("mpn")
+    if not new_mpn or new_mpn == cur.get("mpn") or not cur.get("datasheet"):
+        return changes, None
+    if _names_part(project, cur["datasheet"], new_mpn):
+        return changes, None
+    import sources
+    new = sources.find_for(project, new_mpn) or ""
+    changes["datasheet"] = new
+    why = (f"the MPN changed to {new_mpn}: datasheet {cur['datasheet']} was not for it" +
+           (f", rebound to {new}, pins not compared with it yet" if new else ", unbound, no datasheet for the new part"))
+    return changes, {"verify": "unchecked", "issues": why, "pins_evidence": None, "verified_at": now()}
+
+
+def _duplicate_refs(project, line, refs):
+    """[(ref, other line key)] of the designators in `refs` that another BOM line already holds (W10: refs are unique across lines)."""
+    mine = set(refs or [])
+    return [(r, l["key"]) for l in bom_lines(project) if l["key"] != line for r in (l.get("refs") or []) if r in mine]
+
+
 def edit_bom(project, line, field, value):
     """The student edits a cell. Allowed fields only; recorded as by=student."""
     if field not in BOM_FIELDS:
@@ -1866,9 +1915,17 @@ def edit_bom(project, line, field, value):
     if field == "mpn":
         changes["manufacturer"] = "—"      # unknown until a check answers for the new MPN
         _drop_stale_lcsc(project, line, changes)
-    return append(project, "bom-log.jsonl", {
+    if field == "refs":
+        dup = _duplicate_refs(project, line, value)
+        if dup:
+            raise ValueError("Refused: " + ", ".join(f"{r} is already on line {k}" for r, k in dup) + f" (this is line {line}); a designator is on one line only")
+    changes, lib = _rebind_datasheet(project, existing[line], changes)
+    rec = append(project, "bom-log.jsonl", {
         "ts": now_ms(), "by": "student", "line": line, "changes": changes,
-        "before": {field: existing[line].get(field)}})
+        "before": {k: existing[line].get(k) for k in changes}})
+    if lib:
+        add_library(project, line, lib, by="student")
+    return rec
 
 
 def add_supply(project, line, supplier, stock, unit_price, mpn, qty_break=10, source="skill",
