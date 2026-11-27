@@ -29,3 +29,6 @@ local/
 # The server's own update check and update history: state of this machine, not of the code.
 update-status.json
 update-log.jsonl
+
+# A15: the owner-held hidden half of every acceptance corpus (never committed)
+hidden-corpora/

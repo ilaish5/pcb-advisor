@@ -1,0 +1,169 @@
+{
+ "corpus": "T-B consistency field list (ACCEPTANCE Part C T-B), frozen list of 40",
+ "draw": 12,
+ "note": "computable_here: the artifact value comes from project JSON / netlist files; the rest need the PcbDoc/Gerber oracle or the agent leg (local and E phase). A field the page does not show counts as a mismatch.",
+ "split": "A15: the list itself is the frozen catalogue (visible); the hidden half holds the scripted agent questions per field",
+ "half": "visible",
+ "fields": [
+  {
+   "id": "bom.lines",
+   "computable_here": true
+  },
+  {
+   "id": "bom.parts",
+   "computable_here": true
+  },
+  {
+   "id": "bom.qty[line]",
+   "computable_here": true
+  },
+  {
+   "id": "bom.unverified",
+   "computable_here": true
+  },
+  {
+   "id": "bom.accepted_risks",
+   "computable_here": true
+  },
+  {
+   "id": "board.layers",
+   "computable_here": true
+  },
+  {
+   "id": "idea.requirements",
+   "computable_here": true
+  },
+  {
+   "id": "rules.extra",
+   "computable_here": true
+  },
+  {
+   "id": "sch.sheets",
+   "computable_here": true
+  },
+  {
+   "id": "sch.nets",
+   "computable_here": true
+  },
+  {
+   "id": "outputs.files",
+   "computable_here": true
+  },
+  {
+   "id": "sources.documents",
+   "computable_here": true
+  },
+  {
+   "id": "board.size",
+   "computable_here": false
+  },
+  {
+   "id": "net.width_wanted",
+   "computable_here": false
+  },
+  {
+   "id": "net.width_drawn",
+   "computable_here": false
+  },
+  {
+   "id": "drc.total",
+   "computable_here": false
+  },
+  {
+   "id": "drc.per_class",
+   "computable_here": false
+  },
+  {
+   "id": "rules.badge",
+   "computable_here": false
+  },
+  {
+   "id": "requirement.status[id]",
+   "computable_here": false
+  },
+  {
+   "id": "idea.confirmation",
+   "computable_here": false
+  },
+  {
+   "id": "chat.engine[message]",
+   "computable_here": false
+  },
+  {
+   "id": "stack.code",
+   "computable_here": false
+  },
+  {
+   "id": "outputs.readiness_counts",
+   "computable_here": false
+  },
+  {
+   "id": "bom.cost_per_board",
+   "computable_here": false
+  },
+  {
+   "id": "bom.extended_fee",
+   "computable_here": false
+  },
+  {
+   "id": "bom.out_of_stock",
+   "computable_here": false
+  },
+  {
+   "id": "library.to_verify",
+   "computable_here": false
+  },
+  {
+   "id": "sch.open_pins",
+   "computable_here": false
+  },
+  {
+   "id": "pcb.parts_on_board",
+   "computable_here": false
+  },
+  {
+   "id": "pcb.unrouted",
+   "computable_here": false
+  },
+  {
+   "id": "pcb.holes",
+   "computable_here": false
+  },
+  {
+   "id": "pcb.keepouts",
+   "computable_here": false
+  },
+  {
+   "id": "outputs.out_of_date",
+   "computable_here": false
+  },
+  {
+   "id": "dfm.reports",
+   "computable_here": false
+  },
+  {
+   "id": "rules.preset_on",
+   "computable_here": false
+  },
+  {
+   "id": "net.current[net]",
+   "computable_here": false
+  },
+  {
+   "id": "idea.board_size",
+   "computable_here": false
+  },
+  {
+   "id": "idea.layers",
+   "computable_here": false
+  },
+  {
+   "id": "checks.findings_open",
+   "computable_here": false
+  },
+  {
+   "id": "sources.cited",
+   "computable_here": false
+  }
+ ]
+}

@@ -1,0 +1,236 @@
+{
+ "corpus": "W22 required rule classes (ACCEPTANCE W22)",
+ "split": "A15: even parts visible, odd parts owner-held",
+ "half": "visible",
+ "classes": [
+  {
+   "id": "decap_missing",
+   "words": "decoupl|bypass|capacitor|\\bcap\\b",
+   "parts": [
+    {
+     "value": "LSM6DSOTR",
+     "supply_pins": [
+      [
+       "5",
+       "VDDIO"
+      ],
+      [
+       "8",
+       "VDD"
+      ]
+     ],
+     "gnd": [
+      [
+       "6",
+       "GND"
+      ],
+      [
+       "7",
+       "GND"
+      ]
+     ]
+    },
+    {
+     "value": "BME280",
+     "supply_pins": [
+      [
+       "8",
+       "VDD"
+      ],
+      [
+       "6",
+       "VDDIO"
+      ]
+     ],
+     "gnd": [
+      [
+       "1",
+       "GND"
+      ],
+      [
+       "7",
+       "GND"
+      ]
+     ]
+    },
+    {
+     "value": "AT24C256C-SSHL",
+     "supply_pins": [
+      [
+       "8",
+       "VCC"
+      ]
+     ],
+     "gnd": [
+      [
+       "4",
+       "GND"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "i3c_shared_spi",
+   "words": "I3C|I2C|disable|shared",
+   "parts": [
+    {
+     "value": "LSM6DSOTR",
+     "pins": [
+      [
+       "1",
+       "SDO/SA0"
+      ],
+      [
+       "12",
+       "CS"
+      ],
+      [
+       "13",
+       "SCL/SPC"
+      ],
+      [
+       "14",
+       "SDA/SDI/SDO"
+      ]
+     ]
+    },
+    {
+     "value": "LSM6DSOX",
+     "pins": [
+      [
+       "1",
+       "SDO/SA0"
+      ],
+      [
+       "12",
+       "CS"
+      ],
+      [
+       "13",
+       "SCL/SPC"
+      ],
+      [
+       "14",
+       "SDA/SDI/SDO"
+      ]
+     ]
+    },
+    {
+     "value": "ICM-42605",
+     "pins": [
+      [
+       "1",
+       "AP_SDO/AP_AD0"
+      ],
+      [
+       "12",
+       "AP_CS"
+      ],
+      [
+       "13",
+       "AP_SCL/AP_SCLK"
+      ],
+      [
+       "14",
+       "AP_SDA/AP_SDIO/AP_SDI"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "od_no_pullup",
+   "words": "pull-?up|pull up",
+   "parts": [
+    {
+     "value": "BME280",
+     "pins": [
+      [
+       "4",
+       "SCK"
+      ],
+      [
+       "3",
+       "SDI"
+      ]
+     ]
+    },
+    {
+     "value": "TMP117AIDRVR",
+     "pins": [
+      [
+       "1",
+       "SCL"
+      ],
+      [
+       "6",
+       "SDA"
+      ]
+     ]
+    },
+    {
+     "value": "VEML7700",
+     "pins": [
+      [
+       "1",
+       "SCL"
+      ],
+      [
+       "4",
+       "SDA"
+      ]
+     ]
+    }
+   ]
+  },
+  {
+   "id": "ep_not_gnd",
+   "words": "exposed|thermal pad|\\bEP\\b|centre pad|center pad",
+   "parts": [
+    {
+     "value": "STM32F411CEU6",
+     "ep": [
+      "49",
+      "EP"
+     ]
+    },
+    {
+     "value": "MCP73831T-2ACI/MC",
+     "ep": [
+      "9",
+      "EP"
+     ]
+    },
+    {
+     "value": "DRV8833PWPR",
+     "ep": [
+      "17",
+      "PPAD"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "xtal_no_caps",
+   "words": "load cap|load capacitor|\\bCL\\b",
+   "parts": [
+    {
+     "value": "8 MHz 12 pF",
+     "net_in": "OSC_IN",
+     "net_out": "OSC_OUT"
+    },
+    {
+     "value": "25 MHz 8 pF",
+     "net_in": "XTAL_IN",
+     "net_out": "XTAL_OUT"
+    },
+    {
+     "value": "16 MHz 10 pF",
+     "net_in": "XIN",
+     "net_out": "XOUT"
+    }
+   ]
+  }
+ ]
+}

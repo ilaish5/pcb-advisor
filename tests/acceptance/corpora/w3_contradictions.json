@@ -1,0 +1,240 @@
+{
+ "corpus": "W3 contradiction pairs (ACCEPTANCE W3)",
+ "rule": "each need contradicts its provision; the twin wording is consistent with the need",
+ "split": "A15: even ids visible here, odd ids owner-held in hidden-corpora/",
+ "fillers": [
+  {
+   "topic": "Temperature",
+   "text": "BME280 on I2C measures temperature"
+  },
+  {
+   "topic": "Assembly",
+   "text": "Assembled by JLC (PCBA)"
+  },
+  {
+   "topic": "Connectors",
+   "text": "2x5 1.27 mm SWD header"
+  },
+  {
+   "topic": "UI",
+   "text": "One green status LED"
+  },
+  {
+   "topic": "ESD",
+   "text": "USBLC6 on the USB data lines"
+  }
+ ],
+ "half": "visible",
+ "pairs": [
+  {
+   "id": "power-rtc",
+   "need": {
+    "topic": "Power",
+    "wordings": [
+     "USB-C only, 5 V from VBUS, no battery",
+     "Powered only from the USB-C cable; no cell of any kind"
+    ]
+   },
+   "provision": {
+    "topic": "Clock",
+    "wordings": [
+     "The RTC keeps the time while the board is unplugged",
+     "Timestamps stay correct across power-off thanks to the RTC"
+    ]
+   },
+   "twin_wordings": [
+    "The RTC time is set from the PC each time the board is plugged in",
+    "The PC sends the time over USB at every connection"
+   ]
+  },
+  {
+   "id": "size-battery",
+   "need": {
+    "topic": "Board",
+    "wordings": [
+     "Board 25 x 20 mm",
+     "Outline at most 25 by 20 millimetres"
+    ]
+   },
+   "provision": {
+    "topic": "Battery",
+    "wordings": [
+     "An 18650 cell holder is mounted on the board",
+     "Carries an 18650 Li-ion holder (77 x 21 mm) on the PCB"
+    ]
+   },
+   "twin_wordings": [
+    "A CR1220 coin cell holder is mounted on the board",
+    "Carries a 12 mm coin-cell holder on the PCB"
+   ]
+  },
+  {
+   "id": "rail-solenoid",
+   "need": {
+    "topic": "Power",
+    "wordings": [
+     "The board has a single 3.3 V rail and nothing above it",
+     "Only one supply on the board: 3.3 V"
+    ]
+   },
+   "provision": {
+    "topic": "Actuator",
+    "wordings": [
+     "Drives a 12 V solenoid valve directly from the board",
+     "Switches a 12 V solenoid powered by the board's own rail"
+    ]
+   },
+   "twin_wordings": [
+    "Drives a 3.3 V piezo buzzer through a small MOSFET",
+    "Switches a 3.3 V buzzer from a GPIO via a transistor"
+   ]
+  },
+  {
+   "id": "radio",
+   "need": {
+    "topic": "Wireless",
+    "wordings": [
+     "No radio of any kind on the board",
+     "The board has no wireless transmitter"
+    ]
+   },
+   "provision": {
+    "topic": "Data",
+    "wordings": [
+     "Readings go to a phone over Bluetooth Low Energy",
+     "The phone app receives the samples over BLE"
+    ]
+   },
+   "twin_wordings": [
+    "Readings go to the PC over the USB cable",
+    "The PC receives the samples over USB"
+   ]
+  },
+  {
+   "id": "crystal-usb",
+   "need": {
+    "topic": "Clock",
+    "wordings": [
+     "No crystal: the MCU runs from its internal oscillator only",
+     "Crystal-less design, internal RC oscillator only"
+    ]
+   },
+   "provision": {
+    "topic": "USB",
+    "wordings": [
+     "USB full-speed device on an STM32F411 (needs an accurate 48 MHz clock)",
+     "The STM32F411's USB OTG FS port is used as a device"
+    ]
+   },
+   "twin_wordings": [
+    "USB full-speed device on an STM32 with crystal-less USB (HSI48 trimmed by CRS)",
+    "USB device on an STM32L4 using HSI48 with the clock recovery system"
+   ]
+  },
+  {
+   "id": "coin-life-sd",
+   "need": {
+    "topic": "Power",
+    "wordings": [
+     "Runs one year on a single CR2032 coin cell",
+     "Battery life of 12 months from a CR2032"
+    ]
+   },
+   "provision": {
+    "topic": "Storage",
+    "wordings": [
+     "Logs every sample to the microSD card continuously, card always powered",
+     "SD card stays powered and is written every second"
+    ]
+   },
+   "twin_wordings": [
+    "Logs to the microSD card once an hour, card powered off in between",
+    "SD card powered only for an hourly write"
+   ]
+  },
+  {
+   "id": "single-bga",
+   "need": {
+    "topic": "Board",
+    "wordings": [
+     "Single-sided board, one copper layer",
+     "Only one copper layer"
+    ]
+   },
+   "provision": {
+    "topic": "MCU",
+    "wordings": [
+     "MCU in a 0.5 mm pitch BGA",
+     "Microcontroller in fine-pitch BGA package"
+    ]
+   },
+   "twin_wordings": [
+    "MCU in SOIC-20",
+    "Microcontroller in a SOIC package"
+   ]
+  },
+  {
+   "id": "sealed-buttons",
+   "need": {
+    "topic": "Mechanical",
+    "wordings": [
+     "Sealed IP67 enclosure with no openings",
+     "Waterproof housing, nothing passes through it"
+    ]
+   },
+   "provision": {
+    "topic": "UI",
+    "wordings": [
+     "RESET and BOOT0 buttons pressed by the user during normal use",
+     "The user presses the push buttons through the case"
+    ]
+   },
+   "twin_wordings": [
+    "RESET and BOOT0 buttons reached only when the lid is opened for service",
+    "Buttons used only during service with the lid off"
+   ]
+  },
+  {
+   "id": "internal-flash-1gb",
+   "need": {
+    "topic": "Storage",
+    "wordings": [
+     "Stores 1 GB of samples on the board",
+     "Holds a gigabyte of logged data"
+    ]
+   },
+   "provision": {
+    "topic": "Storage medium",
+    "wordings": [
+     "Data is kept only in the MCU's internal 512 KB flash",
+     "No external memory: internal flash only"
+    ]
+   },
+   "twin_wordings": [
+    "Data is kept on a microSD card",
+    "External microSD storage"
+   ]
+  },
+  {
+   "id": "temp-coin",
+   "need": {
+    "topic": "Environment",
+    "wordings": [
+     "Operates outdoors from -40 to 85 C",
+     "Works across -40 C to +85 C"
+    ]
+   },
+   "provision": {
+    "topic": "Battery",
+    "wordings": [
+     "Backup from a CR2032 rated 0 to 60 C",
+     "Coin cell rated only 0..60 C keeps the RTC"
+    ]
+   },
+   "twin_wordings": [
+    "Backup from a coin cell rated -40 to 85 C",
+    "Industrial-temperature coin cell keeps the RTC"
+   ]
+  }
+ ]
+}

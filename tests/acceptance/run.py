@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--controls", action="store_true", help="also run every metric on its control; control must pass")
     ap.add_argument("--live", default=None, help="base URL of a running pcb-advisor server, enables behaviour metrics")
     ap.add_argument("--live-project", default=None)
+    ap.add_argument("--live-commit", default=None, help="commit behaviour metrics start their own servers from (fault injection); "
+                    "default: the pre-fix commit 2dcd691")
     ap.add_argument("--out", type=pathlib.Path, default=None)
     a = ap.parse_args(argv)
 
@@ -113,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: duplicate metric ids:", sorted(dupes))
         return 4
 
-    live = {"base_url": a.live, "project": a.live_project} if a.live else None
+    live = {"base_url": a.live, "project": a.live_project, "commit": a.live_commit} if a.live else None
     rows = []
     with tempfile.TemporaryDirectory(prefix="acceptance-") as tmp:
         ctx = lib.Ctx(root, seed, pathlib.Path(tmp), live=live, frozen=is_fixture,
