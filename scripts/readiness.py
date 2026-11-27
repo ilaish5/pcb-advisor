@@ -97,8 +97,11 @@ def open_conditions(project):
     try:
         import constraints
         return [r for r in constraints.requirement_rows(project) if r.get("status") != "met"]
-    except Exception:       # noqa: BLE001
-        return []
+    except Exception as e:       # noqa: BLE001 - the conditions could not be read: that is not "0 open", it is unchecked, with the reason
+        return [{"id": UNREAD, "status": "not_checked", "why": f"{type(e).__name__}: {e}"[:200]}]
+
+
+UNREAD = "conditions_unread"
 
 
 def summary(project, bom=None):
@@ -121,7 +124,10 @@ def summary(project, bom=None):
         items.append({"id": "unverified_parts", "label": f"{len(pins)} part(s) with pins not checked against a datasheet", "count": len(pins),
                       "state": "open", "page": "checks", "why": ", ".join(pins[:12])})
     conds = open_conditions(project)
-    if conds:
+    if conds and conds[0].get("id") == UNREAD:
+        items.append({"id": "open_conditions", "label": "Requirement conditions not checked", "count": 1, "state": "not_checked", "page": "pcb",
+                      "why": "the requirement rows could not be read: " + str(conds[0].get("why"))})
+    elif conds:
         items.append({"id": "open_conditions", "label": f"{len(conds)} requirement condition(s) not met or not measured",
                       "count": len(conds), "state": "open", "page": "pcb", "why": ", ".join(str(r.get("id")) for r in conds[:12])})
     return {"ready": not items, "open": sum(i["count"] for i in items), "items": items, "drc": drc}
@@ -143,6 +149,22 @@ def _override_path(project):
     return store.pdir(project) / OVERRIDE
 
 
+def override_current(project):
+    """The Make anyway record when it covers the check as it is now (same PcbDoc sha256, same JLC-reject count), else None. It is not used
+    up by a run: Generate outputs and the Gerber zip both read it, so the zip step is not refused after the files were made. A new
+    PcbDoc or a different count ends it, and the student is asked again."""
+    drc = drc_open(project)
+    if drc["state"] != "checked" or not drc["by_class"]["JLC-reject"]:
+        return None
+    try:
+        rec = store.json.loads(_override_path(project).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if rec.get("pcb_sha256") == drc["pcb_sha256"] and rec.get("reject") == drc["by_class"]["JLC-reject"]:
+        return rec
+    return None
+
+
 def reject_block(project):
     """"" when no JLC-reject DRC item is open on the current PcbDoc, or the student pressed Make anyway for exactly this check; else
     the refusal, with the count and the way past it. (Unrouted nets are route_block's: this adds the other rejects, e.g. shorts.)"""
@@ -150,11 +172,7 @@ def reject_block(project):
     n = drc["by_class"]["JLC-reject"] if drc["state"] == "checked" else 0
     if not n:
         return ""
-    try:
-        rec = store.json.loads(_override_path(project).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        rec = {}
-    if rec.get("pcb_sha256") == drc["pcb_sha256"] and rec.get("reject") == n:
+    if override_current(project):
         return ""
     rules = ", ".join(f"{k} {v}" for k, v in drc["by_rule"].items() if drc_class(k) == "JLC-reject")
     return (f"Not made yet: the board check has {n} violation(s) JLC would reject ({rules}). Fix them on the Layout page, "
@@ -171,11 +189,6 @@ def make_anyway(project):
 
 
 def consume_override(project):
-    """The recorded decision of the run that just made the files (removed: the next run asks again), or None."""
-    p = _override_path(project)
-    try:
-        rec = store.json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    p.unlink(missing_ok=True)
-    return rec
+    """The recorded decision that covers the check now (for the manifest of the run that just made the files), or None. Not removed here:
+    the zip step after the files must pass the same gate; the record lapses by itself when the PcbDoc or the count changes."""
+    return override_current(project)

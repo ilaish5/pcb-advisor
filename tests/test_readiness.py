@@ -1,6 +1,8 @@
 """R2 / W33 / U7: the readiness summary counts what was read back; no evidence is open, never green."""
 import json
 
+import pytest
+
 import board_results
 import readiness
 import store
@@ -62,8 +64,36 @@ def test_make_anyway_covers_one_check_and_is_consumed(empty, monkeypatch):
     _record(empty, {"Short-Circuit Constraint (Allowed=No) (All),(All)": 3})          # another check: the decision does not carry over
     assert readiness.reject_block(empty)
     _record(empty, {"Short-Circuit Constraint (Allowed=No) (All),(All)": 2})
-    assert readiness.consume_override(empty)["reject"] == 2
-    assert readiness.reject_block(empty)
+    assert readiness.override_current(empty)["reject"] == 2 and readiness.reject_block(empty) == ""      # the same check again: still covered
+
+
+@pytest.mark.route_gate
+def test_make_anyway_passes_one_gate_for_outputs_and_the_zip_and_for_unrouted_nets(empty, monkeypatch):
+    """The outputs run reads the record (consume_override) and the zip step after it asks the same gate: not refused again (R2 review)."""
+    _current(monkeypatch)
+    rules = {"Un-Routed Net Constraint (All)": 2}
+    drc = {"rules": rules, "total": 2, "unrouted": 2, "clean": False, "complete": True, "violations": ["Un-Routed Net Constraint: Net NetU1_5 between X and Y"]}
+    rec = {"ts": 1, "op": "drc", "ok": True, "pcb": "x.PcbDoc", "pcb_sha256": "abc123", "drc": drc}
+    (store.pdir(empty) / "board-log.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    assert "unrouted" in store.route_block(empty) and store.manufacturing_block(empty)
+    readiness.make_anyway(empty)
+    assert store.manufacturing_block(empty) == ""
+    assert readiness.consume_override(empty)["reject"] == 2          # the outputs run
+    assert store.manufacturing_block(empty) == ""                    # the zip step
+    drc["unrouted"], drc["total"], rules["Un-Routed Net Constraint (All)"] = 3, 3, 3
+    (store.pdir(empty) / "board-log.jsonl").write_text(json.dumps(rec) + "\n", encoding="utf-8")
+    assert store.manufacturing_block(empty)                          # a different check: asked again
+
+
+def test_unreadable_conditions_are_unchecked_with_the_reason_not_zero_open(empty, monkeypatch):
+    import constraints
+
+    def boom(project):
+        raise ValueError("requirements file is damaged")
+    monkeypatch.setattr(constraints, "requirement_rows", boom)
+    s = readiness.summary(empty)
+    item = next(i for i in s["items"] if i["id"] == "open_conditions")
+    assert item["state"] == "not_checked" and "damaged" in item["why"] and not s["ready"]
 
 
 def test_the_manifest_states_the_open_drc_items(empty, monkeypatch):

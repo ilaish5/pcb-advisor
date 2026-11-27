@@ -4208,6 +4208,7 @@ def route_state(project):
         nets = out["open_nets"]
         shown = f"; open nets: {', '.join(nets[:6])}{' ...' if len(nets) > 6 else ''}" if nets else ""
         out["why"] = (f"the board has unrouted nets (DRC Un-Routed {out['unrouted']}" + (f", {len(nets)} open" if nets else "") + ")" + shown)
+        out["unrouted_only"] = True            # the one refusal Make anyway may pass: a complete, current check that counts unrouted nets
         return out
     out["ready"] = True
     return out
@@ -4224,12 +4225,14 @@ def manufacturing_block(project):
     design's own refusal (manufacturing_warning) and the board's (route_block), in one text; "" when both are clear. Pins are a
     warning only (pins_warning), never a block."""
     design, board = manufacturing_warning(project), route_block(project)
-    if not board:
-        try:
-            import readiness
+    try:
+        import readiness
+        if board and route_state(project).get("unrouted_only") and readiness.override_current(project):
+            board = ""             # Make anyway was pressed for exactly this check (this PcbDoc, this count): unrouted nets are among the rejects it names
+        if not board:
             board = readiness.reject_block(project)      # a JLC-reject DRC item open on this very PcbDoc: refused unless Make anyway was pressed for it
-        except Exception:       # noqa: BLE001 - a gate that cannot be worked out never invents a refusal
-            board = ""
+    except Exception:       # noqa: BLE001 - a gate that cannot be worked out never invents a refusal
+        pass
     if design and board:
         return design + " Also: " + board[len("Not made yet: "):]
     return design or board
