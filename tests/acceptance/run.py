@@ -92,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--live-project", default=None)
     ap.add_argument("--live-commit", default=None, help="commit behaviour metrics start their own servers from (fault injection); "
                     "default: the pre-fix commit 2dcd691")
+    ap.add_argument("--no-altium", action="store_true", help="leave out the metrics that drive Altium (metrics/altium_*.py), "
+                    "e.g. while Altium shows a dialog or a paused script; such a run is never complete")
     ap.add_argument("--out", type=pathlib.Path, default=None)
     a = ap.parse_args(argv)
 
@@ -111,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
     metrics = lib.REGISTRY
     if a.only:
         metrics = [m for m in metrics if any(m.id == o or m.id.startswith(o + "(") for o in a.only)]
+    if a.no_altium:
+        metrics = [m for m in metrics if not str(m.module).split(".")[-1].startswith("altium_")]
     ids = [m.id for m in metrics]
     dupes = {i for i in ids if ids.count(i) > 1}
     if dupes:
@@ -165,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
         if missing:
             ok = False
             print(f"catalogue ids with no metric yet ({len(missing)}): {' '.join(missing)}")
-    if not rows:
+    if not rows or a.no_altium:
         ok = False
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in lib.STATUSES}
     print(f"\n{len(rows)} metrics: " + ", ".join(f"{k} {v}" for k, v in counts.items()))
