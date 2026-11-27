@@ -76,7 +76,7 @@ def u1(ctx):
 ACCEPT_WORDS = re.compile(r"\baccept\b|\bwaive\b", re.I)
 
 
-@metric(id="U5", title="Every finding class has Accept with a required reason; accepted items carry it to the manifest",
+@metric(id="U5(ui)", title="Every finding class has Accept with a required reason; accepted items carry it to the manifest",
         root="R5", level="B", kind="behaviour")
 def u5(ctx):
     run = common.Run(ctx)

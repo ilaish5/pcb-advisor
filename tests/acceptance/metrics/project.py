@@ -1091,7 +1091,7 @@ def _u5_control(ctx: Ctx) -> Ctx:
     return c
 
 
-@metric(id="U5", title="Accepted risks in the order manifest with an empty reason", root="R5", level="B", control=_u5_control)
+@metric(id="U5(manifest)", title="Accepted risks in the order manifest with an empty reason", root="R5", level="B", control=_u5_control)
 def u5(ctx: Ctx) -> Result:
     P = _P(ctx)
     items, scope = u5_items(P)
