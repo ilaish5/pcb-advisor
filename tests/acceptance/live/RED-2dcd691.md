@@ -84,3 +84,37 @@ change the answer, no ledger. 27/11: 13 T-F confusions.
 69 fail, T-F not_run (no real engine in that run), 0 error; all 40 artifact controls PASS. The run says INCOMPLETE only for the
 catalogue coverage: 15 ids whose metrics drive Altium and were left out by `--no-altium` (B1 W1 W11 W15 W21 W26 W30 U2 U3 U4
 F-A F-C F-D F-F F-LIM).
+
+## Acceptance v1.1: browser / engine legs of F-D, F-F, F-C, F-LIM, W11 (27/11)
+Additions only (`metrics/live_fc.py`, `live_fd.py`, `live_ff.py`, `live_flim.py`, `live_w11.py`, `controls_v11.py` 10/10 PASS,
+corpus `flim_limits`). `ACCEPTANCE_REAL_ENGINE=1 run.py --live ... --live-commit 2dcd691 --seed 20261127 --only F-D F-F F-C F-LIM W11`
+with the visible and hidden corpus halves: 15 legs, 11 fail, 2 pass, 2 not_run (local Altium).
+
+| leg | 2dcd691 | measured | 27/11 red |
+|---|---|---|---|
+| F-D(a) unverified facts stated as fact | fail | 138 of 164 claim sentences | >= 6 instances |
+| F-D(b) same question, two answers (real engine) | fail | 3/10 inconsistent | (same family as T-F) |
+| F-D(c) price at a quantity uses another break | fail | 1 ("$46 per board at 5 boards" from the 10 break) | "at 5 boards" used the 10-piece break |
+| F-F(a) Confirm pins opens a pin-table page | **pass** | 0 (draw: U5, page 6 is a pin-table page) | C80 opened the wrong page |
+| F-F(b) pad count vs pin count explained | fail | 2 (J1 16 vs 18, J2 13 vs 15, unnamed THT pads) | J1 16/18, J2 13/15 unexplained |
+| F-C(a) decisions without a ledger | fail | 36 | all |
+| F-C(b) Check datasheets after the PDF changed | fail | 1 (U3 BME280.pdf, record keeps the old sha256) | (dead control) |
+| F-C(c) "Unknown" where the log has the detail | fail | 2 (board clearance, silk to silk) | 2 groups |
+| F-C(d) advice against a served rule | fail | 1 (via-in-pad advice vs "No via in an SMD pad") | 1 |
+| F-C(e) dead controls | **pass** | 0 of 72 tried | 3 controls |
+| F-LIM(a) non-Altium limits stated where they bite | fail | 5/5 (stm32-pin-table has the control, no ledger item) | 3 silent, 1 false, 11 chat-only |
+| F-LIM(b) the 10 Altium limits | not_run | local Altium leg | |
+| W11(a) review chip writes files | fail | 3 (idea-draft.json, netlist/Z69.json, project.json) | 2 side effects after Stop |
+| W11(b) side effects after Stop | not_run | local Altium leg (Altium project + skeleton) | |
+| W11(c) end message names every change | fail | 1 (sheet missing) | |
+
+The two passes are reported as they are, not tuned to fail:
+- F-F(a) draws one random line. This draw picked U5, whose page is right. C80's wrong page is not reproduced by this seed.
+- F-C(e) uses the "own semantics" rule: a control is dead only if the DOM, URL, dialogs and project files all stay unchanged. Under that rule the 27/11 dead
+  controls (D1/D2 rows, Check datasheets) are not dead on 2dcd691: they re-render or call the API. "Check datasheets" does nothing
+  useful, and F-C(b) catches that.
+
+Legs left to the local Altium phase:
+- W11(b).
+- F-LIM(b), which covers 10 limits: planeclearance-import, change-layers, footprint-fix, single-part-place, tent-vias, diffpair-route, draw-ports, compile-erc, keepouts-in-pcblib, incremental-schematic.
+- F-D(b) runs only with `ACCEPTANCE_REAL_ENGINE=1`.
