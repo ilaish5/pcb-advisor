@@ -6,6 +6,7 @@ let mpDlg = null, mpView = null, mpToken = 0, mpCur = null;      // the dialog, 
 
 const MP_TITLE = {symbol: 'Symbol', footprint: 'Footprint', model: '3D model', pins: 'Pins'};
 const MP_FS_MIN = 0.0001;
+const MP_MASK_EXP = 0.05;       // mm per side: the default mask opening drawn around each pad (the board's rule may differ)
 
 function mpNum(v) { return Math.round(v * 1000) / 1000; }
 function mpSpan(b) { return [b[2] - b[0], b[3] - b[1]]; }
@@ -84,8 +85,12 @@ function mpFootprintSVG(d) {
   const bar = span > 30 ? 10 : span > 12 ? 5 : span > 5 ? 2 : 1;
   const by = -b[1] + m * 0.55;
   const pads = d.pads.map(p => mpPadSVG(p, p.num === d.pin1, fs)).join('');
-  return `<svg class="mp-svg" viewBox="${mpNum(x0)} ${mpNum(y0)} ${mpNum(w)} ${mpNum(h)}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Footprint ${esc(d.name)}, ${d.pads.length} pads, pin 1 marked">` +
-    mpFpArt(d.fab, 'fp-fab') + mpFpArt(d.courtyard, 'fp-court') + mpFpArt(d.silk, 'fp-silk') + pads +
+  // Mask opening and paste are not in the part file: they are drawn from the pad with the stated default (mask: the pad plus
+  // MP_MASK_EXP on each side; paste: the SMD pad itself, none on a hole), and say so beside the toggles.
+  const mask = d.pads.map(p => `<g transform="translate(${p.x} ${-p.y}) rotate(${-p.rot})"><rect class="fp-mask" x="${-(p.w / 2 + MP_MASK_EXP)}" y="${-(p.h / 2 + MP_MASK_EXP)}" width="${p.w + 2 * MP_MASK_EXP}" height="${p.h + 2 * MP_MASK_EXP}"/></g>`).join('');
+  const paste = d.pads.filter(p => !p.thru).map(p => `<g transform="translate(${p.x} ${-p.y}) rotate(${-p.rot})"><rect class="fp-paste" x="${-p.w / 2}" y="${-p.h / 2}" width="${p.w}" height="${p.h}"/></g>`).join('');
+  return `<svg class="mp-svg" data-vb="${mpNum(x0)} ${mpNum(y0)} ${mpNum(w)} ${mpNum(h)}" viewBox="${mpNum(x0)} ${mpNum(y0)} ${mpNum(w)} ${mpNum(h)}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Footprint ${esc(d.name)}, ${d.pads.length} pads, pin 1 marked">` +
+    `<g class="fp-lyr-mask" hidden>${mask}</g>` + mpFpArt(d.fab, 'fp-fab') + mpFpArt(d.courtyard, 'fp-court') + mpFpArt(d.silk, 'fp-silk') + pads + `<g class="fp-lyr-paste" hidden>${paste}</g>` +
     `<g class="fp-scale"><line x1="${b[0]}" y1="${by}" x2="${b[0] + bar}" y2="${by}"/><text x="${b[0] + bar + fs * 0.4}" y="${by + fs * 0.35}" font-size="${fs}">${bar} mm</text></g></svg>`;
 }
 function mpFootprintFacts(d) {
@@ -154,8 +159,10 @@ async function mpPaint(line, kind) {
       const d = await get('footprint');
       if (d.error) return set(mpMissing(d.error, row));
       const errs = (d.errors || []).map(t => `<p class="warn-t">${esc(t)}</p>`).join('');
-      return set(`<div class="mp-fig">${mpFootprintSVG(d)}</div><p class="mp-cap">${esc(d.name)} · ${esc(mpFootprintFacts(d))}</p>` +
-        `<p class="muted mp-src"><span class="mp-key p1"></span> pin 1 &nbsp; <span class="mp-key court"></span> courtyard &nbsp; <span class="mp-key silk"></span> silkscreen. ` +
+      return set(`<div class="mp-tools" role="group" aria-label="Footprint view"><button type="button" class="btn sm" data-mp-zoom="in" aria-label="Zoom in">+</button> <button type="button" class="btn sm" data-mp-zoom="out" aria-label="Zoom out">−</button> <button type="button" class="btn sm" data-mp-zoom="fit">Fit</button> ` +
+        `<label><input type="checkbox" data-mp-layer="mask"> Mask opening</label> <label><input type="checkbox" data-mp-layer="paste"> Paste</label></div>` +
+        `<div class="mp-fig">${mpFootprintSVG(d)}</div><p class="mp-cap">${esc(d.name)} · ${esc(mpFootprintFacts(d))}</p>` +
+        `<p class="muted mp-src"><span class="mp-key p1"></span> pin 1 &nbsp; <span class="mp-key court"></span> courtyard &nbsp; <span class="mp-key silk"></span> silkscreen. Mask opening is the pad plus ${MP_MASK_EXP} mm each side and paste is the SMD pad: defaults, not the board's rules. ` +
         `${d.source === 'kicad_mod' ? 'Drawn from the KiCad footprint file of the part.' : 'Drawn from the footprint the build made for Altium.'}</p>${errs}`);
     }
     const info = await get('model');
@@ -199,3 +206,30 @@ function mpOpen(line, kind) {
   mpPaint(line, kind);
 }
 onAct('lib-preview', async (el, d) => { mpOpen(d.line, d.kind); });
+/* Zoom (buttons and the wheel) and the mask / paste layers of the footprint drawing: the viewBox is scaled about its centre. */
+function mpZoom(svg, f) {
+  const v = (svg.getAttribute('viewBox') || '').split(' ').map(Number);
+  if (v.length !== 4) return;
+  const cx = v[0] + v[2] / 2, cy = v[1] + v[3] / 2, w = v[2] * f, h = v[3] * f;
+  svg.setAttribute('viewBox', `${mpNum(cx - w / 2)} ${mpNum(cy - h / 2)} ${mpNum(w)} ${mpNum(h)}`);
+}
+document.addEventListener('click', e => {
+  const z = e.target.closest && e.target.closest('[data-mp-zoom]');
+  if (!z) return;
+  const svg = z.closest('dialog, .mp-body, body').querySelector('svg.mp-svg');
+  if (!svg) return;
+  if (z.dataset.mpZoom === 'fit') svg.setAttribute('viewBox', svg.dataset.vb);
+  else mpZoom(svg, z.dataset.mpZoom === 'in' ? 0.7 : 1 / 0.7);
+});
+document.addEventListener('change', e => {
+  const c = e.target.closest && e.target.closest('[data-mp-layer]');
+  if (!c) return;
+  const g = c.closest('dialog, .mp-body, body').querySelector('.fp-lyr-' + c.dataset.mpLayer);
+  if (g) g.hidden = !c.checked;
+});
+document.addEventListener('wheel', e => {
+  const svg = e.target.closest && e.target.closest('svg.mp-svg');
+  if (!svg || !svg.dataset.vb) return;
+  e.preventDefault();
+  mpZoom(svg, e.deltaY < 0 ? 0.85 : 1 / 0.85);
+}, {passive: false});
