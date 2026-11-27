@@ -279,3 +279,36 @@ def regions_to_keepout(src, dst, rects: list, add_tracks: list | None = None, te
         out["Tracks6/Data"] = rep["Tracks6/Data"]
         counts = {"Tracks6": counts["Tracks6"]}
     return olewrite.rewrite(src, dst, replace=out, header_counts=counts)
+
+
+# ------------------------------------------------------------------------------------------------------------ moving a component
+def move_components(src, dst, shifts: dict) -> pathlib.Path:
+    """Copy PcbDoc `src` to `dst` with components moved: `shifts` {component index: (dx_mm, dy_mm)}. Moves the component record (X, Y)
+    and its pads; tracks, text and bodies owned by it stay (enough for a distance canary)."""
+    streams = olewrite.read_all(src)
+    recs = split_records(streams["Components6/Data"])
+    d = P.PcbDoc(src)
+    cl = d.components()
+    d.close()
+    for idx, (dx, dy) in shifts.items():
+        c = cl[idx]
+        recs[idx] = patch_text(recs[idx], {"X": mil_text(c.x + dx), "Y": mil_text(c.y + dy)})
+    blob, out, i = streams["Pads6/Data"], bytearray(), 0
+    while i < len(blob):
+        if blob[i] != 2:
+            raise ValueError("unexpected record in Pads6")
+        j, starts = i + 1, []
+        for _ in range(6):
+            n = struct.unpack("<I", blob[j:j + 4])[0] & 0xFFFFFF
+            starts.append((j + 4, n))
+            j += 4 + n
+        g0, gn = starts[4]
+        comp = struct.unpack("<H", blob[g0 + 7:g0 + 9])[0]
+        rec = bytearray(blob[i:j])
+        if comp in shifts:
+            off = g0 - i
+            x, y = struct.unpack("<2i", bytes(rec[off + 13:off + 21]))
+            struct.pack_into("<2i", rec, off + 13, x + round(shifts[comp][0] / P.UNIT_MM), y + round(shifts[comp][1] / P.UNIT_MM))
+        out += rec
+        i = j
+    return olewrite.rewrite(src, dst, replace={"Components6/Data": b"".join(recs), "Pads6/Data": bytes(out)})

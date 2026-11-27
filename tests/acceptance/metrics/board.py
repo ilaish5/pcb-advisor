@@ -596,3 +596,217 @@ def w25a(ctx):
     return Result("pass" if not bad else "fail", measured=bad, expected="keep-out requirements without a clean keep-out object = 0",
                   detail=f"{len(bad)}/{len(reqs)} requirements; PcbDoc state {snap[1].parent.name}",
                   evidence=[ctx.ev(vf, "idea-versions"), ctx.ev(snap[1], "PcbDoc state")])
+
+
+# ======================================================================================================================== W23 / W24
+_CAP_VALUE = re.compile(r"^\s*[\d.]+\s*[pnuµμ]F\b", re.I)
+_SUPPLY_PIN = re.compile(r"^(?:V(?:DD|CC|IO|PP)\w*|AVDD\w*|DVDD\w*|VBAT|VCAP\w*|VIN|VOUT|VBUS)$", re.I)
+_CARD_ROLE = re.compile(r"card|micro\s*sd|\bsd\b|\btf\b", re.I)
+_FLAG = re.compile(r"^\s*([A-Z]+\d+) is ([\d.]+) mm from ([A-Z]+\d+) pin (\w+)", re.M)
+
+
+def _bom_lines(ctx):
+    b = json.loads((ctx.project / "bom.json").read_text(encoding="utf-8"))
+    return {ref: line for line in b for ref in line.get("refs") or []}
+
+
+def _netlist_parts(ctx):
+    parts = {}
+    for f in sorted((ctx.project / "netlist").glob("*.json")):
+        for p in json.loads(f.read_text(encoding="utf-8")).get("parts") or []:
+            parts[p["ref"]] = p
+    return parts
+
+
+def _decap_model(ctx, doc):
+    """({(ic, pin): {"name", "net", "d": nearest same-net cap distance mm or None, "cap"}}, {cap ref: {"net", "d", "pin": (ic, pin)}}).
+    Supply pins: pins of ICs and card connectors (netlist kind and BOM role) whose function name is a supply name. A decap is a
+    capacitor (BOM value in F) with one pad on ground and the other on the supply net; distances are pad centre to pad centre."""
+    bom, parts, gnd = _bom_lines(ctx), _netlist_parts(ctx), P.ground_nets(doc)
+    pads = [p for p in doc.pads() if p.ref]
+    by_ref: dict = {}
+    for p in pads:
+        by_ref.setdefault(p.ref, []).append(p)
+    caps = {}
+    for ref, ps in by_ref.items():
+        if len(ps) == 2 and _CAP_VALUE.match(str(bom.get(ref, {}).get("value") or "")):
+            hot = [p for p in ps if p.net and p.net not in gnd]
+            if len(hot) == 1 and any(p.net in gnd for p in ps):
+                caps[ref] = hot[0]
+    pins = {}
+    for ref, part in parts.items():
+        role = str(bom.get(ref, {}).get("role") or "")
+        if not (part.get("kind") == "ic" or (part.get("kind") == "conn" and _CARD_ROLE.search(role))):
+            continue
+        for q in part["pins"]:
+            if _SUPPLY_PIN.match(q["name"].split("/")[0].strip()):
+                mine = [p for p in by_ref.get(ref, []) if p.name == q["num"]]
+                if not mine or not mine[0].net or mine[0].net in gnd:
+                    continue
+                p = mine[0]
+                near = [(math.hypot(c.x - p.x, c.y - p.y), cref) for cref, c in caps.items() if c.net == p.net]
+                d, cref = min(near) if near else (None, None)
+                pins[(ref, q["num"])] = {"name": q["name"], "net": p.net, "d": d, "cap": cref, "x": p.x, "y": p.y}
+    capinfo = {}
+    for cref, c in caps.items():
+        near = [(math.hypot(c.x - v["x"], c.y - v["y"]), k) for k, v in pins.items() if v["net"] == c.net]
+        if near:
+            d, k = min(near)
+            capinfo[cref] = {"net": c.net, "d": d, "pin": k}
+    return pins, capinfo
+
+
+def _place_flags(ctx):
+    """Flag lines of the product's latest placement run in board-log.jsonl: [(ref, mm, ic, pin)]. Text of the product's own output
+    (the claim W23/W24 compare with the oracle); it is read, never trusted."""
+    f = ctx.project / "board-log.jsonl"
+    rows = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
+    places = [r for r in rows if r.get("op") == "place"]
+    if not places:
+        return [], f
+    last = max(places, key=lambda r: r["ts"])
+    return [(m[0], float(m[1]), m[2], m[3]) for w in last.get("warnings") or [] for m in _FLAG.findall(w)], f
+
+
+def _board_copy(ctx):
+    final = str(ctx.pcbdoc().relative_to(ctx.root)).replace("\\", "/")
+    nl = tuple(f"project/netlist/{p.name}" for p in (ctx.project / "netlist").glob("*.json"))
+    return ("project/bom.json", final) + nl
+
+
+def _flag_control(ctx, name, lines):
+    """Sparse root with the fixture PcbDoc, bom, netlist and a board-log whose latest place run also lists `lines`."""
+    c = CB.sparse_root(ctx, name, copy=_board_copy(ctx))
+    rows = [json.loads(l) for l in (ctx.project / "board-log.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    rows.append({"ts": "2999-01-01T00:00:00.000", "op": "place", "ok": True, "summary": {"placed": 0}, "warnings": list(lines)})
+    (c.project / "board-log.jsonl").write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return c
+
+
+def _moved_root(c, name, shifts):
+    """Sparse root like `c` (bom, netlist, board-log) whose PcbDoc has components moved by `shifts` {index: (dx, dy)}."""
+    bad = CB.sparse_root(c, name, copy=("project/bom.json", "project/board-log.jsonl")
+                         + tuple(f"project/netlist/{p.name}" for p in (c.project / "netlist").glob("*.json")))
+    CB.move_components(c.pcbdoc(), bad.altium / c.pcbdoc().name, shifts)
+    return bad
+
+
+def _decap_groups(pins):
+    """Supply pins grouped by (IC, net): a net at an IC is decoupled when a capacitor is within the limit of any of its pins.
+    {(ic, net): {"d": min distance or None, "pins": [num], "names": [...], "cap": nearest cap}}."""
+    g: dict = {}
+    for (ic, num), v in sorted(pins.items()):
+        e = g.setdefault((ic, v["net"]), {"d": None, "pins": [], "names": [], "cap": None})
+        e["pins"].append(num)
+        e["names"].append(v["name"])
+        if v["d"] is not None and (e["d"] is None or v["d"] < e["d"]):
+            e["d"], e["cap"] = v["d"], v["cap"]
+    return g
+
+
+def _w23_oracle(ctx, doc):
+    pins, _ = _decap_model(ctx, doc)
+    groups = _decap_groups(pins)
+    d_lim = _tv(TH.DECAP_FALLBACK_MM)
+    return {k: v for k, v in groups.items() if v["d"] is None or v["d"] > d_lim}, groups, pins
+
+
+def _w23_build(ctx):
+    with P.PcbDoc(ctx.pcbdoc()) as doc:
+        bad, _, _ = _w23_oracle(ctx, doc)
+    lines = [f"{v['cap'] or 'no cap'} is {v['d'] or 0:.1f} mm from {k[0]} pin {v['pins'][0]} ({v['names'][0]}); limit "
+             f"{_tv(TH.DECAP_FALLBACK_MM):g} mm" for k, v in sorted(bad.items())]
+    return _flag_control(ctx, "W23-control", lines)
+
+
+def _w23_inject(c):
+    """Canary: pick a random decoupled (IC, supply net) and move every same-net capacitor within the limit of any of its pins 30 mm
+    away; the net becomes an unflagged violation."""
+    with P.PcbDoc(c.pcbdoc()) as doc:
+        bad, groups, pins = _w23_oracle(c, doc)
+        key = c.rng.choice(sorted(k for k in groups if k not in bad))
+        mine = [v for k, v in pins.items() if k[0] == key[0] and v["net"] == key[1]]
+        bom = _bom_lines(c)
+        comps = {x.ref: x.index for x in doc.components()}
+        movers = {comps[p.ref]: (30.0, 30.0) for p in doc.pads()
+                  if p.ref and p.net == key[1] and _CAP_VALUE.match(str(bom.get(p.ref, {}).get("value") or ""))
+                  and any(math.hypot(p.x - v["x"], p.y - v["y"]) <= _tv(TH.DECAP_FALLBACK_MM) for v in mine)}
+    return _moved_root(c, "W23-canary", movers), f"{key[0]} "
+
+
+@metric(id="W23", title="Decoupling flags cover the oracle set: supply nets at an IC with no capacitor within the limit", root="R2",
+        level="L", p0=("P0-3",), control=_with_canary(_w23_build, _w23_inject, lambda c: w23(c)))
+def w23(ctx):
+    """Limit: DECAP_FALLBACK_MM (OD-1: no part datasheet value is available to the oracle, so the fallback applies, labelled general
+    knowledge). Grain: a supply net at an IC (a net with several supply pins is served by a capacitor within the limit of any of
+    them). Flagged = the (IC, pin) pairs named in the product's latest placement warnings, resolved to their net. A flag on a net
+    that is served is a false alarm, reported in the detail, not a failure."""
+    f = ctx.pcbdoc()
+    with P.PcbDoc(f) as doc:
+        bad, groups, pins = _w23_oracle(ctx, doc)
+    if not groups:
+        return Result("error", detail="no supply pin found", evidence=[ctx.ev(f, "PcbDoc")])
+    flags, lf = _place_flags(ctx)
+    flagged = {(ic, pins[(ic, pin)]["net"]) for _, _, ic, pin in flags if (ic, pin) in pins}
+    miss = sorted(set(bad) - flagged)
+    out = [f"{ic} {'/'.join(sorted(set(bad[(ic, net)]['names'])))} (pin {','.join(bad[(ic, net)]['pins'])}, {net}): nearest cap "
+           f"{('%.1f mm' % bad[(ic, net)]['d']) if bad[(ic, net)]['d'] is not None else 'none'}, not flagged" for ic, net in miss]
+    extra = sorted(flagged - set(bad))
+    return Result("pass" if not out else "fail", measured=out, expected="supply nets over the limit and not flagged = 0",
+                  detail=f"oracle {len(bad)} of {len(groups)} supply nets over the limit; flagged {len(flagged)}"
+                         + (f"; {len(extra)} flagged net(s) within the limit (false alarms, not counted)" if extra else ""),
+                  evidence=[ctx.ev(f, "Pads6"), ctx.ev(lf, "placement warnings"), ctx.ev(ctx.project / "bom.json", "BOM")])
+
+
+# ---- W24: cap-centric plus crystals
+def _w24_oracle(ctx, doc):
+    """Records (cap -> its nearest supply pin, crystal -> its MCU pins) whose distance is over the limit, [(ref, text)]."""
+    pins, caps = _decap_model(ctx, doc)
+    d_lim, x_lim = _tv(TH.DECAP_FALLBACK_MM), _tv(TH.XTAL_MAX_TRACK_MM)
+    out = [(cref, f"{cref} is {v['d']:.1f} mm from {v['pin'][0]} pin {v['pin'][1]}") for cref, v in sorted(caps.items()) if v["d"] > d_lim]
+    for g in _crystal_geometry(ctx, doc):
+        c = g["c"]
+        for net in sorted(g["own"]):
+            mcu = [p for p in doc.pads() if p.net == net and p.comp not in (None, c.index)]
+            mine = [p for p in g["pads"] if p.net == net]
+            if not mcu or not mine:
+                continue
+            ic = max(mcu, key=lambda p: sum(1 for q in doc.pads() if q.comp == p.comp))
+            d = min(math.hypot(ic.x - q.x, ic.y - q.y) for q in mine)
+            if d > x_lim:
+                out.append((c.ref, f"{c.ref} is {d:.1f} mm from {ic.ref} pin {ic.name}"))
+    return out
+
+
+def _w24_build(ctx):
+    with P.PcbDoc(ctx.pcbdoc()) as doc:
+        bad = _w24_oracle(ctx, doc)
+    return _flag_control(ctx, "W24-control", [f"{text}; limit {_tv(TH.DECAP_FALLBACK_MM):g} mm" for _, text in bad])
+
+
+def _w24_inject(c):
+    with P.PcbDoc(c.pcbdoc()) as doc:
+        _, caps = _decap_model(c, doc)
+        cref = c.rng.choice(sorted(k for k, v in caps.items() if v["d"] <= _tv(TH.DECAP_FALLBACK_MM)))
+        idx = {x.ref: x.index for x in doc.components()}[cref]
+    return _moved_root(c, "W24-canary", {idx: (30.0, 30.0)}), f"{cref} is "
+
+
+@metric(id="W24", title="Placement distances: every decap near its pin and every crystal near its MCU, or flagged", root="R3", level="L",
+        p0=("P0-1",), control=_with_canary(_w24_build, _w24_inject, lambda c: w24(c)))
+def w24(ctx):
+    """Records are derived from the placed board by rule (the product writes no typed constraint records on 27/11): each capacitor to
+    its nearest same-net supply pin (limit DECAP_FALLBACK_MM), each crystal pad to its MCU pin (limit XTAL_MAX_TRACK_MM). A record over
+    its limit must be named in the product's latest placement warnings, otherwise it is unflagged."""
+    f = ctx.pcbdoc()
+    with P.PcbDoc(f) as doc:
+        over = _w24_oracle(ctx, doc)
+        _, caps = _decap_model(ctx, doc)
+    if not caps:
+        return Result("error", detail="no decoupling capacitor found", evidence=[ctx.ev(f, "PcbDoc")])
+    flags, lf = _place_flags(ctx)
+    flagged = {ref for ref, *_ in flags}
+    out = [f"{text}, not flagged" for ref, text in over if ref not in flagged]
+    return Result("pass" if not out else "fail", measured=out, expected="records over the limit and not flagged = 0",
+                  detail=f"{len(over)} records over the limit, {len(out)} unflagged",
+                  evidence=[ctx.ev(f, "Pads6"), ctx.ev(lf, "placement warnings")])
