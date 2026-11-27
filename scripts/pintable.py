@@ -696,6 +696,7 @@ def _evaluate(col, pins, pads):
                     out["absent"].append(f"pin {num} {name}: no pin of the table, and neither the table nor the footprint shows an exposed pad")
                 elif _ep_ok(name, ep_rows, ep_lines):
                     out["notes"].append(f"pin {num} {name}: taken for the exposed pad of the datasheet")
+                    matched.add(num)          # the datasheet confirms this pin as the exposed pad: it was compared, with its note as the row
                 elif not ep_rows and not ep_lines:
                     out["absent"].append(f"pin {num} {name}: exposed pad: the datasheet's table does not say its net")
                 else:

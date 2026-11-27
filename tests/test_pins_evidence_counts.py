@@ -43,6 +43,26 @@ def test_a_no_connect_pin_with_no_table_row_is_not_counted_as_compared(empty):
     assert _line(empty)["pins_status"] != "verified"
 
 
+def test_an_exposed_pad_the_datasheet_confirms_counts_as_compared():
+    import pintable
+    rows = [("1", "VIN", "Input voltage"), ("2", "GND", "Ground"), ("3", "EN", "Enable input"), ("4", "FB", "Feedback"),
+            ("5", "SW", "Switch node"), ("6", "VOUT", "Output")]
+    text = "Pin Functions\nPIN NO. NAME DESCRIPTION\n" + "\n".join(f"{n} {nm} {d}" for n, nm, d in rows) + "\nThe exposed pad (EP) must be connected to GND.\n"
+    for pins in ([(n, nm) for n, nm, _ in rows] + [("7", "GND")], [(n, nm) for n, nm, _ in rows] + [("EP", "GND")]):
+        r = pintable.check([text, text], pins, "DFN-6-EP", None)
+        assert r["verify"] == "pass" and r["compared"] == len(pins)
+
+
+def test_the_unreachable_case_does_not_tell_the_student_to_check_again(empty):
+    rec = {"doc": "ABCD1234.pdf", "page": 1, "pins_compared": 2, "symbol_pins": 3, "sha256": "x"}
+    _u1(empty, [{"num": "1", "name": "VCC", "net": "+3V3"}])
+    _datasheet(empty, ["1 VCC Supply"])
+    import sources
+    rec["sha256"] = sources.file_sha256(store._datasheet_file(empty, "ABCD1234.pdf"))
+    got, why = store.pins_evidence(empty, {}, {"pins_evidence": rec})
+    assert got is None and "again will not change" in why and "accept" in why
+
+
 def test_no_compared_row_on_any_page_means_no_record_not_page_one(empty):
     _u1(empty, [{"num": "1", "name": "VCC", "net": "+3V3"}])
     _datasheet(empty, ["1 VCC Supply"])

@@ -43,6 +43,24 @@ def test_an_empty_project_has_seven_neutral_stages_and_one_primary(empty):
     assert m["rev"] and m["board_check"] is None and m["stage_sheets"] == {"plan": 0, "altium": 0, "total": 0}
 
 
+def test_a_confirmed_idea_is_not_clean_with_an_open_assumption_or_a_change_after_confirming():
+    base = {"confirmed": True, "agreed": [{"topic": "A", "text": "x", "status": "confirmed"}]}
+    assert stages.idea_stage({"idea": base})["state"] == "clean"
+    open_ = {"confirmed": True, "agreed": [{"topic": "A", "text": "assuming 3V3", "status": "proposed", "assumed": True}]}
+    s = stages.idea_stage({"idea": open_})
+    assert s["state"] == "in_progress" and "assumption" in s["reason"]
+    done = {"confirmed": True, "agreed": [{"topic": "A", "text": "assuming 3V3", "status": "confirmed", "assumed": True}]}
+    assert stages.idea_stage({"idea": done})["state"] == "clean"
+    changed = stages.idea_stage({"idea": dict(base, changed_since_confirm=True)})
+    assert changed["state"] == "in_progress" and "changed" in changed["reason"]
+
+
+def test_the_assume_word_family_marks_an_item_assumed():
+    for text in ("We assume a 3V3 rail", "assuming USB power", "an assumption: indoor", "[assumed] 20 mm", "(assumed) 5 V", "Assumes 2 layers"):
+        assert store.is_assumed({"text": text}), text
+    assert not store.is_assumed({"text": "Runs from a Li-ion cell"})
+
+
 def test_layout_has_a_state_and_never_clean_beside_violations(empty, pcb):
     assert by_id(empty)[0]["pcb"]["state"] == "not_started"
     board_results.record(empty, "place", {"placed": ["R1"]})

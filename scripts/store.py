@@ -2222,7 +2222,7 @@ def restore_idea_version(project, n):
     return load_idea_working(project)
 
 
-_ASSUMED_RX = re.compile(r"\(\s*assumed\s*\)|\[\s*assumed\s*\]|\bassum(?:ed|ing|es|ption|ptions)\b", re.I)
+_ASSUMED_RX = re.compile(r"\(\s*assumed\s*\)|\[\s*assumed\s*\]|\bassum(?:e[sd]?|ing|ption|ptions)\b", re.I)
 
 
 def is_assumed(item):
@@ -3546,7 +3546,11 @@ def pins_evidence(project, line, entry):
         return None, f"{rec.get('doc')} changed since the pins were checked against it: verify them again"
     n, sym = rec.get("pins_compared"), rec.get("symbol_pins")
     if not isinstance(rec.get("page"), int) or not isinstance(n, int) or n != sym or n < 1:
-        return None, f"only {n} of {sym} pins were compared with the datasheet: verify them again" if isinstance(n, int) and isinstance(sym, int)             else "the evidence record is incomplete: verify the pins again"
+        if isinstance(n, int) and isinstance(sym, int) and n < sym:
+            # checking again cannot change this: the other pins have no row in the datasheet's table (no-connect, not listed); the student decides
+            return None, (f"{n} of {sym} pins matched a row of the datasheet's pin table; the other {sym - n} have no row to compare with "
+                          "(a no-connect or unlisted pin), so checking again will not change it: look at them and accept the part, or fix the symbol")
+        return None, "the evidence record is incomplete: press Re-check datasheets to write it again"
     return rec, ""
 
 

@@ -43,6 +43,12 @@ def _go(sid, label=None):
 def idea_stage(model):
     idea = model.get("idea") or {}
     if idea.get("confirmed"):
+        # R2/W5: confirmed is not clean while an assumption of the agent is still open, or an item changed after the confirmation
+        open_assumed = [i for i in idea.get("agreed") or [] if store.is_assumed(i) and i.get("status") != "confirmed"]
+        if open_assumed or idea.get("changed_since_confirm"):
+            why = (f"{len(open_assumed)} assumption{'s' if len(open_assumed) != 1 else ''} not confirmed by you yet" if open_assumed
+                   else "An item changed after you confirmed the idea")
+            return _stage("idea", "in_progress", why, open_=len(open_assumed) or 1, next_={"label": "Confirm the idea", "act": "go:idea"})
         return _stage("idea", "clean", "Confirmed", next_=_go("bom", "Next: BOM"))
     draft = (model.get("idea_draft") or {}).get("active")
     has = bool(draft or idea.get("items") or idea.get("goal") or idea.get("description") or idea.get("requirements"))
