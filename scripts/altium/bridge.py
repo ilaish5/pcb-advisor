@@ -368,17 +368,63 @@ def take_preflight_notes(project=""):
     return mine
 
 
-def release_executor():
-    """Stop a script that Altium left paused after a runtime error (every later script would silently do nothing).
-    Closes the dialogs first (and notes what they said), also the script error window, so that a retry can start.
-    Returns the dialog texts."""
-    seen = _close_dialogs()
+def _editscript(command):
+    """Send one -REditScript:<command> to the running Altium (the script editor's own commands: RunMacro = F9, Stop = Ctrl+F3)."""
     try:
-        subprocess.Popen(f'"{_exe()}" -REditScript:Stop')
+        subprocess.Popen(f'"{_exe()}" -REditScript:{command}')
     except OSError:
         pass
-    time.sleep(2)
-    seen += _close_dialogs()            # the error window can appear only once the executor is stopped
+
+
+def _wait_end(seconds):
+    """True when our script's end.flag shows up within the seconds (a resumed run that ran to its end)."""
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        if (EXCHANGE / "end.flag").exists():
+            return True
+        time.sleep(0.5)
+    return (EXCHANGE / "end.flag").exists()
+
+
+RESUME_WAIT = 6        # seconds a resumed run gets to reach its end.flag
+
+
+def release_executor(pause_context=False, final=True):
+    """Free Altium of a script it left paused after a runtime error (every later script would silently do nothing). Altium's debugger
+    pauses at an exception even inside try/except; what resumes it from outside is F9's own command, -REditScript:RunMacro
+    (seen live, Altium 26.8; there is no EditScript:Run). The order:
+      (a) press OK on the OK-only boxes (never on a box that asks something);
+      (b) only with evidence of a pause (pause_context: our RunScript raised an OK-only error box without starting, or our run
+          started and stopped logging, AND an OK-only error box is open, and no question box): send RunMacro and wait for our
+          end.flag. RunMacro with nothing paused would run the ACTIVE script document and raise a new error box, so it is never
+          sent without that evidence;
+      (c) press OK on the boxes the resumed script left;
+      (d) when our run still has not ended after (b) and it started, repeat (b) once: at most TWO RunMacro per call;
+      Stop only as the last resort: when nothing was resumed (no RunMacro sent) or `final` and the run still has not ended.
+    Every step goes to the run log. Returns the dialog texts."""
+    boxes = _dialog_boxes()
+    ok_open = any(b["cls"] == "TMessageForm" and b["ok_only"] for b in boxes)
+    asking = any(b["cls"] == "TMessageForm" and not b["ok_only"] for b in boxes)
+    seen = _close_dialogs()                                                         # (a)
+    runlog.event("altium-release", step="ok-boxes", boxes=seen, evidence=bool(pause_context and ok_open and not asking))
+    macros, resumed = 0, False
+    if pause_context and ok_open and not asking:
+        started = (EXCHANGE / "start.flag").exists() and not (EXCHANGE / "end.flag").exists()
+        limit = 2 if started else 1
+        while macros < limit:
+            macros += 1
+            _editscript("RunMacro")                                                 # (b)
+            resumed = _wait_end(RESUME_WAIT)
+            after = _close_dialogs()                                                # (c)
+            seen += after
+            runlog.event("altium-release", step="runmacro", n=macros, run_ended=resumed, boxes=after)
+            if resumed or not started:                                              # (d) only a run of ours that has not ended is tried again
+                break
+    if not resumed and (macros == 0 or final):
+        _editscript("Stop")                                                         # the last resort
+        time.sleep(2)
+        seen += _close_dialogs()            # the error window can appear only once the executor is stopped
+        runlog.event("altium-release", step="stop", macros=macros)
     return seen
 
 
@@ -496,7 +542,7 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                 if released:
                     _note_release(released)         # the run that was paused is gone: this script started
                 break
-            shown = release_executor()          # a paused executor ignores new scripts: release it and try once more
+            shown = release_executor(pause_context=True, final=(attempt == 2))     # a paused executor ignores new scripts: release it and try once more
             if attempt == 2:
                 if any(s.startswith("[TMessageForm]") for s in shown):
                     # Altium's own message box: its text is a TLabel (not a window), so it cannot be read. On a cold start the
@@ -519,7 +565,9 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                 t_look = time.time()
                 boxed = any(d.startswith("[TMessageForm]") for d in _close_dialogs(only_look=True))
             if boxed or time.time() - t_log > stall_timeout or time.time() - t0 > total_timeout:
-                shown = release_executor()
+                shown = release_executor(pause_context=True)
+                if (EXCHANGE / "end.flag").exists():
+                    break                                   # resumed with RunMacro and ran to its end: read its answer as usual
                 log = _read(EXCHANGE / "log.txt")           # the script is stopped now: safe to read
                 raise BridgeError("Altium stopped in the middle of the script, after: "
                                   f"{log[-1] if log else 'nothing'}. I released the script executor."

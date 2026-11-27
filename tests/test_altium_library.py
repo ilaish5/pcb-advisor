@@ -326,7 +326,7 @@ def test_a_script_that_stops_logging_is_released_and_its_dialogs_are_reported(mo
     monkeypatch.setattr(bridge, "_running", lambda: True)
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: (tmp_path / "start.flag").write_text("x"))
     monkeypatch.setattr(bridge.time, "sleep", lambda s: None)
-    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: Cannot create file"])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Error: Cannot create file"])
     with pytest.raises(bridge.BridgeError, match="stopped in the middle.*Cannot create file"):
         bridge.run_commands([("PING",)], stall_timeout=-1)
 
@@ -338,7 +338,7 @@ def test_a_blocking_altium_message_box_tells_the_student_what_to_do(monkeypatch,
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
     monkeypatch.setattr(bridge.time, "sleep", lambda s: None)
     monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 100)).__next__)
-    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Information: OK"])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Information: OK"])
     with pytest.raises(bridge.BridgeError, match=r"sign in.*close any message box.*try again.*\[TMessageForm\] Information: OK"):
         bridge.run_commands([("PING",)])
 
@@ -479,7 +479,7 @@ def test_an_altium_error_box_ends_the_wait_without_the_stall_timeout(monkeypatch
     looks = []
     monkeypatch.setattr(bridge, "_close_dialogs", lambda only_look=False: looks.append(only_look) or ["[TMessageForm] Error: OK"])
     monkeypatch.setattr(bridge, "preflight", lambda strict=False: None)          # this test counts the wait loop's own looks
-    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Error: OK"])
     with pytest.raises(bridge.BridgeError, match="stopped in the middle"):
         bridge.run_commands([("PING",)], stall_timeout=180, total_timeout=900)
     assert looks == [True] and clock[0] < 60          # found by looking, long before the 180 s stall timeout
@@ -509,7 +509,7 @@ def test_a_paused_script_is_stopped_before_the_next_command_is_sent(monkeypatch,
     states = iter([{"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": ["AdvisorBridge.pas [Paused] - Altium"]},
                    {"boxes": [], "foreign": [], "windows": []}])
     monkeypatch.setattr(bridge, "_script_state", lambda: next(states))
-    monkeypatch.setattr(bridge, "release_executor", lambda: order.append("Stop") or ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: order.append("Stop") or ["[TMessageForm] Error: OK"])
     monkeypatch.setattr(bridge.subprocess, "Popen", _finishing_script(tmp_path, order))
     events = []
     monkeypatch.setattr(bridge.runlog, "event", lambda kind, **f: events.append((kind, f)))
@@ -526,7 +526,7 @@ def test_a_clean_altium_is_not_touched_by_the_preflight(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
     order = []
     monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "foreign": [], "windows": []})
-    monkeypatch.setattr(bridge, "release_executor", lambda: order.append("Stop") or [])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: order.append("Stop") or [])
     monkeypatch.setattr(bridge.subprocess, "Popen", _finishing_script(tmp_path, order))
     bridge.run_commands([("PING",)])
     assert order == ["RunScript"] and bridge.take_preflight_notes() == []
@@ -537,7 +537,7 @@ def test_a_gone_box_is_not_a_clean_altium_when_the_script_still_does_not_start(m
     _bridge_files(monkeypatch, tmp_path)
     states = iter([{"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": []}] + [{"boxes": [], "foreign": [], "windows": []}] * 9)
     monkeypatch.setattr(bridge, "_script_state", lambda: next(states))
-    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Error: OK"])
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)          # RunScript never creates start.flag
     monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 50)).__next__)
     with pytest.raises(bridge.BridgeError) as err:
@@ -551,7 +551,7 @@ def test_a_gone_box_is_not_a_clean_altium_when_the_script_still_does_not_start(m
 def test_the_student_line_says_the_next_step_started_only_after_start_flag(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
     monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": []})
-    monkeypatch.setattr(bridge, "release_executor", lambda: [])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: [])
     seen = []
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: (seen.append(bridge.take_preflight_notes()),
                                                                        _finishing_script(tmp_path, [])())[0])
@@ -563,7 +563,7 @@ def test_the_student_line_says_the_next_step_started_only_after_start_flag(monke
 def test_the_preflight_also_runs_after_an_error(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
-    monkeypatch.setattr(bridge, "release_executor", lambda: [])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: [])
     calls = []
     monkeypatch.setattr(bridge, "preflight", lambda strict=False: calls.append("pre"))
     monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 100)).__next__)
@@ -581,7 +581,7 @@ def test_a_window_title_alone_never_triggers_the_preflight(monkeypatch, tmp_path
     """Seen live: the script editor is a tab of the main window, so a title is only extra logging, never the trigger."""
     monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
     monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "foreign": [], "windows": ["AdvisorBridge.pas [Paused]"]})
-    monkeypatch.setattr(bridge, "release_executor", lambda: pytest.fail("nothing is open that blocks a script"))
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: pytest.fail("nothing is open that blocks a script"))
     assert bridge.preflight() is None and bridge.take_preflight_notes() == []
 
 
@@ -620,7 +620,7 @@ def test_an_ok_only_script_error_box_is_released_and_a_question_box_left_alone(m
 def test_the_preflight_releases_an_ok_only_box_and_ignores_the_ok_rule_for_nothing_else(monkeypatch):
     monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
     monkeypatch.setattr(bridge, "_dialog_boxes", lambda: _boxes(("TMessageForm", "Error", ["OK"])))
-    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Error: OK"])
     assert bridge.preflight(strict=True)["found"] == ["[TMessageForm] Error: OK"]
 
 
@@ -642,3 +642,87 @@ def test_the_altium_script_checks_before_it_reads_and_states_the_try_except_rule
         assert guard in pas
     docs = (pathlib.Path(bridge.__file__).parent.parent.parent / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
     assert "Never rely on try/except for a call that may fail" in docs
+
+
+class Release:
+    """Altium for the release tests: the boxes, a clock that sleep advances, every command line sent to X2.EXE and every key pressed."""
+
+    def __init__(self, monkeypatch, tmp_path, boxes=(("TMessageForm", "Error", ["OK"]),)):
+        self.cmds, self.pressed, self.events, self.clock = [], [], [], [0.0]
+        self.boxes = list(boxes)
+        self.on_macro = None
+        monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
+        self.dir = tmp_path
+        monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
+        monkeypatch.setattr(bridge, "_running", lambda: True)
+        monkeypatch.setattr(bridge, "preflight", lambda strict=False: None)
+        monkeypatch.setattr(bridge, "_dialog_boxes", lambda: _boxes(*self.boxes))
+        monkeypatch.setattr(bridge, "_post_enter", lambda h: self.pressed.append(("enter", self.boxes[h - 1][1])))
+        monkeypatch.setattr(bridge, "_post_close", lambda h: self.pressed.append(("close", self.boxes[h - 1][1])))
+        monkeypatch.setattr(bridge.subprocess, "Popen", self.popen)
+        monkeypatch.setattr(bridge.time, "time", lambda: self.clock[0])
+        monkeypatch.setattr(bridge.time, "sleep", lambda s: self.clock.__setitem__(0, self.clock[0] + s))
+        monkeypatch.setattr(bridge.runlog, "event", lambda kind, **f: self.events.append((kind, f)))
+        self.start_script = None
+
+    def popen(self, line, *a, **k):
+        line = str(line)
+        name = "RunMacro" if "RunMacro" in line else "Stop" if "Stop" in line else "RunScript"
+        self.cmds.append(name)
+        if name == "RunScript" and self.start_script:
+            self.start_script()
+        if name == "RunMacro" and self.on_macro:
+            self.on_macro()
+
+    def flags(self, start=True, end=False):
+        if start:
+            (self.dir / "start.flag").write_text("x")
+            (self.dir / "log.txt").write_text("> PING\n")
+        if end:
+            (self.dir / "end.flag").write_text("x")
+            (self.dir / "response.txt").write_text("START\nOK 0\nDONE\n")
+
+    def steps(self):
+        return [f["step"] for k, f in self.events if k == "altium-release"]
+
+
+def test_a_script_that_never_starts_gets_one_runmacro_per_release_and_stop_only_at_the_end(monkeypatch, tmp_path):
+    env = Release(monkeypatch, tmp_path)
+    with pytest.raises(bridge.BridgeError, match=r"^\*\*Altium cannot run scripts right now\*\*"):
+        bridge.run_commands([("PING",)], start_timeout=2)
+    assert env.cmds == ["RunScript", "RunMacro", "RunScript", "RunMacro", "Stop"]       # two RunMacro in all, Stop last
+    assert ("enter", "Error") in env.pressed and all(k != "enter" or t == "Error" for k, t in env.pressed)
+    assert env.steps().count("runmacro") == 2 and env.steps()[-1] == "stop"             # every step is in the run log
+
+
+def test_a_paused_run_of_ours_is_resumed_with_runmacro_and_its_answer_is_used(monkeypatch, tmp_path):
+    env = Release(monkeypatch, tmp_path)
+    env.start_script = env.flags                              # the script starts, then stops logging (paused at its error)
+    env.on_macro = lambda: env.flags(start=False, end=True)   # F9: it runs to its end
+    assert bridge.run_commands([("PING",)], stall_timeout=1) == ["> PING"]
+    assert env.cmds == ["RunScript", "RunMacro"]              # no Stop: it was resumed, not killed
+    runs = [f for k, f in env.events if k == "altium-release" and f["step"] == "runmacro"]
+    assert len(runs) == 1 and runs[0]["run_ended"] is True
+
+
+def test_a_run_that_stays_paused_gets_at_most_two_runmacro_and_then_stop(monkeypatch, tmp_path):
+    env = Release(monkeypatch, tmp_path)
+    env.start_script = env.flags
+    with pytest.raises(bridge.BridgeError, match="stopped in the middle"):
+        bridge.run_commands([("PING",)], stall_timeout=1)
+    assert env.cmds == ["RunScript", "RunMacro", "RunMacro", "Stop"]
+
+
+def test_runmacro_is_never_sent_without_evidence_of_a_pause(monkeypatch, tmp_path):
+    env = Release(monkeypatch, tmp_path, boxes=())                                     # nothing open: a slow script, not a paused one
+    bridge.release_executor(pause_context=True)
+    assert env.cmds == ["Stop"]
+    env = Release(monkeypatch, tmp_path)                                               # the pre-flight (no pause context): OK pressed only
+    bridge.release_executor()
+    assert {t for _, t in env.pressed} == {"Error"} and "RunMacro" not in env.cmds          # only the OK-only box is ever pressed
+
+
+def test_a_box_that_asks_a_question_is_never_pressed_and_blocks_runmacro(monkeypatch, tmp_path):
+    env = Release(monkeypatch, tmp_path, boxes=(("TMessageForm", "Error", ["OK"]), ("TMessageForm", "Confirm", ["&Yes", "&No", "Cancel"])))
+    bridge.release_executor(pause_context=True)
+    assert {t for _, t in env.pressed} == {"Error"} and "RunMacro" not in env.cmds          # only the OK-only box is ever pressed
