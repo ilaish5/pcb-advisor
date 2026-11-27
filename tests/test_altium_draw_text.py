@@ -383,7 +383,7 @@ def test_the_evidence_switches_give_two_notes_not_eight_warnings():
     sw = [w for w in p["warnings"] if w.startswith(("SW1", "SW2"))]
     assert not [w for w in sw if "is called" in w]                # no "1 in the netlist and A in the library" noise
     assert not [w for w in sw if "left unconnected" in w]
-    assert len([w for w in sw if "marked No ERC" in w]) == 4 and len([w for w in sw if "one terminal" in w]) == 2
+    assert len([w for w in sw if "marked No ERC" in w]) == 4 and len([w for w in sw if "drawing only" in w]) == 2 and not [w for w in sw if "are one terminal" in w]
     assert sorted(x for x in p["no_erc"] if x.startswith("SW")) == ["SW1-3", "SW1-4", "SW2-3", "SW2-4"]
 
 

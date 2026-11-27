@@ -90,6 +90,15 @@ def symbol_graphics(text, pins):
     return body, joined
 
 
+def stacked_pins(pins):
+    """[[pin number, ...]] groups of 2 or more pins of one symbol part that sit at one location: Altium connects those by itself, so
+    they are one terminal on evidence (the only 'one terminal' a draw may claim)."""
+    at = {}
+    for p in pins:
+        at.setdefault((p.get("part_id"), p["x"], p["y"]), []).append(str(p["number"]))
+    return [sorted(v) for v in at.values() if len(v) > 1]
+
+
 def read_schlib(path):
     """{"file", "symbols": [{name, description, designator, comment, params, pins, footprints, pinned_paths}]}"""
     p = pathlib.Path(path)
@@ -116,7 +125,7 @@ def read_schlib(path):
             body, joined = symbol_graphics([r for _, r in text], pins)
             symbols.append({
                 "name": comp.get("LIBREFERENCE", entry[0]),
-                "body": body, "joined": joined,
+                "body": body, "joined": joined, "stacked": stacked_pins(pins),
                 "description": comp.get("COMPONENTDESCRIPTION", ""),
                 "designator": des,
                 "comment": params.get("Comment", ""),

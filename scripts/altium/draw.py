@@ -135,8 +135,8 @@ def pin_nets(part, symbol):
             if len(nets) == 1 and next(iter(nets)) and not is_nc(next(iter(nets))):
                 # the symbol itself joins this pad to a listed one (internally paired pads): same net, like the real part
                 out.append((lp, next(iter(nets))))
-                warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is joined to pin {mates[0]} inside the symbol (one terminal); "
-                            f"drawn on the same net {next(iter(nets))}")
+                warn.append(f"{ref}: library pin {num} ({lp.get('name')}) is joined to pin {mates[0]} by a line in the symbol drawing (drawing only: "
+                            f"not checked, no compile or datasheet read-back); drawn on the same net {next(iter(nets))}, confirm with the datasheet")
             elif num in joined or (twice and _may_duplicate(lp, listed, named)):
                 why = (f"the symbol joins it with pin {', '.join(m for m in joined[num] if m != num)}" if num in joined
                        else "the symbol has twice the pins of the netlist, so it is probably a duplicate pad of the same terminal")
@@ -169,10 +169,18 @@ def pin_nets(part, symbol):
                 warn.append(f"{ref}: hidden pin {num} ({lp.get('name')}) connects to net {lp.get('name')} by itself, the netlist says {net}")
             continue
         out.append((lp, net))
-    for g in symbol.get("joined") or []:        # joined inside the symbol but on different nets in the netlist: say so
+    # R2/W21: "one terminal" is claimed only from evidence: pins the symbol stacks at one location (Altium joins those by itself).
+    # A line drawn between two pin bases is a drawing, not evidence (a zener's or a TVS's graphic is a line too): it is reported as
+    # unchecked and never in the words of a claim.
+    for g in symbol.get("stacked") or []:
         nets = sorted({str(by_num[m].get("net") or "").strip() for m in g if m in by_num} - {""})
         if len(nets) > 1:
-            warn.append(f"{ref}: pins {' and '.join(g)} are one terminal in library symbol {symbol['name']} (a line joins them) but the "
+            warn.append(f"{ref}: pins {' and '.join(g)} are one terminal in library symbol {symbol['name']} (they sit at one location) but "
+                        f"the netlist puts them on different nets ({', '.join(nets)}): check the pin map against the datasheet")
+    for g in symbol.get("joined") or []:
+        nets = sorted({str(by_num[m].get("net") or "").strip() for m in g if m in by_num} - {""})
+        if len(nets) > 1:
+            warn.append(f"{ref}: a line in library symbol {symbol['name']} joins pins {' and '.join(g)} (drawing only: not checked) and the "
                         f"netlist puts them on different nets ({', '.join(nets)}): check the pin map against the datasheet")
     return out, warn, errors
 
