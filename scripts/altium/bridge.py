@@ -235,8 +235,77 @@ def _close_dialogs(only_look=False):
         return []
 
 
+PAUSED_HINT = ("If a script is paused in Altium's script editor (a breakpoint after an error), press Run (F9) there to let it "
+               "finish, then close Altium.")
+_SCRIPT_TITLE = re.compile(r"AdvisorBridge|\.PrjScr|\.pas\b", re.I)
+_PAUSED_WORDS = re.compile(r"paus|debug|breakpoint|stopped at", re.I)
+PREFLIGHT_NOTES = []    # one line per paused run released before a command; the server shows them (take_preflight_notes)
 MODAL_AFTER = 15        # seconds without a log line after which the wait looks for an open Altium error box
 DIALOG_LOG = []         # every dialog closed this session, "[class] title: text"
+
+
+def _script_state():
+    """Look (close nothing, send nothing) for a script of ours that Altium left paused: an open script error box
+    (TMessageForm) owned by X2.EXE, or a top-level X2 window whose title shows the script document in a paused or debug state.
+    Returns {"boxes": [...], "windows": [...]}; both empty when Altium is not running or this is not Windows."""
+    out = {"boxes": [], "windows": []}
+    try:
+        import ctypes
+        from ctypes import wintypes
+        out["boxes"] = [d for d in _close_dialogs(only_look=True) if d.startswith("[TMessageForm]")]
+        tl = subprocess.run(["tasklist", "/FI", "IMAGENAME eq X2.EXE", "/FO", "CSV", "/NH"], capture_output=True,
+                            text=True, timeout=15).stdout
+        pids = {int(m) for m in re.findall(r'"X2\.EXE","(\d+)"', tl, re.I)}
+        user32 = ctypes.windll.user32
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def each(hwnd, _):
+            if user32.IsWindowVisible(hwnd):
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value in pids:
+                    buf = ctypes.create_unicode_buffer(512)
+                    user32.GetWindowTextW(hwnd, buf, 512)
+                    t = buf.value.strip()
+                    if _SCRIPT_TITLE.search(t) and _PAUSED_WORDS.search(t):
+                        out["windows"].append(t)
+            return True
+        user32.EnumWindows(each, 0)
+    except Exception:
+        pass
+    return out
+
+
+def preflight():
+    """Before a command is sent (and after an error): a script left paused in Altium makes every later RunScript raise an empty
+    error box and never start. When there is evidence of one (see _script_state), stop it (release_executor: close the boxes,
+    -REditScript:Stop) BEFORE sending, look again, log it in the run log and keep one line for the student. Nothing in the
+    owner's open documents is touched: no keystroke, no close of a document. Returns the record, or None when all is clean."""
+    try:
+        state = _script_state()
+        if not (state["boxes"] or state["windows"]):
+            return None
+        shown = release_executor()
+        left = _script_state()
+        rec = {"found": state["boxes"] + state["windows"], "released": shown, "still_paused": bool(left["boxes"] or left["windows"])}
+        project = getattr(runlog.ctx, "project", "") or ""
+        runlog.event("altium-preflight", project=project, **rec)
+        if project:
+            _log(project, "preflight", **rec)
+        note = ("**A script was paused in Altium** - I stopped it so the next step can run. "
+                + ("It is still showing: " + PAUSED_HINT if rec["still_paused"] else "Altium is clean now.")
+                + " Details: " + " | ".join(rec["found"])[:400])
+        PREFLIGHT_NOTES.append(note)
+        return rec
+    except Exception:
+        return None
+
+
+def take_preflight_notes():
+    """The lines preflight() kept since the last call (the server puts them under the step's result), and forgets them."""
+    out = PREFLIGHT_NOTES[:]
+    del PREFLIGHT_NOTES[:]
+    return out
 
 
 def release_executor():
@@ -327,6 +396,8 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
     try:
         log = _run_commands(commands, start_timeout, stall_timeout, total_timeout)
     except BaseException as exc:
+        if isinstance(exc, BridgeError) and _running():
+            preflight()                # leave Altium clean for the next command, not only for the one after a timeout
         runlog.event("altium", commands=names, args=_cmd_args(commands), project=project, seconds=round(time.time() - t0, 1), ok=False,
                      error=f"{type(exc).__name__}: {exc}", dialogs=DIALOG_LOG[-10:])
         raise
@@ -349,6 +420,8 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
         body = "\r\n".join("\t".join(_ascii(f) for f in c) for c in commands) + "\r\n"
         (EXCHANGE / "request.txt").write_bytes(body.encode("ascii"))     # bytes: text mode would double the CR on Windows
         cold = not _running()          # Altium has to start first: that takes a while
+        if not cold:
+            preflight()                # a run left paused by an earlier error would swallow this one
         for attempt in (1, 2):
             subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
             t0 = time.time()
@@ -370,7 +443,7 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                                       "open, and then try again. Dialog: " + " | ".join(shown))
                 raise BridgeError("Altium did not start the script (a script error or a dialog box was blocking it"
                                   + (f": {' | '.join(shown)}" if shown else "") + "). "
-                                  "I released the script executor and closed dialogs; try again.")
+                                  "I released the script executor and closed dialogs; try again. " + PAUSED_HINT)
         t_log, last, t0 = time.time(), _stat(EXCHANGE / "log.txt"), time.time()
         t_look = t_log
         while not (EXCHANGE / "end.flag").exists():
@@ -3526,7 +3599,7 @@ def build_library(project, fetch=True):
     if not installed:
         issues.append("Altium does not list the IntLib as installed.")
     caps_notice = _capabilities_notice(project)
-    notices = ([caps_notice] if caps_notice else []) + [f"Another installed library had the same name and was removed from Altium's installed list: "
+    notices = take_preflight_notes() + ([caps_notice] if caps_notice else []) + [f"Another installed library had the same name and was removed from Altium's installed list: "
                f"{ln[len(SAME_NAME):].strip()} (Altium matches libraries by file name)."
                for ln in log if ln.startswith(SAME_NAME)]
     # the installed list is not what the schematic ECO reads: the IntLib must be a library of the Altium project itself

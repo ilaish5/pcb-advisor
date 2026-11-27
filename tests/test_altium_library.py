@@ -478,7 +478,81 @@ def test_an_altium_error_box_ends_the_wait_without_the_stall_timeout(monkeypatch
     monkeypatch.setattr(bridge.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + 5))
     looks = []
     monkeypatch.setattr(bridge, "_close_dialogs", lambda only_look=False: looks.append(only_look) or ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge, "preflight", lambda: None)          # this test counts the wait loop's own looks
     monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
     with pytest.raises(bridge.BridgeError, match="stopped in the middle"):
         bridge.run_commands([("PING",)], stall_timeout=180, total_timeout=900)
     assert looks == [True] and clock[0] < 60          # found by looking, long before the 180 s stall timeout
+
+
+def _bridge_files(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
+    monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
+    monkeypatch.setattr(bridge, "_running", lambda: True)
+    monkeypatch.setattr(bridge.time, "sleep", lambda s: None)
+    monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
+
+
+def _finishing_script(tmp_path, order):
+    def popen(*a, **k):
+        order.append("RunScript")
+        (tmp_path / "start.flag").write_text("x")
+        (tmp_path / "response.txt").write_text("START\nDONE\n")
+        (tmp_path / "log.txt").write_text("> PING\n")
+        (tmp_path / "end.flag").write_text("x")
+    return popen
+
+
+def test_a_paused_script_is_stopped_before_the_next_command_is_sent(monkeypatch, tmp_path):
+    _bridge_files(monkeypatch, tmp_path)
+    order = []
+    states = iter([{"boxes": ["[TMessageForm] Error: OK"], "windows": ["AdvisorBridge.pas [Paused] - Altium"]},
+                   {"boxes": [], "windows": []}])
+    monkeypatch.setattr(bridge, "_script_state", lambda: next(states))
+    monkeypatch.setattr(bridge, "release_executor", lambda: order.append("Stop") or ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge.subprocess, "Popen", _finishing_script(tmp_path, order))
+    events = []
+    monkeypatch.setattr(bridge.runlog, "event", lambda kind, **f: events.append((kind, f)))
+    assert bridge.run_commands([("PING",)]) == ["> PING"]
+    assert order == ["Stop", "RunScript"]                                 # released first, then the command
+    pre = [f for k, f in events if k == "altium-preflight"]
+    assert len(pre) == 1 and pre[0]["still_paused"] is False and "AdvisorBridge.pas [Paused] - Altium" in pre[0]["found"]
+    notes = bridge.take_preflight_notes()
+    assert len(notes) == 1 and notes[0].startswith("**A script was paused in Altium**") and "clean now" in notes[0]
+    assert bridge.take_preflight_notes() == []
+
+
+def test_a_clean_altium_is_not_touched_by_the_preflight(monkeypatch, tmp_path):
+    _bridge_files(monkeypatch, tmp_path)
+    order = []
+    monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "windows": []})
+    monkeypatch.setattr(bridge, "release_executor", lambda: order.append("Stop") or [])
+    monkeypatch.setattr(bridge.subprocess, "Popen", _finishing_script(tmp_path, order))
+    bridge.run_commands([("PING",)])
+    assert order == ["RunScript"] and bridge.take_preflight_notes() == []
+
+
+def test_a_run_that_stays_paused_tells_the_student_to_press_run(monkeypatch, tmp_path):
+    _bridge_files(monkeypatch, tmp_path)
+    paused = {"boxes": [], "windows": ["AdvisorBridge.pas [Debug]"]}
+    monkeypatch.setattr(bridge, "_script_state", lambda: paused)
+    monkeypatch.setattr(bridge, "release_executor", lambda: [])
+    assert bridge.preflight()["still_paused"] is True
+    assert "F9" in bridge.take_preflight_notes()[0]
+
+
+def test_the_preflight_also_runs_after_an_error(monkeypatch, tmp_path):
+    _bridge_files(monkeypatch, tmp_path)
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
+    monkeypatch.setattr(bridge, "release_executor", lambda: [])
+    calls = []
+    monkeypatch.setattr(bridge, "preflight", lambda: calls.append("pre"))
+    monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 100)).__next__)
+    with pytest.raises(bridge.BridgeError, match="F9"):
+        bridge.run_commands([("PING",)])
+    assert calls == ["pre", "pre"]            # before sending, and once more after the failure
+
+
+def test_the_altium_help_skill_tells_what_to_do_about_a_paused_script():
+    skill = (pathlib.Path(__file__).parent.parent / "runtime" / "skills" / "altium-help" / "SKILL.md").read_text(encoding="utf-8")
+    assert "F9" in skill and "paused" in skill and "never run or resume a script yourself" in skill

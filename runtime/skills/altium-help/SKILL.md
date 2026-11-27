@@ -48,6 +48,9 @@ import rules, run OutJob) is the actions in AGENTS.md, REPLY FORMAT AND ACTIONS:
 - When the student asks you to do it for them, send the AGENTS.md action; do not answer with a click list instead, and
   do not promise an action you do not send.
 - Read the section you cite: a heading in the index is not an answer. Quote at most a sentence.
+- "Altium will not close" or "the same script error box keeps coming back": a script is paused at a breakpoint after an error.
+  Tell the student to open the script editor tab in Altium and press Run (F9) so the script runs to the end, then close Altium.
+  The tool stops such a run itself before every step; you never run or resume a script yourself.
 - Hebrew answers keep English menu names; do not translate them, because the student clicks the English UI.
 
 ## Output
