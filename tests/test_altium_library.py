@@ -544,7 +544,7 @@ def test_a_gone_box_is_not_a_clean_altium_when_the_script_still_does_not_start(m
         bridge.run_commands([("PING",)])
     msg = str(err.value)
     assert msg.startswith("**Altium cannot run scripts right now** - a script is paused or blocked in Altium.")
-    assert "press Run (F9) or Stop" in msg and "restart Altium" in msg and "[TMessageForm] Error: OK" in msg    # the box texts stay in the details
+    assert "script tab with the highlighted line and press Run (F9) until the highlight is gone" in msg and "restart Altium" in msg and "[TMessageForm] Error: OK" in msg    # the box texts stay in the details
     assert "clean" not in msg.lower() and bridge.take_preflight_notes() == []
 
 
@@ -628,3 +628,17 @@ def test_preflight_notes_are_kept_per_project(monkeypatch):
     monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [("a", "note a"), ("b", "note b"), ("a", "second a")])
     assert bridge.take_preflight_notes("a") == ["note a", "second a"]
     assert bridge.take_preflight_notes("a") == [] and bridge.take_preflight_notes("b") == ["note b"]
+
+
+def test_the_altium_script_checks_before_it_reads_and_states_the_try_except_rule():
+    pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8", errors="replace")
+    assert "never rely on try/except for a call that may fail" in pas.lower()
+    # every procedure that walks the open schematic library says so first, instead of raising on nil
+    assert pas.count("
+    Lib := SchServer.GetCurrentSchDocument;") == 5
+    assert pas.count("if (Lib.ObjectID <> eSchLib) then") == 5 and pas.count("ERR no schematic library is open in Altium") == 5
+    for guard in ("ERR the board has no layer stack", "ERR the board has no top or bottom layer in its stack",
+                  "ERR the stack has no free signal layer for the first inner layer"):
+        assert guard in pas
+    docs = (pathlib.Path(bridge.__file__).parent.parent.parent / "docs" / "ARCHITECTURE.md").read_text(encoding="utf-8")
+    assert "Never rely on try/except for a call that may fail" in docs

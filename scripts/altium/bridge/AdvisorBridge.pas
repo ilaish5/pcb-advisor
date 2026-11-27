@@ -8,6 +8,13 @@
   writes <exchange>\response.txt (START first, then one OK/ERR line per command, DONE last) and flushes
   <exchange>\log.txt after every step, so a runtime error (which try/except does not catch and which leaves the
   executor paused) still shows the statement that failed.
+
+  RULE: never rely on try/except for a call that may fail. Altium's script debugger stops at a runtime exception even when
+  it is raised inside a try block (seen live: a script paused on a line inside try, and neither -REditScript:Stop nor Run
+  from outside released it; only Run (F9) in the script editor did). So CHECK FIRST (nil, count, object kind) and answer
+  with Say('ERR ...') and Exit, so that no exception is ever raised. Remaining try blocks, none of them avoidable by a check:
+  SaveRetry (a file that is locked), LibFootprintsBatch (one primitive line Altium refuses) and StackLayerProps (a property
+  this Altium build does not take; it is not called at present).
   start.flag is written once the script runs and end.flag once, at the very end: Python only stats log.txt while
   the script runs (it must never open these files then; Altium saves them without sharing) and reads them after end.flag.
 
@@ -1354,6 +1361,16 @@ var
 begin
     if (not FocusLib(LibPath, 'SchLib')) then Exit;
     Lib := SchServer.GetCurrentSchDocument;
+    if (Lib = nil) then
+    begin
+        Say('ERR no schematic library is open in Altium');
+        Exit;
+    end;
+    if (Lib.ObjectID <> eSchLib) then
+    begin
+        Say('ERR the open document is not a schematic library');
+        Exit;
+    end;
     Victim := nil;
     It := Lib.SchLibIterator_Create;
     It.AddFilter_ObjectSet(MkSet(eSchComponent));
@@ -1386,6 +1403,16 @@ var
 begin
     if (not FocusLib(LibPath, 'SchLib')) then Exit;
     Lib := SchServer.GetCurrentSchDocument;
+    if (Lib = nil) then
+    begin
+        Say('ERR no schematic library is open in Altium');
+        Exit;
+    end;
+    if (Lib.ObjectID <> eSchLib) then
+    begin
+        Say('ERR the open document is not a schematic library');
+        Exit;
+    end;
     Links := TStringList.Create;
     Links.LoadFromFile(LinksPath);
     n := 0;
@@ -1425,6 +1452,16 @@ var
 begin
     if (not FocusLib(LibPath, 'SchLib')) then Exit;
     Lib := SchServer.GetCurrentSchDocument;
+    if (Lib = nil) then
+    begin
+        Say('ERR no schematic library is open in Altium');
+        Exit;
+    end;
+    if (Lib.ObjectID <> eSchLib) then
+    begin
+        Say('ERR the open document is not a schematic library');
+        Exit;
+    end;
     Props := TStringList.Create;
     Props.LoadFromFile(PropsPath);
     n := 0;
@@ -1487,6 +1524,16 @@ var
 begin
     if (not FocusLib(LibPath, 'SchLib')) then Exit;
     Lib := SchServer.GetCurrentSchDocument;
+    if (Lib = nil) then
+    begin
+        Say('ERR no schematic library is open in Altium');
+        Exit;
+    end;
+    if (Lib.ObjectID <> eSchLib) then
+    begin
+        Say('ERR the open document is not a schematic library');
+        Exit;
+    end;
     Pars := TStringList.Create;
     Pars.LoadFromFile(ParamsPath);
     n := 0;
@@ -1550,6 +1597,16 @@ var
 begin
     if (not FocusLib(LibPath, 'SchLib')) then Exit;
     Lib := SchServer.GetCurrentSchDocument;
+    if (Lib = nil) then
+    begin
+        Say('ERR no schematic library is open in Altium');
+        Exit;
+    end;
+    if (Lib.ObjectID <> eSchLib) then
+    begin
+        Say('ERR the open document is not a schematic library');
+        Exit;
+    end;
     Hide := TStringList.Create;
     if (HidePath <> '') then Hide.LoadFromFile(HidePath);
     changed := 0;
@@ -2618,6 +2675,11 @@ var
     L : IDispatch;
     n : Integer;
 begin
+    if (LS = nil) then
+    begin
+        Say('ERR the board has no layer stack');
+        Exit;
+    end;
     L := LS.FirstLayer;
     n := 0;
     while (L <> nil) and (n < 40) do
@@ -2649,6 +2711,11 @@ procedure StackLayerProps(L: IDispatch; Name: String; CopMil, DielMil, Er: Strin
 var
     D : IDispatch;
 begin
+    if (L = nil) then
+    begin
+        Say('ERR no layer to set the stack-up of ' + Name);
+        Exit;
+    end;
     Log('stackprop name ' + Name);
     try L.Name := Name; except Log('stackwarn name of ' + Name + ' not set'); end;
     Log('stackprop copper ' + Name);
@@ -2685,6 +2752,11 @@ begin
         Exit;
     end;
     LS := B.LayerStack_V7;
+    if (LS = nil) then
+    begin
+        Say('ERR the board has no layer stack');
+        Exit;
+    end;
     if (Count = '2') then
     begin
         if (LS.SignalLayerCount <> 2) then Say('ERR the board has ' + IntToStr(LS.SignalLayerCount) + ' copper layers; taking layers out is not done by this tool');
@@ -2709,12 +2781,27 @@ begin
     end;
     Top := LS.LayerObject_V7[eTopLayer];
     Bot := LS.LayerObject_V7[eBottomLayer];
+    if (Top = nil) or (Bot = nil) then
+    begin
+        Say('ERR the board has no top or bottom layer in its stack');
+        Exit;
+    end;
     Log('stack step: top and bottom found');
     M1 := LS.FirstAvailableSignalLayer;
+    if (M1 = nil) then
+    begin
+        Say('ERR the stack has no free signal layer for the first inner layer');
+        Exit;
+    end;
     Log('stack step: first inner layer ' + M1.Name);
     R := LS.InsertInStackBelow(Top, M1);
     Log('stack step: first inner layer inserted');
     M2 := LS.FirstAvailableSignalLayer;
+    if (M2 = nil) then
+    begin
+        Say('ERR the stack has no free signal layer for the second inner layer');
+        Exit;
+    end;
     Log('stack step: second inner layer ' + M2.Name);
     R := LS.InsertInStackBelow(M1, M2);
     Log('stack step: second inner layer inserted');

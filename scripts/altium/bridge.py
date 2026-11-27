@@ -268,8 +268,9 @@ def _close_dialogs(only_look=False):
         return []
 
 
-BLOCKED = ("**Altium cannot run scripts right now** - a script is paused or blocked in Altium. In Altium open the script editor "
-           "tab, press Run (F9) or Stop, close any box; if that does not help, save your work and restart Altium.")
+BLOCKED = ("**Altium cannot run scripts right now** - a script is paused or blocked in Altium. In Altium, open the script tab "
+           "with the highlighted line and press Run (F9) until the highlight is gone, then close any box; if that does not help, "
+           "save your work and restart Altium.")
 _SCRIPT_TITLE = re.compile(r"AdvisorBridge|\.PrjScr|\.pas\b", re.I)
 _PAUSED_WORDS = re.compile(r"paus|debug|breakpoint|stopped at", re.I)
 PREFLIGHT_NOTES = []    # one line per paused run released before a command; the server shows them (take_preflight_notes)

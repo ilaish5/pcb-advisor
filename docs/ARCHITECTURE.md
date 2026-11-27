@@ -138,6 +138,20 @@ scripts/runtime_pack.py   -->  engine home  (agent.engine_home; default per-OS a
 | `scripts/doctor.py` | `pcb.py doctor` and `GET /api/doctor`: Python, .venv, packages, git, the engine and its sign-in, Altium, JLC network, port, writable workspace, folder names; each check is ok / warn / fix / skip with the fix command. Never installs or writes config. `install.sh` / `install.ps1` run it before starting the server | - |
 
 
+### Altium bridge: rules for the Altium-side script
+
+- **Never rely on try/except for a call that may fail.** Altium's script debugger stops at a runtime exception even when it is raised
+  inside a `try` block (seen live: a script paused on a highlighted line inside `try`). Neither `-REditScript:Stop` nor `Run` from outside
+  released it; only Run (F9) in the script editor does, and every later `RunScript` then fails with an empty "Error" box. So
+  `AdvisorBridge.pas` checks first (nil, count, object kind) and answers `Say('ERR ...')` plus `Exit`. The few `try` blocks left are the
+  ones no check can replace (a locked file in `SaveRetry`, a primitive line Altium refuses in `LibFootprintsBatch`, a property
+  `StackLayerProps` may not be able to set). The header comment of the script says the same.
+- **Pre-flight** (`bridge.preflight`, called by `_run_commands` before each command and after an error): an open OK-only script error box is
+  released (Enter, then `-REditScript:Stop`). A box that asks something (Yes/No/Cancel, "Save changes?") is never pressed: the step stops with
+  "A message box is open in Altium". "Released" is reported only after the next script really started (`start.flag`); otherwise the student
+  gets "Altium cannot run scripts right now" with the F9 steps.
+
+
 ## 6. Data layout
 
 | where | what | in git |
