@@ -1229,17 +1229,17 @@ def _width_report(nets, plan_w, routed):
     return out
 
 
-STALL_WORK = 1_500_000      # expansions: a segment without progress is a stall only when the search also did this much work in it (see Clock)
+STALL_WORK = 8_000_000      # expansions without a net closed after which a routing is stalled (more than one greedy plan may spend: those end by their own cell budget first; see Clock)
 
 
 class Clock:
-    """The routing deadline: a segment of `seconds` that is renewed while the work is still making progress, up to `ceiling` seconds
-    in all. A valid routing never fails on a wall-clock cap: at the end of a segment it continues when a net was closed (or a rip-up
-    left fewer nets open) since the segment began, with everything already routed kept (the searches carry on from their state);
-    it stops only when a whole segment brought nothing (a stall) or the ceiling is reached, and then says which of the two it was.
-    A stall is a count of WORK, not only of seconds (an engine that reports its expansions with note(work=): a slow machine does less
-    in a segment, and must not end with a worse board than a fast one): without progress, the routing goes on into another segment
-    until STALL_WORK expansions were spent since the last progress. The ceiling stays the one hard wall clock end.
+    """The routing deadline. With a `ceiling` longer than `seconds` (a segment) nothing is decided by the wall clock but the ceiling,
+    the one hard end (a runaway): the routing stops EARLIER only on a stall, which is a count of WORK, not of seconds: STALL_WORK
+    search expansions spent since a net last closed (or a rip-up last left fewer nets open). A slow machine therefore does the same
+    work, and ends with the same board, as a fast one. The work is added up from the router that `track()` names (the searches ask
+    expired() every few thousand expansions, and it reads the router's counter) and from note(work=). While the work is not
+    known there is no stall: the routing goes on up to the ceiling. `segment` only counts how many `seconds` have passed, for the
+    words on the screen. Without a longer ceiling `seconds` is the plain cap that it always was.
     The engines report what they have routed with note() and the clock passes that on, at least every 2 s, to `progress` (a callable
     that takes one dict, see snapshot()), the first time at once. expired() is the question the searches ask; it is cheap."""
 
@@ -1251,76 +1251,90 @@ class Clock:
         self.ceiling = self.t0 + self.ceiling_s
         self.segment = 1
         self.done, self.total = 0, total
-        self.best = self.mark = None     # (nets routed, fewer clashes): the best seen, and the best when this segment began
+        self.best = None                 # (nets routed, fewer clashes): the best seen in this attempt
         self.phase = ""
         self.stop = ""                  # "" while running; "stall" or "ceiling" once it has ended for that reason
-        self.work = self.work_mark = self._w_last = 0       # expansions spent in all, and when the progress mark was taken
+        self.work = self.work_prog = self._w_last = 0       # expansions spent in all, and when the best last improved
         self.work_known = False
+        self._src = None
         self.cb = progress
         self._sent = 0.0
         self._emit(True)
+
+    def track(self, router):
+        """The router (anything with a `spent` counter of expansions) whose work this clock adds up from now on. A new router counts from 0."""
+        self._poll()
+        self._src, self._w_last = router, int(getattr(router, "spent", 0) or 0)
+        self.work_known = True
+
+    def attempt_begin(self, phase):
+        """A new plan starts from nothing: what it closes is progress of its own, measured from here."""
+        self.phase = phase
+        self.best, self.work_prog = None, self.work
+
+    def _add_work(self, w):
+        self.work += w - self._w_last if w >= self._w_last else w       # another router (the next attempt) starts again from 0
+        self._w_last, self.work_known = w, True
+
+    def _poll(self):
+        if self._src is not None:
+            try:
+                self._add_work(int(self._src.spent))
+            except Exception:                                       # noqa: BLE001 - a counter that cannot be read adds nothing
+                pass
 
     def note(self, done, total=None, phase=None, fine=0, work=None):
         """The engine's count of nets routed now (and, when it knows, of nets in all and what it is doing). `fine`: a finer measure
         of progress when no net closed (minus the number of overlaps left, for the negotiated engine: rip-ups that drop them count)."""
         self.done = done
         key = (done, fine)
+        if work is not None:
+            self._add_work(work)
+        else:
+            self._poll()
         if self.best is None or key > self.best:
             self.best = key
-        if work is not None:               # a router's own counter: another router (the next attempt) starts again from 0
-            self.work += work - self._w_last if work >= self._w_last else work
-            self._w_last, self.work_known = work, True
-        if self.mark is None:
-            self.mark = key
+            self.work_prog = self.work
         if total is not None:
             self.total = total
         if phase is not None:
             self.phase = phase
         self._emit()
 
-    def _renew(self, now):
-        """Another segment from where the routing stands, if the last one brought progress and the longest time is not reached."""
-        if now < self.ceiling and self.best is not None and self.best > self.mark:
-            self.mark, self.work_mark = self.best, self.work
-            self.segment += 1
-            self.end = min(now + self.seg_s, self.ceiling)
+    def expired(self):
+        if self.stop:
+            return True
+        now = time.time()
+        self._poll()
+        if self.extendable():
+            seg = min(1 + int((now - self.t0) // self.seg_s), int(-(-self.ceiling_s // self.seg_s)))
+            if seg > self.segment:
+                self.segment = seg
+                self._emit(True)
+        if now >= self.ceiling:
+            self.stop = "ceiling"
+        elif self.extendable() and self.work_known and self.work - self.work_prog >= STALL_WORK:
+            self.stop = "stall"                                    # no net closed for STALL_WORK expansions, however long that took
+        if self.stop:
             self._emit(True)
             return True
+        self._emit(now=now)
         return False
 
-    def expired(self):
-        now = time.time()
-        if self.stop:
-            return True
-        if now <= self.end:
-            self._emit(now=now)
-            return False
-        if self._renew(now):                                      # still making progress: carries on, from where it stands
-            return False
-        if now < self.ceiling and self.work_known and self.work - self.work_mark < STALL_WORK:
-            self.end = min(now + self.seg_s, self.ceiling)        # no progress, but too little was tried for that to say anything: a slow machine
-            self.segment += 1
-            self._emit(True)
-            return False
-        self.stop = "ceiling" if now >= self.ceiling else "stall"
-        self._emit(True)
-        return True
-
     def more(self, need):
-        """True when a piece of work that takes about `need` seconds still fits; the segment is renewed first, early, when it does not
-        fit and there was progress. False latches nothing: the caller ends its own loop and returns what it has."""
+        """May another piece of work (the next plan) start? With a ceiling longer than the segment that is NOT a question of time: only a
+        stall or the ceiling says no (`need` is not looked at). A plain cap (no longer ceiling) asks whether `need` seconds still fit.
+        False latches nothing in that case: the caller ends its own loop and returns what it has."""
         if self.stop:
             return False
-        now = time.time()
-        if now + need > self.end:
-            self._renew(now)
-        return time.time() + need <= self.end
+        if not self.extendable():
+            return time.time() + need <= self.end
+        return not self.expired()
 
     def detail(self):
         """Why the routing stopped, in words (only when the time was extendable: the plain cap keeps its old, short words)."""
         if self.stop == "stall":
-            return (f"no net was closed in the last {self.seg_s:g} s of the {self.segment} "
-                    f"segment{'s' if self.segment > 1 else ''}, so the search stopped")
+            return (f"no net was closed in the last {STALL_WORK:,} steps of the search, however long that took, so the search stopped")
         return (f"the longest routing time, {self.ceiling_s:g} s, was reached while the search was still making progress; "
                 "run the route again to continue, or move parts to give it room")
 
@@ -1344,7 +1358,7 @@ class Clock:
         if self.stop:
             return (f"Routing stopped after {self.segment} segment{'s' if self.segment > 1 else ''} ({'no progress in the last one' if self.stop == 'stall' else 'longest time reached'}): "
                     f"{self.done} of {self.total} nets routed, {left} left open")
-        if self.segment > 1:
+        if self.segment > 1 and self.extendable():
             return f"Still routing, segment {self.segment}: {left} net{'s' if left != 1 else ''} left of {self.total}" + (f" ({self.phase})" if self.phase else "")
         return f"Routing: {self.done} of {self.total} nets routed" + (f", {self.phase}" if self.phase else "")
 
@@ -1392,6 +1406,8 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     deadline = clock or Clock(seconds, t0=t0)
     rt = Router(doc, box, rules, pitch, sampling)
     rt.cap = max_expansions or max(DEFAULT_EXPANSIONS, EXPANSIONS_PER_CELL * rt.n)
+    if isinstance(deadline, Clock):
+        deadline.track(rt)           # every search that asks the clock reports its work: the pairs, the first pass, the rip-up rounds
     nets = sorted(n for n, ps in rt.pads.items() if len(ps) >= 2 and (only is None or n in only))
     rt.planes = {n for n in (planes or {}) if n in nets}
     deadline.note(0, total=len(nets))
@@ -1836,7 +1852,7 @@ def _plan_routes(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_ex
 
     def negotiated(left):
         from . import negotiate
-        clock.phase = "negotiated routing"
+        clock.attempt_begin("negotiated routing")
         return _with_clock_stats(negotiate.plan(doc, box, rules, pitch=pitch, seconds=left, only=only, pour_net=pour_net, planes=planes,
                                                 layers=layers, expansions=max_expansions, clock=clock), clock)
     if len(doc.get("pads", [])) >= DENSE_PADS:
@@ -1851,7 +1867,7 @@ def _plan_routes(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_ex
                 first = open_ + [n for n in first if n not in open_]
         info = {}
         t1 = time.time()
-        clock.phase = f"attempt {tried + 1} of {len(STRATEGIES)}"
+        clock.attempt_begin(f"attempt {tried + 1} of {len(STRATEGIES)}")
         res = _plan_routes_once(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, first=first, t0=t0, info=info,
                                 sampling=sampling, spans_last=spans_last, ground_early=ground_early, second_pass=tried > 0, planes=planes,
                                 clock=clock)
@@ -1864,7 +1880,7 @@ def _plan_routes(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_ex
     if max_expansions and any("budget" in why for _n, why in best["failed"]):
         open_ = []          # the caller's budget of cells is used up: another engine on top would not be inside it
     if open_ and clock.more(5):
-        res = negotiated(max(5.0, clock.end - time.time()))
+        res = negotiated(seconds)
         if len(res["failed"]) < len(best["failed"]):
             res["stats"]["attempts"] = tried + 1
             res["stats"]["seconds"] = round(time.time() - t0, 1)

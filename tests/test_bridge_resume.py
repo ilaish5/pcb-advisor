@@ -20,7 +20,7 @@ class Altium:
         # after launcher_s seconds (the launcher that hands its request to the running Altium); slow: the script logs for that long before
         # its end; hang: it starts, logs once and never ends
         self.pids, self.extra_x2, self.launcher_s, self.slow, self.hang = (set() if cold else {100}), extra_x2, launcher_s, slow, hang
-        self.killed = []
+        self.killed, self.stopped = [], False
         self.box_title, self.box_once = box_title, box_once
         self.paused, self.box, self.late, self.resume_ends, self.stuck, self.ok_lets_go = paused, (paused if box is None else box), late, resume_ends, stuck, ok_lets_go
         self.timers = []
@@ -32,7 +32,6 @@ class Altium:
         monkeypatch.setattr(bridge, "stage_script", lambda: "x.PrjScr")
         monkeypatch.setattr(bridge, "_running", lambda: not cold)
         monkeypatch.setattr(bridge, "_x2_pids", lambda: set(self.pids))
-        monkeypatch.setattr(bridge, "SECOND_X2_GRACE", 0.8)
         monkeypatch.setattr(bridge, "_dialog_boxes", self.boxes)
         monkeypatch.setattr(bridge, "_script_state", self.state)
         monkeypatch.setattr(bridge, "_post_enter", self.enter)
@@ -98,6 +97,13 @@ class Altium:
         (self.dir / "log.txt").write_text("step 0\n")
         if not self.slow:
             return
+        if self.slow < 0:                      # logs for ever, until Stop
+            def tick(i=1):
+                if not self.stopped:
+                    (self.dir / "log.txt").write_text(f"step {i}\n")
+                    self.later(0.15, lambda: tick(i + 1))
+            tick()
+            return
         steps = int(self.slow / 0.15)
 
         def end():
@@ -109,15 +115,20 @@ class Altium:
 
     def popen(self, cmd, *a, **k):
         self.cmds.append(cmd)
+        proc = None
         if "RunScript" in cmd:
             self.queue.append("run")
-            if not self.pids:
-                self.pids.add(100)                      # a cold start: the Altium that starts
+            cold = not self.pids
+            if cold:
+                self.pids.add(100)                      # a cold start: the Altium that starts is the launcher
+            lpid = 100 if cold else 999                 # a launch into a running Altium: its process hands over and exits at once
             for i in range(self.extra_x2):
                 pid = 200 + len(self.pids)
                 self.pids.add(pid)
+                lpid = pid if (i == 0 and not cold) else lpid         # the first extra process IS the launcher that stays
                 if self.launcher_s is not None:
                     self.later(self.launcher_s, lambda pid=pid: self.pids.discard(pid))
+            proc = type("Proc", (), {"pid": lpid, "poll": lambda s, a=self, p=lpid: None if p in a.pids else 0})()
             if self.paused or self.stuck:
                 self.box = not (self.box_once and self.sent("RunScript") > 1)       # the executor is busy: an error box, nothing starts
             else:
@@ -128,7 +139,9 @@ class Altium:
                 self.later(self.late, self.execute) if self.late else self.execute()
         elif "Stop" in cmd:
             self.paused = False
+            self.stopped = True
             self.queue.clear()
+        return proc
 
     def sent(self, word):
         return sum(1 for c in self.cmds if word in c)
@@ -311,14 +324,27 @@ def test_a_launch_that_leaves_a_second_altium_alive_is_a_failure_even_when_the_r
     nothing it answered is taken for a pass."""
     a = world(extra_x2=1)
     with pytest.raises(bridge.BridgeError, match="second Altium"):
-        run()
+        run(stall_timeout=1)
     assert a.runs, "the model did answer: the failure is the process, not the answer"
-    assert not list(a.dir.glob("start-*.flag")), "a run we gave up on is not left 'in progress'"
+    assert bridge.run_in_progress() is False
 
 
 def test_a_launcher_that_hands_over_and_exits_is_not_a_second_altium(world):
     a = world(extra_x2=1, launcher_s=0.2)
     assert run() == [f"ours {a.runs[0]}"]
+
+
+def test_a_new_x2_that_is_not_the_launcher_fails_at_once_and_never_removes_the_flag_of_a_script_that_runs(world):
+    a = world(extra_x2=2, launcher_s=0.2)          # the launcher exits, but a second new process stays
+    with pytest.raises(bridge.BridgeError, match="second Altium"):
+        run(stall_timeout=1)
+    assert a.runs
+
+
+def test_when_the_process_list_cannot_be_read_the_second_altium_check_is_skipped_not_failed(world, monkeypatch):
+    a = world(extra_x2=1)
+    monkeypatch.setattr(bridge, "_x2_pids", lambda: None)
+    assert run(stall_timeout=1) == [f"ours {a.runs[0]}"]
 
 
 def test_a_cold_start_may_start_one_altium_and_not_two(world):
@@ -331,15 +357,30 @@ def test_a_cold_start_may_start_one_altium_and_not_two(world):
     assert a.runs
 
 
-def test_a_script_that_keeps_logging_is_never_cut_off_by_the_total_timeout_and_tells_what_it_does(world, monkeypatch):
-    a = world(slow=2.0)
+def test_a_script_that_keeps_logging_is_never_cut_off_by_the_total_timeout_and_the_log_is_never_opened_while_it_runs(world, monkeypatch):
+    """No race with a clock: the runaway cap is made unreachable (LONG_RUN_FACTOR), the script logs for 1.5 s against a total_timeout of
+    0.2 s (7x), and it must end by itself. The progress line comes from the log's stat only: log.txt is opened only after the end."""
+    a = world(slow=1.5)
+    monkeypatch.setattr(bridge, "LONG_RUN_FACTOR", 10_000)
     monkeypatch.setattr(bridge, "PROGRESS_EVERY", 0.3)
+    opened = []
+    real_read = bridge._read
+    monkeypatch.setattr(bridge, "_read", lambda p: (opened.append(a.dir.joinpath('end-' + a.runs[0] + '.flag').exists())
+                                                     if str(p).endswith('log.txt') and a.runs else None) or real_read(p))
     seen = []
     with bridge.progress_to(seen.append):
-        log = bridge.run_commands([("PING",)], start_timeout=0.5, stall_timeout=1, total_timeout=0.5)       # takes 4 times as long as asked
-    assert log and log[-1].startswith("step ")
-    assert a.runs and len(seen) >= 3 and all(s["text"].startswith("Altium is working") for s in seen), seen
-    assert any("step" in s["text"] for s in seen) and seen[-1]["elapsed"] > 1
+        log = bridge.run_commands([("PING",)], start_timeout=0.5, stall_timeout=1, total_timeout=0.2)
+    assert log and log[-1].startswith("step ") and a.runs
+    assert len(seen) >= 2 and all(s["text"].startswith("Altium is working") for s in seen), seen
+    assert opened and all(opened), "log.txt was opened while the script was still running"
+
+
+def test_a_runaway_that_logs_for_ever_is_stopped_at_the_cap_and_not_left_running(world, monkeypatch):
+    a = world(slow=-1)
+    monkeypatch.setattr(bridge, "LONG_RUN_FACTOR", 3)
+    with pytest.raises(bridge.BridgeError, match="Altium stopped in the middle of the script"):
+        bridge.run_commands([("PING",)], start_timeout=0.5, stall_timeout=30, total_timeout=0.3)      # the cap: 0.9 s of a log that never stops
+    assert a.stopped, "the run was stopped, not left going"
 
 
 def test_a_script_that_stops_logging_is_stopped_at_the_stall_and_the_error_says_where(world):
@@ -348,8 +389,8 @@ def test_a_script_that_stops_logging_is_stopped_at_the_stall_and_the_error_says_
         bridge.run_commands([("PING",)], start_timeout=0.5, stall_timeout=1, total_timeout=60)
 
 
-def test_the_last_resort_closes_a_stuck_altium_that_holds_only_copies_and_says_so_in_one_line(world, monkeypatch, tmp_path):
-    a = world(hang=True)
+def test_the_last_resort_closes_a_stuck_altium_that_the_advisor_started_for_copies_and_says_so_in_one_line(world, monkeypatch, tmp_path):
+    a = world(hang=True, cold=True)          # the advisor started this Altium (no X2.EXE before the launch) and gave it only copies
     ran = []
     monkeypatch.setattr(bridge.subprocess, "run", lambda cmd, *x, **k: ran.append(cmd) or type("R", (), {"stdout": "", "returncode": 0})())
     events = []
@@ -363,7 +404,7 @@ def test_the_last_resort_closes_a_stuck_altium_that_holds_only_copies_and_says_s
 
 
 def test_the_last_resort_leaves_altium_alone_when_the_student_s_own_project_may_be_open(world, monkeypatch):
-    world(hang=True)
+    world(hang=True, cold=True)
     ran = []
     monkeypatch.setattr(bridge.subprocess, "run", lambda cmd, *x, **k: ran.append(cmd) or type("R", (), {"stdout": "", "returncode": 0})())
     events = []
@@ -371,12 +412,39 @@ def test_the_last_resort_leaves_altium_alone_when_the_student_s_own_project_may_
     with pytest.raises(bridge.BridgeError) as e:
         bridge.run_commands([("PROJECT", r"D:\Students\Dana\Board.PrjPcb"), ("PING",)], start_timeout=0.5, stall_timeout=1, total_timeout=60)
     assert not [c for c in ran if c[0] == "taskkill"] and "closed it" not in str(e.value)
+    assert "did not close it" in str(e.value) and "unsaved work" in str(e.value) and str(e.value).count("\n") == 0
     assert any(k == "altium-restart" and not kw["done"] for k, kw in events), "the refusal is logged as well"
+
+
+def test_the_last_resort_never_closes_an_altium_the_student_started_even_when_the_batch_names_only_copies(world, monkeypatch, tmp_path):
+    """capabilities() sends FPBATCH/SAVELIB on a %TEMP% library inside the student's live Altium: the paths are copies, the Altium is not ours."""
+    world(hang=True)                                   # Altium was running before the launch: the student's
+    ran = []
+    monkeypatch.setattr(bridge.subprocess, "run", lambda cmd, *x, **k: ran.append(cmd) or type("R", (), {"stdout": "", "returncode": 0})())
+    with pytest.raises(bridge.BridgeError) as e:
+        bridge.run_commands([("FPBATCH", str(tmp_path / "scratch.PcbLib"))], start_timeout=0.5, stall_timeout=1, total_timeout=60)
+    assert not [c for c in ran if c[0] == "taskkill"] and "may hold your own unsaved work" in str(e.value)
+
+
+def test_an_advisor_started_altium_that_was_ever_given_a_project_of_the_student_is_never_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "_x2_pids", lambda: {100})
+    copy, mine = [("PROJECT", str(tmp_path / "c.PrjPcb"))], [("PROJECT", r"D:\Students\Dana\Board.PrjPcb")]
+    bridge._note_altium(copy, True, set(), {100})
+    assert bridge._restart_allowed(copy) is True
+    bridge._note_altium(mine, False, {100})
+    assert bridge._restart_allowed(copy) is False, "one batch with the student's project and the Altium is the student's from then on"
+    bridge._note_altium(copy, True, set(), {100})
+    bridge._note_altium(copy, False, {100, 300})          # another Altium is running as well
+    assert bridge._restart_allowed(copy) is False
+    bridge._note_altium(copy, True, {55}, {100})          # an Altium was running before this start: not known to be ours
+    assert bridge._restart_allowed(copy) is False
 
 
 def test_the_last_resort_needs_a_start_flag_older_than_the_stall_limit_and_a_silent_log(tmp_path, monkeypatch):
     monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
     monkeypatch.setattr(bridge, "_RUN", {"token": "t", "cold": False, "evidence": False})
+    monkeypatch.setattr(bridge, "_x2_pids", lambda: {100})
+    monkeypatch.setattr(bridge, "_ALTIUM", {"pids": {100}, "copies_only": True})
     ran = []
     monkeypatch.setattr(bridge.subprocess, "run", lambda cmd, *x, **k: ran.append(cmd) or type("R", (), {"stdout": "", "returncode": 0})())
     cmds = [("PROJECT", str(tmp_path / "copy.PrjPcb"))]

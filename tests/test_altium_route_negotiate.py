@@ -169,7 +169,7 @@ def test_a_dense_board_on_two_layers_routes_nearly_every_net_and_says_why_not():
     assert route.violations(doc, res["items"], r, box) == []
 
 
-def test_the_time_budget_grows_with_the_board():
-    assert route.time_budget({"pads": [0] * 10}) == route.SECONDS_MIN
-    assert route.SECONDS_MIN < route.time_budget({"pads": [0] * 300}) <= route.SECONDS_MAX
-    assert route.time_budget({"pads": [0] * 10_000}) == route.SECONDS_MAX
+def test_the_routing_time_is_one_segment_a_ceiling_and_a_work_stall_not_a_budget_per_board():
+    """time_budget (seconds by pad count) is gone: a bigger board gets the same ceiling and more work, never a different clock."""
+    assert not hasattr(route, "time_budget")
+    assert route.SEGMENT_S < route.SECONDS_MAX and route.STALL_WORK > 0

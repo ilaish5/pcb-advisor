@@ -491,6 +491,7 @@ def _bridge_files(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge, "_running", lambda: True)
     monkeypatch.setattr(bridge.time, "sleep", lambda s: None)
     monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
+    monkeypatch.setattr(bridge, "_x2_pids", lambda: None)      # the process list would go through the stubbed Popen
 
 
 def _finishing_script(tmp_path, order):
@@ -657,6 +658,7 @@ class Release:
         monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
         monkeypatch.setattr(bridge, "_running", lambda: True)
         monkeypatch.setattr(bridge, "preflight", lambda strict=False, **kw: None)
+        monkeypatch.setattr(bridge, "_x2_pids", lambda: None)      # the process list would go through the stubbed Popen
         monkeypatch.setattr(bridge, "_dialog_boxes", lambda: _boxes(*self.boxes))
         monkeypatch.setattr(bridge, "_post_enter", lambda h: self.pressed.append(("enter", self.boxes[h - 1][1])))
         monkeypatch.setattr(bridge, "_post_close", lambda h: self.pressed.append(("close", self.boxes[h - 1][1])))

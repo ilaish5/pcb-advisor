@@ -6,12 +6,17 @@ ends it says which, and what was done so far is kept.
 
 ## Routing (`scripts/altium/route.py`, `negotiate.py`)
 
-- `Clock(seconds, ceiling, progress)`: `seconds` is one **segment** (`route.SEGMENT_S` = 120 s); the longest total time is
-  `route.SECONDS_MAX` = 1200 s. A segment that ends while nets are still closing is renewed ("Still routing, segment 2: 9 nets
-  left of 45"). Progress is a net closed, or (negotiated engine) fewer overlaps.
-- It stops only when a whole segment brought no progress (`stats.stopped = "stall"`) or the ceiling is reached (`"ceiling"`).
-  The routed nets are kept; each open net says why ("ran out of time: no net was closed in the last 120 s" / "longest routing
-  time, 1200 s, reached while still making progress").
+- `Clock(seconds, ceiling, progress)`: the only decision made by the wall clock is the **ceiling** (`route.SECONDS_MAX` = 1200 s,
+  a runaway). Every other continue/stop decision is a count of **work**: the routing stops early only when `STALL_WORK` (8M)
+  search expansions were spent since a net last closed or a rip-up last left fewer nets open (`stats.stopped = "stall"`). The
+  same board therefore gets the same result on a slow and a fast machine. The work is read from the router the clock `track()`s
+  (the first pass, the pairs, the rip-up rounds, the negotiated engine: whoever asks the clock every few thousand expansions),
+  so there is no phase without a work count; while no work is known the routing goes on up to the ceiling, never stops.
+  `Clock.more()` (may the next plan start?) and the pair pre-route use the same clock. A new plan measures progress from its own
+  start (`attempt_begin`). `seconds` (120 s, `SEGMENT_S`) only numbers the segments for the words on the screen ("Still
+  routing, segment 2: 9 nets left of 45").
+- The routed nets are kept; each open net says why ("ran out of time: no net was closed in the last 8,000,000 steps of the
+  search" / "longest routing time, 1200 s, reached while still making progress").
 - Progress reaches the step's line: `plan_routes(progress=fn)` calls `fn(snapshot)` at once and at least every 2 s (a heartbeat
   thread covers the stretches where no search asks the clock); `bridge.progress_to` hands it to `serve._run_progress`, the UI polls
   `/api/altium/step-status` (1.5 s) and `previews.js` rewrites the `.pv-detail` text in place.
@@ -21,11 +26,18 @@ ends it says which, and what was done so far is kept.
 
 - `total_timeout` of a batch is what the batch is expected to take. A script that **keeps logging** is alive: it is cut off only by
   `stall_timeout` (no log line), an open error box, or `LONG_RUN_FACTOR` (4) times `total_timeout` (a runaway). While it runs, the
-  step's line says "Altium is working: <last log line>" every 2 s.
+  step's line says "Altium is working" every 2 s (from the log file's stat only: the log is never opened while the script runs,
+  Altium saves it without sharing and a failed save pauses the script). At the end of its longest time a script that still logs
+  is stopped (Stop), not left running, and its log is read only once it has stopped changing.
 - A launch that leaves a **second X2.EXE** alive (beyond the one a cold start makes) is a failure, whatever that Altium answered.
+  A launch into a running Altium makes its process hand the request over and exit: a launcher that is still alive when the run
+  has ended (within the stall limit) is a second Altium. No timer, and no start flag of a running script is ever removed for it.
+  When the process list cannot be read the check is skipped, never failed.
 - Last resort, logged (`altium-restart` in the run log): when the start flag is older than the stall limit, the log did not move
-  and the proven release (OK on the box, RunMacro) did not help, X2.EXE is closed only if the batch names nothing but copies
-  (temp or `acc-scratch` folders). The error then says so in one line. Anything else is left alone and the refusal is logged.
+  and the proven release (OK on the box, RunMacro) did not help, X2.EXE is closed only if the advisor itself started that Altium
+  (the process ids seen on a cold start with no Altium running before) and every batch it was given since named copies only
+  (temp or `acc-scratch` folders). An Altium the student started, or that was ever given a project of theirs, is never closed:
+  the error says in one line that it was not, and why. Unknown is a no; the refusal is logged.
 
 ## Audit of the other timeouts
 

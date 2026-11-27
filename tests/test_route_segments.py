@@ -32,50 +32,95 @@ def clock(monkeypatch):
 
 # ------------------------------------------------------------------ the clock itself
 
-def test_a_segment_with_progress_is_renewed_and_says_so(clock):
+def test_a_segment_end_with_progress_goes_on_and_says_so(clock):
     seen = []
     c = route.Clock(10, 100, seen.append, t0=clock.t)
-    c.note(0, total=5)
+    c.note(0, total=5, work=0)
     clock.t += 5
-    c.note(2)                                           # a net closed in this segment
+    c.note(2, work=100)                                 # a net closed in this segment
     clock.t += 6                                        # past the end of segment 1
     assert c.expired() is False and c.segment == 2
     assert c.snapshot()["text"].startswith("Still routing, segment 2: 3 nets left of 5")
     assert seen[-1]["segment"] == 2 and seen[-1]["done"] == 2
 
 
-def test_a_segment_without_progress_ends_the_routing_as_a_stall_and_says_so(clock):
-    c = route.Clock(10, 100, None, t0=clock.t)
-    c.note(0, total=5)
-    clock.t += 11
+def test_seconds_never_make_a_stall_only_work_without_progress_does(clock, monkeypatch):
+    monkeypatch.setattr(route, "STALL_WORK", 1000)
+    c = route.Clock(10, 1000, None, t0=clock.t)
+    c.note(0, total=5, work=0)
+    clock.t += 300                                      # thirty segments, nothing closed, but almost no work done
+    c.note(0, work=900)
+    assert c.expired() is False and c.stop == ""
+    c.note(0, work=1000)                                # now 1000 steps without a net closed
     assert c.expired() is True and c.stop == "stall"
     clock.t += 1
     assert c.expired() is True                          # it stays ended
-    assert "no net was closed in the last 10 s" in c.reason() and "ran out of time" in c.reason()
+    assert "no net was closed in the last 1,000 steps" in c.reason() and "ran out of time" in c.reason()
     assert "Routing stopped" in c.text() and "no progress" in c.text()
+
+
+def test_a_fast_and_a_slow_machine_stop_at_the_same_work(monkeypatch):
+    """The same sequence of work, on a clock that runs 1 s or 90 s per step: the same stop, at the same count of expansions."""
+    monkeypatch.setattr(route, "STALL_WORK", 500)
+    stops = []
+    for step in (1.0, 90.0):
+        v = Virtual(step=0.0)
+        monkeypatch.setattr(route, "time", v)
+        c = route.Clock(10, 10 ** 9, None, t0=v.t)
+        c.note(0, total=9, work=0)
+        for k, w in enumerate(range(100, 5000, 100)):
+            v.t += step
+            c.note(1 if k >= 2 else 0, work=w)
+            if c.expired():
+                break
+        stops.append((c.stop, c.work))
+    assert stops[0] == stops[1] and stops[0][0] == "stall", stops
 
 
 def test_the_longest_time_is_a_hard_end_even_with_progress_and_says_so(clock):
     c = route.Clock(10, 25, None, t0=clock.t)
-    c.note(0, total=50)
+    c.note(0, total=50, work=0)
     done = 0
     for _ in range(40):
         clock.t += 3
         done += 1
-        c.note(done)
+        c.note(done, work=done * 10)
         if c.expired():
             break
     assert c.stop == "ceiling" and c.segment == 3       # 10 + 10 + 5 s
     assert "longest routing time, 25 s" in c.reason() and "still making progress" in c.reason()
 
 
-def test_overlaps_dropping_count_as_progress_when_no_net_closed(clock):
+def test_overlaps_dropping_count_as_progress_when_no_net_closed(clock, monkeypatch):
+    monkeypatch.setattr(route, "STALL_WORK", 1000)
     c = route.Clock(10, 100, None, t0=clock.t)
-    c.note(3, total=5, fine=-40)
-    clock.t += 5
-    c.note(3, fine=-12)                                 # the negotiated engine: fewer overlaps, no net closed yet
-    clock.t += 6
-    assert c.expired() is False and c.segment == 2
+    c.note(3, total=5, fine=-40, work=0)
+    c.note(3, fine=-12, work=900)                       # the negotiated engine: fewer overlaps, no net closed yet
+    c.note(3, fine=-12, work=1800)                      # 900 steps since that: not a stall (1000 needed)
+    assert c.expired() is False
+    c.note(3, fine=-12, work=1950)
+    assert c.expired() is True and c.stop == "stall"
+
+
+def test_while_the_work_is_not_known_the_routing_goes_on_to_the_ceiling(clock):
+    c = route.Clock(10, 100, None, t0=clock.t)          # an engine that reports no work, e.g. the pair pre-route before it was tracked
+    c.note(0, total=5)
+    clock.t += 60
+    assert c.expired() is False and c.stop == "" and c.segment == 7
+    clock.t += 50
+    assert c.expired() is True and c.stop == "ceiling"
+
+
+def test_a_tracked_router_reports_its_work_to_every_search_that_asks_the_clock(clock, monkeypatch):
+    monkeypatch.setattr(route, "STALL_WORK", 1000)
+    rt = type("R", (), {"spent": 0})()
+    c = route.Clock(10, 100, None, t0=clock.t)
+    c.track(rt)
+    c.note(0, total=5)
+    rt.spent = 999
+    assert c.expired() is False
+    rt.spent = 1000                                     # no note(): the search only asked
+    assert c.expired() is True and c.stop == "stall"
 
 
 def test_without_a_longest_time_the_second_is_the_cap_and_the_old_words_stay(clock):
@@ -86,18 +131,36 @@ def test_without_a_longest_time_the_second_is_the_cap_and_the_old_words_stay(clo
     clock.t += 6
     assert c.expired() is True and c.stop == "ceiling"
     assert c.reason() == "not routed (ran out of time)"
+    assert c.more(5) is False
 
 
-def test_more_renews_the_segment_before_a_next_attempt_when_there_was_progress(clock):
+def test_more_is_not_a_question_of_seconds_once_the_ceiling_is_longer_than_the_segment(clock, monkeypatch):
+    """A slow first attempt that crosses 120 s after its last closed net must still give the next plans their turn."""
+    monkeypatch.setattr(route, "STALL_WORK", 1000)
     c = route.Clock(10, 100, None, t0=clock.t)
-    c.note(0, total=5)
-    clock.t += 8
-    c.note(1)
-    assert c.more(5) is True and c.segment == 2         # 8 s in, a 5 s attempt does not fit: the segment is renewed
+    c.note(0, total=5, work=0)
+    clock.t += 60                                       # six segments, no net closed, little work
+    c.note(0, work=300)
+    assert c.more(5) is True and c.stop == ""
+    c.note(0, work=1300)
+    assert c.more(5) is False and c.stop == "stall"
     c2 = route.Clock(10, 100, None, t0=clock.t)
-    c2.note(0, total=5)
-    clock.t += 8
-    assert c2.more(5) is False and c2.stop == "" and c2.segment == 1        # no progress: no renewal; nothing latched
+    clock.t += 200
+    assert c2.more(5) is False and c2.stop == "ceiling"
+
+
+def test_a_new_attempt_measures_its_progress_from_its_own_start(clock, monkeypatch):
+    monkeypatch.setattr(route, "STALL_WORK", 1000)
+    c = route.Clock(10, 100, None, t0=clock.t)
+    c.note(3, total=5, work=0)
+    c.note(3, work=900)
+    c.attempt_begin("attempt 2 of 4")                   # the earlier plan's work is spent: this one has its own 1000 steps
+    c.note(0, total=5, work=950)
+    assert c.expired() is False
+    c.note(2, work=1900)                                # fewer nets than the best of the first plan, but progress of this plan
+    assert c.expired() is False
+    c.note(2, work=2800)
+    assert c.expired() is False
 
 
 # ------------------------------------------------------------------ the router with that clock
@@ -219,31 +282,25 @@ def test_the_ui_shows_the_progress_text_in_place():
     assert js.count("pvDetailHTML()") >= 3, "the single line, the slim bar and the list of steps all carry it"
 
 
-# ------------------------------------------------------------------ a stall is work, not only seconds
+# ------------------------------------------------------------------ the plans and the pairs follow the same rule
 
-def test_a_slow_machine_that_did_little_work_in_a_segment_is_not_stalled(clock, monkeypatch):
-    """The same board must give the same result on a slow runner: a segment without progress ends the routing only when the search also
-    spent STALL_WORK expansions in it; with less it is a slow machine, and the routing goes on (until the longest time)."""
-    monkeypatch.setattr(route, "STALL_WORK", 1000)
-    c = route.Clock(10, 100, None, t0=clock.t)
-    c.note(0, total=5, work=100)
-    clock.t += 11
-    c.note(0, work=400)                                    # a whole segment, 300 expansions, nothing closed
-    assert c.expired() is False and c.stop == "" and c.segment == 2
-    clock.t += 11
-    c.note(0, work=900)
-    assert c.expired() is False and c.segment == 3
-    clock.t += 11
-    c.note(0, work=1500)                                   # now 1400 expansions without progress: that is a stall
-    assert c.expired() is True and c.stop == "stall"
+def test_the_greedy_plans_and_the_negotiated_engine_are_given_the_routing_clock_not_a_time(monkeypatch):
+    """A dense board: the pairs are searched under the clock (work), not under their own 30 s of wall-clock time."""
+    from altium import negotiate, pair
+    got = {}
 
+    class Stop(Exception):
+        pass
 
-def test_the_longest_time_still_ends_a_slow_search_and_a_second_router_counter_adds_up(clock, monkeypatch):
-    monkeypatch.setattr(route, "STALL_WORK", 10 ** 9)
-    c = route.Clock(10, 25, None, t0=clock.t)
-    c.note(0, total=5, work=500)
-    c.note(0, work=900)
-    c.note(0, work=50)                                     # the next attempt's router counts from 0 again
-    assert c.work == 900 + 50
-    clock.t += 30
-    assert c.expired() is True and c.stop == "ceiling"
+    def spy(rt, rules_, nets, deadline, doc):
+        got["deadline"] = deadline
+        raise Stop
+    monkeypatch.setattr(pair, "pre_route", spy)
+    c = route.Clock(10, 100, None)
+    with pytest.raises(Stop):
+        negotiate.plan(dense_board(), [0, 0, 40, 30], rules(), clock=c)
+    assert got["deadline"] is c and c._src is not None and c.work_known
+    got.clear()
+    with pytest.raises(Stop):
+        negotiate.plan(dense_board(), [0, 0, 40, 30], rules(), seconds=100)           # a caller without a clock keeps its 30 s cap
+    assert isinstance(got["deadline"], float)

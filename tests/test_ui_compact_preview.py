@@ -75,7 +75,7 @@ def test_collapsed_the_run_is_one_line_with_the_count_and_stop_and_opens_to_the_
         + (REPO / "ui" / "js" / "kit.js").read_text(encoding="utf-8") + "\n"
         "const PV_STEPS = {place: {busy: 'Altium is placing the parts. It may take a minute and flash while it works.'}};\n"
         "let pvBusy = 'place', pvStartedAt = 0, pvStopping = false, pvRun = null, pvRunOpen = false;\n"
-        "const pvClock = () => '0:35';\n"
+        "const pvClock = () => '0:35', pvDetailHTML = () => '';\n"
         + _const(PREV, "pvElapsedHTML") + _fn(PREV, "pvStepText") + _fn(PREV, "pvStepLine") + _fn(PREV, "pvStopBtn")
         + _const(PREV, "pvFirstSentence") + _fn(PREV, "pvRunSlim") + "\n"
         "const out = {};\n"

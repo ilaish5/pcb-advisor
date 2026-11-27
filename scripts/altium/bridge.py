@@ -191,21 +191,16 @@ def _x2_pids():
     return {int(m) for m in re.findall(r'"X2\.EXE","(\d+)"', out, re.I)}
 
 
-SECOND_X2_GRACE = 6.0      # seconds a RunScript launcher gets to hand its request to the Altium that runs and exit
-
-
-def _extra_x2(before, allowed, grace=None):
-    """The X2.EXE processes that are not in `before` and stay alive after a RunScript launch, beyond the `allowed` ones (a cold start
-    starts the one Altium; a launch into a running Altium starts none that stay: the launcher hands the request over and exits within
-    a second or two). [] when nothing is left over once the grace is over. A second Altium has its own script executor and its own
-    documents: whatever it answers is not an answer of the Altium the project is open in."""
-    t0, extra = time.time(), []
-    while True:
-        now = _x2_pids()
-        extra = sorted(now - before) if now is not None else []
-        if len(extra) <= allowed or time.time() - t0 >= (SECOND_X2_GRACE if grace is None else grace):
-            return extra if len(extra) > allowed else []
-        time.sleep(0.5)
+def _new_x2(before, launcher=None):
+    """The X2.EXE processes that are new since `before` (a set) other than the launcher process itself, sorted; [] when the process list
+    cannot be read. A launch into a running Altium makes the launcher process hand its request over and EXIT: it is judged by that
+    (see _run_commands), never by a timer. A cold start makes the one Altium. Any other new X2.EXE is a second Altium, which has its
+    own script executor and its own documents: nothing it answers is an answer of the Altium the project is open in."""
+    now = _x2_pids()
+    if now is None or before is None:
+        return []
+    own = getattr(launcher, "pid", None)
+    return sorted(now - before - ({own} if own else set()))
 
 
 def _ok_only(parts):
@@ -305,6 +300,7 @@ NOT_STARTED = ("**Altium cannot run scripts right now** - Altium did not start t
                "message box that is open, and then try again.")
 SECOND_ALTIUM = ("**A second Altium was started** - the script was launched and a new Altium process stayed alive next to the one that "
                  "was running")
+SECOND_ALTIUM_TAIL = (" I did not trust anything it answered; close the extra Altium window and run the step again.")
 _SCRIPT_TITLE = re.compile(r"AdvisorBridge|\.PrjScr|\.pas\b", re.I)
 _PAUSED_WORDS = re.compile(r"paus|debug|breakpoint|stopped at", re.I)
 PREFLIGHT_NOTES = []    # one line per paused run released before a command; the server shows them (take_preflight_notes)
@@ -649,6 +645,15 @@ def _read(path):
         return []
 
 
+def _log_when_still():
+    """The script's log lines once the file has stopped changing (two looks 0.6 s apart agree), [] otherwise: a script that may still be
+    running must not have its log opened (Altium saves it without sharing and a failed save pauses the script)."""
+    p = EXCHANGE / "log.txt"
+    a = _stat(p)
+    time.sleep(0.6)
+    return _read(p) if a == _stat(p) else []
+
+
 def _stat(path):
     """(size, mtime) of a file, or None. Only a stat: Altium writes log.txt and response.txt without sharing, so we must
     never open them while the script runs (a read at the wrong moment makes Altium's save fail and the script freeze)."""
@@ -717,6 +722,30 @@ def _restart_safe(commands):
     return True
 
 
+# The Altium the advisor started itself (the X2.EXE process ids it saw appear on a cold start, with no Altium running before) and
+# whether every batch it has been given since named copies only. Only such an Altium may be closed when it is stuck: an Altium the
+# student started, or one that was ever given a project of theirs, may hold their unsaved work, and what it holds cannot be asked
+# while it is stuck. Unknown is a no.
+_ALTIUM = {"pids": set(), "copies_only": False}
+
+
+def _note_altium(commands, cold, before, now=None):
+    copies = _restart_safe(commands)
+    if cold:
+        if before == set() and now:          # known: no Altium was running, so the one running now is the one this call started
+            _ALTIUM.update(pids=set(now), copies_only=copies)
+        else:
+            _ALTIUM.update(pids=set(), copies_only=False)
+    else:
+        mine = bool(before) and bool(_ALTIUM["pids"]) and before <= _ALTIUM["pids"]      # every running Altium is one of ours
+        _ALTIUM["copies_only"] = bool(_ALTIUM["copies_only"] and copies and mine)
+
+
+def _restart_allowed(commands):
+    now = _x2_pids()
+    return bool(now) and now <= _ALTIUM["pids"] and bool(_ALTIUM["copies_only"]) and _restart_safe(commands)
+
+
 def _restart_stuck(commands, stall_timeout, t_log):
     """The last resort, after the proven release (OK on the box, RunMacro) did not bring the run back: the start flag is older than the
     stall limit and the log did not move in that time, so Altium is closed (X2.EXE) when `_restart_safe` says nothing of the student's
@@ -727,11 +756,14 @@ def _restart_stuck(commands, stall_timeout, t_log):
         start = flag_path("start")
         if not start.exists() or time.time() - start.stat().st_mtime <= stall_timeout or time.time() - t_log <= stall_timeout:
             return ""
-        if not _restart_safe(commands):
-            runlog.event("altium-restart", done=False, why="documents that may hold unsaved work are open", commands=[str(c[0]) for c in commands])
-            return ""
+        if not _restart_allowed(commands):
+            runlog.event("altium-restart", done=False, why="this Altium was not started by the advisor for copies only: it may hold unsaved work",
+                         commands=[str(c[0]) for c in commands])
+            return ("Altium has stopped responding. I did not close it, because it may hold your own unsaved work: save and close "
+                    "it yourself, then run the step again.")
         before = _x2_pids() or set()
         subprocess.run(["taskkill", "/F", "/IM", "X2.EXE"], capture_output=True, timeout=30)
+        _ALTIUM.update(pids=set(), copies_only=False)
         runlog.event("altium-restart", done=True, pids=sorted(before), commands=[str(c[0]) for c in commands])
         return "Altium had stopped responding, so I closed it (only copies were open); the next step opens it again."
     except Exception:      # noqa: BLE001 - the last resort never turns the error it comes from into another one
@@ -785,10 +817,13 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
         try:
             if not cold:
                 released = preflight(strict=True)     # a run left paused by an earlier error would swallow this one
-            before = _x2_pids() or set()
+            before = _x2_pids()         # None when the process list cannot be read: the checks that need it are skipped, never failed
+            if not cold:
+                _note_altium(commands, False, before)
+            launcher = None
             for attempt in (1, 2):
                 if attempt == 1 or not flag_path("start").exists():     # a start that came late needs no second RunScript
-                    subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
+                    launcher = subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
                 t0 = time.time()
                 started = False
                 while time.time() - t0 < start_timeout * (8 if cold else 1):
@@ -797,11 +832,11 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                         _RUN["reached"] = True
                         break
                     time.sleep(0.5)
-                extra = _extra_x2(before, 1 if cold else 0)
-                if extra:       # a launch that leaves a new Altium alive is a failure, whatever that Altium went on to answer
-                    flag_path("start").unlink(missing_ok=True)
-                    raise BridgeError(SECOND_ALTIUM + f" (X2.EXE process {', '.join(map(str, extra))}). I did not trust anything it answered; "
-                                      "close the extra Altium window and run the step again.")
+                extra = _new_x2(before, None if cold else launcher)       # a cold start's launcher IS the Altium that starts
+                if cold and started:
+                    _note_altium(commands, True, before, _x2_pids())
+                if len(extra) > (1 if cold else 0):    # a new Altium beyond the one a cold start makes: its answer is not trusted
+                    raise BridgeError(SECOND_ALTIUM + f" (X2.EXE process {', '.join(map(str, extra))})." + SECOND_ALTIUM_TAIL)
                 if started:
                     if released:
                         _note_release(released)         # the run that was paused is gone: this script started
@@ -822,6 +857,10 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
             if not flag_path("start").exists():
                 (EXCHANGE / "request.txt").unlink(missing_ok=True)       # nothing consumed it: nobody may run it now
             raise
+        # a warm launch's process must hand its request to the running Altium and exit; one that stays alive IS another Altium (judged below,
+        # when the run has ended, by the process and not by a timer)
+        watch = launcher if (not cold and before is not None and launcher is not None and getattr(launcher, "poll", None)
+                             and launcher.poll() is None) else None
         t_log, last, t0 = time.time(), _stat(EXCHANGE / "log.txt"), time.time()
         t_look, t_rep = t_log, 0.0
         hard = total_timeout * LONG_RUN_FACTOR      # the cap of a script that is still logging: only a runaway reaches it (see below)
@@ -829,11 +868,11 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
             now = _stat(EXCHANGE / "log.txt")
             if now != last:
                 last, t_log = now, time.time()
-            if progress_fn() and time.time() - t_rep >= PROGRESS_EVERY:       # the step's line says what Altium is on, and for how long
-                t_rep = time.time()
-                lines = _read(EXCHANGE / "log.txt")
-                report_progress({"text": "Altium is working" + (f": {lines[-1][:80]}" if lines else ""), "elapsed": round(t_rep - t0, 1),
-                                "quiet_s": round(t_rep - t_log, 1)})
+            if progress_fn() and time.time() - t_rep >= PROGRESS_EVERY:       # the step's line says that Altium works, and for how long
+                t_rep = time.time()                                          # from the file's stat only: the log is never opened while it runs
+                quiet = round(t_rep - t_log, 1)
+                report_progress({"text": "Altium is working" + (f" (no news from it for {int(quiet)} s)" if quiet >= 10 else ""),
+                                "elapsed": round(t_rep - t0, 1), "quiet_s": quiet})
             boxed = False
             if time.time() - t_log > MODAL_AFTER and time.time() - t_look > MODAL_AFTER / 3:
                 # a script that stops logging while an Altium error box is open will not go on: do not wait out the stall timeout
@@ -842,17 +881,31 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
             # A script that goes on logging is alive and is never cut off for taking long (a wall clock cap on a valid operation is a
             # failure that is no one's fault): it is cut off when it stops logging (stall_timeout) or an error box is open. total_timeout
             # is what the operation is expected to take; only LONG_RUN_FACTOR times it, still going, is taken for a runaway.
-            if boxed or time.time() - t_log > stall_timeout or time.time() - t0 > hard:
+            runaway = time.time() - t0 > hard
+            if boxed or time.time() - t_log > stall_timeout or runaway:
                 shown = release_executor(pause_context=True)
                 if flag_path("end").exists():
                     break                                   # resumed with RunMacro and ran to its end: read its answer as usual
-                log = _read(EXCHANGE / "log.txt")           # the script is stopped now: safe to read
+                if _stat(EXCHANGE / "log.txt") != last and not runaway:
+                    last, t_log, t_look = _stat(EXCHANGE / "log.txt"), time.time(), time.time()      # the release let it go on: it is working
+                    continue
+                if runaway:                                 # still logging at the end of its longest time: stopped, not left running
+                    _editscript("Stop")
+                    time.sleep(2)
+                    shown += _close_dialogs()
+                log = _log_when_still()                     # read only once the script is stopped (a log that still moves is not opened)
                 restarted = _restart_stuck(commands, stall_timeout, t_log)
                 flag_path("start").unlink(missing_ok=True)  # a run we gave up on is not "in progress" any more
                 raise BridgeError("Altium stopped in the middle of the script, after: "
                                   f"{log[-1] if log else 'nothing'}. I released the script executor."
                                   + (f" Dialogs: {' | '.join(shown)}" if shown else "") + (" " + restarted if restarted else ""))
             time.sleep(0.5)
+        if watch is not None:           # the run is over: the launcher that was left alive is judged by exiting, within the stall limit
+            t_w = time.time()
+            while watch.poll() is None and time.time() - t_w < stall_timeout:
+                time.sleep(0.5)
+            if watch.poll() is None:
+                raise BridgeError(SECOND_ALTIUM + f" (X2.EXE process {getattr(watch, 'pid', '?')})." + SECOND_ALTIUM_TAIL)
         resp, log = _read(EXCHANGE / "response.txt"), _read(EXCHANGE / "log.txt")
         errs = [r for r in resp if r.startswith("ERR")]
         if errs:

@@ -950,7 +950,9 @@ def plan(doc, box, rules=None, pitch=0.1, seconds=600.0, only=None, pour_net=Non
     pour = pour_net if pour_net in nets and not planes else None
     nl = 3 if layers == 4 else 2
 
-    pair_state = _pair.pre_route(rt, rules, nets, t0 + min(30.0, seconds), doc)
+    if clock is not None:
+        deadline.track(rt)                      # the pairs are searched under the routing clock: stall by work, never by their own 30 s
+    pair_state = _pair.pre_route(rt, rules, nets, deadline if clock is not None else t0 + min(30.0, seconds), doc)
     _pair.fallback_ties(rt, rules, pair_state)
     fixed_items = [it for n in sorted(rt.routed) for it in rt.routed[n]["items"]] + [it for n in sorted(rt.tie) for it in rt.tie[n]["items"]]
     done = set(pair_state["done"])
@@ -983,6 +985,8 @@ def plan(doc, box, rules=None, pitch=0.1, seconds=600.0, only=None, pour_net=Non
     ng = Negotiator(doc, box, rules, pitch, nl, {v for opts in options.values() for pair_ in opts for v in pair_ if v}, deadline,
                     fixed_items)
     ng.cap = expansions or EXPANSIONS
+    if clock is not None:
+        deadline.track(ng)
     ng.done0 = len(done)
     deadline.note(len(done), total=len(nets))
     ng.mult = [LAYER_MULT[l] for l in range(nl)]
