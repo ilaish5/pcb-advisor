@@ -45,6 +45,19 @@ def test_a_save_that_changes_an_agreed_item_after_confirm_says_changed_since_con
     assert not store.load_idea(empty).get("changed_since_confirm")          # confirmed again
 
 
+def test_the_real_agent_path_never_confirms_an_assumption(empty):
+    store.propose_idea(empty, "Regulator", "Linear 3.3 V regulator (assumed)")
+    store.propose_idea(empty, "Storage", "SPI flash", by="agent")
+    a = _agreed(empty)
+    assert a["Regulator"]["status"] == "proposed" and a["Regulator"]["assumed"] is True
+    assert a["Storage"]["assumed"] is False
+    store.accept_all_proposed(empty)
+    store.confirm_idea(empty)
+    assert _agreed(empty)["Regulator"]["status"] == "proposed"
+    store.confirm_idea_item(empty, topic="Regulator")
+    assert _agreed(empty)["Regulator"]["status"] == "confirmed"
+
+
 def test_a_no_op_save_keeps_the_idea_confirmed(empty):
     _idea(empty, [{"topic": "Power", "text": "USB-C only", "status": "confirmed", "by": "student"}])
     store.confirm_idea(empty)

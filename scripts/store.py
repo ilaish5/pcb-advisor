@@ -2349,7 +2349,9 @@ def propose_idea(project, topic, text, by="agent", replace=False):
     idea = load_idea_working(project)
     items = idea["agreed"]
     item = next((i for i in items if i["topic"] == topic), None)
-    status = "confirmed"
+    # R2/W5: what the agent only assumed is a proposal until the student acts on that item; it carries the `assumed` field so every reader sees it
+    assumed = by != "student" and bool(_ASSUMED_RX.search(text))
+    status = "proposed" if assumed else "confirmed"
     if by == "agent" and item and not replace:
         base = re.sub(r" \(\d+\)$", "", topic)
         row = re.compile(re.escape(base) + r"(?: \(\d+\))?")
@@ -2369,14 +2371,14 @@ def propose_idea(project, topic, text, by="agent", replace=False):
             while (new_topic := f"{base[:60 - len(f' ({n})')].rstrip()} ({n})") in taken:
                 n += 1
             items.insert(items.index(family[-1]) + 1,
-                         {"topic": new_topic, "text": text, "by": by, "status": status, "ts": now_ms()})
+                         {"topic": new_topic, "text": text, "by": by, "status": status, "assumed": assumed, "ts": now_ms()})
             return save_idea_draft(project, idea)
     if item:
         if by == "agent" and item.get("text") and item["text"] != text:
             item["prev_text"] = item["text"]
-        item.update(text=text, by=by, status=status, ts=now_ms())
+        item.update(text=text, by=by, status=status, assumed=assumed, ts=now_ms())
     else:
-        idea["agreed"].append({"topic": topic, "text": text, "by": by, "status": status, "ts": now_ms()})
+        idea["agreed"].append({"topic": topic, "text": text, "by": by, "status": status, "assumed": assumed, "ts": now_ms()})
     return save_idea_draft(project, idea)
 
 
