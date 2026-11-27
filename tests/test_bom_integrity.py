@@ -34,6 +34,14 @@ def test_a_student_edit_cannot_duplicate_a_designator_either(empty):
         store.edit_bom(empty, "R5", "refs", ["R5", "R3"])
 
 
+def test_a_string_of_designators_is_a_list_not_a_set_of_characters(empty):
+    _approve(empty, "R3", {"mpn": "RC0603-10K", "refs": ["R3"]}, new=True)
+    _approve(empty, "R5", {"mpn": "RC0603-1K", "refs": ["R5"]}, new=True)
+    assert store._duplicate_refs(empty, "R5", "R5, R3") == [("R3", "R3")]
+    assert store._duplicate_refs(empty, "R5", "R5 R6") == []
+    assert store._duplicate_refs(empty, "R5", "RR3") == []          # the old set-of-characters build matched "R" and "3" against nothing real
+
+
 def _with_datasheets(empty, names):
     folder = sources.folder_of(empty)
     folder.mkdir(parents=True, exist_ok=True)

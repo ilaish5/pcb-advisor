@@ -709,7 +709,8 @@ def _evaluate(col, pins, pads):
             else:
                 out["absent"].append(f"pin {num} {name}")
             continue
-        good = [r for r in hits if name_matches(name, r["name"], names) or (_is_ep_row(r) and _ep_ok(name, [r], ep_lines))]
+        number_only = name.strip().upper() == num.strip().upper()          # a symbol pin named by its number: the table's row is its only evidence
+        good = [r for r in hits if number_only or name_matches(name, r["name"], names) or (_is_ep_row(r) and _ep_ok(name, [r], ep_lines))]
         if not good:
             unclear = [r for r in hits if polarity_unclear(name, r["name"], names)]
             swallowed = [r for r in hits if not r.get("isolated", True) and _name_forms(name, table_names=names) & _words_of(r.get("rest", ""))]
@@ -743,6 +744,8 @@ def _evaluate(col, pins, pads):
         note = _type_note(name, good[0]["type"])
         if note:
             out["notes"].append(f"pin {num}: {note}")
+    flagged = {m.group(1) for e in out["conflict"] + out["absent"] for m in [re.match(r"pin (\S+) ", e)] if m}
+    out["examined"] = sum(1 for num, _name in pins if num not in flagged)          # pins that went through the table without a conflict or a gap
     if complete:
         out["count"] = len(set(nums))
         if pads is not None:
@@ -888,7 +891,7 @@ def check(texts, pins, package="", pads=None, mpn=""):
     bad = [r for r in results if r["conflict"]]
     if len(clean) == len(results):
         names = sorted({u["label"] or "" for u in results if u["label"]})
-        return {"verify": "pass", "issues": [], "notes": sorted({n for r in results for n in r["notes"]}),
+        return {"verify": "pass", "issues": [], "compared": min(r["examined"] for r in results), "notes": sorted({n for r in results for n in r["notes"]}),
                 "evidence": f"pin table of the datasheet ({len(pins)} pins matched by number and name"
                             + (f", {', '.join(names)}" if names else "") + ")"}
     if len(bad) == len(results):

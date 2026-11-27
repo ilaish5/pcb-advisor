@@ -1894,6 +1894,8 @@ def _rebind_datasheet(project, cur, changes):
 
 def _duplicate_refs(project, line, refs):
     """[(ref, other line key)] of the designators in `refs` that another BOM line already holds (W10: refs are unique across lines)."""
+    if isinstance(refs, str):                       # "C1, C2" or "C1 C2": a string is a list of designators, never a set of its characters
+        refs = [r for r in re.split(r"[\s,;]+", refs) if r]
     mine = set(refs or [])
     return [(r, l["key"]) for l in bom_lines(project) if l["key"] != line for r in (l.get("refs") or []) if r in mine]
 

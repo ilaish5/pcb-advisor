@@ -71,7 +71,8 @@ def _judge(project, line, ds):
     package = line.get("package") or footprint
     results = []
     for ref, pins in parts:
-        named = [(n, nm) for n, nm in pins if nm.strip().upper() != n.strip().upper()]
+        # a pin named by its number is still compared (by its row in the table); a part whose pins ALL carry only numbers has nothing to compare
+        named = list(pins) if any(nm.strip().upper() != n.strip().upper() for n, nm in pins) else []
         if not named:
             r = {"verify": "unchecked", "issues": ["the pins are named only by their numbers: nothing to compare with the table"],
                  "notes": [], "evidence": ""}
@@ -88,30 +89,39 @@ def _judge(project, line, ds):
     notes = [f"{ref}: {n}" for ref, r in results for n in r["notes"]]
     out = {"verify": "pass", "issues": ("note: " + "; ".join(notes[:6])) if notes else "", "method": "pin-table",
            "evidence": f"{ds}: " + results[0][1]["evidence"]}
-    rec = _evidence_record(project, ds, text, parts[0][1], _pins_of(project, line))
+    rec = _evidence_record(project, ds, text, parts[0][1], _symbol_pin_count(project, line), results[0][1].get("compared"))
     if rec:
         out["pins_evidence"] = rec
     return out
 
 
-def _evidence_record(project, ds, text, named_pins, all_parts):
+def _symbol_pin_count(project, line):
+    """The number of distinct pin numbers of the line's first part on the sheets, nameless pins included (every pin of the symbol)."""
+    for sheet in store.sheet_ids(project):
+        for part in store.load_sheet(project, sheet).get("parts", []):
+            if part["ref"] in line.get("refs", []):
+                return len({str(p.get("num") or "").strip() for p in part.get("pins", []) if str(p.get("num") or "").strip() not in ("", "*")})
+    return 0
+
+
+def _evidence_record(project, ds, text, named_pins, symbol_pins, compared):
     """{doc, sha256, page, pins_compared, symbol_pins, checked_at}: what a 'verified' pin status stands on. Written only when the
-    datasheet file is on disk (its sha256 is of that file); the page is the one whose text holds most of the compared pin rows.
-    symbol_pins counts every pin of the symbol, pins_compared those compared by number and name, so a part with pins nobody
-    compared is never recorded as fully verified."""
+    datasheet file is on disk (its sha256 is of that file) and a page of it holds a pin row that was compared (no page is never
+    defaulted to 1). symbol_pins counts every pin of the symbol, pins_compared the pins pintable actually took through the table, so a
+    part with pins nobody compared is never recorded as fully verified."""
     f = sources.document_path(project, ds)
-    if f is None:
+    if f is None or not isinstance(compared, int):
         return None
-    pages = text.split("")
-    best, best_n = 1, -1
+    pages = text.split("\f")
+    best, best_n = None, 0
     for i, pg in enumerate(pages, 1):
         n = sum(1 for num, name in named_pins
-                if re.search(r"(?<![\w.])" + re.escape(num) + r"(?![\w.]).{0,80}?" + re.escape(name[:12]), pg, re.I))
+                if re.search(r"(?<![\w.])" + re.escape(num) + r"(?![\w.]).{0,80}?" + re.escape(name[:12]), pg, re.I)
+                or (name.strip().upper() == num.strip().upper() and re.search(r"(?m)^\s*" + re.escape(num) + r"(?![\w.])", pg)))
         if n > best_n:
             best, best_n = i, n
-    first = next((pins for _ref, pins in all_parts if pins), [])
-    symbol_pins = len({n for n, _nm in first}) if first else 0
-    compared = len({n for n, nm in named_pins if nm.strip().upper() != n.strip().upper()})
+    if best is None:
+        return None
     return {"doc": ds, "sha256": sources.file_sha256(f), "page": best, "pins_compared": compared, "symbol_pins": symbol_pins,
             "checked_at": store.now()}
 
