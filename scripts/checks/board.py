@@ -247,7 +247,7 @@ def _is_passive(comp: dict[str, Any], n_pads: int) -> bool:
     return bool(PASSIVE_REF.match(ref)) or (ref[:1].upper() in "RCLDFT" and n_pads <= 2 and not is_connector(comp))
 
 
-_SUPPLY_NAME = re.compile(r"^(?:[ADP]?V(?:DD|CC|IN|BUS|BAT|BATT|CCA|DDA|DDIO\d*|DDUSB|DDSD|REF\+?|CAP|\d)|VIN|VOUT|VO|\+?\d+V\d*|VS\+?|VP)[A-Z0-9_/+]*$", re.I)
+_SUPPLY_NAME = re.compile(r"^(?:[ADP]?V(?:DD|CC|IN|BUS|BAT|BATT|CCA|DDA|DDIO\d*|DDUSB|DDSD|REF\+?|CAP|\d)|VIN|\+?\d+V\d*|VS\+?|VP)[A-Z0-9_/+]*$", re.I)
 _NOT_A_LOAD = re.compile(r"^(?:SW|S|K|RL|Q|TP|F|FB|LED|BZ)\d", re.I)       # a switch, relay, transistor or test point is no supplied chip
 _LOAD_SUPPLY = re.compile(r"^[ADP]?V(?:DD|CC)[A-Z0-9_/+]*$", re.I)
 _CARD = re.compile(r"sd|sim|card|mmc|(?<![a-z])tf(?![a-z])|micro_?sd", re.I)
@@ -289,6 +289,13 @@ def _supply_pin(q, comp, comp_pads, net, pin_names=None):
     if is_connector(comp) and not _CARD.search(f"{comp.get('pattern', '')} {comp.get('lib_ref', '')}"):
         return bool(_LOAD_SUPPLY.match(name))      # a socket found by its pin names: only its VDD/VCC; VBUS of a plug is an input, not a supplied load
     return bool(_SUPPLY_NAME.match(name))
+
+
+def _shown_over(dist):
+    """A distance that is over a limit, printed so that the printed value is over it too: rounded UP to 0.01 mm, one decimal when that says it all
+    (12.0), two when it does not (3.03; 3.02 is never shown as 3.0 against a 3 mm limit)."""
+    s = f"{math.ceil(dist * 100 - 1e-9) / 100:.2f}"
+    return s[:-1] if s.endswith("0") else s
 
 
 def design_pin_names(design):
@@ -385,7 +392,7 @@ def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DI
             if dist > limit:
                 findings.append({
                     "id": "decap_distance_excessive", "severity": "warning", "refs": [cref, ref],
-                    "message": f"Supply pin {where} on net '{net}': the nearest decoupling cap {cref} is {dist:.1f} mm away. Recommended: <= {limit:g} mm ({cite}).",
+                    "message": f"Supply pin {where} on net '{net}': the nearest decoupling cap {cref} is {_shown_over(dist)} mm away. Recommended: <= {limit:g} mm ({cite}).",
                     "evidence": f"PcbDoc pad distance: {cref} ({cp['x_mm']}, {cp['y_mm']}) to {where} on net {net}"})
 
     for ref, nets in sorted(unknown.items()):

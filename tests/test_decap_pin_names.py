@@ -60,6 +60,23 @@ def test_vdda_vref_names_with_a_slash_are_supply_pins():
     assert board._supply_pin(q, h.comp("U1", 0, 0, pattern="LQFP48"), [q, q, q], "+3V3") is False
 
 
+def test_an_output_pin_named_vout_is_not_a_supply_pin_but_vin_is():
+    q = lambda name: {"ref": "U5", "name": "2", "pin_name": name}
+    comp = h.comp("U5", 0, 0, pattern="SOT23-5")
+    assert board._supply_pin(q("VOUT"), comp, [q("VOUT")] * 3, "+3V3") is False
+    assert board._supply_pin(q("VIN"), comp, [q("VIN")] * 3, "+3V3") is True
+
+
+def test_a_distance_just_over_the_limit_is_printed_over_it():
+    for x in (3.02, 3.03, 3.004):
+        doc = h.decap_doc(h.cap("C1", 0, 0, "+3V3", "GND"), _numbered_ic("U1", x - 1.0, ["+3V3", "X", "GND"]))
+        f = check_decoupling_caps(doc, pin_names={"U1": {"1": "VDD", "2": "PA0", "3": "VSS"}}, limits={"U1": (3.0, "datasheet p.1")})
+        msgs = [m["message"] for m in f if m["id"] == "decap_distance_excessive"]
+        for msg in msgs:
+            shown = float(msg.split("is ")[1].split(" mm")[0])
+            assert shown > 3.0, msg
+
+
 def test_check_board_passes_the_datasheet_limit_and_pin_names_through():
     doc = h.decap_doc(h.cap("C1", 0, 0, "+3V3", "GND"), _numbered_ic("U1", 4.0, ["+3V3", "X", "GND"]))
     names = {"U1": {"1": "VDD", "2": "PA0", "3": "VSS"}}
