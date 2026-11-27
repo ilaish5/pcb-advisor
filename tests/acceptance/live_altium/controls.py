@@ -15,7 +15,7 @@ import sys
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
-MODULES = ("metrics.altium_ui", "metrics.altium_ops", "metrics.altium_faults", "metrics.altium_agent")
+MODULES = ("metrics.altium_ui", "metrics.altium_ops", "metrics.altium_faults", "metrics.altium_agent", "metrics.altium_drc")
 
 
 def main() -> int:
