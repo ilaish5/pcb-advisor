@@ -249,7 +249,18 @@ def _is_passive(comp: dict[str, Any], n_pads: int) -> bool:
 
 _SUPPLY_NAME = re.compile(r"^(?:[ADP]?V(?:DD|CC|IN|BUS|BAT|BATT|CCA|DDA|DDIO\d*|DDUSB|DDSD|REF\+?|CAP|\d)|VIN|VOUT|VO|\+?\d+V\d*|VS\+?|VP)[A-Z0-9_/+]*$", re.I)
 _NOT_A_LOAD = re.compile(r"^(?:SW|S|K|RL|Q|TP|F|FB|LED|BZ)\d", re.I)       # a switch, relay, transistor or test point is no supplied chip
-_CARD = re.compile(r"sd|sim|card|mmc|tf_|micro_?sd", re.I)
+_LOAD_SUPPLY = re.compile(r"^[ADP]?V(?:DD|CC)[A-Z0-9_/+]*$", re.I)
+_CARD = re.compile(r"sd|sim|card|mmc|(?<![a-z])tf(?![a-z])|micro_?sd", re.I)
+
+
+def _is_interface_socket(comp_pads, pin_names):
+    """A connector that is a supplied interface, told by its pin names and not by its part name: a pin named as a supply (VDD, VCC...) and at
+    least three other named signal pins (CMD, CLK, DAT0...) of the symbol. A header whose pins are numbers or a bare rail row is not."""
+    named = [n for n in (pin_function(q, pin_names) for q in comp_pads) if n]
+    supply = [n for n in named if _LOAD_SUPPLY.match(n)]
+    signal = [n for n in named if not _SUPPLY_NAME.match(n) and not GROUND_NET.search(n)
+              and not re.match(r"^(?:[ADP]?GND\w*|VSS\w*|SHIELD|SH|MH\d*|S\d+)$", n, re.I)]
+    return bool(supply) and len(signal) >= 3
 
 
 def pin_function(q, pin_names=None):
@@ -269,12 +280,44 @@ def _supply_pin(q, comp, comp_pads, net, pin_names=None):
     """Is pad q a supply pin of an IC or a card connector? Not on a plain header, a relay coil or a one-pad net part. Decided only by the pin's
     function name (VDD, VCC, VBAT, VDDA, VREF+...) taken from the symbol or netlist; membership of a power net says nothing (a switch, a
     flash CS pin or a relay pin can sit on a rail). Returns True, False, or None when the pin's function is not known."""
-    if len(comp_pads) < 3 or (is_connector(comp) and not _CARD.search(f"{comp.get('pattern', '')} {comp.get('lib_ref', '')}")):
+    if len(comp_pads) < 3 or (is_connector(comp) and not _CARD.search(f"{comp.get('pattern', '')} {comp.get('lib_ref', '')}")
+                              and not _is_interface_socket(comp_pads, pin_names)):
         return False
     name = pin_function(q, pin_names)
     if not name:
         return None
+    if is_connector(comp) and not _CARD.search(f"{comp.get('pattern', '')} {comp.get('lib_ref', '')}"):
+        return bool(_LOAD_SUPPLY.match(name))      # a socket found by its pin names: only its VDD/VCC; VBUS of a plug is an input, not a supplied load
     return bool(_SUPPLY_NAME.match(name))
+
+
+def design_pin_names(design):
+    """{ref: {pin number: pin name}} of the design's netlist sheets (a project name, its folder or its netlist folder), or None when the design
+    has none."""
+    from checks import schematic
+    got = schematic._netlist_sources(design)
+    if not got:
+        return None
+    out: dict[str, dict[str, str]] = {}
+    for sheet in got[0]:
+        for part in sheet.get("parts", []):
+            for q in part.get("pins", []):
+                num = str(q.get("num") or q.get("number") or "").strip()
+                if part.get("ref") and num:
+                    out.setdefault(part["ref"], {})[num] = str(q.get("name") or "")
+    return out
+
+
+def design_decap_limits(design):
+    """{ref: (mm, cite)} from `decap-limits.json` ({"U1": [5.0, "datasheet p.31"]}) in the design's project folder, else None. A limit with no
+    cite is not taken: a distance without its source is the general one."""
+    try:
+        folder = pathlib.Path(design)
+        folder = folder.parent if folder.name == "netlist" else folder
+        raw = json.loads((folder / "decap-limits.json").read_text(encoding="utf-8"))
+        return {r: (float(v[0]), str(v[1])) for r, v in raw.items() if isinstance(v, (list, tuple)) and len(v) == 2 and str(v[1]).strip()} or None
+    except (OSError, ValueError, TypeError, IndexError):
+        return None
 
 
 def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DIST_MM,
@@ -419,7 +462,7 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
                 connector_specs: dict[str, Any] | None = None,
                 decap_max_dist_mm: float = DECAP_MAX_DIST_MM, library_stale: bool | None = None,
                 decap_limits: dict[str, tuple[float, str]] | None = None,
-                pin_names: dict[str, dict[str, str]] | None = None) -> dict[str, Any]:
+                pin_names: dict[str, dict[str, str]] | None = None, design: Any = None) -> dict[str, Any]:
     """Run all board checks on a PcbDoc (a path, or a read_pcbdoc dict; footprint geometry comes from
     read_pcbdoc(path, geometry=True), i.e. body_bbox_mm / outline_bbox_mm on each component)."""
     findings = []
@@ -430,6 +473,9 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
     else:
         doc = doc_or_path
 
+    if design is not None:                 # the design the board is for gives the pin names (a PcbDoc pad is a number) and any datasheet limits
+        pin_names = pin_names if pin_names is not None else design_pin_names(design)
+        decap_limits = decap_limits if decap_limits is not None else design_decap_limits(design)
     bounds = compute_board_bounds(doc, outline_mm=outline_mm)
     findings.extend(check_edge_components(doc, bounds, connector_specs=connector_specs))
     findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm, limits=decap_limits, pin_names=pin_names))
@@ -785,7 +831,7 @@ def main(argv=None):
             stale = partlib.converter_stale(pathlib.Path(args.design).name)      # a project name, or its folder
         except Exception:
             stale = None
-    res = check_board(args.pcb, outline_mm=args.outline, decap_max_dist_mm=args.decap_max_mm, library_stale=stale)
+    res = check_board(args.pcb, outline_mm=args.outline, decap_max_dist_mm=args.decap_max_mm, library_stale=stale, design=args.design)
     if args.design:
         from checks import schematic
         res["findings"].extend(schematic.design_vs_board(args.design, args.pcb))

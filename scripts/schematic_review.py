@@ -52,6 +52,21 @@ def _is_rail(net):
     return bool(n) and not _is_gnd(n) and bool(_RAIL.search(n)) and not re.match(r"^[-~]", n)
 
 
+_ANALOG = re.compile(r"^(?:A?VDDA|AVDD\w*|AVCC|VREF\+?|VREFP)$", re.I)
+
+
+def _is_analog_supply(name):
+    return any(_ANALOG.match(x.strip()) for x in str(name or "").split("/"))
+
+
+def _farads(value):
+    """The capacitance in farads of a BOM value text ('100nF', '4.7uF', '10 pF'), or None when it is not readable."""
+    m = re.match(r"^\s*(\d*\.?\d+)\s*([pnuµμm]?)\s*f?\b", str(value or ""), re.I)
+    if not m:
+        return None
+    return float(m.group(1)) * {"p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "μ": 1e-6, "m": 1e-3, "": 1.0}[m.group(2).lower()]
+
+
 def _pref(ref):
     return re.match(r"[A-Za-z]*", str(ref)).group(0).upper()
 
@@ -60,9 +75,16 @@ def _parts(project):
     out = []
     for sh in store.sheet_ids(project):
         try:
-            out += [p for p in store.load_sheet(project, sh).get("parts", []) if p.get("ref")]
+            out += [dict(p) for p in store.load_sheet(project, sh).get("parts", []) if p.get("ref")]
         except (OSError, ValueError, KeyError):
             continue
+    try:                           # a capacitor's size is in the BOM, not on the sheet
+        values = {r: l.get("value") for l in store.bom(project, write=False) for r in (l.get("refs") or [])}
+    except Exception:       # noqa: BLE001 - without values every capacitor counts as one of unknown size
+        values = {}
+    for p in out:
+        if not p.get("value") and values.get(p["ref"]):
+            p["value"] = values[p["ref"]]
     return out
 
 
@@ -99,20 +121,41 @@ def review(project, parts=None):
         p = by_ref[ref]
         return _pref(ref) not in ("C", "R", "L", "D", "F", "FB", "TP", "J", "P", "SW", "Y", "X") or str(p.get("kind") or "") == "ic"
 
-    # decoupling: every IC supply pin needs its own capacitor, so the supply pins of ALL the ICs on a rail are counted against the rail's capacitors
-    demand = {}                    # rail net -> {ic ref: [pin names]}
-    for ref, p in by_ref.items():
+    # decoupling: every IC supply pin needs a capacitor of its own, taken one-to-one from the capacitors of its sheet area on that rail
+    # (netlist adjacency: the same schematic section and the same net). A bulk capacitor does not stand in for a bypass capacitor, and an analog
+    # supply pin (VDDA, AVDD, VREF+) asks two: a ~10 nF and a ~1 uF (the usual STM32 / mixed-signal datasheet rule).
+    pool = {}                      # (section, rail net) -> [cap refs]
+    for net, refs in caps_to_gnd.items():
+        for c in refs:
+            pool.setdefault((by_ref[c].get("section") or "", net), []).append(c)
+    pins_of = {}                   # (section, rail net) -> [(ic ref, pin name, analog)]
+    for ref, p in sorted(by_ref.items()):
         if is_ic(ref):
             for n, nm, net in _pins(p):
                 if _is_supply_name(nm) and _is_rail(net):
-                    demand.setdefault(net, {}).setdefault(ref, []).append(nm)
-    for net, per_ic in sorted(demand.items()):
-        total, have = sum(len(v) for v in per_ic.values()), len(caps_to_gnd.get(net, []))
-        if have < total:
-            for ref, names in sorted(per_ic.items()):
-                add("decap_missing", ref, f"decoupling capacitor missing: {len(names)} supply pin(s) ({', '.join(names)}) on {net}; the {len(per_ic)} "
-                    f"part(s) on {net} have {total} supply pin(s) in all but only {have} capacitor(s) from {net} to ground; the datasheet asks for a "
-                    "bypass capacitor at each supply pin")
+                    pins_of.setdefault((p.get("section") or "", net), []).append((ref, nm, _is_analog_supply(nm)))
+    for (sec, net), need in sorted(pins_of.items()):
+        free = list(pool.get((sec, net), []))
+
+        def take(lo, hi, prefer=None):
+            known = [c for c in free if _farads(by_ref[c].get("value")) is not None and lo <= _farads(by_ref[c].get("value")) <= hi]
+            if prefer:
+                known.sort(key=lambda c: abs(_farads(by_ref[c].get("value")) - prefer))
+            pick = (known or [c for c in free if _farads(by_ref[c].get("value")) is None] or [None])[0]
+            if pick:
+                free.remove(pick)
+            return pick
+        for ref, nm, analog in [x for x in need if x[2]]:
+            for label, lo, hi, pref in (("10 nF", 1e-9, 4.7e-8, 1e-8), ("1 uF", 4.7e-7, 1e-5, 1e-6)):
+                if not take(lo, hi, pref):
+                    add("decap_missing", ref, f"decoupling capacitor missing: analog supply pin {nm} on {net} has no {label} capacitor of its own "
+                        f"(the part's sheet area has {len(pool.get((sec, net), []))} capacitor(s) on {net}; a capacitor serves one pin, and a bulk "
+                        "capacitor does not replace a bypass capacitor)")
+        for ref, nm, analog in [x for x in need if not x[2]]:
+            if not take(1e-9, 1e-6, 1e-7):
+                add("decap_missing", ref, f"decoupling capacitor missing: supply pin {nm} on {net} has no capacitor of its own "
+                    f"(the part's sheet area has {len(pool.get((sec, net), []))} capacitor(s) on {net}, each serving one pin; a bulk capacitor does "
+                    "not replace a bypass capacitor); the datasheet asks for a bypass capacitor at each supply pin")
     for ref, p in by_ref.items():
         if not is_ic(ref):
             continue

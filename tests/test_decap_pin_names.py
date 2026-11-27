@@ -67,3 +67,31 @@ def test_check_board_passes_the_datasheet_limit_and_pin_names_through():
                             if f["id"] == "decap_distance_excessive"]
     assert len(flagged()) == 1
     assert flagged(decap_limits={"U1": (5.0, "datasheet p.31")}) == []
+
+
+def _real_path_doc():
+    """A board in PcbDoc form (numbers only) with a TF-card socket whose pattern says nothing about 'sd', a header, a switch and a flash."""
+    tf = ([h.comp("J2", 20.0, 0.0, pattern="TF-SMD_TF-01A")],
+          [h.pad("J2", str(i), 20.0 + i, 0.0, n) for i, n in enumerate(["X", "X", "X", "+3V3", "X", "X", "GND", "X"], 1)])
+    hdr = ([h.comp("J5", 40.0, 0.0, pattern="HDR1X4")], [h.pad("J5", str(i), 40.0 + i, 0.0, n) for i, n in enumerate(["+3V3", "X", "X", "GND"], 1)])
+    sw = ([h.comp("SW2", 30.0, 0.0, pattern="SW_TACT")], [h.pad("SW2", "1", 30.0, 0.0, "+3V3"), h.pad("SW2", "2", 31.0, 0.0, "X"), h.pad("SW2", "3", 32.0, 0.0, "GND")])
+    return h.decap_doc(h.cap("C2", 0, 0, "+3V3", "GND"), tf, hdr, sw)
+
+
+_SHEET = {"id": "01", "parts": [
+    {"ref": "J2", "pins": [{"num": str(i), "name": n} for i, n in enumerate(["DAT2", "CD/DAT3", "CMD", "VDD", "CLK", "VSS", "DAT0", "DAT1"], 1)]},
+    {"ref": "J5", "pins": [{"num": str(i), "name": n} for i, n in enumerate(["1", "2", "3", "4"], 1)]},
+    {"ref": "SW2", "pins": [{"num": "1", "name": "A"}, {"num": "2", "name": "B"}, {"num": "3", "name": "C"}]}]}
+
+
+def test_the_real_path_with_a_design_flags_the_tf_socket_by_its_pin_names_and_nothing_else():
+    res = check_board(_real_path_doc(), outline_mm=[-5, -5, 60, 40], design=_SHEET)
+    flagged = [f for f in res["findings"] if f["id"] == "decap_distance_excessive"]
+    assert [f["refs"] for f in flagged] == [["C2", "J2"]] and "J2-4" in flagged[0]["message"]
+    assert not [f for f in res["findings"] if f["id"] == "decap_not_checked" and "J2" in f["refs"]]
+
+
+def test_a_decap_limits_file_with_its_cite_is_read_and_one_without_is_not(tmp_path):
+    (tmp_path / "decap-limits.json").write_text('{"U1": [5.0, "datasheet p.31"], "U2": [9.0, ""]}', encoding="utf-8")
+    assert board.design_decap_limits(tmp_path) == {"U1": (5.0, "datasheet p.31")}
+    assert board.design_decap_limits(tmp_path / "nope") is None
