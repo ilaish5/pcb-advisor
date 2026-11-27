@@ -9,7 +9,7 @@ import re
 import shutil
 import time
 
-from lib import Result, metric
+from lib import Result, metric, not_run
 from live_altium import obs, altium_probe as ap, failview
 from oracle.pcbdoc import PcbDoc
 from metrics.altium_ui import oracle_pitch
@@ -460,7 +460,13 @@ def judge_w21(o: dict) -> Result:
 def w21(ctx):
     try:
         return judge_w21(draw_obs(ctx))
-    except (obs.NotObservable, FileNotFoundError, ValueError, OSError) as e:
+    except obs.NotObservable as e:
+        if str(e).startswith("Altium's compile could not be run by the probe"):
+            # the oracle's compile read-out is not usable in this Altium (three attempts raised Altium's own error box, 27/11): the
+            # draw was observed but nothing can be judged against Altium, so the metric says not_run with the reason, never a pass or fail
+            return not_run(str(e) + " (W21 not judged; the probe's COMPILE read-out raised an Altium error box in three attempts)")
+        return _err(str(e))
+    except (FileNotFoundError, ValueError, OSError) as e:
         return _err(str(e))
 
 
