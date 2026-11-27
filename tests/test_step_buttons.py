@@ -740,3 +740,32 @@ def test_the_layout_page_offers_place_parts_before_a_pcbdoc_exists():
     js = ui_js()
     line = next(l for l in js.splitlines() if "if (pvNoPcb(text)) return" in l)
     assert "pvStepBtn('place')" in line and "pvStepNote('pcb')" in line
+
+
+NOTE = "**A script was paused in Altium** - I stopped it so the next step can run. WARNING: Altium is clean now. Details: [TMessageForm] Error: OK"
+
+
+def _place_with_note(monkeypatch, project, other=None):
+    def place(p, replace=False):
+        bridge.PREFLIGHT_NOTES.append((project, NOTE))
+        if other:
+            bridge.PREFLIGHT_NOTES.append((other, "another project's line"))
+        return dict(PLACED)
+    monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
+    monkeypatch.setattr(bridge, "place_pcb", place)
+
+
+def test_a_chat_action_shows_the_paused_script_line_as_a_warning(empty, monkeypatch):
+    _place_with_note(monkeypatch, empty, other="someone-else")
+    said = "תמקם אתה את החלקים על הלוח"
+    applied, _, refused = serve.apply_actions(empty, [{"type": "altium.place_pcb", "student_said": said}], last_user=said,
+                                              chat=[{"role": "user", "text": said}])
+    assert not refused and applied[0].startswith("altium.place_pcb: ")
+    assert applied[1] == "altium.preflight: " + NOTE and serve.warning_of(applied[1]).startswith("Altium is clean now")      # amber, not green
+    assert bridge.PREFLIGHT_NOTES == [("someone-else", "another project's line")]                                          # only this project's
+
+
+def test_a_step_button_shows_the_paused_script_line_as_a_warning(server, empty, monkeypatch):
+    _place_with_note(monkeypatch, empty)
+    code, body = call(server, "POST", ENDPOINTS["place"], empty, {})
+    assert code == 200 and body["warnings"][-1] == NOTE and body["warnings"][:2] == PLACED["warnings"]

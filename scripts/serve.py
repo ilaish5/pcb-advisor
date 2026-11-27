@@ -1765,6 +1765,12 @@ def run_step_button(project, sess, step, data):
         try:
             with runlog.for_project(project):
                 code, body = _run_step(project, sess, step, data, bridge)
+                notes = bridge.take_preflight_notes(project)
+                if notes and isinstance(body, dict):      # a paused script was stopped first: said under the result, amber
+                    if body.get("error"):
+                        body["error"] = f"{body['error']} {' '.join(notes)}"
+                    else:
+                        body["warnings"] = [*(body.get("warnings") or []), *notes]
         except Exception as exc:      # after the step itself (its result could not be put into words): still an answer, and the page reads the files again
             code, body = 500, {"error": f"Altium ran the step but its result could not be read ({type(exc).__name__}: {exc}). Look at the file in Altium before trying again."}
             _run_end(project, **body)
@@ -1970,10 +1976,22 @@ def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_sta
     held = wants and STEP_LOCK.acquire(blocking=False)
     try:
         with runlog.for_project(project):
-            return _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables)
+            res = _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables)
+            if wants:
+                res[0].extend(_preflight_lines(project))
+            return res
     finally:
         if held:
             STEP_LOCK.release()
+
+
+def _preflight_lines(project):
+    """The bridge stopped a paused Altium script before one of this turn's steps: one amber result line (AGENTS rule 7) for it."""
+    try:
+        from altium import bridge
+        return ["altium.preflight: " + n for n in bridge.take_preflight_notes(project)]
+    except Exception:           # noqa: BLE001 - a note never fails the turn
+        return []
 
 
 def _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables=None):

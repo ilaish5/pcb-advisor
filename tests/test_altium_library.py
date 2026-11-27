@@ -478,7 +478,7 @@ def test_an_altium_error_box_ends_the_wait_without_the_stall_timeout(monkeypatch
     monkeypatch.setattr(bridge.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + 5))
     looks = []
     monkeypatch.setattr(bridge, "_close_dialogs", lambda only_look=False: looks.append(only_look) or ["[TMessageForm] Error: OK"])
-    monkeypatch.setattr(bridge, "preflight", lambda: None)          # this test counts the wait loop's own looks
+    monkeypatch.setattr(bridge, "preflight", lambda strict=False: None)          # this test counts the wait loop's own looks
     monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
     with pytest.raises(bridge.BridgeError, match="stopped in the middle"):
         bridge.run_commands([("PING",)], stall_timeout=180, total_timeout=900)
@@ -506,8 +506,8 @@ def _finishing_script(tmp_path, order):
 def test_a_paused_script_is_stopped_before_the_next_command_is_sent(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
     order = []
-    states = iter([{"boxes": ["[TMessageForm] Error: OK"], "windows": ["AdvisorBridge.pas [Paused] - Altium"]},
-                   {"boxes": [], "windows": []}])
+    states = iter([{"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": ["AdvisorBridge.pas [Paused] - Altium"]},
+                   {"boxes": [], "foreign": [], "windows": []}])
     monkeypatch.setattr(bridge, "_script_state", lambda: next(states))
     monkeypatch.setattr(bridge, "release_executor", lambda: order.append("Stop") or ["[TMessageForm] Error: OK"])
     monkeypatch.setattr(bridge.subprocess, "Popen", _finishing_script(tmp_path, order))
@@ -525,7 +525,7 @@ def test_a_paused_script_is_stopped_before_the_next_command_is_sent(monkeypatch,
 def test_a_clean_altium_is_not_touched_by_the_preflight(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
     order = []
-    monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "windows": []})
+    monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "foreign": [], "windows": []})
     monkeypatch.setattr(bridge, "release_executor", lambda: order.append("Stop") or [])
     monkeypatch.setattr(bridge.subprocess, "Popen", _finishing_script(tmp_path, order))
     bridge.run_commands([("PING",)])
@@ -534,7 +534,7 @@ def test_a_clean_altium_is_not_touched_by_the_preflight(monkeypatch, tmp_path):
 
 def test_a_run_that_stays_paused_tells_the_student_to_press_run(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
-    paused = {"boxes": ["[TMessageForm] Error: OK"], "windows": []}
+    paused = {"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": []}
     monkeypatch.setattr(bridge, "_script_state", lambda: paused)
     monkeypatch.setattr(bridge, "release_executor", lambda: [])
     assert bridge.preflight()["still_paused"] is True
@@ -546,7 +546,7 @@ def test_the_preflight_also_runs_after_an_error(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
     monkeypatch.setattr(bridge, "release_executor", lambda: [])
     calls = []
-    monkeypatch.setattr(bridge, "preflight", lambda: calls.append("pre"))
+    monkeypatch.setattr(bridge, "preflight", lambda strict=False: calls.append("pre"))
     monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 100)).__next__)
     with pytest.raises(bridge.BridgeError, match="F9"):
         bridge.run_commands([("PING",)])
@@ -561,6 +561,51 @@ def test_the_altium_help_skill_tells_what_to_do_about_a_paused_script():
 def test_a_window_title_alone_never_triggers_the_preflight(monkeypatch, tmp_path):
     """Seen live: the script editor is a tab of the main window, so a title is only extra logging, never the trigger."""
     monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
-    monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "windows": ["AdvisorBridge.pas [Paused]"]})
+    monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "foreign": [], "windows": ["AdvisorBridge.pas [Paused]"]})
     monkeypatch.setattr(bridge, "release_executor", lambda: pytest.fail("nothing is open that blocks a script"))
     assert bridge.preflight() is None and bridge.take_preflight_notes() == []
+
+
+def _boxes(*specs):
+    return [{"hwnd": i, "cls": cls, "line": f"[{cls}] {title}: {' / '.join(parts)}", "ok_only": bridge._ok_only(parts)}
+            for i, (cls, title, parts) in enumerate(specs, 1)]
+
+
+def test_a_box_that_asks_a_question_is_never_pressed_and_stops_the_step(monkeypatch, tmp_path):
+    _bridge_files(monkeypatch, tmp_path)
+    pressed = []
+    monkeypatch.setattr(bridge, "_dialog_boxes", lambda: _boxes(("TMessageForm", "Confirm", ["&Yes", "&No", "Cancel"]),
+                                                                 ("TMessageForm", "Error", ["OK"])))
+    monkeypatch.setattr(bridge, "_post_enter", lambda h: pressed.append(("enter", h)))
+    monkeypatch.setattr(bridge, "_post_close", lambda h: pressed.append(("close", h)))
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: pressed.append("RunScript"))
+    monkeypatch.setattr(bridge.subprocess, "run", lambda *a, **k: type("R", (), {"stdout": ""})())      # tasklist
+    with pytest.raises(bridge.BridgeError, match=r"\*\*A message box is open in Altium\*\*.*answer it.*Confirm: &Yes / &No / Cancel"):
+        bridge.run_commands([("PING",)])
+    assert pressed == []                       # nothing pressed, nothing closed, nothing sent
+
+
+def test_an_ok_only_script_error_box_is_released_and_a_question_box_left_alone(monkeypatch):
+    pressed = []
+    monkeypatch.setattr(bridge, "_dialog_boxes", lambda: _boxes(("TMessageForm", "Error", ["OK"]),
+                                                                 ("TMessageForm", "Confirm", ["Save", "Discard", "Cancel"]),
+                                                                 ("#32770", "Open", ["Cancel"])))
+    monkeypatch.setattr(bridge, "_post_enter", lambda h: pressed.append(("enter", h)))
+    monkeypatch.setattr(bridge, "_post_close", lambda h: pressed.append(("close", h)))
+    seen = bridge._close_dialogs()
+    assert pressed == [("enter", 1), ("close", 3)]
+    assert seen == ["[TMessageForm] Error: OK", "(left open, not pressed) [TMessageForm] Confirm: Save / Discard / Cancel", "[#32770] Open: Cancel"]
+    assert bridge._close_dialogs(only_look=True)[1] == "[TMessageForm] Confirm: Save / Discard / Cancel" and len(pressed) == 2
+
+
+def test_the_preflight_releases_an_ok_only_box_and_ignores_the_ok_rule_for_nothing_else(monkeypatch):
+    monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
+    monkeypatch.setattr(bridge, "_dialog_boxes", lambda: _boxes(("TMessageForm", "Error", ["OK"])))
+    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
+    assert bridge.preflight(strict=True)["found"] == ["[TMessageForm] Error: OK"]
+
+
+def test_preflight_notes_are_kept_per_project(monkeypatch):
+    monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [("a", "note a"), ("b", "note b"), ("a", "second a")])
+    assert bridge.take_preflight_notes("a") == ["note a", "second a"]
+    assert bridge.take_preflight_notes("a") == [] and bridge.take_preflight_notes("b") == ["note b"]

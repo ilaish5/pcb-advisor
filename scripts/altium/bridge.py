@@ -178,10 +178,16 @@ def _running():
         return False
 
 
-def _close_dialogs(only_look=False):
-    """Close the dialog boxes Altium left open (class #32770 or a script error box, owned by X2.EXE), so the next script
-    can run. Returns one "title: text" line per dialog closed; each is logged first, so a stall can be explained.
-    only_look=True closes nothing and logs nothing: it only reports which boxes are open."""
+def _ok_only(parts):
+    """True for a box whose only button is OK (the script error box: "[TMessageForm] Error: OK"). Any other box (Yes/No/Cancel,
+    "Save changes?") is a question for the owner: Enter would pick its default button, so nothing is ever pressed on it."""
+    return bool(parts) and all(str(t).replace("&", "").strip().lower() == "ok" for t in parts)
+
+
+def _dialog_boxes():
+    """Every visible dialog box owned by X2.EXE: class #32770 or TMessageForm. One dict each: hwnd, cls, line "[class] title: texts"
+    (the texts are the child windows' captions, the buttons; a message drawn as a label is not readable) and ok_only.
+    Looks only. [] when Altium is not running or this is not Windows."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -189,7 +195,7 @@ def _close_dialogs(only_look=False):
                              text=True, timeout=15).stdout
         pids = {int(m) for m in re.findall(r'"X2\.EXE","(\d+)"', out, re.I)}
         user32 = ctypes.windll.user32
-        closed = []
+        found = []
 
         def text_of(hwnd):
             buf = ctypes.create_unicode_buffer(1024)
@@ -206,7 +212,7 @@ def _close_dialogs(only_look=False):
                     parts.append(t)
                 return True
             user32.EnumChildWindows(hwnd, child, 0)
-            return f"[{cls}] {text_of(hwnd)}: " + " / ".join(parts)
+            return {"hwnd": hwnd, "cls": cls, "line": f"[{cls}] {text_of(hwnd)}: " + " / ".join(parts), "ok_only": _ok_only(parts)}
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def each(hwnd, _):
@@ -216,20 +222,47 @@ def _close_dialogs(only_look=False):
                 pid = wintypes.DWORD()
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                 if cls.value in ("#32770", "TMessageForm") and pid.value in pids:
-                    closed.append(describe(hwnd, cls.value))
-                    if only_look:
-                        return True
-                    if cls.value == "#32770":
-                        user32.PostMessageW(hwnd, 0x0010, 0, 0)       # WM_CLOSE
-                    else:                                             # a script error box: only its OK button ends it
-                        user32.PostMessageW(hwnd, 0x0100, 13, 0)      # WM_KEYDOWN, VK_RETURN
-                        user32.PostMessageW(hwnd, 0x0101, 13, 0)      # WM_KEYUP
+                    found.append(describe(hwnd, cls.value))
             return True
 
         user32.EnumWindows(each, 0)
-        if not only_look:
-            for line in closed:
-                DIALOG_LOG.append(line)
+        return found
+    except Exception:
+        return []
+
+
+def _post_close(hwnd):
+    import ctypes
+    ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)         # WM_CLOSE (a #32770 box answers it as Cancel)
+
+
+def _post_enter(hwnd):
+    import ctypes
+    ctypes.windll.user32.PostMessageW(hwnd, 0x0100, 13, 0)        # WM_KEYDOWN, VK_RETURN
+    ctypes.windll.user32.PostMessageW(hwnd, 0x0101, 13, 0)        # WM_KEYUP
+
+
+def _close_dialogs(only_look=False):
+    """Close the dialog boxes Altium left open, so the next script can run. A #32770 box gets WM_CLOSE (Cancel). A TMessageForm gets
+    Enter ONLY when OK is its only button (a script error box): a box that asks something (Save changes? Yes/No/Cancel) is
+    never pressed, it is listed as "(left open, not pressed) ...". Returns one "[class] title: texts" line per box, each logged
+    first, so a stall can be explained. only_look=True presses and logs nothing: it reports every box that is open."""
+    try:
+        boxes = _dialog_boxes()
+        if only_look:
+            return [b["line"] for b in boxes]
+        closed = []
+        for b in boxes:
+            if b["cls"] == "#32770":
+                _post_close(b["hwnd"])
+            elif b["ok_only"]:
+                _post_enter(b["hwnd"])
+            else:
+                closed.append("(left open, not pressed) " + b["line"])
+                continue
+            closed.append(b["line"])
+        for line in closed:
+            DIALOG_LOG.append(line)
         return closed
     except Exception:
         return []
@@ -245,16 +278,20 @@ DIALOG_LOG = []         # every dialog closed this session, "[class] title: text
 
 
 def _script_state():
-    """Look (close nothing, send nothing) for a script of ours that Altium left paused. The TRIGGER is an open script error box
-    (TMessageForm) owned by X2.EXE: seen live, a paused run leaves that box and nothing else. "windows" is extra LOGGING only:
-    top-level X2 windows whose title names the script in a paused or debug state. Seen live (Altium 26.8) the script editor is a
-    tab inside the main window, whose title shows the project, so this list is normally empty and never decides anything.
-    Returns {"boxes": [...], "windows": [...]}; both empty when Altium is not running or this is not Windows."""
-    out = {"boxes": [], "windows": []}
+    """Look (close nothing, send nothing) for a script of ours that Altium left paused. The TRIGGER is an open script error box:
+    a TMessageForm owned by X2.EXE whose only button is OK ("boxes"). Seen live, a paused run leaves that box and nothing else.
+    "foreign" lists every other open box (a TMessageForm that asks something, any #32770): those are the owner's, never pressed.
+    "windows" is extra LOGGING only: top-level X2 windows whose title names the script in a paused or debug state. Seen live
+    (Altium 26.8) the script editor is a tab inside the main window, whose title shows the project, so it is normally empty
+    and never decides anything. All empty when Altium is not running or this is not Windows."""
+    out = {"boxes": [], "foreign": [], "windows": []}
     try:
+        for b in _dialog_boxes():
+            (out["boxes"] if b["cls"] == "TMessageForm" and b["ok_only"] else out["foreign"]).append(b["line"])
+        if not out["boxes"]:
+            return out              # the titles are logging for a release only: nothing to look up when nothing is released
         import ctypes
         from ctypes import wintypes
-        out["boxes"] = [d for d in _close_dialogs(only_look=True) if d.startswith("[TMessageForm]")]
         tl = subprocess.run(["tasklist", "/FI", "IMAGENAME eq X2.EXE", "/FO", "CSV", "/NH"], capture_output=True,
                             text=True, timeout=15).stdout
         pids = {int(m) for m in re.findall(r'"X2\.EXE","(\d+)"', tl, re.I)}
@@ -278,36 +315,49 @@ def _script_state():
     return out
 
 
-def preflight():
-    """Before a command is sent (and after an error): a script left paused in Altium makes every later RunScript raise an empty
-    error box and never start. When there is evidence of one (see _script_state), stop it (release_executor: close the boxes,
-    -REditScript:Stop) BEFORE sending, look again, log it in the run log and keep one line for the student. Nothing in the
-    owner's open documents is touched: no keystroke, no close of a document. Returns the record, or None when all is clean."""
+def preflight(strict=False):
+    """Before a command is sent (strict=True) and after an error: a script left paused in Altium makes every later RunScript raise
+    an empty error box and never start. When an OK-only script error box is open (see _script_state), stop the run (release_executor:
+    press OK on it, -REditScript:Stop) BEFORE sending, look again, log it in the run log and keep one line for the student, tagged
+    with the project. If any OTHER box is open (a question for the owner: Save changes?), nothing is pressed or closed: strict raises
+    a BridgeError that says to answer it first, otherwise it just returns None. Nothing in the owner's open documents is touched.
+    Returns the record, or None when there was nothing to do."""
     try:
         state = _script_state()
-        if not state["boxes"]:
-            return None
+    except Exception:
+        return None
+    project = getattr(runlog.ctx, "project", "") or ""
+    if state["foreign"]:
+        if strict:
+            runlog.event("altium-preflight", project=project, blocked_by=state["foreign"])
+            raise BridgeError("**A message box is open in Altium** - answer it in Altium, then try again. Nothing was pressed or sent. "
+                              "Details: " + " | ".join(state["foreign"])[:400])
+        return None
+    if not state["boxes"]:
+        return None
+    try:
         shown = release_executor()
         left = _script_state()
-        rec = {"found": state["boxes"], "windows": state["windows"], "released": shown, "still_paused": bool(left["boxes"])}
-        project = getattr(runlog.ctx, "project", "") or ""
+        rec = {"found": state["boxes"], "windows": state["windows"], "released": shown,
+               "still_paused": bool(left["boxes"] or left["foreign"])}
         runlog.event("altium-preflight", project=project, **rec)
         if project:
             _log(project, "preflight", **rec)
-        note = ("**A script was paused in Altium** - I stopped it so the next step can run. "
-                + ("It is still showing: " + PAUSED_HINT if rec["still_paused"] else "Altium is clean now.")
-                + " Details: " + " | ".join(rec["found"])[:400])
-        PREFLIGHT_NOTES.append(note)
+        note = ("**A script was paused in Altium** - I stopped it so the next step can run. WARNING: "
+                + (PAUSED_HINT if rec["still_paused"] else "Altium is clean now.") + " Details: " + " | ".join(rec["found"])[:400])
+        PREFLIGHT_NOTES.append((project, note))
+        del PREFLIGHT_NOTES[:-50]
         return rec
     except Exception:
         return None
 
 
-def take_preflight_notes():
-    """The lines preflight() kept since the last call (the server puts them under the step's result), and forgets them."""
-    out = PREFLIGHT_NOTES[:]
-    del PREFLIGHT_NOTES[:]
-    return out
+def take_preflight_notes(project=""):
+    """The lines preflight() kept for this project since the last call (the server puts them under the step's result as a
+    warning), and forgets them; another project's lines stay for its own steps."""
+    mine = [n for pr, n in PREFLIGHT_NOTES if pr == (project or "")]
+    PREFLIGHT_NOTES[:] = [(pr, n) for pr, n in PREFLIGHT_NOTES if pr != (project or "")]
+    return mine
 
 
 def release_executor():
@@ -423,7 +473,7 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
         (EXCHANGE / "request.txt").write_bytes(body.encode("ascii"))     # bytes: text mode would double the CR on Windows
         cold = not _running()          # Altium has to start first: that takes a while
         if not cold:
-            preflight()                # a run left paused by an earlier error would swallow this one
+            preflight(strict=True)     # a run left paused by an earlier error would swallow this one
         for attempt in (1, 2):
             subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
             t0 = time.time()
@@ -3601,7 +3651,7 @@ def build_library(project, fetch=True):
     if not installed:
         issues.append("Altium does not list the IntLib as installed.")
     caps_notice = _capabilities_notice(project)
-    notices = take_preflight_notes() + ([caps_notice] if caps_notice else []) + [f"Another installed library had the same name and was removed from Altium's installed list: "
+    notices = take_preflight_notes(project) + ([caps_notice] if caps_notice else []) + [f"Another installed library had the same name and was removed from Altium's installed list: "
                f"{ln[len(SAME_NAME):].strip()} (Altium matches libraries by file name)."
                for ln in log if ln.startswith(SAME_NAME)]
     # the installed list is not what the schematic ECO reads: the IntLib must be a library of the Altium project itself
