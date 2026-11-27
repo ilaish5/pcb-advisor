@@ -10,7 +10,6 @@ Server-side env for the network faults: proxy_env(url) -> HTTPS_PROXY/HTTP_PROXY
 from __future__ import annotations
 
 import http.server
-import json
 import os
 import pathlib
 import signal

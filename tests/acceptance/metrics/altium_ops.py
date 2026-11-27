@@ -10,7 +10,7 @@ import shutil
 import time
 
 from lib import Result, metric, not_run
-from live_altium import obs, altium_probe as ap, failview
+from live_altium import obs, altium_probe as ap
 from oracle.pcbdoc import PcbDoc
 from metrics.altium_ui import oracle_pitch
 

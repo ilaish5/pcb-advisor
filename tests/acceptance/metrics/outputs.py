@@ -8,7 +8,6 @@ Not registered here, because they need the product's behaviour or the DOM (liste
 """
 from __future__ import annotations
 
-import functools
 import hashlib
 import json
 import pathlib

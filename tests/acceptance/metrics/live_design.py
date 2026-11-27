@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import re
-import time
 
 from lib import Result, metric
 from live import common, corpora, seed

@@ -10,9 +10,7 @@ empty project, so deleting the evidence (chat, goal, log) cannot turn a metric g
 """
 from __future__ import annotations
 
-import copy
 import json
-import pathlib
 import re
 
 from lib import Ctx, Result, metric
@@ -953,7 +951,6 @@ def _w25b_control(ctx: Ctx) -> Ctx:
         removed.append(s.split()[0])
     # a legitimate version of the story: the student explicitly asked for the removal in chat before the save
     vs = P.versions
-    last_ts = vs[-1]["ts"]
     prev_ts = vs[-2]["ts"]
     txt = "Please remove the keep-out requirements " + ", ".join(removed)
     mid = prev_ts[:19]

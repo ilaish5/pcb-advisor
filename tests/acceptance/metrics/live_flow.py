@@ -11,7 +11,6 @@ import re
 
 from lib import Result, metric
 from live import common, corpora, seed
-from live.driver import Page
 
 CONSENT_REFUSAL = re.compile(r"not run\.", re.I)
 
@@ -38,7 +37,7 @@ def _consent_trial(srv, name: str, phrase: str) -> dict:
 @metric(id="F-E", title="Consent: affirmative replies with extra text grant the action, negations never do; nothing announced before consent",
         root="R5", level="B", kind="behaviour")
 def fe(ctx):
-    affs, note = [], ""
+    note = ""
     vis = corpora.header("fe_consent")
     pool_a = [dict(phrase=p, half="visible") for p in vis["affirmative"]]
     pool_n = [dict(phrase=p, half="visible") for p in vis["negative"]]

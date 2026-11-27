@@ -10,7 +10,7 @@ import re
 import time
 
 from lib import Result, metric
-from live import common, failures, faults, pins, seed
+from live import common, failures, faults, seed
 from live.driver import Page
 
 # ------------------------------------------------------------------ P0-4
@@ -150,7 +150,6 @@ def p0_2(ctx):
             P.open("bom")
             btn = P.page.get_by_role("button", name=re.compile(r"check stock", re.I)).first
             snaps = _observe(P, btn.click, lambda body, s: bool(END_WORDS.search(body)) and not s["running"], max_s=110)
-            end_text = None
             viol += _judge("stock check", snaps, (0.5, 105))
             P.reload()
             rec["stock"] = snaps

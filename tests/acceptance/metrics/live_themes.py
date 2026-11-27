@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import re
-import time
 
 import thresholds as TH
 from lib import Result, metric

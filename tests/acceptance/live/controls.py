@@ -27,7 +27,7 @@ FINDING = """<main><p>U12 pin 20 PB2 (BOOT1) has no level: the boot table needs 
 
 def main() -> int:
     from live import failures
-    from live.driver import Page, launch
+    from live.driver import launch
     from metrics import live_design as D, live_p0 as P0, live_ui as UI, live_themes as TH
     from playwright.sync_api import sync_playwright
     out = []

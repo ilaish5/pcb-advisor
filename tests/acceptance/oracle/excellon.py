@@ -37,8 +37,6 @@ def parse(name: str, data: bytes | str) -> list[Hole]:
     cur: int | None = None
     x = y = 0.0
     routing = False          # M15 pressed: G01 moves cut a slot
-    mode = "drill"
-    slot_start: tuple | None = None
     holes: list[Hole] = []
 
     def conv(s: str) -> float:
@@ -86,7 +84,6 @@ def parse(name: str, data: bytes | str) -> list[Hole]:
             continue
         if line == "M15":
             routing = True
-            slot_start = (x, y)
             continue
         if line == "M16":
             routing = False

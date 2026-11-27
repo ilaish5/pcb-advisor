@@ -4,8 +4,8 @@ Inputs (RUN folder): screens/*.jpg, roles/student-actions.jsonl, roles/student-c
 roles/<role>-S<n>.md "## Video highlights", alti/*.png, RUN-STATE.md.
 Usage: python make_demo.py [--stages 1,2] [--out demo.mp4] [--fps 25]
 """
-import argparse, json, math, pathlib, re, subprocess, sys
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import argparse, json, pathlib, re, subprocess
+from PIL import Image, ImageDraw, ImageFont
 
 RUN = pathlib.Path(__file__).resolve().parent.parent
 FFMPEG = r"C:\Users\ilaish\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.1-full_build\bin\ffmpeg.exe"

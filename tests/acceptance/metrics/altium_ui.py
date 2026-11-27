@@ -9,10 +9,9 @@ Ids here: W15, U3, F-H(a), F-H(d), F-F, F-C(e), F-A(est).
 from __future__ import annotations
 
 import hashlib
-import pathlib
 import re
 
-from lib import Result, metric, not_run
+from lib import Result, metric
 from live_altium import obs, altium_probe as ap
 from oracle import pcbdoc as opcb
 
@@ -183,7 +182,7 @@ def _check_board(ctx) -> dict:
 # -- U3: the tone of the result under which the violations are shown
 def judge_u3(o: dict) -> Result:
     total = o["report_total"]
-    shown = [s for s in o["snaps"][-4:] if obs.notes_with(s, r"\d+|violation|DRC")]
+    [s for s in o["snaps"][-4:] if obs.notes_with(s, r"\d+|violation|DRC")]
     notes = []
     for s in o["snaps"][-4:]:
         notes += obs.notes_with(s, r"DRC|violation|total \d+")
