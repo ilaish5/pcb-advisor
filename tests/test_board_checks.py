@@ -42,6 +42,9 @@ def test_finished_board_checks():
     assert "cpl_rotation_sanity" in finding_ids
 
     # per supply pin (W23): Reg5 pin 4 (5V) has its nearest cap C8 11.4 mm away; a header row of one rail is no supply pin
+    # the PcbDoc pads are numbers: without pin names nothing is guessed, the part is listed as not checked
+    assert not ids(res, "decap_distance_excessive") and "Reg5" in [r for f in ids(res, "decap_not_checked") for r in f["refs"]]
+    res = check_board(FIXTURES / "finished-board.PcbDoc", pin_names={"Reg5": {"4": "VIN"}})
     decap_findings = ids(res, "decap_distance_excessive")
     assert ["C8", "Reg5"] in [f["refs"] for f in decap_findings] and "Reg5-4" in next(f for f in decap_findings if f["refs"] == ["C8", "Reg5"])["message"]
     assert not [f for f in decap_findings if f["refs"][-1].startswith("IOP_")]
@@ -212,7 +215,7 @@ def decap_doc(*parts):
 
 def ic(ref, x, y, net, pin="7"):
     return ([comp(ref, x, y, pattern="QFN32")],
-            [pad(ref, pin, x, y, net), pad(ref, "8", x, y + 1, None), pad(ref, "9", x + 5, y, "GND"), pad(ref, "10", x + 5, y + 1, None)])
+            [dict(pad(ref, pin, x, y, net), pin_name="VDD"), pad(ref, "8", x, y + 1, None), pad(ref, "9", x + 5, y, "GND"), pad(ref, "10", x + 5, y + 1, None)])
 
 
 def test_decap_far_from_its_ic_is_a_warning():

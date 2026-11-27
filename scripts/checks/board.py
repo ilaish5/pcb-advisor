@@ -247,25 +247,40 @@ def _is_passive(comp: dict[str, Any], n_pads: int) -> bool:
     return bool(PASSIVE_REF.match(ref)) or (ref[:1].upper() in "RCLDFT" and n_pads <= 2 and not is_connector(comp))
 
 
-_SUPPLY_NAME = re.compile(r"^(?:[ADP]?V(?:DD|CC|IN|BUS|BAT|BATT|CCA|DDA|DDIO\d*|DDUSB|DDSD|REF\+?|CAP|\d)|VIN|VOUT|VO|\+?\d+V\d*|VS\+?|VP)[A-Z0-9_]*$", re.I)
+_SUPPLY_NAME = re.compile(r"^(?:[ADP]?V(?:DD|CC|IN|BUS|BAT|BATT|CCA|DDA|DDIO\d*|DDUSB|DDSD|REF\+?|CAP|\d)|VIN|VOUT|VO|\+?\d+V\d*|VS\+?|VP)[A-Z0-9_/+]*$", re.I)
+_NOT_A_LOAD = re.compile(r"^(?:SW|S|K|RL|Q|TP|F|FB|LED|BZ)\d", re.I)       # a switch, relay, transistor or test point is no supplied chip
 _CARD = re.compile(r"sd|sim|card|mmc|tf_|micro_?sd", re.I)
 
 
-def _supply_pin(q, comp, comp_pads, net):
-    """Is pad q a supply pin of an IC or a card connector? Not on a plain header, a relay coil or a one-pad net part: a pin whose name is a
-    supply name (VDD, VCC, VBAT, VDDA...) of a part with 3+ pads; for a part whose pads carry no names (numbers only) a power-net pad of a
-    3+ pad part when no more than half of its pads sit on that net (a header row of one rail is a connector, not a supplied chip)."""
+def pin_function(q, pin_names=None):
+    """The function name of pad q: the symbol or netlist pin name (`pin_names[ref][pad number]`, or a `pin_name` on the pad) first, else the
+    pad's own name when that is a name and not a number. '' when nothing says what the pin is (a PcbDoc pad is usually only a number)."""
+    ref = q.get("ref")
+    num = str(q.get("name") or q.get("num") or "").strip()
+    given = str(q.get("pin_name") or ((pin_names or {}).get(ref) or {}).get(num) or "").strip()
+    if given and given != num:
+        return given
+    if num and not num.isdigit() and len(num) > 1:
+        return num
+    return ""
+
+
+def _supply_pin(q, comp, comp_pads, net, pin_names=None):
+    """Is pad q a supply pin of an IC or a card connector? Not on a plain header, a relay coil or a one-pad net part. Decided only by the pin's
+    function name (VDD, VCC, VBAT, VDDA, VREF+...) taken from the symbol or netlist; membership of a power net says nothing (a switch, a
+    flash CS pin or a relay pin can sit on a rail). Returns True, False, or None when the pin's function is not known."""
     if len(comp_pads) < 3 or (is_connector(comp) and not _CARD.search(f"{comp.get('pattern', '')} {comp.get('lib_ref', '')}")):
         return False
-    name = str(q.get("name") or "").strip()
-    if name and not name.isdigit() and len(name) > 1:
-        return bool(_SUPPLY_NAME.match(name))
-    return sum(1 for x in comp_pads if x.get("net") == net) * 2 <= len(comp_pads)
+    name = pin_function(q, pin_names)
+    if not name:
+        return None
+    return bool(_SUPPLY_NAME.match(name))
 
 
 def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DIST_MM,
                           max_pad_span_mm: float = DECAP_MAX_PAD_SPAN_MM,
-                          limits: dict[str, tuple[float, str]] | None = None) -> list[dict[str, Any]]:
+                          limits: dict[str, tuple[float, str]] | None = None,
+                          pin_names: dict[str, dict[str, str]] | None = None) -> list[dict[str, Any]]:
     """Per supply pin: the distance from each supply pin of an IC or card connector to the nearest decoupling cap on its net (R2/W23).
 
     A supply pin is a pad of a part that is not a passive, on a power rail net. A decoupling cap is a two-pad capacitor with one pad on a
@@ -298,6 +313,7 @@ def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DI
         if len(ground) == 1 and len(rail) == 1:
             caps.setdefault(rail[0]["net"], []).append((c_ref, rail[0]))
 
+    unknown: dict[str, list[str]] = {}
     for net, pads in sorted(net_pads.items()):
         if GROUND_NET.search(net) or not POWER_NET.search(net):
             continue
@@ -305,7 +321,12 @@ def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DI
             ref = q.get("ref")
             if ref not in comps_by_ref or _is_passive(comps_by_ref[ref], len(pads_by_ref.get(ref, []))):
                 continue
-            if not _supply_pin(q, comps_by_ref[ref], pads_by_ref.get(ref, []), net):
+            is_supply = _supply_pin(q, comps_by_ref[ref], pads_by_ref.get(ref, []), net, pin_names)
+            if is_supply is None:
+                if not _NOT_A_LOAD.match(ref):
+                    unknown.setdefault(ref, []).append(net)
+                continue
+            if not is_supply:
                 continue
             limit, cite = (limits or {}).get(ref) or (max_dist_mm, "general knowledge, no course source")
             near = sorted(((math.hypot(cp["x_mm"] - q["x_mm"], cp["y_mm"] - q["y_mm"]), cref, cp) for cref, cp in caps.get(net, [])),
@@ -323,6 +344,13 @@ def check_decoupling_caps(doc: dict[str, Any], max_dist_mm: float = DECAP_MAX_DI
                     "id": "decap_distance_excessive", "severity": "warning", "refs": [cref, ref],
                     "message": f"Supply pin {where} on net '{net}': the nearest decoupling cap {cref} is {dist:.1f} mm away. Recommended: <= {limit:g} mm ({cite}).",
                     "evidence": f"PcbDoc pad distance: {cref} ({cp['x_mm']}, {cp['y_mm']}) to {where} on net {net}"})
+
+    for ref, nets in sorted(unknown.items()):
+        findings.append({
+            "id": "decap_not_checked", "severity": "info", "refs": [ref],
+            "message": f"Decoupling not checked for {ref}: its pads on {', '.join(sorted(set(nets)))} carry numbers only and no symbol or netlist pin "
+                       "name was given, so it is not known which of them are supply pins.",
+            "evidence": "PcbDoc pad names are numbers; pass the pin names from the schematic netlist"})
 
     return findings
 
@@ -389,7 +417,9 @@ def outline_bbox_containing_parts(path, doc: dict[str, Any], findings: list) -> 
 
 def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: list[float] | None = None,
                 connector_specs: dict[str, Any] | None = None,
-                decap_max_dist_mm: float = DECAP_MAX_DIST_MM, library_stale: bool | None = None) -> dict[str, Any]:
+                decap_max_dist_mm: float = DECAP_MAX_DIST_MM, library_stale: bool | None = None,
+                decap_limits: dict[str, tuple[float, str]] | None = None,
+                pin_names: dict[str, dict[str, str]] | None = None) -> dict[str, Any]:
     """Run all board checks on a PcbDoc (a path, or a read_pcbdoc dict; footprint geometry comes from
     read_pcbdoc(path, geometry=True), i.e. body_bbox_mm / outline_bbox_mm on each component)."""
     findings = []
@@ -402,7 +432,7 @@ def check_board(doc_or_path: dict[str, Any] | str | pathlib.Path, outline_mm: li
 
     bounds = compute_board_bounds(doc, outline_mm=outline_mm)
     findings.extend(check_edge_components(doc, bounds, connector_specs=connector_specs))
-    findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm))
+    findings.extend(check_decoupling_caps(doc, max_dist_mm=decap_max_dist_mm, limits=decap_limits, pin_names=pin_names))
     findings.extend(check_cpl_rotation_sanity(doc))
     findings.extend(check_drills(doc))
     findings.extend(check_footprint_rules(doc, library_stale))
