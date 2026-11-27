@@ -183,11 +183,12 @@ function dfmWaitingHTML(w) {
   const item = g => {
     const line = (S.bom || []).find(b => b.key === g.id) || {};
     const curDs = line.datasheet || '';
-    const needBtn = g.own_look || (g.kind === 'ic' && curDs);
+    const needBtn = true;       // every row has its own confirm: a row that only looked dead (a diode or LED, a part with no datasheet) did nothing when clicked (C58 C65 C81 C82)
+    const polar = g.kind === 'polarised';
     const title = g.own_look ? 'See the conflict next to the pins; one click records your decision' : 'See the datasheet page next to the pins; one click records your decision';
     return `<li class="unv-row"><span class="m">${esc(refsLabel(g.refs))}</span> ${esc(g.mpn || '')}${g.count > 1 ? ` <span class="muted">×${g.count}</span>` : ''}
     <span class="unv-why" title="${esc(g.issues || '')}">${g.own_look ? 'Pins conflict: ' + esc(g.issues || '') : esc(g.issues || 'Pins not checked against a datasheet')}</span>
-    ${needBtn ? btn('Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: g.id, title}) : ''}
+    ${needBtn ? btn(polar ? 'Confirm polarity' : 'Confirm pins', {kind: 'line', size: 'sm', act: 'confirm-pins', line: g.id, title: polar ? 'Check which pin is the anode and which the cathode, then one click records your decision' : title}) : ''}
     ${g.kind === 'ic' && docs.length ? `<select class="in quiet" data-pick-ds="${esc(g.id)}" aria-label="Pick a datasheet for ${esc(refsLabel(g.refs))}"><option value="">${curDs ? 'Change datasheet' : 'Pick datasheet'}</option>${docs.map(d => `<option value="${esc(d)}"${d === curDs ? ' selected' : ''}>${esc(d)}</option>`).join('')}</select>` : ''}</li>`;
   };
   const recheck = btn(dfmRecheckBusy ? 'Checking…' : 'Check datasheets', {kind: 'line', size: 'sm', act: 'recheck-pins', disabled: dfmRecheckBusy, title: 'Fetches the datasheets it can find itself and checks the pins against them'});

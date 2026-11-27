@@ -129,7 +129,7 @@ def test_the_agent_finds_a_note_in_the_conversation_after_a_button_step(server, 
     assert code == 200
     notes = [m for m in session_mod.load_chat(empty, session_mod.current(empty, None)) if m.get("by") == "button"]
     assert len(notes) == 1 and notes[0]["role"] == "agent"
-    assert "Placed the parts in Altium because the student pressed the button" in notes[0]["text"]
+    assert "Placed the parts with Altium because the student pressed the button" in notes[0]["text"]
     assert serve.place_summary(PLACED) in notes[0]["text"]
 
 
@@ -445,7 +445,7 @@ def test_the_note_carries_the_preparations_then_the_step_and_marks_warnings(serv
     note = button_notes(empty)[0]
     assert note["applied"] == [LIB_SENTENCE, "altium.add_pcb", "altium.place_pcb: " + serve.place_summary(PLACED)]
     assert note["warned"] == serve.warned_map(note["applied"]) and list(note["warned"].values()) == ["w2; w3"]
-    assert note["text"].startswith("Placed the parts in Altium after building the library and adding a PcbDoc because the student pressed the button: ")
+    assert note["text"].startswith("Placed the parts with Altium after building the library and adding a PcbDoc because the student pressed the button: ")
 
 
 @pytest.mark.parametrize("step,setup,fail,done,error", [

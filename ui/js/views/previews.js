@@ -779,6 +779,8 @@ async function loadPcb(container) {
   if (!root) return;
   root.outerHTML = pcbHTML();                               // the empty state and the picture have different frames
   afterPcb();
+  const host = $('#view');
+  if (host && typeof firstStepEnsure === 'function') firstStepEnsure(host, 'pcb');       // the empty state has just been drawn: one filled first step
 }
 /* The idea's board size differs from the outline the PcbDoc holds (the placer reads the size only when there is no outline): Layout offers
    to set the board to the idea's size. The change backs the PcbDoc up first and names parts that would fall outside. */

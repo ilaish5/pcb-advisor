@@ -276,7 +276,28 @@ function renderItem(item, container, force) {
     }
   }
   if (typeof ledgerAppendCard === 'function') ledgerAppendCard(container, item.kind === 'stage' ? item.stage : item.page);   // every page shows its Findings and what the tool does not do here
+  if (typeof firstStepEnsure === 'function' && item.kind === 'stage') firstStepEnsure(container, item.stage);
   if (changed) container.scrollTop = 0;
+}
+/* T-H: a page that has no work yet shows exactly ONE filled (primary) button: the step that is next for the project. The server marks the
+   first stage that is not clean as primary; on any other page that has not been started, that step is offered here and the page's own filled
+   buttons become outlined (they would be refused, or are not the next step). A page that is itself the next step keeps one filled button. */
+function firstStepEnsure(container, stage) {
+  if (!container || !S || !Array.isArray(S.stages)) return;
+  const here = stageOf(stage), prim = S.stages.find(x => x && x.primary);
+  const filled = () => [...container.querySelectorAll('button.pri')];
+  if (!here || !prim) return;
+  if (here.state === 'not_started' && prim.id !== stage && STAGE_TITLES[prim.id]) {
+    filled().forEach(b => b.classList.remove('pri'));
+    if (container.querySelector('[data-first-step]')) return;
+    const n = prim.next || {};
+    const label = n.label && /^go:/.test(n.act || '') && n.act !== 'go:' + stage ? n.label : 'Start with ' + STAGE_TITLES[prim.id];
+    const html = btn(label, {kind: 'pri', act: 'stage-next', stage: stage, to: prim.id, 'first-step': '1'});
+    const host = container.querySelector('.vh-next') || container.querySelector('.vh .acts') || container.querySelector('.vh');
+    if (host) host.insertAdjacentHTML('afterbegin', html);
+    return;
+  }
+  filled().slice(1).forEach(b => b.classList.remove('pri'));
 }
 function renderMain(force) {
   const v = $('#view');

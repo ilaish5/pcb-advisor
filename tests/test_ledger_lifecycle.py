@@ -167,3 +167,31 @@ def test_ui_scripts_parse(name):
     p = pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / ("" if name == "chat.js" else "views") / name
     r = subprocess.run([shutil.which("node"), "--check", str(p)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+# ---- T-H / F-G / D1-D2 / dead-button guards (static: the UI is plain JS, node is not needed)
+_UI = pathlib.Path(__file__).resolve().parent.parent / "ui" / "js"
+
+
+def test_ledger_buttons_carry_their_id_in_data_lid_not_the_html_id():
+    """kit.js turns an `id` key into the HTML id, so d.id was undefined and Done / Accept / Reopen / Add to my list did nothing."""
+    js = (_UI / "views" / "ledger.js").read_text(encoding="utf-8")
+    assert "lid: it.id" in js and "lid: l.id" in js and "d.lid" in js
+    assert "d.id" not in js and "act: 'ledger-done', id:" not in js
+
+
+def test_every_stage_page_gets_exactly_one_first_step():
+    shell = (_UI / "shell.js").read_text(encoding="utf-8")
+    assert "function firstStepEnsure" in shell and "firstStepEnsure(container, item.stage)" in shell
+    assert "firstStepEnsure(host, 'pcb')" in (_UI / "views" / "previews.js").read_text(encoding="utf-8")
+
+
+def test_new_project_asks_the_layer_count_and_the_server_stores_it():
+    assert "layers: true" in (_UI / "shell.js").read_text(encoding="utf-8")
+    assert 'select class="in" name="layers"' in (_UI / "core.js").read_text(encoding="utf-8")
+    assert 'project_mod.set_layers(created' in (pathlib.Path(__file__).resolve().parent.parent / "scripts" / "serve.py").read_text(encoding="utf-8")
+
+
+def test_a_diode_row_has_its_own_confirm_polarity_button():
+    js = (_UI / "views" / "checks.js").read_text(encoding="utf-8")
+    assert "'Confirm polarity'" in js and "const needBtn = true" in js

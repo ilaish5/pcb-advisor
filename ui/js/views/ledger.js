@@ -26,11 +26,11 @@ function ledgerItemHTML(it) {
   const reason = it.state === 'accepted' ? `<p class="muted lg-reason">Accepted because: ${esc(it.reason)}</p>` : '';
   const open = it.state === 'open' || it.state === 'student_fixed';
   const acts = open
-    ? (it.kind === 'limit' ? '' : btn(busy ? 'Checking...' : 'Done, check again', {kind: 'line', size: 'sm', act: 'ledger-done', id: it.id, disabled: busy || undefined,
+    ? (it.kind === 'limit' ? '' : btn(busy ? 'Checking...' : 'Done, check again', {kind: 'line', size: 'sm', act: 'ledger-done', lid: it.id, disabled: busy || undefined,
         title: 'The tool checks the file again as it is now. Only a check that passes closes this finding.'})) +
-      btn('Accept with a reason', {kind: 'link', size: 'sm', act: 'ledger-accept', id: it.id, jlc: it.jlc_reject ? '1' : undefined,
+      btn('Accept with a reason', {kind: 'link', size: 'sm', act: 'ledger-accept', lid: it.id, jlc: it.jlc_reject ? '1' : undefined,
         title: it.jlc_reject ? 'The fab may reject this. You need a reason and to confirm making it anyway.' : 'You say in a sentence why this is fine. It is kept with the outputs.'})
-    : it.state === 'accepted' ? btn('Open it again', {kind: 'link', size: 'sm', act: 'ledger-reopen', id: it.id}) : '';
+    : it.state === 'accepted' ? btn('Open it again', {kind: 'link', size: 'sm', act: 'ledger-reopen', lid: it.id}) : '';
   const hist = (it.history || []).slice(-6).map(h => `<li><span class="m">${esc(String(h.ts || '').replace('T', ' ').slice(0, 16))}</span> ${esc(h.note || h.state)}</li>`).join('');
   return `<li class="lg-item" data-lg="${esc(it.id)}" data-state="${esc(it.state)}"><div class="lg-head"><span class="chip m">${esc(it.id)}</span> <strong>${esc(it.title)}</strong>
     <span class="tag ${tone}">${esc(stateText)}</span></div>${conflict}${check}${reason}
@@ -42,7 +42,7 @@ function ledgerLimitHTML(l) {
   const tracked = l.item ? `<span class="chip m">${esc(l.item.id)}</span> <span class="tag">${esc((LEDGER_STATE[l.item.state] || [l.item.state])[0])}</span>` : '';
   if (l.status === 'works') return '';
   return `<li class="lg-limit" data-limit="${esc(l.id)}"><strong>${esc(l.title)}</strong> <span class="tag">Not automated</span> ${tracked}
-    <p class="muted">${esc(l.says)} ${esc(l.instead)}</p>${l.item ? '' : btn('Add to my list', {kind: 'link', size: 'sm', act: 'ledger-limit', id: l.id, title: 'Keeps this on your Findings list so it is not forgotten'})}</li>`;
+    <p class="muted">${esc(l.says)} ${esc(l.instead)}</p>${l.item ? '' : btn('Add to my list', {kind: 'link', size: 'sm', act: 'ledger-limit', lid: l.id, title: 'Keeps this on your Findings list so it is not forgotten'})}</li>`;
 }
 
 /* The card of one page: its open findings, the limits that belong to it. On Outputs: every open finding of the project. */
@@ -61,10 +61,10 @@ function ledgerCardHTML(page) {
 }
 
 onAct('ledger-done', async (el, d) => {
-  ledgerBusy = d.id;
+  ledgerBusy = d.lid;
   if (typeof render === 'function') render(true);
   try {
-    const r = await api('/api/ledger/done', {id: d.id}, {soft: true});
+    const r = await api('/api/ledger/done', {id: d.lid}, {soft: true});
     if (r && r.error) toast(r.error, null, {bad: true});
     else if (r && r.check_result) toast(r.state === 'closed' ? `${r.id} closed: the file was checked again.` : `${r.id}: ${r.check_result.detail}`, null, {bad: r.state !== 'closed'});
   } catch (e) { toast('The check could not run: ' + e.message, null, {bad: true}); }
@@ -81,13 +81,13 @@ onAct('ledger-accept', async (el, d) => {
     if (!ok) return;
     anyway = true;
   }
-  const r = await api('/api/ledger/accept', {id: d.id, reason, make_anyway: anyway}, {soft: true});
+  const r = await api('/api/ledger/accept', {id: d.lid, reason, make_anyway: anyway}, {soft: true});
   if (r && r.error) { toast(r.error, null, {bad: true}); return; }
   await refresh(true);
 });
-onAct('ledger-reopen', async (el, d) => { await api('/api/ledger/reopen', {id: d.id}); await refresh(true); });
+onAct('ledger-reopen', async (el, d) => { await api('/api/ledger/reopen', {id: d.lid}); await refresh(true); });
 onAct('ledger-limit', async (el, d) => {
-  await api('/api/limits/hit', {id: d.id, context: 'added from the page'});
+  await api('/api/limits/hit', {id: d.lid, context: 'added from the page'});
   ledgerLimitsKey = '';
   await refresh(true);
 });
