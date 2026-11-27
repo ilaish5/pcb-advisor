@@ -83,7 +83,6 @@ def review(project, parts=None):
     def two_pin(ref):
         return len(by_ref[ref].get("pins", [])) == 2
 
-    caps = {}                      # rail net -> [cap refs with the other pin on ground]
     caps_to_gnd = {}               # any net -> [cap refs from that net to ground]
     for ref, p in by_ref.items():
         if _pref(ref) == "C" and two_pin(ref):

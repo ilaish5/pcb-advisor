@@ -502,7 +502,7 @@ function chatEngineName(id) {
   return (e && (e.title || e.name)) || String(id || '').replace(/_/g, ' ');
 }
 function chatEngineLabel(id, model) { return id ? chatEngineName(id) + (model ? ' · ' + model : '') : ''; }
-/* R2/W22: the "no check ran" footer goes only on an agent answer that states a zero count ("0 errors", "no issues", "0 Fehler", "0 שגיאות": a standalone 0
+/* R2/W22: the "no check ran" footer goes only on an agent answer that states a zero count ("0 errors", "no issues", "0 Fehler": a standalone 0
    before a word, in any language) when nothing in its turn was a tool result: no tool call on the message, no earlier agent message of the same turn with
    tool calls or a "Scope:" line (the tool's own review). A DRC or review result that came from a tool is never footnoted. */
 function chatUncheckedClaim(m) {

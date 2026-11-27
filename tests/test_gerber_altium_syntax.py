@@ -67,7 +67,6 @@ def test_the_hole_size_flash_altium_writes_at_an_npth_is_not_copper_near_it():
 
 def test_copper_pad_flashed_the_altium_way_near_the_edge():
     outline = gerber(["%ADD14C,0.0059*%", "D14*", "X0Y0D02*", "Y7874D01*", "X11811D01*", "Y0D01*", "X0D01*"])
-    pad = gerber(["%ADD21R,0.0532X0.0434*%", "D21*", "X5000Y150D02*", "D03*"])      # 15 mil centre to the edge, half the pad is 8.5 mil: 0.4 mm gap? no: inside
     pad_close = gerber(["%ADD21R,0.0532X0.0434*%", "D21*", "X5000Y230D02*", "D03*"])     # lower pad side 0.0013 in from the edge: 0.03 mm
     assert len(gg.problems({"copper": [pad_close], "outline": [outline]})[0]) == 1
 
