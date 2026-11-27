@@ -1093,7 +1093,14 @@ function chatSplitLong(box) {
     if (over.children.length > 1) {
       while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && over.children.length > 1) rest.unshift(over.lastElementChild), over.lastElementChild.remove();
     } else {
-      const only = over.firstElementChild || over;
+      let only = over.firstElementChild || over;
+      if ((only.tagName === 'UL' || only.tagName === 'OL') && only.children.length === 1) {       // one item: read it as a paragraph, so it can be cut between sentences
+        const para = document.createElement('p');
+        para.setAttribute('dir', 'auto');
+        para.innerHTML = only.firstElementChild.innerHTML;
+        over.replaceChild(para, only);
+        only = para;
+      }
       if (only.tagName === 'UL' || only.tagName === 'OL') {
         const tail = document.createElement(only.tagName);
         while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && only.children.length > 1) tail.prepend(only.lastElementChild);
@@ -1107,11 +1114,19 @@ function chatSplitLong(box) {
         tail.innerHTML = moved.join('<br>');
         rest.push(tail);
       } else {
-        const sents = (only.textContent || '').split(/(?<=[.!?])\s+/);
         const tail = document.createElement('p');
-        let moved = [];
-        while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && sents.length > 1) { moved.unshift(sents.pop()); only.textContent = sents.join(' '); }
-        tail.textContent = moved.join(' ');
+        const moved = [];
+        while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && only.childNodes.length > 1) {       // from the end: whole nodes (a source chip stays whole), a long text one sentence at a time
+          const last = only.lastChild;
+          if (last.nodeType === 3) {
+            const ss = last.textContent.trim().split(/(?<=[.!?])\s+/);
+            if (ss.length > 1) { moved.unshift(document.createTextNode(ss.pop())); last.textContent = ss.join(' ') + ' '; continue; }
+          }
+          moved.unshift(last);
+          only.removeChild(last);
+        }
+        if (!moved.length) return;
+        moved.forEach(n => tail.appendChild(n));
         rest.push(tail);
       }
     }
@@ -1130,6 +1145,6 @@ function chatSplitLong(box) {
 function chatSplittable(t) {
   const only = t.firstElementChild;
   if (!only) return false;
-  if (only.tagName === 'UL' || only.tagName === 'OL') return only.children.length > 1;
+  if (only.tagName === 'UL' || only.tagName === 'OL') return only.children.length > 1 || /[.!?]\s+\S/.test(only.textContent || '');
   return /[.!?]\s+\S/.test(only.textContent || '') || !!(only.querySelector && only.querySelector('br'));
 }
