@@ -14,13 +14,14 @@ from altium import bridge
 
 class Altium:
     def __init__(self, tmp_path, monkeypatch, paused=False, late=0.0, resume_ends=True, stuck=False, ok_lets_go=False, cold=False, box=None,
-                 extra_x2=0, launcher_s=None, slow=0.0, hang=False):
+                 extra_x2=0, launcher_s=None, slow=0.0, hang=False, box_title="Error", box_once=False):
         self.dir, self.cmds, self.runs, self.queue = tmp_path, [], [], []
         # the processes of X2.EXE: the one that runs (none on a cold start); a RunScript launch adds `extra_x2` that stay alive, or that exit
         # after launcher_s seconds (the launcher that hands its request to the running Altium); slow: the script logs for that long before
         # its end; hang: it starts, logs once and never ends
         self.pids, self.extra_x2, self.launcher_s, self.slow, self.hang = (set() if cold else {100}), extra_x2, launcher_s, slow, hang
         self.killed = []
+        self.box_title, self.box_once = box_title, box_once
         self.paused, self.box, self.late, self.resume_ends, self.stuck, self.ok_lets_go = paused, (paused if box is None else box), late, resume_ends, stuck, ok_lets_go
         self.timers = []
         if paused:
@@ -46,7 +47,7 @@ class Altium:
 
     # ---- what Altium shows
     def boxes(self):
-        return [{"hwnd": 1, "cls": "TMessageForm", "line": "[TMessageForm] Error: OK", "ok_only": True}] if self.box else []
+        return [{"hwnd": 1, "cls": "TMessageForm", "line": f"[TMessageForm] {self.box_title}: OK", "ok_only": True}] if self.box else []
 
     def state(self):
         return {"boxes": [b["line"] for b in self.boxes()], "foreign": [], "windows": []}
@@ -118,7 +119,7 @@ class Altium:
                 if self.launcher_s is not None:
                     self.later(self.launcher_s, lambda pid=pid: self.pids.discard(pid))
             if self.paused or self.stuck:
-                self.box = True                         # the executor is busy: an error box, nothing starts
+                self.box = not (self.box_once and self.sent("RunScript") > 1)       # the executor is busy: an error box, nothing starts
             else:
                 self.execute()
         elif "RunMacro" in cmd:
@@ -447,3 +448,29 @@ def test_a_run_that_an_ok_let_go_on_is_waited_for_before_the_work_folder_goes(tm
     import os
     os.utime(log, (os_time, os_time))
     assert bridge.settle_failed_run() is False and sent == []
+
+
+# ------------------------------------------------------------------ what counts as evidence of a pause
+
+def test_a_licence_warning_on_a_warm_altium_is_not_a_paused_script_and_gets_no_runmacro(world):
+    """An OK-only box that is not the script's Error box (a licence warning) is closed, but it is no evidence of a pause: RunMacro would
+    run the active script document and raise a new error box."""
+    a = world(box=True, box_title="Warning")
+    assert run() == [f"ours {a.runs[0]}"]
+    assert a.sent("RunMacro") == 0
+    assert bridge._RUN["evidence"] is False
+
+
+def test_a_script_error_box_is_evidence_of_a_pause(world):
+    a = world(paused=True, box=True)
+    run()
+    assert a.sent("RunMacro") == 1 and bridge._RUN["evidence"] is True
+
+
+def test_the_evidence_is_the_whole_calls_history_not_the_last_release(world):
+    """The first release sees the Error box (evidence), the second sees nothing; the run still does not start. The error must say that a
+    script error blocked it (BLOCKED), as the first release proved, not 'Altium did not start' (what the last release alone would say)."""
+    world(paused=True, box=False, resume_ends=False, box_once=True)
+    with pytest.raises(bridge.BridgeError, match="a script error or a dialog box was blocking it"):
+        run()
+    assert bridge._RUN["evidence"] is True

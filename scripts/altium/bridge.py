@@ -556,6 +556,16 @@ def settle_failed_run():
     return True
 
 
+_ERROR_TITLE = re.compile(r"^\[TMessageForm\]\s*(?:script\s+)?error\s*:", re.I)
+
+
+def _script_error_box(box):
+    """A script that Altium left paused shows an Error box with OK only (\"[TMessageForm] Error: OK\", seen live). Any other OK-only box
+    (a licence warning, an information box) is a box to close, but it is no evidence that a script is paused: RunMacro (F9) with nothing
+    paused would run the active script document and raise a new error box."""
+    return box["cls"] == "TMessageForm" and box["ok_only"] and bool(_ERROR_TITLE.match(str(box.get("line", ""))))
+
+
 def release_executor(pause_context=False, final=True):
     """Free Altium of a script it left paused after a runtime error (every later script would silently do nothing). Altium's debugger
     pauses at an exception even inside try/except; what resumes it from outside is F9's own command, -REditScript:RunMacro
@@ -570,17 +580,18 @@ def release_executor(pause_context=False, final=True):
       (d) when our run still has not ended after (b) and it started, repeat (b) once: at most TWO RunMacro for the whole macro_budget
           (one command batch, or one ERC step with its cleanup call);
       Stop only as the last resort: when nothing was resumed (no RunMacro sent) or `final` and the run still has not ended.
-    Every step goes to the run log. Returns the dialog texts. _RUN["evidence"] says whether there was evidence of a pause."""
+    Every step goes to the run log. Returns the dialog texts. _RUN["evidence"] says whether ANY release of this call had evidence of a
+    pause; the evidence is an OK-only box titled Error (_script_error_box), not any OK-only box."""
     with macro_budget():
         t_rel = time.time()
         boxes = _dialog_boxes()
-        ok_open = any(b["cls"] == "TMessageForm" and b["ok_only"] for b in boxes)
+        ok_open = any(_script_error_box(b) for b in boxes)
         asking = any(b["cls"] == "TMessageForm" and not b["ok_only"] for b in boxes)
         log0 = _stat(EXCHANGE / "log.txt")
         started = bool(_RUN["token"]) and flag_path("start").exists() and not flag_path("end").exists()
         seen = _close_dialogs()                                                     # (a)
         evidence = bool(pause_context and ok_open and not asking)
-        _RUN["evidence"] = evidence
+        _RUN["evidence"] = bool(_RUN["evidence"] or evidence)      # the whole call's history (reset when a request is sent), not the last release's
         runlog.event("altium-release", step="ok-boxes", boxes=seen, evidence=evidence)
         macros, resumed, moving = 0, False, False
         if evidence:
