@@ -516,9 +516,9 @@ def test_a_paused_script_is_stopped_before_the_next_command_is_sent(monkeypatch,
     assert bridge.run_commands([("PING",)]) == ["> PING"]
     assert order == ["Stop", "RunScript"]                                 # released first, then the command
     pre = [f for k, f in events if k == "altium-preflight"]
-    assert len(pre) == 1 and pre[0]["still_paused"] is False and pre[0]["found"] == ["[TMessageForm] Error: OK"] and pre[0]["windows"] == ["AdvisorBridge.pas [Paused] - Altium"]
+    assert len(pre) == 1 and pre[0]["box_still_open"] is False and pre[0]["found"] == ["[TMessageForm] Error: OK"] and pre[0]["windows"] == ["AdvisorBridge.pas [Paused] - Altium"]
     notes = bridge.take_preflight_notes()
-    assert len(notes) == 1 and notes[0].startswith("**A script was paused in Altium**") and "clean now" in notes[0]
+    assert len(notes) == 1 and notes[0].startswith("**A script was paused in Altium**") and "next step started" in notes[0] and "clean" not in notes[0]
     assert bridge.take_preflight_notes() == []
 
 
@@ -532,13 +532,32 @@ def test_a_clean_altium_is_not_touched_by_the_preflight(monkeypatch, tmp_path):
     assert order == ["RunScript"] and bridge.take_preflight_notes() == []
 
 
-def test_a_run_that_stays_paused_tells_the_student_to_press_run(monkeypatch, tmp_path):
+def test_a_gone_box_is_not_a_clean_altium_when_the_script_still_does_not_start(monkeypatch, tmp_path):
+    """Seen live: OK and Stop removed the box, the next RunScript still failed. "Clean" is claimed only after start.flag."""
     _bridge_files(monkeypatch, tmp_path)
-    paused = {"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": []}
-    monkeypatch.setattr(bridge, "_script_state", lambda: paused)
+    states = iter([{"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": []}] + [{"boxes": [], "foreign": [], "windows": []}] * 9)
+    monkeypatch.setattr(bridge, "_script_state", lambda: next(states))
+    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)          # RunScript never creates start.flag
+    monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 50)).__next__)
+    with pytest.raises(bridge.BridgeError) as err:
+        bridge.run_commands([("PING",)])
+    msg = str(err.value)
+    assert msg.startswith("**Altium cannot run scripts right now** - a script is paused or blocked in Altium.")
+    assert "press Run (F9) or Stop" in msg and "restart Altium" in msg and "[TMessageForm] Error: OK" in msg    # the box texts stay in the details
+    assert "clean" not in msg.lower() and bridge.take_preflight_notes() == []
+
+
+def test_the_student_line_says_the_next_step_started_only_after_start_flag(monkeypatch, tmp_path):
+    _bridge_files(monkeypatch, tmp_path)
+    monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": ["[TMessageForm] Error: OK"], "foreign": [], "windows": []})
     monkeypatch.setattr(bridge, "release_executor", lambda: [])
-    assert bridge.preflight()["still_paused"] is True
-    assert "F9" in bridge.take_preflight_notes()[0]
+    seen = []
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: (seen.append(bridge.take_preflight_notes()),
+                                                                       _finishing_script(tmp_path, [])())[0])
+    bridge.run_commands([("PING",)])
+    assert seen == [[]]                                      # nothing is said before the script has started
+    assert "next step started" in bridge.take_preflight_notes()[0]
 
 
 def test_the_preflight_also_runs_after_an_error(monkeypatch, tmp_path):

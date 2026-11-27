@@ -268,8 +268,8 @@ def _close_dialogs(only_look=False):
         return []
 
 
-PAUSED_HINT = ("If a script is paused in Altium's script editor (a breakpoint after an error), press Run (F9) there to let it "
-               "finish, then close Altium.")
+BLOCKED = ("**Altium cannot run scripts right now** - a script is paused or blocked in Altium. In Altium open the script editor "
+           "tab, press Run (F9) or Stop, close any box; if that does not help, save your work and restart Altium.")
 _SCRIPT_TITLE = re.compile(r"AdvisorBridge|\.PrjScr|\.pas\b", re.I)
 _PAUSED_WORDS = re.compile(r"paus|debug|breakpoint|stopped at", re.I)
 PREFLIGHT_NOTES = []    # one line per paused run released before a command; the server shows them (take_preflight_notes)
@@ -321,7 +321,8 @@ def preflight(strict=False):
     press OK on it, -REditScript:Stop) BEFORE sending, look again, log it in the run log and keep one line for the student, tagged
     with the project. If any OTHER box is open (a question for the owner: Save changes?), nothing is pressed or closed: strict raises
     a BridgeError that says to answer it first, otherwise it just returns None. Nothing in the owner's open documents is touched.
-    Returns the record, or None when there was nothing to do."""
+    Keeps NO student line itself: _note_release(rec) writes it once a script has really started. Returns the record, or None when
+    there was nothing to do."""
     try:
         state = _script_state()
     except Exception:
@@ -338,18 +339,24 @@ def preflight(strict=False):
     try:
         shown = release_executor()
         left = _script_state()
-        rec = {"found": state["boxes"], "windows": state["windows"], "released": shown,
-               "still_paused": bool(left["boxes"] or left["foreign"])}
-        runlog.event("altium-preflight", project=project, **rec)
+        # a box that is gone is NOT proof that Altium is clean (seen live: Stop and OK removed the box, the next RunScript still failed):
+        # whether the release worked is known only when the next script starts (start.flag); _run_commands says so then
+        rec = {"found": state["boxes"], "windows": state["windows"], "released": shown, "box_still_open": bool(left["boxes"] or left["foreign"]),
+               "project": project}
+        runlog.event("altium-preflight", project=project, **{k: v for k, v in rec.items() if k != "project"})
         if project:
-            _log(project, "preflight", **rec)
-        note = ("**A script was paused in Altium** - I stopped it so the next step can run. WARNING: "
-                + (PAUSED_HINT if rec["still_paused"] else "Altium is clean now.") + " Details: " + " | ".join(rec["found"])[:400])
-        PREFLIGHT_NOTES.append((project, note))
-        del PREFLIGHT_NOTES[:-50]
+            _log(project, "preflight", **{k: v for k, v in rec.items() if k != "project"})
         return rec
     except Exception:
         return None
+
+
+def _note_release(rec):
+    """A script really started (start.flag) after preflight() released a paused run: only now is the release known to have worked.
+    One line for the student, tagged with the project."""
+    PREFLIGHT_NOTES.append((rec["project"], "**A script was paused in Altium** - I stopped it and the next step started. WARNING: "
+                            "Details: " + " | ".join(rec["found"])[:400]))
+    del PREFLIGHT_NOTES[:-50]
 
 
 def take_preflight_notes(project=""):
@@ -472,8 +479,9 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
         body = "\r\n".join("\t".join(_ascii(f) for f in c) for c in commands) + "\r\n"
         (EXCHANGE / "request.txt").write_bytes(body.encode("ascii"))     # bytes: text mode would double the CR on Windows
         cold = not _running()          # Altium has to start first: that takes a while
+        released = None
         if not cold:
-            preflight(strict=True)     # a run left paused by an earlier error would swallow this one
+            released = preflight(strict=True)     # a run left paused by an earlier error would swallow this one
         for attempt in (1, 2):
             subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
             t0 = time.time()
@@ -484,18 +492,20 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                     break
                 time.sleep(0.5)
             if started:
+                if released:
+                    _note_release(released)         # the run that was paused is gone: this script started
                 break
             shown = release_executor()          # a paused executor ignores new scripts: release it and try once more
             if attempt == 2:
                 if any(s.startswith("[TMessageForm]") for s in shown):
                     # Altium's own message box: its text is a TLabel (not a window), so it cannot be read. On a cold start the
                     # usual cause is that Altium is not signed in to an account / licence (seen 2026-11-11).
-                    raise BridgeError("Altium did not start the script because a message box in Altium is blocking it (its text cannot "
+                    raise BridgeError(BLOCKED + " Altium did not start the script because a message box in Altium is blocking it (its text cannot "
                                       "be read from here). Open Altium, sign in if it asks you to, close any message box that is "
                                       "open, and then try again. Dialog: " + " | ".join(shown))
-                raise BridgeError("Altium did not start the script (a script error or a dialog box was blocking it"
+                raise BridgeError(BLOCKED + " Altium did not start the script (a script error or a dialog box was blocking it"
                                   + (f": {' | '.join(shown)}" if shown else "") + "). "
-                                  "I released the script executor and closed dialogs; try again. " + PAUSED_HINT)
+                                  "I released the script executor and closed dialogs once and tried again.")
         t_log, last, t0 = time.time(), _stat(EXCHANGE / "log.txt"), time.time()
         t_look = t_log
         while not (EXCHANGE / "end.flag").exists():
