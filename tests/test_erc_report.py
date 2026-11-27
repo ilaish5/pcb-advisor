@@ -416,3 +416,48 @@ def test_the_real_report_cut_off_is_not_complete():
     f.write_text(cut, encoding="utf-8")
     res = bridge.parse_erc(f)
     assert res["complete"] is False and res["clean"] is False and res["n_errors"] is None
+
+
+# ------------------------------------------------ real AD26.8 reports: no violations, and the two other ERCReportGrouping values
+
+FIXTURES = pathlib.Path(__file__).parent / "fixtures" / "altium"
+REAL_CLEAN = FIXTURES / "erc_ad26_clean.html"
+REAL_GROUPED = (FIXTURES / "erc_ad26_grouped0.html", FIXTURES / "erc_ad26_grouped1.html")
+
+
+def test_a_real_ad26_no_violations_report_is_clean():
+    """Altium Designer 26.8 on a copy of a project (neutral names) with every ERC level and connection matrix entry at No Report: the page
+    says 'Successful Compile; No Violations Found.' and lists nothing. Written by Altium, not by hand."""
+    res = bridge.parse_erc(REAL_CLEAN)
+    assert res["complete"] is True and res["clean"] is True and res["problems"] == [] and res["rows"] == []
+    assert (res["n_errors"], res["n_warnings"], res["total"]) == (0, 0, 0)
+    assert bridge.erc_line(res) == "no violations (clean)"
+
+
+def test_the_real_no_violations_report_cut_off_is_not_clean():
+    text = REAL_CLEAN.read_text(encoding="utf-8")
+    import tempfile
+    f = pathlib.Path(tempfile.mkdtemp()) / "cut.html"
+    f.write_text(text[:text.rindex("</html>")], encoding="utf-8")
+    res = bridge.parse_erc(f)
+    assert res["complete"] is False and res["clean"] is False
+
+
+def test_the_real_reports_of_the_other_report_groupings_are_read_in_full():
+    """ERCReportGrouping=0 and =1 (the generated OutJob writes 2): Altium wrote the same one table in another ORDER of its rows (grouped
+    by kind, or by sheet), seen live; both are read in full with the same classes and kinds."""
+    a, b = (bridge.parse_erc(p) for p in REAL_GROUPED)
+    for res in (a, b):
+        assert res["complete"] is True and res["clean"] is False and res["problems"] == []
+        assert (res["n_errors"], res["n_warnings"], res["total"]) == (8, 16, 24)
+        assert bridge.erc_line(res) == "8 errors, 16 warnings"
+        assert all(r["document"].startswith("Sheet_") and r["message"] and r["kind"] for r in res["rows"])
+        assert res["kinds"]["Net has only one pin"] == 2 and res["kinds"]["Un-Designated Part"] == 2
+    assert [r["message"] for r in a["rows"]] != [r["message"] for r in b["rows"]], "the two groupings order the rows differently"
+
+
+def test_the_real_report_fixtures_hold_no_project_data():
+    for p in (REAL_CLEAN, *REAL_GROUPED):
+        text = p.read_text(encoding="utf-8")
+        for word in ("ilaish", "GPIO", "SPI_", "CAN_", "RELAY", "IOexpand", "NTHD", "MCP23", "WCTopping", "Processor", "Users"):
+            assert word not in text, (p.name, word)
