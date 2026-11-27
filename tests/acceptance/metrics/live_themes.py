@@ -197,13 +197,17 @@ def tc(ctx):
 # ------------------------------------------------------------------ T-D
 HAND_STEP = re.compile(r"\bin Altium\b[^.]{0,80}\b(?:move|set|change|edit|tent|fix|delete|add|run|open|drag|disable)|"
                        r"\b(?:by hand|manually|yourself)\b", re.I)
+HAND_STEP_WORDS = re.compile(r"\b(?:by hand|manually|yourself)\b", re.I)
 
 
 @metric(id="T-D", title="Every hand-step advice is a tracked ledger item (open / fixed / accepted with reason)",
         root="R5", level="B", kind="behaviour")
 def td(ctx):
     run = common.Run(ctx)
-    advice = [r for r in common.chat_rows(run.project_dir) if r.get("role") == "agent" and HAND_STEP.search(str(r.get("text", "")))]
+    # A button step's own note ('by': 'button') reports what the tool did in Altium ("Imported the JLC rules in Altium ...: 6 added");
+    # that is not advice. In such a note only the explicit hand-step words count (acceptance-v1.1, orchestrator 27/11: 36 -> 32 on 2dcd691).
+    advice = [r for r in common.chat_rows(run.project_dir) if r.get("role") == "agent" and
+              (HAND_STEP_WORDS if r.get("by") == "button" else HAND_STEP).search(str(r.get("text", "")))]
     ledgers = {}
     for path in ("/api/ledger", "/api/findings", "/api/keeping/decisions"):
         st, body = run.get(path)
