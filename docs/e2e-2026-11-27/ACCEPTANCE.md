@@ -106,7 +106,8 @@ sentence as proof. A system message is only ever an input that is checked *again
 
 **A4. Red before green.** Each metric must FAIL on the frozen 27/11 artifacts before it can be used. A checker that passes on the
 known-bad state proves nothing and is rejected.
-Frozen evidence (local only, project data never goes to GitHub): `local/acceptance-fixtures/final-e2e-4l-1127/`
+Frozen evidence: `local/acceptance-fixtures/final-e2e-4l-1127/` (git-ignored; published by the owner's decision on 27/11 as the
+GitHub release asset `fixture-final-e2e-4l-1127`, zip sha256 `21c89904…a07477`, fetched by `tests/acceptance/fetch_fixture.py`)
 (`project/` = `projects/Final-E2E-4L`, `altium/` = the Altium project folder incl. `.advisor-backup/`), read-only,
 `MANIFEST.sha256` of 422 files, manifest sha256 `423530bb3cdefa11906cc7741d9748191ea4e22299dea10c8766801707519e27`.
 Key files: `altium/Final-E2E-4L.PcbDoc` `30f07740…fa7664`, `project/bom.json` `50e09ce8…8b53a`, `project/exports/Final-E2E-4L_gerbers.zip`
