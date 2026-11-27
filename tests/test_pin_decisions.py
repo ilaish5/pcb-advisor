@@ -198,11 +198,13 @@ def test_routes_confirm_revoke_and_accept_all(server, empty):
     assert call(server, "GET", "/api/pins/confirm-data?line=NOPE", empty)[0] == 404
     assert call(server, "POST", "/api/pins/confirm", empty, {})[0] == 400
     assert call(server, "POST", "/api/pins/confirm", empty, {"line": "NOPE"})[0] == 404
-    code, body = call(server, "POST", "/api/pins/confirm", empty, {"line": "U1"})      # no reason, no ticks
-    assert code == 200 and body["decision"]["basis"] == "blind"
+    assert call(server, "POST", "/api/pins/confirm", empty, {"line": "U1"})[0] == 400      # no reason, no datasheet page: refused
+    code, body = call(server, "POST", "/api/pins/confirm", empty, {"line": "U1", "reason": "I checked the pins in the vendor PDF"})
+    assert code == 200 and body["decision"]["basis"] == "blind" and body["decision"]["reason"]
     assert call(server, "POST", "/api/pins/revoke", empty, {"line": "U1"})[1]["changed"] is True
     assert call(server, "POST", "/api/pins/accept-all", empty, {})[0] == 400           # one explicit confirm
-    code, body = call(server, "POST", "/api/pins/accept-all", empty, {"confirm": True})
+    assert call(server, "POST", "/api/pins/accept-all", empty, {"confirm": True})[0] == 400      # and the student's reason
+    code, body = call(server, "POST", "/api/pins/accept-all", empty, {"confirm": True, "reason": "checked all of them against the datasheets"})
     assert code == 200 and body["accepted"] == ["U1"]
     assert store.unverified_parts(empty) == []
 

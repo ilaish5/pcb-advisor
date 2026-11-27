@@ -25,7 +25,10 @@ function ledgerItemHTML(it) {
   const conflict = it.conflict ? `<p class="warn-t lg-conflict">Do not do this: it breaks a rule of this tool (${esc(it.conflict.rule)}). ${esc(it.conflict.why)}</p>` : '';
   const reason = it.state === 'accepted' ? `<p class="muted lg-reason">Accepted because: ${esc(it.reason)}</p>` : '';
   const open = it.state === 'open' || it.state === 'student_fixed';
-  const acts = open
+  const manual = it.kind === 'hand_step' && (it.check || {}).type === 'manual';       // the tool has no check for it: the student closes it by saying what they did
+  const acts = open && manual
+    ? btn('I did it', {kind: 'line', size: 'sm', act: 'ledger-accept', lid: it.id, did: '1', title: 'The tool cannot check this step. Say in a sentence what you did; it is kept with the outputs.'})
+    : open
     ? (it.kind === 'limit' ? '' : btn(busy ? 'Checking...' : 'Done, check again', {kind: 'line', size: 'sm', act: 'ledger-done', lid: it.id, disabled: busy || undefined,
         title: 'The tool checks the file again as it is now. Only a check that passes closes this finding.'})) +
       btn('Accept with a reason', {kind: 'link', size: 'sm', act: 'ledger-accept', lid: it.id, jlc: it.jlc_reject ? '1' : undefined,
@@ -49,6 +52,7 @@ function ledgerLimitHTML(l) {
 function ledgerCardHTML(page) {
   ledgerLoadLimits();
   const L = (S && S.ledger) || {counts: {}, items: []};
+  if (L.error) return `<section class="lg-card" data-ledger="${esc(page)}" aria-label="Findings"><h3>Findings</h3><p class="warn-t lg-error" role="alert">${esc(L.error)}</p></section>`;
   const all = page === 'outputs';
   const items = (L.items || []).filter(i => (all || i.page === page) && i.kind !== 'limit' || (all && i.kind === 'limit'));
   const open = items.filter(i => i.state === 'open' || i.state === 'student_fixed');
@@ -72,8 +76,11 @@ onAct('ledger-done', async (el, d) => {
   await refresh(true);
 });
 onAct('ledger-accept', async (el, d) => {
-  const reason = await askText({title: 'Accept this finding', label: 'Why is it fine? (one sentence)', placeholder: 'For example: JLC accepts this gap for this board', confirm: 'Accept',
-    hint: 'The reason is kept with the outputs. If you change the board file afterwards, the finding opens again.'});
+  const reason = d.did
+    ? await askText({title: 'Mark it as done', label: 'What did you do? (one sentence)', placeholder: 'For example: moved C10 next to U1 in Altium', confirm: 'Done',
+      hint: 'The tool cannot check this step. Your words are kept with the outputs.'})
+    : await askText({title: 'Accept this finding', label: 'Why is it fine? (one sentence)', placeholder: 'For example: JLC accepts this gap for this board', confirm: 'Accept',
+      hint: 'The reason is kept with the outputs. If you change the board file afterwards, the finding opens again.'});
   if (!reason) return;
   let anyway = false;
   if (d.jlc) {

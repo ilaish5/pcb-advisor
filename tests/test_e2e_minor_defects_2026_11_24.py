@@ -254,5 +254,5 @@ def test_inspector_clears_pv_note_and_dfm_waiting_offers_confirm_pins_with_selec
     assert ".work:has(>#detail:not([hidden])) .pv>.pv-note{padding-right:" in pv_css
     checks = _js("views/checks.js")
     fn = _fn(checks, "dfmWaitingHTML")
-    assert "curDs" in fn and "(g.kind === 'ic' && curDs)" in fn
+    assert "curDs" in fn and "const needBtn = true" in fn and "g.kind === 'ic' && docs.length" in fn
     assert "Change datasheet" in fn and "${d === curDs ? ' selected' : ''}" in fn

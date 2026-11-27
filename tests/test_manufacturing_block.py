@@ -71,7 +71,7 @@ def test_accepting_clears_the_warning_and_the_endpoint_resolves_a_part(server, e
     assert store.pins_warning(empty)
     assert call(server, "POST", "/api/altium/run-outjob", empty, {})[0] == 200
     for key in ("J1", "D1"):
-        assert call(server, "POST", "/api/pins/accept", empty, {"line": key})[0] == 200
+        assert call(server, "POST", "/api/pins/accept", empty, {"line": key, "reason": "checked on the vendor drawing"})[0] == 200
     assert store.pins_warning(empty) == ""
 
 
@@ -167,7 +167,8 @@ def test_the_unverified_list_has_a_confirm_button_per_part():
     pins = (REPO / "ui" / "js" / "views" / "pins.js").read_text(encoding="utf-8")
     assert "act: 'confirm-pins', line: l.key" in js and "'/api/pins/confirm', {line: key" in pins
     code = re.sub(r"/\*.*?\*/|//[^\n]*", "", pins, flags=re.S).lower()   # comments may describe the record shape
-    # low friction: no reason input and no length rule anywhere in the flow (showing an old note is fine)
+    # one click where a datasheet page backs it; with none, the student says why in one sentence (asked once, no length rule in the UI)
+    assert "if (!ev.length && !result.wrong.length)" in pins
     assert not re.search(r"<(input|textarea)[^>]*reason|reason[^\n]{0,40}\.length|reason\s*\.\s*trim", code)
     assert "rows.map(item)" in js     # every row, a mismatch included, comes from the one template that holds the button
 

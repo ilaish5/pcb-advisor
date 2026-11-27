@@ -15,6 +15,7 @@ Everything the student can do is a function here and a route in the ext registry
 """
 import hashlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -35,8 +36,8 @@ MIN_REASON = 8                 # a reason is words, not a letter: "ok" is not a 
 SYSTEM_RULES = [
     {"id": "via_in_pad_never",
      "pattern": re.compile(r"\bvias?\b[^.\n]{0,60}\b(?:in|under|inside|into|within|beneath)\b[^.\n]{0,40}\b(?:pads?|exposed pad|EP|thermal pad|paddle)\b|"
-                           r"\b(?:thermal|stitch\w*)\s+vias?\b[^.\n]{0,60}\b(?:exposed pad|EP|thermal pad|paddle|U\d+\b)|via[- ]in[- ]pad", re.I),
-     "negation": re.compile(r"\b(?:never|not|no|don[’']?t|do not|avoid|without|instead of|forbidden|not allowed)\b", re.I),
+                           r"\b(?:thermal|stitch\w*)\s+vias?\b[^.\n]{0,40}\b(?:in|under|inside|into|within|beneath|through)\s+(?:the\s+)?(?:exposed pad|EP|thermal pad|paddle|U\d+\b)|via[- ]in[- ]pad", re.I),
+     "negation": re.compile(r"\b(?:never|not|no|don[’']?t|do not|avoid|without|instead of|forbidden|not allowed|next to|beside|around|near|outside|adjacent|alongside)\b", re.I),
      "rule": "No via in an SMD pad (ViasUnderSMD is Not allowed)",
      "why": "JLC makes via-in-pad only as filled and plated-over vias, which cost extra, and an open via in a pad wicks solder away. "
             "Put the thermal vias next to the pad instead, outside the paste window, or leave the pad to the top copper."},
@@ -55,16 +56,27 @@ def _empty():
     return {"seq": 0, "items": []}
 
 
+class LedgerCorrupt(Exception):
+    """ledger.json exists but cannot be read: the student is told, the file is left as it is, and nothing is written over it."""
+
+
 def load(project):
     p = _path(project)
     try:
-        d = json.loads(p.read_text(encoding="utf-8"))
-        if isinstance(d, dict) and isinstance(d.get("items"), list):
-            d.setdefault("seq", len(d["items"]))
-            return d
-    except (OSError, ValueError):
-        pass
-    return _empty()
+        raw = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return _empty()
+    except OSError as exc:
+        raise LedgerCorrupt(f"The Findings list ({p.name}) cannot be read: {exc}. It was left as it is.") from exc
+    try:
+        d = json.loads(raw)
+    except ValueError as exc:
+        raise LedgerCorrupt(f"The Findings list ({p.name}) is damaged ({exc}). It was left as it is; copy the file somewhere safe and "
+                            "ask for help before adding anything, so no item is lost.") from exc
+    if isinstance(d, dict) and isinstance(d.get("items"), list):
+        d.setdefault("seq", len(d["items"]))
+        return d
+    raise LedgerCorrupt(f"The Findings list ({p.name}) does not have the expected shape. It was left as it is.")
 
 
 def _save(project, doc):
@@ -76,7 +88,9 @@ def _save(project, doc):
             return
     except OSError:
         pass
-    store._write_text(p, text)
+    tmp = p.with_name(p.name + ".tmp")          # written whole beside the file, then swapped in: a crash leaves the old file or the new one
+    store._write_text(tmp, text)
+    os.replace(tmp, p)
 
 
 def _pcb_sha(project):
@@ -110,7 +124,7 @@ def key_of(text):
 
 # ---------------------------------------------------------------- adding
 
-def add(project, key, kind, title, detail="", page="", check=None, source="", severity="warn", extra=None):
+def add(project, key, kind, title, detail="", page="", check=None, source="", severity="warn", extra=None, reopen_closed=True):
     """The item for `key`; created open, or returned as it is when it is already open / waiting. A closed item whose finding is back is
     re-opened (its history says so). An accepted item stays accepted until the file changes (see view)."""
     if kind not in KINDS:
@@ -119,7 +133,7 @@ def add(project, key, kind, title, detail="", page="", check=None, source="", se
         doc = load(project)
         for it in doc["items"]:
             if it["key"] == key:
-                if it["state"] == "closed":
+                if it["state"] == "closed" and reopen_closed:
                     _hist(it, "open", "the finding is back")
                 if title and it["state"] in OPEN_STATES:
                     it["title"] = str(title)[:200]
@@ -163,33 +177,55 @@ _HAND = re.compile(
 _TOOL_SIDE = re.compile(r"\b(?:the tool|this tool|the app|the system|pcb advisor|the server|the agent|I(?:'ve| have| did)?)\b[^.\n]{0,30}\b(?:ran|runs|drew|draws|placed|places|routed|routes|did|does|will do|has done)\b", re.I)
 
 
-# The wider reading of "the agent told the student to do it by hand": any message that sends the student into Altium to change something, or
-# says to do it by hand / manually / yourself. A message with such a sentence is ONE step on the list, naming every part and net it mentions.
+# Not a step for the student: the agent doing it, an offer or a question, or a sentence that says nothing needs doing by hand.
+_NOT_STEP = re.compile(
+    r"\b(?:I(?:'ll|’ll| will| can| could| would| am going to|'m going to|’m going to)|let me|shall I|should I|do you want me|want me to|tell me to|ask me to"
+    r"|or tell me|no need|(?:do not|don't|don’t|doesn't|doesn’t|does not|did not|didn't) (?:need|have) to|not need to|nothing to do|never need|"
+    r"without having to|(?:you )?(?:need|have) not)\b", re.I)
 _WIDE = re.compile(r"\bin Altium\b[^.\n]{0,80}\b(?:move|set|change|edit|tent|fix|delete|add|run|open|drag|disable)\b|\b(?:by hand|manually|yourself)\b", re.I)
 _REFS = re.compile(r"\b[A-Z]{1,3}\d{1,3}\b")
+_ANNOTATION = re.compile(r"\n\n(?:Do not follow the step in F-\d+|Tracked on your Findings list:|Nothing in this reply was added to your Findings list|A limit of this tool:|Correction:).*\Z", re.S)
 
 
-def wide_step(text):
-    """(title, refs) of the hand step a whole message holds, or None."""
-    t = str(text or "")
-    for sent in re.split(r"(?<=[.!?])\s+|\n+", t):
+def original(text):
+    """The agent's own text: what annotate_reply appended (the Tracked line, a refusal, a correction) is taken off, so a reply has ONE identity
+    whether it is looked at when it is written or read back from the stored chat."""
+    return _ANNOTATION.sub("", str(text or "")).strip()
+
+
+def _sentences(text):
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", str(text or "")):
         s_ = sent.strip(" \t-*•>#")
-        if len(s_) >= 12 and _WIDE.search(s_) and not _TOOL_SIDE.match(s_):
-            return s_[:120], sorted(set(_REFS.findall(t)))
-    return None
+        if len(s_) >= 12:
+            yield s_
+
+
+def _is_step(sent):
+    return not (_TOOL_SIDE.match(sent) or _NOT_STEP.search(sent) or sent.rstrip().endswith("?"))
+
+
+def hand_steps(text):
+    """The sentences of a text that tell the student to do something by hand in Altium (what the ledger must hold)."""
+    return [s_[:400] for s_ in _sentences(text) if (_HAND.search(s_) or _WIDE.search(s_)) and _is_step(s_)]
 
 
 def track_message(project, text, ts="", source="agent", page=""):
-    """The message's hand step as one item that names every designator in the message. Idempotent per message. Never raises."""
+    """ONE item per reply: the hand steps it holds (title: the first, detail: all of them) naming every part and net the reply mentions.
+    The key is the hash of the agent's own text, so the same reply never makes a second item, however it comes back (live, annotated,
+    read from the stored chat). A closed or accepted item is left as it is. Returns the item or None. Never raises."""
     try:
-        w = wide_step(text)
-        if not w:
+        text = original(text)
+        steps = hand_steps(text)
+        if not steps:
             return None
-        title, refs = w
-        key = "msg:" + hashlib.sha1(str(text).strip().encode("utf-8", "replace")).hexdigest()[:14]
-        label = title + (f" ({', '.join(refs[:8])})" if refs else "")
-        return add(project, key, "hand_step", label[:200], str(text)[:2000], page=page, source=source,
-                   check={"type": "manual"}, extra={"refs": refs})
+        refs = sorted(set(_REFS.findall(text)))
+        key = "msg:" + hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()[:14]
+        label = steps[0][:120] + (f" ({', '.join(refs[:8])})" if refs else "")
+        mech = any(re.search(r"\b(?:DRC|design rule|clearance|short|un-?routed)\b", x, re.I) for x in steps)
+        return add(project, key, "hand_step", label[:200], "\n".join(steps)[:2000] + ("\n\n" + text[:1500] if len(text) > 200 else ""), page=page, source=source,
+                   check={"type": "drc_clean"} if mech else {"type": "manual"}, extra={"refs": refs}, reopen_closed=False)
+    except LedgerCorrupt:
+        raise
     except Exception as exc:       # noqa: BLE001
         print(f"(ledger: message not tracked: {type(exc).__name__}: {exc})", file=sys.stderr)
         return None
@@ -200,7 +236,7 @@ _BACKFILL_SEEN = {}
 
 def backfill(project):
     """Hand-step advice the agent gave before this ledger existed (the stored chats) becomes items too: nothing said stays only in chat.
-    Reads a chat file again only when it changed."""
+    The same key as the live path, so a reply already tracked is found, never added again. Reads a chat file again only when it changed."""
     d = store.pdir(project) / "chats"
     try:
         files = sorted(d.glob("*.jsonl"))
@@ -224,29 +260,12 @@ def backfill(project):
             continue
 
 
-def hand_steps(text):
-    """The sentences of a text that tell the student to do something by hand in Altium (what the ledger must hold)."""
-    out = []
-    for sent in re.split(r"(?<=[.!?])\s+|\n+", str(text)):
-        s = sent.strip(" \t-*•>#")
-        if len(s) < 12 or not _HAND.search(s) or _TOOL_SIDE.match(s):
-            continue
-        out.append(s[:400])
-    return out
-
-
 def track_advice(project, text, source="agent", page=""):
-    """Every hand step in `text` becomes (or finds) a ledger item. Returns [{"id", "title", "state", "conflict"?}]. Never raises: the
-    reply it comes from is never lost because the ledger could not be written."""
-    got = []
-    try:
-        for s in hand_steps(text):
-            it = add(project, key_of(s), "hand_step", s[:120], s, page=page, source=source,
-                     check={"type": "drc_clean"} if re.search(r"\b(?:DRC|design rule|clearance|short|un-?routed)\b", s, re.I) else {"type": "manual"})
-            got.append({"id": it["id"], "title": it["title"], "state": it["state"], **({"conflict": it["conflict"]} if it.get("conflict") else {})})
-    except Exception as exc:       # noqa: BLE001
-        print(f"(ledger: advice not tracked: {type(exc).__name__}: {exc})", file=sys.stderr)
-    return got
+    """The reply's hand steps as ONE ledger item. Returns [{"id", "title", "state", "conflict"?}] (empty when it holds none)."""
+    it = track_message(project, text, source=source, page=page)
+    if not it:
+        return []
+    return [{"id": it["id"], "title": it["title"], "state": it["state"], **({"conflict": it["conflict"]} if it.get("conflict") else {})}]
 
 
 # ---------------------------------------------------------------- checks
@@ -497,6 +516,8 @@ def _model(project, out):
     try:
         doc = view(project)
         return {"ledger": {"counts": counts(doc), "items": [public(i) for i in doc["items"] if i["state"] != "closed"][:60]}}
+    except LedgerCorrupt as exc:
+        return {"ledger": {"error": str(exc), "counts": {k: 0 for k in STATES}, "items": []}}
     except Exception:       # noqa: BLE001 - the page loads without a ledger rather than not at all
         return {}
 
@@ -504,7 +525,10 @@ def _model(project, out):
 @ext.register("get")
 def _get(handler, path, q):
     if path == "/api/ledger":
-        doc = view(handler.project())
+        try:
+            doc = view(handler.project())
+        except LedgerCorrupt as exc:
+            raise ext.HTTPError(500, str(exc))
         return {"counts": counts(doc), "items": [public(i) for i in doc["items"]]}
     return None
 
@@ -569,18 +593,18 @@ def annotate_reply(project, reply):
     import limits
     text = str(reply or "")
     ids, notes = [], []
-    tracked = track_advice(project, text, source="agent")
-    whole = track_message(project, text, ts=store.now(), source="agent")
-    if whole and not any(t["id"] == whole["id"] for t in tracked):
-        tracked.append({"id": whole["id"], "title": whole["title"], "state": whole["state"]})
-    for t in tracked:
-        ids.append(t["id"])
-        if t.get("conflict"):
-            c = t["conflict"]
-            notes.append(f"Do not follow the step in {t['id']}: it breaks a rule of this tool ({c['rule']}). {c['why']}")
-    for it in limits.track_text(project, text):
-        if it["id"] not in ids:
-            ids.append(it["id"])
+    try:
+        tracked = track_advice(project, text, source="agent")
+        for t in tracked:
+            ids.append(t["id"])
+            if t.get("conflict"):
+                c = t["conflict"]
+                notes.append(f"Do not follow the step in {t['id']}: it breaks a rule of this tool ({c['rule']}). {c['why']}")
+        for it in limits.track_text(project, text):
+            if it["id"] not in ids:
+                ids.append(it["id"])
+    except LedgerCorrupt as exc:
+        notes.append(f"Nothing in this reply was added to your Findings list. {exc}")
     wrong = limits.false_claims(text)
     if wrong:
         notes.append(limits.correction(wrong))

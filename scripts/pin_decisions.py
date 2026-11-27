@@ -293,13 +293,14 @@ def waiting(project):
             "lib_buttons": {r["line"]: row_buttons(r, bom.get(r["line"])) for r in store.library_view(project)}}
 
 
-def accept_all(project, lines=None):
-    """Accept every part `remaining` lists (or the given subset of it) in one go, basis from the part (blind / polarity)."""
+def accept_all(project, lines=None, reason=""):
+    """Accept every part `remaining` lists (or the given subset of it) in one go, basis from the part (blind / polarity), with the
+    student's reason, which every one of them carries."""
     todo = remaining(project)
     if lines is not None:
         todo = [r for r in todo if r["line"] in set(lines)]
     for r in todo:
-        accept(project, r["line"])
+        accept(project, r["line"], reason=reason)
     return {"ok": True, "accepted": [r["line"] for r in todo]}
 
 
@@ -413,6 +414,13 @@ def confirm_data(project, key):
 
 # ---------------------------------------------------------------- what the rest of the app reads
 
+def _evidence_words(dec):
+    """What the decision itself records, in words: the datasheet page it was checked against. A decision with no reason and no evidence has
+    NO reason: it is never given one here (the order manifest shows it empty, and the acceptance check flags it)."""
+    ev = [e for e in (dec.get("evidence") or []) if isinstance(e, dict) and e.get("doc")]
+    return "; ".join(f"pins checked against {e['doc']}" + (f", page {e['page']}" if e.get("page") else "") for e in ev)
+
+
 def risks(project):
     """The accepted risks: every part whose pins stand on the student's decision rather than a datasheet pin table.
     [{line, refs, mpn, basis, ts, reason, evidence}]; a revoked or stale decision is no risk, it is a gate item."""
@@ -424,7 +432,7 @@ def risks(project):
         dec = state(project, l, lib.get(l["key"]))[0]
         if dec:
             out.append({"line": l["key"], "refs": l["refs"], "mpn": l.get("mpn") or "", "basis": dec.get("basis", ""),
-                        "ts": dec.get("ts", ""), "reason": dec.get("reason") or f"accepted by the student without a datasheet pin table (basis: {dec.get('basis') or 'not stated'})", "evidence": dec.get("evidence", [])})
+                        "ts": dec.get("ts", ""), "reason": dec.get("reason") or _evidence_words(dec), "evidence": dec.get("evidence", [])})
     return out
 
 
@@ -489,14 +497,19 @@ def _post(handler, path, body):
     if path not in ("/api/pins/confirm", "/api/pins/revoke", "/api/pins/accept-all"):
         return None
     proj = handler.project()
-    if "reason" in body and path != "/api/pins/revoke" and not body.get("evidence") and not body.get("wrong") \
+    if body.get("line") and path != "/api/pins/accept-all":
+        try:
+            store._line_of(proj, body["line"])
+        except KeyError:
+            raise ext.HTTPError(404, f"no BOM line {body.get('line')!r}")      # an unknown part is not found, before it is asked for a reason
+    if path != "/api/pins/revoke" and not body.get("evidence") and not body.get("wrong") \
             and not re.search(r"[A-Za-z֐-׿]{3}", str(body.get("reason") or "")):
         raise ext.HTTPError(400, "a reason is needed to accept a risk: say in a sentence why it is fine")      # a blank reason is no reason (U5)
     try:
         if path == "/api/pins/accept-all":
             if not body.get("confirm"):
                 raise ext.HTTPError(400, "confirm required: this accepts every remaining part at once")
-            return accept_all(proj, body.get("lines"))
+            return accept_all(proj, body.get("lines"), reason=str(body.get("reason") or "")[:300])
         if not body.get("line"):
             raise ext.HTTPError(400, "line required")
         if path == "/api/pins/revoke":

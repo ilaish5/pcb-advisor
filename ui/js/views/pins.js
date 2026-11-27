@@ -140,7 +140,12 @@ async function pinsConfirm(key) {
     });
     if (!result) return;
     const ev = doc && !result.wrong.length ? [{doc: doc.name, sha256: doc.sha256, page: result.page}] : [];
-    const r = await pinsWhile(async () => { const x = await api('/api/pins/confirm', {line: key, evidence: ev, wrong: result.wrong}); await refresh(true); return x; });
+    let reason = '';
+    if (!ev.length && !result.wrong.length) {        // no datasheet page to cite: the student's own sentence is the record
+      reason = await askText({title: `Accept ${refsLabel(d.refs)} on your word?`, label: 'Why is it fine?', placeholder: 'e.g. I checked the pins against the datasheet', confirm: 'Accept'});
+      if (!reason) return;
+    }
+    const r = await pinsWhile(async () => { const x = await api('/api/pins/confirm', {line: key, evidence: ev, wrong: result.wrong, ...(reason ? {reason} : {})}); await refresh(true); return x; });
     render(true);
     toast(r.flagged ? `Marked pin ${r.flagged.join(', ')} as wrong: the part stays in the list` : 'Pins confirmed');
   } finally { pinsOpen = false; }
@@ -161,14 +166,15 @@ onAct('accept-all-pins', async () => {
   const lines = w ? w.bulk || [] : ((S.pin_decisions || {}).remaining || []).map(r => r.line);
   if (!lines.length) return;
   const blind = w ? w.blind || [] : [];
-  if (blind.length) {
-    // the dialog names the same number as the button (E11): every part Confirm all settles; the ones with no datasheet check are named
-    const n = pinsCount('to_confirm') || blind.length;
-    const yes = await askChoice({title: pinsAcceptTitle(n, w), text: pinsAcceptText(blind), yes: 'Accept all', no: 'Not now'});
-    if (!yes) return;
-  }
+  // No datasheet pin table backs this click, so the student says in a sentence why it is fine: that sentence is the record. Never invented.
+  const n = pinsCount('to_confirm') || blind.length || lines.length;
+  const named = blind.length > 0;
+  const ask = {title: named ? pinsAcceptTitle(n, w) : `Accept ${n === 1 ? 'this part' : n + ' parts'} on your word?`, label: 'Why is it fine?',
+    placeholder: 'e.g. I checked the pins against the datasheet', hint: named ? pinsAcceptText(blind) : 'It stays listed as an accepted risk and can be revoked.', confirm: 'Accept all'};
+  const reason = await askText(ask);
+  if (!reason) return;
   let r = null;
-  await pinsWhile(async () => { if (typeof render === 'function') render(true); r = await api('/api/pins/accept-all', {confirm: true, lines}); await refresh(true); });
+  await pinsWhile(async () => { if (typeof render === 'function') render(true); r = await api('/api/pins/accept-all', {confirm: true, lines, reason}); await refresh(true); });
   if (typeof render === 'function') render(true);
   const done = (r && r.accepted) || lines;
   toast(`${done.length} ${done.length === 1 ? 'part' : 'parts'} confirmed`, {label: 'Undo', onClick: async () => {

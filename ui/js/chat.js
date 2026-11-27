@@ -544,7 +544,7 @@ function msgHTML(m, undoTs) {
       ? chatWarnHTML(a.split(/[:( ]/)[0], warned[a])
       : chatActChip(a, 'ok', a))
       .concat((m.refused || []).map(a => chatRefusedHTML(a) +
-        (/^(altium|library)\./.test(a) && live ? btn('Retry', {kind: 'link', size: 'sm', act: 'suggest', text: 'Run this again: ' + String(a).slice(0, 300)}) : '')));
+        (/^(altium|library)\./.test(a) && live ? btn('Retry', {kind: 'link', size: 'sm', act: 'suggest', answer: '1', text: 'Run this again: ' + String(a).slice(0, 300)}) : '')));
     const acts = done.length ? `<div class="acts">${done.join('')}</div>` : '';
     // the stored text ends with "(Not applied: ...)" for older readers; the red chips say it here
     if ((m.refused || []).length && m.text) m = {...m, text: m.text.replace(/\n*\((?:Not applied|\u05dc\u05d0 \u05d4\u05d5\u05d7\u05dc): [\s\S]*\)\s*$/, '')};
@@ -731,7 +731,7 @@ function chatSugs() {
   if (!sugs || !S) return;
   const last = S.chat.at(-1);
   const show = !pending && !chatCurrentError() && !(inp && inp.value.trim()) && !chatChip() && (!last || last.role === 'agent' || last.role === 'ctx');
-  const html = show ? chatSuggestionItems().map(s => `<button type="button" class="sug${s.quick ? ' quick' : ''}" data-act="suggest" data-text="${esc(s.text)}">${esc(s.text)}</button>`).join('') : '';
+  const html = show ? chatSuggestionItems().map(s => `<button type="button" class="sug${s.quick ? ' quick' : ''}" data-act="suggest"${s.quick ? ' data-answer="1"' : ''} data-text="${esc(s.text)}">${esc(s.text)}</button>`).join('') : '';
   if (sugs.dataset.html !== html) { sugs.innerHTML = html; sugs.dataset.html = html; chatFollow(); }
 }
 /* the local time a usage limit lifts: a clock time today, else the date too */
@@ -1015,7 +1015,9 @@ onAct('rename', async (el, d, e) => {
   if (r && r.sessions) S.sessions = r.sessions;
   await refresh(true);
 });
-onAct('suggest', async (el, d, e) => { send(d.text, {chip: true}); });     // a suggestion chip only asks: the server answers or proposes, it runs nothing
+// A starter question only asks (the server answers or proposes, it runs nothing). The answer buttons of a question the agent asked (Yes / No) and Retry are
+// the student's own instruction: they act (data-answer).
+onAct('suggest', async (el, d, e) => { send(d.text, d.answer ? {} : {chip: true}); });
 onAct('retry', async (el, d, e) => {
   let err = chatCurrentError();
   if (!err || !err.text) {                                  // a partial record or a denial: the last student message again
@@ -1073,7 +1075,9 @@ function chatScrub(text) {
   for (const ln of t.split('\n')) {
     if (/^\s*\|.*\|\s*$/.test(ln)) {                       // a table row: its cells, one bullet per row; the |---| line goes
       if (/^\s*\|[\s:|-]+\|\s*$/.test(ln)) continue;
-      out.push('- ' + ln.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()).filter(Boolean).join(' · '));
+      // the | inside a {{src:file|label}} marker belongs to the marker, not to the table: it is hidden while the cells are cut
+      const safe = ln.trim().replace(/\{\{[^}]*\}\}/g, m => m.replace(/\|/g, '\u0001'));
+      out.push('- ' + safe.replace(/^\||\|$/g, '').split('|').map(c => c.trim().replace(/\u0001/g, '|')).filter(Boolean).join(' · '));
     } else out.push(ln);
   }
   return out.join('\n');
@@ -1104,6 +1108,7 @@ function chatSplitLong(box) {
       if (only.tagName === 'UL' || only.tagName === 'OL') {
         const tail = document.createElement(only.tagName);
         while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && only.children.length > 1) tail.prepend(only.lastElementChild);
+        if (only.tagName === 'OL') tail.start = (only.start || 1) + only.children.length;       // the numbering goes on, it does not restart at 1
         rest.push(tail);
       } else if (only.querySelector && only.querySelector('br')) {       // lines of one paragraph (a single newline in the text)
         const parts = only.innerHTML.split(/<br\s*\/?>/);

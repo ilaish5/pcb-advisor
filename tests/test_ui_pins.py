@@ -40,8 +40,8 @@ def test_accept_all_is_one_click_and_asks_again_only_for_parts_nothing_but_the_s
     """The waiting line names the parts and its button is the one click. The extra confirm is kept only for an IC with no datasheet check
     (a real engineering check the click would skip), and it names those parts; everything else is done at once, with an Undo."""
     h = PINS[PINS.index("onAct('accept-all-pins'"):]
-    assert h.count("askChoice(") == 1 and "blind" in h and "confirm: true" in h
-    assert h.index("if (blind.length)") < h.index("askChoice(") < h.index("/api/pins/accept-all")
+    assert h.count("askText(") == 1 and "blind" in h and "confirm: true" in h and "reason" in h
+    assert h.index("askText(") < h.index("/api/pins/accept-all")
     assert "Undo" in h and "/api/pins/revoke" in h
 
 

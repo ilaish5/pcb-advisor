@@ -73,9 +73,15 @@ def record(project, step, res, ok=True, error=""):
     try:
         res = res if isinstance(res, dict) else {}
         pcb, sha = _pcb(project)
+        # A DRC record carries the sha of the file it actually checked. A rejected route was checked on the routed board, which the restore
+        # has since replaced: that file no longer exists, so its result is NOT stamped on the restored file (it would close or open findings
+        # of a board nobody has). The record keeps the step's outcome, without a design rule check.
+        rejected = op == "route" and bool(res.get("restored"))
         rec = {"ts": store.now_ms(), "op": op, "ok": bool(ok), "pcb": pcb, "pcb_sha256": sha,
-               "drc": _drc_of(op, res) if ok else None, "summary": _summary_of(op, res) if ok else {},
+               "drc": _drc_of(op, res) if ok and not rejected else None, "summary": _summary_of(op, res) if ok else {},
                "warnings": [str(w) for w in (res.get("warnings") or [])][:40]}
+        if rejected:
+            rec["rejected"] = True
         if error:
             rec["error"] = str(error)[:600]
         return store.append(project, LOG, rec)

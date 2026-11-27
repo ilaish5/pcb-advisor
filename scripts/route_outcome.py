@@ -114,6 +114,12 @@ def build(project, res, pcb=None):
         return out
     except Exception as exc:       # noqa: BLE001
         print(f"(route outcome not built: {type(exc).__name__}: {exc})", file=sys.stderr)
+        if isinstance(res, dict) and res.get("restored"):         # the worst case has its own plain message, never a raw path or a trace
+            msg = ("The route was rejected. The tool could not read the board files to confirm that the board was put back, so it cannot "
+                   "say it was restored. Look at the file in Altium before going on.")
+            return {"rejected": True, "title": "Route rejected", "count": 0, "causes": [], "cause_text": "", "restored": False,
+                    "restored_claimed": True, "backup_sha256": "", "pcb_sha256": "", "next": [{"id": "findings", "label": "See the problems in Findings"}],
+                    "message": msg, "restored_text": msg}
         return None
 
 

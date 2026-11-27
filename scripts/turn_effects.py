@@ -47,6 +47,11 @@ _WORDS_HE = {
 }
 
 
+# What did NOT run is named as the thing, never as the done verb ("routed the board" would read as if it had happened).
+_NOT_RUN = {"altium.route_pcb": "routing the board", "altium.place_pcb": "placing the parts", "altium.draw_schematic": "drawing the schematic",
+            "altium.run_outjob": "generating the outputs", "altium.run_drc": "checking the board", "library.build": "building the library"}
+
+
 def _label(kind, lang):
     if lang == "he" and kind in _WORDS_HE:
         return _WORDS_HE[kind]
@@ -76,7 +81,7 @@ def text(applied, refused, lang="en", stopped=False, review=False):
     elif stopped or review or refused:
         parts.append("Nothing was changed in this turn." if lang != "he" else "לא השתנה דבר בתור הזה.")
     if refused:
-        nm = "; ".join(_label(str(r).partition(":")[0].strip(), lang) + " (" + (str(r).partition(":")[2].strip().split(".")[0][:70] or "not run") + ")" for r in refused[:12])
+        nm = "; ".join(((_NOT_RUN.get(str(r).partition(":")[0].strip()) if lang != "he" else None) or _label(str(r).partition(":")[0].strip(), lang)) + " (" + (str(r).partition(":")[2].strip().split(".")[0][:70] or "not run") + ")" for r in refused[:12])
         parts.append(("Did not run: " if lang != "he" else "לא רץ: ") + nm + ("" if len(refused) <= 12 else f" and {len(refused) - 12} more") + ".")
     if stopped:
         parts.append("You pressed Stop: nothing started after it." if lang != "he" else "לחצת עצור: שום דבר לא התחיל אחרי זה.")

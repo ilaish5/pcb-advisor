@@ -88,7 +88,9 @@ def test_advice_that_breaks_a_system_rule_is_flagged(empty):
 
 def test_agent_reply_hand_steps_become_items(empty):
     items = ledger.track_advice(empty, "You need to move C3 away from U1 by hand in Altium, then tell me.")
-    assert items is not None
+    assert len(items) == 1 and items[0]["state"] == "open"
+    stored = ledger.load(empty)["items"]
+    assert len(stored) == 1 and stored[0]["kind"] == "hand_step" and {"C3", "U1"} <= set(stored[0]["refs"])
 
 
 def test_limits_registry_is_15_and_refused_ones_say_what_to_do():
