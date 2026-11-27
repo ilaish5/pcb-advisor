@@ -8,7 +8,7 @@ Owner: the project owner. This file, `tests/acceptance/` and the thresholds they
 
 ---
 
-## Part 0. Priority 0: the three invariants (owner, 27/11: "this is the biggest problem")
+## Part 0. Priority 0: the four invariants (owner, 27/11: "this is the biggest problem"; P0-4 added the same day)
 
 These hold for the whole system, every page, both engines, every Altium step. They are checked on every acceptance run before any
 per-finding metric, and a failure here fails the run regardless of the rest. They are system-wide invariants, not per-feature fixes:
@@ -53,6 +53,34 @@ the artifact and covered every item in its scope.
 - *Anti-gaming:* randomized canaries (A5) remove the evidence, make one item in scope unchecked, or change the file after the check
   (stale); each must turn the status away from green within one refresh. Rewording the claim, hiding the tick, or removing the status
   entirely does not pass: the status must still exist and be correct (`not checked` is a required, visible state).
+
+**P0-4. Every failure is readable at a glance, and nothing in it is lost.** (Owner, 27/11: error messages must be clear; a bold
+title that says what failed, and a button that expands the full detail.)
+- *Scope:* every failure or warning the student can see: page banners, toasts, cards, the end message of a long operation (P0-2), and a
+  failed agent turn in the chat. Both engines.
+- *Metric, collapsed view (what the student sees first):*
+  - a **bold title on one line** (≤ 70 characters at 1366 px) that names in plain words the action that failed and the object it failed on,
+    e.g. "Route stopped: +3V3 cannot reach U1 pin 9";
+  - at most one plain sentence under it: what this means for the student's work (what was kept or not changed) and the next step;
+  - one button for that next step where one exists, and a **"Details" control, collapsed by default**;
+  - none of these in the collapsed view: file paths, exception or error-class names, WinError/HRESULT/hex codes, script or file names
+    (`.py`, `.pas`, `.js`), internal ids, raw Altium text, numbers with float noise (0.299999 mm). Frozen regex list in `tests/acceptance/`,
+    plus the T-E list. Hits = 0;
+  - the collapsed view is at most 3 lines of text at 1366 x 768.
+- *Metric, expanded view:* the full original text, word for word (the oracle compares it with the server's event or log record), plus the
+  step, the time and the file it concerns, with a copy button. Still there after a page reload. Details missing or shortened = 0.
+- *Measurement:* the oracle triggers every failure path from a frozen list (at least 12: library build with the IntLib locked, Altium
+  closed mid-step, an Altium modal, a width rule that cannot fit a pin, an unsupported rule kind, a URL source that returns 404, JLC and
+  LCSC unreachable, the agent engine killed, a bridge timeout, a route that creates shorts, outputs with a missing layer, a guard revert),
+  in a random order and on random objects. For each: DOM checks above, plus an oracle-run LLM judge that answers "does the title name the
+  action and the object that were made to fail?" from the title alone.
+- *Red on 27/11:* `S4-40` the IntLib banner is 5 lines with two full Windows paths and no title or details control; `S6-48` "no tracks
+  drawn: could not route +3V3 (pad U1-9 is too close to other copper for a 0.299999 mm track …)" with no title; `S6-17/18` raw Altium text
+  and "437"; `S1-12` the fetch error vanished after about 70 s; WinError 1224 never reached the page.
+- *Anti-gaming:* a generic title ("Something went wrong", "Error") fails, because the title must name the injected action and object, and
+  those are random. Cutting the detail fails, because the expanded view must hold the original text word for word (P0-1: nothing is
+  dropped). Removing or auto-hiding the message fails P0-2 (the end message must stay).
+- *Findings that are instances:* B1 (d), W1 (guard message), U4, U6, F-H (b), F-LIM, and the raw-text entries in F-C and F-E.
 
 ---
 
