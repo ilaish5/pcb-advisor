@@ -1728,7 +1728,7 @@ def _step_note(project, sess, step, done, summary=None, failure=""):
         names = _and([PREP_WORDS[k][0] for k, _ in done])
         if summary is not None:
             applied.append(f"{_CONSENT_ACTION[step]}: {summary}")
-            text = f"{STEP_NAMES[step]} with Altium{' after ' + names if done else ''} because the student pressed the button: {summary}"
+            text = f"{STEP_NAMES[step]} in Altium{' after ' + names if done else ''} because the student pressed the button: {summary}"
         else:
             text = f"The student pressed the {step} button. Altium did {names} first; {failure}"
         if step == "rules" and any(k == "altium.add_pcb" for k, _ in done):
