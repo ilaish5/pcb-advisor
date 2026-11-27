@@ -130,7 +130,6 @@ def run_probe(commands: list[tuple], start_timeout: float = 45, total_timeout: f
     while not (EXCHANGE / "start.flag").exists():
         if time.time() - t0 > start_timeout:
             d = x2_dialogs()
-            _stop_executor()
             raise ProbeError(f"the probe script did not start; dialogs: {d}")
         time.sleep(0.5)
     t_log, last = time.time(), None
@@ -144,7 +143,6 @@ def run_probe(commands: list[tuple], start_timeout: float = 45, total_timeout: f
             last, t_log = now, time.time()
         if time.time() - t_log > stall or time.time() - t0 > total_timeout:
             d = x2_dialogs()
-            _stop_executor()
             raise ProbeError(f"the probe stalled; dialogs: {d}")
         time.sleep(0.5)
     resp = (EXCHANGE / "response.txt").read_text(encoding="cp1252", errors="replace").splitlines()

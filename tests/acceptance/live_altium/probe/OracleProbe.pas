@@ -4,7 +4,7 @@
   (Altium's own text report), COMPILE writes a plain-text list, CLOSE closes documents WITHOUT saving (only those under a given folder).
 
   DRC <pcb> <report>            open the board by path, run Altium's batch design rule check, Altium writes <report>
-  COMPILE <prj> <out>           compile the project, write violations and nets (pins per net) to <out>
+  COMPILE <prj> <out>           compile the ALREADY OPEN project (never opens one; focuses it first), write violations and nets (pins per net) to <out>
   OPEN <prefix> <out>           list open documents whose path starts with <prefix>
   CLOSE <prefix>                close (no save) every open document whose path starts with <prefix>
   MODAL <text>                  show a message box in Altium (a modal dialog raised by the oracle); returns when it is closed
@@ -127,12 +127,12 @@ var
 begin
     Log('compile: project ' + PrjPath);
     Prj := GetWorkspace.DM_GetProjectFromPath(PrjPath);
-    if (Prj = nil) then Prj := GetWorkspace.DM_OpenProject(PrjPath, False);
     if (Prj = nil) then
     begin
-        Say('ERR cannot open ' + PrjPath);
+        Say('ERR project is not open in Altium (the probe never opens one): ' + PrjPath);
         Exit;
     end;
+    Prj.DM_SetAsCurrentProject;      { the same call the product's bridge uses; the scratch project is then the focused one }
     Log('compile: DM_Compile of ' + PrjPath);
     Prj.DM_Compile;
     Log('compile: DM_Compile returned');
