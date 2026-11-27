@@ -175,8 +175,8 @@ half = FAIL (the fix learned the test, not the rule).
 
 **Before the owner tags `acceptance-v1`:**
 - Counts: Part B has 57 entries. That is B1, W1-W37, U1-U8, FRICTION A-J and the unlettered tool-limits table (F-LIM). Nothing was merged. COSMETIC is left out because you did not ask for it. Tagged with P0: 38 (P0-1: 11, P0-2: 4, P0-3: 29); 19 untagged.
-- Six thresholds had no source in `shared/reference`. The owner set them on 27/11 (below, "Owner decisions"). The CPL reference is still open
-  until the JLC check is done; the tag waits for it.
+- Six thresholds had no source in `shared/reference`. The owner set them on 27/11 (below, "Owner decisions"). All six are now set; sources are
+  in `shared/reference` (courtyard, AN2867, CPL).
 - "Red" comes in three kinds. **Artifact-red** was read by me from the fixture (olefile, Gerber zip, JSON). **Behaviour-red** needs a scripted replay on the pre-fix commit 2dcd691; B1 replays on dbf3635^. Two values are taken from the role reports until the oracle reader recomputes them from the Gerbers: mask webs (86 per Alti, about 112 per the producer) and pour-to-NPTH (0.161 mm per Alti). The system's own logs (drawn_widths, board-facts, outputs-check) are used only as corroboration (A1).
 
 Conventions:
@@ -197,10 +197,10 @@ Conventions:
 | ID | Threshold | Decision |
 |---|---|---|
 | OD-1 | Decap to supply pin | Datasheet / app note value per IC; otherwise 3.0 mm, labelled general knowledge |
-| OD-2 | Crystal | ST AN2867 as source; no foreign net under the crystal and its load caps (outer + adjacent layer); no vias MCU pin to crystal; crystal is the nearest part to its pins; length ≤ 10 mm (general knowledge) |
+| OD-2 | Crystal | From ST AN2867 (`shared/reference/appnotes/st-an2867-crystal-layout.en.md`): crystal as close to the MCU as possible (the nearest part to its pins), no foreign net under the crystal and its load caps (outer + adjacent layer, which AN2867 reserves for a local ground plane). General knowledge, labelled so (AN2867 gives no number and no via rule): length ≤ 10 mm, no vias MCU pin to crystal |
 | OD-3 | Courtyard excess | IPC-7351B Level B (nominal), 0.25 mm |
 | OD-4 | Exposed-pad paste coverage | Part datasheet stencil recommendation; otherwise 50-80 % (IPC-7525 range); 100 % fails |
-| OD-5 | CPL reference point and tolerance | OPEN: an agent reads JLC's CPL sources (F14 and others) and proposes; provisional: flag any part where pad centre, origin and body differ by > 0.25 mm |
+| OD-5 | CPL reference point and tolerance | Pad bounding-box centre (JLC asks for the geometric centre, not pin 1 or origin; `shared/reference/jlc/cpl-reference-point.en.md`; "pad box" is our reading). Flag at > 0.25 mm between pad centre, origin and body, labelled "our choice, JLC states no tolerance"; a flagged part gets a "check in JLC's placement preview" item |
 | OD-6 | Chat message length | ≤ 10 lines per message; longer answers split into several messages; tables and long lists to a page link |
 
 ### R1. Reports intent, not read-back
@@ -732,7 +732,7 @@ Conventions:
 - **Metric:**
   - Tracks and vias of other nets (excluding the crystal's own nets and GND) that intersect the crystal courtyard on the outer layer and the adjacent inner layer = 0.
   - Vias between the MCU pin and the crystal pad on crystal nets = 0.
-  - Crystal rules (owner 27/11; source ST AN2867, to be added to `shared/reference` before the tag): the crystal is the nearest part to its MCU pins; track length MCU pin to crystal pad ≤ 10 mm (labelled general knowledge); no vias on that path.
+  - Crystal rules (owner 27/11, OD-2; AN2867 for nearness and keep-out, general knowledge for the number and the via rule): the crystal is the nearest part to its MCU pins; track length MCU pin to crystal pad ≤ 10 mm (labelled general knowledge); no vias on that path.
   - Otherwise the route is refused with the numbers (R5).
 - **Oracle:** L (olefile geometry).
 - **Red on 27/11:** 7 foreign nets; 3 vias on HSE_IN.
@@ -843,13 +843,13 @@ Conventions:
 - **Red on 27/11:** (a) 1 missing; (b) to recompute (0.161 per Alti); (c) 2 extra kinds (PlaneClearance, Differential pair).
 - **Anti-gaming:** a random unsupported kind; a random hole on a hidden board.
 
-### W34 · The CPL centroid rule is unstated and wrong for asymmetric parts (R4) [P0-3] (dispute unresolved: pad centre vs origin vs body centre; JLC preview not reached. No reference is chosen here.)
+### W34 · The CPL centroid rule is unstated and wrong for asymmetric parts (R4) [P0-3] (dispute settled by the owner's OD-5: pad bounding-box centre, after the JLC source check)
 - **Failure (27/11):**
   - `F/project/exports/Final-E2E-4L_cpl.csv`: U5 43.345 vs 44.000 (origin, body and Altium Pick Place); J1 30.84 vs origin 30.99; J2 75.56 vs 75.315 (Altium 75.46).
   - outputs-check validated "Pick Place for Final-E2E-4L.txt", not the uploaded `_cpl.csv`.
 - **Metric:**
-  - (a) The CPL and the manifest state the reference rule. JLC's text is "Mid X/Y = component centroid" (files-and-formats "CPL format").
-  - (b) Every part whose pad centre, origin and body centre differ by more than T_cpl (OD-5: open until the JLC check; provisional 0.25 mm) is flagged. Unflagged = 0.
+  - (a) The CPL holds the pad bounding-box centre of every part (OD-5; JLC: geometric centre, not pin 1 or origin, `jlc/cpl-reference-point.en.md`), and the manifest states that rule. Parts whose CPL point ≠ oracle pad-box centre ± 0.01 mm = 0.
+  - (b) Every part whose pad centre, origin and body centre differ by more than T_cpl = 0.25 mm (OD-5) is flagged. Unflagged = 0.
   - (c) outputs-check validates the uploaded CPL by sha256.
 - **Oracle:** U + B + olefile.
 - **Red on 27/11:** (a) not stated; (b) 3 (U5, J1, J2); (c) the wrong file.

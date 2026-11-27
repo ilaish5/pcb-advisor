@@ -25,6 +25,12 @@ shared/reference/
     files-and-formats.en.md            upload zip, Gerber RS-274X and layer names, JLC's Altium Gerber/drill settings, Excellon, BOM and CPL columns, rotation, stencil, rejections
     ordering-workflow.en.md            order steps for boards + assembly, options, BOM/CPL messages, placement review and rotation fixes, payment, holds, lead times, tips
     jlcdfm.en.md                       JLCDFM tool: inputs, screens, result levels and object names, parse/false-report causes, relation to the order review
+    cpl-reference-point.en.md          which point "Mid X / Mid Y" is (JLC centroid vs Altium Center/Ref), corrections, no stated tolerance
+  standards/                           IPC values summarised from public sources (the standards themselves are not copied)
+    ipc-2221b-clearance.en.md  ipc-class-annular-ring.en.md  ipc.json   conductor spacing by voltage; annular ring by class (data for the Rules tab)
+    ipc-7351b-courtyard.en.md          courtyard excess per density level (A 0.50 / B 0.25 / C 0.10 mm) and how the outline is formed
+  appnotes/                            vendor application notes, summarised
+    st-an2867-crystal-layout.en.md     ST AN2867: crystal PCB layout, guard ring, local ground plane, gain margin / gm_crit rule
 ```
 Altium parser fixtures (real SchDoc/PcbDoc/libraries) live in `tests/fixtures/altium/`: developer use, not reference material.
 
@@ -75,6 +81,9 @@ Language: everything here is English. When the student writes Hebrew, search wit
 | JLC Gerber/drill/BOM/CPL format, rotation and origin, what JLC rejects | `J/files-and-formats` | `J/files-and-formats` § JLC's Altium Gerber and drill recipe; `A/m25` |
 | Ordering at JLC, BOM/CPL messages, placement preview, holds, reorders | `J/ordering-workflow` | - |
 | JLCDFM: reading results, false reports, relation to the order review | `J/jlcdfm` | - |
+| CPL reference point (centroid vs origin), placement offsets | `J/cpl-reference-point` | `J/files-and-formats` § CPL |
+| Courtyard size, IPC-7351B density levels | `standards/ipc-7351b-courtyard` | `A/m27` (PcbLib) |
+| Crystal layout, load caps, gain margin / gm_crit | `appnotes/st-an2867-crystal-layout` | - |
 
 **Not covered anywhere in this folder** (answer from general knowledge or the datasheet and say there is no course source): decoupling/bypass capacitors and placement,
 power integrity beyond planes, thermal design, IPC-356, 4+ layer fab trade-offs, firmware/programming connectors, SPICE simulation. Do not invent a citation.
