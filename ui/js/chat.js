@@ -511,35 +511,65 @@ function chatEngineLabel(id, model) { return id ? chatEngineName(id) + (model ? 
    literal in the source). */
 const CHAT_CHECK_SCRIPT = /^(?:verify_part|schematic|schematic_review|board|lint|validate_netlist|rules|order_check|requirements|dfm|drc_origin|drc_jlc_map|verify_sources)\.py$/i;
 const CHAT_CHECK_ACTION = /^(?:altium\.run_drc|order\.check|dfm\.triage)\b/;
+const CHAT_SCH_SCRIPT = /^(?:schematic|schematic_review|validate_netlist)\.py$/i;      // what an ERC or schematic claim needs
+const CHAT_BOARD_SCRIPT = /^(?:board|drc_[\w-]+)\.py$/i;                              // what a DRC or board claim needs
+const CHAT_BOARD_ACTION = /^altium\.run_drc\b/;
 const heWord = (...codes) => String.fromCharCode(...codes);
 const HE_ERRORS = [heWord(1513, 1490, 1497, 1488, 1493, 1514), heWord(1489, 1506, 1497, 1493, 1514), heWord(1492, 1508, 1512, 1493, 1514),
-  heWord(1502, 1502, 1510, 1488, 1497, 1501)].join('|');
-const HE_NONE = [heWord(1488, 1497, 1503), heWord(1500, 1488, ' '.charCodeAt(0), 1504, 1502, 1510, 1488, 1493), heWord(1500, 1500, 1488),
+  heWord(1502, 1502, 1510, 1488, 1497, 1501),
+  heWord(1513, 1490, 1497, 1488, 1492), heWord(1489, 1506, 1497, 1492), heWord(1492, 1508, 1512, 1492), heWord(1502, 1502, 1510, 1488)].join('|');
+const HE_NONE = [heWord(1488, 1497, 1503), heWord(1493, 1488, 1497, 1503), heWord(1500, 1488, ' '.charCodeAt(0), 1504, 1502, 1510, 1488, 1493), heWord(1500, 1500, 1488),
   heWord(1488, 1508, 1505), heWord(1500, 1488, 32, 1502, 1510, 1488, 1514, 1497)].join('|');
 const CHAT_ZERO_CLAIM = [
-  /(?:^|[^\w.,\/-])(?:0|zero|no)\s+(?:[\w-]+\s+){0,2}(?:errors?|issues?|problems?|violations?|findings?)\b/i,
+  /(?:^|[^\w.,\/-])(?:0|zero|no)\s+(?:[\w\/-]+\s+){0,2}(?:errors?|issues?|problems?|violations?|findings?)\b/i,
   /\b(?:errors?|issues?|problems?|violations?|findings?)\s*[:=]\s*(?:0|zero|none)\b/i,
   new RegExp('(?:^|[^\\w.,/-])0\\s+(?:' + HE_ERRORS + ')', 'u'),
   new RegExp('(?:^|\\s)(?:' + HE_NONE + ')\\s+(?:\\S+\\s+)?(?:' + HE_ERRORS + ')', 'u'),
   new RegExp('(?:' + HE_ERRORS + ')\\s*:\\s*0'),
   /(?:^|[^\w.,\/-])0\s+(?:fehler|probleme|verstöße|erreurs|problèmes|errores|problemas)(?![\p{L}])/iu,
 ];
-function chatHasCheck(m) {
-  return (m.tools || []).some(x => x && (x.check === true || CHAT_CHECK_SCRIPT.test(String(x.script || ''))))
-    || (m.applied || []).some(a => CHAT_CHECK_ACTION.test(String(a)));
+const CHAT_ANY_SCRIPT = /([\w.-]+\.py)\b/;
+/* The kinds of check this message's chips record: 'sch' (a schematic or ERC check), 'board' (a board or DRC check), 'other' (any other check script).
+   A chip says its script in data; an older chip without it is judged from the command it kept in `raw`. A chip that is not ok, or a claimed chip
+   (the model's word, no run behind it), is no check. */
+function chatCheckKinds(m) {
+  const k = new Set();
+  (m.tools || []).forEach(x => {
+    if (!x || x.s === 'claimed' || (x.st && x.st !== 'ok')) return;
+    const name = String(x.script || ((CHAT_ANY_SCRIPT.exec(String(x.raw || '')) || [])[1]) || '');
+    if (CHAT_SCH_SCRIPT.test(name)) k.add('sch');
+    else if (CHAT_BOARD_SCRIPT.test(name)) k.add('board');
+    else if (CHAT_CHECK_SCRIPT.test(name) || (x.check === true && !name)) k.add('other');
+  });
+  (m.applied || []).forEach(a => {
+    if (CHAT_BOARD_ACTION.test(String(a))) k.add('board');
+    else if (CHAT_CHECK_ACTION.test(String(a))) k.add('other');
+  });
+  if (/\bScope:/.test(m.text || '')) k.add('sch');      // the tool's own review of the sheet
+  return k;
 }
+function chatHasCheck(m) { return chatCheckKinds(m).size > 0; }
+const CHAT_KIND_SCH = new RegExp('\\bERC\\b|schematic|electrical rule|' + heWord(1505, 1499, 1502), 'i');
+const CHAT_KIND_BOARD = new RegExp('\\bDRC\\b|design rule|\\bboard\\b|\\bpcb\\b|layout|routing|clearance|' + heWord(1500, 1493, 1495), 'i');
 function chatUncheckedClaim(m) {
   const t = m.text || '';
-  if (m.role !== 'agent' || m.by === 'button' || m.followup || chatHasCheck(m) || /\bScope:/.test(t)) return false;
-  if (!CHAT_ZERO_CLAIM.some(rx => rx.test(t))) return false;
+  if (m.role !== 'agent' || m.by === 'button' || m.followup) return false;
+  const claims = t.split(/(?<=[.!?])\s+|\n+/).filter(sn => CHAT_ZERO_CLAIM.some(rx => rx.test(sn)));
+  if (!claims.length) return false;
+  const have = chatCheckKinds(m);
   const chat = (typeof S !== 'undefined' && S && S.chat) || [];
   const at = chat.indexOf(m);
   for (let i = at > 0 ? at - 1 : chat.length - 1; i >= 0 && at !== 0; i--) {
     const p = chat[i];
     if (p.role === 'user') break;
-    if (p.role === 'agent' && (chatHasCheck(p) || /\bScope:/.test(p.text || ''))) return false;
+    if (p.role === 'agent') chatCheckKinds(p).forEach(k => have.add(k));
   }
-  return true;
+  /* each sentence that states a zero count needs a check of ITS kind: an ERC or schematic claim a schematic check, a DRC or board claim a board check
+     (both words: both), a claim of neither kind any check; rules.py, verify_sources.py, verify_part.py are checks of something else */
+  return claims.some(sn => {
+    const need = [CHAT_KIND_SCH.test(sn) ? 'sch' : '', CHAT_KIND_BOARD.test(sn) ? 'board' : ''].filter(Boolean);
+    return need.length ? need.some(k => !have.has(k)) : have.size === 0;
+  });
 }
 function chatNotChecked(m) {      // the tool's own review lists what it did not check: a click shows every item, never only the first few
   const l = m.not_checked || [];

@@ -427,6 +427,27 @@ def _script_stem(s):
     return re.sub(r"\.py$", "", s)
 
 
+_SHELL_TOOLS = re.compile(r"run_command|shell|bash|powershell|exec|terminal", re.I)
+
+
+def _check_chips_from_calls(meta):
+    """R2/W22: an engine with no step stream (Antigravity) still records what it ran in meta["calls"]. A run of a check script that did not fail is a
+    real check chip (script + check: true), one per script, so the chat's "a check ran" is tied to the recorded run on every gateway."""
+    from gateway import events
+    out, seen = [], set()
+    for c in (meta or {}).get("calls") or []:
+        if not isinstance(c, dict) or c.get("failed") or c.get("error") or not _SHELL_TOOLS.search(str(c.get("tool") or "")):
+            continue
+        inp = c.get("input") if isinstance(c.get("input"), dict) else {}
+        cmd = next((str(inp[k]) for k in ("command", "CommandLine", "cmd", "command_line") if inp.get(k)), "")
+        lab = events.label("Bash", {"command": cmd}) if cmd else ""
+        m = re.search(r"([\w.-]+\.py)", lab)
+        if m and m.group(1).lower() in events.CHECK_SCRIPTS and m.group(1).lower() not in seen:
+            seen.add(m.group(1).lower())
+            out.append({"t": events.human(lab), "st": "ok", "raw": lab, "script": m.group(1), "check": True})
+    return out
+
+
 def real_tools(meta, claimed=()):
     """Tool chips. An engine that reports its steps (meta["stream"]): the chips are its real runs of the tool's own
     scripts (denied: warn, failed: bad), each keeping the detail `d` of the model's claimed chip for the same script;
@@ -435,7 +456,7 @@ def real_tools(meta, claimed=()):
     meta = meta or {}
     claimed = [c for c in claimed or [] if isinstance(c, dict) and c.get("t")]
     if not meta.get("stream"):
-        return [{**c, "s": "claimed"} for c in claimed]
+        return [{**c, "s": "claimed"} for c in claimed] + _check_chips_from_calls(meta)
     denied = {events.label(d.get("tool"), d.get("input")) for d in meta.get("denied") or [] if isinstance(d, dict)}
     free = list(claimed)
     out = []

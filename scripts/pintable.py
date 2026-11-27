@@ -749,8 +749,8 @@ def _evaluate(col, pins, pads):
         if all(str(r.get("name") or "").strip() for r in good):          # a row with its number AND its name: the evidence the pin was compared
             matched.add(num)
     flagged = {m.group(1) for e in out["conflict"] + out["absent"] for m in [re.match(r"pin (\S+) ", e)] if m}
-    # R2/F-F: only a pin matched to a table row (its number and the row's name) is compared; a no-connect pin with no row, a pin the table
-    # does not list and one taken for the exposed pad by a note are not "compared"
+    # R2/F-F: a pin is "compared" when it matched a table row (its number and the row's name) or the datasheet confirms it as the exposed pad
+    # in a note (the note stands as its row); a no-connect pin with no row and a pin the table does not list are not
     out["examined"] = sum(1 for num, _name in pins if num in matched and num not in flagged)
     if complete:
         out["count"] = len(set(nums))
