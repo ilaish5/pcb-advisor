@@ -164,6 +164,10 @@ def _observe_width(ctx, seed: int | None = None) -> dict:
             b.goto_tab("pcb", 1.5)
             out["after_reload"] = b.snap("reload-end")
         out["sha_after"] = _sha(pcb)
+        # the product's backups of the board made during this run (U4: "restored from backup" must be true of a real backup file)
+        bdir = obs.scratch_altium(ctx) / ".advisor-backup"
+        out["backups"] = {str(f.parent.name): _sha(f) for f in sorted(bdir.glob(f"*/{pcb.name}"))
+                          if f.stat().st_mtime >= out["t_click"] - 5} if bdir.is_dir() else {}
     finally:
         t0 = time.time()
         while time.time() - t0 < 1500:            # never put the board back while the product's step is still using it
