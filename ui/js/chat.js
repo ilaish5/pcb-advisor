@@ -502,9 +502,25 @@ function chatEngineName(id) {
   return (e && (e.title || e.name)) || String(id || '').replace(/_/g, ' ');
 }
 function chatEngineLabel(id, model) { return id ? chatEngineName(id) + (model ? ' · ' + model : '') : ''; }
+/* R2/W22: the "no check ran" footer goes only on an agent answer that states a zero count ("0 errors", "no issues", "0 Fehler", "0 שגיאות": a standalone 0
+   before a word, in any language) when nothing in its turn was a tool result: no tool call on the message, no earlier agent message of the same turn with
+   tool calls or a "Scope:" line (the tool's own review). A DRC or review result that came from a tool is never footnoted. */
+function chatUncheckedClaim(m) {
+  const t = m.text || '';
+  if (m.role !== 'agent' || m.by === 'button' || m.followup || (m.tools || []).length || /\bScope:/.test(t)) return false;
+  if (!(/(?:^|[^\d.,\/-])0\s+\p{L}{3,}/u.test(t) || /\b(?:no|zero)\s+(?:errors?|issues?|problems?)\b/i.test(t))) return false;
+  const chat = (typeof S !== 'undefined' && S && S.chat) || [];
+  const at = chat.indexOf(m);
+  for (let i = at > 0 ? at - 1 : chat.length - 1; i >= 0 && at !== 0; i--) {
+    const p = chat[i];
+    if (p.role === 'user') break;
+    if (p.role === 'agent' && ((p.tools || []).length || /\bScope:/.test(p.text || ''))) return false;
+  }
+  return true;
+}
 function chatEngineFoot(m) {
   const l = chatEngineLabel(m.engine, m.model);
-  const claim = /\b(?:0|no|zero)\s+(?:errors?|issues?|problems?)\b/i.test(m.text || '') && !/\bScope:/.test(m.text || '');
+  const claim = chatUncheckedClaim(m);
   const scope = claim ? '<div class="eng" title="R2/W22">No check ran behind this sentence: the model read the sheet and wrote it. It is not a statement that the sheet is correct.</div>' : '';
   return (l ? `<div class="eng" title="The engine and model that wrote this answer">${esc(l)}</div>` : '') + scope;
 }
