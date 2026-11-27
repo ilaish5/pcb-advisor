@@ -312,3 +312,154 @@ def _fa_judge(pair):
 
 CONTROLS["F-H(b)"] = (judge_width_early, _width_control(True), _width_control(False))
 CONTROLS["F-A"] = (_fa_judge, (_route_control(True), _width_control(True)), (_route_control(False), _width_control(False)))
+
+
+# ------------------------------------------------------------------------------------------------ Place (U2) and Draw (W21)
+def _observe_step(ctx, tab: str, label: str, step: str, keep: list[pathlib.Path], max_s: float = 1500) -> dict:
+    """One Altium step of the page (Place parts / Draw in Altium) on the scratch copy: the page every 2 s from the click to the end, the
+    files named in `keep` copied before and put back afterwards (the scratch copy stays as the student had it)."""
+    adir = obs.scratch_altium(ctx)
+    store = adir / "oracle" / f"before-{step}"
+    store.mkdir(parents=True, exist_ok=True)
+    for f in keep:
+        shutil.copy2(f, store / f.name)
+    obs.wait_owner_idle()
+    out = {"step": step, "snaps": [], "sha_before": {f.name: _sha(f) for f in keep}}
+    try:
+        with obs.browser(ctx) as b:
+            b.goto_tab(tab, 1.5)
+            obs.click_step(b, label)
+            out["snaps"] += obs.watch(b, 20, every=1, label="ask", until_idle=False)
+            out["replace_clicked"] = obs.click_replace(b, step)
+            out["t_click"] = time.time()
+            out["snaps"] += obs.watch(b, max_s, every=3, label="run", settle_s=30)
+            out["end"] = b.snap("end")
+            out["t_end"] = out["snaps"][-1]["t"]
+            out["view_text"] = b.text("#view")
+        out["sha_after"] = {f.name: _sha(f) for f in keep}
+    finally:
+        out["restored"] = False
+    out["_store"] = str(store)
+    return out
+
+
+def _put_back(out: dict, keep: list[pathlib.Path]) -> None:
+    store = pathlib.Path(out["_store"])
+    for f in keep:
+        try:
+            shutil.copy2(store / f.name, f)
+        except OSError as e:
+            out.setdefault("restore_errors", []).append(f"{f.name}: {e}")
+    out["restored"] = True
+
+
+def place_obs(ctx) -> dict:
+    def run():
+        pcb = obs.scratch_pcb(ctx)
+        o = _observe_step(ctx, "pcb", "Place parts", "place", [pcb])
+        _put_back(o, [pcb])
+        return o
+    return obs.cached("place", run)
+
+
+OPEN_RX = re.compile(r"(\d+)\s+(?:open\s+)?(?:warnings?|findings?|issues?|problems?|notes? to check)", re.I)
+
+
+def judge_u2(o: dict) -> Result:
+    """The placement banner's tone equals the worst open placement finding: green over open warnings = 0 (ACCEPTANCE U2)."""
+    end = o["end"]
+    banner = None
+    for n in end.get("notes", []):
+        if re.search(r"placed|placement|checked|netlist", n.get("text", ""), re.I) and obs.tone(n["cls"]) in ("ok", "warn", "bad"):
+            banner = n
+            break
+    if banner is None:
+        raise obs.NotObservable("no placement banner with a tone on the page after the step")
+    texts = [n.get("full", "") or n.get("text", "") for n in end["notes"]] + [o.get("view_text", "")]
+    opened = max([int(m.group(1)) for t in texts for m in OPEN_RX.finditer(t)] or [0])
+    tone = obs.tone(banner["cls"])
+    green = tone == "ok"
+    return Result("fail" if (green and opened > 0) else "pass", measured=f"banner tone {tone!r} with {opened} open warnings on the page",
+                  expected="green banner with open placement warnings = 0",
+                  detail=f"banner: {banner['text'][:160]!r}")
+
+
+@metric(id="U2", title="The placement banner is not green while placement warnings are open and states its scope", root="R2", level="B",
+        kind="behaviour", p0=("P0-3",))
+def u2(ctx):
+    try:
+        return judge_u2(place_obs(ctx))
+    except (obs.NotObservable, FileNotFoundError, ValueError, OSError) as e:
+        return _err(str(e))
+
+
+def _u2_synth(green_over_open: bool) -> dict:
+    tone = "note ok" if green_over_open else "note warn"
+    return {"end": {"notes": [{"cls": tone, "text": "Placed 31 parts, checked against the netlist", "full": "Placed 31 parts, checked against the netlist"},
+                              {"cls": "note", "text": "8 warnings", "full": "8 warnings"}]}, "view_text": ""}
+
+
+CONTROLS["U2"] = (judge_u2, _u2_synth(False), _u2_synth(True))
+
+
+# ---- W21: "pins x and y are one terminal" claims, judged by Altium's compile
+JOIN_RX = re.compile(r"\b([A-Z]{1,3}\d+[A-Z]?)\s*:\s*pins\s+([\w, ]+?)\s+are one terminal", re.I)
+
+
+def join_claims(text: str) -> set[tuple[str, tuple[str, ...]]]:
+    out = set()
+    for m in JOIN_RX.finditer(text):
+        pins = tuple(p for p in re.split(r"\s*(?:,|and)\s*", m.group(2).strip()) if p)
+        out.add((m.group(1), pins))
+    return out
+
+
+def draw_obs(ctx) -> dict:
+    def run():
+        adir = obs.scratch_altium(ctx)
+        sheets = sorted(adir.glob("*.SchDoc"))
+        o = _observe_step(ctx, "sch", "Draw in Altium", "draw", sheets, max_s=2400)
+        tmp = adir / "oracle"
+        o["compile"] = ap.compile_nets(obs.scratch_prj(ctx), tmp)
+        ap.close_scratch(adir)                      # the documents the compile opened, without saving
+        _put_back(o, sheets)
+        return o
+    return obs.cached("draw", run)
+
+
+def judge_w21(o: dict) -> Result:
+    """Every 'pins x and y are one terminal' claim the page makes is true in Altium's compile of the drawn sheets (the two pins are on one net
+    there). False joins = 0. A pass state exists: a draw that says it only for a symbol whose drawing really joins the pins."""
+    text = " ".join(n.get("full", "") or n.get("text", "") for s in o["snaps"][-6:] for n in s.get("notes", [])) + " " + o.get("view_text", "")
+    nets = o["compile"]["nets"]
+    where: dict[str, str] = {}
+    for net, pins in nets.items():
+        for p in pins:
+            where[p.upper()] = net
+    claims = join_claims(text)
+    if not claims and not o["compile"]["nets"]:
+        raise obs.NotObservable("Altium's compile returned no nets for the drawn sheets")
+    false, true = [], []
+    for ref, pins in sorted(claims):
+        n = {where.get(f"{ref}-{p}".upper()) for p in pins}
+        (true if len(n) == 1 and None not in n else false).append(f"{ref} pins {' and '.join(pins)}")
+    return Result("pass" if not false else "fail", measured={"false_joins": len(false), "claims": len(claims), "false": false, "true": true},
+                  expected="'pins x and y are one terminal' claims that Altium's compile does not confirm = 0",
+                  detail=f"{len(claims)} claim(s) on the page after the draw, {len(false)} not confirmed by the compile: {', '.join(false) or '-'}")
+
+
+@metric(id="W21", title="A 'pins are one terminal' claim after a draw is confirmed by Altium's compile", root="R2", level="L", kind="behaviour", p0=("P0-3",))
+def w21(ctx):
+    try:
+        return judge_w21(draw_obs(ctx))
+    except (obs.NotObservable, FileNotFoundError, ValueError, OSError) as e:
+        return _err(str(e))
+
+
+def _w21_synth(false_join: bool) -> dict:
+    t = "D1: pins 2 and 5 are one terminal in library symbol X (a line joins them) but the netlist puts them on different nets"
+    nets = {"A": ["D1-2", "D1-5"]} if not false_join else {"A": ["D1-2"], "B": ["D1-5"]}
+    return {"snaps": [{"notes": [{"cls": "note warn", "text": t, "full": t}]}], "view_text": "", "compile": {"nets": nets, "violations": []}}
+
+
+CONTROLS["W21"] = (judge_w21, _w21_synth(False), _w21_synth(True))
