@@ -32,3 +32,15 @@ STACK_TOL_MM = T(0.001, "mm", "Altium stores 0.0001 mil; ±0.001 mm covers mil r
 # Measurement resolution (not design limits): how close an oracle value must be to a displayed value.
 DISPLAY_TOL_MM = T(0.01, "mm", "display rounding (ACCEPTANCE.md W15, W34)")
 OFFSET_TOL_MM = T(0.05, "mm", "measurement resolution (ACCEPTANCE.md W18)")
+
+# --- Manufacturing outputs (Gerber / drill / CPL / BOM / order note), added by the outputs oracle ---------------------------------
+# Every value cites a heading of shared/reference/jlc/pcb-capabilities.en.md or an owner decision.
+_CAP = "jlc/pcb-capabilities.en.md"
+MASK_BRIDGE_MIN_MM = T({"green": 0.10, "red": 0.10, "yellow": 0.10, "blue": 0.10, "purple": 0.10, "black": 0.13, "white": 0.13},
+                       "mm", f"{_CAP} § Solder mask [P1]", "mask bridge (dam between openings), 1 oz copper; 2 oz would be 0.20 mm any colour")
+BARE_VIA_TO_EXPOSED_COPPER_MM = T(0.2, "mm", f"{_CAP} § Via covering options (Untented) [P5, P1]", "with HASL keep bare vias >= 0.2 mm from other exposed copper")
+NPTH_TO_COPPER_MM = T(0.2, "mm", f"{_CAP} § Traces and spacing (NPTH to track) [P1]", "applied to copper on every layer, pours included (ACCEPTANCE W32 b)")
+VIA_MAX_HOLE_MM = T(0.5, "mm", f"{_CAP} § Via covering options (via holes ideally <= 0.4 mm, max 0.5 mm) [P5]",
+                    "classification rule: a plated round hole up to this size is a via; larger plated holes are component holes")
+# Measurement resolution (not design limits). Gerber coordinates have a fixed step (read from %FS); the polygon model of a circle is
+# circumscribed with 64 sides (error <= 0.12 % of the radius). Both are derived in oracle/gerber.py, not tuned here.
