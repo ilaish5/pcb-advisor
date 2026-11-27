@@ -62,6 +62,8 @@ def load_metrics() -> None:
     for path in sorted((HERE / "metrics").glob("*.py")):
         if path.name.startswith("_"):
             continue
+        if f"metrics.{path.stem}" in sys.modules:   # already loaded by another metrics module's import: running it twice would duplicate its ids
+            continue
         spec = importlib.util.spec_from_file_location(f"metrics.{path.stem}", path)
         mod = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = mod
