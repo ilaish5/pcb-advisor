@@ -119,6 +119,7 @@ def run_probe(commands: list[tuple], start_timeout: float = 45, total_timeout: f
     """Run the probe script in the running Altium. Raises ProbeError (with the dialogs seen) when it does not finish."""
     if not x2_running():
         raise ProbeError("Altium is not running")
+    _before_send(commands)
     EXCHANGE.mkdir(parents=True, exist_ok=True)
     for n in ("response.txt", "log.txt", "start.flag", "end.flag"):
         (EXCHANGE / n).unlink(missing_ok=True)
@@ -241,8 +242,9 @@ def compile_nets(prj: pathlib.Path, tmp: pathlib.Path) -> dict:
     out = tmp / f"compile-{int(time.time())}.txt"
     out.unlink(missing_ok=True)
     run_probe([("COMPILE", str(prj), str(out))])
-    res: dict = {"violations": [], "nets": {}}
+    res: dict = {"violations": [], "nets": {}, "sections": []}
     for line in out.read_text(encoding="cp1252", errors="replace").splitlines():
+        res["sections"].append(line.split("	")[0].split(" ")[0]) if line.split("	")[0].split(" ")[0] in ("VIOLATIONS", "NETS", "NODOC") else None
         p = line.split("\t")
         if p[0] == "V" and len(p) >= 4:
             res["violations"].append({"level": p[1], "short": p[2], "long": p[3]})

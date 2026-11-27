@@ -437,6 +437,8 @@ def judge_w21(o: dict) -> Result:
     """Every 'pins x and y are one terminal' claim the page makes is true in Altium's compile of the drawn sheets (the two pins are on one net
     there). False joins = 0. A pass state exists: a draw that says it only for a symbol whose drawing really joins the pins."""
     text = " ".join(n.get("full", "") or n.get("text", "") for s in o["snaps"][-6:] for n in s.get("notes", [])) + " " + o.get("view_text", "")
+    if "NETS" not in o["compile"].get("sections", ["NETS"]):
+        raise obs.NotObservable("Altium's compile was read without its net list (a guarded read failed, see the probe log): nothing to judge against")
     nets = o["compile"]["nets"]
     where: dict[str, str] = {}
     for net, pins in nets.items():

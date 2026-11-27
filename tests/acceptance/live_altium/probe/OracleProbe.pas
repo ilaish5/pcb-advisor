@@ -136,35 +136,75 @@ begin
     Log('compile: DM_Compile of ' + PrjPath);
     Prj.DM_Compile;
     Log('compile: DM_Compile returned');
+    { every read below is one property at a time and guarded: a failed read is logged and skipped, it never raises a box;
+      the file is saved after each stage so what was read survives a later failure }
     SL := TStringList.Create;
     try
-        n := Prj.DM_ViolationCount;
-        SL.Add('VIOLATIONS ' + IntToStr(n));
+        SL.Add('COMPILED');
+        SaveRetry(SL, Outp);
+        n := -1;
+        try
+            n := Prj.DM_ViolationCount;
+            SL.Add('VIOLATIONS ' + IntToStr(n));
+            Log('compile: violations ' + IntToStr(n));
+        except
+            Log('compile: DM_ViolationCount failed');
+        end;
         for i := 0 to n - 1 do
         begin
-            Viol := Prj.DM_Violations(i);
-            SL.Add('V' + #9 + Viol.DM_ErrorLevelString + #9 + Viol.DM_ShortDescriptorString + #9 + Viol.DM_LongDescriptorString);
+            try
+                Viol := Prj.DM_Violations(i);
+                SL.Add('V' + #9 + Viol.DM_ErrorLevelString + #9 + Viol.DM_ShortDescriptorString + #9 + Viol.DM_LongDescriptorString);
+            except
+                Log('compile: violation ' + IntToStr(i) + ' unreadable');
+            end;
         end;
-        Doc := Prj.DM_DocumentFlattened;
-        if (Doc = nil) then Doc := Prj.DM_TopLevelPhysicalDocument;
+        SaveRetry(SL, Outp);
+        Doc := nil;
+        try
+            Doc := Prj.DM_DocumentFlattened;
+            Log('compile: flattened document read');
+        except
+            Log('compile: DM_DocumentFlattened failed');
+        end;
+        if (Doc = nil) then
+        begin
+            try
+                Doc := Prj.DM_TopLevelPhysicalDocument;
+                Log('compile: top level document read');
+            except
+                Log('compile: DM_TopLevelPhysicalDocument failed');
+            end;
+        end;
         if (Doc = nil) then
         begin
             SL.Add('NODOC');
         end
         else
         begin
-            SL.Add('NETS ' + IntToStr(Doc.DM_NetCount));
-            for i := 0 to Doc.DM_NetCount - 1 do
+            n := -1;
+            try
+                n := Doc.DM_NetCount;
+                SL.Add('NETS ' + IntToStr(n));
+                Log('compile: nets ' + IntToStr(n));
+            except
+                Log('compile: DM_NetCount failed');
+            end;
+            for i := 0 to n - 1 do
             begin
-                Net := Doc.DM_Nets(i);
-                for j := 0 to Net.DM_PinCount - 1 do
-                begin
-                    Pin := Net.DM_Pins(j);
-                    SL.Add('P' + #9 + Net.DM_NetName + #9 + Pin.DM_FullName);
+                try
+                    Net := Doc.DM_Nets(i);
+                    for j := 0 to Net.DM_PinCount - 1 do
+                    begin
+                        Pin := Net.DM_Pins(j);
+                        SL.Add('P' + #9 + Net.DM_NetName + #9 + Pin.DM_FullName);
+                    end;
+                except
+                    Log('compile: net ' + IntToStr(i) + ' unreadable');
                 end;
             end;
         end;
-        SL.SaveToFile(Outp);
+        SaveRetry(SL, Outp);
     finally
         SL.Free;
     end;
