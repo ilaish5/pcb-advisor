@@ -619,7 +619,7 @@ function chatSuggestionItems() {
     return items.slice(0, items.some(i => i.quick) ? 4 : 3);
   }
   const stages = Array.isArray(S.stages) ? S.stages : [];
-  const here = stages.find(x => x && x.primary) || stages.find(x => x && x.state && x.state !== 'clean');
+  const here = stages.find(x => x && x.id === chatStage());       // U8: a chip speaks about the page the student is on, never about another stage
   const name = here && (CHAT_STAGE_NAMES[here.id] || here.id);
   if (here && here.state === 'issues') items.push({text: `What is wrong in ${name}${here.open ? ` (${here.open} open)` : ''}, and how do I fix it?`});
   const nxt = chatNextText(here && here.next);

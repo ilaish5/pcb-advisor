@@ -163,6 +163,67 @@ _HAND = re.compile(
 _TOOL_SIDE = re.compile(r"\b(?:the tool|this tool|the app|the system|pcb advisor|the server|the agent|I(?:'ve| have| did)?)\b[^.\n]{0,30}\b(?:ran|runs|drew|draws|placed|places|routed|routes|did|does|will do|has done)\b", re.I)
 
 
+# The wider reading of "the agent told the student to do it by hand": any message that sends the student into Altium to change something, or
+# says to do it by hand / manually / yourself. A message with such a sentence is ONE step on the list, naming every part and net it mentions.
+_WIDE = re.compile(r"\bin Altium\b[^.\n]{0,80}\b(?:move|set|change|edit|tent|fix|delete|add|run|open|drag|disable)\b|\b(?:by hand|manually|yourself)\b", re.I)
+_REFS = re.compile(r"\b[A-Z]{1,3}\d{1,3}\b")
+
+
+def wide_step(text):
+    """(title, refs) of the hand step a whole message holds, or None."""
+    t = str(text or "")
+    for sent in re.split(r"(?<=[.!?])\s+|\n+", t):
+        s_ = sent.strip(" \t-*•>#")
+        if len(s_) >= 12 and _WIDE.search(s_) and not _TOOL_SIDE.match(s_):
+            return s_[:120], sorted(set(_REFS.findall(t)))
+    return None
+
+
+def track_message(project, text, ts="", source="agent", page=""):
+    """The message's hand step as one item that names every designator in the message. Idempotent per message. Never raises."""
+    try:
+        w = wide_step(text)
+        if not w:
+            return None
+        title, refs = w
+        key = "msg:" + hashlib.sha1(str(text).strip().encode("utf-8", "replace")).hexdigest()[:14]
+        label = title + (f" ({', '.join(refs[:8])})" if refs else "")
+        return add(project, key, "hand_step", label[:200], str(text)[:2000], page=page, source=source,
+                   check={"type": "manual"}, extra={"refs": refs})
+    except Exception as exc:       # noqa: BLE001
+        print(f"(ledger: message not tracked: {type(exc).__name__}: {exc})", file=sys.stderr)
+        return None
+
+
+_BACKFILL_SEEN = {}
+
+
+def backfill(project):
+    """Hand-step advice the agent gave before this ledger existed (the stored chats) becomes items too: nothing said stays only in chat.
+    Reads a chat file again only when it changed."""
+    d = store.pdir(project) / "chats"
+    try:
+        files = sorted(d.glob("*.jsonl"))
+    except OSError:
+        return
+    for f in files:
+        try:
+            st = f.stat()
+            sig = (st.st_mtime_ns, st.st_size)
+            if _BACKFILL_SEEN.get((str(project), str(f))) == sig:
+                continue
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(r, dict) and r.get("role") == "agent" and r.get("text") and not r.get("error"):
+                    track_message(project, r.get("text"), r.get("ts", ""), source="agent (earlier chat)")
+            _BACKFILL_SEEN[(str(project), str(f))] = sig
+        except OSError:
+            continue
+
+
 def hand_steps(text):
     """The sentences of a text that tell the student to do something by hand in Altium (what the ledger must hold)."""
     out = []
@@ -392,6 +453,10 @@ def view(project):
             sync_drc(project)
         except Exception as exc:       # noqa: BLE001
             print(f"(ledger: sync failed: {type(exc).__name__}: {exc})", file=sys.stderr)
+        try:
+            backfill(project)
+        except Exception as exc:       # noqa: BLE001
+            print(f"(ledger: backfill failed: {type(exc).__name__}: {exc})", file=sys.stderr)
         doc = load(project)
         cur = _pcb_sha(project)
         changed = False
@@ -505,6 +570,9 @@ def annotate_reply(project, reply):
     text = str(reply or "")
     ids, notes = [], []
     tracked = track_advice(project, text, source="agent")
+    whole = track_message(project, text, ts=store.now(), source="agent")
+    if whole and not any(t["id"] == whole["id"] for t in tracked):
+        tracked.append({"id": whole["id"], "title": whole["title"], "state": whole["state"]})
     for t in tracked:
         ids.append(t["id"])
         if t.get("conflict"):
