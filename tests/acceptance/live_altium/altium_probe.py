@@ -99,6 +99,22 @@ def _stop_executor() -> None:
     time.sleep(2)
 
 
+COMMAND_LOG = EXCHANGE / "commands.log"      # kept across runs: one line per command ever sent to Altium (time, command, document)
+
+
+def _before_send(commands: list[tuple]) -> None:
+    """Read-only guard and trace. Refuses to send while an Altium modal is open (the first thing to look at is who raised it, not another
+    command on top of it), and writes one line per command so a dialog can be traced to its cause."""
+    d = x2_dialogs() if x2_running() else []
+    if d:
+        raise ProbeError("an Altium dialog is open, no command is sent on top of it: " + str(d))
+    EXCHANGE.mkdir(parents=True, exist_ok=True)
+    with COMMAND_LOG.open("a", encoding="utf-8") as f:
+        for c in commands:
+            doc = c[1] if len(c) > 1 else ""
+            f.write("\t".join([time.strftime("%Y-%m-%d %H:%M:%S"), str(c[0]), str(doc)]) + "\n")
+
+
 def run_probe(commands: list[tuple], start_timeout: float = 45, total_timeout: float = 300, stall: float = 90) -> list[str]:
     """Run the probe script in the running Altium. Raises ProbeError (with the dialogs seen) when it does not finish."""
     if not x2_running():
@@ -149,6 +165,7 @@ class AsyncProbe:
     def start(self, start_timeout: float = 45) -> "AsyncProbe":
         if not x2_running():
             raise ProbeError("Altium is not running")
+        _before_send(self.commands)
         EXCHANGE.mkdir(parents=True, exist_ok=True)
         for n in ("response.txt", "log.txt", "start.flag", "end.flag"):
             (EXCHANGE / n).unlink(missing_ok=True)

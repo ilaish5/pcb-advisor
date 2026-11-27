@@ -125,6 +125,7 @@ var
     i, j, n : Integer;
     SL : TStringList;
 begin
+    Log('compile: project ' + PrjPath);
     Prj := GetWorkspace.DM_GetProjectFromPath(PrjPath);
     if (Prj = nil) then Prj := GetWorkspace.DM_OpenProject(PrjPath, False);
     if (Prj = nil) then
@@ -132,7 +133,9 @@ begin
         Say('ERR cannot open ' + PrjPath);
         Exit;
     end;
+    Log('compile: DM_Compile of ' + PrjPath);
     Prj.DM_Compile;
+    Log('compile: DM_Compile returned');
     SL := TStringList.Create;
     try
         n := Prj.DM_ViolationCount;
