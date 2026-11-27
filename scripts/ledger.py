@@ -20,6 +20,7 @@ import pathlib
 import re
 import sys
 import threading
+import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import ext  # noqa: E402
@@ -88,9 +89,19 @@ def _save(project, doc):
             return
     except OSError:
         pass
-    tmp = p.with_name(p.name + ".tmp")          # written whole beside the file, then swapped in: a crash leaves the old file or the new one
+    tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")          # written whole beside the file, then swapped in: a crash leaves the old file or the new one
     store._write_text(tmp, text)
-    os.replace(tmp, p)
+    try:
+        for attempt in range(10):
+            try:
+                os.replace(tmp, p)
+                break
+            except PermissionError:           # Windows refuses the swap while a reader holds the file open: wait and retry, as store does
+                if attempt == 9:
+                    raise
+                time.sleep(0.05)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _pcb_sha(project):
@@ -115,7 +126,7 @@ def _find(doc, item_id):
 
 
 def _norm(text):
-    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+    return re.sub(r"[\W_]+", " ", str(text).lower()).strip()        # every letter of every language counts: Hebrew titles do not collapse into one key
 
 
 def key_of(text):
@@ -184,7 +195,7 @@ _NOT_STEP = re.compile(
     r"without having to|(?:you )?(?:need|have) not)\b", re.I)
 _WIDE = re.compile(r"\bin Altium\b[^.\n]{0,80}\b(?:move|set|change|edit|tent|fix|delete|add|run|open|drag|disable)\b|\b(?:by hand|manually|yourself)\b", re.I)
 _REFS = re.compile(r"\b[A-Z]{1,3}\d{1,3}\b")
-_ANNOTATION = re.compile(r"\n\n(?:Do not follow the step in F-\d+|Tracked on your Findings list:|Nothing in this reply was added to your Findings list|A limit of this tool:|Correction:).*\Z", re.S)
+_ANNOTATION = re.compile(r"\n\n(?:Do not follow the (?:step in F-\d+|advice in this reply)|Tracked on your Findings list:|Nothing in this reply was added to your Findings list|A limit of this tool:|Correction:).*\Z", re.S)
 
 
 def original(text):
@@ -200,8 +211,16 @@ def _sentences(text):
             yield s_
 
 
+_CLAUSES = re.compile(r"[,;:]|\s(?:so|but|and then|then|yet)\s", re.I)
+
+
 def _is_step(sent):
-    return not (_TOOL_SIDE.match(sent) or _NOT_STEP.search(sent) or sent.rstrip().endswith("?"))
+    """A hand step is asked of the student: the clauses where the agent does it, offers it, or says nothing is needed are set aside, and what
+    is left must still read as a hand step. "I can't move parts for you, so move C3 by hand in Altium" keeps its second half."""
+    if sent.rstrip().endswith("?"):
+        return False
+    rest = " ".join(c for c in _CLAUSES.split(sent) if c and not (_TOOL_SIDE.match(c.strip()) or _NOT_STEP.search(c)))
+    return bool(_HAND.search(rest) or _WIDE.search(rest))
 
 
 def hand_steps(text):
@@ -209,7 +228,7 @@ def hand_steps(text):
     return [s_[:400] for s_ in _sentences(text) if (_HAND.search(s_) or _WIDE.search(s_)) and _is_step(s_)]
 
 
-def track_message(project, text, ts="", source="agent", page=""):
+def track_message(project, text, ts="", source="agent", page="", live=True):
     """ONE item per reply: the hand steps it holds (title: the first, detail: all of them) naming every part and net the reply mentions.
     The key is the hash of the agent's own text, so the same reply never makes a second item, however it comes back (live, annotated,
     read from the stored chat). A closed or accepted item is left as it is. Returns the item or None. Never raises."""
@@ -223,7 +242,7 @@ def track_message(project, text, ts="", source="agent", page=""):
         label = steps[0][:120] + (f" ({', '.join(refs[:8])})" if refs else "")
         mech = any(re.search(r"\b(?:DRC|design rule|clearance|short|un-?routed)\b", x, re.I) for x in steps)
         return add(project, key, "hand_step", label[:200], "\n".join(steps)[:2000] + ("\n\n" + text[:1500] if len(text) > 200 else ""), page=page, source=source,
-                   check={"type": "drc_clean"} if mech else {"type": "manual"}, extra={"refs": refs}, reopen_closed=False)
+                   check={"type": "drc_clean"} if mech else {"type": "manual"}, extra={"refs": refs}, reopen_closed=live)
     except LedgerCorrupt:
         raise
     except Exception as exc:       # noqa: BLE001
@@ -254,7 +273,7 @@ def backfill(project):
                 except ValueError:
                     continue
                 if isinstance(r, dict) and r.get("role") == "agent" and r.get("text") and not r.get("error"):
-                    track_message(project, r.get("text"), r.get("ts", ""), source="agent (earlier chat)")
+                    track_message(project, r.get("text"), r.get("ts", ""), source="agent (earlier chat)", live=False)
             _BACKFILL_SEEN[(str(project), str(f))] = sig
         except OSError:
             continue
@@ -605,6 +624,10 @@ def annotate_reply(project, reply):
                 ids.append(it["id"])
     except LedgerCorrupt as exc:
         notes.append(f"Nothing in this reply was added to your Findings list. {exc}")
+    if not any(n.startswith("Do not follow the step") for n in notes):
+        c = advice_conflict(original(text))
+        if c:          # not a hand step, so no item: the student is told all the same
+            notes.append(f"Do not follow the advice in this reply that breaks a rule of this tool ({c['rule']}). {c['why']}")
     wrong = limits.false_claims(text)
     if wrong:
         notes.append(limits.correction(wrong))

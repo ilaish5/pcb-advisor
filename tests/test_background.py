@@ -200,7 +200,7 @@ def test_the_chat_draws_the_check_on_each_chip():
     core = (REPO / "ui/js/core.js").read_text(encoding="utf-8")
     chat = (REPO / "ui/js/chat.js").read_text(encoding="utf-8")
     assert "function fmt(text, cites)" in core and "cite-checking" in core and "cite-bad" in core
-    assert "fmt(m.text, m.cites)" in chat, "the agent record's check reaches its chips"
+    assert "fmt(chatScrub(m.text), m.cites)" in chat, "the agent record's check reaches its chips"
     assert "m.cites.state" in chat, "a result arriving redraws the thread"
     assert "citeChips" not in (REPO / "ui/js/markdown.js").read_text(encoding="utf-8")
 

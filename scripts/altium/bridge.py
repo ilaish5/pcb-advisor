@@ -2379,6 +2379,8 @@ def route_pcb(project, replace=False, keep_partial=False):
                           + (" The board file was put back as it was before (backup kept)." if res["restored"]
                              else f" Tracks stay on the board (partial, as agreed); backup in {res['backup']}." if keep_partial
                              else f" Backup in {res['backup']}."))
+        if res["restored"]:
+            err.route_result = res          # the step's whole answer rides on the error: the server says what was rejected and what was restored (U4)
         if res["failed"] and not res["written"] and not keep_partial:
             err.open_nets = open_nets          # the page offers "route the rest and leave these open": the student's click is the consent
         raise err

@@ -123,6 +123,37 @@ def accept(project, key, evidence=None, reason="", wrong=None, basis=None, group
     return res
 
 
+def valid_evidence(project, evidence):
+    """The evidence that holds: a datasheet that is in the project, a page number, and a sha256 (when one is given) equal to that file's own.
+    Anything else (a name nobody can open, a made-up hash, no page) is dropped, so it can never stand in for a reason."""
+    import sources
+    out = []
+    for e in evidence or []:
+        if not isinstance(e, dict) or not str(e.get("doc") or ""):
+            continue
+        page = int(e["page"]) if str(e.get("page") or "").isdigit() else 0
+        path = sources.document_path(project, str(e["doc"]))
+        if not page or path is None:
+            continue
+        sha = str(e.get("sha256") or "")
+        if sha and sha != _sha256(path):
+            continue
+        out.append({"doc": str(e["doc"]), "sha256": sha, "page": page})
+    return out
+
+
+def _sha256(path):
+    import lineage
+    try:
+        return lineage.sha256_file(path)
+    except Exception:       # noqa: BLE001
+        return ""
+
+
+def _evidence_reason(evidence):
+    return "Matches the datasheet pin table, " + "; ".join(f"page {e['page']} of {e['doc']}" for e in evidence[:3])
+
+
 def _accept(project, key, evidence=None, reason="", wrong=None, basis=None):
     line = store._line_of(project, key)
     key = line["key"]
@@ -140,11 +171,9 @@ def _accept(project, key, evidence=None, reason="", wrong=None, basis=None):
     standing, _ = state(project, line, entry)
     if standing and standing.get("basis") != "legacy":
         return {"ok": True, "line": key, "decision": standing, "changed": False}
-    evidence = [{"doc": str(e.get("doc") or ""), "sha256": str(e.get("sha256") or ""), "page": int(e["page"]) if str(e.get("page") or "").isdigit() else 0}
-                for e in (evidence or []) if isinstance(e, dict)]
-    # a page of a file nobody could open is no evidence: a record with no hash and no file stays a blind decision
-    import sources
-    evidence = [e for e in evidence if e["sha256"] or sources.document_path(project, e["doc"]) is not None]
+    evidence = valid_evidence(project, evidence)
+    if evidence and not str(reason or "").strip():          # the reason of a datasheet-backed accept is what the evidence says, never made up
+        reason = _evidence_reason(evidence)
     dec = {"id": f"pd-{store.now_ms()}", "status": "accepted", "basis": basis if basis in BASES else _basis(line, evidence),
            "reason": str(reason or "").strip()[:300], "evidence": evidence, "fingerprint": fingerprint(project, line), "fpv": FP_VERSION, "ts": store.now()}
     store.add_library(project, key, {"pin_decision": dec, "pins_accepted": False}, by="student")
@@ -502,7 +531,8 @@ def _post(handler, path, body):
             store._line_of(proj, body["line"])
         except KeyError:
             raise ext.HTTPError(404, f"no BOM line {body.get('line')!r}")      # an unknown part is not found, before it is asked for a reason
-    if path != "/api/pins/revoke" and not body.get("evidence") and not body.get("wrong") \
+    backed = path == "/api/pins/confirm" and bool(valid_evidence(proj, body.get("evidence")))       # a real datasheet page says it itself
+    if path != "/api/pins/revoke" and not backed and not body.get("wrong") \
             and not re.search(r"[A-Za-z֐-׿]{3}", str(body.get("reason") or "")):
         raise ext.HTTPError(400, "a reason is needed to accept a risk: say in a sentence why it is fine")      # a blank reason is no reason (U5)
     try:

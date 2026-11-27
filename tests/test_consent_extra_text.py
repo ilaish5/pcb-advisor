@@ -17,6 +17,14 @@ def _granted(phrase, kind="place", q=Q):
     "yes please replace the placement, I have a copy of my own",
     "yeah go ahead and replace the placement now",
     "sure, redo the placement",
+    # reassurance and a judgement of the old work are not a negation of the action
+    "yes, replace it, no problem at all",
+    "yes, replace the placement, I do not mind losing it",
+    "yes, replace it, nobody needs the old one, it is not good",
+    "yes, replace it, I already did a few moves by hand and they can go",
+    "yes replace it, a spare copy of the file is fine with me",
+    "כן, תחליף את המיקום, אין בעיה",
+    "כן, תחליף את המיקום, מה שיש לא טוב",
 ])
 def test_a_clear_yes_with_extra_words_is_consent(phrase):
     assert _granted(phrase)
@@ -41,6 +49,19 @@ def test_a_clear_yes_with_extra_words_is_consent(phrase):
     "yes, replace it if the backup works",
     # question
     "yes, replace it. Or should I do it by hand?",
+    # a joke, a doubt or a second thought after the yes
+    "yes, replace it, only joking",
+    "yes, replace it /s",
+    "yes, replace it, hmm, let me rethink",
+    "yes, replace the placement, scrap that",
+    "yes, replace it, I take it back",
+    "yes, replace it, oops, that was a slip",
+    "yes, replace it, though",
+    "yes, replace it, but only the connectors",
+    "yes, replace it, except the crystal",
+    "כן, תחליף את המיקום, סתם בצחוק, לא",
+    "כן, תחליף את המיקום, טעות שלי",
+    "כן, תחליף את המיקום, אני אסדר את זה בעצמי אחר כך",
     # other kind of work
     "yes, redraw the schematic",
     "yes, add R5 to the BOM",
@@ -59,3 +80,15 @@ def test_a_yes_to_another_question_is_not_consent():
 
 def test_no_yes_without_the_question():
     assert not _granted("yes, replace it, thanks a lot for all the help today", q="Here is the placement.")
+
+
+def test_the_visible_f_e_corpus_decides_the_same_way():
+    """Read from tests/acceptance/corpora when the test runs (not copied): every affirmative is granted, every negative refused."""
+    import json
+    import pathlib
+    f = pathlib.Path(__file__).resolve().parent / "acceptance" / "corpora" / "fe_consent.json"
+    if not f.exists():
+        pytest.skip("the visible corpus is not in this checkout")
+    d = json.loads(f.read_text(encoding="utf-8"))
+    assert all(_granted(p, q=d["question"]) for p in d["affirmative"])
+    assert not any(_granted(p, q=d["question"]) for p in d["negative"])

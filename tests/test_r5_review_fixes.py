@@ -209,3 +209,119 @@ def test_a_button_puts_its_ledger_id_in_a_data_attribute_not_the_html_id():
     assert kit and i >= 0
     html = _node(js)
     assert 'data-lid="F-007"' in html and ' id="' not in html
+
+
+# ---------------------------------------------------------------- U4 through the REAL route_pcb error path (a fake Altium underneath)
+LINES = [
+    "Clearance Constraint: (0.100mm < 0.127mm) Between Pad J3-1(10mm,5mm) on Top Layer And Pad J3-2(10mm,6mm) on Top Layer",
+    "Clearance Constraint: (0.100mm < 0.127mm) Between Pad J3-1(10mm,5mm) on Top Layer And Pad J3-2(10mm,6mm) on Top Layer",
+]
+
+
+def _fake_route(monkeypatch, tmp_path, empty, restored_ok=True):
+    from altium import bridge
+    import lineage
+    pcb = tmp_path / "b.PcbDoc"
+    pcb.write_bytes(b"board-v1")
+    bk = tmp_path / "bk"
+    bk.mkdir()
+    (bk / "b.PcbDoc").write_bytes(b"board-v1" if restored_ok else b"other")
+    monkeypatch.setattr(bridge, "_linked", lambda p: "x.PrjPcb")
+    monkeypatch.setattr(bridge, "_project_pcb", lambda p: pcb)
+    monkeypatch.setattr(bridge, "rules_missing", lambda p: [])
+    monkeypatch.setattr(bridge, "capabilities_cached", lambda: None)
+    monkeypatch.setattr(bridge, "net_current_inputs", lambda p, strict=True: {"currents": {}, "estimates": {}, "copper": {}})
+    monkeypatch.setattr(bridge, "_log", lambda *a, **k: None)
+    monkeypatch.setattr(lineage, "linked_pcb", lambda p: pcb)
+    res = {"routed": ["N1"], "failed": [], "tracks": 4, "vias": 0, "backup": str(bk), "problems": ["2 new clearance violations"], "restored": True,
+           "written": True, "drc_before": {}, "drc_after": {"Clearance": 2}, "drc_line": "Clearance 2", "widths": {}, "summary": "raw altium text",
+           "drc_violations": LINES, "drc_violations_before": []}
+    monkeypatch.setattr(bridge, "route_on", lambda *a, **k: dict(res))
+    return bridge, pcb
+
+
+def test_a_route_altium_rejects_reaches_the_student_as_pairs_a_checked_restore_and_a_finding(empty, tmp_path, monkeypatch):
+    import serve
+    bridge, pcb = _fake_route(monkeypatch, tmp_path, empty)
+    with pytest.raises(bridge.BridgeError) as ei:
+        bridge.route_pcb(empty)
+    out = serve._rejected_route(empty, ei.value)
+    assert out and out["count"] == 2 and "J3-1" in out["cause_text"]
+    assert out["restored"] is True and "Restored from backup" in out["message"] and out["next"]
+    assert out["ledger_id"] and ledger.load(empty)["items"][0]["id"] == out["ledger_id"]
+    rec = board_results.records(empty)[-1]
+    assert rec["op"] == "route" and rec["rejected"] is True and rec["drc"] is None
+    code, body = serve._step_failed(empty, "s", "route", [], serve._CONSENT_ACTION["route"], ei.value, False)
+    assert code == 400 and body["outcome"]["count"] == 2 and "Restored from backup" in body["error"]
+
+
+def test_a_restore_that_differs_from_the_backup_is_not_called_restored(empty, tmp_path, monkeypatch):
+    import serve
+    bridge, pcb = _fake_route(monkeypatch, tmp_path, empty, restored_ok=False)
+    with pytest.raises(bridge.BridgeError) as ei:
+        bridge.route_pcb(empty)
+    out = serve._rejected_route(empty, ei.value)
+    assert out["restored"] is False and "could NOT be confirmed" in out["message"]
+
+
+# ---------------------------------------------------------------- N2-N7
+def test_a_cannot_in_one_clause_does_not_hide_the_step_in_the_next():
+    steps = ledger.hand_steps("I can't move parts for you, so move C3 away from U1 by hand in Altium.")
+    assert len(steps) == 1 and "C3" in steps[0]
+
+
+@pytest.mark.parametrize("text", ["Could you redo the placement?", "Can you route the board?", "תוכל לנתב את הלוח?", "תנתב את הלוח?", "תמקם את הרכיבים?"])
+def test_a_polite_request_to_act_is_not_a_review_question(text):
+    assert not turn_effects.is_review(text)
+
+
+@pytest.mark.parametrize("text", ["What is wrong with the clearance on J3?", "How do I fix the short?", "למה הלוח לא עובר בדיקה?"])
+def test_a_real_question_is_still_a_review(text):
+    assert turn_effects.is_review(text)
+
+
+def test_two_hebrew_titles_are_two_items(empty):
+    a = ledger.add(empty, ledger.key_of("הזז את הקבל ליד השבב"), "hand_step", "הזז את הקבל ליד השבב", page="pcb")
+    b = ledger.add(empty, ledger.key_of("הרחב את המסלול של החשמל"), "hand_step", "הרחב את המסלול של החשמל", page="pcb")
+    assert a["id"] != b["id"]
+
+
+def test_advice_that_breaks_a_rule_reaches_the_student_even_when_it_is_no_hand_step(empty):
+    text, ids = ledger.annotate_reply(empty, "Place two vias in the exposed pad of U3 to carry the heat away.")
+    assert "Do not follow the advice" in text and "via" in text.lower()
+
+
+def test_advice_said_again_after_it_was_closed_is_an_open_item_again(empty):
+    first = ledger.track_advice(empty, REPLY)[0]
+    doc = ledger.load(empty)
+    doc["items"][0]["state"] = "closed"
+    ledger._save(empty, doc)
+    again = ledger.track_advice(empty, REPLY)[0]
+    assert again["id"] == first["id"] and again["state"] == "open"
+    assert [i["state"] for i in ledger.load(empty)["items"]] == ["open"]
+
+
+def test_the_end_line_names_what_did_not_run_and_keeps_the_reason():
+    line = turn_effects.text([], ["idea.propose: not run. The student asked a question, so nothing was changed."])
+    assert "adding a requirement" in line and "added a requirement" not in line
+    assert "asked a question" in line
+
+
+# ---------------------------------------------------------------- the chat answer buttons act (node)
+@needs_node
+def test_an_answer_button_and_retry_send_without_the_read_only_chip_flag():
+    chat = (ROOT / "ui" / "js" / "chat.js").read_text(encoding="utf-8")
+    i = chat.index("onAct('suggest'")
+    suggest = chat[i:chat.index("\n", i)]
+    k = chat.index("onAct('retry'")
+    retry = chat[k:chat.index("\n});", k) + 4]
+    js = ("const calls = []; const ACTIONS = {}; const onAct = (n, f) => { ACTIONS[n] = f; };\n"
+          "const send = async (t, o) => { calls.push([t, o]); }; let chatError = null; const $ = () => null; const chatAutosize = () => {};\n"
+          "const chatCurrentError = () => ({text: 'ask again', ctx: null}); const chatLastUser = () => null; const chatCtxOf = () => null;\n"
+          + suggest + "\n" + retry + "\n"
+          "(async () => { await ACTIONS.suggest({}, {answer: '1', text: 'Yes'}); await ACTIONS.retry({}, {}); await ACTIONS.suggest({}, {text: 'What is wrong?'});\n"
+          "console.log(JSON.stringify(calls)); })();")
+    calls = _node(js)
+    assert calls[0] == ["Yes", {}]                          # an answer acts
+    assert calls[1][0] == "ask again" and not (calls[1][1] or {}).get("chip")       # Retry acts
+    assert calls[2][1] == {"chip": True}                    # a suggestion chip is read-only

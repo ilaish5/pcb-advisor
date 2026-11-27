@@ -942,8 +942,58 @@ def _asked_replace(kind, prev_agent):
     return False
 
 
+# F-E: the stance of a message is its LAST word on this action. Everything that takes a yes back or aims it elsewhere is one rule, applied to the
+# whole message: a withdrawal, a joke, a doubt, a negation that reaches the action, a condition, a hand-over to the student, a question, a contrast
+# that ends on nothing. Words that only reassure ("no problem", "I don't mind") or judge the old work ("it is not good") are not a negation of the
+# action, and "by hand" that tells what the student already did is not a hand-over.
+_IDIOM = re.compile(
+    r"\b(?:no\s+(?:problem|worries|worry|issue|big\s+deal|rush)|not\s+an?\s+(?:problem|issue)|(?:don[’']?t|do\s+not|doesn[’']?t|does\s+not)\s+mind"
+    r"|(?:don[’']?t|do\s+not)\s+(?:worry|care)|nothing\s+(?:to\s+worry|wrong))\b"
+    r"|(?<!\w)(?:אין\s+בעיה|בלי\s+בעיה|לא\s+אכפת|לא\s+מפריע)(?!\w)", re.I)
+_JUSTIFY_NEG = re.compile(
+    r"\b(?:not|isn[’']?t|wasn[’']?t|no)\s+(?:good|great|ok|okay|right|working|useful|usable|nice|enough|what\s+i\s+needed)\b"
+    r"|(?<!\w)(?:לא|אינו|אינה)\s+(?:טוב|טובה|מתאים|מתאימה|מוצלח|מוצלחת|עובד|עובדת|נכון|נכונה|שמיש|שמישה)(?!\w)", re.I)
+_CONTRAST = re.compile(r"\b(?:but|however|though|although|yet)\b|(?<!\w)(?:אבל|אך|למרות)(?!\w)", re.I)
+_WITHDRAW = re.compile(
+    r"\b(?:never\s*mind|nvm|scrap|forget(?:\s+it|\s+that)?|kidding|jk|psych|oops|mistake|rethink\w*|reconsider\w*|second\s+thoughts?"
+    r"|chang(?:ed|ing)\s+my\s+mind|change\s+of\s+mind|hm+|wait|hold\s+(?:on|off|up|it)|hang\s+on|stop|cancel\w*|abort\w*|undo|disregard\w*|ignor(?:e|ing)"
+    r"|skip\w*|drop\s+it|bad\s+idea|unnecessary|keep\w*|kept|leav(?:e|ing)|preserv\w*|retain\w*|actually|instead|rather|except|excluding|besides"
+    r"|take\s+(?:it|that)\s+back|withdraw\w*|pause|paused|pausing|lol\s+no|just\s+joking|joking|joke|wrong|nah|naw)\b"
+    r"|(?:^|\s)/s(?=$|[\s.!,])"
+    r"|(?<!\w)(?:וש|ו|ש)?(?:סתם|צוחק|צוחקת|טעות|התחרטתי|מתחרט|מתחרטת|בעצם|תשאיר|תשאירי|להשאיר|השאר|השאירי|נשאיר|אשאיר|תשמור|תשמרי|לשמור"
+    r"|תוותר|תוותרי|וותר|לוותר|שכח|שכחי|תשכח|לשכוח|במקום|עדיף|חוץ|מלבד|הפסק|תפסיק|להפסיק|חכה|חכי|תחכה|לחכות|תמתין|המתן|עצור|תעצור|בטל|תבטל|ביטול"
+    r"|עזוב|תעזוב|דלג|תדלג|רד\s+מזה|רדי\s+מזה|רגע|עוד\s+לא|הרהור|אולי\s+לא)(?!\w)", re.I)
+_NEG_ALL = re.compile(_NEGATED.pattern + "|" + _REPLACE_NEG.pattern + "|" + _HARD_STOP.pattern, re.I)
+_COND_ALL = re.compile(
+    r"\b(?:if|unless|only|first|when|whenever|while|once|until|provided|assuming|pending|might|may|could|would|should|shall|maybe|perhaps|probably"
+    r"|possibly|suppose|guess|wonder(?:ing)?|unsure|uncertain|later|soon|tomorrow|next\s+time|eventually|not\s+sure|i\s+think|do\s+you\s+think|or)\b"
+    r"|(?<!\w)(?:וש|ו|ש)?(?:כדאי|אפשר|אז|כאשר|בהמשך|בינתיים|עדיין|כרגע|שנייה|שניה|מאוחר\s+יותר|אחר[\s\-–]+כך|אח[\"״]כ|עוד\s+מעט|מחר|בתנאי|תלוי"
+    r"|כנראה|לדעתי|מתלבט|מתלבטת|אם|אלא|רק|אולי|לא\s+בטוח|נראה\s+לי|חושב\w*|או|במידה|במקרה|עד\s+ש)(?!\w)|(?<!\w)ו?כש", re.I)
+_SELF_STRONG = re.compile(r"\b(?:myself|on\s+my\s+own|by\s+hand|manually)\b|(?<!\w)(?:בעצמי|ביד|ידנית|לבד)(?!\w)", re.I)
+_PAST_BY_ME = re.compile(r"\bi(?:[’']ve|\s+have|\s+had|\s+already)?\s+(?!want|need|prefer|plan|decid|intend|hop|wish|lik)(?:\w{2,}ed|moved|made|did|drew|placed|put|wrote|ran|took|built|set|got)\b"
+                         r"|(?<!\w)(?!התחרט)\S{2,}תי(?!\w)", re.I)
+_WORKV = (r"(?:re-?plac\w*|re-?do\w*|re-?draw\w*|re-?rout\w*|re-?lay\w*|replac\w*|plac\w*|draw\w*|rout\w*|wip\w*|overwrit\w*|start\s+over|fix\w*|handl\w*|adjust\w*|"
+          r"finish\w*|mov\w*|tweak\w*|edit\w*|arrang\w*|sort\w*|clean\w*|rebuild\w*|build\w*|delet\w*|remov\w*|chang\w*|do\s+it|do\s+that|take\s+care|deal\s+with|work\s+on)")
+_SELF_FUT = re.compile(
+    r"\b(?:i[’']?ll|i\s+will|let\s+me|(?:i[’']?m|i\s+am)(?:\s+(?:just|really|also|simply))?\s+(?:going\s+to|gonna)|i(?:\s+(?:just|really|also|simply))?\s+(?:want|need|plan|prefer|intend|have)\s+to|i[’']?d(?:\s+(?:just|really|also|simply))?\s+like\s+to"
+    r"|i\s+would\s+like\s+to|i\s+gonna)\s+(?:\w+\s+){0,3}?" + _WORKV + r"\b"
+    r"|\bi\s+(?:re-?place|re-?draw|re-?do|re-?route|overwrit\w*|start\s+over)\b"
+    r"|\b(?:by|for)\s+me\b|\bme\s+to\b|\bon\s+my\s+side\b|\bon\s+my\s+end\b"
+    r"|(?<!\w)(?:אני\s+)?(?:א(?:חליף|דרוס|מחק|שרטט|צייר|מקם|נתב|עשה|תחיל|נסה|סדר|זיז|תקן|טפל|שנה)|רוצה\s+ל\S+|מעדיף\s+ל\S+|מעדיפה\s+ל\S+|מתכוון\s+ל\S+|מתכוונת\s+ל\S+)(?!\w)", re.I)
+
+
+def _stance_cancelled(text):
+    """True when the message takes its yes back or aims it away from this action (see the block above). One rule for the whole message."""
+    t = _JUSTIFY_NEG.sub(" ", _IDIOM.sub(" ", str(text or "")))
+    ms = list(_CONTRAST.finditer(t))
+    if ms and not re.search(r"\w", t[ms[-1].end():]):          # "…, though": a reservation that says nothing is still a reservation
+        return True
+    if _WITHDRAW.search(t) or _NEG_ALL.search(t) or _COND_ALL.search(t) or _STOP_ANY.search(t) or _SELF_FUT.search(t):
+        return True
+    return bool(_SELF_STRONG.search(t)) and not _PAST_BY_ME.search(t)
+
+
 _F_E_VERB = re.compile(r"\b(?:replac\w*|re-?do\w*|re-?draw\w*|re-?plac\w*|re-?rout\w*|wip\w+|overwrit\w*|start\s+over|from\s+scratch)\b", re.I)
-_F_E_BY_ME = re.compile(r"\bby\s+me\b|\bme\s+to\b|\bon\s+my\s+side\b", re.I)
 
 
 def _replace_consent(kind, a, last_user, prev_agent=""):
@@ -954,16 +1004,18 @@ def _replace_consent(kind, a, last_user, prev_agent=""):
     text = str(last_user or "")
     words = re.findall(r"[\w’'\-]+", text)
     asked_yes = bool(_YES.search(text)) and bool(_BARE_YES.match(text.strip())) and _asked_replace(kind, prev_agent)
+    qtext = re.sub(r"(?<!\w)מה\s+ש", "ש", text)         # "מה שיש" (what there is) is a relative clause, not the question word "what"
     has_q = ("?" in text or bool(_REPLACE_INDIRECT_Q.search(text))
-             or (not asked_yes and (any(_is_question(s) for s in _SENT.findall(text))
-                                    or any(_is_question(c) for c in _CLAUSE.split(text) if c.strip()))))
+             or (not asked_yes and (any(_is_question(s) for s in _SENT.findall(qtext))
+                                    or any(_is_question(c) for c in _CLAUSE.split(qtext) if c.strip()))))
     other_kind = (not _REPLACE_SPECIFIC[kind].search(text)
                   and any(_REPLACE_SPECIFIC[k].search(text) for k in _REPLACE_SPECIFIC if k != kind))
+    # the short path is the strict one: any word of any class that could take the yes back ends it (the stance rule below reads longer messages)
     clean = (len(words) <= REPLACE_MAX_WORDS and not has_q and not other_kind
              and not _NEGATED.search(text) and not _REPLACE_NEG.search(text)
              and not _REPLACE_REVERSAL.search(text)
              and not _HEDGE.search(text) and not _CONDITION.search(text) and not _REPLACE_HEDGE_COND.search(text)
-             and not _REPLACE_SELF.search(text)
+             and not _REPLACE_SELF.search(text) and not _WITHDRAW.search(text)
              and not _STOP_ANY.search(text) and not _HARD_STOP.search(text))
     if clean and (replace_re.search(text) or asked_yes):
         return ""
@@ -973,11 +1025,7 @@ def _replace_consent(kind, a, last_user, prev_agent=""):
     # themselves), and it must not name another kind of work. Nothing is set aside before those words are looked for.
     lead = re.match(r"^[\s,.!]*(?:yes|yeah|yep|yup|sure|ok|okay|affirmative|go\s+ahead|כן|בסדר|אוקיי|אוקי|מאשר|מאשרת)(?!\w)", text, re.I)
     names_it = bool(replace_re.search(text)) or (not other_kind and bool(_F_E_VERB.search(text)))
-    if (lead and len(words) <= 40 and not has_q and names_it and not other_kind and _asked_replace(kind, prev_agent)
-            and not _NEGATED.search(text) and not _REPLACE_NEG.search(text) and not _REPLACE_REVERSAL.search(text)
-            and not _HARD_STOP.search(text) and not _STOP_ANY.search(text)
-            and not _HEDGE.search(text) and not _CONDITION.search(text) and not _REPLACE_HEDGE_COND.search(text)
-            and not _REPLACE_SELF.search(text) and not _F_E_BY_ME.search(text)):
+    if lead and len(words) <= 40 and not has_q and names_it and not other_kind and _asked_replace(kind, prev_agent) and not _stance_cancelled(text):
         return ""
     sheet = str(a.get("sheet") or "").strip()
     what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
@@ -1753,6 +1801,22 @@ def button_words(text, built=False):
     return text
 
 
+def _rejected_route(project, exc):
+    """The outcome (U4) of a route that Altium's check rejected and the bridge put back: the cause as object pairs, the restore read from the
+    files, a next step and a ledger item. The attempt is recorded in the board log WITHOUT a design rule check (see board_results.record).
+    None when the error is not a rejected route."""
+    res = getattr(exc, "route_result", None)
+    if not isinstance(res, dict) or not res.get("restored"):
+        return None
+    out = route_outcome.attach(project, dict(res)).get("outcome")
+    try:
+        import board_results
+        board_results.record(project, "route", res)
+    except Exception:           # noqa: BLE001
+        pass
+    return out
+
+
 def _step_failed(project, sess, step, done, current, exc, unexpected):
     """(status, body) for a step or preparation that stopped; the later steps do not run. needs_replace only for the step's own refusal."""
     final = current == _CONSENT_ACTION[step]
@@ -1770,6 +1834,12 @@ def _step_failed(project, sess, step, done, current, exc, unexpected):
         body["prepared"] = prepared
     if final and done:
         body["done_first"] = f"{_and([PREP_WORDS[k][1] for k, _ in done])}."       # the page puts it before the step's own error
+    if final and not unexpected and step == "route":
+        out = _rejected_route(project, exc)
+        if out:
+            body["outcome"] = out
+            body["error"] = out["message"]
+            reason = out["message"].rstrip(". ")
     if final and not unexpected and step == "route" and getattr(exc, "open_nets", None):
         body["partial_offer"] = list(exc.open_nets)       # nets the router could not do: the page offers a partial route (the click is the consent)
     if final and not unexpected and needs_replace(exc):
@@ -1816,7 +1886,7 @@ def _record_board(project, step, res, code=200, body=None):
         import board_results
         if res is not None:
             board_results.record(project, step, res)
-        elif isinstance(body, dict) and body.get("error") and not body.get("needs_replace") and code >= 400 and step in ("place", "route", "drc", "outputs") and code != 409:
+        elif isinstance(body, dict) and body.get("error") and not body.get("needs_replace") and code >= 400 and step in ("place", "route", "drc", "outputs") and code != 409 and not body.get("outcome"):
             board_results.record(project, step, {}, ok=False, error=body["error"])
     except Exception:           # noqa: BLE001 - the log never turns a done step into a failure
         pass
@@ -2240,7 +2310,8 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                         keep = _partial_consent(a, consent_words(chat, last_user))
                         res = bridge.route_pcb(project, replace=_truthy(a.get("replace")), keep_partial=keep)
                 except (bridge.BridgeError, bridge.AltiumReadError, OSError) as exc:
-                    refused.append(f"{kind}: {exc}")
+                    out = _rejected_route(project, exc) if step == "route" else None
+                    refused.append(f"{kind}: " + (out["message"] if out else str(exc)))
                     note_fix(kind, exc, {**a, "partial": a.get("partial") if step == "route" and keep else False})
                     continue
                 if step == "route":

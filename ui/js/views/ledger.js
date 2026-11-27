@@ -75,12 +75,13 @@ onAct('ledger-done', async (el, d) => {
   ledgerBusy = '';
   await refresh(true);
 });
+const LEDGER_DID = ['I did it by hand in Altium', 'I checked it on the board and it is fine', 'It is not needed for this board'];
+const LEDGER_WHY = ['The fab accepts this', 'Checked on the board: it is fine', 'Will be handled on the assembled board', 'Accept the risk: not critical'];
 onAct('ledger-accept', async (el, d) => {
+  // One click picks the reason (nothing to type; "Other" is optional); the pick is kept as worded, with the outputs.
   const reason = d.did
-    ? await askText({title: 'Mark it as done', label: 'What did you do? (one sentence)', placeholder: 'For example: moved C10 next to U1 in Altium', confirm: 'Done',
-      hint: 'The tool cannot check this step. Your words are kept with the outputs.'})
-    : await askText({title: 'Accept this finding', label: 'Why is it fine? (one sentence)', placeholder: 'For example: JLC accepts this gap for this board', confirm: 'Accept',
-      hint: 'The reason is kept with the outputs. If you change the board file afterwards, the finding opens again.'});
+    ? await askPick({title: 'Mark it as done', text: 'The tool cannot check this step. Pick what you did; it is kept with the outputs.', choices: LEDGER_DID})
+    : await askPick({title: 'Accept this finding', text: 'Pick why it is fine. If you change the board file afterwards, the finding opens again.', choices: LEDGER_WHY});
   if (!reason) return;
   let anyway = false;
   if (d.jlc) {
