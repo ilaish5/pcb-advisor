@@ -2165,7 +2165,8 @@ def route_on(prj, pcb, replace=False, seconds=None, keep_partial=False, pitch=0.
                                            + ("" if pour_dep else "All GND pads are connected by tracks; ")
                                            + "add a pour in Altium (Place > Polygon Pour) if you want a ground plane")
     res["drc_after"] = after
-    res.update(drc_rules=dict(drc.get("rules") or {}), drc_total=drc.get("total"), drc_clean=drc_clean(drc), drc_complete=bool(drc.get("complete")), drc_line=drc_line(drc))
+    res.update(drc_rules=dict(drc.get("rules") or {}), drc_total=drc.get("total"), drc_clean=drc_clean(drc), drc_complete=bool(drc.get("complete")), drc_line=drc_line(drc),
+               drc_violations=list(drc.get("violations") or [])[:3000], drc_violations_before=list(drc_before_full.get("violations") or [])[:3000])
     res.update(_drc_explained(drc_before_full, drc, saved))
     if not drc.get("complete"):
         probs.append("Altium's design rule check report could not be read in full, so the board is unchecked (not clean): "

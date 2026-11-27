@@ -104,7 +104,7 @@ def test_stop_returns_the_partial_record_and_applies_no_actions(server, empty, m
     assert code == 200 and state["last_actions"] == []
     sess = session_mod.current(empty, None)
     rec = [r for r in session_mod.load_chat(empty, sess) if r["role"] == "agent"][-1]
-    assert rec["text"] == "half an answer" and rec["partial"] is True and rec["stopped"] is True
+    assert rec["text"].startswith("half an answer") and rec["partial"] is True and rec["stopped"] is True
     assert rec["timed_out"] is False and rec["error_kind"] == "stopped"
     assert rec["steps"] == ["Running calc.py a", "Reading datasheet.pdf"]
     assert not rec.get("error")

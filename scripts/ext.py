@@ -23,7 +23,7 @@ import importlib
 GET, POST, ACTIONS, MODEL, SUMMARY = [], [], [], [], []
 
 _KINDS = {"get": GET, "post": POST, "action": ACTIONS, "model": MODEL, "summary": SUMMARY}
-MODULES = ("stages", "board_results", "pin_decisions", "constraints")
+MODULES = ("stages", "board_results", "pin_decisions", "constraints", "ledger", "limits")
 
 
 class HTTPError(Exception):

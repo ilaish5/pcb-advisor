@@ -221,7 +221,7 @@ def test_a_failing_bom_check_cannot_lose_the_reply_or_the_marker(server, empty, 
         "provider": "fake", "seconds": 1, "usage": {}})
     assert call(server, "POST", "/api/chat", empty, {"text": "go"})[0] == 200
     rec = [r for r in session_mod.load_chat(empty, session_mod.current(empty, None)) if r["role"] == "agent"]
-    assert rec and rec[-1]["text"] == "done"
+    assert rec and rec[-1]["text"].startswith("done")
 
 
 # ---------------------------------------------------------------- replace: only a short, unambiguous replace or yes

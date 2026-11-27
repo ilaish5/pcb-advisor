@@ -465,6 +465,10 @@ function pvLaterOk(n) {        // the same step succeeded after this note was ma
 }
 /* slim: the schematic and layout pages show this on the canvas (pvBarHTML): the run is ONE status line (pvRunSlim) that opens to the full
    list, and the answer is a compact banner. Rules and Outputs call it without slim: the full list under their header. */
+function pvStepNoteCard(page, busyOnly, slim) {       // the step's note, then the page's Findings (ledger.js); the live line alone has no card
+  const base = pvStepNote(page, busyOnly, slim);
+  return busyOnly || slim || typeof ledgerCardHTML !== 'function' ? base : base + ledgerCardHTML(page);
+}
 function pvStepNote(page, busyOnly, slim) {       // under the header: Altium is working, or what the last step answered
   pvResume();
   const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
@@ -476,6 +480,7 @@ function pvStepNote(page, busyOnly, slim) {       // under the header: Altium is
       title: 'Routes every net that can be routed, keeps those tracks, and leaves ' + n.partial.join(', ') + ' unrouted for you to finish in Altium'}) : '') +
     (n.replace ? btn(PV_STEPS[n.replace].again, {size: 'sm', kind: 'line', act: 'altium-step', step: n.replace, replace: '1', disabled: pvBusy ? true : undefined}) : '') +
     btn(n.replace ? 'Keep it' : 'Dismiss', {size: 'sm', kind: n.replace ? 'pri' : 'line', act: 'altium-step-dismiss', page});
+  if (n.outcome) return pvOutcomeHTML(page, n, acts);       // a rejected route: title, what was restored, what to do (U4)
   const c = pvCompact(n.text, n.from === 999 ? [] : n.warnings || []);
   const op = k => pvMoreOpen[page + ':' + k] ? ' open' : '';
   const more = c.warnings.length ? `<details class="pv-more" data-pvk="${page}:w"${op('w')}><summary>Show ${c.warnings.length} ${c.warnings.length === 1 ? 'warning' : 'warnings'}</summary><ul>${c.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></details>` : '';
@@ -584,6 +589,7 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
     else if (r && r.gone) pvNote[c.page] = {kind: 'warn', text: 'The step ended while this page was loading, and its answer went to the page that started it. Look at the board in Altium, and at the chat, before starting it again.'};       // ended, not "succeeded": this page never saw the answer
     else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', stopped: true, text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
     else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server'), partial: r && Array.isArray(r.partial_offer) && r.partial_offer.length ? r.partial_offer : undefined};
+    else if (r.outcome && r.outcome.rejected) pvNote[c.page] = {kind: 'warn', text: r.summary, outcome: r.outcome, raw: r.summary_raw || '', warnings: r.warnings || [], from: 0};
     else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
     if (pvNote[c.page]) { pvNote[c.page].step = step; pvNote[c.page].at = at0; }       // lets a later success (by button or chat) retire a failure note
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
@@ -755,7 +761,7 @@ function pcbHTML(container) {
   const text = pcbSvgCache.text;
   const fix = typeof constraintFixHTML === 'function' ? constraintFixHTML() : '';
   const fixNote = fix ? `<div class="pv-note">${fix}</div>` : '';
-  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout', actions: pvStepBtn('place')})}${pvStepNote('pcb')}${fixNote}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
+  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout', actions: pvStepBtn('place')})}${pvStepNoteCard('pcb')}${fixNote}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
   const plan = pvPlan(), b = S.board || {}, cnt = k => plan && Array.isArray(plan[k]) ? plan[k].length : 0;
   const size = Array.isArray(b.size_mm) && b.size_mm.length === 2 ? b.size_mm.map(v => Math.round(v * 10) / 10).join(' × ') + ' mm' : '';
   const cu = text && text.match(/data-copper-layers="(\d+)"/), copper = cu ? +cu[1] : b.layers;
@@ -766,7 +772,7 @@ function pcbHTML(container) {
   const zoom = text || pvPcbErr ? pvZoomHTML('pcb') : '';
   return `<div class="pv" data-pv="pcb">` +
     viewHeader({title: 'Layout', meta, actions: pvStepBtn('place') + pvStepBtn('route') + pvStepBtn('drc')}) + fixNote +
-    `<div class="pv-stage"><div class="pv-canvas pcb-canvas" id="pcbwrap" tabindex="0" aria-label="PCB layout. Scroll to zoom, drag to pan.">${inner}</div>${zoom}${pvBarHTML('pcb', pvLayersHTML(layers))}</div></div>`;
+    `<div class="pv-stage"><div class="pv-canvas pcb-canvas" id="pcbwrap" tabindex="0" aria-label="PCB layout. Scroll to zoom, drag to pan.">${inner}</div>${zoom}${pvBarHTML('pcb', pvLayersHTML(layers))}</div>${typeof ledgerCardHTML === 'function' ? ledgerCardHTML('pcb') : ''}</div>`;
 }
 async function loadPcb(container) {
   if (!$('.pv[data-pv="pcb"]')) return;
@@ -908,3 +914,17 @@ document.addEventListener('click', e => {
 onAct('pv-link', async (el, d, e) => {
   go('settings'); return;
 });
+
+/* U4: the end message of a rejected route. Collapsed: a bold title, whether the board file was put back (read from the files by the server),
+   and the cause as object pairs. Details: Altium's own text, word for word. Always at least one next step. */
+function pvOutcomeHTML(page, n, acts) {
+  const o = n.outcome;
+  const pairs = (o.causes || []).slice(0, 3).map(r => r.words).join('; ') + ((o.causes || []).length > 3 ? ` and ${(o.causes || []).length - 3} more` : '');
+  const next = (o.next || []).map(x => x.id === 'findings' ? btn(x.label, {size: 'sm', kind: 'pri', act: 'ledger-show', page})
+    : x.id === 'partial' ? btn(x.label, {size: 'sm', kind: 'line', act: 'altium-step', step: 'route', partial: '1', disabled: pvBusy ? true : undefined})
+    : btn('Route again', {size: 'sm', kind: 'line', act: 'altium-step', step: 'route', disabled: pvBusy ? true : undefined, title: x.label})).join('');
+  const full = [n.raw, ...(n.warnings || [])].filter(Boolean);
+  const more = `<details class="pv-more" data-pvk="${page}:o"${pvMoreOpen[page + ':o'] ? ' open' : ''}><summary>Details</summary><p>${esc(o.cause_text || '')}</p>${full.length ? `<ul>${full.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}</details>`;
+  const html = `<strong class="pv-title">${esc(o.title)}</strong><br>${esc(o.restored_text)}${pairs ? `<br>${esc('Cause: ' + pairs)}` : ''}${more}`;
+  return `<div class="pv-note" data-outcome="route-rejected">${banner({tone: o.restored ? 'warn' : 'bad', html, actions: next + btn('Dismiss', {size: 'sm', kind: 'link', act: 'altium-step-dismiss', page})})}</div>`;
+}

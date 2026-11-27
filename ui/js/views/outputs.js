@@ -319,15 +319,15 @@ function outputsHTML(container) {
   const files = S.exports || [];
   const a = outAltState(), note = outAltNoteHTML(files);
   if (!files.length && a) {
-    return outHeader([], true) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + `<div class="vb">${note}${outTable([], a)}</div>`;
+    return outHeader([], true) + pvStepNoteCard('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + `<div class="vb">${note}${outTable([], a)}</div>`;
   }
   if (!files.length) {
     const linked = outLinked();
-    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + (note ? `<div class="vb">${note}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+    return viewHeader({title: 'Outputs'}) + pvStepNoteCard('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + (note ? `<div class="vb">${note}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
       outLimits(linked));
   }
-  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinsWarnNote()}${outPinRisks()}<div class="vb">${note}${outTable(files, a, files.some(f => f.modified))}</div>`;
+  return `${outHeader(files)}${pvStepNoteCard('outputs')}${outBlockNote()}${outPinsWarnNote()}${outPinRisks()}<div class="vb">${note}${outTable(files, a, files.some(f => f.modified))}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */

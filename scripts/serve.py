@@ -36,11 +36,14 @@ import board_layers      # noqa: E402
 import ext               # noqa: E402
 import gateway           # noqa: E402
 import model             # noqa: E402
+import ledger           # noqa: E402
 import project as project_mod  # noqa: E402
+import route_outcome     # noqa: E402
 import runlog            # noqa: E402
 import session as session_mod  # noqa: E402
 import sources           # noqa: E402
 import tool_guard        # noqa: E402
+import turn_effects      # noqa: E402
 import turn_truth        # noqa: E402
 import project_guard     # noqa: E402
 import store             # noqa: E402
@@ -82,6 +85,14 @@ TURNS_LOCK = threading.Lock()
 COMPACTING = {}                       # (project, session) -> Lock; one memory rewrite at a time per conversation
 COMPACTING_LOCK = threading.Lock()
 ALLOW_LOCK = threading.Lock()
+
+
+STOP_MARKS = {}                       # (project, session) -> time of the student's last Stop press, kept even when no turn was registered
+
+
+def stopped_since(project, sess, since):
+    """True when the student pressed Stop after `since` (the start of the turn whose actions are about to run)."""
+    return bool(since) and STOP_MARKS.get((project, sess), 0) >= since
 
 
 def _new_turn():
@@ -1359,6 +1370,8 @@ def place_summary(res):
 def route_summary(res):
     """The route's own summary, which carries Altium's DRC line with every rule and its count (not only the watched six in
     drc_after); when a summary lacks it (a result from elsewhere), the line is added here."""
+    if res.get("outcome"):          # a rejected route says its cause and the restore in words; Altium's own text stays in the details
+        return str(res["summary"])
     line = str(res.get("drc_line") or "")
     s = str(res["summary"])
     if line and line not in s:
@@ -1921,6 +1934,8 @@ def _run_step(project, sess, step, data, bridge):
         code, body = _step_failed(project, sess, step, done, current, exc, True)
         _run_end(project, **body)
         return code, body
+    if step == "route":
+        res = route_outcome.attach(project, res)       # a rejected route: the cause as object pairs, "restored" read from the files, a next step (U4)
     if step == "outputs" and any(k == "outjob.generate" for k, _ in done):
         res = {**res, "added": True}          # the same answer as when the bridge adds the OutJob itself
     if skipped:            # a warning of the result, so the summary's tail (the amber chip in the chat) carries it
@@ -1963,31 +1978,33 @@ def ask_of(actions):
 
 
 def apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, allow_auto=True,
-                  fixables=None):
+                  fixables=None, review=False):
     """The server is the only writer: see _apply_actions. A turn whose actions drive Altium holds STEP_LOCK while they run; when
     something else holds it, those actions are refused and the rest still applies."""
     wants = any(_uses_altium(a.get("type")) for a in actions or [] if isinstance(a, dict))
     held = wants and STEP_LOCK.acquire(blocking=False)
     try:
         with runlog.for_project(project):
-            return _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables)
+            return _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables, review)
     finally:
         if held:
             STEP_LOCK.release()
 
 
-def _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables=None):
+def _apply_actions_held(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, held, allow_auto, fixables=None, review=False):
     if not held:
-        return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto, fixables=fixables)
+        return _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto, fixables=fixables,
+                              review=review)
     kinds = [a.get("type") for a in actions if isinstance(a, dict) and _uses_altium(a.get("type"))]
     with runlog.span("chat.altium-actions", project=project, actions=kinds):
-        res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto, fixables=fixables)
+        res = _apply_actions(project, actions, sess, last_user, meta, turn_start, on_step, cancel, chat, altium_free=held, allow_auto=allow_auto, fixables=fixables,
+                             review=review)
         runlog.event("op", op="chat.altium-actions", phase="result", project=project, refused=res[2])
         return res
 
 
 def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_start=None, on_step=None, cancel=None, chat=None, altium_free=True, allow_auto=True,
-                   fixables=None):
+                   fixables=None, review=False):
     """The server is the only writer. Agents propose; this applies.
     Returns (applied, proposal_ids, refused). Proposals the autonomy setting lets through are
     approved here, by "auto", right after they are recorded (so later actions in the same turn see them).
@@ -2033,8 +2050,13 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
         if not isinstance(a, dict):
             continue
         kind = a.get("type")
-        if cancel is not None and cancel.is_set():      # Stop: what has not started does not run (a running Altium step is not interrupted)
+        if (cancel is not None and cancel.is_set()) or stopped_since(project, sess, turn_start):
+            # Stop: what has not started does not run (a running Altium step is not interrupted). A Stop that came while no turn was
+            # registered (between a turn and its follow-up round) counts too: it is the student's word for everything begun before it.
             refused.append(f"{kind}: stopped by the student before it ran")
+            continue
+        if review and (why_not := turn_effects.review_refusal(kind)):       # a review chip or a question only answers or proposes (W11)
+            refused.append(why_not)
             continue
         if _uses_altium(kind) and not altium_free:
             refused.append(f"{kind}: not run. Another step is still running in Altium (started with a button); try again when it has finished")
@@ -2205,6 +2227,8 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                     refused.append(f"{kind}: {exc}")
                     note_fix(kind, exc, {**a, "partial": a.get("partial") if step == "route" and keep else False})
                     continue
+                if step == "route":
+                    res = route_outcome.attach(project, res)
                 _record_board(project, step, res)
                 applied.append(f"{kind}: " + STEP_SUMMARY[step](res))
             elif kind in ALTIUM_ACTIONS:
@@ -2698,7 +2722,7 @@ def _run_retry(proj, sess, tkey, fturn, user_text, orig_rec, applied, refused, f
         r_fix = []
         r_applied, r_proposals, r_refused = apply_actions(
             proj, allowed, sess, last_user=ctx["last_user"], meta={}, turn_start=ctx["turn_start"], cancel=fturn["cancel"],
-            chat=ctx["chat"], allow_auto=False, fixables=r_fix)
+            chat=ctx["chat"], allow_auto=False, fixables=r_fix, review=bool(ctx.get("review")))
         r_refused = [*(res.get("parse_refused") or []), *dropped, *r_refused, *notes]
         text = reply
         if r_refused:
@@ -3762,6 +3786,7 @@ class Handler(BaseHTTPRequestHandler):
                 say(proj, sess, user_msg)
                 m = model.build(project=proj, session=sess)
                 ask = text
+                review = turn_effects.is_review(text, chip=_truthy(data.get("chip")))      # a suggestion chip or a bare question: answer or propose only (W11)
                 row = next((r for r in m["sessions"] if r["id"] == sess), {})
                 if source_file:
                     src_text = ""
@@ -3783,6 +3808,9 @@ class Handler(BaseHTTPRequestHandler):
                     if ctx:
                         ask = ("[this conversation is about one part; its context]\n"
                                f"{json.dumps(ctx, ensure_ascii=False, indent=2)}\n\n{text}")
+                if review:
+                    ask = ("[this message only asks: answer it. Do not start anything in Altium and do not change the project; the only actions "
+                           "allowed are chat.ask, ledger.track and proposals]\n\n") + ask
             except BaseException as exc:
                 runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}")
                 _turn_end(tkey, turn)
@@ -3814,7 +3842,7 @@ class Handler(BaseHTTPRequestHandler):
                     applied, proposals, refused = apply_actions(
                         proj, res.get("actions"), sess, last_user=text, meta=chat_meta, turn_start=turn["started"],
                         on_step=lambda label, k=tkey: _turn_event(k, {"label": label}), cancel=turn["cancel"],
-                        chat=m["chat"], fixables=fixables)
+                        chat=m["chat"], fixables=fixables, allow_auto=not review, review=review)
             except BaseException as exc:
                 runlog.usage(proj, "answer", text="", chat=sess, ok=False, error=f"{type(exc).__name__}: {exc}", engine=_chat_info["engine"])
                 runlog.exception("chat", exc, phase="end", ok=False, seconds=round(time.time() - _chat_t0, 1), **_chat_info)
@@ -3860,7 +3888,16 @@ class Handler(BaseHTTPRequestHandler):
                 if not partial and not res.get("error"):     # the text was written before the actions ran: the server's records win (ledger 31, 39)
                     will_retry = retry_expected({}, fixables, turn["cancel"].is_set(), 0)
                     reply += "".join("\n\n" + x for x in turn_truth.closing_lines(res.get("reply"), applied, proposals, refused, will_retry, lang))
+                    reply, ledger_ids = ledger.annotate_reply(proj, reply)       # hand steps and stated limits get items; false limits are corrected
+                else:
+                    ledger_ids = []
+                _stopped = bool(turn["cancel"].is_set() or stopped_since(proj, sess, turn["started"]))
+                _eff = turn_effects.text(applied, refused, lang, stopped=_stopped, review=review) if (review or _stopped or applied or refused) else ""
+                if _eff:
+                    reply += "\n\n" + _eff
                 rec = {"ts": now(), "role": "agent", "text": reply.strip(), "applied": applied}
+                if ledger_ids:
+                    rec["ledger"] = ledger_ids
                 if warned_map(applied):
                     rec["warned"] = warned_map(applied)
                 if refused:
@@ -3914,7 +3951,7 @@ class Handler(BaseHTTPRequestHandler):
                 started = False
                 try:
                     started = start_followup(proj, sess, tkey, text, rec, applied, refused, turn["cancel"].is_set(), fixables=fixables,
-                                             ctx={"round": 0, "last_user": text, "chat": m["chat"], "turn_start": turn["started"],
+                                             ctx={"round": 0, "last_user": text, "chat": m["chat"], "turn_start": turn["started"], "review": review,
                                                   "generated": generated, "grants": retry_grants(fixables, proj)})
                 except Exception as exc:       # never costs the reply
                     runlog.event("chat", phase="followup-end", ok=False, project=proj, error=f"{type(exc).__name__}: {exc}")
@@ -3931,6 +3968,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/chat/stop":
             with TURNS_LOCK:
                 turn = TURNS.get((proj, sess))
+                STOP_MARKS[(proj, sess)] = time.time()
             if not turn:
                 return self._send(409, {"error": "nothing is running"})
             turn["cancel"].set()
@@ -4169,6 +4207,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/pins/accept":
             if not data.get("line"):
                 return self._send(400, {"error": "line required"})
+            if "reason" in data and not re.search(r"[A-Za-z֐-׿]{3}", str(data.get("reason") or "")):
+                return self._send(400, {"error": "a reason is needed to accept a risk: say in a sentence why it is fine"})
             store.accept_pins(proj, data["line"])
             return self._send(200, state())
 

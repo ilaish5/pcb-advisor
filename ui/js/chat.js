@@ -875,7 +875,7 @@ async function chatReloadViews(m) {
 async function send(text, opts) {
   text = (text || '').trim();
   if (!text || pending) return;
-  const own = !(opts && 'ctx' in opts);
+  const own = !(opts && 'ctx' in opts);   // (opts.chip does not change the context)
   const ctx = own ? chatChip() : opts.ctx;
   if (own) chatSetChip(null);
   chatError = null;
@@ -903,6 +903,7 @@ async function send(text, opts) {
     else if (ctx) payload.about = entry.about;
     if (entry.generated) payload.generated = true;
     if (opts && opts.queued) payload.queued = true;
+    if (opts && opts.chip) payload.chip = true;
     const res = await api('/api/chat', payload, {soft: true});      // soft: the error is drawn under the box, not toasted
     if (!res || res.error) throw new Error((res && res.error) || 'no answer');
     setState(res);
@@ -1002,7 +1003,7 @@ onAct('rename', async (el, d, e) => {
   if (r && r.sessions) S.sessions = r.sessions;
   await refresh(true);
 });
-onAct('suggest', async (el, d, e) => { send(d.text); });
+onAct('suggest', async (el, d, e) => { send(d.text, {chip: true}); });     // a suggestion chip only asks: the server answers or proposes, it runs nothing
 onAct('retry', async (el, d, e) => {
   let err = chatCurrentError();
   if (!err || !err.text) {                                  // a partial record or a denial: the last student message again
