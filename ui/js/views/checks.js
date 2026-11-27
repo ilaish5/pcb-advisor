@@ -291,7 +291,7 @@ onAct('recheck-pins', async () => {
     await refresh(true);
   } finally { dfmRecheckBusy = false; if (typeof pinsBusy !== 'undefined') pinsBusy--; }
   render(true);
-  if (r && r.message) toast(r.message);
+  toast(r && r.message ? r.message : r ? 'Datasheets checked: nothing new was found.' : 'The datasheet check did not answer. Try again.');       // a control always answers
 });
 function dfmUpload(trigger) {
   if (dfmBusy || dfmLooking) return btn(dfmLooking ? 'Looking…' : 'Uploading…', {kind: trigger.kind, disabled: true});
@@ -499,7 +499,7 @@ function checksHTML(container) {
 
   dfmProjectGuard();
   if (!checks.length) {          // nothing to review yet: the view is the guide to getting a report
-    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
+    return `${viewHeader({title: 'DFM', actions: dfmRemakeAll(), primary: dfmUpload({kind: 'pri'})})}<div class="vb dfm-vb">${dfmSigninNote()}${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmPendingHTML()}${dfmGuideHTML(true)}</div>`;
   }
   dfmSync();
 
@@ -518,7 +518,7 @@ function checksHTML(container) {
   } else {
     body = dfmFindings(stem, kind) + dfmSlices(stem);
   }
-  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
+  return `${dfmHeader(checks.length)}<div class="vb dfm-vb">${dfmSigninNote()}${dfmUnverifiedHTML()}${typeof pinRisksHTML === 'function' ? pinRisksHTML() : ''}${dfmStaleHTML()}${dfmGapsHTML()}${dfmDesignHTML()}${dfmOrderHTML()}${dfmPendingHTML()}${dfmGuide ? dfmGuideHTML(false) : ''}<div class="dfm-bar">${seg(DFM_SEGS, kind, {act: 'dfm-seg', label: 'Report type'})}${picker}</div>${body}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
@@ -759,3 +759,8 @@ document.addEventListener('keydown', e => {
   const rows = [...tr.closest('tbody').querySelectorAll('tr.dfm-r')], next = rows[rows.indexOf(tr) + (e.key === 'ArrowDown' ? 1 : -1)];
   if (next) { e.preventDefault(); next.focus(); }
 });
+
+/* L03: JLC shows its DFM verdict only after a sign-in on its site, so the tool cannot fetch it. Said at the upload control, not in chat. */
+function dfmSigninNote() {
+  return `<div class="pv-note" data-limit-refusal="L03">${banner({tone: 'info', html: '<strong>JLC\'s own verdict needs your sign-in.</strong><br>The tool cannot fetch it. Upload the Gerbers on JLC\'s DFM page, sign in there, save the JLCDFM report as a PDF, then add that PDF here with Upload report.'})}</div>`;
+}

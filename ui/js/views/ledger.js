@@ -95,3 +95,18 @@ onAct('ledger-show', () => {
   const el = document.querySelector('[data-ledger]');
   if (el) { el.scrollIntoView({block: 'start', behavior: 'smooth'}); el.setAttribute('tabindex', '-1'); el.focus({preventScroll: true}); }
 });
+
+/* Every stage and page shows its Findings card, whatever its own renderer drew (so a limit is stated on the page where its control lives, not in chat only). */
+function ledgerAppendCard(container, page) {
+  if (!container || !page || typeof ledgerCardHTML !== 'function') return;
+  const old = container.querySelector('[data-ledger-auto]');
+  if (old) old.remove();
+  if (container.querySelector('[data-ledger="' + page + '"]')) return;       // the page drew its own
+  const html = ledgerCardHTML(page);
+  if (!html) return;
+  const w = document.createElement('div');
+  w.setAttribute('data-ledger-auto', page);
+  w.className = 'vb';
+  w.innerHTML = html;
+  container.appendChild(w);
+}

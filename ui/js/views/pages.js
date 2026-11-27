@@ -11,7 +11,7 @@ const PG_RESTORE = 'python scripts/sources.py restore';
 const PG_COURSE_LIB = 'course/ad20-essentials/m29-integrated-library.en.md';   // a general source: its name is its path under shared/reference
 
 let srcUnmatched = [];                       // uploaded documents no part claimed yet: asked about in Sources
-let srcFilter = 'all', srcBusy = '';        // Sources: which scope is shown, and what is being added right now
+let srcFilter = 'all', srcBusy = '', srcUrlRefusal = null;        // Sources: which scope is shown, and what is being added right now
 let libBusy = '', libNote = null;            // Library: what is running ('build' | 'prepare' | 'export'), and the last result {tone, text}
 let ALTIUM_ERR = null, altiumLoading = false, pgSkillsScrolled = false;
 const pgOpen = {};                          // details that stay open across a redraw: {key: true}
@@ -178,7 +178,7 @@ function sourcesHTML(container) {
   else if (!shown.length) body = `<p class="muted">${srcFilter === 'shared' ? 'No shared documents.' : 'This project has no documents of its own yet.'}</p>`;
   else body = `<div class="tbl-wrap"><table class="tbl dense rows src-tbl${cols.type || cols.used ? '' : ' slim'}"><thead><tr><th>Name</th>${cols.type ? '<th>Type</th>' : ''}<th class="num">Size</th>${cols.used ? '<th>Used for</th>' : ''}</tr></thead>
     <tbody>${shown.map(s => srcRow(s, srcFilter === 'all', cols)).join('')}</tbody></table></div>`;
-  return `${viewHeader({title: 'Sources', meta, actions, primary})}<div class="vb">${note}${srcAskHTML()}${srcBusy ? loadingLine(srcBusy) : ''}${body}</div>`;
+  return `${viewHeader({title: 'Sources', meta, actions, primary})}<div class="vb">${note}${srcRefusalHTML()}${srcAskHTML()}${srcBusy ? loadingLine(srcBusy) : ''}${body}</div>`;
 }
 // a document no part claimed: which part is it for? ICs first, the passives need no datasheet
 function srcAskHTML() {
@@ -545,9 +545,15 @@ onAct('addurl', async (el, d, e) => {
   renderCenter(true);
   try {
     const r = await api('/api/fetch_source', {url: u});
-    if (r.error) { srcBusy = ''; renderCenter(true); toast(r.error); return; }
+    if (r.error) { srcBusy = ''; srcUrlRefusal = {url: u, text: r.error, says: r.limit && r.limit.says, instead: r.limit && r.limit.instead, id: r.ledger_id}; ledgerLimitsKey = ''; await refresh(true); renderCenter(true); return; }
+    srcUrlRefusal = null;
     await srcAdded(r);
-  } catch (err) { srcBusy = ''; renderCenter(true); }
+  } catch (err) {       // the request itself failed: still a visible refusal on the control, never a silent return
+    srcBusy = '';
+    srcUrlRefusal = {url: u, text: 'could not fetch: ' + (err && err.message || 'no answer'), says: 'The server could not download the document.', instead: 'Save the PDF from your browser and add the file with Add file.'};
+    try { await api('/api/limits/hit', {id: 'L01', context: u.slice(0, 160)}); ledgerLimitsKey = ''; await refresh(true); } catch (e2) { /* the banner below still shows */ }
+    renderCenter(true);
+  }
 });
 onChange(t => t.id === 'filepick', async e => {
   const f = e.target.files[0]; if (!f) return;
@@ -619,3 +625,12 @@ onAct('rewritemem', async (el, d, e) => {
     if (label) label.textContent = was;
   }
 });
+
+/* L01: the address could not be fetched. The refusal stays on the Add from URL control until it is dismissed or a fetch works; the same text is a Findings item. */
+function srcRefusalHTML() {
+  const r = srcUrlRefusal;
+  if (!r) return '';
+  const html = `<strong>The document at this address could not be added.</strong><br>${esc(r.says || r.text)} ${esc(r.instead || '')}<br><span class="muted">${esc(r.url)}</span>`;
+  return `<div class="pv-note" data-limit-refusal="L01">${banner({tone: 'warn', html, actions: btn('Add file instead', {size: 'sm', kind: 'pri', act: 'upload'}) + btn('Dismiss', {size: 'sm', kind: 'link', act: 'src-refusal-dismiss'})})}</div>`;
+}
+onAct('src-refusal-dismiss', async () => { srcUrlRefusal = null; renderCenter(true); });

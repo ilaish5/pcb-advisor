@@ -4209,7 +4209,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "line required"})
             if "reason" in data and not re.search(r"[A-Za-z֐-׿]{3}", str(data.get("reason") or "")):
                 return self._send(400, {"error": "a reason is needed to accept a risk: say in a sentence why it is fine"})
-            store.accept_pins(proj, data["line"])
+            store.accept_pins(proj, data["line"], reason=str(data.get("reason") or "")[:300])
             return self._send(200, state())
 
         if path == "/api/library/accept":
@@ -4744,7 +4744,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 meta = sources.get(proj, url, data.get("name"))   # added from the UI: the project's own sources
             except Exception as exc:
-                return self._send(200, {"error": f"could not fetch: {exc}"})
+                import limits
+                it = limits.hit(proj, "L01", str(url)[:160])      # the refusal stays: a Findings item, not a toast that goes away
+                lim = limits.BY_ID["L01"]
+                return self._send(200, {"error": f"could not fetch: {exc}", "limit": {"id": "L01", "says": lim["says"], "instead": lim["instead"]},
+                                        "ledger_id": it["id"] if it else ""})
             return self._send(200, state())
 
         if path == "/api/delete_source":
@@ -4830,7 +4834,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(exc)})
             rules_file = model.project_dir(proj) / "rules.json"
             extra = _extra_rules_save(rules_file, [clean_rule])
-            return self._send(200, {"ok": True, "extra": extra})
+            limit_item = None
+            if clean_rule.get("kind") in {k["kind"] for k in rule_kinds.kinds_info() if not k.get("writable", True)}:
+                import limits
+                it = limits.hit(proj, "L02", f"{clean_rule.get('kind')} {clean_rule.get('name', '')}"[:160])    # saved to the .RUL, not to the board
+                limit_item = it["id"] if it else None
+            return self._send(200, {"ok": True, "extra": extra, "ledger_id": limit_item})
         if path == "/api/rules/extra/enabled":      # switch one extra rule on or off (off: kept in the list, not in the .RUL)
             rules_file = model.project_dir(proj) / "rules.json"
             extra = _extra_rules_load(rules_file)

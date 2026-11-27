@@ -6,7 +6,8 @@ those names alone a violation is classified:
     footprint  two pads of the SAME part (a fine-pitch footprint: nothing the router or the placement can change)
     router     a via or a track is one of the objects (the router drew it)
     placement  pads of two different parts
-    unknown    the line names no object this reads (never guessed)
+    placement  also: one pad with text, a region or a hole (objects are named, one is not a router object)
+    unknown    the line names no object at all (never guessed)
 
 classify() gives the violations per rule with these origins; table() joins them with the JLC map into the table the student
 and the agent read: {rule, n, by_origin, jlc, jlc_level, explained}. "explained" = every violation of the rule has an origin.
@@ -27,8 +28,13 @@ def origin(message):
     pads = _PAD.findall(text)
     if len(pads) >= 2:
         return "footprint" if len({r.upper() for r, _ in pads}) == 1 else "placement"
-    if len(pads) == 1:
-        return "unknown"
+    try:       # a line that names objects but not two pads (a pad and text or a region, a polygon, a hole): placement or the board's own copper
+        import violation_pairs
+        named = violation_pairs.objects(text)
+    except Exception:       # noqa: BLE001
+        named = ()
+    if named:
+        return "placement"
     return "unknown"
 
 

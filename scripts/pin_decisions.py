@@ -424,7 +424,7 @@ def risks(project):
         dec = state(project, l, lib.get(l["key"]))[0]
         if dec:
             out.append({"line": l["key"], "refs": l["refs"], "mpn": l.get("mpn") or "", "basis": dec.get("basis", ""),
-                        "ts": dec.get("ts", ""), "reason": dec.get("reason", ""), "evidence": dec.get("evidence", [])})
+                        "ts": dec.get("ts", ""), "reason": dec.get("reason") or f"accepted by the student without a datasheet pin table (basis: {dec.get('basis') or 'not stated'})", "evidence": dec.get("evidence", [])})
     return out
 
 
@@ -442,7 +442,12 @@ def write_manifest(project):
         lib = pin_model.verified_lines(project)
     except Exception:       # noqa: BLE001
         lib = []
-    if not (acc or unv or lib or path.exists()):
+    try:
+        import ledger
+        findings = ledger.accepted_for_manifest(project)       # findings accepted with a reason (Findings list)
+    except Exception:       # noqa: BLE001
+        findings = []
+    if not (acc or unv or lib or findings or path.exists()):
         return None
     try:
         import board_results             # stream A's record of the last Altium check; absent or empty, the manifest says null
@@ -451,12 +456,12 @@ def write_manifest(project):
         board = None
     try:
         old = json.loads(path.read_text(encoding="utf-8"))
-        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str)) and old.get("warning", "") == warn
+        same = old.get("accepted_risks") == acc and old.get("accepted_findings", []) == findings and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str)) and old.get("warning", "") == warn
     except (OSError, ValueError):
         same = False
     if not same:
         path.parent.mkdir(parents=True, exist_ok=True)
-        doc = {"warning": warn, "accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
+        doc = {"warning": warn, "accepted_risks": acc, "accepted_findings": findings, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
         store._write_text(path, json.dumps(doc, ensure_ascii=False, indent=2, default=str))
     return str(path)
 
@@ -484,6 +489,9 @@ def _post(handler, path, body):
     if path not in ("/api/pins/confirm", "/api/pins/revoke", "/api/pins/accept-all"):
         return None
     proj = handler.project()
+    if "reason" in body and path != "/api/pins/revoke" and not body.get("evidence") and not body.get("wrong") \
+            and not re.search(r"[A-Za-z֐-׿]{3}", str(body.get("reason") or "")):
+        raise ext.HTTPError(400, "a reason is needed to accept a risk: say in a sentence why it is fine")      # a blank reason is no reason (U5)
     try:
         if path == "/api/pins/accept-all":
             if not body.get("confirm"):

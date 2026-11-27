@@ -4087,10 +4087,10 @@ def manufacturing_block(project):
     return design or board
 
 
-def accept_pins(project, key):
+def accept_pins(project, key, reason=""):
     """The student accepts the agent's pins as is: a pin decision with no datasheet page (basis polarity / blind), idempotent."""
     import pin_decisions
-    pin_decisions.accept(project, key)
+    pin_decisions.accept(project, key, reason=reason)
 
 
 # ---------------------------------------------------------------- datasheet link

@@ -112,7 +112,12 @@ def _diffpair_width_attrs(width):
 
 def kinds_info():
     """What the form needs for each kind: label, hint, and the fields."""
-    return [{"kind": k, "label": s["label"], "hint": s["hint"],
+    try:
+        from altium import bridge
+        writable = set(bridge.RULE_PROPS)
+    except Exception:       # noqa: BLE001 - the form still works; it just cannot say which kinds Apply writes
+        writable = set(KINDS)
+    return [{"kind": k, "label": s["label"], "hint": s["hint"], "writable": k in writable,
              "fields": [{x: f[x] for x in ("key", "label", "type", "placeholder", "unit", "optional", "default", "choices") if x in f}
                         for f in s["fields"]]} for k, s in KINDS.items()]
 

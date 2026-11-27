@@ -187,6 +187,7 @@ function rulesExtraBody(rd) {
       ${kind.fields.map(f => rulesFieldHTML(f, dr)).join('')}
       ${btn('Add rule', {kind: 'line', act: 'add-extra-rule'})}
     </div>
+    ${kind.writable === false ? `<div class="pv-note" data-limit-refusal="L02">${banner({tone: 'warn', html: '<strong>Altium cannot take this kind from the tool.</strong><br>It goes into the downloaded .RUL file, but Apply rules in Altium does not write it to the board. Import the .RUL in Altium (Design, Rules, Import Rules) or add the rule there by hand.'})}</div>` : ''}
     <p class="muted rules-hint">${esc(kind.hint)} Lengths in mil or mm (a bare number is mil). Scope blank means All.</p>`;
 }
 

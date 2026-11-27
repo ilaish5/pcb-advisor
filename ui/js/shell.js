@@ -275,6 +275,7 @@ function renderItem(item, container, force) {
       hitSrc = null;
     }
   }
+  if (typeof ledgerAppendCard === 'function') ledgerAppendCard(container, item.kind === 'stage' ? item.stage : item.page);   // every page shows its Findings and what the tool does not do here
   if (changed) container.scrollTop = 0;
 }
 function renderMain(force) {
