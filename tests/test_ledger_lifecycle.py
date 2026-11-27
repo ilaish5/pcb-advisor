@@ -157,3 +157,13 @@ def test_pin_accept_with_a_blank_reason_is_refused(server, empty):
 
 def test_route_not_rejected_has_no_outcome(empty, tmp_path):
     assert route_outcome.build(empty, {"restored": False}, pcb=pathlib.Path(tmp_path / "x")) is None
+
+
+@pytest.mark.skipif(not __import__("shutil").which("node"), reason="node is not installed")
+@pytest.mark.parametrize("name", ["ledger.js", "previews.js", "chat.js", "outputs.js", "rules.js"])
+def test_ui_scripts_parse(name):
+    import shutil
+    import subprocess
+    p = pathlib.Path(__file__).resolve().parent.parent / "ui" / "js" / ("" if name == "chat.js" else "views") / name
+    r = subprocess.run([shutil.which("node"), "--check", str(p)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
