@@ -9,6 +9,7 @@ or writes Altium's own report files. It shares nothing with the product's bridge
 """
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import hashlib
 import os
@@ -128,9 +129,63 @@ def x2_script_state() -> list[str]:
     return titles
 
 
+LOCK_FILE = pathlib.Path(os.environ.get("PUBLIC") or r"C:\Users\Public") / "altium.lock"      # one Altium user at a time (agreed 27/11 between the sessions)
+LOCK_STALE_S = 30 * 60
+LOCK_SESSION = "acc-altium"
+_HELD = 0
+
+
+def _log_line(kind: str, text: str) -> None:
+    EXCHANGE.mkdir(parents=True, exist_ok=True)
+    with COMMAND_LOG.open("a", encoding="utf-8") as f:
+        f.write("\t".join([time.strftime("%Y-%m-%d %H:%M:%S"), kind, text]) + "\n")
+
+
+@contextlib.contextmanager
+def altium_lock(what: str):
+    """Hold the lock file (`<session> <start time> <what>`) while this process uses Altium; reentrant inside the process. Waits while another
+    holder's file exists. A file older than 30 minutes is NOT broken: ProbeError, to be reported to the parent session."""
+    global _HELD
+    if _HELD:
+        _HELD += 1
+        try:
+            yield
+        finally:
+            _HELD -= 1
+        return
+    t0 = time.time()
+    while True:
+        try:
+            with LOCK_FILE.open("x", encoding="utf-8") as f:
+                f.write(f"{LOCK_SESSION} {time.strftime('%Y-%m-%d %H:%M:%S')} {what}\n")
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - LOCK_FILE.stat().st_mtime
+                holder = LOCK_FILE.read_text(encoding="utf-8", errors="replace").strip()
+            except OSError:
+                continue                                    # released between the two calls
+            if age > LOCK_STALE_S:
+                raise ProbeError(f"the Altium lock is {age / 60:.0f} min old (not broken, report it to the parent session): {holder!r}")
+            time.sleep(10)
+    _HELD = 1
+    try:
+        _log_line("LOCK", f"taken for {what} after waiting {time.time() - t0:.0f} s")
+        yield
+    finally:
+        _HELD = 0
+        try:
+            LOCK_FILE.unlink()
+        except OSError:
+            pass
+        _log_line("LOCK", f"released for {what}")
+
+
 def _before_send(commands: list[tuple]) -> None:
     """Read-only guard and trace. Refuses to send while an Altium modal is open (the first thing to look at is who raised it, not another
     command on top of it), and writes one line per command so a dialog can be traced to its cause."""
+    if not _HELD:
+        raise ProbeError("this process holds no Altium lock (use altium_probe.altium_lock): one Altium user at a time")
     d = x2_dialogs() if x2_running() else []
     st = x2_script_state() if x2_running() else []
     EXCHANGE.mkdir(parents=True, exist_ok=True)

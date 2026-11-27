@@ -24,9 +24,17 @@ class NotObservable(RuntimeError):
     """The injected condition (or the live system) could not be established independently: the metric reports `error`, never `fail`."""
 
 
+NO_ALTIUM = frozenset({"w1", "w26", "w30"})      # observations that only talk to the agent / the page: they take no Altium lock (W30 takes it inside check_board)
+
+
 def cached(key: str, fn: Callable[[], Any]) -> Any:
     if key not in _CACHE:
-        _CACHE[key] = fn()
+        if key in NO_ALTIUM:
+            _CACHE[key] = fn()
+        else:
+            from . import altium_probe as _ap
+            with _ap.altium_lock(key):                       # one Altium user at a time (C:\Users\Public\altium.lock)
+                _CACHE[key] = fn()
     return _CACHE[key]
 
 
