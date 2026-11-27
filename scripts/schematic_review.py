@@ -30,7 +30,14 @@ CLASSES = {
 }
 _GND = re.compile(r"^(?:[ADP]?GND\w*|VSS\w*|GROUND|0V|PGND\w*|\+?0V0?)$", re.I)
 _RAIL = re.compile(r"^\+|VCC|VDD|VIN|VBAT|VBUS|\d+V\d*|^V\+", re.I)
-_SUPPLY = re.compile(r"^(?:[ADP]?V(?:DD|CC|BAT)[A-Z0-9_]*|VDD\w*)$", re.I)
+_SUPPLY_ONE = re.compile(r"^(?:[ADP]?V(?:DD|CC|BAT|REF\+?|BUS)[A-Z0-9_+]*|VDD\w*)$", re.I)
+_SCL = re.compile(r"(?<![A-Z0-9])SCL(?![A-Z])", re.I)       # SCL, I2C_SCL, SCL1, SCL/SPC; not SPI_SCLK
+_SDA = re.compile(r"(?<![A-Z0-9])SDA(?![A-Z])", re.I)
+
+
+def _is_supply_name(name):
+    """A supply pin name, also when the pin is shared: VDDA/VREF+ is a supply pin of the part."""
+    return any(_SUPPLY_ONE.match(x.strip()) for x in str(name or "").split("/"))
 _EP = re.compile(r"^(?:EP|EPAD|E-PAD|PAD|TAB|THERMAL\w*|EXP\w*|EXPOSED\w*|DAP)$", re.I)
 _NC = re.compile(r"^(?:NC|N/C|NO[_-]?CONNECT|\*|)$", re.I)
 _I2C_NET = re.compile(r"I2C|SCL|SDA", re.I)
@@ -93,25 +100,29 @@ def review(project, parts=None):
         p = by_ref[ref]
         return _pref(ref) not in ("C", "R", "L", "D", "F", "FB", "TP", "J", "P", "SW", "Y", "X") or str(p.get("kind") or "") == "ic"
 
+    # decoupling: every IC supply pin needs its own capacitor, so the supply pins of ALL the ICs on a rail are counted against the rail's capacitors
+    demand = {}                    # rail net -> {ic ref: [pin names]}
+    for ref, p in by_ref.items():
+        if is_ic(ref):
+            for n, nm, net in _pins(p):
+                if _is_supply_name(nm) and _is_rail(net):
+                    demand.setdefault(net, {}).setdefault(ref, []).append(nm)
+    for net, per_ic in sorted(demand.items()):
+        total, have = sum(len(v) for v in per_ic.values()), len(caps_to_gnd.get(net, []))
+        if have < total:
+            for ref, names in sorted(per_ic.items()):
+                add("decap_missing", ref, f"decoupling capacitor missing: {len(names)} supply pin(s) ({', '.join(names)}) on {net}; the {len(per_ic)} "
+                    f"part(s) on {net} have {total} supply pin(s) in all but only {have} capacitor(s) from {net} to ground; the datasheet asks for a "
+                    "bypass capacitor at each supply pin")
     for ref, p in by_ref.items():
         if not is_ic(ref):
             continue
         pins = _pins(p)
-        # decoupling: supply pins per rail against capacitors on that rail
-        per_rail = {}
-        for n, nm, net in pins:
-            if _SUPPLY.match(nm.strip()) and _is_rail(net):
-                per_rail.setdefault(net, []).append(nm)
-        for net, names in per_rail.items():
-            have = len(caps_to_gnd.get(net, []))
-            if have < len(names):
-                add("decap_missing", ref, f"decoupling capacitor missing: {len(names)} supply pin(s) ({', '.join(names)}) on {net} but only {have} "
-                    f"capacitor(s) from {net} to ground; the datasheet asks for a bypass capacitor at each supply pin")
         # I2C/I3C device on a shared SPI bus
         names = [nm.upper() for _, nm, _ in pins]
-        if any("SCL" in n for n in names) and any("SDA" in n for n in names) and any(n.split("/")[0] in ("CS", "NCS", "/CS") or n == "CS" for n in names):
+        if any(_SCL.search(n) for n in names) and any(_SDA.search(n) for n in names) and any(n.split("/")[0] in ("CS", "NCS", "/CS") or n == "CS" for n in names):
             for n, nm, net in pins:
-                if "SCL" in nm.upper() and net:
+                if _SCL.search(nm) and net:
                     others = [(r, pn) for r, _, pn in nets.get(net, []) if r != ref and re.search(r"SCK|SCLK|CLK|SPC", pn, re.I)]
                     if others:
                         add("i3c_shared_spi", ref, f"I2C/I3C-capable device on a shared SPI bus: its {nm} pin is on {net}, which is also the clock of "
@@ -139,14 +150,25 @@ def review(project, parts=None):
             for r in ics:
                 add("od_no_pullup", r, f"open-drain bus {net} has no pull-up resistor to a supply rail (nothing pulls it high)")
     # crystals: both nets want a load capacitor to ground
+    skipped = []
     for ref, p in by_ref.items():
-        if (str(p.get("kind") or "") == "xtal" or _pref(ref) in ("Y", "X")) and two_pin(ref):
-            lacking = [net for _, _, net in _pins(p) if net and not caps_to_gnd.get(net)]
+        if str(p.get("kind") or "") == "xtal" or _pref(ref) in ("Y", "X"):
+            pins = _pins(p)
+            if len(pins) not in (2, 4):
+                skipped.append(f"{ref} ({len(pins)}-pin crystal or oscillator)")
+                continue
+            # a 4-pin crystal has two signal pins and two case grounds: the load caps belong on the signal pins only
+            signal = [net for _, _, net in pins if net and not _is_gnd(net)]
+            if len(pins) == 4 and len(signal) != 2:
+                skipped.append(f"{ref} (4-pin part whose signal pins could not be told from its grounds)")
+                continue
+            lacking = [net for net in signal if not caps_to_gnd.get(net)]
             if lacking:
                 add("xtal_no_caps", ref, f"crystal without load capacitors: {', '.join(lacking)} has no capacitor to ground "
                     "(load caps CL are needed on both crystal pins)")
     scope = (f"Scope: the tool checked {len(by_ref)} part(s) of the netlist for {len(CLASSES)} rule classes: "
-             + "; ".join(CLASSES.values()) + ". Not checked: component values against their datasheets, any other electrical rule, the board.")
+             + "; ".join(CLASSES.values()) + ". Not checked: component values against their datasheets, any other electrical rule, the board"
+             + (f"; crystals it could not read: {', '.join(skipped)}" if skipped else "") + ".")
     if findings:
         text = (f"The tool's check of this sheet found {len(findings)} thing(s) to look at:\n" + "\n".join("- " + f["text"] for f in findings)
                 + "\n\n" + scope)
