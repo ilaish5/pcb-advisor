@@ -20,9 +20,9 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 def quiet_queue(monkeypatch):
     monkeypatch.setattr(background, "STOCK_GAP", 0)
     background._tried.clear()
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     yield
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
 
 
 def test_a_key_already_queued_or_running_is_not_added_again():
@@ -41,7 +41,7 @@ def test_a_key_already_queued_or_running_is_not_added_again():
     assert background.submit("k2", lambda: ran.append("two-dup")) is False  # queued
     assert background.is_active("k1") and background.is_active("k2")
     gate.set()
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     assert ran == ["slow", "two"]
     assert not background.is_active("k1")
 
@@ -50,7 +50,7 @@ def test_a_job_that_raises_does_not_kill_the_worker(capsys):
     ran = []
     background.submit("boom", lambda: 1 / 0)
     background.submit("after", lambda: ran.append("ok"))
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     assert ran == ["ok"]
     assert "ZeroDivisionError" in capsys.readouterr().err
 
@@ -68,7 +68,7 @@ def test_a_rerun_request_while_running_runs_once_more():
     assert background.submit("r", job, rerun=True) is False
     assert background.submit("r", job, rerun=True) is False       # asked twice: still one more run
     gate.set()
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     assert len(n) == 2
 
 
@@ -86,7 +86,7 @@ def test_citations_are_checked_and_stored_by_record_ts(empty):
                            '{{src:ds.md|"a made up sentence"}} and {{src:gone.pdf|p. 2}} and {{src:ds.md|p. 1, Pins}} '
                            'and {{src:JLC query "esda" 2026-10-20}}')
     assert background.verify_record_async(empty, "main", rec["ts"], rec["text"])
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     done = background.read_cites(empty, "main")[rec["ts"]]
     items = done["items"]
     assert done["state"] == "done" and len(items) == 4          # the JLC query is a script run, not a file
@@ -136,7 +136,7 @@ def test_the_state_carries_cites_checking_then_done(empty):
     m = model.build(project=empty, session="main")
     assert m["chat"][-1]["cites"] == {"state": "checking"}
     gate.set()
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     m = model.build(project=empty, session="main")
     c = m["chat"][-1]["cites"]
     assert c["state"] == "done" and c["items"]['ds.md|"alpha beta"']["status"] == "file_only"
@@ -157,7 +157,7 @@ def test_a_stock_check_is_queued_once_per_line_and_only_for_lines_without_an_ans
     assert lines
     key = lines[0]
     assert background.stock_line_async(lte, key) is True
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     assert calls == [{key}]
     # a line asked for recently without an answer is not asked again by the sweep
     assert key not in background.lines_missing_stock(lte)
@@ -192,7 +192,7 @@ def test_recheck_async_goes_through_the_queue(lte, monkeypatch):
     key = next(l["key"] for l in store.bom_lines(lte) if background._line_wants_stock(l))
     serve.recheck_async(lte, key)
     serve.recheck_async(lte, key)
-    assert background.wait_idle(5)
+    assert background.wait_idle(30)
     assert 1 <= len(calls) <= 2          # the second ask may rerun once; never two at the same time
 
 

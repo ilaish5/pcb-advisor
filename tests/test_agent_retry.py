@@ -177,7 +177,7 @@ def test_at_most_two_retry_rounds(server, empty, monkeypatch):
     fake_draw(monkeypatch, fail=None)
     agent = scripted_respond(monkeypatch, [{"reply": "Drawing.", "actions": [DRAW]}])
     assert call(server, "POST", "/api/chat", empty, {"text": SAID})[0] == 200
-    assert wait_for(lambda: len(followups(empty)) == 2, 8) and idle(server, empty)
+    assert wait_for(lambda: len(followups(empty)) == 2, 30) and idle(server, empty)
     time.sleep(0.3)
     assert len(agent) == 3 and [r["retry"] for r in followups(empty)] == [1, 2]
 

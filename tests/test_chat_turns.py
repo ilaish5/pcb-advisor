@@ -41,7 +41,7 @@ def call(base, method, path, project, body=None):
         return e.code, json.loads(e.read())
 
 
-def wait_for(cond, secs=5):
+def wait_for(cond, secs=30):          # returns the moment the condition holds: a long limit costs nothing when it passes, and a slow CI runner must not fail it
     end = time.time() + secs
     while time.time() < end:
         if cond():

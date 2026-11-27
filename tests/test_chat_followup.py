@@ -44,7 +44,7 @@ def chat_records(project):
     return session_mod.load_chat(project, session_mod.current(project, None))
 
 
-def idle(server, project, secs=5):
+def idle(server, project, secs=30):
     return wait_for(lambda: call(server, "GET", "/api/chat/progress", project)[1]["running"] is False, secs)
 
 

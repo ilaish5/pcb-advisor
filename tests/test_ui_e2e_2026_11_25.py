@@ -154,7 +154,7 @@ def test_the_match_reaches_the_browser_state_through_the_real_search_shape(serve
     monkeypatch.setattr(serve, "recheck_async", lambda project, key: None)
     pid = _new_card(empty, "RC0603FR-0710KL")
     serve.recheck_missing(empty)                    # the one sweep every proposal source ends in
-    assert background.wait_idle(10)
+    assert background.wait_idle(30)
     _, state = call(server, "GET", "/api/state", empty)
     assert next(p for p in state["proposals"] if p["id"] == pid)["lcsc_match"] == "C25804"
 
