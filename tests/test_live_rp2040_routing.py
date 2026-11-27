@@ -29,7 +29,7 @@ def test_the_rails_route_at_their_width_when_alone():
     """Not a width problem: on the placed board, without the signals, every rail is drawn at the 0.3 mm rail default."""
     doc, box, rules = placed.load("live_rp2040_placed")
     for net in RAILS:
-        res = route.plan_routes(doc, box, rules, pitch=0.1, seconds=120, only={net})
+        res = route.plan_routes(doc, box, rules, pitch=0.1, seconds=route.SEGMENT_S, max_seconds=route.SECONDS_MAX, only={net})
         assert res["failed"] == [] and res["widths"][net]["width_mm"] == pytest.approx(0.3), (net, res["failed"])
         assert route.violations(doc, res["items"], rules, box) == []
 
@@ -39,7 +39,7 @@ def test_the_rails_route_at_their_width_when_alone():
 def test_the_rp2040_board_routes_every_net_with_no_violation():
     doc, box, rules = placed.load("live_rp2040_placed")
     t0 = time.process_time()
-    res = route.plan_routes(doc, box, rules, pitch=0.1, seconds=120, pour_net=route.pour_net_for(doc))
+    res = route.plan_routes(doc, box, rules, pitch=0.1, seconds=route.SEGMENT_S, max_seconds=route.SECONDS_MAX, pour_net=route.pour_net_for(doc))
     print(f"\nRP2040: {len(res['routed'])}/27, plans {res['stats']['attempts']}, cpu {time.process_time() - t0:.1f}s, failed {res['failed']}")
     assert route.violations(doc, res["items"], rules, box) == []       # what is drawn is always clean
     assert res["failed"] == [], res["failed"]

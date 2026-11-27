@@ -394,6 +394,7 @@ function pvPollStart(resumed) {       // while a step runs: ask the server how f
     if (r.running) {
       const sig = JSON.stringify((r.steps || []).map(x => x.state)) + (r.stopping ? 'stopping' : '');
       pvRun = r;
+      pvShowDetail();
       if (r.started && !pvStartedAt) pvStartedAt = r.started * 1000;
       if (r.stopping) pvStopping = true;
       if (sig !== pvRunSig) { pvRunSig = sig; renderCenter(true); }          // only when a step changed: the picture is not redrawn for nothing
@@ -418,9 +419,14 @@ function pvStepBtn(step, o) {       // o.disabled / o.title: the page can hold t
 function pvStepText(st, i, all) {       // the words of one step of the live list
   return st.state === 'running' && i === all.length - 1 ? PV_STEPS[pvBusy].busy : st.label + (st.state === 'done' && st.note ? ': ' + st.note : '');
 }
+/* What the slow operation inside the step says it is doing (routing: "Routing: 31 of 45 nets routed, attempt 2 of 4", then "Still routing, segment 2: ...";
+   Altium: its last log line). Kept in .pv-detail spans that the poll rewrites in place: the page is not redrawn for it. */
+const pvDetail = () => (pvRun && pvRun.running && pvRun.progress && pvRun.progress.text) || '';
+const pvDetailHTML = () => `<span class="pv-detail muted">${esc(pvDetail())}</span>`;
+function pvShowDetail() { const t = pvDetail(); document.querySelectorAll('.pv-detail').forEach(el => { if (el.textContent !== t) el.textContent = t; }); }
 function pvStepLine(st, i, all) {       // one line of the live list: done, running (spinner) or waiting; the step itself keeps its long hint
   const text = esc(pvStepText(st, i, all));
-  if (st.state === 'running') return `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${text} ${pvElapsedHTML()}</div>`;
+  if (st.state === 'running') return `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${text} ${pvElapsedHTML()} ${pvDetailHTML()}</div>`;
   return `<div class="loading"><span aria-hidden="true">${st.state === 'done' ? '✓' : '&middot;'}</span>${text}${st.state === 'waiting' ? ' (waiting)' : st.state === 'stopped' ? ' (stopped)' : ''}</div>`;
 }
 function pvStopBtn() {       // the run stops before its next step; the last step is one Altium operation that cannot be cut
@@ -470,7 +476,7 @@ function pvLaterOk(n) {        // the same step succeeded after this note was ma
 function pvStepNote(page, busyOnly, slim) {       // under the header: Altium is working, or what the last step answered
   pvResume();
   const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
-  const busy = pvBusy && PV_STEPS[pvBusy].page === page && slim ? pvRunSlim() : pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${esc(PV_STEPS[pvBusy].busy)} ${pvElapsedHTML()}</div>`}<div class="acts">${pvStopBtn()}</div></div>` : '';
+  const busy = pvBusy && PV_STEPS[pvBusy].page === page && slim ? pvRunSlim() : pvBusy && PV_STEPS[pvBusy].page === page ? `<div class="pv-note">${list || `<div class="loading" role="status"><span class="spin" aria-hidden="true"></span>${esc(PV_STEPS[pvBusy].busy)} ${pvElapsedHTML()} ${pvDetailHTML()}</div>`}<div class="acts">${pvStopBtn()}</div></div>` : '';
   if (pvNote[page] && pvNote[page].kind !== 'ok' && (pvLaterOk(pvNote[page]) || pvCauseGone(pvNote[page]))) delete pvNote[page];
   const n = pvNote[page] || pvSeedNote(page);
   if (busy || !n || busyOnly) return busy;
@@ -501,7 +507,7 @@ function pvRunSlim() {
     title: multi ? `${plural(waiting, 'step')} waiting${done ? ', ' + done + ' done' : ''}. Show every step of this run.` : 'Show the whole line.'});
   const body = pvRunOpen ? `<div class="pv-steps">${multi ? st.map(pvStepLine).join('') : `<div class="loading">${esc(full)}</div>`}</div>` : '';
   return `<div class="pv-note pv-run"><div class="pv-run-line"><div class="loading" role="status" title="${esc(full)}"><span class="spin" aria-hidden="true"></span>` +
-    `<span class="pv-run-txt">${esc(pvFirstSentence(full))}</span> ${pvElapsedHTML()}</div>${toggle}<div class="acts">${pvStopBtn()}</div></div>${body}</div>`;
+    `<span class="pv-run-txt">${esc(pvFirstSentence(full))}</span> ${pvElapsedHTML()} ${pvDetailHTML()}</div>${toggle}<div class="acts">${pvStopBtn()}</div></div>${body}</div>`;
 }
 /* The floating bar at the top of a canvas: the status of the step and its answer on the left, the layer switches on the right. It sits
    over the drawing, so the drawing keeps the whole height; its right edge keeps clear of the inspector drawer (previews.css). */

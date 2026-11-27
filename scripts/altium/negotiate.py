@@ -417,7 +417,7 @@ class Negotiator:
                 if self.spent + pops > self.cap:
                     self.status = "budget"
                     break
-                if time.time() > self.deadline:
+                if R.late(self.deadline):
                     self.status = "time"
                     break
                 if pops > limit:
@@ -647,7 +647,9 @@ class Negotiator:
                 stall = 0
             else:
                 stall += 1
-            if not bad or stall > STALL or self.spent > self.cap or time.time() > self.deadline:
+            if isinstance(self.deadline, R.Clock):
+                self.deadline.note(self.done0 + len(live) - len(bad), phase=f"negotiated routing, round {rounds + 1}", fine=-score[1], work=self.spent)
+            if not bad or stall > STALL or self.spent > self.cap or R.late(self.deadline):
                 break
             rounds += 1
             for _n, cells in bad:
@@ -657,7 +659,7 @@ class Negotiator:
                     else:
                         self.hist[l][i] += HIST_STEP
             for net, _c in bad:
-                if self.spent > self.cap or time.time() > self.deadline:
+                if self.spent > self.cap or R.late(self.deadline):
                     break
                 if not self.clashes(net, wides[net.name]):
                     continue
@@ -934,13 +936,13 @@ class Negotiator:
         return left
 
 
-def plan(doc, box, rules=None, pitch=0.1, seconds=600.0, only=None, pour_net=None, planes=None, layers=2, log=None, expansions=None):
+def plan(doc, box, rules=None, pitch=0.1, seconds=600.0, only=None, pour_net=None, planes=None, layers=2, log=None, expansions=None, clock=None):
     """Route a placed board; the arguments and the result are those of route.plan_routes. layers=4: Mid-Layer 2 is a third routing
     layer (the plane on it is poured around the tracks); Mid-Layer 1 is never used."""
     from altium import netcurrent, pair as _pair
     t0 = time.time()
     rules = rules or R.rules_from_doc(doc)
-    deadline = t0 + seconds
+    deadline = clock or R.Clock(seconds, t0=t0)
     rt = R.Router(doc, box, rules, pitch, R.SAMPLING_TIGHT)
     rt.cap = R.DEFAULT_EXPANSIONS
     nets = sorted(n for n, ps in rt.pads.items() if len(ps) >= 2 and (only is None or n in only))
@@ -948,7 +950,7 @@ def plan(doc, box, rules=None, pitch=0.1, seconds=600.0, only=None, pour_net=Non
     pour = pour_net if pour_net in nets and not planes else None
     nl = 3 if layers == 4 else 2
 
-    pair_state = _pair.pre_route(rt, rules, nets, min(deadline, t0 + 30), doc)
+    pair_state = _pair.pre_route(rt, rules, nets, t0 + min(30.0, seconds), doc)
     _pair.fallback_ties(rt, rules, pair_state)
     fixed_items = [it for n in sorted(rt.routed) for it in rt.routed[n]["items"]] + [it for n in sorted(rt.tie) for it in rt.tie[n]["items"]]
     done = set(pair_state["done"])
@@ -981,6 +983,8 @@ def plan(doc, box, rules=None, pitch=0.1, seconds=600.0, only=None, pour_net=Non
     ng = Negotiator(doc, box, rules, pitch, nl, {v for opts in options.values() for pair_ in opts for v in pair_ if v}, deadline,
                     fixed_items)
     ng.cap = expansions or EXPANSIONS
+    ng.done0 = len(done)
+    deadline.note(len(done), total=len(nets))
     ng.mult = [LAYER_MULT[l] for l in range(nl)]
     if pour:
         ng.mult[R.BOT] = POUR_BOT_MULT

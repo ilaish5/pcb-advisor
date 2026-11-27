@@ -61,14 +61,14 @@ def test_a_current_out_of_range_gets_no_invented_width():
         assert w["+5V"]["width_mm"] is None and "outside IPC-2221 range" in w["+5V"]["note"]
     assert _widths(["+5V"], currents={"+5V": 1.0}, rise=5)["+5V"]["width_mm"] is None       # a rise outside 10-100 C
     # and the router does not invent one: the rail default is drawn, the note stays
-    res = route.plan_routes(_two_net_board("+5V"), [0, 0, 20, 12], dict(rules(), net_current={"+5V": 50.0}), seconds=30)
+    res = route.plan_routes(_two_net_board("+5V"), [0, 0, 20, 12], dict(rules(), net_current={"+5V": 50.0}), seconds=30, max_seconds=600)
     assert res["widths"]["+5V"]["width_mm"] == 0.3 and "outside IPC-2221 range" in res["widths"]["+5V"]["note"]
     assert res["widths"]["+5V"]["wanted_mm"] is None
 
 
 def test_plan_routes_returns_the_widths_and_draws_them():
     res = route.plan_routes(_two_net_board("+5V"), [0, 0, 20, 12], dict(rules(), net_current={"+5V": 1.0}, copper_oz=1.0, temp_rise_c=10.0),
-                            seconds=30)
+                            seconds=30, max_seconds=600)
     assert not res["failed"]
     w = res["widths"]
     assert w["+5V"]["source"] == "set" and w["+5V"]["current_a"] == 1.0 and w["+5V"]["width_mm"] == w["+5V"]["wanted_mm"] > 0.25
@@ -203,7 +203,7 @@ def test_a_hebrew_net_is_found_by_the_router_under_its_drawn_name(empty):
     (drawn,) = inp["currents"]
     assert drawn != net and all(ord(c) < 128 for c in drawn) and inp["names"] == {drawn: net}
     r = dict(rules(), net_current=inp["currents"], net_estimate=inp["estimates"])
-    res = route.plan_routes(_two_net_board(drawn), [0, 0, 20, 12], r, seconds=30)
+    res = route.plan_routes(_two_net_board(drawn), [0, 0, 20, 12], r, seconds=30, max_seconds=600)
     assert not res["failed"] and res["widths"][drawn]["source"] == "set" and res["widths"][drawn]["width_mm"] > 0.6
     row = next(x for x in bridge.net_current_rows(empty)["nets"] if x["net"] == net)         # the table speaks the netlist's name
     assert row["current_a"] == 2.0 and row["width_mm"] > 0.6
@@ -237,7 +237,7 @@ def test_a_current_net_drawn_narrower_than_it_needs_is_a_problem_not_a_note():
               "SIG": {"width_mm": 0.127, "wanted_mm": 0.127, "current_a": None, "source": "rule", "note": ""}}
     probs = netcurrent.width_problems(widths, {"+5V": "+5V_מנוע"})
     assert len(probs) == 1 and "+5V_מנוע" in probs[0] and "1 A" in probs[0] and "0.3 mm" in probs[0] and "0.127 mm" in probs[0]
-    res = route.plan_routes(_two_net_board("+5V"), [0, 0, 20, 12], dict(rules(), net_current={"+5V": 1.0}), seconds=30)
+    res = route.plan_routes(_two_net_board("+5V"), [0, 0, 20, 12], dict(rules(), net_current={"+5V": 1.0}), seconds=30, max_seconds=600)
     assert res["width_problems"] == []                                         # room enough: nothing to report
 
 
@@ -253,7 +253,7 @@ def _lqfp_board(extra=()):
 
 def test_a_rail_into_a_fine_pitch_pad_is_necked_down_not_refused():
     doc, box = _lqfp_board(), [0, 0, 40, 24]
-    res = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}), seconds=60, only={"+3V3"})
+    res = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}), seconds=60, max_seconds=600, only={"+3V3"})
     w = res["widths"]["+3V3"]
     assert not res["failed"] and not res["width_problems"]
     assert w["width_mm"] == w["wanted_mm"] > 1.3                              # the rest of the net is as wide as 3 A needs
@@ -275,13 +275,13 @@ def _walled_board():
 
 def test_no_room_for_a_current_net_leaves_it_open_routes_the_rest_and_says_how_to_go_on():
     doc, box = _walled_board()
-    res = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}), seconds=60)
+    res = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}), seconds=60, max_seconds=600)
     assert res["routed"] == ["SIG"] and [n for n, _ in res["failed"]] == ["+3V3"]
     why = dict(res["failed"])["+3V3"]
     assert "3 A needs" in why and "move parts" in why and "pour" in why and "lower its current" in why
     assert res["widths"]["+3V3"]["width_mm"] is None and res["width_problems"] == []
     # a partial route the student agreed to may draw it narrow, and then says so as a problem
-    part = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}, allow_narrow=True), seconds=60)
+    part = route.plan_routes(doc, box, dict(rules(), net_current={"+3V3": 3.0}, allow_narrow=True), seconds=60, max_seconds=600)
     assert not part["failed"] and part["widths"]["+3V3"]["width_mm"] < part["widths"]["+3V3"]["wanted_mm"]
     assert len(part["width_problems"]) == 1 and part["width_problems"][0].startswith("too narrow: +3V3 carries 3 A")
     from altium import bridge

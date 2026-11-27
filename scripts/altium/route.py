@@ -22,6 +22,7 @@ import heapq
 import itertools
 import math
 import re
+import threading
 import time
 
 try:
@@ -567,7 +568,7 @@ class Router:
                 checked = True
                 if not self._connected(net, sources, goals, base, wide, vblock, tht, relaxed, goal_bot, goal_layer):
                     return None
-            if deadline and pops % 2000 == 0 and time.time() > deadline:
+            if deadline and pops % 2000 == 0 and late(deadline):
                 self.status = "time"
                 return None
             l, i = divmod(k, n)
@@ -1228,8 +1229,151 @@ def _width_report(nets, plan_w, routed):
     return out
 
 
+STALL_WORK = 1_500_000      # expansions: a segment without progress is a stall only when the search also did this much work in it (see Clock)
+
+
+class Clock:
+    """The routing deadline: a segment of `seconds` that is renewed while the work is still making progress, up to `ceiling` seconds
+    in all. A valid routing never fails on a wall-clock cap: at the end of a segment it continues when a net was closed (or a rip-up
+    left fewer nets open) since the segment began, with everything already routed kept (the searches carry on from their state);
+    it stops only when a whole segment brought nothing (a stall) or the ceiling is reached, and then says which of the two it was.
+    A stall is a count of WORK, not only of seconds (an engine that reports its expansions with note(work=): a slow machine does less
+    in a segment, and must not end with a worse board than a fast one): without progress, the routing goes on into another segment
+    until STALL_WORK expansions were spent since the last progress. The ceiling stays the one hard wall clock end.
+    The engines report what they have routed with note() and the clock passes that on, at least every 2 s, to `progress` (a callable
+    that takes one dict, see snapshot()), the first time at once. expired() is the question the searches ask; it is cheap."""
+
+    def __init__(self, seconds, ceiling=None, progress=None, t0=None, total=0):
+        self.t0 = t0 or time.time()
+        self.seg_s = float(seconds)
+        self.end = self.t0 + self.seg_s
+        self.ceiling_s = max(float(ceiling or 0.0), self.seg_s)
+        self.ceiling = self.t0 + self.ceiling_s
+        self.segment = 1
+        self.done, self.total = 0, total
+        self.best = self.mark = None     # (nets routed, fewer clashes): the best seen, and the best when this segment began
+        self.phase = ""
+        self.stop = ""                  # "" while running; "stall" or "ceiling" once it has ended for that reason
+        self.work = self.work_mark = self._w_last = 0       # expansions spent in all, and when the progress mark was taken
+        self.work_known = False
+        self.cb = progress
+        self._sent = 0.0
+        self._emit(True)
+
+    def note(self, done, total=None, phase=None, fine=0, work=None):
+        """The engine's count of nets routed now (and, when it knows, of nets in all and what it is doing). `fine`: a finer measure
+        of progress when no net closed (minus the number of overlaps left, for the negotiated engine: rip-ups that drop them count)."""
+        self.done = done
+        key = (done, fine)
+        if self.best is None or key > self.best:
+            self.best = key
+        if work is not None:               # a router's own counter: another router (the next attempt) starts again from 0
+            self.work += work - self._w_last if work >= self._w_last else work
+            self._w_last, self.work_known = work, True
+        if self.mark is None:
+            self.mark = key
+        if total is not None:
+            self.total = total
+        if phase is not None:
+            self.phase = phase
+        self._emit()
+
+    def _renew(self, now):
+        """Another segment from where the routing stands, if the last one brought progress and the longest time is not reached."""
+        if now < self.ceiling and self.best is not None and self.best > self.mark:
+            self.mark, self.work_mark = self.best, self.work
+            self.segment += 1
+            self.end = min(now + self.seg_s, self.ceiling)
+            self._emit(True)
+            return True
+        return False
+
+    def expired(self):
+        now = time.time()
+        if self.stop:
+            return True
+        if now <= self.end:
+            self._emit(now=now)
+            return False
+        if self._renew(now):                                      # still making progress: carries on, from where it stands
+            return False
+        if now < self.ceiling and self.work_known and self.work - self.work_mark < STALL_WORK:
+            self.end = min(now + self.seg_s, self.ceiling)        # no progress, but too little was tried for that to say anything: a slow machine
+            self.segment += 1
+            self._emit(True)
+            return False
+        self.stop = "ceiling" if now >= self.ceiling else "stall"
+        self._emit(True)
+        return True
+
+    def more(self, need):
+        """True when a piece of work that takes about `need` seconds still fits; the segment is renewed first, early, when it does not
+        fit and there was progress. False latches nothing: the caller ends its own loop and returns what it has."""
+        if self.stop:
+            return False
+        now = time.time()
+        if now + need > self.end:
+            self._renew(now)
+        return time.time() + need <= self.end
+
+    def detail(self):
+        """Why the routing stopped, in words (only when the time was extendable: the plain cap keeps its old, short words)."""
+        if self.stop == "stall":
+            return (f"no net was closed in the last {self.seg_s:g} s of the {self.segment} "
+                    f"segment{'s' if self.segment > 1 else ''}, so the search stopped")
+        return (f"the longest routing time, {self.ceiling_s:g} s, was reached while the search was still making progress; "
+                "run the route again to continue, or move parts to give it room")
+
+    def reason(self):
+        """What a net that ran out of time is told (the words 'ran out of time' stay: a test reads them)."""
+        if not self.extendable() or not self.stop:
+            return "not routed (ran out of time)"
+        return f"not routed (ran out of time: {self.detail()})"
+
+    def explain(self, text):
+        """A reason that says the search ran out of time, with which end it was (the search's own words keep the pads they name)."""
+        if self.stop and self.extendable() and "ran out of time" in text and self.detail() not in text:
+            return f"{text} ({self.detail()})"
+        return text
+
+    def extendable(self):
+        return self.ceiling_s > self.seg_s + 1e-9
+
+    def text(self):
+        left = max(0, self.total - self.done)
+        if self.stop:
+            return (f"Routing stopped after {self.segment} segment{'s' if self.segment > 1 else ''} ({'no progress in the last one' if self.stop == 'stall' else 'longest time reached'}): "
+                    f"{self.done} of {self.total} nets routed, {left} left open")
+        if self.segment > 1:
+            return f"Still routing, segment {self.segment}: {left} net{'s' if left != 1 else ''} left of {self.total}" + (f" ({self.phase})" if self.phase else "")
+        return f"Routing: {self.done} of {self.total} nets routed" + (f", {self.phase}" if self.phase else "")
+
+    def snapshot(self, now=None):
+        now = now or time.time()
+        return {"elapsed": round(now - self.t0, 1), "done": self.done, "total": self.total, "open": max(0, self.total - self.done),
+                "phase": self.phase, "segment": self.segment, "segment_s": self.seg_s, "ceiling_s": self.ceiling_s,
+                "stopped": self.stop, "text": self.text()}
+
+    def _emit(self, force=False, now=None):
+        if not self.cb:
+            return
+        now = now or time.time()
+        if force or now - self._sent >= HEARTBEAT_S:
+            self._sent = now
+            try:
+                self.cb(self.snapshot(now))
+            except Exception:                                       # noqa: BLE001 - what shows the progress never stops the routing
+                pass
+
+
+def late(deadline):
+    """True once the deadline has passed: a plain time (seconds since the epoch) or a Clock (which may renew itself, see above)."""
+    return deadline.expired() if isinstance(deadline, Clock) else time.time() > deadline
+
+
 def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None,
-                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False, ground_early=False, second_pass=False, planes=None):
+                      first=(), t0=None, info=None, sampling=SAMPLING, spans_last=False, ground_early=False, second_pass=False, planes=None,
+                      clock=None):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1].
     Returns {"items", "routed", "failed": [(net, reason)], "stats"}. Nets with one pad are not routed. Order: rails (wide) first, then
     signals shortest first, ground last. A net that is blocked rips up the nets in its way and everything is retried (`rounds`: 8 or twice the nets that failed first, whichever is more).
@@ -1245,11 +1389,13 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     The result's "planes" lists them."""
     rules = rules or rules_from_doc(doc)
     t0 = t0 or time.time()
-    deadline = t0 + seconds
+    deadline = clock or Clock(seconds, t0=t0)
     rt = Router(doc, box, rules, pitch, sampling)
     rt.cap = max_expansions or max(DEFAULT_EXPANSIONS, EXPANSIONS_PER_CELL * rt.n)
     nets = sorted(n for n, ps in rt.pads.items() if len(ps) >= 2 and (only is None or n in only))
     rt.planes = {n for n in (planes or {}) if n in nets}
+    deadline.note(0, total=len(nets))
+    base_phase = deadline.phase + ", " if deadline.phase else ""
     plane_mask = bytearray(b"\x01") * rt.n                  # a plane is under the whole board: a via may land wherever the rules let one stand
     pour = pour_net if pour_net in nets and not rt.planes else None
     pour_state = {"net": pour, "mode": None, "note": "", "links": {}}
@@ -1348,6 +1494,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
         if r:
             failed.append(n)
             why[n] = r
+        deadline.note(len(rt.routed), work=rt.spent)
         if stopped():
             break
     ripped = {}
@@ -1387,6 +1534,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
 
     def keep_best():
         k = len(set(failed))
+        deadline.note(len(rt.routed), work=rt.spent)
         if best[0] is None or k < best[0][0]:
             best[0] = (k, dict(rt.routed), list(failed), dict(why), dict(pour_state["links"]), pour_state["mode"], pour_state.get("tree"))
     keep_best()
@@ -1394,8 +1542,9 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     def run_rounds(gentle):
         for rnd in range(rounds if rounds is not None else max(ROUNDS, ROUNDS_PER_FAILED * len(failed))):
             cand = [m for m in failed if m not in hard and not (gentle and m == pour)]
-            if not cand or stopped() or time.time() > deadline:
+            if not cand or stopped() or late(deadline):
                 break
+            deadline.phase = f"{base_phase}rip-up round {rnd + 1}"
             n = cand[0]
             failed.remove(n)
             paths, esc_stubs, reason = rt.route_net(n, rules["width"], relaxed=True, deadline=deadline,
@@ -1608,7 +1757,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
     for n in nets:                      # never leave a net unaccounted for: not routed means failed, with a reason
         if n not in rt.routed and n not in failed:
             failed.append(n)
-            why[n] = ("not routed (ran out of time)" if time.time() > deadline else
+            why[n] = (deadline.reason() if late(deadline) else
                       "not routed (ran out of search budget)" if rt.status == "budget" else "not routed")
     failed = list(dict.fromkeys(n for n in failed if n not in rt.routed))
     for n in partial:                   # drawn in part: it is not a routed net, its failure says which pad is left
@@ -1625,7 +1774,7 @@ def _plan_routes_once(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None,
             "pour": {"net": pour, "mode": pour_state["mode"] if pour in rt.routed else None, "note": pour_state["note"]} if pour else None,
             "stats": {"nets": len(nets), "tracks": sum(1 for i in items if i["kind"] == "track"), "vias": sum(1 for i in items if i["kind"] == "via"),
                       "seconds": round(time.time() - t0, 1), "ripped": sum(ripped.values()), "repaired": repaired, "pitch": pitch,
-                      "expansions": rt.spent}}
+                      "expansions": rt.spent, "segments": deadline.segment, "stopped": deadline.stop}}
 
 
 # The plans tried, in order, until every net is routed: (sampling, the nets left open by the earlier plans are laid first, a rail that
@@ -1635,17 +1784,29 @@ STRATEGIES = ((SAMPLING, False, False, False), (SAMPLING_TIGHT, False, True, Tru
               (SAMPLING_TIGHT, True, False, False))
 
 DENSE_PADS = 200          # a board with this many pads goes to the negotiated engine straight away (the greedy plans cannot finish it)
-SECONDS_PER_PAD = 3.0     # the time budget route_on gives grows with the board ...
-SECONDS_MIN, SECONDS_MAX = 120.0, 1200.0      # ... between these
+SEGMENT_S = 120.0         # one segment of routing time; a segment that ends while nets are still closing is followed by another (see Clock) ...
+SECONDS_MAX = 1200.0      # ... up to this long in all
 
 
-def time_budget(doc):
-    """Seconds the routing of this board may take (a safety cap: the searches have their own deterministic budgets)."""
-    return min(SECONDS_MAX, max(SECONDS_MIN, SECONDS_PER_PAD * len(doc.get("pads", []))))
+HEARTBEAT_S = 2.0         # seconds between two reports of the routing's state (the UI wants one at least every 10)
+
+
+def _heartbeat(clock):
+    """While the routing runs, the progress callback is called at least every 2 s from a thread, even in a stretch where no search
+    asks the clock (the exact check, a pair); returns the function that ends it."""
+    if not clock.cb:
+        return lambda: None
+    stop = threading.Event()
+
+    def beat():
+        while not stop.wait(HEARTBEAT_S):
+            clock._emit(True)
+    threading.Thread(target=beat, name="route-progress", daemon=True).start()
+    return stop.set
 
 
 def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, rounds=None, pour_net=None, max_expansions=None, planes=None,
-                layers=2):
+                layers=2, max_seconds=None, progress=None):
     """Route every net of a placed board (read_pcbdoc dict) inside `box` [x0, y0, x1, y1]; the arguments and the result are those of
     _plan_routes_once. A net left open that is not blocked by fixed copper alone is a search that went wrong, not a board that cannot be
     routed (the search is greedy: one net's track can close a fine pitch pad's only way out): the whole plan is then made again, by the
@@ -1655,44 +1816,66 @@ def plan_routes(doc, box, rules=None, pitch=0.1, seconds=120.0, only=None, round
 
     A dense board (DENSE_PADS pads or more) is routed by the negotiated engine (negotiate.plan) instead, and so is a smaller one the
     greedy plans leave nets open on: that result replaces theirs only when it leaves fewer nets open. layers=4: the negotiated engine
-    may also draw tracks on Mid-Layer 2; the greedy plans use top and bottom only."""
+    may also draw tracks on Mid-Layer 2; the greedy plans use top and bottom only.
+
+    Time: `seconds` is one SEGMENT. With `max_seconds` (the longest routing time; none: `seconds` is the cap, as before) a segment
+    that ends while nets are still closing is renewed, from where the routing stands, and the routing stops only when a whole
+    segment brought no progress or `max_seconds` is reached; the nets left open then say which (stats "segments", "stopped").
+    progress: called with a dict (see Clock.snapshot) at once and at least every 2 s: nets routed of all, the phase, the segment."""
     t0 = time.time()
     rules = rules or rules_from_doc(doc)
+    clock = Clock(seconds, max_seconds, progress, t0=t0)
+    end_beat = _heartbeat(clock)
+    try:
+        return _plan_routes(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, planes, layers, t0, clock)
+    finally:
+        end_beat()
+
+
+def _plan_routes(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, planes, layers, t0, clock):
 
     def negotiated(left):
         from . import negotiate
-        return negotiate.plan(doc, box, rules, pitch=pitch, seconds=left, only=only, pour_net=pour_net, planes=planes, layers=layers,
-                              expansions=max_expansions)
+        clock.phase = "negotiated routing"
+        return _with_clock_stats(negotiate.plan(doc, box, rules, pitch=pitch, seconds=left, only=only, pour_net=pour_net, planes=planes,
+                                                layers=layers, expansions=max_expansions, clock=clock), clock)
     if len(doc.get("pads", [])) >= DENSE_PADS:
         return negotiated(seconds)
     best, info, first, tried, took = None, {}, [], 0, 0.0
     for sampling, promote, spans_last, ground_early in STRATEGIES:
         if best is not None:
             open_ = [n for n, _ in best["failed"]]
-            if not open_ or time.time() - t0 + took > seconds or not [n for n in open_ if n not in info.get("hard", ())]:
+            if not open_ or not clock.more(took) or not [n for n in open_ if n not in info.get("hard", ())]:
                 break                                  # done, out of time, or only fixed copper is in the way: another plan cannot help
             if promote:
                 first = open_ + [n for n in first if n not in open_]
         info = {}
         t1 = time.time()
+        clock.phase = f"attempt {tried + 1} of {len(STRATEGIES)}"
         res = _plan_routes_once(doc, box, rules, pitch, seconds, only, rounds, pour_net, max_expansions, first=first, t0=t0, info=info,
-                                sampling=sampling, spans_last=spans_last, ground_early=ground_early, second_pass=tried > 0, planes=planes)
+                                sampling=sampling, spans_last=spans_last, ground_early=ground_early, second_pass=tried > 0, planes=planes,
+                                clock=clock)
         tried += 1
         took = time.time() - t1
         if best is None or len(res["failed"]) < len(best["failed"]):
             best = res
     best["stats"]["attempts"] = tried
     open_ = [n for n, _ in best["failed"] if n not in info.get("hard", ())]
-    left = seconds - (time.time() - t0)
     if max_expansions and any("budget" in why for _n, why in best["failed"]):
         open_ = []          # the caller's budget of cells is used up: another engine on top would not be inside it
-    if open_ and left > 5:
-        res = negotiated(left)
+    if open_ and clock.more(5):
+        res = negotiated(max(5.0, clock.end - time.time()))
         if len(res["failed"]) < len(best["failed"]):
             res["stats"]["attempts"] = tried + 1
             res["stats"]["seconds"] = round(time.time() - t0, 1)
             return res
-    return best
+    return _with_clock_stats(best, clock)
+
+
+def _with_clock_stats(res, clock):
+    res["stats"]["segments"], res["stats"]["stopped"] = clock.segment, clock.stop
+    res["failed"] = [(n, clock.explain(why)) for n, why in res["failed"]]
+    return res
 
 
 POUR_KEEPOUT_MARGIN_MM = 0.2      # the pour stays this far from a keep-out (the polygon clearance rule adds its own)
@@ -1819,7 +2002,6 @@ def _violations(shapes, items, rules, box, nets=None):
     (the answer is the same as filtering the full list, found faster)."""
     out = []
     clear, edge = rules["clearance"], rules["edge"]
-    via_r = rules["via_dia"] / 2
     tracks = [i for i in items if i["kind"] == "track"]
     vias = [i for i in items if i["kind"] == "via"]
     lay = {1: TOP, 32: BOT, 3: 2}                                # 2: Mid-Layer 2 (a 4 layer board)

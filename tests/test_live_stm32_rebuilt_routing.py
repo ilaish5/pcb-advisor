@@ -8,13 +8,13 @@ import time
 import live_stm32_placed as placed
 from altium import route
 
-CPU_BUDGET_S = 90.0       # measured about 30-40 s; headroom for a slower machine. The seconds given are large so that a slow machine still tries every plan (the result is the same for the same board)
+CPU_BUDGET_S = 600.0      # a hang guard, not a speed test (measured about 30-40 s): the routing is segmented like the server's, and the result is asserted
 
 
 def _plan(pour):
     doc, box, rules = placed.load("live_stm32_rebuilt")
     t0 = time.process_time()
-    res = route.plan_routes(doc, box, rules, pitch=0.1, seconds=600, pour_net=pour)
+    res = route.plan_routes(doc, box, rules, pitch=0.1, seconds=route.SEGMENT_S, max_seconds=route.SECONDS_MAX, pour_net=pour)
     return doc, box, rules, res, time.process_time() - t0
 
 

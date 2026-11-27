@@ -51,7 +51,7 @@ def _board(jitter=None):
 def _route(doc, clearance, amps=None, pour=POUR_NET):
     rules = _rules(doc, clearance, amps)
     t0 = time.process_time()
-    res = route.plan_routes(doc, fx.OUTLINE, rules, seconds=300, pour_net=pour)
+    res = route.plan_routes(doc, fx.OUTLINE, rules, seconds=route.SEGMENT_S, max_seconds=route.SECONDS_MAX, pour_net=pour)
     return res, rules, time.process_time() - t0
 
 

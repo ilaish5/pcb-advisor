@@ -48,6 +48,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -180,6 +181,33 @@ def _running():
         return False
 
 
+def _x2_pids():
+    """The process ids of the running X2.EXE (a set); None when the process list cannot be read."""
+    try:
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq X2.EXE", "/FO", "CSV", "/NH"], capture_output=True,
+                             text=True, timeout=15).stdout
+    except Exception:        # noqa: BLE001 - an unreadable process list is "not known", never an error of its own
+        return None
+    return {int(m) for m in re.findall(r'"X2\.EXE","(\d+)"', out, re.I)}
+
+
+SECOND_X2_GRACE = 6.0      # seconds a RunScript launcher gets to hand its request to the Altium that runs and exit
+
+
+def _extra_x2(before, allowed, grace=None):
+    """The X2.EXE processes that are not in `before` and stay alive after a RunScript launch, beyond the `allowed` ones (a cold start
+    starts the one Altium; a launch into a running Altium starts none that stay: the launcher hands the request over and exits within
+    a second or two). [] when nothing is left over once the grace is over. A second Altium has its own script executor and its own
+    documents: whatever it answers is not an answer of the Altium the project is open in."""
+    t0, extra = time.time(), []
+    while True:
+        now = _x2_pids()
+        extra = sorted(now - before) if now is not None else []
+        if len(extra) <= allowed or time.time() - t0 >= (SECOND_X2_GRACE if grace is None else grace):
+            return extra if len(extra) > allowed else []
+        time.sleep(0.5)
+
+
 def _ok_only(parts):
     """True for a box whose only button is OK (the script error box: "[TMessageForm] Error: OK"). Any other box (Yes/No/Cancel,
     "Save changes?") is a question for the owner: Enter would pick its default button, so nothing is ever pressed on it."""
@@ -275,6 +303,8 @@ BLOCKED = ("**Altium cannot run scripts right now** - a script is paused or bloc
            "save your work and restart Altium.")
 NOT_STARTED = ("**Altium cannot run scripts right now** - Altium did not start the script. Open Altium, sign in if it asks you to, close any "
                "message box that is open, and then try again.")
+SECOND_ALTIUM = ("**A second Altium was started** - the script was launched and a new Altium process stayed alive next to the one that "
+                 "was running")
 _SCRIPT_TITLE = re.compile(r"AdvisorBridge|\.PrjScr|\.pas\b", re.I)
 _PAUSED_WORDS = re.compile(r"paus|debug|breakpoint|stopped at", re.I)
 PREFLIGHT_NOTES = []    # one line per paused run released before a command; the server shows them (take_preflight_notes)
@@ -385,7 +415,14 @@ def _editscript(command):
 # One request, one token. The token is the first line of request.txt (TOKEN<TAB>x). The script names its flags with it (start-x.flag,
 # end-x.flag) and CONSUMES request.txt when it starts: so the flag of an earlier run (the paused one a RunMacro resumed) is never taken
 # for ours, and a RunScript that Altium starts late finds no request and does nothing. A request runs at most once.
-_RUN = {"token": "", "cold": False, "evidence": False}
+_RUN = {"token": "", "cold": False, "evidence": False, "reached": False}
+
+
+def request_reached():
+    """True when the last request this process sent was CONSUMED by the script (it started: the start flag was seen), whatever became of
+    the flags since: a run we gave up on has its start flag removed, and that is not "nothing reached Altium". A caller that must clean
+    up after a failed batch asks this, never whether the start flag exists."""
+    return bool(_RUN["reached"])
 
 
 def flag_path(kind, token=None):
@@ -440,6 +477,39 @@ def run_in_progress(max_age=1800):
         return False
 
 
+_PROGRESS = threading.local()
+
+
+class progress_to:
+    """`with progress_to(fn):` the slow operations inside tell fn what they are doing: fn({"text": ..., "elapsed": ..., ...}). The server
+    passes the function that puts it on the running step's line (one request thread, one step). Never raises into the work."""
+
+    def __init__(self, fn):
+        self.fn = fn
+
+    def __enter__(self):
+        self.prev = getattr(_PROGRESS, "fn", None)
+        _PROGRESS.fn = self.fn
+        return self
+
+    def __exit__(self, *exc):
+        _PROGRESS.fn = self.prev
+
+
+def progress_fn():
+    """The function the current thread reports to (None outside a step), for work that reports from another thread."""
+    return getattr(_PROGRESS, "fn", None)
+
+
+def report_progress(info):
+    fn = progress_fn()
+    if fn:
+        try:
+            fn(info)
+        except Exception:        # noqa: BLE001 - showing progress never stops the work
+            pass
+
+
 class macro_budget:
     """At most TWO RunMacro for everything inside the block: one _run_commands call, or one ERC step with its cleanup call. Blocks
     nest; the outermost one counts."""
@@ -458,6 +528,32 @@ class macro_budget:
 
 RESUME_WAIT = 6        # seconds a resumed run gets to reach its end flag
 ALIVE_WAIT = 2.5       # seconds after pressing OK in which a log line or an end flag shows that nothing was paused
+
+
+SETTLE_QUIET = 10      # seconds without a log line after which a run that went on after an OK is taken for stalled
+SETTLE_MAX = 600       # the longest wait for such a run
+
+
+def settle_failed_run():
+    """After a batch that reached Altium failed: a script that an OK let go on may still be working on files the caller is about to
+    delete or to rely on. Waits while its log moves, up to its end flag (True); one that has gone quiet is not waited for, and one that
+    was moving and stops moving is stopped (Stop). False when the run did not end by itself. Only stats the log: never opens it."""
+    if not request_reached():
+        return True
+    t0 = time.time()
+    while not flag_path("end").exists():
+        st = _stat(EXCHANGE / "log.txt")
+        quiet = time.time() - st[1] / 1e9 if st else SETTLE_QUIET + 1
+        if quiet > SETTLE_QUIET or time.time() - t0 > SETTLE_MAX:
+            if time.time() - t0 < 1:                       # quiet at the start: the release already stopped it
+                return False
+            _editscript("Stop")
+            time.sleep(2)
+            _close_dialogs()
+            runlog.event("altium-release", step="settle-stop", quiet_s=round(quiet, 1))
+            return False
+        time.sleep(0.5)
+    return True
 
 
 def release_executor(pause_context=False, final=True):
@@ -583,6 +679,54 @@ def _cmd_args(commands):
     return out
 
 
+PROGRESS_EVERY = 2.0          # seconds between two progress reports of a running script (the step's line shows them)
+LONG_RUN_FACTOR = 4          # see _run_commands: a script that keeps logging may take this many times total_timeout
+
+
+def _command_paths(commands):
+    return [pathlib.Path(str(f)) for c in commands for f in c[1:] if re.match(r"^[A-Za-z]:[\\/]", str(f))]
+
+
+def _restart_safe(commands):
+    """May a stuck Altium be closed? Only when what it holds is not the student's own work: every file the stuck batch names is a copy
+    (in a temp or scratch folder, or in the advisor's backup copies) and nothing it was asked to open is a project of the owner.
+    Altium cannot be asked what is unsaved while it is stuck, so an unknown is a no."""
+    paths = _command_paths(commands)
+    roots = [pathlib.Path(tempfile.gettempdir()).resolve()]
+    roots += [p for p in (altium_base() / "acc-scratch",) if p.exists()]
+    if not paths:
+        return False
+    for p in paths:
+        try:
+            r = p.resolve()
+        except OSError:
+            return False
+        if not any(r == root or root in r.parents for root in roots):
+            return False
+    return True
+
+
+def _restart_stuck(commands, stall_timeout, t_log):
+    """The last resort, after the proven release (OK on the box, RunMacro) did not bring the run back: the start flag is older than the
+    stall limit and the log did not move in that time, so Altium is closed (X2.EXE) when `_restart_safe` says nothing of the student's
+    is open; the next step starts it again. Logged in the run log. Returns the one line the student reads, '' when nothing was done."""
+    try:
+        if sys.platform != "win32":
+            return ""
+        start = flag_path("start")
+        if not start.exists() or time.time() - start.stat().st_mtime <= stall_timeout or time.time() - t_log <= stall_timeout:
+            return ""
+        if not _restart_safe(commands):
+            runlog.event("altium-restart", done=False, why="documents that may hold unsaved work are open", commands=[str(c[0]) for c in commands])
+            return ""
+        before = _x2_pids() or set()
+        subprocess.run(["taskkill", "/F", "/IM", "X2.EXE"], capture_output=True, timeout=30)
+        runlog.event("altium-restart", done=True, pids=sorted(before), commands=[str(c[0]) for c in commands])
+        return "Altium had stopped responding, so I closed it (only copies were open); the next step opens it again."
+    except Exception:      # noqa: BLE001 - the last resort never turns the error it comes from into another one
+        return ""
+
+
 def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300):
     """_run_commands, with one run-log record per batch: the commands with their fields, seconds, ok or the full error (it carries the dialog
     texts), the script's last log lines, and the project it ran for (when the server set one)."""
@@ -621,7 +765,7 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
         for name in ("response.txt", "log.txt"):
             (EXCHANGE / name).unlink(missing_ok=True)
         tok = uuid.uuid4().hex[:12]
-        _RUN.update(token=tok, cold=False, evidence=False)
+        _RUN.update(token=tok, cold=False, evidence=False, reached=False)
         body = "TOKEN\t" + tok + "\r\n" + "\r\n".join("\t".join(_ascii(f) for f in c) for c in commands) + "\r\n"
         (EXCHANGE / "request.txt").write_bytes(body.encode("ascii"))     # bytes: text mode would double the CR on Windows
         cold = not _running()          # Altium has to start first: that takes a while
@@ -630,6 +774,7 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
         try:
             if not cold:
                 released = preflight(strict=True)     # a run left paused by an earlier error would swallow this one
+            before = _x2_pids() or set()
             for attempt in (1, 2):
                 if attempt == 1 or not flag_path("start").exists():     # a start that came late needs no second RunScript
                     subprocess.Popen(f'"{exe}" -RScriptingSystem:RunScript(ProjectName="{script}"|ProcName="AdvisorBridge>Run")')
@@ -638,8 +783,14 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                 while time.time() - t0 < start_timeout * (8 if cold else 1):
                     if flag_path("start").exists():
                         started = True
+                        _RUN["reached"] = True
                         break
                     time.sleep(0.5)
+                extra = _extra_x2(before, 1 if cold else 0)
+                if extra:       # a launch that leaves a new Altium alive is a failure, whatever that Altium went on to answer
+                    flag_path("start").unlink(missing_ok=True)
+                    raise BridgeError(SECOND_ALTIUM + f" (X2.EXE process {', '.join(map(str, extra))}). I did not trust anything it answered; "
+                                      "close the extra Altium window and run the step again.")
                 if started:
                     if released:
                         _note_release(released)         # the run that was paused is gone: this script started
@@ -647,6 +798,8 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                 # a paused executor ignores new scripts: release it and try once more. Only an OK-only error box on a running Altium
                 # (not a cold start: there it is a sign-in or licence box) counts as a pause.
                 shown = release_executor(pause_context=not cold, final=(attempt == 2))
+                if flag_path("start").exists():
+                    _RUN["reached"] = True                 # it came late, after the wait: the request was consumed all the same
                 if attempt == 2 and not flag_path("start").exists():
                     if _RUN["evidence"]:
                         raise BridgeError(BLOCKED + " Altium did not start the script (a script error or a dialog box was blocking it"
@@ -659,25 +812,35 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                 (EXCHANGE / "request.txt").unlink(missing_ok=True)       # nothing consumed it: nobody may run it now
             raise
         t_log, last, t0 = time.time(), _stat(EXCHANGE / "log.txt"), time.time()
-        t_look = t_log
+        t_look, t_rep = t_log, 0.0
+        hard = total_timeout * LONG_RUN_FACTOR      # the cap of a script that is still logging: only a runaway reaches it (see below)
         while not flag_path("end").exists():
             now = _stat(EXCHANGE / "log.txt")
             if now != last:
                 last, t_log = now, time.time()
+            if progress_fn() and time.time() - t_rep >= PROGRESS_EVERY:       # the step's line says what Altium is on, and for how long
+                t_rep = time.time()
+                lines = _read(EXCHANGE / "log.txt")
+                report_progress({"text": "Altium is working" + (f": {lines[-1][:80]}" if lines else ""), "elapsed": round(t_rep - t0, 1),
+                                "quiet_s": round(t_rep - t_log, 1)})
             boxed = False
             if time.time() - t_log > MODAL_AFTER and time.time() - t_look > MODAL_AFTER / 3:
                 # a script that stops logging while an Altium error box is open will not go on: do not wait out the stall timeout
                 t_look = time.time()
                 boxed = any(d.startswith("[TMessageForm]") for d in _close_dialogs(only_look=True))
-            if boxed or time.time() - t_log > stall_timeout or time.time() - t0 > total_timeout:
+            # A script that goes on logging is alive and is never cut off for taking long (a wall clock cap on a valid operation is a
+            # failure that is no one's fault): it is cut off when it stops logging (stall_timeout) or an error box is open. total_timeout
+            # is what the operation is expected to take; only LONG_RUN_FACTOR times it, still going, is taken for a runaway.
+            if boxed or time.time() - t_log > stall_timeout or time.time() - t0 > hard:
                 shown = release_executor(pause_context=True)
                 if flag_path("end").exists():
                     break                                   # resumed with RunMacro and ran to its end: read its answer as usual
                 log = _read(EXCHANGE / "log.txt")           # the script is stopped now: safe to read
+                restarted = _restart_stuck(commands, stall_timeout, t_log)
                 flag_path("start").unlink(missing_ok=True)  # a run we gave up on is not "in progress" any more
                 raise BridgeError("Altium stopped in the middle of the script, after: "
                                   f"{log[-1] if log else 'nothing'}. I released the script executor."
-                                  + (f" Dialogs: {' | '.join(shown)}" if shown else ""))
+                                  + (f" Dialogs: {' | '.join(shown)}" if shown else "") + (" " + restarted if restarted else ""))
             time.sleep(0.5)
         resp, log = _read(EXCHANGE / "response.txt"), _read(EXCHANGE / "log.txt")
         errs = [r for r in resp if r.startswith("ERR")]
@@ -2319,6 +2482,7 @@ def route_on(prj, pcb, replace=False, seconds=None, keep_partial=False, pitch=0.
                 "pour": None, "pour_warning": "", "pour_warnings": [],
                 "summary": "not routed, nothing was drawn: " + "; ".join(refused)}
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="advisor-drc-"))
+    report_progress({"text": "Checking the board in Altium before routing"})
     drc_before_full = run_drc(prj, pcb, tmp / "before.txt")
     drc_before = _drc_counts(drc_before_full)
     planes = route.plane_nets_for(doc) if layers == 4 else {}        # 4 layers: ground and the main supply are planes on the inner layers
@@ -2329,8 +2493,11 @@ def route_on(prj, pcb, replace=False, seconds=None, keep_partial=False, pitch=0.
     # The ground is planned as poured (each pad dropped to the pour by a short stub and a via) only when the pour is certain to be drawn
     # as planned: a board shape that has to be rewritten first could fail, and then the ground would have no copper; that board is
     # planned with the ground routed by tracks (the pour is still drawn on top).
-    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds or route.time_budget(doc), pour_net=None if shape else pour_net,
-                             planes=planes, layers=layers)
+    report_progress({"text": "Routing the board", "elapsed": 0})
+    # seconds is one SEGMENT of 120 s; the routing goes on in further segments while nets are still closing, up to route.SECONDS_MAX, and
+    # stops sooner only when a whole segment brought nothing (the nets left open then say so). A caller that names `seconds` names the cap.
+    plan = route.plan_routes(doc, box, rules, pitch=pitch, seconds=seconds or route.SEGMENT_S, max_seconds=None if seconds else route.SECONDS_MAX,
+                             progress=progress_fn(), pour_net=None if shape else pour_net, planes=planes, layers=layers)
     pour_dep = bool(plan.get("pour") and plan["pour"].get("mode") == "drops")       # some ground pad is joined by the pour alone
     names = names or {}                  # {drawn name: netlist name}: the PcbDoc carries the drawn names, the student knows the netlist's
     shown = {names.get(n, n): w for n, w in plan["widths"].items()}
@@ -2376,6 +2543,7 @@ def route_on(prj, pcb, replace=False, seconds=None, keep_partial=False, pitch=0.
                 res["shape_fixed"] = [round(v, 3) for v in box]
         if layers == 4 and ensure_stack(prj, pcb, 4):
             res["stack_added"] = True
+        report_progress({"text": f"Drawing {plan['stats']['tracks']} tracks and {plan['stats']['vias']} vias in Altium"})
         run_commands([("PROJECT", str(prj))] + route.route_commands(pcb, plan["items"], replace, pour_net=pour_net, box=box,
                                                                      edge=rules["edge"], keepouts=_footprint_keepouts(doc) + py_keepouts,
                                                                      planes=planes), total_timeout=1500)
@@ -2959,9 +3127,10 @@ def _erc_check(prj, keep_report):
         run_commands(cmds, total_timeout=300)
         released = True
     except BridgeError:
-        if not flag_path("start").exists():
+        if not request_reached():
             shutil.rmtree(work, ignore_errors=True)      # nothing reached Altium (it never started the script): the project cannot point at it
             raise
+        settle_failed_run()   # a run an OK let go on may still be using the OutJob: it ends (or is stopped) before anything is taken out
         try:                  # the OutJob may have joined the open project, and the script stopped before taking it out and before the marks
             run_commands([("PROJECT", str(prj)), ("LIBRELEASE", str(prj), str(oj)), *unmark])
             shutil.rmtree(work, ignore_errors=True)

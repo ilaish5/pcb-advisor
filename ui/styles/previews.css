@@ -46,6 +46,9 @@
 .pv-run-line>.loading{flex:0 1 auto;min-width:0;padding:0;gap:8px}
 .pv-run-txt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pv-run-line .pv-elapsed{flex:none;font-variant-numeric:tabular-nums}
+.pv-detail:empty{display:none}
+.pv-detail:not(:empty)::before{content:'\00b7\00a0'}
+.pv-detail{font-variant-numeric:tabular-nums}
 .pv-run-line>.btn{flex:none}
 .pv-run-line>.acts{flex:none;margin-left:auto;flex-wrap:nowrap}
 .pv-run-line .pv-nostop{font-size:12px;white-space:nowrap}

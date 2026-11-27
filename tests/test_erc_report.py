@@ -200,7 +200,8 @@ class FakeAltium:
         n = len(self.batches)
         self.batches.append([tuple(map(str, c)) for c in cmds])
         bridge._RUN["token"] = f"t{n}"
-        if self.reach[min(n, len(self.reach) - 1)]:
+        bridge._RUN["reached"] = bool(self.reach[min(n, len(self.reach) - 1)])
+        if bridge._RUN["reached"]:
             bridge.flag_path("start").write_text("x")
         if n >= 1 and self.cleanup_fails:
             raise bridge.BridgeError("Altium would not run the cleanup")
@@ -317,6 +318,7 @@ def test_when_the_script_never_started_nothing_reached_altium_and_nothing_is_lef
 
     def refuse(cmds, *a, **kw):
         fake.batches.append(list(cmds))
+        bridge._RUN["reached"] = False                       # what _run_commands does first: a new request, not yet consumed
         raise bridge.BridgeError("**A message box is open in Altium**")
     monkeypatch.setattr(bridge, "run_commands", refuse)
     with pytest.raises(bridge.BridgeError, match="message box is open"):

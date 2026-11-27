@@ -1604,10 +1604,21 @@ def _run_mark(project, key, state, note=""):
                 st["state"], st["note"] = state, note
 
 
+def _run_progress(project, info):
+    """What the slow operation inside the running step says it is doing (routing: nets routed of all, the phase, the segment; Altium: its
+    last log line), kept on the run for step-status, so the page's line for the step can show it. Only while the run is running."""
+    with RUNS_LOCK:
+        run = STEP_RUNS.get(project)
+        if run and run.get("running"):
+            run["progress"] = {"text": str(info.get("text", ""))[:200], "at": time.time(),
+                                **{k: info[k] for k in ("elapsed", "done", "total", "open", "segment", "phase", "stopped", "quiet_s") if k in info}}
+
+
 def _run_end(project, **final):
     with RUNS_LOCK:
         run = STEP_RUNS.get(project)
         if run:
+            run.pop("progress", None)
             for st in run["steps"]:
                 if st["state"] in ("waiting", "running"):
                     st["state"] = "stopped" if final.get("stopped") else "skipped" if final.get("error") else "done"
@@ -1769,7 +1780,7 @@ def run_step_button(project, sess, step, data):
     runlog.usage(project, "step", op=step, phase="begin", ok=True)
     try:
         try:
-            with runlog.for_project(project):
+            with runlog.for_project(project), bridge.progress_to(lambda info: _run_progress(project, info)):
                 code, body = _run_step(project, sess, step, data, bridge)
                 notes = bridge.take_preflight_notes(project)
                 if notes and isinstance(body, dict):      # a paused script was stopped first: said under the result, amber
