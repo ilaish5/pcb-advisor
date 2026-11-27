@@ -2798,13 +2798,10 @@ begin
         Exit;
     end;
     Log('stack step: top and bottom found');
-    { check everything BEFORE the first change: the stack holds at most 32 signal layers, so two more must fit; nothing is inserted
-      unless both inner layers can be }
-    if (LS.SignalLayerCount + 2 > 32) then
-    begin
-        Say('ERR the stack has no room for two more signal layers; nothing was changed');
-        Exit;
-    end;
+    { Everything that CAN be checked before the first change has been: the layer stack, top and bottom, exactly 2 signal layers. The
+      second inner layer can be fetched only once the first is in (FirstAvailableSignalLayer then names another layer); with 2 of at
+      most 32 signal layers a free one always exists, so a nil there is not expected. If it happens the run stops with ERR and the
+      message says the first one is already in the open board (the caller saves nothing after an ERR). }
     M1 := LS.FirstAvailableSignalLayer;
     if (M1 = nil) then
     begin

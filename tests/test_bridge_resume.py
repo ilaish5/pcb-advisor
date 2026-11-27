@@ -30,8 +30,8 @@ class Altium:
         monkeypatch.setattr(bridge.subprocess, "Popen", self.popen)
         real_sleep = time.sleep
         monkeypatch.setattr(bridge.time, "sleep", lambda s: real_sleep(min(s, 0.1)))
-        monkeypatch.setattr(bridge, "RESUME_WAIT", 0.8)
-        monkeypatch.setattr(bridge, "ALIVE_WAIT", 0.5)
+        monkeypatch.setattr(bridge, "RESUME_WAIT", 1.2)
+        monkeypatch.setattr(bridge, "ALIVE_WAIT", 0.8)
         monkeypatch.setattr(bridge, "DIALOG_LOG", [])
         monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
         monkeypatch.setattr(bridge.macro_budget, "depth", 0)
@@ -225,9 +225,37 @@ def test_the_script_consumes_the_request_and_names_its_flags_with_the_token():
     assert pas.index("FileExists(Dir + 'request.txt')") < pas.index("Req.LoadFromFile(Dir + 'request.txt')")
 
 
-def test_the_layer_stack_checks_come_before_the_first_change():
+def test_the_layer_stack_second_layer_failure_says_the_first_is_already_in():
+    """The second inner layer exists only after the first is inserted, so that check cannot come first: the message says so."""
     import pathlib
     pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8", errors="replace")
     body = pas[pas.index("procedure PcbStack"):pas.index("procedure DispatchStep")]
-    assert body.index("no room for two more signal layers") < body.index("InsertInStackBelow(Top, M1)")
+    assert body.index("ERR the stack has no free signal layer for the first inner layer") < body.index("InsertInStackBelow(Top, M1)")
     assert "close it WITHOUT saving" in body
+
+
+def test_after_a_failed_cold_start_the_cleanup_preflight_has_no_evidence_of_a_pause(world, monkeypatch):
+    """A sign-in box on a cold start: the start failed, Altium is running by then, and the cleanup must not RunMacro on it."""
+    a = world(cold=True, stuck=True)
+    a.box = True
+    seen = {"n": 0}
+
+    def running():
+        seen["n"] += 1
+        return seen["n"] > 1                  # not running at the start (cold), running by the time the failure is cleaned up
+    monkeypatch.setattr(bridge, "_running", running)
+    with pytest.raises(bridge.BridgeError):
+        bridge.run_commands([("PING",)], start_timeout=0.1)
+    assert a.sent("RunMacro") == 0
+
+
+def test_only_the_newest_start_flag_counts_for_a_run_in_progress(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
+    old, new = tmp_path / "start-old.flag", tmp_path / "start-new.flag"
+    old.write_text("x")
+    os.utime(old, (time.time() - 60, time.time() - 60))
+    assert bridge.run_in_progress() is True                 # the only run, no end
+    new.write_text("x")
+    (tmp_path / "end-new.flag").write_text("x")
+    assert bridge.run_in_progress() is False, "an older run that never ended is dead"

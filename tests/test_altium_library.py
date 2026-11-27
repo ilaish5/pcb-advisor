@@ -478,7 +478,7 @@ def test_an_altium_error_box_ends_the_wait_without_the_stall_timeout(monkeypatch
     monkeypatch.setattr(bridge.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + 5))
     looks = []
     monkeypatch.setattr(bridge, "_close_dialogs", lambda only_look=False: looks.append(only_look) or ["[TMessageForm] Error: OK"])
-    monkeypatch.setattr(bridge, "preflight", lambda strict=False: None)          # this test counts the wait loop's own looks
+    monkeypatch.setattr(bridge, "preflight", lambda strict=False, **kw: None)          # this test counts the wait loop's own looks
     monkeypatch.setattr(bridge, "release_executor", lambda **kw: ["[TMessageForm] Error: OK"])
     with pytest.raises(bridge.BridgeError, match="stopped in the middle"):
         bridge.run_commands([("PING",)], stall_timeout=180, total_timeout=900)
@@ -565,7 +565,7 @@ def test_the_preflight_also_runs_after_an_error(monkeypatch, tmp_path):
     monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: None)
     monkeypatch.setattr(bridge, "release_executor", lambda **kw: bridge._RUN.update(evidence=True) or [])
     calls = []
-    monkeypatch.setattr(bridge, "preflight", lambda strict=False: calls.append("pre"))
+    monkeypatch.setattr(bridge, "preflight", lambda strict=False, **kw: calls.append("pre"))
     monkeypatch.setattr(bridge.time, "time", iter(range(0, 10**6, 100)).__next__)
     with pytest.raises(bridge.BridgeError, match="F9"):
         bridge.run_commands([("PING",)])
@@ -655,7 +655,7 @@ class Release:
         self.dir = tmp_path
         monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
         monkeypatch.setattr(bridge, "_running", lambda: True)
-        monkeypatch.setattr(bridge, "preflight", lambda strict=False: None)
+        monkeypatch.setattr(bridge, "preflight", lambda strict=False, **kw: None)
         monkeypatch.setattr(bridge, "_dialog_boxes", lambda: _boxes(*self.boxes))
         monkeypatch.setattr(bridge, "_post_enter", lambda h: self.pressed.append(("enter", self.boxes[h - 1][1])))
         monkeypatch.setattr(bridge, "_post_close", lambda h: self.pressed.append(("close", self.boxes[h - 1][1])))

@@ -320,7 +320,7 @@ def _script_state():
     return out
 
 
-def preflight(strict=False):
+def preflight(strict=False, pause_context=True):
     """Before a command is sent (strict=True) and after an error: a script left paused in Altium makes every later RunScript raise
     an empty error box and never start. When an OK-only script error box is open (see _script_state), stop the run (release_executor:
     press OK on it, -REditScript:Stop) BEFORE sending, look again, log it in the run log and keep one line for the student, tagged
@@ -342,7 +342,9 @@ def preflight(strict=False):
     if not state["boxes"]:
         return None
     try:
-        shown = release_executor(pause_context=True)      # an OK-only error box is the evidence: resume with RunMacro, Stop last
+        # an OK-only error box on a running Altium is the evidence: resume with RunMacro, Stop last. After a failed COLD start there is none
+        # (a sign-in or licence box): pause_context=False then
+        shown = release_executor(pause_context=pause_context)
         left = _script_state()
         # a box that is gone is NOT proof that Altium is clean (seen live: Stop and OK removed the box, the next RunScript still failed):
         # whether the release worked is known only when the next script starts (start.flag); _run_commands says so then
@@ -430,8 +432,10 @@ def run_in_progress(max_age=1800):
         req = EXCHANGE / "request.txt"
         if req.is_file() and now - req.stat().st_mtime < max_age:
             return True
-        ends = {p.name[len("end-"):] for p in EXCHANGE.glob("end-*.flag")}
-        return any(now - p.stat().st_mtime < max_age and p.name[len("start-"):] not in ends for p in EXCHANGE.glob("start-*.flag"))
+        starts = sorted(EXCHANGE.glob("start-*.flag"), key=lambda p: p.stat().st_mtime)
+        if not starts or now - starts[-1].stat().st_mtime >= max_age:
+            return False                                  # only the newest run counts: an older one that never ended is dead
+        return not (EXCHANGE / ("end-" + starts[-1].name[len("start-"):])).exists()
     except OSError:
         return False
 
@@ -591,7 +595,7 @@ def run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=300
                 log = _run_commands(commands, start_timeout, stall_timeout, total_timeout)
             except BridgeError:
                 if _running():
-                    preflight()        # leave Altium clean for the next command, not only for the one after a timeout
+                    preflight(pause_context=not _RUN["cold"])      # leave Altium clean for the next command, not only for the one after a timeout
                 raise
     except BaseException as exc:
         runlog.event("altium", commands=names, args=_cmd_args(commands), project=project, seconds=round(time.time() - t0, 1), ok=False,
@@ -670,6 +674,7 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                 if flag_path("end").exists():
                     break                                   # resumed with RunMacro and ran to its end: read its answer as usual
                 log = _read(EXCHANGE / "log.txt")           # the script is stopped now: safe to read
+                flag_path("start").unlink(missing_ok=True)  # a run we gave up on is not "in progress" any more
                 raise BridgeError("Altium stopped in the middle of the script, after: "
                                   f"{log[-1] if log else 'nothing'}. I released the script executor."
                                   + (f" Dialogs: {' | '.join(shown)}" if shown else ""))
