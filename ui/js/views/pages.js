@@ -184,7 +184,7 @@ function sourcesHTML(container) {
   else if (!shown.length) body = `<p class="muted">${srcFilter === 'shared' ? 'No shared documents.' : 'This project has no documents of its own yet.'}</p>`;
   else body = `<div class="tbl-wrap"><table class="tbl dense rows src-tbl${cols.type || cols.used ? '' : ' slim'}"><thead><tr><th>Name</th>${cols.type ? '<th>Type</th>' : ''}<th class="num">Size</th>${cols.used ? '<th>Used for</th>' : ''}</tr></thead>
     <tbody>${shown.map(s => srcRow(s, srcFilter === 'all', cols)).join('')}</tbody></table></div>`;
-  return `${viewHeader({title: 'Sources', meta, actions, primary})}<div class="vb">${note}${srcAskHTML()}${srcBusy ? loadingLine(srcBusy) : ''}${body}</div>`;
+  return `${viewHeader({title: 'Sources', meta, actions, primary})}<div class="vb">${note}${srcAskHTML()}<div class="src-status" aria-live="polite">${srcBusy ? loadingLine(srcBusy) : ''}</div>${body}</div>`;
 }
 // a document no part claimed: which part is it for? ICs first, the passives need no datasheet
 function srcAskHTML() {

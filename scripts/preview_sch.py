@@ -239,6 +239,9 @@ def _fallback_body(pins: list) -> tuple:
     return x0, y0, x1, y1
 
 
+LABEL_NEAR = 60     # px: a designator or comment stored farther than this from its part's body is drawn beside the body (R2/F-F)
+
+
 def _part_svg(comp: dict, fonts: dict, sys_font: int, bounds: _Bounds) -> str:
     """One component: highlight box, body drawing, pins, designator and comment."""
     ref = comp.get("ref", "")
@@ -269,7 +272,8 @@ def _part_svg(comp: dict, fonts: dict, sys_font: int, bounds: _Bounds) -> str:
     if sub and not (com or {}).get("hidden"):
         labels.append((sub[:32], com, "mpn", 6, (own.x0, own.y1 + 4)))
     for text, st, cls, just, anchor in labels:
-        if st:
+        near = st and (own.x0 - LABEL_NEAR <= _px(st["x"]) <= own.x1 + LABEL_NEAR) and (own.y0 - LABEL_NEAR <= _py(st["y"]) <= own.y1 + LABEL_NEAR)
+        if st and near:
             inner.append(_text_svg(_px(st["x"]), _py(st["y"]), text, font_px(fonts, st.get("font", 1)), cls,
                                    st.get("justification", 0), st.get("orientation", 0), bounds))
         else:
