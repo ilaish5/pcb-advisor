@@ -71,3 +71,16 @@ Run: `run.py --live <server.py up, 2dcd691> --live-project Final-E2E-4L --live-c
 | T-B agent leg, T-F | need a real agent engine answering scripted / probe questions twice (`ACCEPTANCE_REAL_ENGINE=1`), and a ledger. |
 | T-G geometry, 400% zoom | footprint geometry vs PcbLib needs the board session's PcbLib reader; zoom scale needs Altium-rendered sheets. |
 | U2, U3, U4, B1, W1, W9, W11, W21, W24-W31, W33, F-A, F-C, F-D, F-H, F-J, F-LIM | Altium as judge or E-level (A12) by ACCEPTANCE. |
+
+## T-F with the real engine (27/11, 14:00 UTC)
+\`ACCEPTANCE_REAL_ENGINE=1 run.py --only T-F --live-commit 2dcd691 --seed 20261127\`: the product's own engine (Claude Code CLI)
+answered 10 probe questions twice in fresh chats; the oracle's judge (\`claude -p\`, outside the product) compared the facts.
+**fail**: inconsistent 3/10 (e.g. "the tool cannot change the layer stack" vs "it adds Mid-Layer 1 and 2 via ensure_stack", the
+W26 contradiction; "inner layers under the crystals unknown" vs "GND and +3V3 pours on MID1/MID2"), the BOM-quantity canary did not
+change the answer, no ledger. 27/11: 13 T-F confusions.
+
+## Full run on the merged main (82eeeec)
+\`run.py --controls --no-altium --live ... --live-commit 2dcd691 --seed 20261127\`: 70 metrics (40 artifact, 30 behaviour):
+69 fail, T-F not_run (no real engine in that run), 0 error; all 40 artifact controls PASS. The run says INCOMPLETE only for the
+catalogue coverage: 15 ids whose metrics drive Altium and were left out by \`--no-altium\` (B1 W1 W11 W15 W21 W26 W30 U2 U3 U4
+F-A F-C F-D F-F F-LIM).
