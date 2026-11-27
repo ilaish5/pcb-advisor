@@ -198,6 +198,98 @@ def w2(ctx: Ctx) -> Result:
                    _ev(ctx, "idea-versions.json", "idea.json", "bom-log.jsonl", "project.json"), scope)
 
 
+# ============================================================================= W4
+def _item_parts(P: PO.Project, text: str, names: list[str]) -> set[str]:
+    """Part families (>= 6 characters) named in an item text that also name a source of this project."""
+    fams = {PO.family(n) for n in names}
+    return {PO.family(tk) for tk in PO.tokens(text) if len(PO.family(tk)) >= 6} & fams
+
+
+def _cite_field_ok(P: PO.Project, item: dict, parts: set[str]) -> bool:
+    cites = item.get("cites") or []
+    for c in cites if isinstance(cites, list) else []:
+        if not isinstance(c, dict):
+            continue
+        pages = P.source_pages(str(c.get("file", "")))
+        page, quote = c.get("page"), c.get("quote")
+        if not pages or not isinstance(page, int) or not 1 <= page <= len(pages) or not quote:
+            continue
+        if PO.norm_ws(quote) not in PO.norm_ws(pages[page - 1]):
+            continue
+        if parts and PO.family(str(c["file"])) not in parts:
+            continue                                   # the item names a part; the cite must be about that part
+        return True
+    return False
+
+
+def w4_items(P: PO.Project) -> tuple[list, int]:
+    names = P.source_names()
+    recs = [r for r in P.cite_records() if r["status"] == "ok"]
+    out, scope, backed = [], 0, 0
+    for a in P.idea.get("agreed", []):
+        if a.get("status") != "confirmed" or a.get("by") == "student":
+            continue
+        scope += 1
+        parts = _item_parts(P, a.get("text", ""), names)
+        ok = _cite_field_ok(P, a, parts) or any(PO.family(r["file"]) in parts for r in recs)
+        backed += ok
+        if not ok:
+            out.append(f"{a.get('topic')}: confirmed by {a.get('by')}, no structured cite (file + page) that can be re-checked"
+                       + (f"; names {sorted(parts)}" if parts else ""))
+    if scope and not backed:
+        out.append("no confirmed item carries a cite: nothing can be re-checked")
+    return out, scope
+
+
+def _w4_control(ctx: Ctx) -> Ctx:
+    c = ctx.writable_copy("W4-control")
+    P = _P(c)
+    names = P.source_names()
+    idea = json.loads((c.project / "idea.json").read_text(encoding="utf-8"))
+    for a in idea["agreed"]:
+        if a.get("status") != "confirmed" or a.get("by") == "student":
+            continue
+        parts = _item_parts(P, a.get("text", ""), names)
+        if _cite_field_ok(P, a, parts):
+            continue
+        for n in [n for n in names if not parts or PO.family(n) in parts]:
+            for i, pg in enumerate(P.source_pages(n) or [], 1):
+                words = pg.split()
+                if len(words) >= 8:                     # a real quote from a real page of a file that names the part
+                    a["cites"] = [{"file": n, "page": i, "quote": " ".join(words[:8])}]
+                    break
+            if a.get("cites"):
+                break
+    (c.project / "idea.json").write_text(json.dumps(idea, ensure_ascii=False, indent=1), encoding="utf-8")
+    _assert_clean(c, w4, "W4")
+    # twin: cited items stay confirmed in the control, and a copy with everything unverified must fail
+    if not any(a.get("cites") and a.get("status") == "confirmed" for a in idea["agreed"]):
+        raise AssertionError("W4 control has no cited item left confirmed")
+    t = c.writable_copy("W4-unverified")
+    ti = json.loads((t.project / "idea.json").read_text(encoding="utf-8"))
+    for a in ti["agreed"]:
+        a["status"] = "proposed"
+    (t.project / "idea.json").write_text(json.dumps(ti, ensure_ascii=False, indent=1), encoding="utf-8")
+    if w4(t).status != "fail":
+        raise AssertionError("W4: 'unverify everything' passed")
+    _selftest(c, w4, CAN.inject_w4, "W4-canary", lambda info, m: any(x.startswith(info["topic"] + ":") for x in m))
+    return c
+
+
+@metric(id="W4", title="Confirmed agreed items with no structured cite (file + page) that can be re-checked when a part changes", root="R3",
+        p0=("P0-3",), level="B", control=_w4_control)
+def w4(ctx: Ctx) -> Result:
+    P = _P(ctx)
+    items, scope = w4_items(P)
+    return _result(items, "confirmed non-student items without a re-checkable cite = 0",
+                   "cite-backed = a `cites` field (file, page, quote found on that page) or a cites.json record with status ok naming a "
+                   "source for a part the item names (part-number tokens of the item text that match a source name). file_only records do "
+                   "not count (no quote was compared). Student items are exempt. If no confirmed item is backed at all the check fails, so "
+                   "unverifying everything cannot pass. cites.json records are per chat message, not per item: a per-item cites field "
+                   "in the product would be the strong form of this check",
+                   _ev(ctx, "idea.json") + [ctx.ev(p, "cites") for p in sorted((ctx.project / "chats").glob("*.cites.json"))], scope)
+
+
 # ============================================================================= W5
 _ASSUMED = re.compile(r"\(\s*assumed\s*\)", re.I)
 

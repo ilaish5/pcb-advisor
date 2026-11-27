@@ -280,6 +280,17 @@ def inject_fjb(c) -> dict:
     return {"key": l["key"]}
 
 
+def inject_w4(c) -> dict:
+    p = c.project / "idea.json"
+    idea = _rd(p)
+    topic = "Zz" + _tag(c)
+    part = "".join(c.rng.choice("QWXZ") for _ in range(3)) + str(c.rng.randint(1000, 9999))
+    idea.setdefault("agreed", []).append({"topic": topic, "text": f"Use {part} for the supply", "by": "agent", "status": "confirmed",
+                                          "ts": _late(c)})
+    _wr(p, idea)
+    return {"topic": topic}
+
+
 def inject_u5(c) -> dict:
     mp = sorted((c.project / "exports").glob("*order_manifest.json"))[0]
     d = _rd(mp)

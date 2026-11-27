@@ -169,6 +169,21 @@ class Project:
         pages = self.source_pages(name)
         return None if pages is None else "\n".join(pages)
 
+    def source_names(self) -> list[str]:
+        """Names of the sources that have a text file (sources/<name>.txt, quality and layout files excluded)."""
+        return sorted(f.name[:-4] for f in self.path("sources").glob("*.txt")
+                      if not f.name.endswith((".quality.txt", ".layout.txt")))
+
+    def cite_records(self) -> list[dict]:
+        """Every record of every chats/*.cites.json: [{file, loc, status, at}] (keys are 'file|location')."""
+        out = []
+        for p in sorted(self.path("chats").glob("*.cites.json")):
+            for at, rec in read_json(p).items():
+                for key, v in (rec.get("items") or {}).items():
+                    f, _, loc = key.partition("|")
+                    out.append({"file": f, "loc": loc, "status": v.get("status"), "at": at})
+        return out
+
     def order_manifests(self) -> list[pathlib.Path]:
         return sorted(self.path("exports").glob("*order_manifest.json"))
 
