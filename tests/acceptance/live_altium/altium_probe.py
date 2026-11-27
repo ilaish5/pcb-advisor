@@ -102,13 +102,44 @@ def _stop_executor() -> None:
 COMMAND_LOG = EXCHANGE / "commands.log"      # kept across runs: one line per command ever sent to Altium (time, command, document)
 
 
+def x2_script_state() -> list[str]:
+    """Read only: titles of X2.EXE's visible top-level windows that point at a script held open in the editor / debugger (a .pas or .pas
+    project, 'OracleProbe', 'AdvisorBridge', 'Debug', 'Paused', 'Breakpoint'). A DelphiScript error leaves Altium paused on the failing line:
+    nothing may be sent until the owner or the run has resumed it."""
+    out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq X2.EXE", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+    pids = {int(m) for m in re.findall(r'"X2\.EXE","(\d+)"', out, re.I)}
+    user32 = ctypes.windll.user32
+    titles: list[str] = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            if pid.value in pids:
+                buf = ctypes.create_unicode_buffer(512)
+                user32.GetWindowTextW(hwnd, buf, 512)
+                t = buf.value.strip()
+                if re.search(r"\.pas|\.PrjScr|OracleProbe|AdvisorBridge|debug|paused|breakpoint", t, re.I):
+                    titles.append(t)
+        return True
+
+    user32.EnumWindows(each, 0)
+    return titles
+
+
 def _before_send(commands: list[tuple]) -> None:
     """Read-only guard and trace. Refuses to send while an Altium modal is open (the first thing to look at is who raised it, not another
     command on top of it), and writes one line per command so a dialog can be traced to its cause."""
     d = x2_dialogs() if x2_running() else []
+    st = x2_script_state() if x2_running() else []
+    EXCHANGE.mkdir(parents=True, exist_ok=True)
+    with COMMAND_LOG.open("a", encoding="utf-8") as f:
+        f.write("\t".join([time.strftime("%Y-%m-%d %H:%M:%S"), "GUARD", f"dialogs={len(d)} script_windows={st}"]) + "\n")
     if d:
         raise ProbeError("an Altium dialog is open, no command is sent on top of it: " + str(d))
-    EXCHANGE.mkdir(parents=True, exist_ok=True)
+    if st:
+        raise ProbeError("Altium holds a script in its editor / debugger (a paused run?), nothing is sent until it is resumed: " + str(st))
     with COMMAND_LOG.open("a", encoding="utf-8") as f:
         for c in commands:
             doc = c[1] if len(c) > 1 else ""
