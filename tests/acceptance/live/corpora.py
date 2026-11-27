@@ -15,10 +15,12 @@ HIDDEN = pathlib.Path(os.environ.get("ACCEPTANCE_HIDDEN_CORPORA") or HERE.parent
 def load(name: str, key: str) -> tuple[list, str]:
     """(items from both halves, a note on which halves were used)."""
     vis = json.loads((VISIBLE / f"{name}.json").read_text(encoding="utf-8"))
-    items = [dict(x, half="visible") for x in vis[key]]
+    def wrap(x, half):
+        return dict(x, half=half) if isinstance(x, dict) else {"text": x, "half": half}
+    items = [wrap(x, "visible") for x in vis[key]]
     hp = HIDDEN / f"{name}.json"
     if hp.is_file():
-        items += [dict(x, half="hidden") for x in json.loads(hp.read_text(encoding="utf-8"))[key]]
+        items += [wrap(x, "hidden") for x in json.loads(hp.read_text(encoding="utf-8"))[key]]
         note = f"{name}: visible + hidden halves ({len(items)} items)"
     else:
         note = f"{name}: VISIBLE HALF ONLY ({len(items)} items; hidden half not present, not valid for a final pass)"

@@ -254,16 +254,100 @@ def te(ctx):
 
 
 # ------------------------------------------------------------------ T-F
-@metric(id="T-F", title="Repeat consistency (10 probe questions asked twice agree) and no ledger decision contradicted",
+JUDGE_PROMPT = """You are an independent checker. A student asked an assistant the same question twice, in two separate chats, with
+no change to the project in between. Compare only the FACTS stated (numbers, part names, yes/no verdicts, which items).
+Wording, order and detail level do not matter; a fact present in one answer and absent in the other is not a contradiction.
+Reply with one line of JSON only: {"agree": true|false, "contradiction": "<the conflicting facts, or empty>"}.
+
+QUESTION: %s
+
+ANSWER 1:
+%s
+
+ANSWER 2:
+%s
+"""
+
+
+def _judge(q: str, a1: str, a2: str) -> dict:
+    """The oracle's own LLM judge (ACCEPTANCE F-D / T-F): a separate CLI call, never the product. ACCEPTANCE_JUDGE_CMD
+    names the command (default: claude -p)."""
+    import os
+    import shlex
+    import subprocess
+    cmd = shlex.split(os.environ.get("ACCEPTANCE_JUDGE_CMD") or "claude -p --output-format text")
+    r = subprocess.run(cmd, input=JUDGE_PROMPT % (q, a1[:6000], a2[:6000]), capture_output=True, text=True, timeout=300,
+                       cwd=os.path.expanduser("~"))
+    m = re.search(r"\{.*\}", r.stdout, re.S)
+    try:
+        return json.loads(m.group(0)) if m else {"agree": None, "contradiction": r.stdout[:200]}
+    except ValueError:
+        return {"agree": None, "contradiction": r.stdout[:200]}
+
+
+def _ask(srv, project: str, q: str) -> str:
+    """One question in a fresh chat of the product (so the second ask cannot copy the first); returns the answer text."""
+    st, body = srv.post("/api/sessions/new", {"title": "probe"}, project=project)
+    sess = (body or {}).get("created") if isinstance(body, dict) else None
+    sess = sess.get("id") if isinstance(sess, dict) else sess
+    st, body = srv.post("/api/chat", {"text": q}, project=project, **({"session": sess} if sess else {}))
+    rows = []
+    for f in sorted((srv.projects / project / "chats").glob("*.jsonl")):
+        if not sess or str(sess) in f.name:
+            rows += seed.read_jsonl(f)
+    ans = [r for r in rows if r.get("role") == "agent"]
+    return str(ans[-1].get("text", "")) if ans else ""
+
+
+@metric(id="T-F", title="Repeat consistency (10 probe questions asked twice agree), a state canary changes the answer, no ledger decision contradicted",
         root="R1", level="E", kind="behaviour")
 def tf(ctx):
     import os
     from lib import not_run
     if os.environ.get("ACCEPTANCE_REAL_ENGINE") != "1":
-        return not_run("needs a real agent engine answering 10 questions drawn from corpora/probe_questions.json twice "
-                       "(ACCEPTANCE_REAL_ENGINE=1, local/E phase) and a product ledger to compare against: the oracle's fake "
-                       "engine would only repeat its own script", expected="10/10 consistent; 0 contradictions")
-    return not_run("real-engine run not implemented in the cloud phase")
+        return not_run("needs the real agent engine (ACCEPTANCE_REAL_ENGINE=1): 10 questions from corpora/probe_questions.json "
+                       "asked twice through the product, compared by the oracle's own judge; the fake engine only repeats its script",
+                       expected="10/10 consistent; canary answer changes; 0 ledger contradictions")
+    qs, note = corpora.load("probe_questions", "questions")
+    draw = ctx.rng.sample(qs, 10)
+    srv = common.private(ctx, "T-F", engine="real", fresh=True)
+    rows, canary = [], {}
+    try:
+        srv.project = seed.seed_fixture(srv.projects, root=ctx.root)
+        srv.restart()
+        for q in draw:
+            a1 = _ask(srv, srv.project, q["text"])
+            a2 = _ask(srv, srv.project, q["text"])
+            j = _judge(q["text"], a1, a2)
+            rows.append({"q": q["text"], "half": q["half"], "a1": a1, "a2": a2, "judge": j})
+        # canary: a state change between two asks must change the answer (a random line's quantity, the parts total)
+        pdir = srv.projects / srv.project
+        bom = json.loads((pdir / "bom.json").read_text(encoding="utf-8"))
+        cq = "How many parts are placed in total, counting quantities? Answer with the number."
+        b1 = _ask(srv, srv.project, cq)
+        ln = ctx.rng.choice([x for x in bom if not x.get("dnp")])
+        add = 1 + ctx.rng.randrange(3)
+        ln["qty"] = int(ln.get("qty") or len(ln.get("refs") or [])) + add
+        ln["refs"] = list(ln.get("refs") or []) + [f"{ln['refs'][0]}x{i}" for i in range(add)] if ln.get("refs") else ln.get("refs")
+        (pdir / "bom.json").write_text(json.dumps(bom, indent=1), encoding="utf-8")
+        want = sum(int(x.get("qty") or len(x.get("refs") or [])) for x in bom if not x.get("dnp"))
+        b2 = _ask(srv, srv.project, cq)
+        canary = {"line": ln["key"], "added": add, "want_after": want, "before": b1[:300], "after": b2[:300],
+                  "changed": str(want) in re.findall(r"\d+", b2)}
+    finally:
+        srv.stop()
+    disagree = [r for r in rows if r["judge"].get("agree") is False]
+    unjudged = [r for r in rows if r["judge"].get("agree") is None]
+    run = common.Run(ctx)
+    st, body = run.get("/api/ledger")
+    ledger = st == 200
+    v = len(disagree) + len(unjudged) + (0 if canary.get("changed") else 1) + (0 if ledger else 1)
+    return Result("pass" if v == 0 else "fail",
+                  measured={"inconsistent": f"{len(disagree)}/{len(rows)}", "unjudged": len(unjudged),
+                            "canary_answer_changed": canary.get("changed"), "ledger_present": ledger},
+                  expected="inconsistent answers 0/10, canary answer equals the new total, a ledger exists and no decision in it is contradicted",
+                  detail=f"{note}; contradictions: {[r['judge'].get('contradiction') for r in disagree][:3]}",
+                  evidence=[common.save(ctx, "T-F", {"rows": rows, "canary": canary})])
 
 
 # ------------------------------------------------------------------ T-G
