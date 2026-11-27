@@ -145,10 +145,12 @@ def _is_parts_datasheet(project, key, name):
     base = pathlib.Path(name).name
     if "/" in name or "\\" in name:
         return False                                  # the general reference library is not a part's datasheet
-    if base == pathlib.Path(str(line.get("datasheet") or "\0")).name or base == sources.find_for(project, line.get("mpn")):
-        return True
-    mpn = re.sub(r"[^a-z0-9]", "", str(line.get("mpn") or "").lower())
-    return len(mpn) >= 4 and mpn in re.sub(r"[^a-z0-9]", "", base.lower())
+    if base == pathlib.Path(str(line.get("datasheet") or "\0")).name:
+        return True                                   # the file the BOM line itself names
+    key = sources._key(line.get("mpn") or "")
+    # the part number as a whole token of the file name (or its family: the number without an ordering suffix), never a substring:
+    # ABCD12345-other.pdf is not the datasheet of ABCD1234
+    return len(key) >= 4 and any(sources._family_hit(t, key) for t in sources._tokens(pathlib.Path(base).stem))
 
 
 def valid_evidence(project, evidence, key=None):
@@ -168,8 +170,8 @@ def valid_evidence(project, evidence, key=None):
         if not sha or sha != _sha256(path):
             continue
         pages = _page_count(path)
-        if pages is not None and page > pages:
-            continue
+        if path.suffix.lower() != ".pdf" or not pages or page > pages:
+            continue                                  # only a PDF whose page count can be read, and a page that is in it
         if key is not None and not _is_parts_datasheet(project, key, str(e["doc"])):
             continue
         out.append({"doc": str(e["doc"]), "sha256": sha, "page": page})
@@ -466,7 +468,9 @@ def confirm_data(project, key):
             text = ""
         meta = sources._read_meta(folder / ds)
         dpath = sources.document_path(project, ds)
-        docs.append({"name": ds, "sha256": (_sha256(dpath) if dpath else "") or meta.get("sha256", ""), "url": "/api/source/" + ds,
+        dsha = (_sha256(dpath) if dpath else "") or meta.get("sha256", "")
+        citable = bool(valid_evidence(project, [{"doc": ds, "sha256": dsha, "page": 1}], line["key"]))      # a page of it can stand as evidence
+        docs.append({"name": ds, "sha256": dsha, "citable": citable, "pages": (_page_count(dpath) if dpath else None), "url": "/api/source/" + ds,
                      "candidate_pages": candidate_pages(text, line.get("package") or ""), "quality": sources.quality(text)})
     st = next((l for l in store.bom(project, write=False) if l["key"] == line["key"]), {})
     return {"line": line["key"], "refs": line.get("refs", []), "mpn": line.get("mpn") or "", "package": line.get("package") or "",

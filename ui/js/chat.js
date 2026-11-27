@@ -1132,7 +1132,10 @@ function chatSplitLong(box) {
           only.removeChild(last);
         }
         if (!moved.length) return;
-        moved.forEach(n => tail.appendChild(n));
+        moved.forEach((n, i) => {
+          if (n.nodeType === 3 && moved[i + 1] && moved[i + 1].nodeType === 3 && !/\s$/.test(n.textContent)) n.textContent += ' ';       // the space between moved sentences stays
+          tail.appendChild(n);
+        });
         rest.push(tail);
       }
     }

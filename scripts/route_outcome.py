@@ -85,20 +85,27 @@ def _open_nets(res):
 def kind_of(res, total):
     """The kind of rejection, read from what the bridge said: "drc" (new violations of the rejecting check), "open_nets", "width", "pour",
     "readback", "unchecked", or "other". Each has its own title and next step; the bridge's own words stay as the reason."""
-    if total:
-        return "drc"
+    return kinds_of(res, total)[0]
+
+
+def kinds_of(res, total):
+    """Every kind of problem the result holds, most serious first: new violations, pour, read-back, open nets, width, unchecked.
+    A pour or read-back failure outranks open nets in the title; the others are still listed."""
     text = " | ".join(str(p) for p in res.get("problems") or []).lower()
-    if _open_nets(res) or "not routed" in text or "un-routed" in text:
-        return "open_nets"
-    if "width" in text or "narrow" in text:
-        return "width"
+    out = []
+    if total:
+        out.append("drc")
     if "pour" in text or "plane" in text:
-        return "pour"
+        out.append("pour")
     if "read back" in text:
-        return "readback"
-    if "could not be read in full" in text or "unchecked" in text:
-        return "unchecked"
-    return "other"
+        out.append("readback")
+    if _open_nets(res) or "not routed" in text or "un-routed" in text:
+        out.append("open_nets")
+    if "width" in text or "narrow" in text:
+        out.append("width")
+    if "could not be read in full" in text or "unchecked" in text or "incomplete" in text:
+        out.append("unchecked")
+    return out or ["other"]
 
 
 def reason_of(res):
@@ -145,6 +152,8 @@ def build(project, res, pcb=None):
             cause = "; ".join(r["words"] for r in rows[:6]) + (f"; and {len(rows) - 6} more pairs" if len(rows) > 6 else "")
             count = total
             first = "Move the parts named above, then route again" if any(r.get("a") for r in rows) else _NEXT["other"]
+            if res.get("problems"):         # a route with new clearances still lists its other problems (an incomplete check, a pour ...)
+                cause += "; also: " + reason_of(res)
         else:
             title = _TITLES[kind]
             if kind == "open_nets" and nets:
@@ -152,12 +161,15 @@ def build(project, res, pcb=None):
             cause = reason_of(res)
             count = len(nets) if kind == "open_nets" and nets else len(res.get("problems") or [])
             first = _NEXT[kind]
+            rest = [k for k in kinds_of(res, total)[1:] if k in _TITLES]
+            if rest:                        # every problem kind is still said, in the cause
+                cause += ("; " if cause else "") + "also: " + ", ".join(_TITLES[k].split(": ", 1)[-1] for k in rest)
         restored = (f"Restored from backup: the board file is the same as before the route (checked, sha256 {csha[:12]})." if verified else
                     "The board file could NOT be confirmed as restored: it differs from the backup. Look at the file in Altium before going on.")
         nxt = [{"id": "findings", "label": "See the problems in Findings"}, {"id": "route_again", "label": first}]
         if kind == "open_nets" or res.get("partial_offer"):
             nxt.append({"id": "partial", "label": "Route the rest and leave the failed nets open"})
-        out = {"rejected": True, "kind": kind, "title": title, "count": count or None, "causes": rows[:30], "cause_text": cause, "restored": verified,
+        out = {"rejected": True, "kind": kind, "kinds": kinds_of(res, total), "raw_problems": [str(p) for p in res.get("problems") or []], "title": title, "count": count or None, "causes": rows[:30], "cause_text": cause, "restored": verified,
                "restored_claimed": bool(res.get("restored")), "backup_sha256": bsha, "pcb_sha256": csha, "next": nxt,
                "message": f"{title}. {restored}" + (f" Cause: {cause}." if cause else ""), "restored_text": restored}
         try:

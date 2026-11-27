@@ -12,6 +12,16 @@ from test_chat_turns import call, server  # noqa: F401
 from test_unverified_pins import _add, _datasheet, _jd_sheet, _sheet
 
 
+def _real_pdf(path, pages=5):
+    """A PDF whose page count can be read: evidence is a page of a real document."""
+    import pypdf
+    w = pypdf.PdfWriter()
+    for _ in range(pages):
+        w.add_blank_page(width=100, height=100)
+    with open(path, "wb") as f:
+        w.write(f)
+
+
 def _log(empty):
     return [json.loads(l) for l in (store.pdir(empty) / "library-log.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
 
@@ -42,7 +52,7 @@ def test_accept_records_basis_evidence_and_needs_no_reason(empty):
     import workspace
     src = workspace.project_dir(empty) / "sources"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "ABCD1234.pdf").write_bytes(b"%PDF-1.4 a datasheet")
+    _real_pdf(src / "ABCD1234.pdf")
     sha = pin_decisions._sha256(src / "ABCD1234.pdf")
     r = pin_decisions.accept(empty, "U1", evidence=[{"doc": "ABCD1234.pdf", "sha256": sha, "page": 4}])
     assert r["decision"]["basis"] == "datasheet_page" and r["decision"]["evidence"][0]["page"] == 4
@@ -60,7 +70,7 @@ def test_fake_evidence_is_not_evidence(server, empty, ev):
     _sheet(empty)
     src = workspace.project_dir(empty) / "sources"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "ABCD1234.pdf").write_bytes(b"%PDF-1.4 a datasheet")
+    _real_pdf(src / "ABCD1234.pdf")
     assert call(server, "POST", "/api/pins/confirm", empty, {"line": "U1", "evidence": ev})[0] == 400
     assert call(server, "POST", "/api/pins/accept-all", empty, {"confirm": True, "evidence": ev})[0] == 400
     assert pin_decisions.current(empty, "U1") is None
@@ -71,7 +81,7 @@ def test_real_evidence_is_accepted_with_the_reason_it_states(server, empty):
     _sheet(empty)
     src = workspace.project_dir(empty) / "sources"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "ABCD1234.pdf").write_bytes(b"%PDF-1.4 a datasheet")
+    _real_pdf(src / "ABCD1234.pdf")
     ev = [{"doc": "ABCD1234.pdf", "sha256": pin_decisions._sha256(src / "ABCD1234.pdf"), "page": 2}]
     code, body = call(server, "POST", "/api/pins/confirm", empty, {"line": "U1", "evidence": ev})
     assert code == 200 and body["decision"]["reason"].startswith("Matches the datasheet pin table, page 2")

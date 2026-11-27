@@ -1,5 +1,5 @@
-"""F-E: a yes that opens the message grants replace even with a few more words after it; every way of taking the yes back refuses.
-The rule is grammatical (negation, reversal, stop, hedge, condition, question, doing it oneself, another kind of work), not a list of phrases.
+"""F-E: a replace is granted only to a plain affirmative and nothing more (a whitelist). A yes with extra words is NOT a grant, but it never
+costs more than one click: the chat offers a confirm that says what will happen. Every way of taking the yes back is never a grant.
 All phrasings here are written for this test."""
 import pytest
 
@@ -12,11 +12,25 @@ def _granted(phrase, kind="place", q=Q):
     return not serve._replace_consent(kind, {}, phrase, q)
 
 
+def _confirm(phrase, kind="place"):
+    meta = {}
+    return serve.replace_confirm(kind, {"replace": True}, phrase, meta) and meta["confirm"]
+
+
+@pytest.mark.parametrize("phrase", [
+    "yes, replace it, thanks",
+    "yes please replace the placement",
+    "yeah go ahead and replace the placement now",
+    "sure, redo the placement",
+    "כן, תחליף את המיקום בבקשה",
+])
+def test_a_plain_yes_is_granted_at_once(phrase):
+    assert _granted(phrase)
+
+
 @pytest.mark.parametrize("phrase", [
     "yes, replace it, thanks a lot",
     "yes please replace the placement, I have a copy of my own",
-    "yeah go ahead and replace the placement now",
-    "sure, redo the placement",
     # reassurance and a judgement of the old work are not a negation of the action
     "yes, replace it, no problem at all",
     "yes, replace the placement, I do not mind losing it",
@@ -26,8 +40,8 @@ def _granted(phrase, kind="place", q=Q):
     "כן, תחליף את המיקום, אין בעיה",
     "כן, תחליף את המיקום, מה שיש לא טוב",
 ])
-def test_a_clear_yes_with_extra_words_is_consent(phrase):
-    assert _granted(phrase)
+def test_a_yes_with_extra_words_is_not_a_grant_but_costs_one_click(phrase):
+    assert not _granted(phrase) and _confirm(phrase)
 
 
 @pytest.mark.parametrize("phrase", [
@@ -83,12 +97,12 @@ def test_no_yes_without_the_question():
 
 
 def test_the_visible_f_e_corpus_decides_the_same_way():
-    """Read from tests/acceptance/corpora when the test runs (not copied): every affirmative is granted, every negative refused."""
+    """Read from tests/acceptance/corpora when the test runs (not copied): every affirmative is granted or confirmed with one click, no negative is ever granted."""
     import json
     import pathlib
     f = pathlib.Path(__file__).resolve().parent / "acceptance" / "corpora" / "fe_consent.json"
     if not f.exists():
         pytest.skip("the visible corpus is not in this checkout")
     d = json.loads(f.read_text(encoding="utf-8"))
-    assert all(_granted(p, q=d["question"]) for p in d["affirmative"])
+    assert all(_granted(p, q=d["question"]) or _confirm(p) for p in d["affirmative"])       # a grant, or the one-click confirm: never a silent refusal
     assert not any(_granted(p, q=d["question"]) for p in d["negative"])

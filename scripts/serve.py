@@ -1008,70 +1008,110 @@ def _stance_cancelled(text):
     return bool(_SELF_STRONG.search(t)) and not _PAST_BY_ME.search(t)
 
 
-_F_E_VERB = re.compile(r"\b(?:replac\w*|re-?do\w*|re-?draw\w*|re-?plac\w*|re-?rout\w*|wip\w+|overwrit\w*|start\s+over|from\s+scratch)\b", re.I)
+# F-E, the whole rule: a replace is GRANTED only to a plain affirmative and nothing more (a whitelist, not a blocklist). Every word of the message
+# must be a yes, a politeness, an intensifier, or the restatement of this very action and its target. One word outside that list (an exclusion, a
+# condition, a time, another part, a joke, a reservation) and it is no grant: the student gets a one-click confirm that says exactly what will happen.
+_AFFIRM_EN = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "alright", "absolutely", "definitely", "certainly", "affirmative", "please", "thanks",
+              "thank", "you", "go", "ahead", "do", "it", "for", "me", "proceed", "confirm", "confirmed", "approved", "i", "i'm", "i’m", "just", "now", "and",
+              "this", "that", "them", "the", "a", "all", "my", "whole", "entire", "everything", "on", "in", "of", "its", "their", "again", "fromscratch",
+              "old", "one", "ones", "existing", "current", "altium"}
+_ACT_EN = {"replace", "replacing", "redo", "overwrite", "wipe", "start", "over", "rebuild"}
+_TARGET_EN = {"place": {"placement", "layout", "parts", "components", "copper", "board", "place", "redo"},
+              "route": {"routing", "tracks", "traces", "copper", "board", "route", "reroute", "rerouting"},
+              "draw": {"schematic", "sheet", "drawing", "draw", "redraw", "sheets"}}
+_AFFIRM_HE = {"כן", "אוקיי", "אוקי", "בסדר", "סבבה", "בבקשה", "תודה", "קדימה", "בהחלט", "מאשר", "מאשרת", "יאללה", "לגמרי", "תעשה", "את", "זה", "תמשיך", "לך", "על",
+              "עכשיו", "שוב", "בשבילי", "הכל", "כל", "תחליף", "תחליפי", "להחליף", "מחדש", "תמחק", "תדרוס", "אותו", "אותם", "ו", "החלף", "החליפי",
+              "דרוס", "דרסי", "הישן", "הקיים", "אלטיום", "תדרסי"}
+_TARGET_HE = {"place": {"מיקום", "רכיבים", "לוח", "נחושת", "תמקם", "למקם", "השמה"}, "route": {"מסלולים", "ניתוב", "לוח", "נחושת", "תנתב", "לנתב"},
+              "draw": {"גיליון", "סכמה", "ציור", "שרטוט", "תשרטט", "תצייר", "שרטט", "צייר"}}
+_STOP_FIRST = re.compile(r"^[\s,.!…-]*(?:no|nope|nah|not|never|stop|wait|cancel|hold|don[’']?t|do\s+not|עצור|חכה|חכי|רגע|בטל|ביטול|לא|אל|עוד\s+לא)(?![\w])", re.I)
+_TOKEN = re.compile(r"[^\W\d_]+(?:[’'][^\W\d_]+)?|\d+", re.U)
+_EXCLUDE = re.compile(r"\b(?:minus|but|except|apart|besides|excluding|exclude|without|keep|leave|only|other\s+than|all\s+but)\b|(?<!\w)(?:חוץ|מלבד|בלי|רק|תשאיר|אבל|למעט)(?!\w)"
+                      r"|\b[A-Z]{1,3}\d{1,3}\b", re.I)
+
+
+def _plain_grant(kind, text, a=None):
+    """True when `text` is a plain affirmative and nothing more (see above) and names this action or is a bare yes (the caller decides which)."""
+    t = re.sub(r"\ball\s+right\b", "alright", str(text or "").lower().replace("’", "'"))
+    t = re.sub(r"\bgo\s+for\s+it\b", "go ahead", t)
+    t = re.sub(r"\bfrom\s+scratch\b", "fromscratch", t)
+    t = re.sub(r"\bre-(?=\w)", "re", t)
+    t = re.sub(r"\bi\s+want\s+you\s+to\b|\b(?:can|could|would)\s+you\b|\bi['’]d\s+like\s+you\s+to\b|אני\s+רוצה\s+ש(?=ת)", " ", t)     # "I want you to replace it": a request to the agent, not a hand-over
+    toks = _TOKEN.findall(t)
+    own = set(_TOKEN.findall(str((a or {}).get("sheet") or "").lower()))
+    if not toks or "?" in t:
+        return False
+    en = _AFFIRM_EN | _ACT_EN | _TARGET_EN.get(kind, set())
+    he = _AFFIRM_HE | _TARGET_HE.get(kind, set())
+    for w in toks:
+        if w in en or w in he or w in own or (kind == "draw" and w.isdigit() and len(w) <= 3):         # a sheet is named by its id
+            continue
+        if len(w) > 2 and w[0] in "והלבש" and w[1:] in he and (w[0] != "ל" or w[1:] in _TARGET_HE.get(kind, set())):       # one Hebrew prefix letter: "המיקום", "ולוח", "שתחליף"
+            continue
+        return False
+    return True
+
+
+def _bare_yes_only(text):
+    return bool(_YES.search(text)) and bool(_BARE_YES.match(str(text or "").strip()))
 
 
 def _replace_consent(kind, a, last_user, prev_agent=""):
-    """'' when the student's last message is a short, unambiguous replace or yes, else why not. Simple by construction: at most 8 words,
-    a replace word (or a bare yes right after the agent asked about replacing), and no negation, reversal, hedge, condition, question,
-    self-do or stop word anywhere in it. A longer message never grants replace, however it is worded: the agent asks a yes/no question instead."""
+    """'' when the student's last message is a plain affirmative and nothing more (`_plain_grant`): either it names this replace ("yes, replace the
+    placement", "כן, תחליף") or it is a bare yes right after the agent asked about replacing. Any other message never grants a replace, however it
+    is worded: the agent (and the chat, see `replace_confirm`) asks one yes/no question instead."""
     wipes, replace_re = CONSENT[kind][3], CONSENT[kind][1]
     text = str(last_user or "")
-    words = re.findall(r"[\w’'\-]+", text)
-    asked_yes = bool(_YES.search(text)) and bool(_BARE_YES.match(text.strip())) and _asked_replace(kind, prev_agent)
-    qtext = re.sub(r"(?<!\w)מה\s+ש", "ש", text)         # "מה שיש" (what there is) is a relative clause, not the question word "what"
-    has_q = ("?" in text or bool(_REPLACE_INDIRECT_Q.search(text))
-             or (not asked_yes and (any(_is_question(s) for s in _SENT.findall(qtext))
-                                    or any(_is_question(c) for c in _CLAUSE.split(qtext) if c.strip()))))
-    other_kind = ((not _REPLACE_SPECIFIC[kind].search(text) and any(_REPLACE_SPECIFIC[k].search(text) for k in _REPLACE_SPECIFIC if k != kind))
-                   or any(_OTHER_WORK[k].search(text) for k in _OTHER_WORK if k != kind))       # "replace the placement and route again" names more than this action
-    # the short path is the strict one: any word of any class that could take the yes back ends it (the stance rule below reads longer messages)
-    clean = (len(words) <= REPLACE_MAX_WORDS and not has_q and not other_kind
-             and not _NEGATED.search(text) and not _REPLACE_NEG.search(text)
-             and not _REPLACE_REVERSAL.search(text)
-             and not _HEDGE.search(text) and not _CONDITION.search(text) and not _REPLACE_HEDGE_COND.search(text)
-             and not _REPLACE_SELF.search(text) and not _WITHDRAW.search(text)
-             and not _STOP_ANY.search(text) and not _HARD_STOP.search(text)
-             and not _SARCASM.search(text) and not _SELF_FUT.search(text) and not _COND_ALL.search(_IDIOM.sub(" ", text)))
-    if clean and (replace_re.search(text) or asked_yes):
-        return ""
-    # F-E: a yes that opens the message, right after the agent asked whether to replace THIS thing, and that names this action again, still
-    # grants it when more words follow ("yes, replace it, thanks for the help"). The rule is grammatical: the WHOLE message, not a part of it,
-    # must be free of every class that takes a yes back (negation, reversal, stop, hedge, condition, question, the student doing it
-    # themselves), and it must not name another kind of work. Nothing is set aside before those words are looked for.
-    lead = re.match(r"^[\s,.!]*(?:yes|yeah|yep|yup|sure|ok|okay|affirmative|go\s+ahead|כן|בסדר|אוקיי|אוקי|מאשר|מאשרת)(?!\w)", text, re.I)
-    names_it = bool(replace_re.search(text)) or (not other_kind and bool(_F_E_VERB.search(text)))
-    if lead and len(words) <= 40 and not has_q and names_it and not other_kind and _asked_replace(kind, prev_agent) and not _stance_cancelled(text):
+    if _plain_grant(kind, text, a) and (replace_re.search(text) or (_bare_yes_only(text) and _asked_replace(kind, prev_agent))):
         return ""
     sheet = str(a.get("sheet") or "").strip()
     what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
     be = "is" if wipes == "sheet" else "are"
-    return (f"The {wipes} {be} only wiped on a short, clear yes from the student (a long message never grants replace). Ask a yes/no "
+    return (f"The {wipes} {be} only wiped on a plain yes from the student and nothing more (any other message does not grant replace). Ask a yes/no "
             f"question: \"Replace {what}? This wipes what is there (a backup is kept). Answer yes/no.\" Run this again only after their "
             "short answer (such as \"yes, replace\").")
 
 
 _HE_LETTER = re.compile(r"[֐-׿]")
-_CONFIRM_HE = {"draw": "הציור של הגיליון", "place": "המיקום והנחושת בלוח", "route": "המסלולים בלוח"}
+_CONFIRM_HE = {"draw": "הציור של הגיליון", "place": "כל המיקום", "route": "כל המסלולים בלוח"}
 
 
-def replace_confirm(kind, a, last_user, meta):
-    """An ambiguous yes to a replace is neither granted nor refused in silence: the chat gets one question that restates the action, with a
-    one-click Yes and No. Set in `meta["confirm"]` (the turn record's `ask`); nothing is shown when the message says no / stop / wait, or has no
-    yes in it. Returns True when a confirm was set."""
+def _parts_count(project):
+    try:
+        return sum(len(l.get("refs") or []) for l in store.bom(project, write=False))
+    except Exception:       # noqa: BLE001 - the question is asked without a number rather than not at all
+        return 0
+
+
+def replace_confirm(kind, a, last_user, meta, project=None):
+    """Everything that is not a plain yes and not an explicit no gets ONE question that says exactly what will happen, with a one-click Yes and No
+    (`meta["confirm"]`, the turn record's `ask`). Only a no / stop / wait / cancel that comes first, a question, or a message with neither a yes nor
+    this action gets none. A negation inside the message does not stop it ("not worth keeping"). When the message names parts to keep or leave out,
+    the question says plainly that the action replaces everything, those parts included. Returns True when a confirm was set."""
     text = str(last_user or "")
-    if meta is None or not _truthy(a.get("replace")) or kind not in _CONFIRM_HE or not _YES.search(text):
+    if meta is None or not _truthy(a.get("replace")) or kind not in _CONFIRM_HE or _STOP_FIRST.match(text):
         return False
-    if _NEGATED.search(text) or _REPLACE_NEG.search(text) or _HARD_STOP.search(text) or _STOP_ANY.search(text):
+    if not (_YES.search(text) or CONSENT[kind][1].search(text) or _REPLACE_ASKED_VERB.search(text)):
         return False
-    if _HE_LETTER.search(text):
-        what = _CONFIRM_HE[kind]
-        meta["confirm"] = {"question": f"להחליף את {what}? זה מוחק את מה שיש (נשמר גיבוי).", "yes": "כן, תחליף", "no": "לא, השאר"}
+    if re.search(r"\?\s*$", text) and not _YES.search(text):
+        return False                                                 # a plain question gets an answer, not a Yes button
+    n = _parts_count(project) if project else 0
+    excl = bool(_EXCLUDE.search(text))
+    he = bool(_HE_LETTER.search(text))
+    if he:
+        what = _CONFIRM_HE[kind] + (f", כל {n} הרכיבים" if kind == "place" and n else "")
+        q = f"להחליף {what}? זה מוחק את מה שיש (נשמר גיבוי)." + (" זה מחליף הכל, גם מה שביקשת להשאיר." if excl else "")
+        meta["confirm"] = {"question": q, "yes": "כן, תחליף", "no": "לא, השאר"}
+        return True
+    sheet = str(a.get("sheet") or "").strip()
+    if kind == "place":
+        what = f"the whole placement{f', all {n} parts' if n else ''} and their copper"
+    elif kind == "route":
+        what = "all the tracks on the board"
     else:
-        wipes = CONSENT[kind][3]
-        sheet = str(a.get("sheet") or "").strip()
-        what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
-        meta["confirm"] = {"question": f"Replace {what}? This wipes what is there (a backup is kept).", "yes": "Yes, replace it", "no": "No, keep it"}
+        what = f"the drawing on sheet {sheet}" if sheet else "the drawing on the sheet"
+    q = f"Replace {what}? This wipes what is there (a backup is kept)." + (" It replaces everything, including what you asked to keep." if excl else "")
+    meta["confirm"] = {"question": q, "yes": "Yes, replace it", "no": "No, keep it"}
     return True
 
 
@@ -2326,7 +2366,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 why = _draw_consent(a, consent_words(chat, last_user), earlier_student_messages(chat, "draw", last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
-                    replace_confirm("draw", a, last_user, meta)
+                    replace_confirm("draw", a, last_user, meta, project)
                     continue
                 try:
                     res = _drawn(bridge, project, a.get("sheet") or None, _truthy(a.get("replace")))
@@ -2343,7 +2383,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 why = _consent(step, a, consent_words(chat, last_user), earlier_student_messages(chat, step, last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
-                    replace_confirm(step, a, last_user, meta)       # an ambiguous yes gets a one-click confirm, not a silent refusal
+                    replace_confirm(step, a, last_user, meta, project)       # an ambiguous yes gets a one-click confirm, not a silent refusal
                     continue
                 try:
                     if step == "place":

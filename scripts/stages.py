@@ -187,10 +187,23 @@ def pcb_stage(project, model, lt):
             return _stage("pcb", "not_started", "Parts not placed yet; the schematic is still a draft", next_={"label": "Build the library, draw again", "act": "go:sch"})
         return _stage("pcb", "not_started", "Parts not placed yet", next_={"label": "Place parts", "act": "go:pcb"})
     chk = board_check_of(lt)
-    if not routed and route and route.get("rejected") and not route.get("ok") and not (place and place.get("seq", -1) > route.get("seq", -1)):
+    if route and route.get("rejected") and not route.get("ok") and not (place and place.get("seq", -1) > route.get("seq", -1)):
         why = " ".join(str(route.get("error") or "").split())
-        return _stage("pcb", "issues", "The last route was rejected and the board was put back unrouted" + (f": {why[:240]}" if why else ""), "warn", 1,
-                      next_={"label": "Route the board", "act": "go:pcb"})
+        was_routed = False
+        try:
+            import board_results
+            recs = board_results.records(project)[:route.get("seq", 0)]
+            for r in reversed(recs):
+                if r.get("op") == "place" and r.get("ok"):
+                    break
+                if r.get("op") == "route" and r.get("ok") and not r.get("rejected"):
+                    was_routed = True
+                    break
+        except Exception:       # noqa: BLE001
+            was_routed = bool(ok_log.get("route-pcb"))
+        head = ("The last route was rejected and the board was put back as it was: still routed" if was_routed
+                else "The last route was rejected and the board was put back unrouted")
+        return _stage("pcb", "issues", head + (f": {why[:240]}" if why else ""), "warn", 1, next_={"label": "Route the board" if not was_routed else "See the problems", "act": "go:pcb"})
     if not routed:
         return _stage("pcb", "in_progress", "Placed, not routed yet", next_={"label": "Route the board", "act": "go:pcb"})
     open_nets = list(((route or {}).get("summary") or {}).get("open_nets") or []) if route and route.get("ok") else []

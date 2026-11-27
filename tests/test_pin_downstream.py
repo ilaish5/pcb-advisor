@@ -54,7 +54,8 @@ def test_order_check_carries_the_accepted_risk_and_writes_a_manifest_beside_the_
     _sheet(empty)
     src = store.pdir(empty) / "sources"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "ABCD1234.pdf").write_bytes(b"%PDF-1.4\n")          # a page counts as evidence only when its file is on this machine, is this part's, and its sha is given
+    from test_pin_decisions import _real_pdf
+    _real_pdf(src / "ABCD1234.pdf")          # a page counts as evidence only when its file is on this machine, is this part's, and its sha is given
     pin_decisions.accept(empty, "U1", evidence=[{"doc": "ABCD1234.pdf", "page": 3, "sha256": pin_decisions._sha256(src / "ABCD1234.pdf")}])
     res = order_check.order_check(empty)
     assert res["counts"]["accepted_risk"] == 1

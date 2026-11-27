@@ -141,7 +141,7 @@ async function pinsConfirm(key) {
       dlg.querySelector('button[value="ok"]').focus();
     });
     if (!result) return;
-    const ev = doc && !result.wrong.length ? [{doc: doc.name, sha256: doc.sha256, page: result.page}] : [];
+    const ev = doc && doc.citable !== false && !result.wrong.length ? [{doc: doc.name, sha256: doc.sha256, page: Math.min(result.page, doc.pages || result.page)}] : [];       // a file the server will not take as evidence goes through the one-click reason
     let reason = '';
     if (!ev.length && !result.wrong.length) {        // no datasheet page to cite: the student's own sentence is the record
       reason = await askPick({title: `Accept ${refsLabel(d.refs)} on your word?`, text: 'Pick why it is fine.', choices: PINS_WHY});
