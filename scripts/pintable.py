@@ -23,7 +23,7 @@ MAX_GAP = 10                    # lines of wrapped description / page footer all
 HEADING_REACH = 14              # lines between a heading and the first row (figure text, column headings)
 
 _DASHES = {"-", "—", "–", "--", "---", "n/a", "na"}
-_NUMBER = r"(?:[A-Za-z]{1,2}[1-9]\d{0,2}|[1-9]\d{0,2}|0)"
+_NUMBER = r"(?:[A-Za-z]{1,2}[1-9]\d{0,2}(?:[A-Za-z]{1,2}[1-9]\d{0,2})?|[1-9]\d{0,2}|0)"      # a connector pin may be two joined contacts: A4B9
 _CELL = re.compile(rf"^{_NUMBER}(?:,{_NUMBER})*$")
 _RANGE = re.compile(r"^([1-9]\d{0,2})[-–]([1-9]\d{0,2})$")
 _ANNOT = re.compile(r"^\(\w{1,4}\)$")

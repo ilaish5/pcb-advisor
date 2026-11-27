@@ -4271,8 +4271,9 @@ def attach_datasheet(project, line_or_ref, doc_name, by="student"):
     res = {"ok": True, "line": line["key"], "refs": line.get("refs", []), "name": name, **_verify_line(project, line["key"])}
     if res["status"] != "verified":           # the reason as pins_status says it, so the toast and the DFM list read the same
         fresh = _line_of(project, line["key"])
-        why = pins_status(fresh, library_parts(project).get(fresh["key"]), project)[1]
-        res["issues"] = why or res["issues"]
+        st2, why = pins_status(fresh, library_parts(project).get(fresh["key"]), project)
+        if not (res["status"] == "mismatch" and st2 != "mismatch"):      # a conflict the datasheet check found is never replaced by "no check exists"
+            res["issues"] = why or res["issues"]
     return res
 
 

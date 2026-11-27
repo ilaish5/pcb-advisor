@@ -1545,7 +1545,7 @@ def _with_pins_warning(project, res):
         anyway = readiness.consume_override(project)            # a one-run Make anyway: its record travels with the manifest
         drc = readiness.drc_open(project)
         bc = drc["by_class"]
-        drc_words = (f"Open design rule check items: {drc['total']} on the PcbDoc as checked (JLC-reject {bc['JLC-reject']}, unclassified "
+        drc_words = (f"Open design rule check items: {drc['total']} on the PcbDoc as checked (the fab would stop on {bc['JLC-reject']}, unclassified "
                      f"{bc['unclassified']}, cosmetic {bc['cosmetic']})" if drc["state"] == "checked" and drc["total"]
                      else f"The board check is {drc['state'].replace('_', ' ')}: {drc['why']}" if drc["state"] != "checked" else None)
     except Exception:       # noqa: BLE001

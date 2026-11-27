@@ -343,7 +343,8 @@ def geometry_problems(z: zipfile.ZipFile, entries: list[dict], skipped: list[str
         text = data.decode("latin-1")
         if grp == "drill":
             d = gerber_check.parse_excellon(text)
-            if d is not None and d["plated"] is False:
+            named_npth = bool(re.search(r"non[-_ ]?plated|npth", e["name"], re.I))      # a file Altium names NonPlated, with no TYPE comment inside
+            if d is not None and (d["plated"] is False or (d["plated"] is None and named_npth)):
                 files["npth"].append(text)
         else:
             files[grp].append(text)

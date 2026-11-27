@@ -176,7 +176,7 @@ function rulesExtraBody(rd) {
   const kind = rulesKindFields(rd, dr.kind || 'Width');
   const table = ex.length
     ? `<p class="muted">Added to every .RUL you download; a rule turned off stays here but is left out.</p><table class="tbl dense rules-tbl"><thead><tr><th>On</th><th>Rule</th><th>Kind</th><th>Scope</th><th>Value</th><th><span class="sr">Actions</span></th></tr></thead><tbody>
-      ${ex.map(r => `<tr${r.enabled === false ? ' class="rule-off"' : ''}><td><input type="checkbox" data-extra-toggle="${esc(r.name)}" aria-label="Rule ${esc(r.name)} on"${r.enabled === false ? '' : ' checked'}></td><td><span class="rn">${esc(r.name)}</span>${r.source ? `<span class="sub">${chip(r.source)}</span>` : ''}</td><td>${esc(r.kind)}</td><td>${esc(r.scope1 || 'All')}</td><td class="val">${esc(r.value || '')}${r.skipped ? `<div class="warn-t rule-skip" role="status">${esc(r.skipped)}</div>` : ''}</td>
+      ${ex.map(r => `<tr${r.enabled === false ? ' class="rule-off"' : ''}><td><input type="checkbox" data-extra-toggle="${esc(r.name)}" aria-label="Rule ${esc(r.name)} on"${r.enabled === false ? '' : ' checked'}></td><td><span class="rn">${esc(r.name)}</span>${r.source ? `<span class="sub">${chip(r.source)}</span>` : ''}</td><td>${esc(r.kind)}</td><td>${esc(r.scope1 || 'All')}</td><td class="val">${esc(r.value || '')}${r.skipped ? `<span class="warn-t rule-skip" role="status"> ${esc(r.skipped)}</span>` : ''}</td>
         <td><div class="row-acts">${btn('', {icon: 'trash', size: 'sm', title: `Remove ${r.name}`, act: 'remove-extra-rule', rule: r.name})}</div></td></tr>`).join('')}</tbody></table>`
     : '<p class="muted">No extra rules yet. Rules you add here go into every .RUL you download.</p>';
   return `${table}
