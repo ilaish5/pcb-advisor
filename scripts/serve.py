@@ -3783,8 +3783,19 @@ class Handler(BaseHTTPRequestHandler):
                 if generated:
                     user_msg["generated"] = True
                 say(proj, sess, user_msg)
+                _review = None
+                try:      # R2/W22: "review this sheet" runs the tool's own rule check first, so the answer has a scope and is never a bare "0 errors"
+                    import schematic_review
+                    if schematic_review.is_review_request(text):
+                        _review = schematic_review.review(proj)
+                        say(proj, sess, {"ts": now(), "role": "agent", "followup": True, "applied": [], "text": _review["text"]})
+                except Exception as exc:
+                    print(f"[review] the tool's own check failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
                 m = model.build(project=proj, session=sess)
                 ask = text
+                if _review:
+                    ask = ("[the tool already checked this sheet and showed the student the result below; build on it, "
+                           "never say there are no errors beyond its scope]\n" + _review["text"] + "\n\n" + text)
                 row = next((r for r in m["sessions"] if r["id"] == sess), {})
                 if source_file:
                     src_text = ""

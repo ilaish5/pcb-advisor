@@ -504,7 +504,9 @@ function chatEngineName(id) {
 function chatEngineLabel(id, model) { return id ? chatEngineName(id) + (model ? ' · ' + model : '') : ''; }
 function chatEngineFoot(m) {
   const l = chatEngineLabel(m.engine, m.model);
-  return l ? `<div class="eng" title="The engine and model that wrote this answer">${esc(l)}</div>` : '';
+  const claim = /\b(?:0|no|zero)\s+(?:errors?|issues?|problems?)\b/i.test(m.text || '') && !/\bScope:/.test(m.text || '');
+  const scope = claim ? '<div class="eng" title="R2/W22">No check ran behind this sentence: the model read the sheet and wrote it. It is not a statement that the sheet is correct.</div>' : '';
+  return (l ? `<div class="eng" title="The engine and model that wrote this answer">${esc(l)}</div>` : '') + scope;
 }
 function msgHTML(m, undoTs) {
   if (m.role === 'user') {
