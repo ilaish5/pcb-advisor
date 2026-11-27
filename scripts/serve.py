@@ -1539,12 +1539,26 @@ def _with_pins_warning(project, res):
         warn = store.pins_warning(project)
     except Exception:       # noqa: BLE001 - a warning that cannot be worked out never stops the files
         warn = ""
+    anyway = drc_words = None
+    try:
+        import readiness
+        anyway = readiness.consume_override(project)            # a one-run Make anyway: its record travels with the manifest
+        drc = readiness.drc_open(project)
+        bc = drc["by_class"]
+        drc_words = (f"Open design rule check items: {drc['total']} on the PcbDoc as checked (JLC-reject {bc['JLC-reject']}, unclassified "
+                     f"{bc['unclassified']}, cosmetic {bc['cosmetic']})" if drc["state"] == "checked" and drc["total"]
+                     else f"The board check is {drc['state'].replace('_', ' ')}: {drc['why']}" if drc["state"] != "checked" else None)
+    except Exception:       # noqa: BLE001
+        pass
     try:
         import pin_decisions
-        pin_decisions.write_manifest(project)
+        pin_decisions.write_manifest(project, made_anyway=anyway)
     except Exception:       # noqa: BLE001
         pass
     res = dict(res or {})
+    if drc_words:
+        res["drc_open"] = drc_words
+        res["warnings"] = [*(res.get("warnings") or []), drc_words]
     if warn:
         res["pins_warning"] = warn
         res["warnings"] = [warn, *[w for w in (res.get("warnings") or []) if w != warn]]
@@ -4753,6 +4767,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, "stem": stem, "triage": saved, "sig": dfm.triage_sig(saved)})
             except Exception as exc:
                 return self._send(400, {"error": str(exc)})
+
+        if path == "/api/outputs/make-anyway":
+            # the student's one-run decision to make the files with JLC-reject DRC items open: it covers this check on this PcbDoc only
+            import readiness
+            drc = readiness.drc_open(proj)
+            if drc["state"] != "checked" or not drc["by_class"]["JLC-reject"]:
+                return self._send(409, {"error": "nothing to make anyway: no JLC-reject item is open on a complete, current board check"})
+            return self._send(200, {"ok": True, "decision": readiness.make_anyway(proj)})
 
         if path == "/api/outjob/generate":
             import outjob

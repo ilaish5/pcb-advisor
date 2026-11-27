@@ -162,7 +162,7 @@ def test_rev_changes_when_a_log_grows_and_never_hashes_the_pcb(empty, pcb, monke
 def test_every_state_is_one_of_the_five_and_blocked_has_a_reason(empty):
     st, _ = by_id(empty)
     for s in st.values():
-        assert s["state"] in stages.STATES and set(s) - {"pins_warning"} == {"id", "state", "severity", "reason", "open", "gate", "next", "primary"}
+        assert s["state"] in stages.STATES and set(s) - {"pins_warning", "readiness"} == {"id", "state", "severity", "reason", "open", "gate", "next", "primary"}
 
 
 # ---- the page: the dots read S.stages only

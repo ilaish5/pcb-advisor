@@ -4147,6 +4147,12 @@ def manufacturing_block(project):
     design's own refusal (manufacturing_warning) and the board's (route_block), in one text; "" when both are clear. Pins are a
     warning only (pins_warning), never a block."""
     design, board = manufacturing_warning(project), route_block(project)
+    if not board:
+        try:
+            import readiness
+            board = readiness.reject_block(project)      # a JLC-reject DRC item open on this very PcbDoc: refused unless Make anyway was pressed for it
+        except Exception:       # noqa: BLE001 - a gate that cannot be worked out never invents a refusal
+            board = ""
     if design and board:
         return design + " Also: " + board[len("Not made yet: "):]
     return design or board

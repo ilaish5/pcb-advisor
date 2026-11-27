@@ -354,6 +354,7 @@ function drcSummary(c) {
   let tone = '', text;
   if (!c) text = 'Board DRC: not run yet';
   else if (c.complete === false) { tone = 'warn'; text = 'Board DRC: the report was incomplete, run it again'; }
+  else if (typeof c.total !== 'number') { tone = 'warn'; text = 'Board DRC: the report gave no violation count, so nothing says the board is clean'; }
   else if (c.total) { tone = 'bad'; text = `Board DRC: ${plural(c.total, 'violation')}`; }
   else { tone = c.stale ? 'warn' : 'ok'; text = 'Board DRC: clean'; }
   if (c && c.stale) { tone = tone === 'ok' ? 'warn' : tone; text += ', but the board changed since: check it again'; }
@@ -568,6 +569,17 @@ async function pvRunStep(step, replace, partial) {
   pvPollStop();
   await pvFinish(step, r, lost);
 }
+/* The tone of a finished step's note comes from what the step READ BACK, never from "it ran": a design rule check with violations or an
+   incomplete report is never green, and a route that left DRC violations is not green either (R2, U3, U2). */
+function pvResultTone(step, r) {
+  const total = step === 'drc' ? r.total : step === 'route' ? r.drc_total : null;
+  if (step === 'drc' && (r.total > 0 || r.unrouted > 0)) return 'bad';
+  if ((step === 'drc' || step === 'route') && (r.complete === false || r.drc_complete === false)) return 'warn';
+  if (total > 0) return 'warn';
+  if (step === 'drc' && (total === undefined || total === null)) return 'warn';       // no total in the answer: nothing says the board is clean
+  if (step === 'place' && (r.warnings || []).length) return 'warn';
+  return (r.warnings || []).length ? 'warn' : 'ok';
+}
 async function pvFinish(step, r, lost) {       // the answer of a step (from its own POST, or read after a reload): the note, then the pages read again
   const at0 = Date.now();
   const c = PV_STEPS[step];
@@ -584,7 +596,7 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
     else if (r && r.gone) pvNote[c.page] = {kind: 'warn', text: 'The step ended while this page was loading, and its answer went to the page that started it. Look at the board in Altium, and at the chat, before starting it again.'};       // ended, not "succeeded": this page never saw the answer
     else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', stopped: true, text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
     else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server'), partial: r && Array.isArray(r.partial_offer) && r.partial_offer.length ? r.partial_offer : undefined};
-    else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
+    else pvNote[c.page] = {kind: pvResultTone(step, r), text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
     if (pvNote[c.page]) { pvNote[c.page].step = step; pvNote[c.page].at = at0; }       // lets a later success (by button or chat) retire a failure note
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
     try { await refresh(true); } catch (err) { /* the note still says what happened */ }

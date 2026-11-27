@@ -357,6 +357,12 @@ def outputs_stage(project, model):
         warn = store.pins_warning(project)
     except Exception:       # noqa: BLE001
         warn = ""
+    try:
+        import readiness
+        ready = readiness.summary(project, model.get("bom"))
+    except Exception as exc:       # noqa: BLE001 - what cannot be counted is not "nothing open"
+        ready = {"ready": False, "open": 1, "drc": {}, "items": [{"id": "unknown", "label": "Readiness could not be worked out", "count": 1,
+                                                              "state": "not_checked", "page": "outputs", "why": str(exc)[:200]}]}
     if why:
         started = _board_started(project, model)
         if not design and not started:
@@ -366,6 +372,7 @@ def outputs_stage(project, model):
                         gate={"blocked": True, "why": why, "page": "pcb", "quiet": True, "design": "", "board_started": False},
                         next_={"label": "Place parts", "act": "go:pcb"})
             st["pins_warning"] = warn
+            st["readiness"] = ready
             return st
         gaps = _gate_gaps(project)
         has_pins = bool(gaps["open"] or gaps["unlisted"] or gaps["pads"] or gaps["nopad"])
@@ -378,6 +385,7 @@ def outputs_stage(project, model):
         st = _stage("outputs", "blocked", why, "bad", len(gaps["open"]) + len(gaps["unlisted"]) + len(gaps["pads"]) + len(gaps["nopad"]) or 1, gate=gate,
                     next_={"label": label, "act": "go:" + page})
         st["pins_warning"] = warn
+        st["readiness"] = ready
         return st
     ex = model.get("exports") or []
     if not ex:
@@ -386,9 +394,14 @@ def outputs_stage(project, model):
         old = [e for e in ex if (e.get("lineage") or {}).get("status") in ("stale", "edited")]
         if old:
             st = _stage("outputs", "issues", f"{_plural(len(old), 'file')} out of date with the design: export again", "warn", len(old), next_={"label": "Export again", "act": "go:outputs"})
+        elif not ready["ready"]:
+            # green is for "nothing open", never for "files exist": the open items are named and counted
+            st = _stage("outputs", "issues", f"{_plural(len(ex), 'file')} made; before you order: " + "; ".join(i["label"] for i in ready["items"]),
+                        "bad" if any(i["id"] in ("drc_reject",) for i in ready["items"]) else "warn", ready["open"], next_=_go("checks", "Next: DFM"))
         else:
             st = _stage("outputs", "clean", _plural(len(ex), "file"), next_=_go("checks", "Next: DFM"))
     st["pins_warning"] = warn
+    st["readiness"] = ready
     return st
 
 

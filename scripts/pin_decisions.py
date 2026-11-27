@@ -428,7 +428,7 @@ def risks(project):
     return out
 
 
-def write_manifest(project):
+def write_manifest(project, made_anyway=None):
     """exports/<project>_order_manifest.json: {warning, accepted_risks, unverified, verified_by_library_model, board_check, generated}, beside the Gerber zip, never inside it.
     Written when there is anything to say (or an older one to keep current); the JLC BOM CSV is not touched."""
     import json
@@ -442,7 +442,13 @@ def write_manifest(project):
         lib = pin_model.verified_lines(project)
     except Exception:       # noqa: BLE001
         lib = []
-    if not (acc or unv or lib or path.exists()):
+    try:
+        import readiness
+        drc = readiness.manifest_block(project)          # what the open DRC items are, by rule and class, for the PcbDoc sha256 they were counted on
+    except Exception:       # noqa: BLE001
+        drc = None
+    open_drc = bool(drc and (drc["state"] != "not_checked") and (drc["total"] or drc["state"] != "checked"))
+    if not (acc or unv or lib or path.exists() or open_drc):
         return None
     try:
         import board_results             # stream A's record of the last Altium check; absent or empty, the manifest says null
@@ -451,12 +457,16 @@ def write_manifest(project):
         board = None
     try:
         old = json.loads(path.read_text(encoding="utf-8"))
-        same = old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib and old.get("board_check") == json.loads(json.dumps(board, default=str)) and old.get("warning", "") == warn
+        if made_anyway is None:
+            made_anyway = old.get("made_anyway")          # the record of the last Make anyway stays until another run replaces it
+        same = (old.get("made_anyway") == made_anyway and old.get("accepted_risks") == acc and old.get("unverified") == unv and old.get("verified_by_library_model", []) == lib
+                and old.get("board_check") == json.loads(json.dumps(board, default=str)) and old.get("warning", "") == warn
+                and old.get("drc_open") == json.loads(json.dumps(drc, default=str)))
     except (OSError, ValueError):
         same = False
     if not same:
         path.parent.mkdir(parents=True, exist_ok=True)
-        doc = {"warning": warn, "accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "generated": store.now()}
+        doc = {"warning": warn, "accepted_risks": acc, "unverified": unv, "verified_by_library_model": lib, "board_check": board, "drc_open": drc, "made_anyway": made_anyway, "generated": store.now()}
         store._write_text(path, json.dumps(doc, ensure_ascii=False, indent=2, default=str))
     return str(path)
 

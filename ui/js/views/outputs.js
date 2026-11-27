@@ -71,6 +71,33 @@ function outPinsWarnNote() {
   const acts = (typeof pinsConfirmAllBtn === 'function' ? pinsConfirmAllBtn() : '') + btn('Open DFM', {kind: 'link', page: 'checks'});
   return `<div data-pins-warn="1">${banner({tone: 'warn', text: w, actions: acts})}</div>`;
 }
+/* "Before you order": every open count the server read back (stage 'outputs' readiness), each with a link. No evidence is never "0 open":
+   a check that was not run, is stale or was read in part is listed as such, and the dot in the nav is green only when this card has nothing open. */
+function outReady() {
+  const st = typeof stageOf === 'function' ? stageOf('outputs') : null;
+  return st && st.readiness ? st.readiness : null;
+}
+function outReadyCard() {
+  const r = outReady();
+  if (!r) return '';
+  const item = id => (r.items || []).find(i => i.id === id);
+  const drc = r.drc || {}, bc = drc.by_class || {};
+  const drcText = drc.state && drc.state !== 'checked'
+    ? `DRC: the board check is ${esc(String(drc.state).replace('_', ' '))}. ${esc(drc.why || '')}`
+    : `DRC: ${drc.total} violation${drc.total === 1 ? '' : 's'} open (JLC-reject ${bc['JLC-reject'] || 0}, unclassified ${bc.unclassified || 0}, cosmetic ${bc.cosmetic || 0}). ${esc(drc.scope || '')}`;
+  const pins = item('unverified_parts'), conds = item('open_conditions');
+  const row = (open, html, link) => `<li class="${open ? 'warn' : 'ok'}">${html} ${link}</li>`;
+  const anyway = bc['JLC-reject'] ? ' ' + btn('Make anyway', {kind: 'link', size: 'sm', act: 'out-make-anyway', title: 'Makes the files once with these items open and lists them in the order manifest'}) : '';
+  return `<section class="out-ready" data-ready="1"><h3>Before you order</h3><ul>` +
+    row(!!(item('drc_state') || item('drc_reject') || item('drc_unclassified') || item('drc_cosmetic')), drcText, btn('Open Layout', {kind: 'link', size: 'sm', page: 'pcb'}) + anyway) +
+    row(!!pins, pins ? `${pins.count} unverified part${pins.count === 1 ? '' : 's'}: pins not checked against a datasheet (${esc(pins.why)}).` : '0 unverified parts: every part is checked, accepted or has no pins to check.', btn('Open DFM', {kind: 'link', size: 'sm', page: 'checks'})) +
+    row(!!conds, conds ? `${conds.count} open condition${conds.count === 1 ? '' : 's'}: requirements not met or not measured on this board (${esc(conds.why)}).` : '0 open conditions: every confirmed requirement is met on the measured board.', btn('Open Layout', {kind: 'link', size: 'sm', page: 'pcb'})) +
+    `</ul></section>`;
+}
+onAct('out-make-anyway', async () => {
+  const r = await api('/api/outputs/make-anyway', {}, {soft: true});
+  toast(r && !r.error ? 'Make anyway recorded for this check: press Generate outputs now.' : ((r && r.error) || "Couldn't record it."), null, r && !r.error ? {} : {bad: true});
+});
 function outBlockNote(where) {
   const g = outGate();
   if (!g) return '';
@@ -319,11 +346,11 @@ function outputsHTML(container) {
   const files = S.exports || [];
   const a = outAltState(), note = outAltNoteHTML(files);
   if (!files.length && a) {
-    return outHeader([], true) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + `<div class="vb">${note}${outTable([], a)}</div>`;
+    return outHeader([], true) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outReadyCard() + outPinRisks() + `<div class="vb">${note}${outTable([], a)}</div>`;
   }
   if (!files.length) {
     const linked = outLinked();
-    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outPinRisks() + (note ? `<div class="vb">${note}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
+    return viewHeader({title: 'Outputs'}) + pvStepNote('outputs') + outBlockNote() + outPinsWarnNote() + outReadyCard() + outPinRisks() + (note ? `<div class="vb">${note}</div>` : '') + emptyState('Nothing exported yet', linked ? 'Altium generates the outputs from the OutJob, or export the BOM and the pick and place file.' : 'Generate the OutJob for Altium, or export the BOM and the pick and place file.',
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
       outLimits(linked));
   }
