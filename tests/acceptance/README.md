@@ -8,8 +8,10 @@ Frozen by the owner at git tag `acceptance-v1`; a fix branch reads this folder, 
 .venv/Scripts/python.exe -I tests/acceptance/run.py --controls          # red proof: every artifact metric FAILS on 27/11, every control PASSES
 .venv/Scripts/python.exe -I tests/acceptance/gate.py all                 # A2 imports, A3 frozen, A9 special-casing
 ```
-`-I` matters: the oracle must run with no product code on the path. The frozen fixture is local only
-(`local/acceptance-fixtures/final-e2e-4l-1127/`, verified against its manifest before and after every run).
+`-I` matters: the oracle must run with no product code on the path. The frozen fixture lives in
+`local/acceptance-fixtures/final-e2e-4l-1127/` (git-ignored) and is verified against its manifest before and after every run.
+On a new checkout or in a cloud session, get it first: `python -I tests/acceptance/fetch_fixture.py` (GitHub release
+`fixture-final-e2e-4l-1127`, zip hash checked). The owner made it public on 27/11; hidden boards (A6) are never published.
 This folder is not a pytest suite: no file is named `test_*`, and the normal suite never collects it.
 
 ## Layout
