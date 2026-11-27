@@ -135,10 +135,13 @@ function ideaHeaderHTML() {
   const meta = metaLine([
     {n: items.length, label: items.length === 1 ? 'requirement' : 'requirements'},
     {n: proposed, label: 'proposed', tone: 'warn', title: 'The agent proposed these. Accept all, or one by one.'},
-    I.confirmed ? 'confirmed' + (when ? ' ' + when : '') : ''
+    I.confirmed ? (I.changed_since_confirm ? 'changed since confirm' : 'confirmed') + (when ? ' ' + when : '') : ''
   ]);
   let primary = '', next = '';
-  if (I.confirmed) {
+  if (I.confirmed && I.changed_since_confirm) {
+    primary = btn('Confirm again', {kind: 'pri', act: 'confirmidea', title: 'An agreed requirement changed after you confirmed the idea: confirm it again'});
+    next = btn('Next: BOM', {kind: 'line', act: 'idea-next'});
+  } else if (I.confirmed) {
     next = btn('Next: BOM', {kind: 'pri', act: 'idea-next'});       // in the header's Next slot, where every other page has its Next
   } else {
     const D = (S && S.idea_draft) || {};

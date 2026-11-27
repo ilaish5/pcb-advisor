@@ -2186,8 +2186,10 @@ def save_idea_from_draft(project, by="student"):
     changes = idea_changes(saved, draft)
     if not idea_versions(project) and idea_exists(project):
         _push_idea_version(project, saved, "before first save", "the idea as it was before drafts")
-    keep = {k: saved[k] for k in ("confirmed", "confirmed_at") if k in saved}
+    keep = {k: saved[k] for k in ("confirmed", "confirmed_at", "changed_since_confirm") if k in saved}
     draft.update(keep)
+    if saved.get("confirmed") and _agreed_sig(saved) != _agreed_sig(draft):
+        draft["changed_since_confirm"] = True       # W5(b): an agreed item changed after confirmed_at; a no-op save leaves it alone
     import constraints            # noqa: PLC0415
     constraints.confirm_all(draft)          # the Save is the one confirmation of what the agent proposed
     board_from_text(draft)
@@ -2218,6 +2220,19 @@ def restore_idea_version(project, n):
     return load_idea_working(project)
 
 
+_ASSUMED_RX = re.compile(r"\(\s*assumed\s*\)", re.I)
+
+
+def is_assumed(item):
+    """An agreed item the agent marked as an assumption (the `assumed` field, status "assumed", or the "(assumed)" marker in its text).
+    Such an item is confirmed only by the student acting on that item (confirm_idea_item), never by a bulk Accept, Save or Confirm."""
+    return bool(item.get("assumed")) or item.get("status") == "assumed" or bool(_ASSUMED_RX.search(str(item.get("text") or "")))
+
+
+def _agreed_sig(idea):
+    return {(i.get("topic"), i.get("text")) for i in (idea or {}).get("agreed", [])}
+
+
 def accept_all_proposed(project, accept=True):
     """Accept (or dismiss) every proposed requirement and description in the working idea."""
     idea = load_idea_working(project)
@@ -2230,7 +2245,7 @@ def accept_all_proposed(project, accept=True):
                     it["status"] = "confirmed"
                 else:
                     continue
-            else:
+            elif not is_assumed(it):          # an assumption waits for the student's click on that item
                 it["status"] = "confirmed"
                 it["ts"] = now_ms()
         kept.append(it)
@@ -2414,16 +2429,18 @@ def confirm_idea_item(project, index=None, topic=None):
     agreed = idea.get("agreed", [])
     if index is not None and isinstance(index, int) and 0 <= index < len(agreed):
         agreed[index]["status"] = "confirmed"
+        agreed[index]["by"] = "student"
         agreed[index]["ts"] = now_ms()
     elif topic:
         item = next((it for it in agreed if it.get("topic") == topic), None)
         if not item:
             raise KeyError(f"no requirement with topic {topic!r}")
         item["status"] = "confirmed"
+        item["by"] = "student"
         item["ts"] = now_ms()
     else:
         for it in agreed:
-            if it.get("status") == "proposed":
+            if it.get("status") == "proposed" and not is_assumed(it):
                 it["status"] = "confirmed"
                 it["ts"] = now_ms()
     save_idea_draft(project, idea)
@@ -2485,7 +2502,7 @@ def confirm_idea(project):
     """Confirm the idea: the draft (if any) is saved first, then the saved idea is marked confirmed."""
     idea = load_idea_working(project)
     for i in idea["agreed"]:
-        if i["status"] == "proposed":
+        if i["status"] == "proposed" and not is_assumed(i):
             i["status"] = "confirmed"
     if idea.get("goal_status") == "proposed":
         idea["goal_status"] = "confirmed"
@@ -2496,6 +2513,7 @@ def confirm_idea(project):
         idea = load_idea(project)
     idea["confirmed"] = True
     idea["confirmed_at"] = now()
+    idea.pop("changed_since_confirm", None)          # confirmed again: the agreed items are the ones the student confirmed
     board_from_text(idea)
     sync_layers_from_idea(project, idea)
     return save_idea(project, idea)
