@@ -358,7 +358,7 @@ function outputsHTML(container) {
       (linked ? outAltiumBtn(true) + outOutjobBtn(false) : outOutjobBtn(true)) + menu({label: 'Export', iconAfter: 'chev'}, outExportItems()),
       outLimits(linked));
   }
-  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinsWarnNote()}${outPinRisks()}<div class="vb">${note}${outTable(files, a, files.some(f => f.modified))}</div>`;
+  return `${outHeader(files)}${pvStepNote('outputs')}${outBlockNote()}${outPinsWarnNote()}${outReadyCard()}${outPinRisks()}<div class="vb">${note}${outTable(files, a, files.some(f => f.modified))}</div>`;
 }
 
 /* ---------- action + change handlers (dispatched by the delegates in core.js) ---------- */
