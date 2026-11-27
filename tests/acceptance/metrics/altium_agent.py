@@ -1,5 +1,5 @@
 """Behaviour metrics that need a real agent turn on the live server (they cost money: each turn is cached and shared).
-Ids: W1, W26 (W30 and W11 live in altium_ops.py because they also need Altium). Needs the agent engine of the live server."""
+Ids: W1, W26 (W30 and W11 are not built: see the hand-over note). Needs the agent engine of the live server."""
 from __future__ import annotations
 
 import hashlib

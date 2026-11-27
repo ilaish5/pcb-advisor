@@ -338,26 +338,27 @@ def _observe_step(ctx, tab: str, label: str, step: str, keep: list[pathlib.Path]
             out["view_text"] = b.text("#view")
         out["sha_after"] = {f.name: _sha(f) for f in keep}
     finally:
-        out["restored"] = False
-    out["_store"] = str(store)
+        pass
     return out
 
 
-def _put_back(out: dict, keep: list[pathlib.Path]) -> None:
-    store = pathlib.Path(out["_store"])
+def _put_back_from(store: pathlib.Path, keep: list[pathlib.Path]) -> None:
+    """The scratch files as the student had them (the copies made before the step), whatever happened in between."""
     for f in keep:
-        try:
-            shutil.copy2(store / f.name, f)
-        except OSError as e:
-            out.setdefault("restore_errors", []).append(f"{f.name}: {e}")
-    out["restored"] = True
+        if (store / f.name).is_file():
+            try:
+                shutil.copy2(store / f.name, f)
+            except OSError:
+                pass
 
 
 def place_obs(ctx) -> dict:
     def run():
         pcb = obs.scratch_pcb(ctx)
-        o = _observe_step(ctx, "pcb", "Place parts", "place", [pcb])
-        _put_back(o, [pcb])
+        try:
+            o = _observe_step(ctx, "pcb", "Place parts", "place", [pcb])
+        finally:
+            _put_back_from(obs.scratch_altium(ctx) / "oracle" / "before-place", [pcb])
         return o
     return obs.cached("place", run)
 
@@ -379,9 +380,9 @@ def judge_u2(o: dict) -> Result:
     opened = max([int(m.group(1)) for t in texts for m in OPEN_RX.finditer(t)] or [0])
     tone = obs.tone(banner["cls"])
     green = tone == "ok"
-    return Result("fail" if (green and opened > 0) else "pass", measured=f"banner tone {tone!r} with {opened} open warnings on the page",
+    return Result("fail" if (green and opened > 0) else "pass", measured=f"banner tone {tone!r} (class {banner['cls']!r}) with {opened} open warnings on the page",
                   expected="green banner with open placement warnings = 0",
-                  detail=f"banner: {banner['text'][:160]!r}")
+                  detail=f"banner: {banner['text'][:160]!r}; only the tone clause is judged: the wording clause (scope next to the count) is not decided by the oracle, the banner still says 'checked against the netlist' over a separate 'Show n warnings' control")
 
 
 @metric(id="U2", title="The placement banner is not green while placement warnings are open and states its scope", root="R2", level="B",
@@ -418,11 +419,16 @@ def draw_obs(ctx) -> dict:
     def run():
         adir = obs.scratch_altium(ctx)
         sheets = sorted(adir.glob("*.SchDoc"))
-        o = _observe_step(ctx, "sch", "Draw in Altium", "draw", sheets, max_s=2400)
-        tmp = adir / "oracle"
-        o["compile"] = ap.compile_nets(obs.scratch_prj(ctx), tmp)
-        ap.close_scratch(adir)                      # the documents the compile opened, without saving
-        _put_back(o, sheets)
+        try:
+            o = _observe_step(ctx, "sch", "Draw in Altium", "draw", sheets, max_s=2400)
+            tmp = adir / "oracle"
+            try:
+                o["compile"] = ap.compile_nets(obs.scratch_prj(ctx), tmp)
+            except ap.ProbeError as e:
+                raise obs.NotObservable(f"Altium's compile could not be run by the probe: {e}")
+            ap.close_scratch(adir)                  # the documents the compile opened, without saving
+        finally:
+            _put_back_from(adir / "oracle" / "before-draw", sheets)
         return o
     return obs.cached("draw", run)
 

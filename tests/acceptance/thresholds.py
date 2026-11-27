@@ -57,3 +57,15 @@ EDGE_ASSEMBLY_MIN_MM = T(0.3, "mm", "jlc/assembly-capabilities.en.md § Economic
 # --- Altium-judged live metrics (metrics/altium_*.py) ------------------------------------------------------------------------------
 ANNULAR_RING_MIN_MM = T(0.15, "mm", f"{_CAP} § Drills, vias and annular ring (PTH annular ring: multilayer 1 oz, 0.15 mm absolute min) [P1]",
                         "used by the F-H(a) classifier: a pad ring below it is JLC-reject, between it and the rule value JLC-accept")
+
+# P0-2 / P0-4 / B1(b) limits (ACCEPTANCE.md Part 0 and B1; the owner's own numbers, not tool limits)
+P02_FIRST_STATE_S = T(2.0, "s", "ACCEPTANCE.md Part 0 P0-2: 'within 2 s a visible running state with the phase name'",
+                      "the oracle's page poll is 2 s, so a first phase name later than this plus 3 s of poll and paint is a fail")
+P02_UPDATE_GAP_S = T(10.0, "s", "ACCEPTANCE.md Part 0 P0-2: 'an update at least every 10 s'", "gap between changes of the running text")
+P02_NO_PROGRESS_S = T(60.0, "s", "ACCEPTANCE.md Part 0 P0-2: 'if the backend reports no progress for 60 s, the page says so in words'",
+                      "5 s of poll slack in the judge")
+B1B_MODAL_IN_DOM_S = T(15.0, "s", "ACCEPTANCE.md B1(b): 'every Altium modal ... is shown in words in the DOM within 15 s (the dbf3635 contract)'",
+                       "3 s of poll slack in the judge")
+P04_TITLE_MAX_CHARS = T(70, "chars", "ACCEPTANCE.md Part 0 P0-4 (owner 27/11: a bold title that says what failed); the character limit is the P0-4 text's collapsed-view limit at 1366 x 768",
+                        "one line of the failure card")
+P04_LINES_MAX = T(3, "lines", "ACCEPTANCE.md Part 0 P0-4: at most 3 lines in the collapsed view at 1366 x 768", "title included")

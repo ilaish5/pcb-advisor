@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import re
 
-TITLE_MAX = 70
-LINES_MAX = 3
+import thresholds as TH
+
+TITLE_MAX = TH.P04_TITLE_MAX_CHARS["value"]      # cited in thresholds.py
+LINES_MAX = TH.P04_LINES_MAX["value"]
 FORBIDDEN = [
     ("path", r"[A-Za-z]:\\|\\\\[A-Za-z0-9_.$-]+\\|(?<![\w/])/(?:usr|home|var|tmp|c)/\w"),
     ("error-class", r"\b\w*(?:Error|Exception)\b|Traceback|errno|HRESULT|WinError|OSError|BridgeError"),

@@ -11,6 +11,7 @@ import re
 import shutil
 import time
 
+import thresholds as TH
 from lib import Result, metric
 from live_altium import obs, env, altium_probe as ap, failview
 
@@ -288,7 +289,7 @@ PHASE_RX = re.compile(r"\b(prepar\w+|convert\w+|download\w+|symbols?|footprints?
                       r"verif\w+|draw\w*|plac\w+|rout\w+|net \S+|pad \S+)\b", re.I)
 PROGRESS_RX = re.compile(r"\b\d+\s*(?:s|sec|secs|seconds?|min|mins|minutes?)\b|\b\d+\s*(?:/|of)\s*\d+\b|\b\d+\s*-\s*\d+\s*min", re.I)
 END_RX = re.compile(r"\b(built|done|finished|failed|could not|couldn.t|cancelled|stopped|error)\b", re.I)
-GAP_MAX_S, FIRST_MAX_S, STALL_S = 10.0, 2.0, 60.0          # ACCEPTANCE Part 0, P0-2: visible within 2 s, an update at least every 10 s, no progress for 60 s said in words
+GAP_MAX_S, FIRST_MAX_S, STALL_S = (TH.P02_UPDATE_GAP_S["value"], TH.P02_FIRST_STATE_S["value"], TH.P02_NO_PROGRESS_S["value"])   # cited in thresholds.py
 
 
 def _run_text(s: dict, rx_note: str) -> str:
@@ -377,7 +378,7 @@ MODAL_WORDS = re.compile(r"error box|message box|dialog|pop-?up|window|Altium (?
                          r"could not create|integrated library|blocked", re.I)
 STALL_WORDS = re.compile(r"no progress|not responding|has not (?:answered|responded|moved)|stalled|waiting for Altium|nothing (?:has )?changed|"
                          r"no sign of|still waiting|has stopped", re.I)
-MODAL_MAX_S = 15.0      # the dbf3635 contract (ACCEPTANCE B1(b)): every Altium modal raised during a bridge step is in the DOM in words within 15 s
+MODAL_MAX_S = TH.B1B_MODAL_IN_DOM_S["value"]      # cited in thresholds.py
 
 
 def _tokens(texts: list[str]) -> set[str]:
