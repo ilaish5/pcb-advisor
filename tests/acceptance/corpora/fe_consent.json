@@ -1,0 +1,26 @@
+{
+ "corpus": "F-E consent phrasings (ACCEPTANCE F-E, T-E)",
+ "question": "Replace the board's parts? This wipes what is there (a backup is kept). Answer yes/no.",
+ "rule": "affirmatives (with extra text) must grant the replace; negations / delays / self-do must not",
+ "split": "A15: even items visible, odd owner-held",
+ "half": "visible",
+ "affirmative": [
+  "yes, replace the placement, I moved two parts by hand but they can go",
+  "yes replace the parts on the board, a backup is fine with me",
+  "yes. Replace it. I want the decaps closer to the MCU this time",
+  "yes, wipe it and place the parts again from scratch",
+  "Yes, please do the replacement; I saved my own copy already",
+  "yes, replace it please, the crystal is too far from the MCU right now",
+  "yes I'm sure, replace the parts and their copper",
+  "Yes, replace everything on the board, thanks",
+  "affirmative, replace the placement",
+  "yes, replace the board's parts, I understand the tracks go too"
+ ],
+ "negative": [
+  "yes, but don't replace the placement yet",
+  "not yet, I want to look at the current placement first",
+  "don't replace it, just tell me what you would change",
+  "maybe later, do not wipe the board now",
+  "hold on, stop, don't touch the board"
+ ]
+}

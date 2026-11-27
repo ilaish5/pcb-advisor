@@ -1,0 +1,58 @@
+{
+ "corpus": "W6 MCU boot/strap tables (ACCEPTANCE W6)",
+ "split": "A15: STM32F411 and ESP32 visible; STM32F103 and STM32G0 owner-held",
+ "half": "visible",
+ "families": [
+  {
+   "family": "STM32F411xC/E",
+   "mpn": "STM32F411CEU6",
+   "source": "STM32F411xC/E datasheet DS10314, Table 8 / RM0383 boot modes",
+   "mode": "boot from main flash (BOOT0=0); USB DFU via BOOT0=1, BOOT1=0",
+   "straps": [
+    {
+     "pin": "44",
+     "name": "BOOT0",
+     "level": "0"
+    },
+    {
+     "pin": "20",
+     "name": "PB2",
+     "alias": "BOOT1",
+     "level": "0"
+    }
+   ]
+  },
+  {
+   "family": "ESP32 (WROOM-32)",
+   "mpn": "ESP32-WROOM-32E",
+   "source": "ESP32 datasheet section 2.4 Strapping Pins, Table 5",
+   "mode": "SPI boot, 3.3 V flash",
+   "straps": [
+    {
+     "pin": "25",
+     "name": "IO0",
+     "alias": "GPIO0",
+     "level": "1"
+    },
+    {
+     "pin": "24",
+     "name": "IO2",
+     "alias": "GPIO2",
+     "level": "0"
+    },
+    {
+     "pin": "14",
+     "name": "IO12",
+     "alias": "MTDI",
+     "level": "0"
+    },
+    {
+     "pin": "23",
+     "name": "IO15",
+     "alias": "MTDO",
+     "level": "1"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,20 @@
+{
+ "corpus": "W20 pin-table styles (ACCEPTANCE W20)",
+ "note": "The oracle writes a datasheet page for a real part of the seeded project in this style from the part's own library symbol (correct twin), and a copy with one random pin renamed (true rename).",
+ "split": "A15: number-first, multi-function, ordering-code-note visible; the rest owner-held",
+ "half": "visible",
+ "styles": [
+  {
+   "id": "number-first",
+   "doc": "Plain number-first pin table, one name per cell."
+  },
+  {
+   "id": "multi-function",
+   "doc": "Each cell lists several functions, the symbol's name is NOT the first one: '<ALT1> / <ALT2> (<NAME>)'."
+  },
+  {
+   "id": "ordering-code-note",
+   "doc": "The table shows a default function; a numbered note says that for this ordering code the pin is <NAME> (the W25Q -IQ case)."
+  }
+ ]
+}
