@@ -503,28 +503,41 @@ function chatEngineName(id) {
 }
 function chatEngineLabel(id, model) { return id ? chatEngineName(id) + (model ? ' · ' + model : '') : ''; }
 /* R2/W22: the "no check ran" footer goes on an agent answer that states a zero count of errors, issues, problems or violations as a claim about the
-   design ("0 errors", "no issues", "0 Fehler": the count is the word before it, in any language) when no CHECKING tool ran in its turn: DRC, ERC, the
-   schematic review or a verify. A document read or a web look-up does not count as a check. The same holds for an earlier agent message of the turn
-   with such a tool or a "Scope:" line (the tool's own review). Numbers that are not such a count ("0 ohm", "PA0 and", "keep BOOT0 low") never match. */
-const CHAT_CHECK_TOOL = /\b(?:drc|erc|design rule|schematic review|review sheet|sheet review|verify|verif(?:ied|ication)|board check|order check)\b/i;
+   design when no CHECK ran in its turn. "A check ran" is read from what the server recorded on the message (a tool chip with `check: true`, the
+   script it ran, or an applied action that is a check), never from the words of a label. A document read or a web look-up is not a check. The same
+   holds for an earlier agent message of the turn, or a "Scope:" line (the tool's own review).
+   The claim: a zero count next to the word ("0 errors", "no ERC errors", "0 DRC violations", "Errors: 0", and the Hebrew forms with or without a digit).
+   Numbers that are not such a count ("0 ohm", "PA0 and", "keep BOOT0 low") never match. Hebrew words are built from character codes (no Hebrew
+   literal in the source). */
+const CHAT_CHECK_SCRIPT = /^(?:verify_part|schematic|schematic_review|board|lint|validate_netlist|rules|order_check|requirements|dfm|drc_origin|drc_jlc_map|verify_sources)\.py$/i;
+const CHAT_CHECK_ACTION = /^(?:altium\.run_drc|order\.check|dfm\.triage)\b/;
+const heWord = (...codes) => String.fromCharCode(...codes);
+const HE_ERRORS = [heWord(1513, 1490, 1497, 1488, 1493, 1514), heWord(1489, 1506, 1497, 1493, 1514), heWord(1492, 1508, 1512, 1493, 1514),
+  heWord(1502, 1502, 1510, 1488, 1497, 1501)].join('|');
+const HE_NONE = [heWord(1488, 1497, 1503), heWord(1500, 1488, ' '.charCodeAt(0), 1504, 1502, 1510, 1488, 1493), heWord(1500, 1500, 1488),
+  heWord(1488, 1508, 1505), heWord(1500, 1488, 32, 1502, 1510, 1488, 1514, 1497)].join('|');
 const CHAT_ZERO_CLAIM = [
-  /(?:^|[^\w.,\/-])(?:0|zero|no)\s+(?:(?:open|remaining|new|real|critical|blocking|more)\s+)?(?:errors?|issues?|problems?|violations?|findings?)\b/i,
-  /(?:^|[^\w.,\/-])0\s+(?:שגיאות|בעיות|הפרות|ממצאים)/u,
+  /(?:^|[^\w.,\/-])(?:0|zero|no)\s+(?:[\w-]+\s+){0,2}(?:errors?|issues?|problems?|violations?|findings?)\b/i,
+  /\b(?:errors?|issues?|problems?|violations?|findings?)\s*[:=]\s*(?:0|zero|none)\b/i,
+  new RegExp('(?:^|[^\\w.,/-])0\\s+(?:' + HE_ERRORS + ')', 'u'),
+  new RegExp('(?:^|\\s)(?:' + HE_NONE + ')\\s+(?:\\S+\\s+)?(?:' + HE_ERRORS + ')', 'u'),
+  new RegExp('(?:' + HE_ERRORS + ')\\s*:\\s*0'),
   /(?:^|[^\w.,\/-])0\s+(?:fehler|probleme|verstöße|erreurs|problèmes|errores|problemas)(?![\p{L}])/iu,
 ];
-function chatHasCheckTool(m) {
-  return (m.tools || []).some(x => CHAT_CHECK_TOOL.test([x.t, x.d, x.raw, x.name].filter(Boolean).join(' ')));
+function chatHasCheck(m) {
+  return (m.tools || []).some(x => x && (x.check === true || CHAT_CHECK_SCRIPT.test(String(x.script || ''))))
+    || (m.applied || []).some(a => CHAT_CHECK_ACTION.test(String(a)));
 }
 function chatUncheckedClaim(m) {
   const t = m.text || '';
-  if (m.role !== 'agent' || m.by === 'button' || m.followup || chatHasCheckTool(m) || /\bScope:/.test(t)) return false;
+  if (m.role !== 'agent' || m.by === 'button' || m.followup || chatHasCheck(m) || /\bScope:/.test(t)) return false;
   if (!CHAT_ZERO_CLAIM.some(rx => rx.test(t))) return false;
   const chat = (typeof S !== 'undefined' && S && S.chat) || [];
   const at = chat.indexOf(m);
   for (let i = at > 0 ? at - 1 : chat.length - 1; i >= 0 && at !== 0; i--) {
     const p = chat[i];
     if (p.role === 'user') break;
-    if (p.role === 'agent' && (chatHasCheckTool(p) || /\bScope:/.test(p.text || ''))) return false;
+    if (p.role === 'agent' && (chatHasCheck(p) || /\bScope:/.test(p.text || ''))) return false;
   }
   return true;
 }

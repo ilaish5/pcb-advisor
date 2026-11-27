@@ -134,6 +134,10 @@ SCRIPT_WORDS = {
     "schematic.py": "Checking the schematic", "board.py": "Checking the board", "idea.py": "Checking the idea",
     "requirements.py": "Checking the requirements", "drc_origin.py": "Tracing the DRC findings", "drc_jlc_map.py": "Matching the DRC to JLC",
 }
+# R2/W22: the scripts whose run IS a check of the design (a sheet, the board, a part's pins, the order): a chip for one carries `check: true`,
+# so the chat decides "a check ran" from the recorded script and not from the words of the label
+CHECK_SCRIPTS = frozenset({"verify_part.py", "schematic.py", "schematic_review.py", "board.py", "lint.py", "validate_netlist.py", "rules.py",
+                           "order_check.py", "requirements.py", "dfm.py", "drc_origin.py", "drc_jlc_map.py", "verify_sources.py"})
 _FIRST = re.compile(r"^(Denied: Running|Running|Reading|Searching for|Searching the web:|Opening skill|Opening|Editing)\s*(.*)$", re.S)
 # a bare tool name (the label of a call that has no input to name): said in words, never as the tool's own name
 _BARE = {"Read": "Reading a file", "Grep": "Searching the project", "Glob": "Searching the project", "Bash": "Running a command",

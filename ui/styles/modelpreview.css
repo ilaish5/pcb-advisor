@@ -68,6 +68,6 @@
 .mp-key.p1{background:var(--sig);border-color:var(--sig)}
 .mp-key.court{border:2px dashed var(--net)}
 .mp-key.silk{border-color:var(--sch-text);border-radius:0;height:0;width:16px;border-width:0 0 2px}
-.fp-mask{fill:var(--ok,#2a9d5c);fill-opacity:.25;stroke:var(--ok,#2a9d5c);stroke-width:.02}
-.fp-paste{fill:var(--sig);fill-opacity:.55}
+.fp-mask{fill:color-mix(in srgb,var(--ok,#2a9d5c) 25%,transparent);stroke:var(--ok,#2a9d5c);stroke-width:.02}
+.fp-paste{fill:color-mix(in srgb,var(--sig) 55%,transparent)}
 .mp-tools{display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem;font-size:.85rem}
