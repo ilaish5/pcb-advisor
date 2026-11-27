@@ -327,6 +327,36 @@ def content_problems(z: zipfile.ZipFile, entries: list[dict], facts: dict[str, A
     return out
 
 
+def geometry_problems(z: zipfile.ZipFile, entries: list[dict], skipped: list[str]) -> list[dict]:
+    """Mask web, copper to NPTH and copper to routed edge (gerber_geometry), read from the zip's own files. Entries like content_problems'."""
+    import gerber_geometry
+    files: dict[str, list[str]] = {"mask": [], "copper": [], "outline": [], "npth": []}
+    for e in entries:
+        grp = e["group"]
+        if grp not in ("mask", "copper", "outline", "drill") or e.get("empty"):
+            continue
+        with z.open(e["name"]) as fh:
+            data = fh.read(gerber_check.MAX_BYTES * 8 + 1)
+        if len(data) > gerber_check.MAX_BYTES * 8:
+            skipped.append(f"{e['name']} is too large to read for the geometry check")
+            continue
+        text = data.decode("latin-1")
+        if grp == "drill":
+            d = gerber_check.parse_excellon(text)
+            if d is not None and d["plated"] is False:
+                files["npth"].append(text)
+        else:
+            files[grp].append(text)
+    msgs, skip = gerber_geometry.problems(files)
+    skipped += skip
+    layer = {"mask web": ("Top/bottom solder mask", ".GTS .GBS"), "non-plated": ("NC drill", ".TXT"), "routed": ("Board outline", ".GM1 or .GKO")}
+    out = []
+    for m in msgs:
+        key = "mask web" if "mask web" in m else "non-plated" if "non-plated" in m else "routed"
+        out.append({"layer": layer[key][0], "ext": layer[key][1], "level": "geometry", "why": m})
+    return out
+
+
 _FACTS: dict[tuple, Any] = {}
 
 
@@ -356,6 +386,11 @@ def _describe(path: pathlib.Path, pcb=None) -> dict[str, Any]:
                 with z.open(i) as fh:
                     entries[-1]["empty"] = not _has_draws(fh.read(EMPTY_SCAN_BYTES))
         missing, warnings = _problems(entries)
+        geo_skipped: list[str] = []
+        try:                       # R2/W37: mask webs, copper to NPTH and copper to the routed edge, from the files alone
+            missing += geometry_problems(z, entries, geo_skipped)
+        except (OSError, zipfile.BadZipFile, ValueError, KeyError):
+            geo_skipped.append("the output files could not be read for the geometry check")
         facts = _facts_cached(pcb) if pcb else None
         check = {"checked": False, "note": "no PcbDoc linked" if not pcb else "the PcbDoc could not be read"}
         if facts:
@@ -375,6 +410,8 @@ def _describe(path: pathlib.Path, pcb=None) -> dict[str, Any]:
     name = workspace.safe_name(path.name[: -len("_gerbers.zip")])
     assembly = {"bom": f"{name}_BOM_jlc.csv", "cpl": f"{name}_cpl.csv"}
     assembly = {k: (v if (exports / v).is_file() else None) for k, v in assembly.items()}
+    if geo_skipped:
+        check["geometry_not_checked"] = geo_skipped
     return {
         "exists": True, "zip": path.name, "bytes": size, "built": _iso(path.stat().st_mtime),
         "generated": max((e["modified"] for e in entries), default=None), "files": entries,

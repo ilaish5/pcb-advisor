@@ -351,13 +351,14 @@ function dfmZipBody() {
   const z = dfmZip;
   if (!z) return err || loadingLine('Looking for the zip');
   if (!z.exists) return err || '<p>Writes one zip with the newest Gerber and NC drill files of your Altium project. Altium\'s own folder is only read.</p>';
-  const gaps = z.missing || [], problems = gaps.filter(m => m.level === 'problem'), notes = gaps.filter(m => m.level !== 'problem');
+  const gaps = z.missing || [], problems = gaps.filter(m => m.level === 'problem'), geo = gaps.filter(m => m.level === 'geometry'), notes = gaps.filter(m => m.level !== 'problem' && m.level !== 'geometry');
   const url = `/api/export/${encodeURIComponent(z.zip)}?${q()}`;
   let out = err;
   out += `<p class="dfm-zip"><span class="m">${esc(z.zip)}</span><span>${(z.files || []).length} files, written <time datetime="${esc(z.generated)}" title="${esc(outFull(z.generated))}">${esc(outAgo(z.generated))}</time></span>` +
     `<a class="btn icon sm" href="${esc(url)}" download="${esc(z.zip)}" title="Download ${esc(z.zip)}" aria-label="Download ${esc(z.zip)}">${icon('download')}</a></p>`;
   out += dfmNames((z.files || []).map(f => f.name));
   out += problems.map(m => banner({tone: 'warn', html: `<b>${esc(m.layer)}</b> (<span class="m">${esc(m.ext)}</span>) is missing. ${esc(m.why)}`})).join('');
+  out += geo.map(m => banner({tone: 'warn', html: `<b>${esc(m.layer)}</b>: ${esc(m.why)}`})).join('');
   out += (z.warnings || []).map(w => banner({tone: 'warn', text: w})).join('');
   if (notes.length) out += `<p class="muted">${notes.map(m => `${esc(m.layer)} (<span class="m">${esc(m.ext)}</span>) is not in the set. ${esc(m.why)}`).join(' ')}</p>`;
   const a = z.assembly || {};
