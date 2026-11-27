@@ -53,3 +53,7 @@ EDGE_COPPER_MIN_MM = T(0.2, "mm", "jlc/pcb-capabilities.en.md § Outline, board 
                        "copper to a routed edge must be >= 0.2 mm")
 EDGE_ASSEMBLY_MIN_MM = T(0.3, "mm", "jlc/assembly-capabilities.en.md § Economic vs Standard PCBA (Economic boards ... > 0.3 mm from the edge) [A4 #14]",
                          "JLC asks > 0.3 mm from traces and components to the edge: a gap of 0.3 mm or less is a finding")
+
+# --- Altium-judged live metrics (metrics/altium_*.py) ------------------------------------------------------------------------------
+ANNULAR_RING_MIN_MM = T(0.15, "mm", f"{_CAP} § Drills, vias and annular ring (PTH annular ring: multilayer 1 oz, 0.15 mm absolute min) [P1]",
+                        "used by the F-H(a) classifier: a pad ring below it is JLC-reject, between it and the rule value JLC-accept")
