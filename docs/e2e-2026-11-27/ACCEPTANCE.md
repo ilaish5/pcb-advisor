@@ -247,7 +247,8 @@ Conventions:
 
 ### W2 · Goal, description and diagram drift while the agent says "Updated" (R1) [P0-3]
 - **Failure (27/11):**
-  - `F/project/idea.json` (final) still contains "45 x 35 mm" while board = 60 x 45, and still names "ME6211" while bom.json U5 = LDL1117S33R.
+  - Correction (oracle, 27/11): the final `idea.json` holds "45 x 35 mm" and "ME6211" only in `prev_text` (history). The stale text lived in the
+    intermediate versions: the oracle replays every idea version against the BOM at that time (5 stale windows).
   - idea-versions n=5-7: the goal names ME6211 after the 02:12 swap.
   - The chat said "Updated the draft with all your fixes".
 - **Metric:**
@@ -257,7 +258,7 @@ Conventions:
   - "Updated" claims carry an A10 record with the text hashes.
 - **Oracle:** U (synthetic ideas) + B.
   - Entities are extracted with a frozen regex set: `\d+ ?x ?\d+ mm`, `\d-layer`, the MPN set from bom.json.
-- **Red on 27/11:** 2 unmarked stale entities in the final idea.json.
+- **Red on 27/11:** 5 stale windows across idea versions (oracle replay).
 - **Anti-gaming:**
   - A canary changes a random entity (random MPN swap, random size).
   - Deleting the goal or description does not pass: the text must still exist and name the current values.
