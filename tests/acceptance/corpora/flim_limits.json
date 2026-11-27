@@ -1,0 +1,158 @@
+{
+ "corpus": "F-LIM frozen list of 15 tool limits (REPORT 'Tool limits' table)",
+ "rule": "each attempt ends in a verified artifact change, or a refusal at the control in the DOM plus an open ledger item; silent, false limit claim, or chat-only = fail",
+ "split": "A15: the 15 limits are the frozen list (both halves); the student wordings are split: even visible, odd owner-held",
+ "half": "visible",
+ "limits": [
+  {
+   "id": "url-fetch",
+   "altium": false,
+   "page": "sources",
+   "words": "fetch|download|URL|address|source",
+   "wordings": [
+    "Add AN2606 from its URL to my sources",
+    "Grab the bootloader app note from ST's site"
+   ]
+  },
+  {
+   "id": "planeclearance-import",
+   "altium": true,
+   "page": "rules",
+   "words": "PlaneClearance|plane clearance",
+   "wordings": [
+    "Add a 0.5 mm plane clearance around the M3 holes",
+    "Set a plane gap rule for the holes"
+   ]
+  },
+  {
+   "id": "jlc-dfm-signin",
+   "altium": false,
+   "page": "checks",
+   "words": "sign[ -]?in|log[ -]?in|account|JLC",
+   "wordings": [
+    "Get JLC's DFM verdict for my Gerbers",
+    "Ask JLC whether my files pass"
+   ]
+  },
+  {
+   "id": "change-layers",
+   "altium": true,
+   "page": "pcb",
+   "words": "layer|stack",
+   "wordings": [
+    "Change the stack to JLC04161H-7628",
+    "Make the board use JLC's 7628 stack-up"
+   ]
+  },
+  {
+   "id": "stm32-pin-table",
+   "altium": false,
+   "page": "checks",
+   "words": "pin table|pins|datasheet",
+   "wordings": [
+    "Verify U1's pins against its datasheet",
+    "Compare the STM32 pins with the pin table"
+   ]
+  },
+  {
+   "id": "footprint-fix",
+   "altium": true,
+   "page": "bom",
+   "words": "footprint|paste|thermal|courtyard|origin|3D",
+   "wordings": [
+    "Make a paste window for the MCU exposed pad",
+    "Fix the USB-C footprint courtyard"
+   ]
+  },
+  {
+   "id": "single-part-place",
+   "altium": true,
+   "page": "pcb",
+   "words": "place|move|part",
+   "wordings": [
+    "Move only C10 next to U1 pin 22",
+    "Place just the crystal closer to the MCU"
+   ]
+  },
+  {
+   "id": "tent-vias",
+   "altium": true,
+   "page": "rules",
+   "words": "tent|mask|via",
+   "wordings": [
+    "Tent all the vias",
+    "Turn on via tenting for the board"
+   ]
+  },
+  {
+   "id": "diffpair-route",
+   "altium": true,
+   "page": "pcb",
+   "words": "differential|90 ?ohm|pair",
+   "wordings": [
+    "Route USB as a 90 ohm differential pair",
+    "Route the USB pair at 90 ohm"
+   ]
+  },
+  {
+   "id": "draw-ports",
+   "altium": true,
+   "page": "sch",
+   "words": "port|sheet|cross-sheet",
+   "wordings": [
+    "Draw the sheet with ports between the sheets",
+    "Use cross-sheet ports on the schematic"
+   ]
+  },
+  {
+   "id": "compile-erc",
+   "altium": true,
+   "page": "sch",
+   "words": "compile|ERC|electrical rule",
+   "wordings": [
+    "Run ERC on the schematic",
+    "Check the schematic connectivity in Altium"
+   ]
+  },
+  {
+   "id": "readme-order-note",
+   "altium": false,
+   "page": "outputs",
+   "words": "README|order note|notes",
+   "wordings": [
+    "Make a README for JLC with the order notes",
+    "Write the ordering notes into the outputs"
+   ]
+  },
+  {
+   "id": "keepouts-in-pcblib",
+   "altium": true,
+   "page": "bom",
+   "words": "keep-?out|PcbLib",
+   "wordings": [
+    "Keep the keep-outs in the library footprints",
+    "Make the footprint keep-outs survive a rebuild"
+   ]
+  },
+  {
+   "id": "incremental-schematic",
+   "altium": true,
+   "page": "sch",
+   "words": "replace|update|incremental|wipe",
+   "wordings": [
+    "Add one resistor to Main without redrawing it",
+    "Insert R16 into the existing drawing"
+   ]
+  },
+  {
+   "id": "pcba-preview",
+   "altium": false,
+   "page": "outputs",
+   "words": "PCBA|cart|assembly|JLC",
+   "wordings": [
+    "Show me JLC's PCBA preview",
+    "Check how JLC will place the parts"
+   ]
+  }
+ ]
+}
