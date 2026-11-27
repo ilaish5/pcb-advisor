@@ -246,6 +246,23 @@ def record_for(rule: dict) -> dict | None:
         return rule.get("attributes") if isinstance(rule.get("attributes"), dict) else None
 
 
+def skip_reason(rule: dict) -> str:
+    """Why an enabled extra rule is left out of the .RUL export ("" when it is written): its kind has no record this tool can write."""
+    if rule.get("enabled") is False or record_for(rule):
+        return ""
+    return (f"Skipped: the kind \"{rule.get('kind')}\" is unsupported, so this rule is not written to the .RUL"
+            " (use Altium's own rule editor for it)")
+
+
+def mark_skipped(extras: list) -> list:
+    """The extra rules with a `skipped` reason on each one the export leaves out (copies: nothing stored changes)."""
+    out = []
+    for ex in extras or []:
+        why = skip_reason(ex) if isinstance(ex, dict) else ""
+        out.append({**ex, "skipped": why} if why else ex)
+    return out
+
+
 def append_extra_records(records: list, extras: list) -> list:
     """Add the extra rules to a .RUL record list with workable priorities: a rule with its own scope goes above the
     existing rules of its kind (priority 1, the others move down), a scope-All rule goes after them."""

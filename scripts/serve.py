@@ -3021,6 +3021,12 @@ def _extra_rules_load(rules_file):
     return []
 
 
+def _marked(extra):
+    """The extra rules with the reason on each one the .RUL export skips (R2/U6): the Rules page shows it on the rule's own row."""
+    import rule_kinds
+    return rule_kinds.mark_skipped(extra)
+
+
 def _preset_off(proj):
     """Names of the JLC preset rules this project turned off (rules-off.json)."""
     f = model.project_dir(proj) / "rules-off.json"
@@ -3588,7 +3594,7 @@ class Handler(BaseHTTPRequestHandler):
                 design_check = bridge.design_problems(proj)    # the board against the design (netlist and SchDocs)
             return self._send(200, {
                 "preset": preset,
-                "extra": extra,
+                "extra": _marked(extra),
                 "preset_off": off,
                 "kinds": rule_kinds.kinds_info(),
                 "standards": ipc_standards.info(),
@@ -3628,8 +3634,11 @@ class Handler(BaseHTTPRequestHandler):
             import rule_kinds
             records = rule_kinds.append_extra_records(records, _extra_rules_load(model.project_dir(proj) / "rules.json"))
             b = rules_mod.format_rul_bytes(records)
-            return self._send(200, b, "application/octet-stream",
-                              {"Content-Disposition": f'attachment; filename="{proj}-rules{"-board" if board_aware else ""}.RUL"'})
+            left = [r["name"] for r in _marked(_extra_rules_load(model.project_dir(proj) / "rules.json")) if r.get("skipped")]
+            hdr = {"Content-Disposition": f'attachment; filename="{proj}-rules{"-board" if board_aware else ""}.RUL"'}
+            if left:
+                hdr["X-Rules-Skipped"] = ", ".join(left)[:500]          # the file cannot say it: the header and the Rules page do
+            return self._send(200, b, "application/octet-stream", hdr)
         if path == "/api/calc":
             import calc
             q = self.queries()
@@ -4812,7 +4821,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": str(exc)})
             rules_file = model.project_dir(proj) / "rules.json"
             extra = _extra_rules_save(rules_file, [clean_rule])
-            return self._send(200, {"ok": True, "extra": extra})
+            return self._send(200, {"ok": True, "extra": _marked(extra)})
         if path == "/api/rules/extra/enabled":      # switch one extra rule on or off (off: kept in the list, not in the .RUL)
             rules_file = model.project_dir(proj) / "rules.json"
             extra = _extra_rules_load(rules_file)
@@ -4821,7 +4830,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "no such extra rule"})
             hit[0]["enabled"] = bool(data.get("enabled"))
             rules_file.write_text(json.dumps(extra, indent=2), encoding="utf-8")
-            return self._send(200, {"ok": True, "extra": extra})
+            return self._send(200, {"ok": True, "extra": _marked(extra)})
         if path == "/api/rules/preset/enabled":     # switch one JLC preset rule on or off for this project
             import rules as rules_mod
             name = _text_field(data, "name")
@@ -4834,7 +4843,7 @@ class Handler(BaseHTTPRequestHandler):
             rules_file = model.project_dir(proj) / "rules.json"
             extra = [r for r in _extra_rules_load(rules_file) if r.get("name") != data.get("name")]
             rules_file.write_text(json.dumps(extra, indent=2), encoding="utf-8")
-            return self._send(200, {"ok": True, "extra": extra})
+            return self._send(200, {"ok": True, "extra": _marked(extra)})
         if path == "/api/rules/standard":           # add the rules of a standard preset to the extra rules
             import ipc_standards
             try:
@@ -4847,7 +4856,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "choose at least one rule to add"})
             rules_file = model.project_dir(proj) / "rules.json"
             extra = _extra_rules_save(rules_file, rows)
-            return self._send(200, {"ok": True, "added": [r["name"] for r in rows], "extra": extra})
+            return self._send(200, {"ok": True, "added": [r["name"] for r in rows], "extra": _marked(extra)})
 
         if path == "/api/calc":
             import calc

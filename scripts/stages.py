@@ -275,9 +275,23 @@ def rules_state(project):
     return res
 
 
+def _skipped_rules(project):
+    """Names of the enabled extra rules the .RUL export leaves out (an unsupported kind): never a silent drop, never a clear status."""
+    try:
+        import rule_kinds
+        rows = json.loads((store.pdir(project) / "rules.json").read_text(encoding="utf-8"))
+        return [r.get("name") for r in rule_kinds.mark_skipped(rows if isinstance(rows, list) else []) if isinstance(r, dict) and r.get("skipped")]
+    except (OSError, ValueError, ImportError):
+        return []
+
+
 def rules_stage(project):
     rs = rules_state(project)
     nxt = _go("outputs", "Next: Outputs")
+    left = _skipped_rules(project)
+    if left:
+        return _stage("rules", "issues", _plural(len(left), "extra rule") + " skipped (unsupported kind): " + ", ".join(left[:5]), "warn", len(left),
+                      next_={"label": "Rules", "act": "go:rules"})
     if rs is None:
         return _stage("rules", "not_started", "", next_={"label": "Rules", "act": "go:rules"})
     if not rs["linked"]:
