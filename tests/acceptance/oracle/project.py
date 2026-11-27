@@ -65,7 +65,7 @@ _FAMILY = re.compile(r"[A-Z]+\d+[A-Z]?\d*")
 
 def family(mpn: str) -> str:
     """Ordering-code family of an MPN: letters+digits(+one variant letter+digits), separators removed.
-    STM32F411CEU6 -> STM32F411, ME6211A33PG-N -> ME6211A33, LDL1117S33R -> LDL1117S33."""
+    ABC1234XU6 -> ABC1234, XY6211A33PG-N -> XY6211A33."""
     s = norm_alnum(mpn)
     m = _FAMILY.match(s)
     return m.group(0) if m else s

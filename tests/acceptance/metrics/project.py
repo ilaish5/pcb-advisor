@@ -157,18 +157,10 @@ def _w2_control(ctx: Ctx) -> Ctx:
                     t = t.replace(m, new)
         return t
 
-    def fix_idea(idea: dict) -> None:
-        idea["goal"] = fix_text(idea.get("goal", ""))
-        for a in idea.get("agreed", []):
-            a["text"] = fix_text(a.get("text", ""))
-        for s in (idea.get("diagram") or {}).get("shapes", []):
-            if s.get("text"):
-                s["text"] = fix_text(s["text"])
     # only fix what the check flags: entities named in `items` are in goal/agreed/diagram of some version
     vs = json.loads((c.project / "idea-versions.json").read_text(encoding="utf-8"))
     for v in vs:
         # keep legitimate "replaces" notes untouched: fix_text is applied only where the check found a stale token
-        flagged = {it.split(":")[0] + ":" + it.split(":")[1] for it in items}
         idea = v["idea"]
         for loc, text in list(_idea_texts(idea)):
             if any(it.startswith(loc + ":") for it in items):
@@ -248,9 +240,8 @@ def _w5a_control(ctx: Ctx) -> Ctx:
 def w5a(ctx: Ctx) -> Result:
     items, scope = w5a_items(_P(ctx))
     return _result(items, "assumed items confirmed by someone other than the student = 0",
-                   "assumed = `assumed` field, status 'assumed', or the frozen text marker '(assumed)'; "
-                   "this fixture has no field, so the text marker decides. The 6th item of REPORT is '(holes assumed)', "
-                   "which the marker '(assumed)' does not match",
+                   "assumed = `assumed` field, status 'assumed', or the frozen text marker '(assumed)' (an item that only "
+                   "says 'assumed' inside other words is not matched)",
                    _ev(ctx, "idea-versions.json", "idea.json"), scope)
 
 
@@ -492,7 +483,7 @@ def _w8b_control(ctx: Ctx) -> Ctx:
 def w8b(ctx: Ctx) -> Result:
     items, scope = w8b_items(_P(ctx))
     return _result(items, "stated BOM counts that differ from the replay at message time = 0",
-                   "frozen regex: 'BOM ... has|holds|contains N parts|lines'; card counts ('sent 31 BOM lines as cards'), forward-looking sentences and counts of "
+                   "frozen regex: 'BOM ... has|holds|contains N parts|lines'; card counts ('N BOM lines as cards'), forward-looking sentences and counts of "
                    "sheet/netlist parts are not matched. The LLM-judge half of W8(b) is behaviour and is not registered here",
                    _ev(ctx, "bom-log.jsonl") + [ctx.ev(p, "chat") for p in sorted((ctx.project / "chats").glob("*.jsonl"))], scope)
 
@@ -688,7 +679,7 @@ def w12(ctx: Ctx) -> Result:
     return _result(items, "stale datasheet bindings after an mpn/lcsc write = 0",
                    "window opens at an mpn/lcsc write whose bound datasheet text does not name the part (ordering-code family, normalised) "
                    "and closes at the write that rebinds or unbinds; a datasheet without extractable text cannot be judged and is not counted",
-                   _ev(ctx, "bom-log.jsonl") + [ctx.ev(p, "datasheet text") for p in sorted((ctx.project / "sources").glob("*.txt"))[:0]], scope)
+                   _ev(ctx, "bom-log.jsonl") + [], scope)
 
 
 # ============================================================================= W14
@@ -892,9 +883,24 @@ def w25b(ctx: Ctx) -> Result:
 
 
 # ============================================================================= W36
+_RISK_HEAD = re.compile(r"risk|requirement|decision|condition|finding|accepted|ledger", re.I)
+
+
+def _risk_sections(text: str) -> str:
+    """Lines of a markdown text that sit under a heading naming risks, requirements, decisions, conditions or findings."""
+    keep, on = [], False
+    for ln in text.splitlines():
+        if ln.lstrip().startswith("#"):
+            on = bool(_RISK_HEAD.search(ln))
+            continue
+        if on:
+            keep.append(ln)
+    return "\n".join(keep)
+
+
 def w36_items(P: PO.Project) -> tuple[list, int]:
     texts = P.export_texts()
-    blob = "\n".join(texts.values())
+    blob = "\n".join(_risk_sections(t) for t in texts.values())
 
     def listed(i: str) -> bool:
         return bool(re.search(r"(?<![A-Za-z0-9_])" + re.escape(i) + r"(?![A-Za-z0-9_])", blob))
@@ -925,7 +931,7 @@ def _w36_control(ctx: Ctx) -> Ctx:
     P = _P(c)
     ids = [re.search(r"(?:risk|requirement|item) (\S+)", s).group(1) for s in w36_items(P)[0]]
     p = c.project / "notes.md"
-    p.write_text(p.read_text(encoding="utf-8") + "\n## Recorded items (ids)\n\n" + "\n".join(f"- {i}" for i in ids) + "\n", encoding="utf-8")
+    p.write_text(p.read_text(encoding="utf-8") + "\n## Open risks and requirements (ids)\n\n" + "\n".join(f"- {i}" for i in ids) + "\n", encoding="utf-8")
     _assert_clean(c, w36, "W36")
     _selftest(c, w36, CAN.inject_w36, "W36-canary", lambda info, m: any(info["id"] in x for x in m))
     return c
@@ -937,8 +943,9 @@ def w36(ctx: Ctx) -> Result:
     items, scope = w36_items(_P(ctx))
     return _result(items, "recorded items not listed by id = 0",
                    "recorded = order_manifest accepted_risks[].line, idea constraints items[].id, ledger.json/findings.json open or accepted "
-                   "items; export text = README.md, notes.md, exports/*.md|txt; an id counts as listed when it occurs as a whole token. "
-                   "No ledger file exists on this project",
+                   "items; export text = README.md, notes.md, exports/*.md|txt; an id counts as listed when it occurs as a whole token on a line "
+                   "inside a section whose heading names risks, requirements, decisions, conditions or findings. Ledger files found: "
+                   + str(sum(1 for n in ("ledger.json", "findings.json") if (ctx.project / n).is_file())),
                    _ev(ctx, "idea.json", "notes.md", "README.md") + [ctx.ev(p, "manifest") for p in _P(ctx).order_manifests()], scope)
 
 
