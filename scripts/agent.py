@@ -446,10 +446,9 @@ def real_tools(meta, claimed=()):
         chip = {"t": events.human(lab), "st": st}      # the student reads "Searching JLC"; the command line stays in "raw", under details
         if chip["t"] != lab:
             chip["raw"] = lab
-        if script:                  # which script ran, and whether that script is a check of the design (the chat reads these, not the label)
-            chip["script"] = script.group(1)
-            if script.group(1).lower() in events.CHECK_SCRIPTS and st == "ok":
-                chip["check"] = True
+        if script and script.group(1).lower() in events.CHECK_SCRIPTS and st == "ok":
+            chip["script"] = script.group(1)      # a run of a check of the design says so, in data (the chat reads this, not the label)
+            chip["check"] = True
         if script and st == "ok":
             want = _script_stem(script.group(1))
             for c in free:      # each claim once, in order, on the whole script name (check.py is not check_stock.py)

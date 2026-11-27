@@ -13,7 +13,7 @@ def test_a_check_script_chip_carries_check_and_the_script():
 
 def test_a_document_read_or_search_chip_is_not_a_check():
     chips = _chips("Reading notes.md", "Running python scripts/jlc.py search x", "Running python scripts/export_bom.py")
-    assert not any(c.get("check") for c in chips)
+    assert not any(c.get("check") or "script" in c for c in chips)
 
 
 def test_a_failed_check_run_is_not_a_check_that_ran():
