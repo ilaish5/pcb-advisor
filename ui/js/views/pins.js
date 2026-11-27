@@ -106,8 +106,10 @@ function pinsDialogHTML(d, page) {
   const rows = (d.pins || []).map(p => `<tr><td class="m">${esc(p.ref)}</td><td class="m">${esc(p.num)}</td><td class="m">${esc(p.name)}</td><td>${p.net ? `<span class="m">${esc(p.net)}</span>` : '<span class="muted">—</span>'}</td>
     <td><label class="pins-wrong"><input type="checkbox" data-pin-wrong="${esc(p.num)}"> wrong</label></td></tr>`).join('');
   const why = d.polarised ? '<p class="muted pins-note">Diode or LED: check which pin is the anode and which the cathode.</p>' : (d.issues ? `<p class="muted pins-note">${esc(d.issues)}</p>` : '');
+  const pc = d.pad_check;
+  const pads = pc ? `<div class="pins-pads"><p class="muted pins-note">${esc(pc.note)}</p>${pc.rows.length ? `<ul class="pins-padrows">${pc.rows.map(r => `<li><span class="m">${esc(r.pad)}</span> ${esc(r.why)}</li>`).join('')}</ul>` : ''}</div>` : '';
   return `<form method="dialog"><h2>Confirm pins of ${esc(refsLabel(d.refs))} <span class="muted">${esc(d.mpn)}</span></h2>
-    <div class="pins-body">${left}<div class="pins-tbl-w"><table class="tbl pins-tbl"><thead><tr><th>Part</th><th>Pin</th><th>Name</th><th>Net</th><th></th></tr></thead><tbody>${rows}</tbody></table>${why}${bad}</div></div>
+    <div class="pins-body">${left}<div class="pins-tbl-w"><table class="tbl pins-tbl"><thead><tr><th>Part</th><th>Pin</th><th>Name</th><th>Net</th><th></th></tr></thead><tbody>${rows}</tbody></table>${pads}${why}${bad}</div></div>
     <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn pri" value="ok">Pins match</button></div></form>`;
 }
 let pinsOpen = false;

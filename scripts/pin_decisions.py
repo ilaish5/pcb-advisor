@@ -361,7 +361,23 @@ def _package_on_page(page, package):
     return False
 
 
-def candidate_pages(text, package=""):
+def pin_rows_on_page(page, pins):
+    """How many of the part's pins have a row on this page: a line that holds the pin number as a word and the pin name (or the name as
+    written with its slashes split). That is the page with the pin TABLE of this part, not one that only has the heading or a package."""
+    lines = page.splitlines()
+    n = 0
+    for p in pins or []:
+        num, name = str(p.get("num") or "").strip(), str(p.get("name") or "").strip()
+        if not num or not name or name == num:
+            continue
+        pn = re.compile(rf"(?<![\w.]){re.escape(num)}(?![\w.])")
+        nm = re.compile(rf"(?<![\w]){re.escape(name)}(?![\w])", re.I)
+        if any(pn.search(ln) and nm.search(ln) for ln in lines):
+            n += 1
+    return n
+
+
+def candidate_pages(text, package="", pins=None):
     """1-based pages of the document that look like the pin table / pinout, best first (at most 5): a page with a pin heading
     scores above a page that only names the package, a page with the pin table itself (Pin No. / Pin Name / I/O) above one with only
     a heading, and the part's package on the same page adds to it. A contents or index page (dot leaders and page numbers) is
@@ -374,9 +390,51 @@ def candidate_pages(text, package=""):
         table = len(_PIN_TABLE.findall(page))
         pkg = _package_on_page(page, package)
         score = 2 * heads + (3 if heads and table else 0) + (1 if pkg else 0) + (1 if heads and pkg else 0)
+        rows = pin_rows_on_page(page, pins)
+        if rows:
+            score += 4 + 4 * rows          # the part's own pin rows outweigh any heading: this is the page that holds its pin table
         if score:
             scored.append((-score, n))
     return [n for _, n in sorted(scored)[:5]]
+
+
+def pad_check(project, line):
+    """Symbol pins against the footprint's pads, explained pad by pad (F-F): {symbol_pins, pads, rows: [{pad, kind, why}], note}, or None
+    while there is no footprint built. Every pad of the footprint that is not one symbol pin gets a row: an unplated hole (an NPTH
+    peg: no copper, no pin), a second pad of a pin already counted (a thermal tab split in two, a shell leg), a numbered pad the
+    symbol has no pin for; every symbol pin with no pad gets one too. The difference in counts is the sum of the rows."""
+    try:
+        import partlib_order
+        fp = partlib_order.footprint_of(project, line.get("key"))
+    except Exception:       # noqa: BLE001 - no library build is nothing to compare
+        return None
+    if not fp or not fp.get("lines"):
+        return None
+    spins = [str(q.get("num") or q.get("number") or "") for q in fp.get("symbol_pins") or []]
+    seen, rows, pads = set(), [], 0
+    for ln in fp["lines"]:
+        f = ln.split("|")
+        if f[0] != "PAD" or len(f) < 14:
+            continue
+        pads += 1
+        num, plated = f[1], str(f[6]).lower() not in ("0", "false", "")
+        try:
+            hole = float(f[7] or 0) * 0.0254
+        except ValueError:
+            hole = 0.0
+        if hole > 0 and not plated:
+            rows.append({"pad": num or "(no number)", "kind": "npth_peg", "why": f"unplated hole {hole:.2f} mm, no copper: a mounting peg, not a pin"})
+        elif num in spins and num not in seen:
+            seen.add(num)
+        elif num in spins:
+            rows.append({"pad": num, "kind": "second_pad", "why": f"a second pad numbered {num}: the same pin, drawn as another pad"})
+        else:
+            rows.append({"pad": num or "(no number)", "kind": "no_symbol_pin", "why": "a copper pad the symbol has no pin for (exposed pad, shell leg or a renumbered pin)"})
+    for n in spins:
+        if n not in seen:
+            rows.append({"pad": n, "kind": "no_pad", "why": f"symbol pin {n} has no pad in the footprint"})
+    note = (f"{len(spins)} symbol pins, {pads} pads: " + ("every pad is one pin." if not rows else f"{len(rows)} difference(s), listed below."))
+    return {"symbol_pins": len(spins), "pads": pads, "rows": rows, "note": note}
 
 
 def confirm_data(project, key):
@@ -402,10 +460,10 @@ def confirm_data(project, key):
             text = ""
         meta = sources._read_meta(folder / ds)
         docs.append({"name": ds, "sha256": meta.get("sha256", ""), "url": "/api/source/" + ds,
-                     "candidate_pages": candidate_pages(text, line.get("package") or ""), "quality": sources.quality(text)})
+                     "candidate_pages": candidate_pages(text, line.get("package") or "", _pins_of(project, line)), "quality": sources.quality(text)})
     st = next((l for l in store.bom(project, write=False) if l["key"] == line["key"]), {})
     return {"line": line["key"], "refs": line.get("refs", []), "mpn": line.get("mpn") or "", "package": line.get("package") or "",
-            "pins": _pins_of(project, line), "wired": store.has_wired_pins(project, line), "docs": docs, "missing_doc": missing,
+            "pins": _pins_of(project, line), "pad_check": pad_check(project, line), "wired": store.has_wired_pins(project, line), "docs": docs, "missing_doc": missing,
             "status": st.get("pins_status", ""), "issues": st.get("pins_issues", ""),
             "polarised": store._polarised_only(line), "group_refs": [r for g in [group_lines(project, line["key"])] for k in g
                                                                       for r in (store._line_of(project, k).get("refs") or [k])]}
