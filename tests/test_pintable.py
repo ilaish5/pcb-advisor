@@ -349,7 +349,7 @@ def test_the_part_number_with_a_voltage_is_found_in_the_datasheet_of_its_base():
 
 def test_a_pass_without_the_pin_table_method_is_not_verified_but_never_revokes_an_accept():
     line = {"refs": ["U1"], "key": "U1"}
-    assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == "verified"
+    assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == "unverified"       # no evidence record: not green
     assert store.pins_status(line, {"verify": "pass"})[0] == "unverified"
     assert store.pins_status(line, {"verify": "pass", "accepted": True})[0] == "accepted"
     assert store.pins_status(line, {"verify": "pass", "pins_accepted": True})[0] == "accepted"

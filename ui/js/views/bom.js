@@ -68,6 +68,7 @@ function bomStatus(l) {
   if (bs === 'error' || l.library === 'error') return {text: 'Footprint error', tone: 'bad', say: 'The footprint has errors, so it is not drawn, placed or made.'};
   if (l.pins_status === 'mismatch') return {text: 'Pins conflict', tone: 'bad', say: 'The pins differ from the datasheet: look at them and confirm or fix them.'};
   if (l.pins_status === 'unverified') return {text: 'Verify pins', tone: 'warn', say: 'The pins are not checked against a datasheet yet.'};
+  if (l.pins_status === 'not_checked') return {text: 'Pins not checked', tone: 'warn', say: l.pins_issues || 'No check compared the pins of this part with a datasheet.'};
   if (!r) return l.library === 'missing' ? {text: 'Missing', tone: 'bad', say: 'No symbol or footprint yet. Press Build library.'} : {text: 'To review', tone: 'warn', say: 'Not reviewed yet.'};
   if (l.pin_decision) return {text: 'Accepted risk', tone: 'warn', say: 'You accepted these pins without a datasheet pin table.'};
   if (bs) {

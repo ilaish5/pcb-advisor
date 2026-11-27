@@ -136,7 +136,7 @@ def test_the_agent_cannot_write_a_decision(empty):
 def test_simple_passives_are_never_asked(empty):
     _sheet(empty)
     assert all(r["line"] != "R1" for r in pin_decisions.remaining(empty))
-    assert pin_decisions.confirm_data(empty, "R1")["status"] == ""
+    assert pin_decisions.confirm_data(empty, "R1")["status"] == "not_applicable"
 
 
 def test_accept_all_remaining_is_one_call_and_skips_conflicts(empty):

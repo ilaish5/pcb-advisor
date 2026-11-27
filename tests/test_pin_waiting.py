@@ -240,7 +240,7 @@ def test_a_part_with_no_wired_pin_is_not_waiting_and_blocks_nothing(empty):
     lines = {l["key"]: l for l in store.bom(empty)}
     assert lines["U1"]["pins_status"] == "unverified"
     for key in ("U7", "U8", "U9"):
-        assert lines[key]["pins_status"] == "" and lines[key]["on_sheet"]       # on a sheet, but nothing wired: nothing to decide
+        assert lines[key]["pins_status"] == "not_checked" and lines[key]["on_sheet"]       # on a sheet, but nothing wired: nothing to decide
     assert [r["line"] for r in store.pins_to_resolve(empty)] == ["U1"]
     w = pin_decisions.waiting(empty)
     assert w["questions"] == 1 and w["groups"][0]["refs"] == ["U1"] and w["bulk"] == ["U1"] and w["blind"] == ["U1"]

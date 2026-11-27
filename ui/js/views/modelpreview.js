@@ -119,7 +119,7 @@ function mpPins(row) {
   const l = (S.bom || []).find(b => b.key === row.line) || {};
   const [state, text] = libPinsState(row);
   const st = l.pins_status || '';
-  const head = {bad: 'Needs attention', ok: 'Checked', no: 'Missing'}[state];
+  const head = {bad: 'Needs attention', ok: 'Checked', no: 'Not checked'}[state];
   const d = l.pin_decision;
   const facts = [
     l.datasheet ? `Datasheet: <span class="m">${esc(l.datasheet)}</span>` : 'No datasheet linked',

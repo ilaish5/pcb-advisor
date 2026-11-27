@@ -12,6 +12,7 @@ The symbol is never evidence: a generated symbol is built from the netlist itsel
 """
 import json
 import pathlib
+import re
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
@@ -85,8 +86,34 @@ def _judge(project, line, ds):
     if weak:
         return {"verify": "unchecked", "issues": "; ".join(f"{ref}: {i}" for ref, r in weak for i in r["issues"])[:600]}
     notes = [f"{ref}: {n}" for ref, r in results for n in r["notes"]]
-    return {"verify": "pass", "issues": ("note: " + "; ".join(notes[:6])) if notes else "", "method": "pin-table",
-            "evidence": f"{ds}: " + results[0][1]["evidence"]}
+    out = {"verify": "pass", "issues": ("note: " + "; ".join(notes[:6])) if notes else "", "method": "pin-table",
+           "evidence": f"{ds}: " + results[0][1]["evidence"]}
+    rec = _evidence_record(project, ds, text, parts[0][1], _pins_of(project, line))
+    if rec:
+        out["pins_evidence"] = rec
+    return out
+
+
+def _evidence_record(project, ds, text, named_pins, all_parts):
+    """{doc, sha256, page, pins_compared, symbol_pins, checked_at}: what a 'verified' pin status stands on. Written only when the
+    datasheet file is on disk (its sha256 is of that file); the page is the one whose text holds most of the compared pin rows.
+    symbol_pins counts every pin of the symbol, pins_compared those compared by number and name, so a part with pins nobody
+    compared is never recorded as fully verified."""
+    f = sources.document_path(project, ds)
+    if f is None:
+        return None
+    pages = text.split("")
+    best, best_n = 1, -1
+    for i, pg in enumerate(pages, 1):
+        n = sum(1 for num, name in named_pins
+                if re.search(r"(?<![\w.])" + re.escape(num) + r"(?![\w.]).{0,80}?" + re.escape(name[:12]), pg, re.I))
+        if n > best_n:
+            best, best_n = i, n
+    first = next((pins for _ref, pins in all_parts if pins), [])
+    symbol_pins = len({n for n, _nm in first}) if first else 0
+    compared = len({n for n, nm in named_pins if nm.strip().upper() != n.strip().upper()})
+    return {"doc": ds, "sha256": sources.file_sha256(f), "page": best, "pins_compared": compared, "symbol_pins": symbol_pins,
+            "checked_at": store.now()}
 
 
 def verify(project, key):
@@ -103,6 +130,7 @@ def verify(project, key):
         changes["accepted"] = False          # a part that fails is no longer accepted
         changes["method"] = ""               # the earlier pass's method and evidence do not describe this result
         changes["evidence"] = ""
+        changes["pins_evidence"] = None
     if result["verify"] == "mismatch":
         changes["pins_accepted"] = False     # new conflicting pins: the student decides again
         changes["pin_decision"] = None

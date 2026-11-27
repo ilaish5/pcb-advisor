@@ -32,7 +32,7 @@ def test_ic_without_datasheet_is_written_and_marked_passives_are_not(empty):
     assert parts["U1"]["pins_source"] == "agent"
     assert "pins_source" not in parts["R1"]
     lines = {l["key"]: l for l in store.bom(empty)}
-    assert lines["U1"]["pins_status"] == "unverified" and lines["R1"]["pins_status"] == ""
+    assert lines["U1"]["pins_status"] == "unverified" and lines["R1"]["pins_status"] == "not_applicable"
 
 
 def test_datasheet_then_verify_clears_the_mark(empty):
@@ -140,7 +140,8 @@ def test_diode_never_runs_the_datasheet_text_check(empty):
 def test_connector_with_datasheet_stays_unverified_until_verified():
     line = {"refs": ["J1"], "key": "J1", "datasheet": "usb.pdf"}
     assert store.pins_status(line, {"verify": "unchecked"})[0] == "unverified"
-    assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == ""
+    # a pin-table pass with no evidence record (no datasheet file read back) is not a verification (R2)
+    assert store.pins_status(line, {"verify": "pass", "method": "pin-table"})[0] == "unverified"
     assert store.pins_status(line, {"verify": "pass"})[0] == "unverified"        # an older pass is not a verification
-    assert store.pins_status(line, {"verify": "pass", "accepted": True})[0] == ""   # an accept is never revoked
+    assert store.pins_status(line, {"verify": "pass", "accepted": True})[0] == "accepted"   # an accept is never revoked
     assert store.pins_status(line, {"pins_accepted": True})[0] == "accepted"

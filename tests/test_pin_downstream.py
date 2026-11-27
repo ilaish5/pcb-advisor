@@ -23,9 +23,10 @@ def test_rules_match_gate():
     assert "confirm pin numbers/polarity before ordering" in rule and "never a block" in rule
     gated = set(store.CONNECTOR_PREFIXES) | set(store.POLARISED_PREFIXES)
     assert gated == {"J", "P", "D", "LED"} and gated <= set(store.SIMPLE_PREFIXES)
-    for prefix in ("R", "C", "L", "Y", "XTAL"):        # never asked: no datasheet and no decision still gives ""
+    for prefix in ("R", "C", "L", "Y", "XTAL"):        # never asked, and never an empty status: not_applicable (passive) or not_checked (R2)
         assert prefix in store.SIMPLE_PREFIXES and prefix not in gated
-        assert store.pins_status({"key": prefix + "1", "refs": [prefix + "1"]}, {})[0] == ""
+        want = "not_applicable" if prefix in ("R", "C", "L") else "not_checked"
+        assert store.pins_status({"key": prefix + "1", "refs": [prefix + "1"]}, {})[0] == want
     for prefix in gated:
         assert store.pins_status({"key": prefix + "1", "refs": [prefix + "1"]}, {})[0] == "unverified"
     assert "not pin assignments" in text and "never write `pin_decision`" in text

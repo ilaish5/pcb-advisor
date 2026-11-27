@@ -73,9 +73,15 @@ function libPinsState(r) {
   if (st === 'unverified') return ['bad', 'Pins unverified: ' + (l.pins_issues || 'not checked against a datasheet') + ' Verify them or accept them.'];
   if (st === 'mismatch') return ['bad', 'Pins conflict with the datasheet: ' + (l.pins_issues || '')];
   if (st === 'accepted') return ['ok', 'Pins accepted by you (no datasheet pin table checked them)'];
-  if (st === 'verified') return ['ok', 'Pins verified against the datasheet pin table'];
+  if (st === 'verified') {
+    const ev = l.pins_evidence;
+    if (l.pins_basis === 'datasheet' && ev) return ['ok', `Pins verified against the datasheet pin table: ${ev.pins_compared} of ${ev.symbol_pins} pins compared, ${ev.doc} page ${ev.page}`];
+    return ['no', 'Pins match the library symbol only: no datasheet pin table checked them, so this is not a verification'];
+  }
+  if (st === 'not_applicable') return ['no', 'Pins: nothing to verify for an unpolarised two-terminal passive or a part with no signal pin'];
   if (r.build_status === 'missing') return ['no', 'Pins: the library build made no symbol for this line, so no pins to check'];       // after the decisions above: a recorded conflict stays red
-  return ['ok', 'Pins: nothing to verify for this part'];
+  /* an empty or not_checked status is never green: no evidence, no tick */
+  return ['no', 'Pins not checked: ' + (l && l.pins_issues ? l.pins_issues : 'no datasheet pin table was compared with this part')];
 }
 function libModelStates(r) {
   const fpErr = r.build_status === 'error';

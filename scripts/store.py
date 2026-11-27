@@ -444,6 +444,7 @@ def _bom(project, write):
         l["library_entry"] = ui_entry(entry)
         l["pins_status"], l["pins_issues"] = pins_status(l, entry, project, wired=wired)
         l["pins_basis"] = pins_basis(project, l, entry, l["pins_status"])
+        l["pins_evidence"] = (pins_evidence(project, l, entry)[0] if l["pins_status"] == "verified" and l["pins_basis"] == "datasheet" else None)
         l["pin_decision"] = _decision_view(project, l, entry) if l["pins_status"] == "accepted" else None
         l["on_sheet"] = sorted({sheets[r][0] + ":" + (sheets[r][1] or "") for r in l.get("refs", []) if r in sheets})
         # refs no netlist sheet places, while sheets exist: an orphan line shows "not on any sheet" with Delete at hand
@@ -3400,12 +3401,72 @@ def pins_status(line, entry, project=None, wired=None, check_wired=True):
     to the caller (the sheet marking, which has the parts being saved in hand while the disk still has the old ones)."""
     import pin_decisions
     if check_wired and project and line.get("refs") and not (set(line["refs"]) & (wired_refs(project) if wired is None else wired)):
-        return "", ""
+        return _silent_pins(line, unwired=True)
     acc, note = pin_decisions.state(project, line, entry)
     st, why = _pins_status(line, entry, project, bool(acc))
     if note and st in ("unverified", "mismatch"):
         why = f"{note}: {why}" if why else note
+    if not st:
+        return _silent_pins(line)
+    if st == "verified" and not _model_basis(line, entry):
+        # green needs a read-back (A10/A11): the datasheet file as it is on disk now, the page, and every pin of the symbol compared
+        ev, why_ev = pins_evidence(project, line, entry)
+        if ev is None:
+            return "unverified", why_ev
     return st, why
+
+
+_PASSIVE_PREFIXES = ("R", "C", "L", "FB")
+_NO_SIGNAL_PREFIXES = ("TP", "MH", "FID", "H")
+_POLARISED_WORDS = re.compile(r"electrolytic|tantalum|polari[sz]ed|E-?cap", re.I)
+
+
+def _silent_pins(line, unwired=False):
+    """What used to be the empty status: never an empty string. 'not_applicable' only for an unpolarised two-terminal passive or a
+    part with no signal pin (test point, fiducial, mounting hole); everything else is 'not_checked', with the reason."""
+    refs = line.get("refs") or []
+    prefixes = {_prefix_of(r) for r in refs}
+    text = " ".join(str(line.get(k) or "") for k in ("value", "mpn", "description", "role", "footprint", "package"))
+    if refs and prefixes <= set(_NO_SIGNAL_PREFIXES):
+        return "not_applicable", ""
+    if refs and prefixes <= set(_PASSIVE_PREFIXES) and not _POLARISED_WORDS.search(text):
+        return "not_applicable", ""
+    if not refs:
+        return "not_checked", "this line has no designator, so no pins can be checked"
+    if unwired:
+        return "not_checked", "no pin of this part is wired on a sheet yet: its pins were not checked"
+    if prefixes <= set(_PASSIVE_PREFIXES):
+        return "not_checked", "a polarised part: its orientation was not checked against a datasheet"
+    return "not_checked", "no datasheet pin check exists for this kind of part: confirm its pins yourself or accept them"
+
+
+def _model_basis(line, entry):
+    """True when a 'verified' stands on the library model only (pin_model), not on a datasheet pin table."""
+    return all(is_simple_ref(r) for r in line.get("refs") or [""]) and not passed_by_table(entry)
+
+
+def _datasheet_file(project, name):
+    import sources
+    return sources.document_path(project, name) if project and name else None
+
+
+def pins_evidence(project, line, entry):
+    """(record, why). The record {doc, sha256, page, pins_compared, symbol_pins, checked_at} that verify_part wrote with a pin-table
+    pass, re-read against the datasheet as it is on disk NOW. None, with the reason, when it is missing (a check from before records
+    existed), when the file changed or went missing since, or when fewer pins were compared than the symbol has."""
+    rec = (entry or {}).get("pins_evidence")
+    if not isinstance(rec, dict):
+        return None, "checked before evidence records existed: press Re-check datasheets to verify the pins again"
+    f = _datasheet_file(project, rec.get("doc"))
+    if f is None:
+        return None, f"the datasheet {rec.get('doc') or ''} the pins were checked against is no longer in the project: verify them again"
+    import sources
+    if sources.file_sha256(f) != rec.get("sha256"):
+        return None, f"{rec.get('doc')} changed since the pins were checked against it: verify them again"
+    n, sym = rec.get("pins_compared"), rec.get("symbol_pins")
+    if not isinstance(rec.get("page"), int) or not isinstance(n, int) or n != sym or n < 1:
+        return None, f"only {n} of {sym} pins were compared with the datasheet: verify them again" if isinstance(n, int) and isinstance(sym, int)             else "the evidence record is incomplete: verify the pins again"
+    return rec, ""
 
 
 def _pins_status(line, entry, project, acc):
@@ -3419,8 +3480,12 @@ def _pins_status(line, entry, project, acc):
     if all(is_simple_ref(r) for r in refs):
         kinds = {_prefix_of(r) for r in refs}
         conn, pol = kinds & set(CONNECTOR_PREFIXES), kinds & set(POLARISED_PREFIXES)
-        if not (conn or pol) or passed_by_table(entry) or (entry.get("accepted") and entry.get("verify") == "pass"):
+        if not (conn or pol):
             return "", ""
+        if passed_by_table(entry):
+            return "verified", ""
+        if entry.get("accepted") and entry.get("verify") == "pass":
+            return "accepted", ""
         if acc:                      # the student's decision stands on no datasheet table: an accepted risk, never "verified"
             return "accepted", ""
         if entry.get("verify") == "mismatch":
