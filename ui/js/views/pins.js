@@ -110,6 +110,8 @@ function pinsDialogHTML(d, page) {
     <div class="pins-body">${left}<div class="pins-tbl-w"><table class="tbl pins-tbl"><thead><tr><th>Part</th><th>Pin</th><th>Name</th><th>Net</th><th></th></tr></thead><tbody>${rows}</tbody></table>${why}${bad}</div></div>
     <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn pri" value="ok">Pins match</button></div></form>`;
 }
+/* The reason a risk is accepted is PICKED, never typed (one click); the choice is stored exactly as worded. */
+const PINS_WHY = ['Matches the datasheet pin table', 'Will check on the assembled board', 'Same part as a verified one', 'Accept the risk: not critical'];
 let pinsOpen = false;
 async function pinsConfirm(key) {
   if (pinsOpen) return;
@@ -142,7 +144,7 @@ async function pinsConfirm(key) {
     const ev = doc && !result.wrong.length ? [{doc: doc.name, sha256: doc.sha256, page: result.page}] : [];
     let reason = '';
     if (!ev.length && !result.wrong.length) {        // no datasheet page to cite: the student's own sentence is the record
-      reason = await askText({title: `Accept ${refsLabel(d.refs)} on your word?`, label: 'Why is it fine?', placeholder: 'e.g. I checked the pins against the datasheet', confirm: 'Accept'});
+      reason = await askPick({title: `Accept ${refsLabel(d.refs)} on your word?`, text: 'Pick why it is fine.', choices: PINS_WHY});
       if (!reason) return;
     }
     const r = await pinsWhile(async () => { const x = await api('/api/pins/confirm', {line: key, evidence: ev, wrong: result.wrong, ...(reason ? {reason} : {})}); await refresh(true); return x; });
@@ -169,9 +171,9 @@ onAct('accept-all-pins', async () => {
   // No datasheet pin table backs this click, so the student says in a sentence why it is fine: that sentence is the record. Never invented.
   const n = pinsCount('to_confirm') || blind.length || lines.length;
   const named = blind.length > 0;
-  const ask = {title: named ? pinsAcceptTitle(n, w) : `Accept ${n === 1 ? 'this part' : n + ' parts'} on your word?`, label: 'Why is it fine?',
-    placeholder: 'e.g. I checked the pins against the datasheet', hint: named ? pinsAcceptText(blind) : 'It stays listed as an accepted risk and can be revoked.', confirm: 'Accept all'};
-  const reason = await askText(ask);
+  const ask = {title: named ? pinsAcceptTitle(n, w) : `Accept ${n === 1 ? 'this part' : n + ' parts'} on your word?`,
+    text: (named ? pinsAcceptText(blind) : 'It stays listed as an accepted risk and can be revoked.') + ' One pick covers all of them.', choices: PINS_WHY};
+  const reason = await askPick(ask);
   if (!reason) return;
   let r = null;
   await pinsWhile(async () => { if (typeof render === 'function') render(true); r = await api('/api/pins/accept-all', {confirm: true, lines, reason}); await refresh(true); });

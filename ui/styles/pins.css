@@ -15,3 +15,6 @@
 .pin-dec .btn{margin-left:4px}
 .pin-risks h3{margin-bottom:6px}
 @media (max-width:900px){.pins-body{grid-template-columns:1fr;overflow:auto}.pins-frame{min-height:60vh}}
+
+.pick-list{display:flex;flex-direction:column;gap:6px;margin:10px 0}
+.pick-list .btn{text-align:left}

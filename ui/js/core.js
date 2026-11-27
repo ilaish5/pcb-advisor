@@ -325,6 +325,30 @@ function askText(o) {
   });
 }
 
+/* One click picks the answer: askPick({title, text, choices: [..], other}) resolves to the choice exactly as worded, or the line typed in the
+   optional "Other" box (never required), or null when cancelled. */
+function askPick(o) {
+  o = o || {};
+  return new Promise(resolve => {
+    const dlg = document.createElement('dialog');
+    dlg.className = 'dlg';
+    dlg.setAttribute('aria-labelledby', 'dlg-title');
+    dlg.innerHTML = `<form method="dialog"><h2 id="dlg-title">${esc(o.title || '')}</h2>${o.text ? `<p>${esc(o.text)}</p>` : ''}
+      <div class="pick-list">${(o.choices || []).map((c, i) => `<button type="submit" class="btn" name="pick" value="${i}">${esc(c)}</button>`).join('')}</div>
+      ${o.other === false ? '' : `<label class="field"><span>Other (optional)</span><input class="in" name="other" placeholder="Type your own and press Enter" autocomplete="off"></label>`}
+      <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button></div></form>`;
+    let picked = null;
+    dlg.querySelector('[data-cancel]').addEventListener('click', () => dlg.close('cancel'));
+    dlg.addEventListener('click', e => { const b = e.target.closest && e.target.closest('button[name=pick]'); if (b) picked = (o.choices || [])[Number(b.value)]; });
+    const other = dlg.querySelector('input[name=other]');
+    if (other) other.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const v = other.value.trim(); if (v) { picked = v; dlg.close('ok'); } } });
+    dlg.addEventListener('close', () => { dlg.remove(); resolve(dlg.returnValue === 'cancel' ? null : picked); });
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    dlg.querySelector('button[name=pick]')?.focus();
+  });
+}
+
 /* A two-way question: resolves true (yes), false (no) or null (cancelled). askChoice({title, text, list, yes, no})
    list = lines shown under the text (plain text each); no: false leaves out the No button (Cancel stays). */
 function askChoice(o) {

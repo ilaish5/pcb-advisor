@@ -168,7 +168,7 @@ def test_the_unverified_list_has_a_confirm_button_per_part():
     assert "act: 'confirm-pins', line: l.key" in js and "'/api/pins/confirm', {line: key" in pins
     code = re.sub(r"/\*.*?\*/|//[^\n]*", "", pins, flags=re.S).lower()   # comments may describe the record shape
     # one click where a datasheet page backs it; with none, the student says why in one sentence (asked once, no length rule in the UI)
-    assert "if (!ev.length && !result.wrong.length)" in pins
+    assert "if (!ev.length && !result.wrong.length)" in pins and "askPick(" in pins and "askText(" not in pins     # a pick, never typing
     assert not re.search(r"<(input|textarea)[^>]*reason|reason[^\n]{0,40}\.length|reason\s*\.\s*trim", code)
     assert "rows.map(item)" in js     # every row, a mismatch included, comes from the one template that holds the button
 
