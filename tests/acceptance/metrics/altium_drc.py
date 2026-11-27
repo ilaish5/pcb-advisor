@@ -87,7 +87,7 @@ def judge_w30(o: dict) -> Result:
     return Result("pass" if not problems else "fail", measured=m,
                   expected="every rule named in a fix advice has violations > 0 in Altium's report, and the count quoted is Altium's",
                   detail=("; ".join(problems) or "all named rules are real and their counts are Altium's")
-                         + f"; question: {o['question']!r}; answer: {reply[:240]!r}. "
+                         + f"; question: {o['question']!r}; answer: {reply[:1500]!r}. "
                          "Legs not built: the predicted after-fix count vs the re-run count (needs an applied fix and a second Altium DRC), "
                          "and the canary that toggles a random rule on the live board (the control below does it on a synthetic report).")
 

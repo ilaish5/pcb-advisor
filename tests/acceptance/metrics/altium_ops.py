@@ -6,6 +6,7 @@ import hashlib
 import pathlib
 import random
 import re
+import os
 import shutil
 import time
 
@@ -421,6 +422,10 @@ def join_claims(text: str) -> set[tuple[str, tuple[str, ...]]]:
 
 def draw_obs(ctx) -> dict:
     def run():
+        if not os.environ.get("ACCEPTANCE_ALTIUM_COMPILE"):
+            # the probe's COMPILE raised an Altium error box per net read (55 boxes) in four attempts on 27/11 and left the script paused;
+            # nothing is sent to Altium for W21 until a netlist report file replaces the DM_* read-out (set the variable to try it anyway)
+            raise obs.NotObservable("Altium's compile could not be run by the probe: COMPILE is not sent (four attempts raised an Altium error box per net)")
         adir = obs.scratch_altium(ctx)
         sheets = sorted(adir.glob("*.SchDoc"))
         try:
@@ -468,7 +473,7 @@ def w21(ctx):
         if str(e).startswith("Altium's compile could not be run by the probe"):
             # the oracle's compile read-out is not usable in this Altium (three attempts raised Altium's own error box, 27/11): the
             # draw was observed but nothing can be judged against Altium, so the metric says not_run with the reason, never a pass or fail
-            return not_run(str(e) + " (W21 not judged; the probe's COMPILE read-out raised an Altium error box in three attempts)")
+            return not_run(str(e) + " (W21 not judged; the probe's COMPILE read-out raised an Altium error box in four attempts)")
         return _err(str(e))
     except (FileNotFoundError, ValueError, OSError) as e:
         return _err(str(e))
