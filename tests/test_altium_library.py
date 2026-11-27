@@ -416,3 +416,69 @@ def test_the_build_says_when_the_project_still_lacks_the_intlib(lib, monkeypatch
         bridge.build_library(lib)
     last = [e for e in store.read_jsonl(store.pdir(lib) / "altium-log.jsonl") if e["op"] == "build-library"][-1]
     assert last["in_project"] is False and any("Footprint Not Found" in i for i in last["issues"])
+
+
+def _lists_the_intlib(lib, monkeypatch):
+    """The state after a first build: an IntLib on disk that the (open) Altium project lists as a project library."""
+    lp = bridge.library_paths(lib)
+    lp["intlib"].parent.mkdir(parents=True, exist_ok=True)
+    lp["intlib"].write_bytes(b"old intlib")
+    bridge._linked(lib).write_bytes(b"[Design]\r\n[Document1]\r\nDocumentPath=Library/Project Outputs for lte-Lib/lte-Lib.IntLib\r\n")
+    return lp
+
+
+def test_a_rebuild_takes_the_intlib_out_of_the_open_project_first_and_puts_it_back_after(lib, monkeypatch):
+    """Altium cannot write an IntLib that is a library of the open project ("Could not create integrated library")."""
+    stub = Stub(monkeypatch)
+    lp = _lists_the_intlib(lib, monkeypatch)
+    res = bridge.build_library(lib)
+    names = stub.names()
+    assert names[:2] == ["LIBRELEASE", "LIBCLOSE"] and names.index("LIBRELEASE") < names.index("COMPILE")
+    assert stub.runs[0][0] == ("LIBRELEASE", str(bridge._linked(lib)), str(lp["intlib"]))
+    assert names[-3:] == ["PROJECT", "ADDDOC", "SAVEPRJ"]          # sent although the saved file still lists it
+    assert res["in_project"] is True and res["intlib_fresh"] is True
+
+
+def test_a_first_build_has_nothing_to_release(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+    bridge.build_library(lib)
+    assert "LIBRELEASE" not in stub.names()
+
+
+def test_a_failed_rebuild_puts_the_project_library_back_into_the_project(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+    _lists_the_intlib(lib, monkeypatch)
+    stub.fail_commands = True
+    with pytest.raises(bridge.BridgeError, match=r"lte-Lib\.IntLib is a library of lte\.PrjPcb again"):
+        bridge.build_library(lib)
+    names = stub.names()
+    assert names[0] == "LIBRELEASE" and names[-3:] == ["PROJECT", "ADDDOC", "SAVEPRJ"]
+
+
+def test_a_compile_error_box_is_explained_not_left_as_a_silent_wait(lib, monkeypatch):
+    stub = Stub(monkeypatch)
+    real = stub.__call__
+
+    def call(commands, **kw):
+        if any(c[0] == "COMPILE" for c in commands):
+            raise bridge.BridgeError("Altium stopped in the middle of the script, after: x. Dialogs: [TMessageForm] Error: OK")
+        return real(commands, **kw)
+    monkeypatch.setattr(bridge, "run_commands", call)
+    with pytest.raises(bridge.BridgeError, match=r"error box while compiling the library.*lte-Lib\.IntLib.*holds that file"):
+        bridge.build_library(lib)
+
+
+def test_an_altium_error_box_ends_the_wait_without_the_stall_timeout(monkeypatch, tmp_path):
+    monkeypatch.setattr(bridge, "EXCHANGE", tmp_path)
+    monkeypatch.setattr(bridge, "_exe", lambda: "x2.exe")
+    monkeypatch.setattr(bridge, "_running", lambda: True)
+    monkeypatch.setattr(bridge.subprocess, "Popen", lambda *a, **k: (tmp_path / "start.flag").write_text("x"))
+    clock = [0.0]
+    monkeypatch.setattr(bridge.time, "time", lambda: clock[0])
+    monkeypatch.setattr(bridge.time, "sleep", lambda s: clock.__setitem__(0, clock[0] + 5))
+    looks = []
+    monkeypatch.setattr(bridge, "_close_dialogs", lambda only_look=False: looks.append(only_look) or ["[TMessageForm] Error: OK"])
+    monkeypatch.setattr(bridge, "release_executor", lambda: ["[TMessageForm] Error: OK"])
+    with pytest.raises(bridge.BridgeError, match="stopped in the middle"):
+        bridge.run_commands([("PING",)], stall_timeout=180, total_timeout=900)
+    assert looks == [True] and clock[0] < 60          # found by looking, long before the 180 s stall timeout

@@ -178,9 +178,10 @@ def _running():
         return False
 
 
-def _close_dialogs():
+def _close_dialogs(only_look=False):
     """Close the dialog boxes Altium left open (class #32770 or a script error box, owned by X2.EXE), so the next script
-    can run. Returns one "title: text" line per dialog closed; each is logged first, so a stall can be explained."""
+    can run. Returns one "title: text" line per dialog closed; each is logged first, so a stall can be explained.
+    only_look=True closes nothing and logs nothing: it only reports which boxes are open."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -216,6 +217,8 @@ def _close_dialogs():
                 user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
                 if cls.value in ("#32770", "TMessageForm") and pid.value in pids:
                     closed.append(describe(hwnd, cls.value))
+                    if only_look:
+                        return True
                     if cls.value == "#32770":
                         user32.PostMessageW(hwnd, 0x0010, 0, 0)       # WM_CLOSE
                     else:                                             # a script error box: only its OK button ends it
@@ -224,13 +227,15 @@ def _close_dialogs():
             return True
 
         user32.EnumWindows(each, 0)
-        for line in closed:
-            DIALOG_LOG.append(line)
+        if not only_look:
+            for line in closed:
+                DIALOG_LOG.append(line)
         return closed
     except Exception:
         return []
 
 
+MODAL_AFTER = 15        # seconds without a log line after which the wait looks for an open Altium error box
 DIALOG_LOG = []         # every dialog closed this session, "[class] title: text"
 
 
@@ -367,11 +372,17 @@ def _run_commands(commands, start_timeout=45, stall_timeout=60, total_timeout=30
                                   + (f": {' | '.join(shown)}" if shown else "") + "). "
                                   "I released the script executor and closed dialogs; try again.")
         t_log, last, t0 = time.time(), _stat(EXCHANGE / "log.txt"), time.time()
+        t_look = t_log
         while not (EXCHANGE / "end.flag").exists():
             now = _stat(EXCHANGE / "log.txt")
             if now != last:
                 last, t_log = now, time.time()
-            if time.time() - t_log > stall_timeout or time.time() - t0 > total_timeout:
+            boxed = False
+            if time.time() - t_log > MODAL_AFTER and time.time() - t_look > MODAL_AFTER / 3:
+                # a script that stops logging while an Altium error box is open will not go on: do not wait out the stall timeout
+                t_look = time.time()
+                boxed = any(d.startswith("[TMessageForm]") for d in _close_dialogs(only_look=True))
+            if boxed or time.time() - t_log > stall_timeout or time.time() - t0 > total_timeout:
                 shown = release_executor()
                 log = _read(EXCHANGE / "log.txt")           # the script is stopped now: safe to read
                 raise BridgeError("Altium stopped in the middle of the script, after: "
@@ -604,14 +615,16 @@ def intlib_in_project(prj, intlib):
     return any(_doc_key(prj, d) == want for d in read_prjpcb(prj)["documents"])
 
 
-def add_intlib_to_project(prj, intlib):
+def add_intlib_to_project(prj, intlib, force=False):
     """Make the IntLib a document of the Altium project. Altium's installed-libraries list does not feed the schematic ECO
-    (Update PCB says Footprint Not Found); a project library does. Idempotent. Returns True when the saved PrjPcb lists it."""
+    (Update PCB says Footprint Not Found); a project library does. Idempotent. Returns True when the saved PrjPcb lists it.
+    force=True sends the add and the save even when the saved file already lists the IntLib: after the build took the library
+    out of the OPEN project (LIBRELEASE) the file still lists it but Altium's project no longer does."""
     prj, intlib = pathlib.Path(prj), pathlib.Path(intlib)
     try:
         if not intlib.is_file() or not prj.is_file():
             return False
-        if not intlib_in_project(prj, intlib):
+        if force or not intlib_in_project(prj, intlib):
             run_commands([("PROJECT", str(prj)), ("ADDDOC", str(prj), str(intlib)), ("SAVEPRJ", str(prj))])
         return intlib_in_project(prj, intlib)
     except (BridgeError, AltiumReadError, OSError, ValueError):
@@ -3408,12 +3421,15 @@ def _restore_library(project, lp, backup):
     return "The earlier library files were put back."
 
 
-def _create_libraries(project, lp):
+def _create_libraries(project, lp, release=False):
     """Steps 1 and 2 of build_library; safe to run again (every run starts from the templates).
+    release=True: the IntLib is a library of the open Altium project, so it is taken out of that project first (Altium holds a
+    project library open and cannot write the file again: "Could not create integrated library").
     Returns (expected, per-symbol problems, per-footprint problems, other problems, counts)."""
     # 1. nothing of the old library may stay open or installed in Altium; then the files are ours to replace
     lp["folder"].mkdir(parents=True, exist_ok=True)
-    run_commands([("LIBCLOSE", str(lp["libpkg"]), str(lp["schlib"]), str(lp["pcblib"]), str(lp["intlib"]))])
+    close = [("LIBCLOSE", str(lp["libpkg"]), str(lp["schlib"]), str(lp["pcblib"]), str(lp["intlib"]))]
+    run_commands(([("LIBRELEASE", str(lp["prj"]), str(lp["intlib"]))] if release else []) + close)
     _check_unlocked([lp["intlib"], lp["schlib"], lp["pcblib"], lp["libpkg"]])
     for old_step in (lp["d3"].glob("*.step") if lp["d3"].is_dir() else []):
         old_step.unlink()
@@ -3450,13 +3466,17 @@ def build_library(project, fetch=True):
     if not syms or not (build / "parts.json").is_file():
         raise BridgeError("The library data has no symbols to build. Prepare the part library first and fix its issues.")
     old = [lp[k] for k in ("schlib", "pcblib", "libpkg", "intlib")] + (sorted(lp["d3"].glob("*.step")) if lp["d3"].is_dir() else [])
+    try:
+        release = lp["intlib"].is_file() and prj.is_file() and intlib_in_project(prj, lp["intlib"])
+    except (AltiumReadError, OSError, ValueError):
+        release = False
     backup = _backup(prj, old)
     t0 = time.time() - 2
     marked = False
     try:
         for attempt in (1, 2):         # Altium sometimes stops in the middle of a batch; a rebuild from the templates is safe
             try:
-                expected, problems, per_symbol, per_fp, counts = _create_libraries(project, lp)
+                expected, problems, per_symbol, per_fp, counts = _create_libraries(project, lp, release)
                 break
             except BridgeError as exc:
                 if attempt == 2 or "stopped in the middle" not in str(exc):
@@ -3478,12 +3498,22 @@ def build_library(project, fetch=True):
                 break
             except BridgeError as exc:
                 if attempt == 2 or "stopped in the middle" not in str(exc):
+                    if "[TMessageForm]" in str(exc):
+                        raise BridgeError("Altium showed an error box while compiling the library (its text is not readable from "
+                                          f"here; seen before: it could not write {lp['intlib'].name} because something still holds that "
+                                          "file open). The box was closed. Close the library in Altium (Projects and Libraries panels) "
+                                          "and build again. " + str(exc)) from exc
                     raise
                 _log(project, "build-library", retry=f"compile: {exc}")
     except (BridgeError, AltiumReadError, OSError) as exc:
         if not marked:
             _mark_failed(project, f"the build did not finish: {exc}")
         note = _restore_library(project, lp, backup)
+        if release:            # never leave the project without its library
+            if add_intlib_to_project(prj, lp["intlib"], force=True):
+                note += f" {lp['intlib'].name} is a library of {prj.name} again."
+            else:
+                note += f" {lp['intlib'].name} could NOT be added back to {prj.name}: add it in Altium (Projects panel, Add Existing to Project)."
         _log(project, "build-library", error=str(exc), backup=backup, restored=note)
         raise BridgeError(f"{exc} {note}") from exc
     installed = any(ln.startswith("INSTALLED yes") for ln in log)
@@ -3500,7 +3530,7 @@ def build_library(project, fetch=True):
                f"{ln[len(SAME_NAME):].strip()} (Altium matches libraries by file name)."
                for ln in log if ln.startswith(SAME_NAME)]
     # the installed list is not what the schematic ECO reads: the IntLib must be a library of the Altium project itself
-    in_project = add_intlib_to_project(prj, intlib) if fresh else False
+    in_project = add_intlib_to_project(prj, intlib, force=release) if (fresh or release) else False
     if not in_project:
         issues.append(f"The project library is not part of {prj.name}: the ECO will say Footprint Not Found. "
                       f"Add {intlib} to the project in Altium (Projects panel, right-click the project, Add Existing to Project) and save it.")

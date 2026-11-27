@@ -16,7 +16,7 @@
              RULE pcb kind name scope1 scope2 priority prop=value... | RULESIN pcb | ADDDOC prj path | OUTJOB path medium basepath
 
   Library commands (stage L2, see "project library" below):
-             LIBCLOSE libpkg schlib pcblib intlib | FPBATCH pcblib spec | FPREMOVE pcblib name
+             LIBRELEASE prj intlib | LIBCLOSE libpkg schlib pcblib intlib | FPBATCH pcblib spec | FPREMOVE pcblib name
              SYMBATCH schlib spec | SYMREMOVE schlib name | SYMLINK schlib linksfile | SYMPROPS schlib propsfile
              SYMPARAMS schlib paramsfile | HIDEPINS schlib hidefile | ATTACH3D spec | SAVELIB path kind
              COMPILE libpkg intlib | CHECKINST intlib
@@ -763,6 +763,32 @@ begin
     begin
         IntegratedLibraryManager.UninstallLibrary(IntLib);
         Log('uninstalled ' + IntLib);
+    end;
+end;
+
+{ LIBRELEASE prj intlib: the IntLib is a library of the open Altium project (a document of it), and Altium holds such a library
+  open: compiling the package then fails with "Could not create integrated library". Closes the IntLib and takes it out of the
+  open project (the file stays on disk); the caller adds it back with ADDDOC + SAVEPRJ once the new IntLib is compiled. }
+procedure LibRelease(Prj: String; IntLib: String);
+var
+    P : IDispatch;
+    i : Integer;
+    Listed : Boolean;
+begin
+    P := GetWorkspace.DM_GetProjectFromPath(Prj);
+    if (P = nil) then
+    begin
+        Log('project not open, nothing to release ' + Prj);
+        Exit;
+    end;
+    Listed := False;
+    for i := 0 to P.DM_LogicalDocumentCount - 1 do
+        if SameFile(P.DM_LogicalDocuments(i).DM_FullPath, IntLib) then Listed := True;
+    CloseDocByPath(IntLib);
+    if Listed then
+    begin
+        P.DM_RemoveSourceDocument(IntLib);
+        Log('released from project ' + IntLib);
     end;
 end;
 
@@ -2728,6 +2754,7 @@ begin
     else if (Cmd = 'ADDDOC') then AddDocument(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'OUTJOB') then RunOutJob(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
     else if (Cmd = 'UNMARK') then Unmark(Field(Line, 1))
+    else if (Cmd = 'LIBRELEASE') then LibRelease(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'LIBCLOSE') then LibClose(Field(Line, 1), Field(Line, 2), Field(Line, 3), Field(Line, 4))
     else if (Cmd = 'FPBATCH') then LibFootprintsBatch(Field(Line, 1), Field(Line, 2))
     else if (Cmd = 'FPREMOVE') then LibFootprintRemove(Field(Line, 1), Field(Line, 2))
