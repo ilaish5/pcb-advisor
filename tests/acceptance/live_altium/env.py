@@ -71,12 +71,22 @@ def _replace_in(path: pathlib.Path, old: str, new: str) -> None:
 def make_altium_copy(dst: pathlib.Path, name: str = NAME) -> pathlib.Path:
     """Copy the fixture's Altium folder to dst, renamed to `name` (Prj/Pcb/OutJob/Lib files), without .advisor-backup."""
     src = fixture() / "altium"
-    if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(".advisor-backup", "History", "__Previews"))
+    if dst.exists():                 # Altium has the scratch project open: a file it holds (the installed IntLib) cannot be removed, the rest is
+        shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst, ignore=shutil.ignore_patterns(".advisor-backup", "History", "__Previews"), dirs_exist_ok=True)
     for p in sorted(dst.rglob("*"), key=lambda q: -len(q.parts)):
         if OLD in p.name:
-            p.rename(p.with_name(p.name.replace(OLD, name)))
+            target = p.with_name(p.name.replace(OLD, name))
+            if target.is_file():
+                target.unlink()
+            if target.is_dir():          # the folder is already there (a re-seed): merge into it; a file Altium holds stays as it is
+                try:
+                    shutil.copytree(p, target, dirs_exist_ok=True)
+                except (shutil.Error, OSError):
+                    pass
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.rename(target)
     for p in dst.rglob("*"):
         if p.is_file() and p.suffix.lower() in (".prjpcb", ".outjob", ".libpkg"):
             _replace_in(p, OLD, name)

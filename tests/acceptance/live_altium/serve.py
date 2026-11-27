@@ -30,7 +30,13 @@ def main(argv=None) -> int:
         print("stopped")
         return 0
     if a.fresh or not srv.home.exists():
-        env.make_home(a.tag, port=a.port)
+        from live_altium import altium_probe as ap_
+        if a.fresh and ap_.x2_running() and (env.SCRATCH / f"altium-{a.tag}").exists():
+            with ap_.altium_lock("re-seed the scratch Altium copy"):       # no document of the old copy stays open in Altium while its files are replaced
+                ap_.close_scratch(env.SCRATCH / f"altium-{a.tag}")
+                env.make_home(a.tag, port=a.port)
+        else:
+            env.make_home(a.tag, port=a.port)
     srv.start()
     print(f"server up: {srv.url}   project: {env.NAME}   tree: {env.TREES[a.tree]}   home: {srv.home}")
     return 0

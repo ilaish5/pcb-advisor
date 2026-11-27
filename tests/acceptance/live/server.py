@@ -146,16 +146,23 @@ class LiveServer:
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:
-            try:
-                os.killpg(self.proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            self._kill_tree(force=False)
             try:
                 self.proc.wait(10)
             except subprocess.TimeoutExpired:
-                os.killpg(self.proc.pid, signal.SIGKILL)
+                self._kill_tree(force=True)
                 self.proc.wait(5)
         self.proc = None
+
+    def _kill_tree(self, force: bool) -> None:
+        """POSIX: signal the server's own process group (start_new_session). Windows has no killpg: kill the process tree with taskkill."""
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(self.proc.pid)], capture_output=True)
+            return
+        try:
+            os.killpg(self.proc.pid, signal.SIGKILL if force else signal.SIGTERM)
+        except ProcessLookupError:
+            pass
 
     def restart(self) -> "LiveServer":
         self.stop()

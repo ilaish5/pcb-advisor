@@ -101,7 +101,7 @@ def kill_engine(srv) -> list[int]:
     killed = []
     for pid in engine_pids(srv):
         try:
-            os.kill(pid, signal.SIGKILL)
+            os.kill(pid, getattr(signal, "SIGKILL", signal.SIGTERM))      # Windows has no SIGKILL: os.kill(…, SIGTERM) terminates the process there
             killed.append(pid)
         except ProcessLookupError:
             pass
