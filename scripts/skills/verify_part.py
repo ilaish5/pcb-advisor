@@ -76,7 +76,7 @@ def _judge(project, line, ds):
             r = {"verify": "unchecked", "issues": ["the pins are named only by their numbers: nothing to compare with the table"],
                  "notes": [], "evidence": ""}
         else:
-            r = pintable.check([layout, text], named, package, pads)
+            r = pintable.check([layout, text], named, package, pads, mpn=line.get("mpn") or "")
         results.append((ref, r))
     bad = [(ref, r) for ref, r in results if r["verify"] == "mismatch"]
     if bad:

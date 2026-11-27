@@ -811,7 +811,47 @@ def _known(col, pins):
                or any(_name_forms(a, table_names=names) & names for a in _alternatives(name)))
 
 
-def check(texts, pins, package="", pads=None):
+_ORDER_NOTE = re.compile(r"(?:ordering\s+(?:code|option|number)|part\s+number|orderable|variant)s?\s*[:\s]\s*([A-Za-z0-9][A-Za-z0-9._\-]{3,})[^.\n]{0,40}?\bpin\s+"
+                         r"([A-Za-z]{0,2}\d{1,3})\s+(?:is|=|becomes|functions\s+as|acts\s+as)\s+([^\s.;,][^\n.;]*)", re.I)
+
+
+def ordering_notes(texts, mpn):
+    """{pin number: name} the datasheet's own notes give for THIS ordering code ("Note 1: for the ordering code W25Q128JVSIQ, pin 5 is
+    DI (IO0)"): the table shows a default function and the note says what the pin is for the part that was ordered. Only a note whose
+    code is this part's (or its family: one is the other with an ordering suffix cut off) counts; a note for another code is no evidence."""
+    key = _squash(mpn or "")
+    out = {}
+    if len(key) < 4:
+        return out
+    for text in texts:
+        for m in _ORDER_NOTE.finditer(text or ""):
+            code = _squash(m.group(1))
+            if len(code) >= 4 and (code == key or key.startswith(code) or code.startswith(key)):
+                out[m.group(2)] = m.group(3).strip()
+        if out:
+            break
+    return out
+
+
+def _apply_ordering_notes(results, notes, pins):
+    """A conflict at a pin the ordering-code note speaks about is dropped when the note's name is the symbol's name (the note, not the
+    table's default cell, is what this part's datasheet says); the note is kept as a result note. A note naming another function stays
+    a conflict. Returns the results."""
+    sym = {str(n): nm for n, nm in pins}
+    for r in results:
+        keep = []
+        for c in r["conflict"]:
+            m = re.match(r"pin (\S+) ", c)
+            n = m.group(1) if m else None
+            if n in notes and n in sym and (_squash(sym[n]) == _squash(notes[n]) or name_matches(sym[n], notes[n])):
+                r["notes"] = list(r["notes"]) + [f"pin {n} is {notes[n]} for this ordering code (datasheet note), the table shows its default function"]
+            else:
+                keep.append(c)
+        r["conflict"] = keep
+    return results
+
+
+def check(texts, pins, package="", pads=None, mpn=""):
     """texts: the document's text, best layout first ([layout, plain]); pins: [(number, name)]. Answer:
     {"verify": "pass"|"mismatch"|"unchecked", "issues": [...], "notes": [...], "evidence": str}."""
     # The first text (layout, then plain) with a table that can be this part's decides. A table that names fewer than half of
@@ -841,6 +881,9 @@ def check(texts, pins, package="", pads=None):
                 "issues": [reasons[0] if reasons else
                            "no pin table found in the datasheet text (a pin diagram or prose alone is not compared)"]}
     results = [_evaluate(u, pins, pads) for u in units]
+    notes = ordering_notes(texts, mpn)
+    if notes:
+        results = _apply_ordering_notes(results, notes, pins)
     clean = [r for r in results if not r["conflict"] and not r["absent"]]
     bad = [r for r in results if r["conflict"]]
     if len(clean) == len(results):
