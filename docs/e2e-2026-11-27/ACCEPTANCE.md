@@ -147,7 +147,8 @@ half = FAIL (the fix learned the test, not the rule).
 
 **Before the owner tags `acceptance-v1`:**
 - Counts: Part B has 57 entries. That is B1, W1-W37, U1-U8, FRICTION A-J and the unlettered tool-limits table (F-LIM). Nothing was merged. COSMETIC is left out because you did not ask for it. Tagged with P0: 38 (P0-1: 11, P0-2: 4, P0-3: 29); 19 untagged.
-- Six thresholds have no source in `shared/reference`, so they are marked "OWNER-CITE before tag": decap-to-pin distance, crystal keep-out and HSE length, the IPC-7351B courtyard excess, exposed-pad paste coverage, the CPL reference point and its tolerance, and the chat-length limit in Part C. I wrote relational metrics where a number was not needed.
+- Six thresholds had no source in `shared/reference`. The owner set them on 27/11 (below, "Owner decisions"). The CPL reference is still open
+  until the JLC check is done; the tag waits for it.
 - "Red" comes in three kinds. **Artifact-red** was read by me from the fixture (olefile, Gerber zip, JSON). **Behaviour-red** needs a scripted replay on the pre-fix commit 2dcd691; B1 replays on dbf3635^. Two values are taken from the role reports until the oracle reader recomputes them from the Gerbers: mask webs (86 per Alti, about 112 per the producer) and pour-to-NPTH (0.161 mm per Alti). The system's own logs (drawn_widths, board-facts, outputs-check) are used only as corroboration (A1).
 
 Conventions:
@@ -163,6 +164,16 @@ Conventions:
   - Designer S1 C14 (data loss);
   - Engineer S3 J1 chat pitch (only the preview caption survives, in W15);
   - Engineer S2 r1 BOM data errors (only the generic causes survive, in W13).
+
+### Owner decisions (27/11, frozen with the tag)
+| ID | Threshold | Decision |
+|---|---|---|
+| OD-1 | Decap to supply pin | Datasheet / app note value per IC; otherwise 3.0 mm, labelled general knowledge |
+| OD-2 | Crystal | ST AN2867 as source; no foreign net under the crystal and its load caps (outer + adjacent layer); no vias MCU pin to crystal; crystal is the nearest part to its pins; length ≤ 10 mm (general knowledge) |
+| OD-3 | Courtyard excess | IPC-7351B Level B (nominal), 0.25 mm |
+| OD-4 | Exposed-pad paste coverage | Part datasheet stencil recommendation; otherwise 50-80 % (IPC-7525 range); 100 % fails |
+| OD-5 | CPL reference point and tolerance | OPEN: an agent reads JLC's CPL sources (F14 and others) and proposes; provisional: flag any part where pad centre, origin and body differ by > 0.25 mm |
+| OD-6 | Chat message length | ≤ 10 lines per message; longer answers split into several messages; tables and long lists to a page link |
 
 ### R1. Reports intent, not read-back
 
@@ -511,7 +522,7 @@ Conventions:
   - For each supply pin of every IC and card connector, the oracle takes the nearest same-net cap.
   - The flagged set must equal the oracle set {pin: distance > D_decap}. Set difference = 0.
   - Agent statements equal that set.
-  - D_decap: OWNER-CITE (no source in shared/reference; the product's 5.0 mm is not a citation).
+  - D_decap (owner 27/11): the IC's datasheet or application note value where it gives one (cited by page); otherwise 3.0 mm, labelled "general knowledge, no course source". The product's 5.0 mm is not used.
 - **Oracle:** U + L (olefile pads).
 - **Red on 27/11:** at least 2 pins unflagged (J2 supply; U1 VDDA per W24 figures).
 - **Anti-gaming:** a random decap is moved far away (A5), and a random connector gets a supply pin.
@@ -666,7 +677,7 @@ Conventions:
   - Code: `layout.py:1773` `decap_hints`, `:1683` `_DECAP_IC`.
 - **Metric:**
   - Typed constraint records (cap→pin, crystal→pins) are written at the BOM/schematic stage.
-  - After placement, each record has distance ≤ D_decap / D_xtal (OWNER-CITE), or an open item with the measured number (R5, refused explicitly).
+  - After placement, each record has distance ≤ D_decap / D_xtal (owner decisions OD-1, OD-2), or an open item with the measured number (R5, refused explicitly).
   - Unmet and unflagged = 0.
   - A re-placement that increases a constrained distance names that record (P0-1).
 - **Oracle:** L (olefile) + U.
@@ -693,7 +704,7 @@ Conventions:
 - **Metric:**
   - Tracks and vias of other nets (excluding the crystal's own nets and GND) that intersect the crystal courtyard on the outer layer and the adjacent inner layer = 0.
   - Vias between the MCU pin and the crystal pad on crystal nets = 0.
-  - Length limit: OWNER-CITE.
+  - Crystal rules (owner 27/11; source ST AN2867, to be added to `shared/reference` before the tag): the crystal is the nearest part to its MCU pins; track length MCU pin to crystal pad ≤ 10 mm (labelled general knowledge); no vias on that path.
   - Otherwise the route is refused with the numbers (R5).
 - **Oracle:** L (olefile geometry).
 - **Red on 27/11:** 7 foreign nets; 3 vias on HSE_IN.
@@ -736,7 +747,7 @@ Conventions:
   - Mech 15 holds the EasyEDA body outline, which lies inside the pads on 20/20 footprints (Alti S3).
   - `partlib_convert.py:20` copies it; `model_preview.py:26` labels it "courtyard".
 - **Metric:**
-  - Every built footprint has a closed courtyard enclosing all pad copper and the 3D body outline plus the IPC-7351B Level B excess (0.25 mm; OWNER-CITE: add it to shared/reference).
+  - Every built footprint has a closed courtyard enclosing all pad copper and the 3D body outline plus the IPC-7351B Level B excess (0.25 mm, owner 27/11; `shared/reference/standards/ipc-7351b-courtyard.en.md`).
   - Failing footprints = 0.
 - **Oracle:** U + L (olefile PcbLib).
 - **Red on 27/11:** 20/20.
@@ -754,7 +765,7 @@ Conventions:
 ### W19 · The U1 exposed pad gets a full paste opening, and it reaches the stencil Gerber (R4) [LIMIT stated]
 - **Failure (27/11):** GTP has D38 R 0.2165 x 0.2165 in (5.50 mm), flashed once over the 5.5 mm EP; PasteMaskExpansion 0.
 - **Metric:**
-  - For each exposed or thermal pad, paste coverage (paste area / pad area in GTP/GBP) lies within the part datasheet's stencil recommendation, or else IPC-7525 (OWNER-CITE).
+  - For each exposed or thermal pad, paste coverage (paste area / pad area in GTP/GBP) lies within the part datasheet's stencil recommendation, or else 50-80 % (IPC-7525 range, owner 27/11, labelled general knowledge).
   - 100% coverage = fail.
 - **Oracle:** U + Gerber oracle.
 - **Red on 27/11:** 1 pad at 100% (30.25 / 30.25 mm²).
@@ -810,7 +821,7 @@ Conventions:
   - outputs-check validated "Pick Place for Final-E2E-4L.txt", not the uploaded `_cpl.csv`.
 - **Metric:**
   - (a) The CPL and the manifest state the reference rule. JLC's text is "Mid X/Y = component centroid" (files-and-formats "CPL format").
-  - (b) Every part whose pad centre, origin and body centre differ by more than T_cpl (OWNER-CITE) is flagged. Unflagged = 0.
+  - (b) Every part whose pad centre, origin and body centre differ by more than T_cpl (OD-5: open until the JLC check; provisional 0.25 mm) is flagged. Unflagged = 0.
   - (c) outputs-check validates the uploaded CPL by sha256.
 - **Oracle:** U + B + olefile.
 - **Red on 27/11:** (a) not stated; (b) 3 (U5, J1, J2); (c) the wrong file.
@@ -1064,7 +1075,7 @@ Conventions:
 - **Behaviour:**
   - Internal identifiers in the rendered chat (frozen regex list: `bom\.propose`, `student_said`, `chat\.ask`, `p20\d{12,}`, `\w+\.py\b`, `checks/`) = 0.
   - Tables wider than the chat column = 0; they move to a page link.
-  - Final answers ≤ L lines (L: OWNER-CITE).
+  - Each chat message ≤ 10 lines (owner 27/11). A longer answer is split into 2 or more messages, each ≤ 10 lines and each able to stand alone; tables and long lists go to a page link.
   - Consent per F-E (20/20).
   - The guard's messages name the actual writer (W1).
 - **Target:** 0 leaks; at most 3 T-E confusions.
