@@ -64,4 +64,4 @@ def test_the_zip_description_lists_geometry_findings_without_blocking(tmp_path):
 def test_macro_aperture_is_reported_as_not_checked():
     t = "%FSLAX46Y46*%\n%MOMM*%\n%AMTHERM*1,1,1,0,0*%\n%ADD10THERM,1*%\nD10*\nX1000000Y1000000D03*\nM02*\n"
     _, skipped = gg.problems({"copper": [t], "outline": [OUTLINE]})
-    assert skipped and "macro" in skipped[0]
+    assert any("macro" in s for s in skipped)

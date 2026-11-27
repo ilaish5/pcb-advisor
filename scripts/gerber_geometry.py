@@ -1,7 +1,7 @@
 """Pre-order geometry checks on the produced Gerber / Excellon files (R2, ACCEPTANCE W37).
 
 Three checks, each against a limit cited from shared/reference/jlc/pcb-capabilities.en.md:
-  - solder mask web: two mask openings of one layer closer than 0.10 mm (a dam thinner than that is not made)
+  - solder mask web: two mask openings of one layer closer than 0.10 mm (1 oz, green; 0.13 mm for black or white) so no dam is made
   - copper to a non-plated hole: copper closer than 0.20 mm to the wall of an NPTH
   - copper to the routed edge: copper closer than 0.20 mm to the board outline (centre line of the outline layer)
 Every finding names the position (mm, in the coordinates of the Gerber files) so the student can find it in Altium.
@@ -9,15 +9,58 @@ What the check cannot read (an aperture macro, a block aperture, a file over the
 import math
 import re
 
-MASK_WEB_MIN_MM = 0.10
+MASK_WEB_MIN_MM = 0.10             # pcb-capabilities.en.md, Solder mask: bridge 0.10 mm green/red/yellow/blue/purple, 1 oz [P1]
+MASK_WEB_BLACK_WHITE = 0.13        # the same table for black and white mask; the colour is not known here
 NPTH_TO_COPPER_MM = 0.20
 EDGE_TO_COPPER_MM = 0.20
 MAX_REPORT = 6                      # per kind; the rest is counted
 
 
+_AMP = re.compile(r"(\w+)=([^|]*)")
+_SIZE = re.compile(r"^\s*([-+]?\d*\.?\d+)\s*(mil|mm|in)?\s*$", re.I)
+
+
+def _mm(s):
+    m = _SIZE.match(s or "")
+    if not m:
+        return None
+    v = float(m.group(1))
+    return v * {"mil": 0.0254, "mm": 1.0, "in": 25.4, None: 1.0}[(m.group(2) or "").lower() or None]
+
+
+def _rot_wh(w, h, deg):
+    """Width and height of the bounding box of a w x h rectangle turned by deg degrees."""
+    a = math.radians(deg % 180)
+    return abs(w * math.cos(a)) + abs(h * math.sin(a)), abs(w * math.sin(a)) + abs(h * math.cos(a))
+
+
+def _flash_shape(ap, x, y):
+    """The shape of aperture `ap` flashed at (x, y), or None. ap = ("C", d) | ("R", w, h) | ("O", w, h) | ("A", shape, w, h, rot)
+    where "A" is an Altium macro aperture described by its AMPARAMS comment."""
+    kind = ap[0]
+    if kind == "C":
+        return ("seg", x, y, x, y, ap[1] / 2)
+    if kind in ("R", "O"):
+        w, h = ap[1], ap[2]
+    else:
+        w, h = _rot_wh(ap[2], ap[3], ap[4])
+        kind = {"round": "C", "oval": "O"}.get(ap[1], "R")
+        if kind == "C":
+            return ("seg", x, y, x, y, max(w, h) / 2)
+    if kind == "O":
+        if w >= h:
+            return ("seg", x - (w - h) / 2, y, x + (w - h) / 2, y, h / 2)
+        return ("seg", x, y - (h - w) / 2, x, y + (h - w) / 2, w / 2)
+    return ("rect", x - w / 2, y - h / 2, x + w / 2, y + h / 2)
+
+
 def parse_layer(text):
-    """{"shapes": [shape], "unread": [why]} of one RS-274X file. shape = ("seg", x1, y1, x2, y2, r) or ("rect", x0, y0, x1, y1).
-    Dark polarity only; a region (G36..G37) is taken as its boundary line."""
+    """Read one RS-274X file as Altium writes it.
+    {"shapes": flashes and strokes (dark only), "boundary": the outlines of regions as zero-width segments,
+     "polys": [(dark, [(x, y)...])] the regions with their polarity, "unread": [why]}, or None when it has no readable format header.
+    Altium's habits: coordinates are modal (`Y7874D01*` keeps X), a flash is `X..Y..D02*` then a bare `D03*`, round and rectangular pads
+    are standard apertures, other pad shapes are macros described by a `G04:AMPARAMS|DCode=..|XSize=..|YSize=..|Rotation=..|Shape=..|` comment,
+    and a pour is a dark region with clear (`%LPC*%`) regions cut out of it."""
     fs = re.search(r"%FS([LT])A?X(\d)(\d)Y(\d)(\d)\*%", text)
     mo = re.search(r"%MO(IN|MM)\*%", text)
     if not fs or not mo:
@@ -25,17 +68,6 @@ def parse_layer(text):
     zero, dec = fs.group(1), int(fs.group(3))
     digits = int(fs.group(2)) + dec
     unit = 25.4 if mo.group(1) == "IN" else 1.0
-    aps, unread = {}, []
-    for m in re.finditer(r"%ADD(\d+)([A-Za-z_][\w.]*),?([^*%]*)\*%", text):
-        kind, args = m.group(2), [float(a) * unit for a in re.findall(r"[-+]?\d*\.?\d+", m.group(3).replace("X", " "))]
-        if kind in ("C", "R", "O") and args:
-            aps[m.group(1)] = (kind, args)
-        else:
-            unread.append(f"aperture D{m.group(1)} ({kind}) is a macro or block")
-    clear = False
-    body = re.sub(r"%LP([DC])\*%", lambda m: "\n#LP" + m.group(1) + "\n", text)
-    body = re.sub(r"%(?!#)[^%]*%", "", body)
-    body = re.sub(r"G04[^*]*\*", "", body)
 
     def num(s):
         sign = -1 if s.startswith("-") else 1
@@ -44,88 +76,147 @@ def parse_layer(text):
             d = d.ljust(digits, "0")
         return sign * int(d or "0") / (10 ** dec) * unit
 
+    aps, amp, unread = {}, {}, set()
+    shapes, boundary, polys = [], [], []
+    clear, region = False, False
+    cur = None
     x = y = 0.0
-    cur, mode, shapes, region = None, 1, [], False
-    for st in re.split(r"\*|\n", body):
-        st = st.strip()
-        if st.startswith("#LP"):
-            clear = st.endswith("C")
+    mode = 1
+    last_op = "02"
+    contours, pts = [], None
+
+    def arc(x0, y0, x1, y1, st):
+        mi, mj = re.search(r"I([-+]?\d+)", st), re.search(r"J([-+]?\d+)", st)
+        cx = x0 + (num(mi.group(1)) if mi else 0.0)
+        cy = y0 + (num(mj.group(1)) if mj else 0.0)
+        rad = math.hypot(x0 - cx, y0 - cy)
+        a0, a1 = math.atan2(y0 - cy, x0 - cx), math.atan2(y1 - cy, x1 - cx)
+        if mode == 3:
+            while a1 <= a0:
+                a1 += 2 * math.pi
+        else:
+            while a1 >= a0:
+                a1 -= 2 * math.pi
+        out = []
+        for k in range(1, 25):
+            a = a0 + (a1 - a0) * k / 24
+            out.append((cx + rad * math.cos(a), cy + rad * math.sin(a)))
+        return out
+
+    for m in re.finditer(r"%([^%]*)%|([^*%]*)\*", text):
+        if m.group(1) is not None:
+            ext = m.group(1)
+            if ext.startswith("LP"):
+                clear = ext.startswith("LPC")
+            elif ext.startswith("ADD"):
+                for a in re.finditer(r"ADD(\d+)([A-Za-z_][\w.$]*)(?:,([^*]*))?\*", ext):
+                    d, name, args = a.group(1), a.group(2), a.group(3) or ""
+                    vals = [float(v) * unit for v in re.findall(r"[-+]?\d*\.?\d+", args.replace("X", " "))]
+                    if name == "C" and vals:
+                        aps[d] = ("C", vals[0])
+                    elif name in ("R", "O") and len(vals) >= 2:
+                        aps[d] = (name, vals[0], vals[1])
+                    elif d in amp:
+                        aps[d] = amp[d]
+                    else:
+                        unread.add(f"aperture D{d} ({name}) is a macro without a size comment")
             continue
+        st = m.group(2).strip()
         if not st:
             continue
+        if st.startswith("G04"):
+            if "AMPARAMS" in st:
+                kv = dict(_AMP.findall(st))
+                w, h, rot = _mm(kv.get("XSize")), _mm(kv.get("YSize")), re.sub(r"[^\d.\-]", "", kv.get("Rotation", "0")) or "0"
+                if kv.get("DCode") and w and h:
+                    amp[kv["DCode"]] = ("A", re.sub(r"[^a-z]", "", kv.get("Shape", "").lower()), w, h, float(rot))
+            continue
         if "G36" in st:
-            region = True
+            region, contours, pts = True, [], None
+            continue
         if "G37" in st:
-            region = False
+            if pts and len(pts) > 2:
+                contours.append(pts)
+            for c in contours:
+                polys.append((not clear, c))
+                for p, q in zip(c, c[1:] + c[:1]):
+                    boundary.append(("seg", p[0], p[1], q[0], q[1], 0.0))
+            region, contours, pts = False, [], None
+            continue
         for g, v in (("G01", 1), ("G02", 2), ("G03", 3)):
             if g in st:
                 mode = v
         md = re.search(r"D(\d+)$", st)
         mx, my = re.search(r"X([-+]?\d+)", st), re.search(r"Y([-+]?\d+)", st)
         if md and int(md.group(1)) >= 10 and not (mx or my):
-            cur = md.group(1)
+            cur = md.group(1).lstrip("0") or "0"
             continue
-        if not (mx or my):
+        if not (mx or my or md):
             continue
         x0, y0 = x, y
         if mx:
             x = num(mx.group(1))
         if my:
             y = num(my.group(1))
-        op = md.group(1) if md else "01"
-        ap = aps.get(cur)
+        op = md.group(1).lstrip("0") if md else last_op
+        op = op or "0"
+        last_op = op
+        if region:
+            if op == "2":
+                if pts and len(pts) > 2:
+                    contours.append(pts)
+                pts = [(x, y)]
+            elif op == "1":
+                if pts is None:
+                    pts = [(x0, y0)]
+                if mode in (2, 3) and re.search(r"[IJ]", st):
+                    pts += arc(x0, y0, x, y, st)
+                else:
+                    pts.append((x, y))
+            continue
         if clear:
             continue
-        if op in ("03", "3") and ap:
-            kind, a = ap
-            if kind == "C":
-                shapes.append(("seg", x, y, x, y, a[0] / 2))
-            elif kind == "R" and len(a) >= 2:
-                shapes.append(("rect", x - a[0] / 2, y - a[1] / 2, x + a[0] / 2, y + a[1] / 2))
-            elif kind == "O" and len(a) >= 2:
-                w, h = a[0], a[1]
-                if w >= h:
-                    shapes.append(("seg", x - (w - h) / 2, y, x + (w - h) / 2, y, h / 2))
-                else:
-                    shapes.append(("seg", x, y - (h - w) / 2, x, y + (h - w) / 2, w / 2))
-        elif op in ("01", "1") and (region or ap):
-            r = 0.0 if region else (ap[1][0] / 2 if ap[0] in ("C",) else min(ap[1][:2]) / 2)
-            mi, mj = re.search(r"I([-+]?\d+)", st), re.search(r"J([-+]?\d+)", st)
-            if mode in (2, 3) and (mi or mj):
-                cx = x0 + (num(mi.group(1)) if mi else 0.0)
-                cy = y0 + (num(mj.group(1)) if mj else 0.0)
-                rad = math.hypot(x0 - cx, y0 - cy)
-                a0, a1 = math.atan2(y0 - cy, x0 - cx), math.atan2(y - cy, x - cx)
-                if mode == 3:
-                    while a1 <= a0:
-                        a1 += 2 * math.pi
-                else:
-                    while a1 >= a0:
-                        a1 -= 2 * math.pi
-                sweep = a1 - a0
+        ap = aps.get(cur)
+        if op == "3" and ap:
+            shapes.append(_flash_shape(ap, x, y))
+        elif op == "1" and ap:
+            r = ap[1] / 2 if ap[0] == "C" else min(ap[1:3]) / 2 if ap[0] in ("R", "O") else min(ap[2], ap[3]) / 2
+            if mode in (2, 3) and re.search(r"[IJ]", st):
                 px, py = x0, y0
-                for k in range(1, 25):
-                    a = a0 + sweep * k / 24
-                    qx, qy = cx + rad * math.cos(a), cy + rad * math.sin(a)
+                for qx, qy in arc(x0, y0, x, y, st):
                     shapes.append(("seg", px, py, qx, qy, r))
                     px, py = qx, qy
             else:
                 shapes.append(("seg", x0, y0, x, y, r))
-    return {"shapes": shapes, "unread": sorted(set(unread))}
+    return {"shapes": shapes, "boundary": boundary, "polys": polys, "unread": sorted(unread)}
 
 
 def parse_npth(text):
-    """[(x_mm, y_mm, diameter_mm)] of the hits of one non-plated Excellon file (routs and slots are not holes here)."""
+    """[(x_mm, y_mm, diameter_mm)] of the hits of one Excellon file as Altium writes it: `INCH,LZ` or `METRIC,TZ`, `;FILE_FORMAT=2:4`,
+    tools `T01F00S00C0.0120`, coordinates without a decimal point (zero suppression and format applied), a lone Y after an X (modal).
+    A route (M15..M16) or a slot (G85) is not a hole here."""
     metric, tools, cur, out = False, {}, None, []
-    lead_trail = "L"
+    zmode, total, decd = "", None, None
     x = y = None
+    routing = False
     for raw in text.splitlines():
         line = raw.strip()
-        if line.startswith(("METRIC", "M71")):
-            metric = True
-            lead_trail = "T" if "TZ" in line else "L"
-        elif line.startswith(("INCH", "M72")):
-            metric = False
+        mf = re.match(r";\s*FILE_FORMAT\s*=\s*(\d+):(\d+)", line, re.I)
+        if mf:
+            total, decd = int(mf.group(1)) + int(mf.group(2)), int(mf.group(2))
+            continue
+        if line.startswith(";"):
+            continue
+        if line.startswith(("METRIC", "INCH", "M71", "M72")):
+            metric = line.startswith(("METRIC", "M71"))
+            zmode = "T" if "TZ" in line else "L" if "LZ" in line else zmode
+            continue
+        if line.startswith("M15"):
+            routing = True
+            continue
+        if line.startswith("M16") or line.startswith("M17"):
+            routing = False
+            continue
         m = re.match(r"T(\d+)[A-Z\d.]*?C(\d*\.?\d+)", line)
         if m:
             tools[int(m.group(1))] = float(m.group(2)) * (1.0 if metric else 25.4)
@@ -136,17 +227,22 @@ def parse_npth(text):
             cur = int(m.group(1))
             continue
         mx, my = re.search(r"X([-+]?[\d.]+)", line), re.search(r"Y([-+]?[\d.]+)", line)
-        if (mx or my) and cur in tools and not line.startswith(("G00", "G01", "G02", "G03", "M")):
+        if (mx or my) and not routing and "G85" not in line and not line.startswith(("G00", "G01", "G02", "G03", "M")):
             def v(s):
-                f = float(s)
+                neg = s.startswith("-")
+                s = s.lstrip("+-")
                 if "." in s:
-                    return f * (1.0 if metric else 25.4)
-                return f / (1000.0 if metric else 10000.0) * (1.0 if metric else 25.4)
+                    f = float(s)
+                else:
+                    n, dd = (total, decd) if total else ((6, 3) if metric else (6, 4))
+                    s2 = s.ljust(n, "0") if zmode == "L" else s.rjust(n, "0") if zmode == "T" else s
+                    f = int(s2) / (10 ** dd)
+                return (-f if neg else f) * (1.0 if metric else 25.4)
             if mx:
                 x = v(mx.group(1))
             if my:
                 y = v(my.group(1))
-            if x is not None and y is not None:
+            if x is not None and y is not None and cur in tools:
                 out.append((x, y, tools[cur]))
     return out
 
@@ -235,18 +331,52 @@ def mask_webs(shapes, limit=MASK_WEB_MIN_MM):
     return out
 
 
-def copper_to_holes(copper, holes, limit=NPTH_TO_COPPER_MM):
-    """[(gap_mm, (x, y), (hx, hy, dia))]: copper nearer than the limit to the wall of a non-plated hole; (x, y) is the copper's nearest point."""
+def _inside(poly, px, py):
+    n, c = len(poly), False
+    for k in range(n):
+        (x1, y1), (x2, y2) = poly[k], poly[(k + 1) % n]
+        if (y1 > py) != (y2 > py) and px < (x2 - x1) * (py - y1) / (y2 - y1) + x1:
+            c = not c
+    return c
+
+
+def copper_to_holes(copper, holes, polys=(), limit=NPTH_TO_COPPER_MM):
+    """[(gap_mm, (x, y), (hx, hy, dia))]: copper nearer than the limit to the wall of a non-plated hole; (x, y) is the copper's nearest point.
+    `copper`: flashes and strokes of one layer; `polys`: its regions [(dark, points)] (a pour is a dark region with clear ones cut out).
+    A flash centred on the hole is the hole's own mark in the copper file (Altium writes one at the hole size) or its own pad: not a neighbour."""
     out = []
     for hx, hy, dia in holes:
+        r = dia / 2
         for s in copper:
             x0, y0, x1, y1 = _bbox(s)
-            if x0 - limit - dia / 2 > hx or x1 + limit + dia / 2 < hx or y0 - limit - dia / 2 > hy or y1 + limit + dia / 2 < hy:
+            if x0 - limit - r > hx or x1 + limit + r < hx or y0 - limit - r > hy or y1 + limit + r < hy:
+                continue
+            if math.hypot((x0 + x1) / 2 - hx, (y0 + y1) / 2 - hy) < 0.1 and s[1] == s[3] and (s[0] == "rect" or s[2] == s[4]):
                 continue
             d, p = (_rect_pt(s, hx, hy) if s[0] == "rect" else _seg_pt(s[1], s[2], s[3], s[4], hx, hy))
-            d = d - (s[5] if s[0] == "seg" else 0.0) - dia / 2
+            d = d - (s[5] if s[0] == "seg" else 0.0) - r
             if d < limit:
                 out.append((max(d, 0.0), p, (hx, hy, dia)))
+        if polys:
+            covered = False
+            for dark, pts in polys:                       # in file order, a later region over an earlier one wins
+                if _inside(pts, hx, hy):
+                    covered = dark
+            best = (0.0, (hx, hy)) if covered else None
+            for dark, pts in polys:
+                if best and covered:
+                    break
+                bx0, bx1 = min(q[0] for q in pts), max(q[0] for q in pts)
+                by0, by1 = min(q[1] for q in pts), max(q[1] for q in pts)
+                if bx0 - limit - r > hx or bx1 + limit + r < hx or by0 - limit - r > hy or by1 + limit + r < hy:
+                    continue
+                for a, b in zip(pts, pts[1:] + pts[:1]):
+                    d, p = _seg_pt(a[0], a[1], b[0], b[1], hx, hy)
+                    d -= r
+                    if d < limit and (best is None or d < best[0]):
+                        best = (max(d, 0.0), p)
+            if best:
+                out.append((best[0], best[1], (hx, hy, dia)))
     return out
 
 
@@ -285,19 +415,23 @@ def _dedupe(rows, tol=0.3):
 
 def problems(files):
     """files: {"mask": [text], "copper": [text], "outline": [text], "npth": [text]} -> (messages, skipped).
-    A message names the kind, the gap and the position; `skipped` says what could not be checked."""
+    Each file is read on its own (a top and a bottom layer never meet). A message names the kind, the gap and the position;
+    `skipped` says what could not be checked, so no file ever turns out green by being unreadable."""
     msgs, skipped = [], []
 
-    def layers(group):
-        shapes = []
+    def parsed(group):
+        out = []
         for t in files.get(group, []):
             p = parse_layer(t)
             if p is None:
-                skipped.append(f"a {group} file is not RS-274X")
+                skipped.append(f"a {group} file is not RS-274X: not checked")
                 continue
-            shapes += p["shapes"]
             skipped.extend(f"{group}: {u}; shapes using it are not checked" for u in p["unread"])
-        return shapes
+            if not p["shapes"] and not p["polys"]:
+                skipped.append(f"a {group} file has no readable shape: not checked")
+                continue
+            out.append(p)
+        return out
 
     def emit(label, rows, fmt):
         rows = _dedupe(rows)
@@ -306,20 +440,33 @@ def problems(files):
         if len(rows) > MAX_REPORT:
             msgs.append(f"{label}: {len(rows) - MAX_REPORT} more places of the same kind, not listed")
 
+    webs = []
+    for p in parsed("mask"):
+        webs += mask_webs(p["shapes"])
+        if p["polys"]:
+            skipped.append("mask: a region opening is not checked for webs")
     if files.get("mask"):
-        mk = layers("mask")
-        emit("solder mask web", mask_webs(mk), lambda r: (
+        emit("solder mask web", webs, lambda r: (
             f"solder mask web of {r[0]:.3f} mm between two openings at X {r[1][0]:.2f} mm, Y {r[1][1]:.2f} mm is below the "
-            f"{MASK_WEB_MIN_MM:.2f} mm minimum (the dam is not made; widen the gap or merge the openings)"))
-    cu = layers("copper") if files.get("copper") else []
+            f"{MASK_WEB_MIN_MM:.2f} mm minimum for 1 oz copper, green mask ({MASK_WEB_BLACK_WHITE:.2f} mm for black or white): the dam is "
+            f"not made; widen the gap or merge the openings"))
+    cu = parsed("copper")
     holes = [h for t in files.get("npth", []) for h in parse_npth(t)]
+    if files.get("npth") and not holes:
+        skipped.append("an NPTH drill file lists no hole that could be read: copper to NPTH not checked")
+    near = []
+    for p in cu:
+        near += copper_to_holes(p["shapes"], holes, p["polys"]) if holes else []
     if cu and holes:
-        emit("copper to NPTH", copper_to_holes(cu, holes), lambda r: (
+        emit("copper to NPTH", near, lambda r: (
             f"copper is {r[0]:.2f} mm from a non-plated hole ({r[2][2]:g} mm) at X {r[1][0]:.2f} mm, Y {r[1][1]:.2f} mm, "
             f"less than the {NPTH_TO_COPPER_MM:.2f} mm minimum NPTH to copper clearance"))
-    ol = layers("outline") if files.get("outline") else []
+    ol = [s for p in parsed("outline") for s in p["shapes"]]
     if cu and ol:
-        emit("copper to edge", copper_to_edge(cu, ol), lambda r: (
+        edge = []
+        for p in cu:
+            edge += copper_to_edge(p["shapes"] + p["boundary"], ol)
+        emit("copper to edge", edge, lambda r: (
             f"copper is {r[0]:.2f} mm from the routed board edge at X {r[1][0]:.2f} mm, Y {r[1][1]:.2f} mm, "
             f"less than the {EDGE_TO_COPPER_MM:.2f} mm minimum copper to edge clearance"))
     return msgs, sorted(set(skipped))

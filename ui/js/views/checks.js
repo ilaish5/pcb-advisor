@@ -359,6 +359,8 @@ function dfmZipBody() {
   out += dfmNames((z.files || []).map(f => f.name));
   out += problems.map(m => banner({tone: 'warn', html: `<b>${esc(m.layer)}</b> (<span class="m">${esc(m.ext)}</span>) is missing. ${esc(m.why)}`})).join('');
   out += geo.map(m => banner({tone: 'warn', html: `<b>${esc(m.layer)}</b>: ${esc(m.why)}`})).join('');
+  const geoSkip = (z.content_check && z.content_check.geometry_not_checked) || [];
+  if (geoSkip.length) out += `<p class="muted">Not checked for mask webs, copper to NPTH and copper to the edge: ${geoSkip.map(esc).join('; ')}.</p>`;
   out += (z.warnings || []).map(w => banner({tone: 'warn', text: w})).join('');
   if (notes.length) out += `<p class="muted">${notes.map(m => `${esc(m.layer)} (<span class="m">${esc(m.ext)}</span>) is not in the set. ${esc(m.why)}`).join(' ')}</p>`;
   const a = z.assembly || {};
