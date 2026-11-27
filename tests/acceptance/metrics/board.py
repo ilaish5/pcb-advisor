@@ -810,3 +810,231 @@ def w24(ctx):
     return Result("pass" if not out else "fail", measured=out, expected="records over the limit and not flagged = 0",
                   detail=f"{len(over)} records over the limit, {len(out)} unflagged",
                   evidence=[ctx.ev(f, "Pads6"), ctx.ev(lf, "placement warnings")])
+
+
+# ======================================================================================================================== W34(b) / W18 / F-H(c)
+def _walk_text(o, path=()):
+    if isinstance(o, dict):
+        for k, v in o.items():
+            yield from _walk_text(v, path + (str(k),))
+    elif isinstance(o, list):
+        for i, v in enumerate(o):
+            yield from _walk_text(v, path + (str(i),))
+    elif isinstance(o, str):
+        yield path, o
+
+
+def _order_manifest_file(ctx):
+    fs = sorted((ctx.project / "exports").glob("*_order_manifest.json"))
+    if len(fs) != 1:
+        raise FileNotFoundError(f"expected one *_order_manifest.json in {ctx.project / 'exports'}, found {len(fs)}")
+    return fs[0]
+
+
+def _product_findings(ctx):
+    """Free-text findings of the product's order manifest (every string except the raw Altium DRC dump under a 'drc' key: those lines
+    are unclassified Altium output, F-H a, not a finding the product made), and the file."""
+    f = _order_manifest_file(ctx)
+    d = json.loads(f.read_text(encoding="utf-8"))
+    return [t for p, t in _walk_text(d) if not any("drc" in k.lower() for k in p)], f
+
+
+def _names(text: str, ref: str) -> bool:
+    return re.search(rf"(?<![A-Za-z0-9]){re.escape(ref)}(?![A-Za-z0-9])", text) is not None
+
+
+_CPL_WORDS = re.compile(r"\bCPL\b|centroid|pick[\s-]*(?:and|&)?[\s-]*place|placement point|\borigin\b", re.I)
+
+
+def _centres(doc):
+    """{ref: {"pad_origin", "body_origin", "body_pad"}} in mm: pad bounding-box centre (copper extents, OD-5), footprint origin and 3D
+    body bounding-box centre. Parts with no pad are skipped; body_* is None when the part has no body."""
+    out = {}
+    for c in doc.components():
+        boxes = [p.extent() for p in doc.pads() if p.comp == c.index]
+        if not boxes:
+            continue
+        pc = ((min(b[0] for b in boxes) + max(b[2] for b in boxes)) / 2, (min(b[1] for b in boxes) + max(b[3] for b in boxes)) / 2)
+        bb = [b.bbox() for b in doc.bodies() if b.comp == c.index and b.bbox()]
+        bc = ((min(b[0] for b in bb) + max(b[2] for b in bb)) / 2, (min(b[1] for b in bb) + max(b[3] for b in bb)) / 2) if bb else None
+        out[c.ref] = {"pad_origin": math.hypot(pc[0] - c.x, pc[1] - c.y),
+                      "body_origin": math.hypot(bc[0] - c.x, bc[1] - c.y) if bc else None,
+                      "body_pad": math.hypot(bc[0] - pc[0], bc[1] - pc[1]) if bc else None}
+    return out
+
+
+def _cpl_offset_parts(doc):
+    """Parts whose pad centre, origin and body centre differ by more than CPL_FLAG_MM (OD-5): {ref: (worst mm, text)}."""
+    lim = _tv(TH.CPL_FLAG_MM)
+    out = {}
+    for ref, c in _centres(doc).items():
+        vals = {k: v for k, v in c.items() if v is not None}
+        worst = max(vals.values())
+        if worst > lim:
+            k = max(vals, key=vals.get)
+            out[ref] = (worst, f"{k.replace('_', ' to ')} {worst:.2f} mm")
+    return out
+
+
+def _lib_issues(ctx):
+    f = ctx.project / "library" / "manifest.json"
+    m = json.loads(f.read_text(encoding="utf-8"))
+    return {ref: v for ref, v in m.items() if isinstance(v, dict)}, f
+
+
+def _offset_files(ctx):
+    om = _order_manifest_file(ctx)
+    return (str(ctx.pcbdoc().relative_to(ctx.root)).replace("\\", "/"), str(om.relative_to(ctx.root)).replace("\\", "/"),
+            "project/library/manifest.json")
+
+
+def _w34_build(ctx):
+    """Control: the fixture PcbDoc, a library manifest as it is and an order manifest that also carries a production finding for
+    every part the oracle lists."""
+    with P.PcbDoc(ctx.pcbdoc()) as doc:
+        parts = _cpl_offset_parts(doc)
+    c = CB.sparse_root(ctx, "W34-control", copy=_offset_files(ctx))
+    om = c.project / "exports" / _order_manifest_file(ctx).name
+    d = json.loads(om.read_text(encoding="utf-8"))
+    d["cpl_findings"] = [f"{ref}: the pick and place point (pad box centre) is off the footprint origin or body centre ({t}); "
+                         f"check its CPL position" for ref, (_, t) in sorted(parts.items())]
+    om.write_text(json.dumps(d), encoding="utf-8")
+    return c
+
+
+def _w34_inject(c, lib_issue: bool = False):
+    """Canary: the origin of a random pad-bearing part with no offset moves 1.0 mm (pads stay) and nothing flags it."""
+    with P.PcbDoc(c.pcbdoc()) as doc:
+        ok = _cpl_offset_parts(doc)
+        cands = sorted(r for r in _centres(doc) if r not in ok and sum(1 for p in doc.pads() if p.ref == r) >= 2)
+        ref = c.rng.choice(cands)
+        idx = {x.ref: x.index for x in doc.components()}[ref]
+    bad = CB.sparse_root(c, "W34-canary", copy=_offset_files(c))
+    CB.move_components(c.pcbdoc(), bad.altium / c.pcbdoc().name, {idx: (1.0, 0.0)}, pads=False)
+    if lib_issue:
+        lf = bad.project / "library" / "manifest.json"
+        m = json.loads(lf.read_text(encoding="utf-8"))
+        e = m.setdefault(ref, {})
+        e["status"], e["issues"] = "warn", [f"the 3D body of footprint {ref} is centred 1.0 mm from its pads (limit 0.5 mm): the model may be offset"]
+        lf.write_text(json.dumps(m), encoding="utf-8")
+    return bad, f"{ref}: "
+
+
+@metric(id="W34(b)", title="Every part whose pad centre, origin and body centre differ by more than the CPL flag limit has a production finding",
+        root="R4", level="U", p0=("P0-3",), control=_with_canary(_w34_build, _w34_inject, lambda c: w34b(c)))
+def w34b(ctx):
+    """Oracle: pad bounding-box centre, footprint origin and 3D body centre from the PcbDoc; limit CPL_FLAG_MM (OD-5). A part is flagged
+    when a free-text finding of the order manifest names it together with a CPL / centroid / pick-and-place / origin wording. The 3D
+    warnings of the library manifest are not production findings (that is W18). The CPL file itself (U5 on 27/11) is W34(a), not read
+    here."""
+    f = ctx.pcbdoc()
+    with P.PcbDoc(f) as doc:
+        parts = _cpl_offset_parts(doc)
+        total = len(_centres(doc))
+    if not total:
+        return Result("error", detail="no part with pads found", evidence=[ctx.ev(f, "PcbDoc")])
+    texts, mf = _product_findings(ctx)
+    out = [f"{ref}: {t}, no production finding" for ref, (_, t) in sorted(parts.items())
+           if not any(_names(x, ref) and _CPL_WORDS.search(x) for x in texts)]
+    return Result("pass" if not out else "fail", measured=out, expected="parts over the limit without a production finding = 0",
+                  detail=f"{len(parts)} of {total} parts over {_tv(TH.CPL_FLAG_MM):g} mm; {len(out)} unflagged",
+                  evidence=[ctx.ev(f, "Pads6, Components6, ComponentBodies6"), ctx.ev(mf, "order manifest findings")])
+
+
+def _w18_inject(c):
+    return _w34_inject(c, lib_issue=True)
+
+
+@metric(id="W18", title="An offset that moves the CPL point is a production finding, not only a 3D warning", root="R4", level="U",
+        p0=(), control=_with_canary(_w34_build, _w18_inject, lambda c: w18(c)))
+def w18(ctx):
+    """Misclassified = a part the library manifest reports as a 3D offset whose pad centre, origin and body centre differ by more than
+    CPL_FLAG_MM (so the CPL point moves) and that no production finding names. Not covered here: the comparison of the figures the
+    product shows with the oracle's (the product's figures come from the STEP model, which the PcbDoc/PcbLib reader does not read)."""
+    f = ctx.pcbdoc()
+    with P.PcbDoc(f) as doc:
+        parts = _cpl_offset_parts(doc)
+    lib, lf = _lib_issues(ctx)
+    d3 = {ref for ref, v in lib.items() if any(re.search(r"\b3D\b", str(i)) for i in v.get("issues") or [])}
+    texts, mf = _product_findings(ctx)
+    if not d3:
+        return Result("error", detail="the library manifest has no 3D finding to classify", evidence=[ctx.ev(lf, "library manifest")])
+    out = [f"{ref}: {parts[ref][1]}, classed only as a 3D warning" for ref in sorted(d3 & set(parts))
+           if not any(_names(x, ref) and _CPL_WORDS.search(x) for x in texts)]
+    return Result("pass" if not out else "fail", measured=out, expected="misclassified = 0",
+                  detail=f"{len(d3)} parts with a 3D warning, {len(d3 & set(parts))} of them move the CPL point",
+                  evidence=[ctx.ev(f, "PcbDoc"), ctx.ev(lf, "library manifest 3D warnings"), ctx.ev(mf, "order manifest findings")])
+
+
+# ---- F-H (c): parts and copper at the board edge
+_MM = re.compile(r"\d+(?:\.\d+)?\s*mm", re.I)
+
+
+def _edge_need(doc):
+    """[(kind, label, gap mm, limit mm)] over the limit: components <= EDGE_ASSEMBLY_MIN_MM, copper < EDGE_COPPER_MIN_MM. Gaps compare
+    after GEOM_TOL_MM (coordinate resolution), so a gap stored as 0.29999 mm counts as 0.3 mm."""
+    tol, la, lc = _tv(TH.GEOM_TOL_MM), _tv(TH.EDGE_ASSEMBLY_MIN_MM), _tv(TH.EDGE_COPPER_MIN_MM)
+    out = []
+    for kind, label, gap in P.edge_gaps(doc):
+        if kind == "component" and gap <= la + tol:
+            out.append((kind, label, gap, la))
+        elif kind != "component" and gap < lc - tol:
+            out.append((kind, label or "?", gap, lc))
+    return out
+
+
+def _edge_flagged(texts, kind, label) -> bool:
+    for x in texts:
+        if re.search(r"\bedge\b", x, re.I) and _MM.search(x) and (_names(x, label) if label else False):
+            return True
+    return False
+
+
+def _fh_build(ctx):
+    with P.PcbDoc(ctx.pcbdoc()) as doc:
+        need = _edge_need(doc)
+    c = CB.sparse_root(ctx, "F-H-control", copy=(str(ctx.pcbdoc().relative_to(ctx.root)).replace("\\", "/"),
+                                                  str(_order_manifest_file(ctx).relative_to(ctx.root)).replace("\\", "/")))
+    om = c.project / "exports" / _order_manifest_file(ctx).name
+    d = json.loads(om.read_text(encoding="utf-8"))
+    d["edge_findings"] = [f"{label}: {gap:.2f} mm from the board edge; JLC asks more than {lim:g} mm" for _, label, gap, lim in need]
+    om.write_text(json.dumps(d), encoding="utf-8")
+    return c
+
+
+def _fh_inject(c):
+    """Canary: a random movable part moves to 0.1 mm of the board edge (its origin and pads shift together); nothing flags it."""
+    with P.PcbDoc(c.pcbdoc()) as doc:
+        gaps = {l: g for k, l, g in P.edge_gaps(doc) if k == "component"}
+        o = doc.outline()
+        left = min(p[0] for p in o)
+        cands = sorted(r for r, g in gaps.items() if g > 1.0 and sum(1 for p in doc.pads() if p.ref == r) >= 2)
+        ref = c.rng.choice(cands)
+        comp = {x.ref: x for x in doc.components()}[ref]
+        boxes = [p.extent() for p in doc.pads() if p.comp == comp.index and p.plated]
+        dx = (left + 0.1) - min(b[0] for b in boxes)
+    bad = CB.sparse_root(c, "F-H-canary", copy=(str(c.pcbdoc().relative_to(c.root)).replace("\\", "/"),
+                                                 str(_order_manifest_file(c).relative_to(c.root)).replace("\\", "/")))
+    CB.move_components(c.pcbdoc(), bad.altium / c.pcbdoc().name, {comp.index: (dx, 0.0)})
+    return bad, f"{ref} ("
+
+
+@metric(id="F-H(c)", title="A part within 0.3 mm of the board edge, or copper within 0.2 mm of it, is flagged", root="R4", level="L",
+        p0=(), control=_with_canary(_fh_build, _fh_inject, lambda c: fh_c(c)))
+def fh_c(ctx):
+    """Limits: EDGE_ASSEMBLY_MIN_MM (> 0.3 mm for components, so 0.3 mm or less is a finding) and EDGE_COPPER_MIN_MM (>= 0.2 mm for
+    copper). Gaps measured from the Board6 outline to plated pad copper and 3D bodies per part, and to track and via copper. A finding
+    counts when a free-text finding of the order manifest names the part (or the net) with the word edge and a distance in mm; the
+    raw Altium DRC lines are not findings."""
+    f = ctx.pcbdoc()
+    with P.PcbDoc(f) as doc:
+        need = _edge_need(doc)
+        n = sum(1 for k, *_ in P.edge_gaps(doc) if k == "component")
+    if not n:
+        return Result("error", detail="no component to measure", evidence=[ctx.ev(f, "PcbDoc")])
+    texts, mf = _product_findings(ctx)
+    out = [f"{label} ({kind}) is {gap:.2f} mm from the board edge (limit {lim:g} mm), not flagged"
+           for kind, label, gap, lim in need if not _edge_flagged(texts, kind, label)]
+    return Result("pass" if not out else "fail", measured=out, expected="over-limit parts and copper without a finding = 0",
+                  detail=f"{len(need)} items over the limit of {n} components; {len(out)} unflagged",
+                  evidence=[ctx.ev(f, "Board6 outline, Pads6"), ctx.ev(mf, "order manifest findings")])

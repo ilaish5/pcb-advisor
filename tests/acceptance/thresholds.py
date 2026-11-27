@@ -36,3 +36,9 @@ OFFSET_TOL_MM = T(0.05, "mm", "measurement resolution (ACCEPTANCE.md W18)")
 # Oracle resolution (not design limits). Altium stores 1/10000 mil = 2.54e-6 mm; these absorb the rounding of derived values.
 GEOM_TOL_MM = T(0.001, "mm", "oracle coordinate resolution (Altium 1/10000 mil); ACCEPTANCE.md A7 measurement resolution")
 STACK_ER_TOL = T(0.005, "-", "Altium stores Er as typed (two decimals); half the last stored digit (ACCEPTANCE.md W27)")
+
+# Edge distances (JLCPCB). Used by F-H (c).
+EDGE_COPPER_MIN_MM = T(0.2, "mm", "jlc/pcb-capabilities.en.md § Outline, board size and thickness (Copper to edge, routed edge) [P1]",
+                       "copper to a routed edge must be >= 0.2 mm")
+EDGE_ASSEMBLY_MIN_MM = T(0.3, "mm", "jlc/assembly-capabilities.en.md § Economic vs Standard PCBA (Economic boards ... > 0.3 mm from the edge) [A4 #14]",
+                         "JLC asks > 0.3 mm from traces and components to the edge: a gap of 0.3 mm or less is a finding")

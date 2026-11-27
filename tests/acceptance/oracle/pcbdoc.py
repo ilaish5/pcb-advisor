@@ -715,3 +715,56 @@ def route_length(doc: PcbDoc, net: str, a: Pad, b: Pad) -> float | None:
                 k += 1
                 heapq.heappush(heap, (d + w, k, v))
     return None
+
+
+# ------------------------------------------------------------------------------------------------------------ board-edge gaps
+def _pt_seg(px, py, x1, y1, x2, y2) -> float:
+    dx, dy = x2 - x1, y2 - y1
+    n = dx * dx + dy * dy
+    t = 0.0 if n == 0 else max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / n))
+    return math.hypot(px - (x1 + t * dx), py - (y1 + t * dy))
+
+
+def _seg_seg(a, b) -> float:
+    """Distance between segments a=(x1,y1,x2,y2) and b (0 when they cross)."""
+    def ccw(p, q, r):
+        return (r[1] - p[1]) * (q[0] - p[0]) - (q[1] - p[1]) * (r[0] - p[0])
+    p1, p2, p3, p4 = a[:2], a[2:], b[:2], b[2:]
+    if ccw(p1, p3, p4) * ccw(p2, p3, p4) < 0 and ccw(p1, p2, p3) * ccw(p1, p2, p4) < 0:
+        return 0.0
+    return min(_pt_seg(*p1, *b), _pt_seg(*p2, *b), _pt_seg(*p3, *a), _pt_seg(*p4, *a))
+
+
+def _rect_seg(r, s) -> float:
+    if seg_hits_rect(s[0], s[1], s[2], s[3], 0.0, r):
+        return 0.0
+    cs = ((r[0], r[1]), (r[0], r[3]), (r[2], r[1]), (r[2], r[3]))
+    ends = [math.hypot(max(r[0] - x, 0, x - r[2]), max(r[1] - y, 0, y - r[3])) for x, y in ((s[0], s[1]), (s[2], s[3]))]
+    return min([_pt_seg(x, y, *s) for x, y in cs] + ends)
+
+
+def edge_gaps(doc: PcbDoc) -> list[tuple[str, str, float]]:
+    """Gap in mm from the board outline (the Board6 vertex polygon) to: each placed component's plated pads and 3D bodies
+    ("component", designator), each copper track ("track", net, edge of the copper) and each via ("via", net). Sorted by gap."""
+    o = doc.outline()
+    if len(o) < 3:
+        raise ValueError("board outline has fewer than 3 vertices")
+    segs = [(o[i][0], o[i][1], o[(i + 1) % len(o)][0], o[(i + 1) % len(o)][1]) for i in range(len(o))]
+    segs = [s for s in segs if (s[0], s[1]) != (s[2], s[3])]
+    out = []
+    for c in doc.components():
+        try:
+            boxes = [p.extent() for p in doc.pads() if p.comp == c.index and p.plated]
+            boxes += [b.bbox() for b in doc.bodies() if b.comp == c.index and b.bbox()]
+            if not boxes:
+                continue
+            r = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+        except ValueError:
+            continue
+        out.append(("component", c.ref, min(_rect_seg(r, s) for s in segs)))
+    for t in doc.tracks():
+        if is_copper(t.layer):
+            out.append(("track", t.net or "", min(_seg_seg((t.x1, t.y1, t.x2, t.y2), s) for s in segs) - t.width / 2))
+    for v in doc.vias():
+        out.append(("via", v.net or "", min(_pt_seg(v.x, v.y, *s) for s in segs) - v.dia / 2))
+    return sorted(out, key=lambda r: r[2])

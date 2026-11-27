@@ -282,9 +282,9 @@ def regions_to_keepout(src, dst, rects: list, add_tracks: list | None = None, te
 
 
 # ------------------------------------------------------------------------------------------------------------ moving a component
-def move_components(src, dst, shifts: dict) -> pathlib.Path:
+def move_components(src, dst, shifts: dict, pads: bool = True) -> pathlib.Path:
     """Copy PcbDoc `src` to `dst` with components moved: `shifts` {component index: (dx_mm, dy_mm)}. Moves the component record (X, Y)
-    and its pads; tracks, text and bodies owned by it stay (enough for a distance canary)."""
+    and, unless pads=False (origin offset only), its pads; tracks, text and bodies owned by it stay (enough for a distance canary)."""
     streams = olewrite.read_all(src)
     recs = split_records(streams["Components6/Data"])
     d = P.PcbDoc(src)
@@ -305,7 +305,7 @@ def move_components(src, dst, shifts: dict) -> pathlib.Path:
         g0, gn = starts[4]
         comp = struct.unpack("<H", blob[g0 + 7:g0 + 9])[0]
         rec = bytearray(blob[i:j])
-        if comp in shifts:
+        if pads and comp in shifts:
             off = g0 - i
             x, y = struct.unpack("<2i", bytes(rec[off + 13:off + 21]))
             struct.pack_into("<2i", rec, off + 13, x + round(shifts[comp][0] / P.UNIT_MM), y + round(shifts[comp][1] / P.UNIT_MM))
