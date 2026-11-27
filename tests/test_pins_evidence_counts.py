@@ -34,6 +34,15 @@ def test_a_nameless_symbol_pin_is_in_the_symbol_count_so_the_part_is_not_fully_v
     assert u1["pins_status"] != "verified"
 
 
+def test_a_no_connect_pin_with_no_table_row_is_not_counted_as_compared(empty):
+    _u1(empty, [{"num": "1", "name": "VCC", "net": "+3V3"}, {"num": "2", "name": "GND", "net": "GND"}, {"num": "3", "name": "NC", "net": "NC"}])
+    _datasheet(empty, ["1 VCC Supply", "2 GND Ground"])
+    store.unverified_parts(empty)
+    ev = (store.library_parts(empty).get("U1") or {}).get("pins_evidence")
+    assert not ev or ev["pins_compared"] == 2 and ev["symbol_pins"] == 3
+    assert _line(empty)["pins_status"] != "verified"
+
+
 def test_no_compared_row_on_any_page_means_no_record_not_page_one(empty):
     _u1(empty, [{"num": "1", "name": "VCC", "net": "+3V3"}])
     _datasheet(empty, ["1 VCC Supply"])

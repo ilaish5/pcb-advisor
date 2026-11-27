@@ -684,6 +684,7 @@ def _evaluate(col, pins, pads):
     # EP pin top+1, or split into top+1 .. top+k: a few pads past a real pin list, never most of the part's pins past a 1- or
     # 2-row "table"
     ep_split = bool(beyond) and beyond == list(range(top + 1, top + 1 + len(beyond))) and len(beyond) <= top // 2
+    matched: set[str] = set()
     for num, name in pins:
         hits = [r for r in col["rows"] if num.upper() in {n.upper() for n in r["nums"][col["index"]]}]
         if not hits:
@@ -744,8 +745,12 @@ def _evaluate(col, pins, pads):
         note = _type_note(name, good[0]["type"])
         if note:
             out["notes"].append(f"pin {num}: {note}")
+        if all(str(r.get("name") or "").strip() for r in good):          # a row with its number AND its name: the evidence the pin was compared
+            matched.add(num)
     flagged = {m.group(1) for e in out["conflict"] + out["absent"] for m in [re.match(r"pin (\S+) ", e)] if m}
-    out["examined"] = sum(1 for num, _name in pins if num not in flagged)          # pins that went through the table without a conflict or a gap
+    # R2/F-F: only a pin matched to a table row (its number and the row's name) is compared; a no-connect pin with no row, a pin the table
+    # does not list and one taken for the exposed pad by a note are not "compared"
+    out["examined"] = sum(1 for num, _name in pins if num in matched and num not in flagged)
     if complete:
         out["count"] = len(set(nums))
         if pads is not None:
