@@ -516,7 +516,7 @@ def test_a_paused_script_is_stopped_before_the_next_command_is_sent(monkeypatch,
     assert bridge.run_commands([("PING",)]) == ["> PING"]
     assert order == ["Stop", "RunScript"]                                 # released first, then the command
     pre = [f for k, f in events if k == "altium-preflight"]
-    assert len(pre) == 1 and pre[0]["still_paused"] is False and "AdvisorBridge.pas [Paused] - Altium" in pre[0]["found"]
+    assert len(pre) == 1 and pre[0]["still_paused"] is False and pre[0]["found"] == ["[TMessageForm] Error: OK"] and pre[0]["windows"] == ["AdvisorBridge.pas [Paused] - Altium"]
     notes = bridge.take_preflight_notes()
     assert len(notes) == 1 and notes[0].startswith("**A script was paused in Altium**") and "clean now" in notes[0]
     assert bridge.take_preflight_notes() == []
@@ -534,7 +534,7 @@ def test_a_clean_altium_is_not_touched_by_the_preflight(monkeypatch, tmp_path):
 
 def test_a_run_that_stays_paused_tells_the_student_to_press_run(monkeypatch, tmp_path):
     _bridge_files(monkeypatch, tmp_path)
-    paused = {"boxes": [], "windows": ["AdvisorBridge.pas [Debug]"]}
+    paused = {"boxes": ["[TMessageForm] Error: OK"], "windows": []}
     monkeypatch.setattr(bridge, "_script_state", lambda: paused)
     monkeypatch.setattr(bridge, "release_executor", lambda: [])
     assert bridge.preflight()["still_paused"] is True
@@ -556,3 +556,11 @@ def test_the_preflight_also_runs_after_an_error(monkeypatch, tmp_path):
 def test_the_altium_help_skill_tells_what_to_do_about_a_paused_script():
     skill = (pathlib.Path(__file__).parent.parent / "runtime" / "skills" / "altium-help" / "SKILL.md").read_text(encoding="utf-8")
     assert "F9" in skill and "paused" in skill and "never run or resume a script yourself" in skill
+
+
+def test_a_window_title_alone_never_triggers_the_preflight(monkeypatch, tmp_path):
+    """Seen live: the script editor is a tab of the main window, so a title is only extra logging, never the trigger."""
+    monkeypatch.setattr(bridge, "PREFLIGHT_NOTES", [])
+    monkeypatch.setattr(bridge, "_script_state", lambda: {"boxes": [], "windows": ["AdvisorBridge.pas [Paused]"]})
+    monkeypatch.setattr(bridge, "release_executor", lambda: pytest.fail("nothing is open that blocks a script"))
+    assert bridge.preflight() is None and bridge.take_preflight_notes() == []

@@ -245,8 +245,10 @@ DIALOG_LOG = []         # every dialog closed this session, "[class] title: text
 
 
 def _script_state():
-    """Look (close nothing, send nothing) for a script of ours that Altium left paused: an open script error box
-    (TMessageForm) owned by X2.EXE, or a top-level X2 window whose title shows the script document in a paused or debug state.
+    """Look (close nothing, send nothing) for a script of ours that Altium left paused. The TRIGGER is an open script error box
+    (TMessageForm) owned by X2.EXE: seen live, a paused run leaves that box and nothing else. "windows" is extra LOGGING only:
+    top-level X2 windows whose title names the script in a paused or debug state. Seen live (Altium 26.8) the script editor is a
+    tab inside the main window, whose title shows the project, so this list is normally empty and never decides anything.
     Returns {"boxes": [...], "windows": [...]}; both empty when Altium is not running or this is not Windows."""
     out = {"boxes": [], "windows": []}
     try:
@@ -283,11 +285,11 @@ def preflight():
     owner's open documents is touched: no keystroke, no close of a document. Returns the record, or None when all is clean."""
     try:
         state = _script_state()
-        if not (state["boxes"] or state["windows"]):
+        if not state["boxes"]:
             return None
         shown = release_executor()
         left = _script_state()
-        rec = {"found": state["boxes"] + state["windows"], "released": shown, "still_paused": bool(left["boxes"] or left["windows"])}
+        rec = {"found": state["boxes"], "windows": state["windows"], "released": shown, "still_paused": bool(left["boxes"])}
         project = getattr(runlog.ctx, "project", "") or ""
         runlog.event("altium-preflight", project=project, **rec)
         if project:
