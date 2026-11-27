@@ -16,8 +16,10 @@ def classes(parts):
 
 def test_decap_missing_and_clean():
     ic = P("U1", [("VDD", "3V3"), ("VDD", "3V3"), ("GND", "GND")])
-    assert "decap_missing" in classes([ic, cap("C1", "3V3")])
-    assert "decap_missing" not in classes([ic, cap("C1", "3V3"), cap("C2", "3V3")])
+    assert "decap_missing" in classes([ic])                          # a supply rail with no capacitor to ground at all
+    assert "decap_missing" not in classes([ic, cap("C1", "3V3")])
+    r = sr.review("x", parts=[ic, cap("C1", "3V3")])               # no datasheet text: what the pin asks is not known, so it is not checked
+    assert r["not_checked"] and "datasheet" in r["not_checked"][0]
 
 
 def test_i3c_device_on_shared_spi_bus():

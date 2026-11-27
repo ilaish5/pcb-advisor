@@ -8,18 +8,20 @@ and what to do. `text` is what the student reads: the findings, then the scope (
 says "no finding in these rule classes", never "0 errors".
 
 Rule classes (each is a netlist check, none is a guess about values):
-  decap_missing    an IC with more supply pins on a rail than capacitors from that rail to ground
+  decap_missing    a supply pin whose own datasheet asks a capacitor (value by value) that the rail does not have left for it
   i3c_shared_spi   an I2C/I3C-capable device (SCL + SDA + CS pins) whose SCL net is also another device's SPI clock
   od_no_pullup     an I2C-named open-drain bus with no resistor from the net to a supply rail
   ep_not_gnd       an exposed / thermal pad pin that is not on a ground net
   xtal_no_caps     a 2-pin crystal with no load capacitor to ground on one of its two nets
 """
+import math
 import re
 import sys
 import pathlib
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import store  # noqa: E402
+import decap_requirements  # noqa: E402
 
 CLASSES = {
     "decap_missing": "decoupling capacitor per supply pin",
@@ -67,6 +69,32 @@ def _farads(value):
     return float(m.group(1)) * {"p": 1e-12, "n": 1e-9, "u": 1e-6, "µ": 1e-6, "μ": 1e-6, "m": 1e-3, "": 1.0}[m.group(2).lower()]
 
 
+def _fmt_farads(f):
+    return f"{f * 1e6:g} uF" if f >= 1e-6 else f"{f * 1e9:g} nF"
+
+
+def _datasheets(project):
+    """{ref: the text of the part's datasheet} for the BOM lines whose datasheet file has readable text."""
+    out = {}
+    try:
+        import sources
+        folder = store.pdir(project) / "sources"
+        for line in store.bom(project, write=False):
+            ds = line.get("datasheet")
+            if not ds:
+                continue
+            try:
+                text = sources.text_of(ds, folder)
+            except (OSError, ValueError, KeyError):
+                continue
+            if text and text.strip():
+                for r in line.get("refs") or []:
+                    out[r] = text
+    except Exception:           # noqa: BLE001 - no datasheet text means every pin is "not checked", never a guess
+        return {}
+    return out
+
+
 def _pref(ref):
     return re.match(r"[A-Za-z]*", str(ref)).group(0).upper()
 
@@ -92,7 +120,8 @@ def _pins(part):
     return [(str(p.get("num", p.get("number", ""))), str(p.get("name") or ""), str(p.get("net") or "").strip()) for p in part.get("pins", [])]
 
 
-def review(project, parts=None):
+def review(project, parts=None, datasheets=None):
+    datasheets = (_datasheets(project) if parts is None else {}) if datasheets is None else datasheets
     parts = _parts(project) if parts is None else parts
     nets = {}                      # net -> [(ref, pin number, pin name)]
     by_ref = {}
@@ -121,41 +150,46 @@ def review(project, parts=None):
         p = by_ref[ref]
         return _pref(ref) not in ("C", "R", "L", "D", "F", "FB", "TP", "J", "P", "SW", "Y", "X") or str(p.get("kind") or "") == "ic"
 
-    # decoupling: every IC supply pin needs a capacitor of its own, taken one-to-one from the capacitors of its sheet area on that rail
-    # (netlist adjacency: the same schematic section and the same net). A bulk capacitor does not stand in for a bypass capacitor, and an analog
-    # supply pin (VDDA, AVDD, VREF+) asks two: a ~10 nF and a ~1 uF (the usual STM32 / mixed-signal datasheet rule).
-    pool = {}                      # (section, rail net) -> [cap refs]
+    # decoupling. A decap belongs to the pin's NET (a capacitor from that rail to ground, wherever on the schematic it is drawn; how near it sits is a
+    # board check). What each supply pin asks comes from that part's OWN datasheet (decap_requirements): a list of capacitor values next to the pin name,
+    # or a note that one goes on a named pin. Each wanted capacitor is taken one-to-one from the rail's capacitors by value (a capacitor serves one
+    # slot, and a 4.7 uF that the datasheet puts on a VDD pin never stands in for the 1 uF of VDDA). A pin whose requirement cannot be read is "not
+    # checked" with the reason, never a guess from the part family; only a rail with no capacitor to ground at all is missing without a datasheet.
+    pool = {}                      # rail net -> [cap refs]
     for net, refs in caps_to_gnd.items():
-        for c in refs:
-            pool.setdefault((by_ref[c].get("section") or "", net), []).append(c)
-    pins_of = {}                   # (section, rail net) -> [(ic ref, pin name, analog)]
+        pool[net] = sorted(refs, key=lambda r: (len(r), r))
+    groups = {}                    # (ic ref, pin name, net) -> pin numbers
     for ref, p in sorted(by_ref.items()):
         if is_ic(ref):
             for n, nm, net in _pins(p):
                 if _is_supply_name(nm) and _is_rail(net):
-                    pins_of.setdefault((p.get("section") or "", net), []).append((ref, nm, _is_analog_supply(nm)))
-    for (sec, net), need in sorted(pins_of.items()):
-        free = list(pool.get((sec, net), []))
-
-        def take(lo, hi, prefer=None):
-            known = [c for c in free if _farads(by_ref[c].get("value")) is not None and lo <= _farads(by_ref[c].get("value")) <= hi]
-            if prefer:
-                known.sort(key=lambda c: abs(_farads(by_ref[c].get("value")) - prefer))
-            pick = (known or [c for c in free if _farads(by_ref[c].get("value")) is None] or [None])[0]
-            if pick:
+                    groups.setdefault((ref, nm, net), []).append(n)
+    not_checked = []
+    used = {}                      # rail net -> caps already assigned
+    for (ref, nm, net), nums in sorted(groups.items(), key=lambda kv: (not _is_analog_supply(kv[0][1]), kv[0])):
+        nums = [n for n in nums if n]
+        pins_txt = (f"pin{'s' if len(nums) > 1 else ''} {', '.join(nums)} ({nm})" if nums else f"supply pin {nm}") + f" on {net}"
+        free = [c for c in pool.get(net, []) if c not in used.setdefault(net, set())]
+        if not pool.get(net):
+            add("decap_missing", ref, f"decoupling capacitor missing: {pins_txt} has no capacitor to ground on the net at all")
+            continue
+        text = (datasheets or {}).get(ref)
+        req = decap_requirements.requirement(text, nm) if text else None
+        if not req:
+            why = "its datasheet text is not available" if not text else "its datasheet text gives no readable capacitor requirement for this pin"
+            not_checked.append(f"{ref} {nm} on {net}: {why}")
+            continue
+        for want in req["values"]:
+            known = [c for c in free if _farads(by_ref[c].get("value")) is not None and 0.4 <= _farads(by_ref[c].get("value")) / want <= 2.5]
+            known.sort(key=lambda c: abs(math.log(_farads(by_ref[c].get("value")) / want)))
+            unknown = [c for c in free if _farads(by_ref[c].get("value")) is None]
+            pick = (known or unknown or [None])[0]
+            if pick is None:
+                add("decap_missing", ref, f"decoupling capacitor missing: {pins_txt} needs a {_fmt_farads(want)} capacitor of its own "
+                    f"({req['why']}); the rail has {len(pool[net])} capacitor(s) to ground, each serves one slot and none is left of that size")
+            else:
                 free.remove(pick)
-            return pick
-        for ref, nm, analog in [x for x in need if x[2]]:
-            for label, lo, hi, pref in (("10 nF", 1e-9, 4.7e-8, 1e-8), ("1 uF", 4.7e-7, 1e-5, 1e-6)):
-                if not take(lo, hi, pref):
-                    add("decap_missing", ref, f"decoupling capacitor missing: analog supply pin {nm} on {net} has no {label} capacitor of its own "
-                        f"(the part's sheet area has {len(pool.get((sec, net), []))} capacitor(s) on {net}; a capacitor serves one pin, and a bulk "
-                        "capacitor does not replace a bypass capacitor)")
-        for ref, nm, analog in [x for x in need if not x[2]]:
-            if not take(1e-9, 1e-6, 1e-7):
-                add("decap_missing", ref, f"decoupling capacitor missing: supply pin {nm} on {net} has no capacitor of its own "
-                    f"(the part's sheet area has {len(pool.get((sec, net), []))} capacitor(s) on {net}, each serving one pin; a bulk capacitor does "
-                    "not replace a bypass capacitor); the datasheet asks for a bypass capacitor at each supply pin")
+                used[net].add(pick)
     for ref, p in by_ref.items():
         if not is_ic(ref):
             continue
@@ -210,13 +244,14 @@ def review(project, parts=None):
                     "(load caps CL are needed on both crystal pins)")
     scope = (f"Scope: the tool checked {len(by_ref)} part(s) of the netlist for {len(CLASSES)} rule classes: "
              + "; ".join(CLASSES.values()) + ". Not checked: component values against their datasheets, any other electrical rule, the board"
-             + (f"; crystals it could not read: {', '.join(skipped)}" if skipped else "") + ".")
+             + (f"; crystals it could not read: {', '.join(skipped)}" if skipped else "")
+             + (f"; decoupling not checked (the part's own datasheet gives no readable requirement): {'; '.join(not_checked[:8])}" if not_checked else "") + ".")
     if findings:
         text = (f"The tool's check of this sheet found {len(findings)} thing(s) to look at:\n" + "\n".join("- " + f["text"] for f in findings)
                 + "\n\n" + scope)
     else:
         text = "The tool's check of this sheet found nothing in these rule classes (this is not a statement that the sheet is correct).\n\n" + scope
-    return {"findings": findings, "classes": list(CLASSES), "scope": scope, "text": text, "sheets": len(store.sheet_ids(project)) if parts is None else 1,
+    return {"findings": findings, "classes": list(CLASSES), "not_checked": not_checked, "scope": scope, "text": text, "sheets": len(store.sheet_ids(project)) if parts is None else 1,
             "parts": len(by_ref)}
 
 

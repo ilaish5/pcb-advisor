@@ -36,37 +36,3 @@ def test_a_crystal_it_cannot_read_is_named_in_the_scope_not_claimed():
     y = P("Y2", [("1", "XI"), ("2", "XO"), ("3", "VDD")], kind="xtal")
     r = run([y])
     assert "Y2" in r["scope"] and "could not read" in r["scope"]
-
-
-def test_decap_count_is_per_supply_pin_across_all_ics_on_the_rail():
-    a = P("U1", [("VDD", "3V3"), ("GND", "GND")])
-    b = P("U2", [("VDD", "3V3"), ("GND", "GND")])
-    assert "decap_missing" in classes([a, b, cap("C1", "3V3")])             # one cap for two supply pins
-    assert "decap_missing" not in classes([a, b, cap("C1", "3V3"), cap("C2", "3V3")])
-
-
-def test_vdda_vref_shared_pin_needs_its_decap():
-    u = P("U1", [("VDD", "+3V3"), ("VDDA/VREF+", "+3V3"), ("VSS", "GND")])
-    assert "decap_missing" in classes([u, cap("C1", "+3V3")])
-    assert "decap_missing" in classes([u, cap("C1", "+3V3"), cap("C2", "+3V3")])      # the analog pin asks two, the digital pin one
-    assert "decap_missing" not in classes([u, cap("C1", "+3V3"), cap("C2", "+3V3"), cap("C3", "+3V3")])
-
-
-def vcap(ref, net, value, section="B"):
-    return dict(cap(ref, net), value=value, section=section)
-
-
-def _mcu():
-    return dict(P("U1", [("VDD", "+3V3"), ("VDD", "+3V3"), ("VDDA/VREF+", "+3V3"), ("VSS", "GND")]), section="B")
-
-
-def test_the_analog_pin_asks_a_10nf_and_a_1uf_of_its_own_and_a_spare_bulk_cap_does_not_stand_in():
-    ok = [_mcu(), vcap("C1", "+3V3", "100nF"), vcap("C2", "+3V3", "100nF"), vcap("C3", "+3V3", "10nF"), vcap("C4", "+3V3", "1uF")]
-    assert "decap_missing" not in classes(ok)
-    assert "decap_missing" in classes([c for c in ok if c["ref"] != "C3"] + [vcap("C9", "+3V3", "470uF")])
-    assert "decap_missing" in classes([c for c in ok if c["ref"] not in ("C3", "C4")])
-
-
-def test_caps_of_another_sheet_area_do_not_serve_the_pin():
-    parts = [_mcu(), vcap("C1", "+3V3", "100nF"), vcap("C2", "+3V3", "100nF"), vcap("C3", "+3V3", "10nF", "E"), vcap("C4", "+3V3", "1uF", "E")]
-    assert "decap_missing" in classes(parts)
