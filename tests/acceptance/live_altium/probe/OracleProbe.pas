@@ -150,15 +150,7 @@ begin
         except
             Log('compile: DM_ViolationCount failed');
         end;
-        for i := 0 to n - 1 do
-        begin
-            try
-                Viol := Prj.DM_Violations(i);
-                SL.Add('V' + #9 + Viol.DM_ErrorLevelString + #9 + Viol.DM_ShortDescriptorString + #9 + Viol.DM_LongDescriptorString);
-            except
-                Log('compile: violation ' + IntToStr(i) + ' unreadable');
-            end;
-        end;
+        { the violation objects are NOT read: DM_Violations(i) made Altium raise its own error box (twice, 27/11); W21 needs the nets only }
         SaveRetry(SL, Outp);
         Doc := nil;
         try
