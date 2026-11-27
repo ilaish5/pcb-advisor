@@ -1,0 +1,28 @@
+{
+ "corpus": "Probe questions (ACCEPTANCE Part C fixed opportunities; F-D / T-F pool of 40)",
+ "rule": "asked twice with no state change between: the facts of both answers must agree; a canary state change between asks must change the answer",
+ "split": "A15: even items visible, odd owner-held",
+ "half": "visible",
+ "questions": [
+  "How many BOM lines does the project have now?",
+  "Which parts still have pins nobody checked against a datasheet?",
+  "What board size is saved for this project?",
+  "Is the VDDA pin decoupled as the MCU datasheet asks?",
+  "How many DRC violations are open, and which class blocks the order?",
+  "Which stack-up does the PcbDoc use?",
+  "What does the LDO dissipate at full load?",
+  "Which parts are Extended at JLC and what do the fees add up to?",
+  "Which rule in rules.json did not reach the PcbDoc?",
+  "Which nets run under the crystals?",
+  "What did I accept as a risk, and with which reason?",
+  "What does BOOT1 connect to?",
+  "What changed in the idea since I confirmed it?",
+  "Which CPL file is the one I upload?",
+  "Which keep-out requirements are met?",
+  "What is the net count of the schematic?",
+  "What does the order note say about tenting?",
+  "What is the courtyard excess of the USB-C footprint?",
+  "What did the last route do to the board?",
+  "Can the tool change the layer stack, and how?"
+ ]
+}
