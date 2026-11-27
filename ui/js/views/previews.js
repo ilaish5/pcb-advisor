@@ -584,8 +584,8 @@ async function pvFinish(step, r, lost) {       // the answer of a step (from its
     if (lost) pvNote[c.page] = {kind: 'bad', text: 'Lost contact with the server while Altium was working. The step may still be running or may have finished: look at the board in Altium, and at the chat for its result, before starting it again.'};
     else if (r && r.gone) pvNote[c.page] = {kind: 'warn', text: 'The step ended while this page was loading, and its answer went to the page that started it. Look at the board in Altium, and at the chat, before starting it again.'};       // ended, not "succeeded": this page never saw the answer
     else if (r && r.stopped) pvNote[c.page] = {kind: 'warn', stopped: true, text: (pvPrepNames(r) ? 'Altium ' + pvPrepNames(r) + '. ' : '') + r.message};       // Stop: "Stopped after <step>; nothing after it ran."
+    else if (r && r.outcome && r.outcome.rejected) pvNote[c.page] = {kind: 'warn', text: first + (r.error || r.summary || r.outcome.message || ''), outcome: r.outcome, raw: r.summary_raw || r.error || '', warnings: r.warnings || [], from: 0};       // a rejected route always raises: its outcome is shown, with the error text inside it (U4)
     else if (!r || r.error) pvNote[c.page] = {kind: 'bad', text: first + ((r && r.error) || 'no answer from the server'), partial: r && Array.isArray(r.partial_offer) && r.partial_offer.length ? r.partial_offer : undefined};
-    else if (r.outcome && r.outcome.rejected) pvNote[c.page] = {kind: 'warn', text: r.summary, outcome: r.outcome, raw: r.summary_raw || '', warnings: r.warnings || [], from: 0};
     else pvNote[c.page] = {kind: (r.warnings || []).length ? 'warn' : 'ok', text: 'Altium: ' + (pvPrepNames(r) ? pvPrepNames(r) + ', then: ' : '') + (r.summary || 'done.'), warnings: r.warnings || [], from: c.page === 'outputs' ? 0 : c.page === 'rules' ? 999 : undefined};       // outputs: all warnings are listed; rules: the summary already says each one, so the list adds none
     if (pvNote[c.page]) { pvNote[c.page].step = step; pvNote[c.page].at = at0; }       // lets a later success (by button or chat) retire a failure note
     // a step that failed may still have changed a file (a drawing that does not match the netlist stays on disk): always read again
@@ -923,6 +923,6 @@ function pvOutcomeHTML(page, n, acts) {
     : btn('Route again', {size: 'sm', kind: 'line', act: 'altium-step', step: 'route', disabled: pvBusy ? true : undefined, title: x.label})).join('');
   const full = [n.raw, ...(n.warnings || [])].filter(Boolean);
   const more = `<details class="pv-more" data-pvk="${page}:o"${pvMoreOpen[page + ':o'] ? ' open' : ''}><summary>Details</summary><p>${esc(o.cause_text || '')}</p>${full.length ? `<ul>${full.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}</details>`;
-  const html = `<strong class="pv-title">${esc(o.title)}</strong><br>${esc(o.restored_text)}${pairs ? `<br>${esc('Cause: ' + pairs)}` : ''}${more}`;
+  const html = `<strong class="pv-title">${esc(o.title)}</strong><br>${esc(o.restored_text)}${pairs || o.cause_text ? `<br>${esc('Cause: ' + (pairs || o.cause_text))}` : ''}${more}`;
   return `<div class="pv-note" data-outcome="route-rejected">${banner({tone: o.restored ? 'warn' : 'bad', html, actions: next + btn('Dismiss', {size: 'sm', kind: 'link', act: 'altium-step-dismiss', page})})}</div>`;
 }

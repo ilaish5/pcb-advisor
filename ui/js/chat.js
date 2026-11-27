@@ -1121,7 +1121,8 @@ function chatSplitLong(box) {
       } else {
         const tail = document.createElement('p');
         const moved = [];
-        while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && only.childNodes.length > 1) {       // from the end: whole nodes (a source chip stays whole), a long text one sentence at a time
+        const cuttable = () => only.childNodes.length > 1 || (only.childNodes.length === 1 && only.lastChild.nodeType === 3 && /[.!?]\s+\S/.test(only.lastChild.textContent.trim()));       // one long text node is cut between its sentences
+        while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && cuttable()) {       // from the end: whole nodes (a source chip stays whole), a long text one sentence at a time
           const last = only.lastChild;
           if (last.nodeType === 3) {
             const ss = last.textContent.trim().split(/(?<=[.!?])\s+/);
@@ -1148,8 +1149,8 @@ function chatSplitLong(box) {
   }
 }
 function chatSplittable(t) {
-  const only = t.firstElementChild;
-  if (!only) return false;
+  const only = t.firstElementChild || t;       // a long plain-text paragraph has no child element
+  if (only === t && !(t.childNodes && t.childNodes.length)) return false;
   if (only.tagName === 'UL' || only.tagName === 'OL') return only.children.length > 1 || /[.!?]\s+\S/.test(only.textContent || '');
   return /[.!?]\s+\S/.test(only.textContent || '') || !!(only.querySelector && only.querySelector('br'));
 }

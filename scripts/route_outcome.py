@@ -75,6 +75,52 @@ def title_of(rows, total):
     return t if len(t) <= 70 else f"Route rejected: {_plural(total, 'new problem')}"
 
 
+def _open_nets(res):
+    out = []
+    for n in list(res.get("failed") or []) + list(res.get("saved_open") or []) + list(res.get("open_nets") or []):
+        out.append(str(n[0] if isinstance(n, (list, tuple)) else n))
+    return list(dict.fromkeys(out))
+
+
+def kind_of(res, total):
+    """The kind of rejection, read from what the bridge said: "drc" (new violations of the rejecting check), "open_nets", "width", "pour",
+    "readback", "unchecked", or "other". Each has its own title and next step; the bridge's own words stay as the reason."""
+    if total:
+        return "drc"
+    text = " | ".join(str(p) for p in res.get("problems") or []).lower()
+    if _open_nets(res) or "not routed" in text or "un-routed" in text:
+        return "open_nets"
+    if "width" in text or "narrow" in text:
+        return "width"
+    if "pour" in text or "plane" in text:
+        return "pour"
+    if "read back" in text:
+        return "readback"
+    if "could not be read in full" in text or "unchecked" in text:
+        return "unchecked"
+    return "other"
+
+
+def reason_of(res):
+    """The bridge's own reason, kept: its problems, each cut at a word, never replaced by a generic sentence."""
+    out = []
+    for p in (res.get("problems") or [])[:3]:
+        t = " ".join(str(p).split())
+        out.append(t if len(t) <= 200 else t[:200].rsplit(" ", 1)[0] + " ...")
+    return "; ".join(out)
+
+
+_TITLES = {"open_nets": "Route rejected: some nets could not be routed", "width": "Route rejected: tracks would be narrower than the current needs",
+           "pour": "Route rejected: the copper pour or plane did not come out", "readback": "Route rejected: the board could not be read back after drawing",
+           "unchecked": "Route rejected: the board check could not be read in full", "other": "Route rejected"}
+_NEXT = {"open_nets": "Make room near the open nets (move a part, or free a layer), then route again",
+         "width": "Check the net currents and the track widths, then route again",
+         "pour": "Look at the pour reason above, fix it in Altium, then route again",
+         "readback": "Open the board in Altium and look at it, then route again",
+         "unchecked": "Run the design rule check in Altium and look at its list, then route again",
+         "other": "Look at the reason above, fix what it names, then route again"}
+
+
 def backup_file(res, pcb):
     b = res.get("backup")
     return pathlib.Path(str(b)) / pathlib.Path(str(pcb)).name if b and pcb else None
@@ -89,24 +135,35 @@ def build(project, res, pcb=None):
             import lineage
             pcb = lineage.linked_pcb(project)
         rows, total = causes(res)
+        kind = kind_of(res, total)
         bk = backup_file(res, pcb)
         bsha, csha = (sha256_of(bk) if bk else ""), (sha256_of(pcb) if pcb else "")
         verified = bool(bsha) and bsha == csha
-        title = title_of(rows, total)
-        cause = "; ".join(r["words"] for r in rows[:6]) + (f"; and {len(rows) - 6} more pairs" if len(rows) > 6 else "")
+        nets = _open_nets(res)
+        if kind == "drc":
+            title = title_of(rows, total)
+            cause = "; ".join(r["words"] for r in rows[:6]) + (f"; and {len(rows) - 6} more pairs" if len(rows) > 6 else "")
+            count = total
+            first = "Move the parts named above, then route again" if any(r.get("a") for r in rows) else _NEXT["other"]
+        else:
+            title = _TITLES[kind]
+            if kind == "open_nets" and nets:
+                title = f"Route rejected: {_plural(len(nets), 'net')} could not be routed ({', '.join(nets[:5])}{' ...' if len(nets) > 5 else ''})"
+            cause = reason_of(res)
+            count = len(nets) if kind == "open_nets" and nets else len(res.get("problems") or [])
+            first = _NEXT[kind]
         restored = (f"Restored from backup: the board file is the same as before the route (checked, sha256 {csha[:12]})." if verified else
                     "The board file could NOT be confirmed as restored: it differs from the backup. Look at the file in Altium before going on.")
-        nxt = [{"id": "findings", "label": "See the problems in Findings"},
-               {"id": "route_again", "label": "Move the parts named above, then route again"}]
-        if res.get("partial_offer") or res.get("saved_open"):
+        nxt = [{"id": "findings", "label": "See the problems in Findings"}, {"id": "route_again", "label": first}]
+        if kind == "open_nets" or res.get("partial_offer"):
             nxt.append({"id": "partial", "label": "Route the rest and leave the failed nets open"})
-        out = {"rejected": True, "title": title, "count": total, "causes": rows[:30], "cause_text": cause, "restored": verified,
+        out = {"rejected": True, "kind": kind, "title": title, "count": count or None, "causes": rows[:30], "cause_text": cause, "restored": verified,
                "restored_claimed": bool(res.get("restored")), "backup_sha256": bsha, "pcb_sha256": csha, "next": nxt,
                "message": f"{title}. {restored}" + (f" Cause: {cause}." if cause else ""), "restored_text": restored}
         try:
             import ledger
             it = ledger.add(project, f"route:{csha[:16] or bsha[:16] or 'x'}", "hand_step", title,
-                            (f"Cause: {cause}. " if cause else "") + "Move or rework the parts named, then press Route board again.",
+                            (f"Cause: {cause}. " if cause else "") + first + ", by pressing Route board.",
                             page="pcb", check={"type": "manual"}, source="route", severity="warn")
             out["ledger_id"] = it["id"]
         except Exception:       # noqa: BLE001 - the answer is never lost because the ledger could not be written
@@ -117,7 +174,7 @@ def build(project, res, pcb=None):
         if isinstance(res, dict) and res.get("restored"):         # the worst case has its own plain message, never a raw path or a trace
             msg = ("The route was rejected. The tool could not read the board files to confirm that the board was put back, so it cannot "
                    "say it was restored. Look at the file in Altium before going on.")
-            return {"rejected": True, "title": "Route rejected", "count": 0, "causes": [], "cause_text": "", "restored": False,
+            return {"rejected": True, "title": "Route rejected", "count": None, "causes": [], "cause_text": "", "restored": False,
                     "restored_claimed": True, "backup_sha256": "", "pcb_sha256": "", "next": [{"id": "findings", "label": "See the problems in Findings"}],
                     "message": msg, "restored_text": msg}
         return None

@@ -123,9 +123,38 @@ def accept(project, key, evidence=None, reason="", wrong=None, basis=None, group
     return res
 
 
-def valid_evidence(project, evidence):
-    """The evidence that holds: a datasheet that is in the project, a page number, and a sha256 (when one is given) equal to that file's own.
-    Anything else (a name nobody can open, a made-up hash, no page) is dropped, so it can never stand in for a reason."""
+def _page_count(path):
+    """The number of pages of a PDF, or None when it cannot be told (not a PDF, or no reader can open it)."""
+    if path.suffix.lower() != ".pdf":
+        return None
+    try:
+        import pypdf
+        return len(pypdf.PdfReader(str(path)).pages)
+    except Exception:       # noqa: BLE001
+        return None
+
+
+def _is_parts_datasheet(project, key, name):
+    """True when the document `name` is this part's datasheet: the one its BOM line names, the one found for its part number, or one whose
+    file name carries the part number. A file that only sits in the shared folder, and maps to another part, is not."""
+    import sources
+    try:
+        line = store._line_of(project, key)
+    except KeyError:
+        return False
+    base = pathlib.Path(name).name
+    if "/" in name or "\\" in name:
+        return False                                  # the general reference library is not a part's datasheet
+    if base == pathlib.Path(str(line.get("datasheet") or "\0")).name or base == sources.find_for(project, line.get("mpn")):
+        return True
+    mpn = re.sub(r"[^a-z0-9]", "", str(line.get("mpn") or "").lower())
+    return len(mpn) >= 4 and mpn in re.sub(r"[^a-z0-9]", "", base.lower())
+
+
+def valid_evidence(project, evidence, key=None):
+    """The evidence that holds: a datasheet that is in the project, a page number that exists in it, and the sha256 of that very file (a
+    missing one does not count). With `key`, the file must also be THIS part's datasheet. Anything else (a name nobody can open, no hash, a
+    made-up hash, a page past the end, another part's file) is dropped, so it can never stand in for a reason."""
     import sources
     out = []
     for e in evidence or []:
@@ -136,7 +165,12 @@ def valid_evidence(project, evidence):
         if not page or path is None:
             continue
         sha = str(e.get("sha256") or "")
-        if sha and sha != _sha256(path):
+        if not sha or sha != _sha256(path):
+            continue
+        pages = _page_count(path)
+        if pages is not None and page > pages:
+            continue
+        if key is not None and not _is_parts_datasheet(project, key, str(e["doc"])):
             continue
         out.append({"doc": str(e["doc"]), "sha256": sha, "page": page})
     return out
@@ -171,7 +205,7 @@ def _accept(project, key, evidence=None, reason="", wrong=None, basis=None):
     standing, _ = state(project, line, entry)
     if standing and standing.get("basis") != "legacy":
         return {"ok": True, "line": key, "decision": standing, "changed": False}
-    evidence = valid_evidence(project, evidence)
+    evidence = valid_evidence(project, evidence, key)
     if evidence and not str(reason or "").strip():          # the reason of a datasheet-backed accept is what the evidence says, never made up
         reason = _evidence_reason(evidence)
     dec = {"id": f"pd-{store.now_ms()}", "status": "accepted", "basis": basis if basis in BASES else _basis(line, evidence),
@@ -431,7 +465,8 @@ def confirm_data(project, key):
         except (FileNotFoundError, OSError):
             text = ""
         meta = sources._read_meta(folder / ds)
-        docs.append({"name": ds, "sha256": meta.get("sha256", ""), "url": "/api/source/" + ds,
+        dpath = sources.document_path(project, ds)
+        docs.append({"name": ds, "sha256": (_sha256(dpath) if dpath else "") or meta.get("sha256", ""), "url": "/api/source/" + ds,
                      "candidate_pages": candidate_pages(text, line.get("package") or ""), "quality": sources.quality(text)})
     st = next((l for l in store.bom(project, write=False) if l["key"] == line["key"]), {})
     return {"line": line["key"], "refs": line.get("refs", []), "mpn": line.get("mpn") or "", "package": line.get("package") or "",
@@ -531,7 +566,7 @@ def _post(handler, path, body):
             store._line_of(proj, body["line"])
         except KeyError:
             raise ext.HTTPError(404, f"no BOM line {body.get('line')!r}")      # an unknown part is not found, before it is asked for a reason
-    backed = path == "/api/pins/confirm" and bool(valid_evidence(proj, body.get("evidence")))       # a real datasheet page says it itself
+    backed = path == "/api/pins/confirm" and bool(body.get("line") and valid_evidence(proj, body.get("evidence"), body.get("line")))       # a real datasheet page says it itself
     if path != "/api/pins/revoke" and not backed and not body.get("wrong") \
             and not re.search(r"[A-Za-z֐-׿]{3}", str(body.get("reason") or "")):
         raise ext.HTTPError(400, "a reason is needed to accept a risk: say in a sentence why it is fine")      # a blank reason is no reason (U5)

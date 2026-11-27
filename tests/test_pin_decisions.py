@@ -42,17 +42,17 @@ def test_accept_records_basis_evidence_and_needs_no_reason(empty):
     import workspace
     src = workspace.project_dir(empty) / "sources"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "x.pdf").write_bytes(b"%PDF-1.4 a datasheet")
-    sha = pin_decisions._sha256(src / "x.pdf")
-    r = pin_decisions.accept(empty, "U1", evidence=[{"doc": "x.pdf", "sha256": sha, "page": 4}])
+    (src / "ABCD1234.pdf").write_bytes(b"%PDF-1.4 a datasheet")
+    sha = pin_decisions._sha256(src / "ABCD1234.pdf")
+    r = pin_decisions.accept(empty, "U1", evidence=[{"doc": "ABCD1234.pdf", "sha256": sha, "page": 4}])
     assert r["decision"]["basis"] == "datasheet_page" and r["decision"]["evidence"][0]["page"] == 4
-    assert r["decision"]["reason"] == "Matches the datasheet pin table, page 4 of x.pdf"          # said by the evidence itself
+    assert r["decision"]["reason"] == "Matches the datasheet pin table, page 4 of ABCD1234.pdf"          # said by the evidence itself
 
 
 @pytest.mark.parametrize("ev", [
-    [{"doc": "x.pdf", "sha256": "ab", "page": 4}],            # a made-up hash
+    [{"doc": "ABCD1234.pdf", "sha256": "ab", "page": 4}],            # a made-up hash
     [{"doc": "gone.pdf", "sha256": "", "page": 4}],          # a file nobody has
-    [{"doc": "x.pdf", "sha256": "", "page": 0}],             # no page
+    [{"doc": "ABCD1234.pdf", "sha256": "", "page": 0}],             # no page
     [{"x": 1}],
 ])
 def test_fake_evidence_is_not_evidence(server, empty, ev):
@@ -60,7 +60,7 @@ def test_fake_evidence_is_not_evidence(server, empty, ev):
     _sheet(empty)
     src = workspace.project_dir(empty) / "sources"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "x.pdf").write_bytes(b"%PDF-1.4 a datasheet")
+    (src / "ABCD1234.pdf").write_bytes(b"%PDF-1.4 a datasheet")
     assert call(server, "POST", "/api/pins/confirm", empty, {"line": "U1", "evidence": ev})[0] == 400
     assert call(server, "POST", "/api/pins/accept-all", empty, {"confirm": True, "evidence": ev})[0] == 400
     assert pin_decisions.current(empty, "U1") is None
@@ -71,8 +71,8 @@ def test_real_evidence_is_accepted_with_the_reason_it_states(server, empty):
     _sheet(empty)
     src = workspace.project_dir(empty) / "sources"
     src.mkdir(parents=True, exist_ok=True)
-    (src / "x.pdf").write_bytes(b"%PDF-1.4 a datasheet")
-    ev = [{"doc": "x.pdf", "sha256": pin_decisions._sha256(src / "x.pdf"), "page": 2}]
+    (src / "ABCD1234.pdf").write_bytes(b"%PDF-1.4 a datasheet")
+    ev = [{"doc": "ABCD1234.pdf", "sha256": pin_decisions._sha256(src / "ABCD1234.pdf"), "page": 2}]
     code, body = call(server, "POST", "/api/pins/confirm", empty, {"line": "U1", "evidence": ev})
     assert code == 200 and body["decision"]["reason"].startswith("Matches the datasheet pin table, page 2")
 

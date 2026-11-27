@@ -904,6 +904,12 @@ _REPLACE_SHARED = {
     "place": re.compile(r"\b(?:board|pcb)\b|(?<!\w)(?:ו?[בלמהש]|ו)?לוח(?!\w)|מה שיש", re.I),
     "route": re.compile(r"\b(?:board|pcb)\b|(?<!\w)(?:ו?[בלמהש]|ו)?לוח(?!\w)|מה שיש", re.I),
 }
+# the work itself named as a verb of another kind ("route again", "תנתב מחדש"): a second job in the same message. A noun ("the tracks go too") is not.
+_OTHER_WORK = {
+    "draw": re.compile(r"\b(?:re-?draw\w*|draw(?:ing)?)\b|(?<!\w)(?:ו?[לת]?)(?:שרטט|צייר|אשרטט|אצייר)\w*", re.I),
+    "place": re.compile(r"\b(?:re-?plac(?:e|ing)\s+(?:the\s+)?(?:parts|components)|plac(?:e|ing)\s+(?:the\s+)?(?:parts|components))\b|(?<!\w)(?:ו?[לת]?)(?:מקם|אמקם)\w*", re.I),
+    "route": re.compile(r"\b(?:re-?rout(?:e|ing)|rout(?:e|ing))\b|(?<!\w)(?:ו?[לת]?)(?:נתב|אנתב)\w*", re.I),
+}
 REPLACE_MAX_WORDS = 8
 
 
@@ -958,7 +964,7 @@ _WITHDRAW = re.compile(
     r"\b(?:never\s*mind|nvm|scrap|forget(?:\s+it|\s+that)?|kidding|jk|psych|oops|mistake|rethink\w*|reconsider\w*|second\s+thoughts?"
     r"|chang(?:ed|ing)\s+my\s+mind|change\s+of\s+mind|hm+|wait|hold\s+(?:on|off|up|it)|hang\s+on|stop|cancel\w*|abort\w*|undo|disregard\w*|ignor(?:e|ing)"
     r"|skip\w*|drop\s+it|bad\s+idea|unnecessary|keep\w*|kept|leav(?:e|ing)|preserv\w*|retain\w*|actually|instead|rather|except|excluding|besides"
-    r"|take\s+(?:it|that)\s+back|withdraw\w*|pause|paused|pausing|lol\s+no|just\s+joking|joking|joke|wrong|nah|naw)\b"
+    r"|take\s+(?:it|that)\s+back|withdraw\w*|pause|paused|pausing|lol\s+no|just\s+joking|joking|joke|nah|naw)\b"
     r"|(?:^|\s)/s(?=$|[\s.!,])"
     r"|(?<!\w)(?:וש|ו|ש)?(?:סתם|צוחק|צוחקת|טעות|התחרטתי|מתחרט|מתחרטת|בעצם|תשאיר|תשאירי|להשאיר|השאר|השאירי|נשאיר|אשאיר|תשמור|תשמרי|לשמור"
     r"|תוותר|תוותרי|וותר|לוותר|שכח|שכחי|תשכח|לשכוח|במקום|עדיף|חוץ|מלבד|הפסק|תפסיק|להפסיק|חכה|חכי|תחכה|לחכות|תמתין|המתן|עצור|תעצור|בטל|תבטל|ביטול"
@@ -966,20 +972,29 @@ _WITHDRAW = re.compile(
 _NEG_ALL = re.compile(_NEGATED.pattern + "|" + _REPLACE_NEG.pattern + "|" + _HARD_STOP.pattern, re.I)
 _COND_ALL = re.compile(
     r"\b(?:if|unless|only|first|when|whenever|while|once|until|provided|assuming|pending|might|may|could|would|should|shall|maybe|perhaps|probably"
-    r"|possibly|suppose|guess|wonder(?:ing)?|unsure|uncertain|later|soon|tomorrow|next\s+time|eventually|not\s+sure|i\s+think|do\s+you\s+think|or)\b"
+    r"|possibly|suppose|guess|wonder(?:ing)?|unsure|uncertain|later|soon|tomorrow|next\s+time|eventually|not\s+sure|i\s+think|do\s+you\s+think|or"
+    r"|as\s+long\s+as|so\s+long\s+as|in\s+case|after|afterwards?|before|then|depending|depends)\b"
     r"|(?<!\w)(?:וש|ו|ש)?(?:כדאי|אפשר|אז|כאשר|בהמשך|בינתיים|עדיין|כרגע|שנייה|שניה|מאוחר\s+יותר|אחר[\s\-–]+כך|אח[\"״]כ|עוד\s+מעט|מחר|בתנאי|תלוי"
-    r"|כנראה|לדעתי|מתלבט|מתלבטת|אם|אלא|רק|אולי|לא\s+בטוח|נראה\s+לי|חושב\w*|או|במידה|במקרה|עד\s+ש)(?!\w)|(?<!\w)ו?כש", re.I)
+    r"|כנראה|לדעתי|מתלבט|מתלבטת|אם|אלא|אולי|לא\s+בטוח|נראה\s+לי|חושב\w*|או|במידה|במקרה|עד\s+ש|אחרי|לפני|לאחר|כל\s+עוד|למקרה)(?!\w)|(?<!\w)ו?כש"
+    r"|(?<!\w)רק(?=\s+(?:את|אם|כש)(?!\w)|\s+[לבמה]\S)", re.I)
+# a yes that is irony, and a yes that calls the action the last thing the student wants
+_SARCASM = re.compile(
+    r"\b(?:what\s+could\s+(?:possibly\s+)?go\s+wrong|yeah\s+right|as\s+if|said\s+no\s+one|so\s+well|brilliant|genius|great\s+idea|wonderful\s+idea"
+    r"|oh\s+(?:yes|sure|great)|big\s+surprise|totally\s+fine|what\s+a\s+(?:great|brilliant)|that\s+(?:will|would)\s+(?:definitely|surely)\s+work"
+    r"|last\s+thing|least\s+(?:i\s+want|wanted)|anything\s+but|opposite)\b"
+    r"|(?<!\w)(?:כאילו|בטח\s+בטח|מבריק\w*|גאוני\w*|גאון|רעיון\s+(?:מבריק|גאוני|נהדר)|מה\s+כבר\s+יכול|הדבר\s+האחרון|האחרון\s+שאני|ההפך|הפוך)(?!\w)", re.I)
 _SELF_STRONG = re.compile(r"\b(?:myself|on\s+my\s+own|by\s+hand|manually)\b|(?<!\w)(?:בעצמי|ביד|ידנית|לבד)(?!\w)", re.I)
 _PAST_BY_ME = re.compile(r"\bi(?:[’']ve|\s+have|\s+had|\s+already)?\s+(?!want|need|prefer|plan|decid|intend|hop|wish|lik)(?:\w{2,}ed|moved|made|did|drew|placed|put|wrote|ran|took|built|set|got)\b"
                          r"|(?<!\w)(?!התחרט)\S{2,}תי(?!\w)", re.I)
 _WORKV = (r"(?:re-?plac\w*|re-?do\w*|re-?draw\w*|re-?rout\w*|re-?lay\w*|replac\w*|plac\w*|draw\w*|rout\w*|wip\w*|overwrit\w*|start\s+over|fix\w*|handl\w*|adjust\w*|"
           r"finish\w*|mov\w*|tweak\w*|edit\w*|arrang\w*|sort\w*|clean\w*|rebuild\w*|build\w*|delet\w*|remov\w*|chang\w*|do\s+it|do\s+that|take\s+care|deal\s+with|work\s+on)")
 _SELF_FUT = re.compile(
-    r"\b(?:i[’']?ll|i\s+will|let\s+me|(?:i[’']?m|i\s+am)(?:\s+(?:just|really|also|simply))?\s+(?:going\s+to|gonna)|i(?:\s+(?:just|really|also|simply))?\s+(?:want|need|plan|prefer|intend|have)\s+to|i[’']?d(?:\s+(?:just|really|also|simply))?\s+like\s+to"
+    r"\b(?:i[’']?ll|i\s+will|let\s+me|leave\s+it\s+to\s+me|i[’']?ll\s+take\s+(?:it|care|over))\b"
+    r"|\b(?:(?:i[’']?m|i\s+am)(?:\s+(?:just|really|also|simply))?\s+(?:going\s+to|gonna)|i(?:\s+(?:just|really|also|simply))?\s+(?:want|need|plan|prefer|intend|have)\s+to|i[’']?d(?:\s+(?:just|really|also|simply))?\s+like\s+to"
     r"|i\s+would\s+like\s+to|i\s+gonna)\s+(?:\w+\s+){0,3}?" + _WORKV + r"\b"
     r"|\bi\s+(?:re-?place|re-?draw|re-?do|re-?route|overwrit\w*|start\s+over)\b"
-    r"|\b(?:by|for)\s+me\b|\bme\s+to\b|\bon\s+my\s+side\b|\bon\s+my\s+end\b"
-    r"|(?<!\w)(?:אני\s+)?(?:א(?:חליף|דרוס|מחק|שרטט|צייר|מקם|נתב|עשה|תחיל|נסה|סדר|זיז|תקן|טפל|שנה)|רוצה\s+ל\S+|מעדיף\s+ל\S+|מעדיפה\s+ל\S+|מתכוון\s+ל\S+|מתכוונת\s+ל\S+)(?!\w)", re.I)
+    r"|\bby\s+me\b|\bme\s+to\b|\bon\s+my\s+side\b|\bon\s+my\s+end\b|\bi\s+(?:can|could)\s+(?:do|handle|take)\b"
+    r"|(?<!\w)(?:תן|תני|תנו)\s+לי(?!\w)|(?<!\w)(?:אקח|ניקח)\s+על\s+ע?צמ\S+|(?<!\w)(?:אני\s+)?(?:א(?:חליף|דרוס|מחק|שרטט|צייר|מקם|נתב|עשה|תחיל|נסה|סדר|זיז|תקן|טפל|שנה)|רוצה\s+ל\S+|מעדיף\s+ל\S+|מעדיפה\s+ל\S+|מתכוון\s+ל\S+|מתכוונת\s+ל\S+)(?!\w)", re.I)
 
 
 def _stance_cancelled(text):
@@ -988,7 +1003,7 @@ def _stance_cancelled(text):
     ms = list(_CONTRAST.finditer(t))
     if ms and not re.search(r"\w", t[ms[-1].end():]):          # "…, though": a reservation that says nothing is still a reservation
         return True
-    if _WITHDRAW.search(t) or _NEG_ALL.search(t) or _COND_ALL.search(t) or _STOP_ANY.search(t) or _SELF_FUT.search(t):
+    if _WITHDRAW.search(t) or _NEG_ALL.search(t) or _COND_ALL.search(t) or _STOP_ANY.search(t) or _SELF_FUT.search(t) or _SARCASM.search(t):
         return True
     return bool(_SELF_STRONG.search(t)) and not _PAST_BY_ME.search(t)
 
@@ -1008,15 +1023,16 @@ def _replace_consent(kind, a, last_user, prev_agent=""):
     has_q = ("?" in text or bool(_REPLACE_INDIRECT_Q.search(text))
              or (not asked_yes and (any(_is_question(s) for s in _SENT.findall(qtext))
                                     or any(_is_question(c) for c in _CLAUSE.split(qtext) if c.strip()))))
-    other_kind = (not _REPLACE_SPECIFIC[kind].search(text)
-                  and any(_REPLACE_SPECIFIC[k].search(text) for k in _REPLACE_SPECIFIC if k != kind))
+    other_kind = ((not _REPLACE_SPECIFIC[kind].search(text) and any(_REPLACE_SPECIFIC[k].search(text) for k in _REPLACE_SPECIFIC if k != kind))
+                   or any(_OTHER_WORK[k].search(text) for k in _OTHER_WORK if k != kind))       # "replace the placement and route again" names more than this action
     # the short path is the strict one: any word of any class that could take the yes back ends it (the stance rule below reads longer messages)
     clean = (len(words) <= REPLACE_MAX_WORDS and not has_q and not other_kind
              and not _NEGATED.search(text) and not _REPLACE_NEG.search(text)
              and not _REPLACE_REVERSAL.search(text)
              and not _HEDGE.search(text) and not _CONDITION.search(text) and not _REPLACE_HEDGE_COND.search(text)
              and not _REPLACE_SELF.search(text) and not _WITHDRAW.search(text)
-             and not _STOP_ANY.search(text) and not _HARD_STOP.search(text))
+             and not _STOP_ANY.search(text) and not _HARD_STOP.search(text)
+             and not _SARCASM.search(text) and not _SELF_FUT.search(text) and not _COND_ALL.search(_IDIOM.sub(" ", text)))
     if clean and (replace_re.search(text) or asked_yes):
         return ""
     # F-E: a yes that opens the message, right after the agent asked whether to replace THIS thing, and that names this action again, still
@@ -1033,6 +1049,30 @@ def _replace_consent(kind, a, last_user, prev_agent=""):
     return (f"The {wipes} {be} only wiped on a short, clear yes from the student (a long message never grants replace). Ask a yes/no "
             f"question: \"Replace {what}? This wipes what is there (a backup is kept). Answer yes/no.\" Run this again only after their "
             "short answer (such as \"yes, replace\").")
+
+
+_HE_LETTER = re.compile(r"[֐-׿]")
+_CONFIRM_HE = {"draw": "הציור של הגיליון", "place": "המיקום והנחושת בלוח", "route": "המסלולים בלוח"}
+
+
+def replace_confirm(kind, a, last_user, meta):
+    """An ambiguous yes to a replace is neither granted nor refused in silence: the chat gets one question that restates the action, with a
+    one-click Yes and No. Set in `meta["confirm"]` (the turn record's `ask`); nothing is shown when the message says no / stop / wait, or has no
+    yes in it. Returns True when a confirm was set."""
+    text = str(last_user or "")
+    if meta is None or not _truthy(a.get("replace")) or kind not in _CONFIRM_HE or not _YES.search(text):
+        return False
+    if _NEGATED.search(text) or _REPLACE_NEG.search(text) or _HARD_STOP.search(text) or _STOP_ANY.search(text):
+        return False
+    if _HE_LETTER.search(text):
+        what = _CONFIRM_HE[kind]
+        meta["confirm"] = {"question": f"להחליף את {what}? זה מוחק את מה שיש (נשמר גיבוי).", "yes": "כן, תחליף", "no": "לא, השאר"}
+    else:
+        wipes = CONSENT[kind][3]
+        sheet = str(a.get("sheet") or "").strip()
+        what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
+        meta["confirm"] = {"question": f"Replace {what}? This wipes what is there (a backup is kept).", "yes": "Yes, replace it", "no": "No, keep it"}
+    return True
 
 
 _ME = re.compile(r"myself|\bi[’']?ll\b|\bi will\b|בעצמי|(?<!\w)א(?:מחק|סיר|שנה|מחוק)\w*", re.I)
@@ -1811,7 +1851,7 @@ def _rejected_route(project, exc):
     out = route_outcome.attach(project, dict(res)).get("outcome")
     try:
         import board_results
-        board_results.record(project, "route", res)
+        board_results.record(project, "route", res, ok=False, error=(out or {}).get("message", "") or "the route was rejected")
     except Exception:           # noqa: BLE001
         pass
     return out
@@ -2286,6 +2326,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 why = _draw_consent(a, consent_words(chat, last_user), earlier_student_messages(chat, "draw", last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
+                    replace_confirm("draw", a, last_user, meta)
                     continue
                 try:
                     res = _drawn(bridge, project, a.get("sheet") or None, _truthy(a.get("replace")))
@@ -2302,6 +2343,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 why = _consent(step, a, consent_words(chat, last_user), earlier_student_messages(chat, step, last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
+                    replace_confirm(step, a, last_user, meta)       # an ambiguous yes gets a one-click confirm, not a silent refusal
                     continue
                 try:
                     if step == "place":
@@ -3982,6 +4024,8 @@ class Handler(BaseHTTPRequestHandler):
                     reply, ledger_ids = ledger.annotate_reply(proj, reply)       # hand steps and stated limits get items; false limits are corrected
                 else:
                     ledger_ids = []
+                if chat_meta.get("confirm") and not ask_of(res.get("actions")) and not partial and not res.get("error"):
+                    reply += "\n\n" + chat_meta["confirm"]["question"]       # the question is in the reply, so the next message is read as its answer
                 _stopped = bool(turn["cancel"].is_set() or stopped_since(proj, sess, turn["started"]))
                 _eff = turn_effects.text(applied, refused, lang, stopped=_stopped, review=review) if (review or _stopped or applied or refused) else ""
                 if _eff:
@@ -3993,8 +4037,8 @@ class Handler(BaseHTTPRequestHandler):
                     rec["warned"] = warned_map(applied)
                 if refused:
                     rec["refused"] = refused
-                if not partial and not res.get("error") and ask_of(res.get("actions")):
-                    rec["ask"] = ask_of(res.get("actions"))
+                if not partial and not res.get("error") and (ask_of(res.get("actions")) or chat_meta.get("confirm")):
+                    rec["ask"] = ask_of(res.get("actions")) or chat_meta["confirm"]
                 if res.get("error"):
                     rec["error"] = True       # the engine did not answer: the chat offers Retry instead of showing this as a reply
                 if chat_meta.get("diagram_touched"):

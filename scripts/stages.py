@@ -187,6 +187,10 @@ def pcb_stage(project, model, lt):
             return _stage("pcb", "not_started", "Parts not placed yet; the schematic is still a draft", next_={"label": "Build the library, draw again", "act": "go:sch"})
         return _stage("pcb", "not_started", "Parts not placed yet", next_={"label": "Place parts", "act": "go:pcb"})
     chk = board_check_of(lt)
+    if not routed and route and route.get("rejected") and not route.get("ok") and not (place and place.get("seq", -1) > route.get("seq", -1)):
+        why = " ".join(str(route.get("error") or "").split())
+        return _stage("pcb", "issues", "The last route was rejected and the board was put back unrouted" + (f": {why[:240]}" if why else ""), "warn", 1,
+                      next_={"label": "Route the board", "act": "go:pcb"})
     if not routed:
         return _stage("pcb", "in_progress", "Placed, not routed yet", next_={"label": "Route the board", "act": "go:pcb"})
     open_nets = list(((route or {}).get("summary") or {}).get("open_nets") or []) if route and route.get("ok") else []
