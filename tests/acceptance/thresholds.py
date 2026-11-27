@@ -32,3 +32,7 @@ STACK_TOL_MM = T(0.001, "mm", "Altium stores 0.0001 mil; ±0.001 mm covers mil r
 # Measurement resolution (not design limits): how close an oracle value must be to a displayed value.
 DISPLAY_TOL_MM = T(0.01, "mm", "display rounding (ACCEPTANCE.md W15, W34)")
 OFFSET_TOL_MM = T(0.05, "mm", "measurement resolution (ACCEPTANCE.md W18)")
+
+# Oracle resolution (not design limits). Altium stores 1/10000 mil = 2.54e-6 mm; these absorb the rounding of derived values.
+GEOM_TOL_MM = T(0.001, "mm", "oracle coordinate resolution (Altium 1/10000 mil); ACCEPTANCE.md A7 measurement resolution")
+STACK_ER_TOL = T(0.005, "-", "Altium stores Er as typed (two decimals); half the last stored digit (ACCEPTANCE.md W27)")

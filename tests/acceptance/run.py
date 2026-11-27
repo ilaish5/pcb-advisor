@@ -16,6 +16,7 @@ import argparse
 import datetime as dt
 import importlib.util
 import json
+import os
 import pathlib
 import re
 import secrets
@@ -29,7 +30,8 @@ sys.path.insert(0, str(HERE))          # only tests/acceptance itself; never scr
 
 import lib  # noqa: E402
 
-DEFAULT_FIXTURE = REPO / "local" / "acceptance-fixtures" / "final-e2e-4l-1127"
+# ACCEPTANCE_FIXTURE lets a git worktree (which has no local/ folder) point at the one frozen fixture; the manifest check still runs.
+DEFAULT_FIXTURE = pathlib.Path(os.environ.get("ACCEPTANCE_FIXTURE") or REPO / "local" / "acceptance-fixtures" / "final-e2e-4l-1127")
 MANIFEST_SHA = "423530bb3cdefa11906cc7741d9748191ea4e22299dea10c8766801707519e27"
 
 
