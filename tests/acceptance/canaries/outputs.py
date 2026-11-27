@@ -140,8 +140,9 @@ def _connector():
 class Synth:
     """A clean 4-layer board built from the rng, with optional single defects."""
 
-    def __init__(self, rng, defect: str | None = None) -> None:
+    def __init__(self, rng, defect: str | None = None, legal_open: bool = False) -> None:
         self.rng = rng
+        self.legal_open = legal_open
         self.defect = defect
         self.parts: list[Part] = []
         self.vias: list[tuple] = []          # (x, y, untented)
@@ -168,7 +169,8 @@ class Synth:
             x, y = cx + r.uniform(-1.0, 1.0), cy + r.uniform(-1.0, 1.0)
             n += 1
             if kind == "qfn":
-                self.parts.append(Part(f"U{n}", kind, x, y, _qfn16(), ep=(2.4, 2.4)))
+                s = round(r.uniform(1.5, 2.4), 2)                                  # another size every run
+                self.parts.append(Part(f"U{n}", kind, x, y, _qfn16(), ep=(s, s)))
             elif kind == "soic":
                 self.parts.append(Part(f"U{n}", kind, x, y, _soic8()))
             elif kind == "conn":
@@ -178,6 +180,9 @@ class Synth:
         for p in self.parts:                 # tented vias well away from every pad (corner offsets of the cell)
             self.vias.append((p.x + 5.6, p.y - 5.0, False))
             self.vias.append((p.x + 5.6, p.y + 5.0, False))
+        if self.legal_open:                  # an untented via at a legal distance (pad copper to via copper 0.30 mm) from a passive's pad
+            q = next(p for p in self.parts if p.kind == "pas")
+            self.vias.append((q.x + 0.75 + 0.30 + 0.30, q.y, True))
         self.npth = [(OFF + 3.0, OFF + 3.0, 3.2, 1.6 + 0.45), (OFF + BOARD[0] - 3.0, OFF + BOARD[1] - 3.0, 3.2, 1.6 + 0.45)]
         d = self.defect
         if d == "web":
@@ -227,7 +232,7 @@ class Synth:
                 else:
                     for sx in (-1, 1):
                         for sy in (-1, 1):
-                            L["GTP"].flash("R", x + sx * 0.6, y + sy * 0.6, 1.0, 1.0)
+                            L["GTP"].flash("R", x + sx * 0.25 * w, y + sy * 0.25 * h, 0.4 * w, 0.4 * h)   # four windows, 64 % coverage
         for x, y, w, h in self.extra_pads:
             self._pad(L, x, y, w, h, exp)
         for x, y, open_ in self.vias:
@@ -350,14 +355,14 @@ def write_fab_set(synth: Synth, root: pathlib.Path, ref_name: str = "SYN") -> No
         {"ok": True, "expected": [{"kind": "cpl", "label": "Pick and place (CPL)", "found": [found]}]}), encoding="utf-8")
 
 
-def control_ctx(ctx: Ctx, name: str, defect: str | None = None) -> Ctx:
+def control_ctx(ctx: Ctx, name: str, defect: str | None = None, legal_open: bool = False) -> Ctx:
     """A fixture-shaped folder with a synthetic fab set. Positions come from ctx.rng. `.canary` holds the injected defect, if any;
     `.pad_table` is the pad ownership a PcbDoc would give (the synthetic set has none)."""
     root = ctx.work / name
     if root.exists():
         import shutil
         shutil.rmtree(root)
-    synth = Synth(ctx.rng, defect)
+    synth = Synth(ctx.rng, defect, legal_open)
     write_fab_set(synth, root)
     c = Ctx(root, ctx.seed, ctx.work, ctx.live, frozen=False, label=name)
     c.canary = synth.injected

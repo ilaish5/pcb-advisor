@@ -115,6 +115,7 @@ def _web_text(w):
 
 
 def _w29a_control(ctx):
+    _selftest(ctx, "web", w29a, locate=True)
     return can.control_ctx(ctx, "W29a-control")
 
 
@@ -190,7 +191,8 @@ def bare_via_violations(fs: FabSet, limit: float) -> list[dict]:
 
 
 def _w29b_control(ctx):
-    return can.control_ctx(ctx, "W29b-control")
+    _selftest(ctx, "via_pad", w29b, locate=True)
+    return can.control_ctx(ctx, "W29b-control", legal_open=True)   # one untented via at a legal 0.30 mm from a pad must pass
 
 
 @metric(id="W29(b)", title="Bare via copper too close to other exposed copper (from the Gerbers)", root="R4", level="U",
@@ -227,6 +229,7 @@ def npth_violations(fs: FabSet, limit: float) -> list[dict]:
 
 
 def _w32b_control(ctx):
+    _selftest(ctx, "npth", w32b, locate=True)
     return can.control_ctx(ctx, "W32b-control")
 
 
@@ -315,8 +318,8 @@ def _need_owners(ctx, fs, expected):
 
 # ------------------------------------------------------------------------------------------------------------ W19 exposed pad paste
 def exposed_pads(owned: dict, holes: list) -> list[tuple]:
-    """(ref, side, pad Prim) of every exposed / thermal pad: a pad of a part with at least 4 other pads that lies inside the bounding
-    box of the other pads, is at least 2 mm2 and 4 times the median area of the others, and is not a through-hole pad (a plated hole or
+    """(ref, side, pad Prim) of every exposed / thermal pad: a pad of a part with at least 4 other pads whose centre lies inside the
+    bounding box of the other pads, is at least 4 times the median area of the others, and is not a through-hole pad (a plated hole or
     slot centred on it that is at least 40 % of its smaller side, e.g. a connector shield). Found by rule, no refdes (A9)."""
     def through_hole(p):
         w, h = p.size
@@ -332,8 +335,8 @@ def exposed_pads(owned: dict, holes: list) -> list[tuple]:
             b = _padbox(others)
             areas = sorted(q.area() for q in others)
             med = areas[len(areas) // 2]
-            if (p.bbox[0] >= b[0] - 1e-6 and p.bbox[1] >= b[1] - 1e-6 and p.bbox[2] <= b[2] + 1e-6 and p.bbox[3] <= b[3] + 1e-6
-                    and p.area() >= 2.0 and p.area() >= 4 * med and not through_hole(p)):
+            cx, cy = (p.bbox[0] + p.bbox[2]) / 2, (p.bbox[1] + p.bbox[3]) / 2
+            if b[0] <= cx <= b[2] and b[1] <= cy <= b[3] and p.area() >= 4 * med and not through_hole(p):
                 out.append((ref, side, p))
     return out
 
@@ -396,8 +399,39 @@ def _manifest(ctx):
 
 
 # ------------------------------------------------------------------------------------------------------------ W33 DRC open items
+def _class_breakdown(man: dict, raw_keys=("board_check",)):
+    """Second accepted form (ACCEPTANCE W33 wording): a dict outside the raw record whose keys name the JLC classes
+    (reject / accept / cosmetic) with integer counts. Returns {class: n} or None."""
+    def walk(v):
+        if isinstance(v, dict):
+            cls = {k: x for k, x in v.items() if isinstance(x, int) and not isinstance(x, bool) and re.search(r"reject|accept|cosmetic", str(k), re.I)}
+            if len(cls) >= 2:
+                return cls
+            for x in v.values():
+                r = walk(x)
+                if r:
+                    return r
+        elif isinstance(v, list):
+            for x in v:
+                r = walk(x)
+                if r:
+                    return r
+        return None
+    return walk({k: v for k, v in man.items() if k not in raw_keys})
+
+
 def _w33_control(ctx):
     _selftest(ctx, "drc_hidden", w33)
+    c2 = can.control_ctx(ctx, "W33-control-class")          # the other accepted form: counts by JLC class
+    mp = next((c2.project / "exports").glob("*manifest*.json"))
+    man = json.loads(mp.read_text(encoding="utf-8"))
+    n = len(man["board_check"]["drc"]["drc"]["violations"])
+    man.pop("drc_open_by_rule")
+    man["drc_by_class"] = {"JLC-reject": n // 3, "JLC-accept": n - n // 3 - 1, "cosmetic": 1}
+    mp.write_text(json.dumps(man), encoding="utf-8")
+    r = w33(c2)
+    if r.status != "pass":
+        raise AssertionError(f"W33 rejects a manifest that states the counts by class: {r.detail[:200]}")
     return can.control_ctx(ctx, "W33-control")
 
 
@@ -414,6 +448,10 @@ def w33(ctx):
                       detail="the manifest holds no DRC result, so nobody can tell whether violations are open",
                       evidence=[ctx.ev(path, "order manifest")])
     text = fabfiles.manifest_text_outside(man)
+    by_class = _class_breakdown(man)
+    if by_class is not None and viol and sum(by_class.values()) == len(viol):
+        return Result("pass", measured=0, expected=exp,
+                      detail=f"{len(viol)} open items stated by class in the manifest: {by_class}", evidence=[ctx.ev(path, "order manifest")])
     by_rule: dict[str, int] = {}
     for v in viol:
         r = fabfiles.drc_rule_name(v)
@@ -616,7 +654,10 @@ def fid(ctx):
     man, _p = _manifest(ctx)
     flagged_text = fabfiles.manifest_text_outside(man) if man else ""
     groups = fabfiles.duplicate_lcsc_groups(fabfiles.read_bom_jlc(boms[0]))
-    bad = [g for g in groups if g[0].lcsc not in flagged_text]
+    def flagged(g):      # the manifest must name the code AND every designator of the group
+        return g[0].lcsc in flagged_text and all(re.search(rf"(?<![A-Za-z0-9]){re.escape(r)}(?![A-Za-z0-9])", flagged_text)
+                                                 for ln in g for r in ln.refs)
+    bad = [g for g in groups if not flagged(g)]
     return Result("pass" if not bad else "fail", measured=len(bad),
                   expected="BOM groups (same LCSC, value, footprint) neither merged nor flagged in the manifest = 0",
                   detail=_fmt([f"{g[0].lcsc} {g[0].comment}: {' + '.join(','.join(x.refs) for x in g)}" for g in bad]) or "none",
