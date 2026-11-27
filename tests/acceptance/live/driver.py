@@ -67,7 +67,11 @@ class Page:
     def __enter__(self) -> "Page":
         from playwright.sync_api import sync_playwright
         self._pw = sync_playwright().start()
-        self._browser = launch(self._pw)
+        try:
+            self._browser = launch(self._pw)
+        except BaseException:                  # a failed launch must not leave Playwright's event loop running (every later metric then fails with 'Sync API inside the asyncio loop')
+            self._pw.stop()
+            raise
         self.page = self._browser.new_page(viewport=self.viewport)
         self.page.on("console", lambda m: self.console.append(f"{m.type}: {m.text}"))
         if self.record_api:
@@ -93,11 +97,20 @@ class Page:
         self.api.append({"t": time.time(), "method": resp.request.method, "path": u.path, "query": u.query,
                          "status": resp.status, "body": body})
 
+    def _settle(self, cap_ms: int = 6000) -> None:
+        """Wait for the page to load, then for the network to go idle, with a cap: the app polls its status, so on some machines the network
+        never goes idle (Windows: 30 s timeout). The fixed wait that follows every call is what lets the page settle."""
+        self.page.wait_for_load_state("load")
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=cap_ms)
+        except Exception:                                  # playwright TimeoutError: carry on, the page is loaded
+            pass
+
     # -- navigation
     def open(self, stage: str | None = None, wait_ms: int = 2500, query: str = "") -> "Page":
         url = f"{self.base_url}/?project={self.project}" + (f"&{query}" if query else "")
         self.page.goto(url)
-        self.page.wait_for_load_state("networkidle")
+        self._settle()
         self.page.wait_for_timeout(wait_ms)
         if stage:
             self.stage(stage)
@@ -114,7 +127,7 @@ class Page:
 
     def reload(self, wait_ms: int = 2500) -> None:
         self.page.reload()
-        self.page.wait_for_load_state("networkidle")
+        self._settle()
         self.page.wait_for_timeout(wait_ms)
 
     # -- recording
