@@ -942,6 +942,18 @@ def _asked_replace(kind, prev_agent):
     return False
 
 
+_F_E_DESCRIPTIVE = [re.compile(x, re.I) for x in (
+    r"\b(?:is|was|are|were|be)\s+(?:not|only|just|n[’']t)\b[^,.;]*",
+    r"\b(?:nothing|none)\b[^,.;]*",
+    r"\b(?:keep|kept|saved?|have|has|had|checked|made|exists?)\s+(?:the|a|my(?:\s+own)?|it)?\s*(?:backup|copy)\b[^,.;]*",
+    r"\bwill\s+be\s+\w+[^,.;]*",
+)]
+_F_E_TAKEBACK = re.compile(r"\b(?:keep(?:ing)?|leav(?:e|ing)|preserv(?:e|ing)|retain(?:ing)?|scratch\s+that|forget|ignor(?:e|ing)|skip|abort|"
+                           r"paus(?:e|ing)|hang\s+on|undo|disregard|second\s+thoughts?|actually|instead|rather|however|except)\b", re.I)
+_F_E_VERB = re.compile(r"\b(?:replac\w*|re-?do\w*|re-?draw\w*|re-?plac\w*|re-?rout\w*|wip\w+|overwrit\w*|start\s+over|from\s+scratch)\b", re.I)
+_F_E_SELF = re.compile(r"\b(?:myself|on\s+my\s+own|i[’']?ll|i\s+will|let\s+me|i[’']?m\s+going\s+to)\b", re.I)
+
+
 def _replace_consent(kind, a, last_user, prev_agent=""):
     """'' when the student's last message is a short, unambiguous replace or yes, else why not. Simple by construction: at most 8 words,
     a replace word (or a bare yes right after the agent asked about replacing), and no negation, reversal, hedge, condition, question,
@@ -963,6 +975,22 @@ def _replace_consent(kind, a, last_user, prev_agent=""):
              and not _STOP_ANY.search(text) and not _HARD_STOP.search(text))
     if clean and (replace_re.search(text) or asked_yes):
         return ""
+    # F-E: a yes that opens the message, right after the agent asked whether to replace, grants it even with more words after it
+    # ("yes, replace it, I saved my own copy"). Everything that takes a yes back still refuses: a negation, a stop, a hedge, a condition,
+    # a question, a reversal (keep, leave, instead, actually...), the student saying they will do it themselves. A DESCRIPTION of the board or
+    # of a backup ("the old one was only a test", "I checked the backup exists", "the routing will be done again") is not an instruction
+    # and is set aside before the words that take a yes back are looked for.
+    lead = re.match(r"^[\s,.!]*(?:yes|yeah|yep|yup|sure|ok|okay|affirmative|go\s+ahead|כן|בסדר|אוקיי|אוקי|מאשר|מאשרת)(?!\w)", text, re.I)
+    if (lead and len(words) <= 40 and "?" not in text and _asked_replace(kind, prev_agent)
+            and (replace_re.search(text) or _F_E_VERB.search(text)) and (not other_kind or replace_re.search(text) or _F_E_VERB.search(text))):
+        rest = text[lead.end():]
+        for rx in _F_E_DESCRIPTIVE:
+            rest = rx.sub(" ", rest)
+        scan = text[:lead.end()] + " " + rest
+        if (not _NEGATED.search(scan) and not _REPLACE_NEG.search(scan) and not _HARD_STOP.search(scan) and not _STOP_ANY.search(scan)
+                and not _HEDGE.search(scan) and not _CONDITION.search(scan) and not _REPLACE_HEDGE_COND.search(scan)
+                and not _REPLACE_INDIRECT_Q.search(scan) and not _F_E_TAKEBACK.search(scan) and not _F_E_SELF.search(scan)):
+            return ""
     sheet = str(a.get("sheet") or "").strip()
     what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
     be = "is" if wipes == "sheet" else "are"

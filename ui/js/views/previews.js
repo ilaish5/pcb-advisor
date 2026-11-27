@@ -465,10 +465,6 @@ function pvLaterOk(n) {        // the same step succeeded after this note was ma
 }
 /* slim: the schematic and layout pages show this on the canvas (pvBarHTML): the run is ONE status line (pvRunSlim) that opens to the full
    list, and the answer is a compact banner. Rules and Outputs call it without slim: the full list under their header. */
-function pvStepNoteCard(page, busyOnly, slim) {       // the step's note, then the page's Findings (ledger.js); the live line alone has no card
-  const base = pvStepNote(page, busyOnly, slim);
-  return busyOnly || slim || typeof ledgerCardHTML !== 'function' ? base : base + ledgerCardHTML(page);
-}
 function pvStepNote(page, busyOnly, slim) {       // under the header: Altium is working, or what the last step answered
   pvResume();
   const list = pvRun && pvRun.running && (pvRun.steps || []).length > 1 ? `<div class="pv-steps">${pvRun.steps.map(pvStepLine).join('')}</div>` : '';
@@ -761,7 +757,7 @@ function pcbHTML(container) {
   const text = pcbSvgCache.text;
   const fix = typeof constraintFixHTML === 'function' ? constraintFixHTML() : '';
   const fixNote = fix ? `<div class="pv-note">${fix}</div>` : '';
-  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout', actions: pvStepBtn('place')})}${pvStepNoteCard('pcb')}${fixNote}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
+  if (pvNoPcb(text)) return `<div class="pv pv-empty" data-pv="pcb">${viewHeader({title: 'Layout', actions: pvStepBtn('place')})}${pvStepNote('pcb')}${fixNote}<div class="pv-stage" id="pcbwrap">${formatPcbPreview(text)}</div></div>`;
   const plan = pvPlan(), b = S.board || {}, cnt = k => plan && Array.isArray(plan[k]) ? plan[k].length : 0;
   const size = Array.isArray(b.size_mm) && b.size_mm.length === 2 ? b.size_mm.map(v => Math.round(v * 10) / 10).join(' × ') + ' mm' : '';
   const cu = text && text.match(/data-copper-layers="(\d+)"/), copper = cu ? +cu[1] : b.layers;

@@ -496,6 +496,15 @@ function chatRefusedHTML(a) {
   if (cut.length < 160) cut = s.slice(0, 220);          // no place to break (a long path): the reason still shows
   return `<details class="chat-act bad" title="Not applied"><summary>${esc(cut)}<span class="more">… more</span></summary>${esc(s.slice(cut.length))}</details>`;
 }
+/* An applied result with a warning: amber, the first part in a few lines, the whole text one click away (nothing is dropped). */
+function chatWarnHTML(name, text) {
+  const s = String(text || '');
+  const head = `<b>${esc(name)} applied with warnings:</b> `;
+  if (s.length <= 200) return `<span class="chat-act warn" title="Applied with warnings">${head}${esc(s)}</span>`;
+  let cut = s.slice(0, 200).replace(/[\s;,(:][^\s;,(:]*$/, '');
+  if (cut.length < 120) cut = s.slice(0, 200);
+  return `<details class="chat-act warn" title="Applied with warnings"><summary>${head}${esc(cut)}<span class="more">… more</span></summary>${esc(s.slice(cut.length))}</details>`;
+}
 /* which engine and model wrote an answer: "Claude Code · sonnet", muted under it */
 function chatEngineName(id) {
   const e = ((CONFIG && CONFIG.engines) || []).find(x => x.id === id);
@@ -519,7 +528,7 @@ function msgHTML(m, undoTs) {
     if (m.error || m.decision) return '';      // a failed reply becomes Retry under the box; a decision is the proposal card's own state
     if (m.by === 'button') {                    // the note the server wrote for the agent after a button step: its text is not for the student, the chips are
       const chips = (m.applied || []).map(a => (m.warned || {})[a]
-        ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(chatActLabel(a.split(/[:( ]/)[0]))} applied with warnings:</b> ${esc(m.warned[a])}</span>`
+        ? chatWarnHTML(chatActLabel(a.split(/[:( ]/)[0]), m.warned[a])
         : chatActChip(a, 'ok', a)).join('');
       return chips ? `<div class="msg agent note"><div class="acts">${chips}</div></div>` : '';
     }
@@ -532,7 +541,7 @@ function msgHTML(m, undoTs) {
     // an applied result that carries a warning is amber and shows it in full: "done" must never hide what Altium or a check flagged
     const warned = m.warned || {};
     const done = (m.applied || []).filter(a => a !== 'idea.ready').map(a => warned[a]
-      ? `<span class="chat-act warn" title="Applied with warnings"><b>${esc(a.split(/[:( ]/)[0])} applied with warnings:</b> ${esc(warned[a])}</span>`
+      ? chatWarnHTML(a.split(/[:( ]/)[0], warned[a])
       : chatActChip(a, 'ok', a))
       .concat((m.refused || []).map(a => chatRefusedHTML(a) +
         (/^(altium|library)\./.test(a) && live ? btn('Retry', {kind: 'link', size: 'sm', act: 'suggest', text: 'Run this again: ' + String(a).slice(0, 300)}) : '')));
@@ -543,7 +552,7 @@ function msgHTML(m, undoTs) {
     const nRef = (m.refused || []).length;
     const after = m.followup ? '<div class="chat-followup" role="note">After the results</div>' : '';     // the server's own second turn, written once the actions had answered
     const head = after + (nRef && m.text ? `<div class="acts"><span class="chat-act bad" role="note">Not all of this happened: ${nRef} step${nRef > 1 ? 's' : ''} failed (red, below)</span></div>` : '');
-    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(m.text, m.cites))}</div>${acts}${undo}${ready}${chatEngineFoot(m)}</div>` : '') + props + chatDeniedHTML(m, live);
+    return toolsHTML(m.tools) + (m.text ? `<div class="msg agent">${head}<div class="txt" dir="auto">${chatDir(fmt(chatScrub(m.text), m.cites))}</div>${acts}${undo}${ready}${chatEngineFoot(m)}</div>` : '') + props + chatDeniedHTML(m, live);
   }
   return '';
 }
@@ -666,6 +675,9 @@ function renderThread(force) {
     chatHtml = html;
     chatFollow();
     document.fonts?.ready.then(chatFollow);      // fonts settle after this: still at the end, or the last reply's chips sit below the fold
+    chatSplitLong(box);                          // a long answer reads as several short messages (T-E)
+    document.fonts?.ready.then(() => chatSplitLong(box));
+    setTimeout(() => chatSplitLong(box), 600);       // the layout settles after the first paint
   }
   if (chatSeen.session === S.session && S.chat.length > chatSeen.count) {       // announce only what arrived, never a re-render
     const fresh = S.chat.slice(chatSeen.count).filter(m => m.role === 'agent' && m.text && !m.error && !m.decision);
@@ -1044,3 +1056,80 @@ onAct('undo-change', async (el, d, e) => {
   // the delete threw out the pending changes for that line: an undo brings the line back, not those
   toast(r.superseded && r.superseded.length ? `Undone. ${r.superseded.length} pending change${r.superseded.length === 1 ? '' : 's'} for that line ${r.superseded.length === 1 ? 'was' : 'were'} dropped when it was deleted and ${r.superseded.length === 1 ? 'is' : 'are'} not back` : 'Undone');
 });
+
+/* ---------- what the student reads (T-E): no internal names, no wide tables, no message over 10 lines ----------
+   Display only: the stored record is untouched. A name the tool uses inside (bom.propose, chat.ask, a script file) is said in words; a pipe
+   table becomes a list (one row per bullet) so it never runs wider than the column; a long answer is shown as several messages of at most
+   CHAT_MAX_LINES lines, each of which can be read on its own (the actions and the engine line stay under the last one). */
+const CHAT_MAX_LINES = 10;
+const CHAT_SCRUB = [
+  [/\bbom\.propose\b/g, 'BOM proposal'], [/\bstudent_said\b/g, 'your words'], [/\bchat\.ask\b/g, 'question'],
+  [/\bp20\d{12,}\b/g, 'this proposal'], [/\bchecks\//g, 'the checks '], [/\b[\w-]+\.py\b/g, 'the tool'],
+];
+function chatScrub(text) {
+  let t = String(text || '');
+  for (const [rx, to] of CHAT_SCRUB) t = t.replace(rx, to);
+  const out = [];
+  for (const ln of t.split('\n')) {
+    if (/^\s*\|.*\|\s*$/.test(ln)) {                       // a table row: its cells, one bullet per row; the |---| line goes
+      if (/^\s*\|[\s:|-]+\|\s*$/.test(ln)) continue;
+      out.push('- ' + ln.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()).filter(Boolean).join(' · '));
+    } else out.push(ln);
+  }
+  return out.join('\n');
+}
+function chatLinesOf(el) {
+  const cs = getComputedStyle(el);
+  const lh = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.4 || 20;
+  return el.getBoundingClientRect().height / lh;
+}
+function chatSplitLong(box) {
+  if (!box || !box.querySelectorAll) return;
+  for (let guard = 0; guard < 200; guard++) {
+    const over = [...box.querySelectorAll('.msg.agent > .txt')].find(t => chatLinesOf(t) > CHAT_MAX_LINES - 0.5 && (t.children.length > 1 || chatSplittable(t)));
+    if (!over) return;
+    const msg = over.parentElement;
+    const rest = [];
+    if (over.children.length > 1) {
+      while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && over.children.length > 1) rest.unshift(over.lastElementChild), over.lastElementChild.remove();
+    } else {
+      const only = over.firstElementChild || over;
+      if (only.tagName === 'UL' || only.tagName === 'OL') {
+        const tail = document.createElement(only.tagName);
+        while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && only.children.length > 1) tail.prepend(only.lastElementChild);
+        rest.push(tail);
+      } else if (only.querySelector && only.querySelector('br')) {       // lines of one paragraph (a single newline in the text)
+        const parts = only.innerHTML.split(/<br\s*\/?>/);
+        const keep = parts.slice();
+        const moved = [];
+        while (keep.length > 1) { moved.unshift(keep.pop()); only.innerHTML = keep.join('<br>'); if (chatLinesOf(over) <= CHAT_MAX_LINES - 0.5) break; }
+        const tail = document.createElement('p');
+        tail.innerHTML = moved.join('<br>');
+        rest.push(tail);
+      } else {
+        const sents = (only.textContent || '').split(/(?<=[.!?])\s+/);
+        const tail = document.createElement('p');
+        let moved = [];
+        while (chatLinesOf(over) > CHAT_MAX_LINES - 0.5 && sents.length > 1) { moved.unshift(sents.pop()); only.textContent = sents.join(' '); }
+        tail.textContent = moved.join(' ');
+        rest.push(tail);
+      }
+    }
+    if (!rest.length) return;
+    const next = document.createElement('div');
+    next.className = 'msg agent chat-part';
+    const txt = document.createElement('div');
+    txt.className = 'txt';
+    txt.setAttribute('dir', 'auto');
+    rest.forEach(r => txt.appendChild(r));
+    next.appendChild(txt);
+    while (over.nextElementSibling) next.appendChild(over.nextElementSibling);       // the chips and the engine line belong under the last part
+    msg.after(next);
+  }
+}
+function chatSplittable(t) {
+  const only = t.firstElementChild;
+  if (!only) return false;
+  if (only.tagName === 'UL' || only.tagName === 'OL') return only.children.length > 1;
+  return /[.!?]\s+\S/.test(only.textContent || '') || !!(only.querySelector && only.querySelector('br'));
+}

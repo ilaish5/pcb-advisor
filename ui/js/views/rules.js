@@ -396,7 +396,7 @@ function rulesHTML(container) {
   if (segv === 'calc') body = calcsHTML();
   else body = (linked ? rulesDiffSection(rd)
     : banner({tone: 'info', html: `No board linked. Link a project in ${btn('Settings', {kind: 'link', page: 'settings'})} to compare its rules.`})) + rulesDiscs(rd);
-  return rulesHeader(rd) + pvStepNoteCard('rules') + `<div class="vb rules-vb">${switcher}${body}</div>`;
+  return rulesHeader(rd) + pvStepNote('rules') + `<div class="vb rules-vb">${switcher}${body}</div>`;
 }
 function rulesFocus(sel) {       // a redraw drops the focus; give it back to the control the user just used
   const el = $(sel);
