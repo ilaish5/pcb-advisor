@@ -691,70 +691,56 @@ def _moved_root(c, name, shifts):
     return bad
 
 
-def _decap_groups(pins):
-    """Supply pins grouped by (IC, net): a net at an IC is decoupled when a capacitor is within the limit of any of its pins.
-    {(ic, net): {"d": min distance or None, "pins": [num], "names": [...], "cap": nearest cap}}."""
-    g: dict = {}
-    for (ic, num), v in sorted(pins.items()):
-        e = g.setdefault((ic, v["net"]), {"d": None, "pins": [], "names": [], "cap": None})
-        e["pins"].append(num)
-        e["names"].append(v["name"])
-        if v["d"] is not None and (e["d"] is None or v["d"] < e["d"]):
-            e["d"], e["cap"] = v["d"], v["cap"]
-    return g
-
-
 def _w23_oracle(ctx, doc):
     pins, _ = _decap_model(ctx, doc)
-    groups = _decap_groups(pins)
     d_lim = _tv(TH.DECAP_FALLBACK_MM)
-    return {k: v for k, v in groups.items() if v["d"] is None or v["d"] > d_lim}, groups, pins
+    return {k: v for k, v in pins.items() if v["d"] is None or v["d"] > d_lim}, pins
 
 
 def _w23_build(ctx):
     with P.PcbDoc(ctx.pcbdoc()) as doc:
-        bad, _, _ = _w23_oracle(ctx, doc)
-    lines = [f"{v['cap'] or 'no cap'} is {v['d'] or 0:.1f} mm from {k[0]} pin {v['pins'][0]} ({v['names'][0]}); limit "
-             f"{_tv(TH.DECAP_FALLBACK_MM):g} mm" for k, v in sorted(bad.items())]
+        bad, _ = _w23_oracle(ctx, doc)
+    lines = [f"{v['cap'] or 'no cap'} is {v['d'] or 0:.1f} mm from {k[0]} pin {k[1]} ({v['name']}); limit {_tv(TH.DECAP_FALLBACK_MM):g} mm"
+             for k, v in sorted(bad.items())]
     return _flag_control(ctx, "W23-control", lines)
 
 
 def _w23_inject(c):
-    """Canary: pick a random decoupled (IC, supply net) and move every same-net capacitor within the limit of any of its pins 30 mm
-    away; the net becomes an unflagged violation."""
+    """Canary: pick a random supply pin and move every same-net capacitor within the limit of it 30 mm away; its pin becomes an
+    unflagged violation."""
     with P.PcbDoc(c.pcbdoc()) as doc:
-        bad, groups, pins = _w23_oracle(c, doc)
-        key = c.rng.choice(sorted(k for k in groups if k not in bad))
-        mine = [v for k, v in pins.items() if k[0] == key[0] and v["net"] == key[1]]
+        bad, pins = _w23_oracle(c, doc)
+        pin = c.rng.choice(sorted(k for k in pins if k not in bad))
+        v = pins[pin]
         bom = _bom_lines(c)
         comps = {x.ref: x.index for x in doc.components()}
         movers = {comps[p.ref]: (30.0, 30.0) for p in doc.pads()
-                  if p.ref and p.net == key[1] and _CAP_VALUE.match(str(bom.get(p.ref, {}).get("value") or ""))
-                  and any(math.hypot(p.x - v["x"], p.y - v["y"]) <= _tv(TH.DECAP_FALLBACK_MM) for v in mine)}
-    return _moved_root(c, "W23-canary", movers), f"{key[0]} "
+                  if p.ref and p.net == v["net"] and _CAP_VALUE.match(str(bom.get(p.ref, {}).get("value") or ""))
+                  and math.hypot(p.x - v["x"], p.y - v["y"]) <= _tv(TH.DECAP_FALLBACK_MM)}
+    return _moved_root(c, "W23-canary", movers), f"{pin[0]} pin {pin[1]} "
 
 
-@metric(id="W23", title="Decoupling flags cover the oracle set: supply nets at an IC with no capacitor within the limit", root="R2",
+@metric(id="W23", title="Decoupling flags equal the oracle set: supply pins whose nearest same-net cap is over the limit", root="R2",
         level="L", p0=("P0-3",), control=_with_canary(_w23_build, _w23_inject, lambda c: w23(c)))
 def w23(ctx):
     """Limit: DECAP_FALLBACK_MM (OD-1: no part datasheet value is available to the oracle, so the fallback applies, labelled general
-    knowledge). Grain: a supply net at an IC (a net with several supply pins is served by a capacitor within the limit of any of
-    them). Flagged = the (IC, pin) pairs named in the product's latest placement warnings, resolved to their net. A flag on a net
-    that is served is a false alarm, reported in the detail, not a failure."""
+    knowledge). Grain per ACCEPTANCE W23: each supply pin of every IC and card connector against its nearest same-net capacitor.
+    Flagged = the (IC, pin) pairs named in the product's latest placement warnings; the flagged set must equal the oracle set, so a
+    pin flagged although within the limit also fails (set difference both ways)."""
     f = ctx.pcbdoc()
     with P.PcbDoc(f) as doc:
-        bad, groups, pins = _w23_oracle(ctx, doc)
-    if not groups:
+        bad, pins = _w23_oracle(ctx, doc)
+    if not pins:
         return Result("error", detail="no supply pin found", evidence=[ctx.ev(f, "PcbDoc")])
     flags, lf = _place_flags(ctx)
-    flagged = {(ic, pins[(ic, pin)]["net"]) for _, _, ic, pin in flags if (ic, pin) in pins}
+    flagged = {(ic, pin) for _, _, ic, pin in flags}
     miss = sorted(set(bad) - flagged)
-    out = [f"{ic} {'/'.join(sorted(set(bad[(ic, net)]['names'])))} (pin {','.join(bad[(ic, net)]['pins'])}, {net}): nearest cap "
-           f"{('%.1f mm' % bad[(ic, net)]['d']) if bad[(ic, net)]['d'] is not None else 'none'}, not flagged" for ic, net in miss]
-    extra = sorted(flagged - set(bad))
-    return Result("pass" if not out else "fail", measured=out, expected="supply nets over the limit and not flagged = 0",
-                  detail=f"oracle {len(bad)} of {len(groups)} supply nets over the limit; flagged {len(flagged)}"
-                         + (f"; {len(extra)} flagged net(s) within the limit (false alarms, not counted)" if extra else ""),
+    extra = sorted((flagged & set(pins)) - set(bad))
+    out = [f"{ic} pin {pin} ({bad[(ic, pin)]['name']}): nearest cap "
+           f"{('%.2f mm' % bad[(ic, pin)]['d']) if bad[(ic, pin)]['d'] is not None else 'none'}, not flagged" for ic, pin in miss]
+    out += [f"{ic} pin {pin}: flagged but within the limit" for ic, pin in extra]
+    return Result("pass" if not out else "fail", measured=out, expected="oracle set minus flagged set = 0 (and none flagged in error)",
+                  detail=f"oracle {len(bad)} pins over the limit of {len(pins)}; flagged {len(flagged)}",
                   evidence=[ctx.ev(f, "Pads6"), ctx.ev(lf, "placement warnings"), ctx.ev(ctx.project / "bom.json", "BOM")])
 
 
@@ -1038,3 +1024,104 @@ def fh_c(ctx):
     return Result("pass" if not out else "fail", measured=out, expected="over-limit parts and copper without a finding = 0",
                   detail=f"{len(need)} items over the limit of {n} components; {len(out)} unflagged",
                   evidence=[ctx.ev(f, "Board6 outline, Pads6"), ctx.ev(mf, "order manifest findings")])
+
+
+# ======================================================================================================================== F-J (e)
+_EP_CLAIM = re.compile(r"\bpin\s+(\w+)\b[^;:]*:\s*exposed pad", re.I)
+
+
+def _verify_claims(ctx):
+    """{part ref: [pin numbers claimed to be an exposed pad]} from the latest verify_part row of each part in library-log.jsonl."""
+    f = ctx.project / "library-log.jsonl"
+    last = {}
+    for l in f.read_text(encoding="utf-8").splitlines():
+        if l.strip():
+            r = json.loads(l)
+            if r.get("by") == "verify_part" and r.get("line"):
+                last[r["line"]] = r
+    return {ref: _EP_CLAIM.findall(str(r.get("changes"))) for ref, r in last.items()}, f
+
+
+def _is_exposed(fp, pin: str) -> bool | None:
+    """Rule without a number: pad `pin` is an exposed pad when its copper box is larger than that of every pad with another name
+    in the same footprint (the single largest pad). None when the footprint has no pad of that name."""
+    mine = [p.xs * p.ys for p in fp.pads if p.name == pin]
+    rest = [p.xs * p.ys for p in fp.pads if p.name != pin]
+    if not mine:
+        return None
+    return bool(rest) and max(mine) > max(rest) * (1 + 1e-6)
+
+
+def _fj_lookup(ctx):
+    lib, lf = _lib_issues(ctx)
+    fps = {fp.name: fp for path in _pcbs(ctx) for fp in P.read_pcblib(path)}
+    return lib, lf, fps
+
+
+def _fj_false(ctx):
+    claims, cf = _verify_claims(ctx)
+    lib, lf, fps = _fj_lookup(ctx)
+    bad, n = [], 0
+    for ref, pins in sorted(claims.items()):
+        fp = fps.get((lib.get(ref) or {}).get("footprint"))
+        for pin in pins:
+            n += 1
+            if fp is None:
+                bad.append((ref, pin, "footprint not found in the PcbLib"))
+            elif _is_exposed(fp, pin) is not True:
+                bad.append((ref, pin, f"{fp.name} has no exposed pad named {pin}" if _is_exposed(fp, pin) is None
+                            else f"pad {pin} of {fp.name} is an ordinary pad"))
+    return bad, n, cf, lf
+
+
+def _fj_files(ctx):
+    libs = [str(p.relative_to(ctx.root)).replace("\\", "/") for p in _pcbs(ctx)]
+    return ("project/library-log.jsonl", "project/library/manifest.json", *libs)
+
+
+def _fj_build(ctx):
+    """Control: the verify messages with every false exposed-pad claim removed from the text."""
+    bad, _, _, _ = _fj_false(ctx)
+    c = CB.sparse_root(ctx, "F-J-control", copy=_fj_files(ctx))
+    f = c.project / "library-log.jsonl"
+    rows = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
+    for r in rows:
+        if r.get("by") == "verify_part":
+            for ref, pin, _ in bad:
+                if r.get("line") == ref:
+                    r["changes"] = re.sub(rf"(\bpin\s+{re.escape(pin)}\b[^;:]*):\s*exposed pad", r"\1", str(r["changes"]))
+    f.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return c
+
+
+def _fj_inject(c):
+    """Canary: a new verify message for a random part claims a random ordinary pad of its footprint is an exposed pad."""
+    lib, _, fps = _fj_lookup(c)
+    cands = sorted((ref, p.name) for ref, v in lib.items() if (fp := fps.get(v.get("footprint"))) and len(fp.pads) >= 2
+                   for p in fp.pads if _is_exposed(fp, p.name) is False)
+    ref, pin = c.rng.choice(cands)
+    f = c.project / "library-log.jsonl"
+    msg = f"{ref}: not found as a row of the datasheet's pin table: pin {pin} X: exposed pad: the datasheet's table does not say its net"
+    with open(f, "a", encoding="utf-8") as h:
+        h.write(json.dumps({"ts": "2999-01-01T00:00:00.000", "by": "verify_part", "line": ref, "changes": str({"verify": "unchecked", "issues": msg})}) + "\n")
+    return c, f"{ref}: pin {pin} "
+
+
+def _fj_canary_root(c):
+    bad = CB.sparse_root(c, "F-J-canary", copy=_fj_files(c))
+    return bad
+
+
+@metric(id="F-J(e)", title="Every exposed-pad claim in a verify message equals the PcbLib pad geometry", root="R3", level="L", p0=("P0-1",),
+        control=_with_canary(_fj_build, lambda c: _fj_inject(_fj_canary_root(c)), lambda c: fj_e(c)))
+def fj_e(ctx):
+    """Claim: the latest verify_part message of a part in library-log.jsonl says "pin N <name>: exposed pad". Oracle: the PcbLib
+    footprint named in the library manifest. Rule without a number: a pad is an exposed pad when it is larger than every pad with
+    another name in its footprint (no shared/reference source gives a size ratio, so none is invented). Not covered: pin-count claims."""
+    bad, n, cf, lf = _fj_false(ctx)
+    if n == 0:
+        return Result("error", detail="no exposed-pad claim in any verify message", evidence=[ctx.ev(cf, "verify messages")])
+    out = [f"{ref}: pin {pin} is claimed to be an exposed pad, but {why}" for ref, pin, why in bad]
+    return Result("pass" if not out else "fail", measured=out, expected="false exposed-pad claims = 0",
+                  detail=f"{len(bad)} of {n} claims false, in {len({r for r, *_ in bad})} part(s)",
+                  evidence=[ctx.ev(cf, "verify messages"), ctx.ev(lf, "library manifest")] + [ctx.ev(p, "PcbLib") for p in _pcbs(ctx)])
