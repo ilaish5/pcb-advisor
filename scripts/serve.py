@@ -4647,6 +4647,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(409, {"error": f"A project named \"{wanted}\" already exists.", "exists": wanted,
                                         "projects": model.list_projects()})
             created = project_mod.create(name, title=data.get("title") or name, brief=data.get("brief", ""))
+            if data.get("layers") in (2, 4, "2", "4"):
+                project_mod.set_layers(created, data.get("layers"))
             runlog.usage(created, "project", action="create", name=name, ok=True)
             out = {"created": created, "projects": model.list_projects()}
             if created != name:                         # the folder is not the text typed: say what it is
@@ -5012,7 +5014,7 @@ def readiness(project):
         except Exception:                       # noqa: BLE001 - BridgeError: not found
             problems.append({"id": "altium", "title": "Altium Designer was not found, so the Make in Altium steps cannot run.",
                              "fix": "Open Settings and set the Altium folder (altium.install_path).", "page": "settings"})
-    if not linked and _past_idea(project):
+    if not linked:       # T-H: the banner shows iff the project has no Altium path (the page shows it on Altium steps only)
         problems.append({"id": "link", "title": "This project is not linked to an Altium project, so nothing can be drawn or read from Altium.",
                          "fix": "Open Altium (Settings) and link the .PrjPcb file.", "page": "settings"})
     import hashlib

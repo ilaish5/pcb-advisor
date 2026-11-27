@@ -307,12 +307,15 @@ function askText(o) {
     dlg.setAttribute('aria-labelledby', 'dlg-title');
     dlg.innerHTML = `<form method="dialog"><h2 id="dlg-title">${esc(o.title || '')}</h2>
       <label class="field"><span>${esc(o.label || '')}</span><input class="in" name="v" value="${esc(o.value || '')}" placeholder="${esc(o.placeholder || '')}" autocomplete="off" required>${o.hint ? `<small>${esc(o.hint)}</small>` : ''}</label>
+      ${o.layers ? `<label class="field"><span>Copper layers</span><select class="in" name="layers"><option value="2">2 layers</option><option value="4">4 layers</option></select></label>` : ''}
       <div class="acts"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn pri" value="ok">${esc(o.confirm || 'OK')}</button></div></form>`;
     // Cancel is not a submit button: Enter in the field submits the form through its first submit button, which must be the OK one
     dlg.querySelector('[data-cancel]').addEventListener('click', () => dlg.close('cancel'));
     dlg.addEventListener('close', () => {
       const v = dlg.querySelector('input').value.trim();
       const ok = dlg.returnValue === 'ok' && v;
+      const ls = dlg.querySelector('select[name=layers]');
+      askText.layers = ls ? Number(ls.value) : null;
       dlg.remove();
       resolve(ok ? v : null);
     });

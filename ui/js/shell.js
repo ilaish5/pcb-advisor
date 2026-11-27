@@ -631,14 +631,15 @@ onAct('unarchive-project', async (el, d) => {
   await projGoto(r.restored);
 });
 onAct('newproj', async () => {
-  const n = await askText({title: 'New project', label: 'Project name', placeholder: 'Temperature controller', confirm: 'Create'});
+  const n = await askText({title: 'New project', label: 'Project name', placeholder: 'Temperature controller', confirm: 'Create', layers: true});
+  const layers = askText.layers;
   if (!n) return;
-  let r = await api('/api/projects/new', {name: n}, {soft: true});
+  let r = await api('/api/projects/new', {name: n, layers}, {soft: true});
   if (r && r.exists) {       // the name is taken: open that one, or make a numbered copy, never silently
     const open = await askChoice({title: 'Project exists', text: `A project named "${r.exists}" already exists.`, yes: 'Open it', no: 'Create a copy'});
     if (open === null) return;
     if (open) r = {created: r.exists};
-    else r = await api('/api/projects/new', {name: n, allow_copy: true});
+    else r = await api('/api/projects/new', {name: n, layers, allow_copy: true});
   } else if (!r || !r.created) { toast((r && r.error) || 'Could not create the project', null, {bad: true}); return; }
   if (window.usage) window.usage('click', {text: 'New project: Create', act: 'newproj', id: 'newproj', tag: 'button', project: r.created});      // the click belongs to the new project's log
   if (r.note) { try { sessionStorage.setItem('pcb-new-note', r.note); } catch (e) { /* the note is lost, the folder is still named in the project list */ } }

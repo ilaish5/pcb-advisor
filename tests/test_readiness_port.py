@@ -71,16 +71,19 @@ def test_all_three(monkeypatch):
     assert ids(serve.readiness("demo")) == ["engine", "altium"]
 
 
-def test_idea_stage_project_shows_no_link_row(monkeypatch):
+def test_unlinked_project_shows_the_link_row_even_at_idea_stage(monkeypatch):
+    """T-H: the 'not linked' row is there iff the project has no Altium path (the page shows it on Altium steps only)."""
     _patch(monkeypatch, linked=False, past=False)
-    assert serve.readiness("demo") == {"problems": []}
+    assert ids(serve.readiness("demo")) == ["link"]
+    _patch(monkeypatch, linked=True, past=False)
+    assert "link" not in ids(serve.readiness("demo"))
 
 
 def test_altium_missing_is_silent_without_link_or_drawing(monkeypatch):
     _patch(monkeypatch, altium_ok=False, linked=False, past=False)
-    assert serve.readiness("demo") == {"problems": []}
+    assert ids(serve.readiness("demo")) == ["link"]
     _patch(monkeypatch, altium_ok=False, linked=False, past=False, sheets=True)
-    assert ids(serve.readiness("demo")) == ["altium"]
+    assert ids(serve.readiness("demo")) == ["altium", "link"]
 
 
 def test_no_doctor_merge():
