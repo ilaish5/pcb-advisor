@@ -208,10 +208,12 @@ def new_track(template: bytes, layer: int, net_idx: int, x1: float, y1: float, x
     return template[:1] + struct.pack("<I", len(p)) + bytes(p)
 
 
-def rewrite_routing(ctx: Ctx, name: str, keep_track=None, keep_via=None, add_tracks: list | None = None, copy: tuple = ()) -> Ctx:
-    """Sparse root whose PcbDoc keeps the tracks / vias that pass `keep_track(Track)` / `keep_via(Via)` and gains `add_tracks`
-    [(layer, net name, x1, y1, x2, y2, width_mm)]. A new net name is not allowed (the net table is not edited)."""
-    src = ctx.pcbdoc()
+def routing_streams(src, keep_track=None, keep_via=None, add_tracks: list | None = None, set_width: dict | None = None,
+                    template_from=None):
+    """({stream: bytes}, {name: count}) for a PcbDoc whose tracks / vias are filtered by `keep_track(Track)` / `keep_via(Via)`, whose
+    tracks on `set_width` {net: mm} nets are redrawn at that width, and which gains `add_tracks`
+    [(layer, net name, x1, y1, x2, y2, width_mm)]. A new net name is not allowed (the net table is not edited). New tracks copy a
+    free copper track record of `template_from` (default `src`; a placement-stage PcbDoc may have none)."""
     doc = P.PcbDoc(src)
     nets, tracks, vias = doc.nets(), doc.tracks(), doc.vias()
     streams = olewrite.read_all(src)
@@ -219,9 +221,61 @@ def rewrite_routing(ctx: Ctx, name: str, keep_track=None, keep_via=None, add_tra
     traw, vraw = prim_records(streams["Tracks6/Data"]), prim_records(streams["Vias6/Data"])
     if len(traw) != len(tracks) or len(vraw) != len(vias):
         raise ValueError("record count differs from the parsed objects")
-    template = next(r for r, t in zip(traw, tracks) if t.comp is None and P.is_copper(t.layer))
-    ktr = [r for r, t in zip(traw, tracks) if keep_track is None or keep_track(t)]
+    template = None
+    if add_tracks:
+        tsrc = template_from or src
+        td = P.PcbDoc(tsrc)
+        trecs, tobjs = prim_records(olewrite.read_all(tsrc)["Tracks6/Data"]), td.tracks()
+        td.close()
+        template = next((r for r, t in zip(trecs, tobjs) if t.comp is None and P.is_copper(t.layer)), None)
+        if template is None:
+            raise ValueError(f"no free copper track in {tsrc} to copy a record from")
+
+    def widened(r, t):
+        if set_width and t.net in set_width and P.is_copper(t.layer):
+            p = bytearray(r[5:])
+            struct.pack_into("<i", p, 29, round(set_width[t.net] / P.UNIT_MM))
+            return r[:5] + bytes(p)
+        return r
+    ktr = [widened(r, t) for r, t in zip(traw, tracks) if keep_track is None or keep_track(t)]
     kvi = [r for r, v in zip(vraw, vias) if keep_via is None or keep_via(v)]
     ktr += [new_track(template, layer, nets.index(net), x1, y1, x2, y2, w) for layer, net, x1, y1, x2, y2, w in (add_tracks or [])]
-    return rewrite_pcbdoc(ctx, name, {"Tracks6/Data": b"".join(ktr), "Vias6/Data": b"".join(kvi)},
-                          header_counts={"Tracks6": len(ktr), "Vias6": len(kvi)}, copy=copy)
+    return {"Tracks6/Data": b"".join(ktr), "Vias6/Data": b"".join(kvi)}, {"Tracks6": len(ktr), "Vias6": len(kvi)}
+
+
+def rewrite_routing(ctx: Ctx, name: str, keep_track=None, keep_via=None, add_tracks: list | None = None, copy: tuple = (),
+                    set_width: dict | None = None) -> Ctx:
+    """Sparse root whose PcbDoc is the fixture PcbDoc edited by routing_streams()."""
+    replace, counts = routing_streams(ctx.pcbdoc(), keep_track, keep_via, add_tracks, set_width)
+    return rewrite_pcbdoc(ctx, name, replace, header_counts=counts, copy=copy)
+
+
+def regions_to_keepout(src, dst, rects: list, add_tracks: list | None = None, template_from=None) -> pathlib.Path:
+    """Copy PcbDoc `src` to `dst` with every non-pour region whose bounding-box centre lies in one of `rects` [(x0, y0, x1, y1) mm]
+    moved to the Keep-Out layer (layer byte 56, V7_LAYER=KEEPOUT); `add_tracks` as in routing_streams (canary copper)."""
+    doc = P.PcbDoc(src)
+    nets = doc.nets()
+    streams = olewrite.read_all(src)
+    doc.close()
+    out = {}
+    for sname in ("Regions6", "ShapeBasedRegions6"):
+        recs = []
+        for raw in prim_records(streams[sname + "/Data"]):
+            p = raw[5:]
+            r = P._parse_region(p, nets, shape=sname.startswith("Shape"))
+            cx = sum(x for x, _ in r.points) / max(len(r.points), 1)
+            cy = sum(y for _, y in r.points) / max(len(r.points), 1)
+            if r.points and not r.poured and any(a <= cx <= c and b <= cy <= d for a, b, c, d in rects):
+                tl = struct.unpack("<I", p[18:22])[0]
+                text = p[22:22 + tl].decode("latin-1")
+                text = re.sub(r"V7_LAYER=[^|\r\x00]*", "V7_LAYER=KEEPOUT", text)
+                p = bytes([P.L_KEEPOUT]) + p[1:18] + struct.pack("<I", len(text)) + text.encode("latin-1") + p[22 + tl:]
+                raw = raw[:1] + struct.pack("<I", len(p)) + p
+            recs.append(raw)
+        out[sname + "/Data"] = b"".join(recs)
+    counts = {}
+    if add_tracks:
+        rep, counts = routing_streams(src, add_tracks=add_tracks, template_from=template_from)
+        out["Tracks6/Data"] = rep["Tracks6/Data"]
+        counts = {"Tracks6": counts["Tracks6"]}
+    return olewrite.rewrite(src, dst, replace=out, header_counts=counts)

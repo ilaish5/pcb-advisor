@@ -246,13 +246,13 @@ def _parse_arc(p: bytes, nets) -> Arc:
     return Arc(p[0], _net(struct.unpack("<H", p[3:5])[0], nets), _mm(cx), _mm(cy), _mm(r), a1, a2, _mm(w), None if c == 0xFFFF else c)
 
 
-def _parse_region(p: bytes, nets) -> Region:
+def _parse_region(p: bytes, nets, shape: bool = False) -> Region:
     tl = struct.unpack("<I", p[18:22])[0]
     props = kv(p[22:22 + tl].decode("latin-1", "replace").strip("\0"))
     n = struct.unpack("<I", p[22 + tl:26 + tl])[0]
     data = p[26 + tl:]
     pts, holes = [], []
-    if props.get("ISSHAPEBASED", "FALSE").upper() != "TRUE" and len(data) >= 16 * n:
+    if not shape and len(data) >= 16 * n:
         for k in range(n):
             x, y = struct.unpack("<2d", data[16 * k:16 * k + 16])
             pts.append((x * UNIT_MM, y * UNIT_MM))
@@ -266,7 +266,7 @@ def _parse_region(p: bytes, nets) -> Region:
                 break
             holes.append([(a * UNIT_MM, b * UNIT_MM) for a, b in struct.iter_unpack("<2d", data[pos:pos + 16 * hn])])
             pos += 16 * hn
-    elif props.get("ISSHAPEBASED", "").upper() == "TRUE" and n and len(data) >= 37 * n:
+    elif shape and n and len(data) >= 37 * n:
         for k in range(n):
             x, y = struct.unpack("<ii", data[37 * k + 1:37 * k + 9])
             pts.append((x * UNIT_MM, y * UNIT_MM))
@@ -391,7 +391,7 @@ class PcbDoc:
             seen = set()
             for sname in ("Regions6", "ShapeBasedRegions6"):
                 for p in self.checked(sname, list(_prims(self.stream(sname + "/Data")))):
-                    r = _parse_region(p, self.nets())
+                    r = _parse_region(p, self.nets(), shape=sname.startswith("Shape"))
                     key = (r.layer, r.comp, r.kind, tuple((round(x, 3), round(y, 3)) for x, y in r.points))
                     if key not in seen:
                         seen.add(key)

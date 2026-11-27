@@ -409,3 +409,190 @@ def _w31_control(ctx):
     if r.status != "fail" or f"{g['c'].ref}: foreign net {net} " not in json.dumps(r.measured):
         raise AssertionError(f"canary not caught: {g['c'].ref} {net} layer {layer}: {r.status} {r.measured}")
     return c
+
+
+# ======================================================================================================================== W28
+def _default_width(doc: P.PcbDoc) -> float:
+    """The board's default track width (mm): the preferred width of the highest-priority enabled Width rule whose scope is All."""
+    rules = [r for r in doc.rules() if r.get("RULEKIND") == "Width" and r.get("ENABLED", "TRUE").upper() == "TRUE"
+             and r.get("SCOPE1EXPRESSION", "").strip().lower() == "all"]
+    if not rules:
+        raise ValueError("no enabled Width rule with scope All: the default width is unknown")
+    r = min(rules, key=lambda r: int(r.get("PRIORITY", "99") or 99))
+    return P.mil_value(r["PREFEREDWIDTH"])
+
+
+def _min_widths(doc: P.PcbDoc) -> dict[str, float]:
+    w: dict[str, float] = {}
+    for t in doc.tracks():
+        if P.is_copper(t.layer) and t.net and t.comp is None:
+            w[t.net] = min(w.get(t.net, 1e9), t.width)
+    return w
+
+
+def _w28_build(ctx):
+    with P.PcbDoc(ctx.pcbdoc()) as doc:
+        base, narrow = _default_width(doc), {n: w for n, w in _min_widths(doc).items()}
+    fix = {n: base for n, w in narrow.items() if w < base - _tv(TH.GEOM_TOL_MM)}
+    if not fix:
+        raise AssertionError("no net is narrower than the default width: nothing for the control to correct")
+    return CB.rewrite_routing(ctx, "W28-control", set_width=fix)
+
+
+def _w28_inject(c):
+    with P.PcbDoc(c.pcbdoc()) as doc:
+        base, nets = _default_width(doc), sorted(_min_widths(doc))
+    net = c.rng.choice(nets)
+    return CB.rewrite_routing(c, "W28-canary", set_width={net: round(base * c.rng.uniform(0.4, 0.8), 4)}), net
+
+
+@metric(id="W28", title="No net is drawn narrower than the width it gets with no current entered (baseline part of W28)", root="R3",
+        level="L", control=_with_canary(_w28_build, _w28_inject, lambda c: w28(c)))
+def w28(ctx):
+    """Baseline half of W28 only: the minimum drawn width of every net (Tracks6, copper, not component-owned) must be at least the
+    board's default width (the All-scope Width rule's preferred width). The IPC-2221 half (width for the entered current, rise and
+    copper weight) is NOT measured here: shared/reference has no cited IPC-2221 width formula, so no value is invented (contract rule 7)."""
+    f = ctx.pcbdoc()
+    with P.PcbDoc(f) as doc:
+        base, widths = _default_width(doc), _min_widths(doc)
+    if not widths:
+        return Result("error", detail="no routed net in the PcbDoc", evidence=[ctx.ev(f, "Tracks6, Rules6")])
+    tol = _tv(TH.GEOM_TOL_MM)
+    bad = [f"{n}: {w:.4f} mm < default {base:.4f} mm" for n, w in sorted(widths.items()) if w < base - tol]
+    return Result("pass" if not bad else "fail", measured=bad, expected="nets narrower than the no-current width = 0",
+                  detail=f"{len(bad)}/{len(widths)} nets", evidence=[ctx.ev(f, "Tracks6, Rules6")])
+
+
+# ======================================================================================================================== W25(a)
+import datetime as dt
+import pathlib
+
+
+def _snapshots(ctx):
+    """[(time, path)] of every PcbDoc state kept: each `.advisor-backup/<YYYYMMDD-HHMMSS>/*.PcbDoc` and the final document (time max)."""
+    out = []
+    for d in sorted((ctx.altium / ".advisor-backup").glob("*")) if (ctx.altium / ".advisor-backup").is_dir() else []:
+        docs = sorted(d.glob("*.PcbDoc"))
+        if docs:
+            out.append((dt.datetime.strptime(d.name, "%Y%m%d-%H%M%S"), docs[0]))
+    out.append((dt.datetime.max, ctx.pcbdoc()))
+    return out
+
+
+def _ko_requirements(ctx):
+    """(requirements, deleted_at): the keep-out items of the latest idea version that has any, and the time of the first later
+    version that has none (None when they still exist)."""
+    f = ctx.project / "idea-versions.json"
+    vs = sorted(json.loads(f.read_text(encoding="utf-8")), key=lambda v: v["n"])
+    items = lambda v: ((v.get("idea") or {}).get("constraints") or {}).get("items") or []
+    has = [i for i, v in enumerate(vs) if any(it.get("kind") == "keepout" for it in items(v))]
+    if not has:
+        return [], None, f
+    last = has[-1]
+    reqs = [it for it in items(vs[last]) if it.get("kind") == "keepout"]
+    gone = dt.datetime.fromisoformat(vs[last + 1]["ts"]) if last + 1 < len(vs) else None
+    return reqs, gone, f
+
+
+def _snapshot_for(ctx, gone):
+    """The latest PcbDoc state at or before the moment the requirement was deleted (the final document when it was never deleted)."""
+    snaps = [s for s in _snapshots(ctx) if gone is None or s[0] <= gone]
+    return snaps[-1] if snaps else None
+
+
+def _origin(doc):
+    o = doc.outline()
+    return min(p[0] for p in o), min(p[1] for p in o)
+
+
+def _w25_problems(doc, reqs):
+    ox, oy = _origin(doc)
+    tol = _tv(TH.GEOM_TOL_MM)
+    regs = [r for r in doc.regions() if r.points]
+    out = []
+    for q in reqs:
+        a, b, c, d = q["rect_mm"]
+        rect = (ox + a, oy + b, ox + c, oy + d)
+        ov = lambda x0, y0, x1, y1: x0 < rect[2] - tol and x1 > rect[0] + tol and y0 < rect[3] - tol and y1 > rect[1] + tol
+        bb = lambda pts: (min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts))
+        ko = [bb(r.points) for r in regs if r.keepout and ov(*bb(r.points))]
+        ko_pts = [(t.x1, t.y1) for t in doc.tracks() if t.layer == P.L_KEEPOUT and ov(min(t.x1, t.x2), min(t.y1, t.y2), max(t.x1, t.x2), max(t.y1, t.y2))] \
+            + [(t.x2, t.y2) for t in doc.tracks() if t.layer == P.L_KEEPOUT and ov(min(t.x1, t.x2), min(t.y1, t.y2), max(t.x1, t.x2), max(t.y1, t.y2))]
+        if ko_pts:
+            ko.append(bb(ko_pts))
+        covered = bool(ko) and min(k[0] for k in ko) <= rect[0] + tol and min(k[1] for k in ko) <= rect[1] + tol \
+            and max(k[2] for k in ko) >= rect[2] - tol and max(k[3] for k in ko) >= rect[3] - tol
+        cu = []
+        for p in doc.pads():
+            if p.plated and ov(*p.extent()):          # a non-plated hole carries no copper
+                cu.append(f"pad {p.ref}-{p.name}")
+        for t in doc.tracks():
+            if P.is_copper(t.layer) and P.seg_hits_rect(t.x1, t.y1, t.x2, t.y2, t.width / 2, rect):
+                cu.append(f"track {layer_name(t.layer)} {t.net}")
+        for v in doc.vias():
+            if ov(v.x - v.dia / 2, v.y - v.dia / 2, v.x + v.dia / 2, v.y + v.dia / 2):
+                cu.append(f"via {v.net}")
+        for r in regs:
+            if not r.keepout and not r.poured and P.is_copper(r.layer) and ov(*bb(r.points)):
+                cu.append(f"region {layer_name(r.layer)} {r.net or 'no net'}")
+        why = []
+        if not covered:
+            why.append("no keep-out object covers it")
+        if cu:
+            why.append(f"copper inside: {len(cu)} ({', '.join(sorted(set(cu))[:3])})")
+        if why:
+            out.append(f"{q['id']}: " + "; ".join(why))
+    return out
+
+
+layer_name = P.layer_name
+
+
+def _w25_root(ctx, name, snapshot, patch_rects=None, add_tracks=None):
+    """Sparse root with idea-versions.json, the final PcbDoc and one `.advisor-backup` snapshot written from `snapshot` (patched)."""
+    final = ctx.pcbdoc()
+    c = CB.sparse_root(ctx, name, copy=("project/idea-versions.json", str(final.relative_to(ctx.root)).replace("\\", "/")))
+    stamp, src = snapshot
+    dst = c.altium / ".advisor-backup" / stamp.strftime("%Y%m%d-%H%M%S") / src.name
+    CB.regions_to_keepout(src, dst, patch_rects or [], add_tracks, template_from=final)
+    return c
+
+
+def _w25_build(ctx):
+    reqs, gone, _ = _ko_requirements(ctx)
+    snap = _snapshot_for(ctx, gone)
+    with P.PcbDoc(snap[1]) as doc:
+        ox, oy = _origin(doc)
+    rects = [(ox + q["rect_mm"][0], oy + q["rect_mm"][1], ox + q["rect_mm"][2], oy + q["rect_mm"][3]) for q in reqs]
+    return _w25_root(ctx, "W25a-control", snap, patch_rects=rects)
+
+
+def _w25_inject(c):
+    reqs, gone, _ = _ko_requirements(c)
+    snap = _snapshot_for(c, gone)
+    q = c.rng.choice(reqs)
+    with P.PcbDoc(snap[1]) as doc:
+        ox, oy = _origin(doc)
+        net = c.rng.choice([n for n in doc.nets() if n])
+    a, b, x, y = q["rect_mm"]
+    cx, cy = ox + (a + x) / 2, oy + (b + y) / 2
+    track = (c.rng.choice([1, 32]), net, cx - 1.0, cy, cx + 1.0, cy, 0.2)
+    return _w25_root(c, "W25a-canary", snap, add_tracks=[track]), q["id"]
+
+
+@metric(id="W25(a)", title="Each keep-out requirement is a keep-out object with no copper inside", root="R4", level="L", p0=("P0-3", "P0-1"),
+        control=_with_canary(_w25_build, _w25_inject, lambda c: w25a(c)))
+def w25a(ctx):
+    """Requirements: the keep-out items (rect_mm from the board origin) of the latest idea version that has any. The PcbDoc state
+    checked is the latest snapshot at or before the version in which they disappeared (the final document if they never did)."""
+    reqs, gone, vf = _ko_requirements(ctx)
+    if not reqs:
+        return Result("not_run", detail="no idea version has a keep-out requirement", evidence=[ctx.ev(vf, "idea-versions")])
+    snap = _snapshot_for(ctx, gone)
+    if snap is None:
+        return Result("error", detail="no PcbDoc state from before the requirement was removed", evidence=[ctx.ev(vf, "idea-versions")])
+    with P.PcbDoc(snap[1]) as doc:
+        bad = _w25_problems(doc, reqs)
+    return Result("pass" if not bad else "fail", measured=bad, expected="keep-out requirements without a clean keep-out object = 0",
+                  detail=f"{len(bad)}/{len(reqs)} requirements; PcbDoc state {snap[1].parent.name}",
+                  evidence=[ctx.ev(vf, "idea-versions"), ctx.ev(snap[1], "PcbDoc state")])
