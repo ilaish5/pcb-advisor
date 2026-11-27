@@ -2060,7 +2060,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 # an existing requirement is replaced only when the student asked, quoted from what they just wrote
                 replace = _truthy(a.get("replace")) and _quote_holds(a.get("student_said"), last_user)
                 before_rows = {i.get("topic"): i.get("text") for i in store.load_idea_working(project).get("agreed", [])}
-                idea = store.propose_idea(project, a["topic"], a["text"], by="agent", replace=replace)
+                idea = store.propose_idea(project, a["topic"], a["text"], by="agent", replace=replace, assumed=_truthy(a.get("assumed")))
                 applied.append(f"idea.propose:{a['topic']}" + idea_kept_note(before_rows, idea, a))
             elif kind == "idea.describe" and isinstance(a.get("text"), str):
                 store.set_idea_goal(project, a["text"], by="agent")

@@ -10,3 +10,10 @@ def test_every_return_of_outputsHTML_carries_the_readiness_card():
     returns = re.findall(r"return [^;]*;", body, re.S)
     assert len(returns) == 3
     assert all("outReadyCard()" in r for r in returns)
+
+
+def test_an_unknown_readiness_shows_the_pins_and_conditions_rows_as_not_checked_never_zero_or_green():
+    card = SRC[SRC.index("function outReadyCard("):SRC.index("onAct(\x27out-make-anyway\x27")]
+    for line in card.splitlines():
+        if "unverified parts: every part" in line or "0 open conditions" in line:
+            assert "!!unknown" in line and "not checked" in line and "esc(unknown.why" in line

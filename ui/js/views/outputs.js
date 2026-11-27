@@ -94,8 +94,8 @@ function outReadyCard() {
   return `<section class="out-ready" data-ready="1"><h3>Before you order</h3><ul>` +
     (unknown ? row(true, `${esc(unknown.label || 'Readiness could not be worked out')}: ${esc(unknown.why || '')}`, btn('Open DFM', {kind: 'link', size: 'sm', page: 'checks'})) : '') +
     row(!drc.state || !!(item('drc_state') || item('drc_reject') || item('drc_unclassified') || item('drc_cosmetic')), drcText, btn('Open Layout', {kind: 'link', size: 'sm', page: 'pcb'}) + anyway) +
-    row(!!pins, pins ? `${pins.count} unverified part${pins.count === 1 ? '' : 's'}: pins not checked against a datasheet (${esc(pins.why)}).` : '0 unverified parts: every part is checked, accepted or has no pins to check.', btn('Open DFM', {kind: 'link', size: 'sm', page: 'checks'})) +
-    row(!!conds, conds && conds.state === 'not_checked' ? `Open conditions not checked: ${esc(conds.why)}.` : conds ? `${conds.count} open condition${conds.count === 1 ? '' : 's'}: requirements not met or not measured on this board (${esc(conds.why)}).` : '0 open conditions: every confirmed requirement is met on the measured board.', btn('Open Layout', {kind: 'link', size: 'sm', page: 'pcb'})) +
+    row(!!pins || !!unknown, pins ? `${pins.count} unverified part${pins.count === 1 ? '' : 's'}: pins not checked against a datasheet (${esc(pins.why)}).` : unknown ? `Unverified parts: not checked. ${esc(unknown.why || '')}` : '0 unverified parts: every part is checked, accepted or has no pins to check.', btn('Open DFM', {kind: 'link', size: 'sm', page: 'checks'})) +
+    row(!!conds || !!unknown, conds && conds.state === 'not_checked' ? `Open conditions not checked: ${esc(conds.why)}.` : conds ? `${conds.count} open condition${conds.count === 1 ? '' : 's'}: requirements not met or not measured on this board (${esc(conds.why)}).` : unknown ? `Open conditions: not checked. ${esc(unknown.why || '')}` : '0 open conditions: every confirmed requirement is met on the measured board.', btn('Open Layout', {kind: 'link', size: 'sm', page: 'pcb'})) +
     `</ul></section>`;
 }
 onAct('out-make-anyway', async () => {

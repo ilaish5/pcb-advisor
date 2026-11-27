@@ -16,7 +16,7 @@ def _claim(chat, index):
     if not node:
         pytest.skip("node is not installed")
     src = (UI / "js" / "chat.js").read_text(encoding="utf-8")
-    fn = re.search(r"function chatUncheckedClaim\(m\) \{.*?\n\}\n", src, re.S).group(0)
+    fn = re.search(r"const CHAT_CHECK_TOOL = .*?function chatUncheckedClaim\(m\) \{.*?\n\}\n", src, re.S).group(0)
     prog = fn + "\nconst S = {chat: " + json.dumps(chat) + "};\nconsole.log(JSON.stringify(chatUncheckedClaim(S.chat[" + str(index) + "])));"
     r = subprocess.run([node, "-e", prog], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
@@ -46,6 +46,23 @@ def test_a_drc_result_from_a_tool_is_not_footnoted():
 
 def test_a_claim_in_an_earlier_turn_does_not_excuse_a_later_one():
     assert _claim([U, A("check\n\nScope: x"), U, A("This one is fine: 0 errors")], 3) is True
+
+
+def test_only_a_checking_tool_hides_the_footer_a_document_read_does_not():
+    claim = "The sheet has 0 errors."
+    assert _claim([U, A(claim, tools=[{"t": "Read datasheet", "d": "STM32 p.31"}])], 1) is True
+    assert _claim([U, A(claim, tools=[{"t": "Read file", "raw": "notes.md"}])], 1) is True
+    assert _claim([U, A(claim, tools=[{"t": "Schematic review", "d": "sheet B"}])], 1) is False
+    assert _claim([U, A(claim, tools=[{"t": "Run DRC"}])], 1) is False
+    assert _claim([U, A("read it", tools=[{"t": "Read file"}]), A(claim)], 2) is True
+
+
+def test_numbers_that_are_not_a_count_of_errors_are_not_a_claim():
+    for text in ("Keep BOOT0 low at reset.", "PA0 and PA1 are free.", "Use a 0 ohm link here.", "0 volts across it.",
+                 "Pull-down: 0 ohm to GND"):
+        assert _claim([U, A(text)], 1) is False, text
+    assert _claim([U, A("No problems on this sheet.")], 1) is True
+    assert _claim([U, A("DRC shows 0 violations.")], 1) is True
 
 
 def test_plain_text_with_a_number_is_not_a_claim():

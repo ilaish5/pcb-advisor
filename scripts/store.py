@@ -2222,7 +2222,7 @@ def restore_idea_version(project, n):
     return load_idea_working(project)
 
 
-_ASSUMED_RX = re.compile(r"\(\s*assumed\s*\)", re.I)
+_ASSUMED_RX = re.compile(r"\(\s*assumed\s*\)|\[\s*assumed\s*\]|\bassum(?:ed|ing|es|ption|ptions)\b", re.I)
 
 
 def is_assumed(item):
@@ -2340,7 +2340,7 @@ def _extends(new, old):
     return bool(old) and re.search(r"(?:^|[.;]\s+)" + re.escape(old) + r"(?=$|[;,+]|\.(?:\s|$)|\s[(+])", new) is not None
 
 
-def propose_idea(project, topic, text, by="agent", replace=False):
+def propose_idea(project, topic, text, by="agent", replace=False, assumed=False):
     """A requirement, written into the live draft at once (the student's Save is the gate). 'proposed' only
     survives in projects made before the draft existed; Accept all / Dismiss all clear those.
 
@@ -2352,8 +2352,10 @@ def propose_idea(project, topic, text, by="agent", replace=False):
     items = idea["agreed"]
     item = next((i for i in items if i["topic"] == topic), None)
     # R2/W5: what the agent only assumed is a proposal until the student acts on that item; it carries the `assumed` field so every reader sees it
-    assumed = by != "student" and bool(_ASSUMED_RX.search(text))
-    status = "proposed" if assumed else "confirmed"
+    # R2/W5: whatever the agent writes is a proposal until the student confirms it; only the student's own entry is a confirmed requirement
+    assumed = by != "student" and (bool(assumed) or bool(_ASSUMED_RX.search(text)))
+    # (a replace is the student's own change, quoted from what they wrote: it stays confirmed unless the text says it is an assumption)
+    status = "proposed" if assumed or (by != "student" and not replace) else "confirmed"
     if by == "agent" and item and not replace:
         base = re.sub(r" \(\d+\)$", "", topic)
         row = re.compile(re.escape(base) + r"(?: \(\d+\))?")

@@ -502,19 +502,29 @@ function chatEngineName(id) {
   return (e && (e.title || e.name)) || String(id || '').replace(/_/g, ' ');
 }
 function chatEngineLabel(id, model) { return id ? chatEngineName(id) + (model ? ' · ' + model : '') : ''; }
-/* R2/W22: the "no check ran" footer goes only on an agent answer that states a zero count ("0 errors", "no issues", "0 Fehler": a standalone 0
-   before a word, in any language) when nothing in its turn was a tool result: no tool call on the message, no earlier agent message of the same turn with
-   tool calls or a "Scope:" line (the tool's own review). A DRC or review result that came from a tool is never footnoted. */
+/* R2/W22: the "no check ran" footer goes on an agent answer that states a zero count of errors, issues, problems or violations as a claim about the
+   design ("0 errors", "no issues", "0 Fehler": the count is the word before it, in any language) when no CHECKING tool ran in its turn: DRC, ERC, the
+   schematic review or a verify. A document read or a web look-up does not count as a check. The same holds for an earlier agent message of the turn
+   with such a tool or a "Scope:" line (the tool's own review). Numbers that are not such a count ("0 ohm", "PA0 and", "keep BOOT0 low") never match. */
+const CHAT_CHECK_TOOL = /\b(?:drc|erc|design rule|schematic review|review sheet|sheet review|verify|verif(?:ied|ication)|board check|order check)\b/i;
+const CHAT_ZERO_CLAIM = [
+  /(?:^|[^\w.,\/-])(?:0|zero|no)\s+(?:(?:open|remaining|new|real|critical|blocking|more)\s+)?(?:errors?|issues?|problems?|violations?|findings?)\b/i,
+  /(?:^|[^\w.,\/-])0\s+(?:שגיאות|בעיות|הפרות|ממצאים)/u,
+  /(?:^|[^\w.,\/-])0\s+(?:fehler|probleme|verstöße|erreurs|problèmes|errores|problemas)(?![\p{L}])/iu,
+];
+function chatHasCheckTool(m) {
+  return (m.tools || []).some(x => CHAT_CHECK_TOOL.test([x.t, x.d, x.raw, x.name].filter(Boolean).join(' ')));
+}
 function chatUncheckedClaim(m) {
   const t = m.text || '';
-  if (m.role !== 'agent' || m.by === 'button' || m.followup || (m.tools || []).length || /\bScope:/.test(t)) return false;
-  if (!(/(?:^|[^\d.,\/-])0\s+\p{L}{3,}/u.test(t) || /\b(?:no|zero)\s+(?:errors?|issues?|problems?)\b/i.test(t))) return false;
+  if (m.role !== 'agent' || m.by === 'button' || m.followup || chatHasCheckTool(m) || /\bScope:/.test(t)) return false;
+  if (!CHAT_ZERO_CLAIM.some(rx => rx.test(t))) return false;
   const chat = (typeof S !== 'undefined' && S && S.chat) || [];
   const at = chat.indexOf(m);
   for (let i = at > 0 ? at - 1 : chat.length - 1; i >= 0 && at !== 0; i--) {
     const p = chat[i];
     if (p.role === 'user') break;
-    if (p.role === 'agent' && ((p.tools || []).length || /\bScope:/.test(p.text || ''))) return false;
+    if (p.role === 'agent' && (chatHasCheckTool(p) || /\bScope:/.test(p.text || ''))) return false;
   }
   return true;
 }

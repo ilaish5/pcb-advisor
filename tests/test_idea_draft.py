@@ -83,10 +83,22 @@ def _legacy(project, *items, goal=None):
     store.save_idea(project, idea)
 
 
+def test_an_agent_item_is_proposed_and_an_assumption_in_any_form_is_marked_assumed(empty):
+    store.propose_idea(empty, "Power", "Li-ion", by="agent")
+    store.propose_idea(empty, "Size", "Under 50 mm, assuming a small enclosure", by="agent")
+    store.propose_idea(empty, "Temp", "Indoor use [assumed]", by="agent")
+    store.propose_idea(empty, "Speed", "Fast enough", by="agent", assumed=True)
+    store.propose_idea(empty, "Colour", "Green", by="student")
+    rows = {i["topic"]: i for i in store.load_idea_working(empty)["agreed"]}
+    assert {t: (r["status"], r["assumed"]) for t, r in rows.items()} == {
+        "Power": ("proposed", False), "Size": ("proposed", True), "Temp": ("proposed", True),
+        "Speed": ("proposed", True), "Colour": ("confirmed", False)}
+
+
 def test_the_agents_requirements_go_straight_into_the_draft(empty):
     store.propose_idea(empty, "Power", "Li-ion", by="agent")
     w = store.load_idea_working(empty)
-    assert w["agreed"][0]["status"] == "confirmed" and w["agreed"][0]["by"] == "agent"
+    assert w["agreed"][0]["status"] == "proposed" and w["agreed"][0]["by"] == "agent"     # R2/W5: not a requirement until the student confirms
     assert store.load_idea(empty)["agreed"] == [], "the saved idea waits for Save"
     assert store.idea_draft_info(empty)["marks"]["items"] == {"Power": "new"}
     store.save_idea_from_draft(empty)
