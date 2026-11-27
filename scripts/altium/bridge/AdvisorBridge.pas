@@ -2798,14 +2798,19 @@ begin
         Exit;
     end;
     Log('stack step: top and bottom found');
-    { Everything that CAN be checked before the first change has been: the layer stack, top and bottom, exactly 2 signal layers. The
-      second inner layer can be fetched only once the first is in (FirstAvailableSignalLayer then names another layer); with 2 of at
-      most 32 signal layers a free one always exists, so a nil there is not expected. If it happens the run stops with ERR and the
-      message says the first one is already in the open board (the caller saves nothing after an ERR). }
+    { ALL the checks come before the first change to the stack. The first inner layer is fetched now (FirstAvailableSignalLayer names
+      it without changing anything). The second can be fetched only once the first is in (it then names another layer), so that
+      check is made on what decides it: a board has at most 32 signal layers (top, bottom, 30 mid layers) and two more must fit.
+      Past these checks nothing is expected to fail between the first insert and the second. }
+    if (LS.SignalLayerCount + 2 > 32) then
+    begin
+        Say('ERR the stack has no room for two more signal layers (' + IntToStr(LS.SignalLayerCount) + ' of at most 32 are in use); nothing was changed');
+        Exit;
+    end;
     M1 := LS.FirstAvailableSignalLayer;
     if (M1 = nil) then
     begin
-        Say('ERR the stack has no free signal layer for the first inner layer');
+        Say('ERR the stack has no free signal layer for the first inner layer; nothing was changed');
         Exit;
     end;
     Log('stack step: first inner layer ' + M1.Name);
@@ -2814,6 +2819,7 @@ begin
     M2 := LS.FirstAvailableSignalLayer;
     if (M2 = nil) then
     begin
+        { not expected after the capacity check above; the first layer is in the open board and nothing is saved after an ERR }
         Say('ERR the stack has no free signal layer for the second inner layer (the first inner layer was already inserted in the open board: close it WITHOUT saving)');
         Exit;
     end;

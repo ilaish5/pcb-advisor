@@ -263,12 +263,17 @@ def test_the_script_consumes_the_request_and_names_its_flags_with_the_token():
     assert pas.index("FileExists(Dir + 'request.txt')") < pas.index("Req.LoadFromFile(Dir + 'request.txt')")
 
 
-def test_the_layer_stack_second_layer_failure_says_the_first_is_already_in():
-    """The second inner layer exists only after the first is inserted, so that check cannot come first: the message says so."""
+def test_the_layer_stack_makes_every_check_before_its_first_change():
+    """Every refusal that can be known comes before InsertInStackBelow: layer count, the room for two more signal layers, the first
+    inner layer. The second layer exists only once the first is in, so its check is the capacity one made first."""
     import pathlib
     pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8", errors="replace")
     body = pas[pas.index("procedure PcbStack"):pas.index("procedure DispatchStep")]
-    assert body.index("ERR the stack has no free signal layer for the first inner layer") < body.index("InsertInStackBelow(Top, M1)")
+    first = body.index("InsertInStackBelow(Top, M1)")
+    for check in ("ERR the board has no top or bottom layer in its stack", "ERR the stack has no room for two more signal layers",
+                  "ERR the stack has no free signal layer for the first inner layer", "if (M1 = nil) then"):
+        assert body.index(check) < first, check
+    assert body.count("InsertInStackBelow(") == 2 and body.index("if (M2 = nil) then") > first
     assert "close it WITHOUT saving" in body
 
 
