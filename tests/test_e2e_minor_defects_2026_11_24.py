@@ -34,7 +34,7 @@ def _fn(src, name):
 def _node(tmp_path, script):
     f = tmp_path / "t.js"
     f.write_text(script, encoding="utf-8")
-    r = subprocess.run([NODE, str(f)], capture_output=True, text=True, timeout=30)
+    r = subprocess.run([NODE, str(f)], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
 
