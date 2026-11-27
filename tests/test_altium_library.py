@@ -634,8 +634,8 @@ def test_the_altium_script_checks_before_it_reads_and_states_the_try_except_rule
     pas = (pathlib.Path(bridge.__file__).parent / "bridge" / "AdvisorBridge.pas").read_text(encoding="utf-8", errors="replace")
     assert "never rely on try/except for a call that may fail" in pas.lower()
     # every procedure that walks the open schematic library says so first, instead of raising on nil
-    assert pas.count("
-    Lib := SchServer.GetCurrentSchDocument;") == 5
+    flat = pas.replace(chr(13) + chr(10), chr(10))
+    assert flat.count(chr(10) + "    Lib := SchServer.GetCurrentSchDocument;") == 5
     assert pas.count("if (Lib.ObjectID <> eSchLib) then") == 5 and pas.count("ERR no schematic library is open in Altium") == 5
     for guard in ("ERR the board has no layer stack", "ERR the board has no top or bottom layer in its stack",
                   "ERR the stack has no free signal layer for the first inner layer"):
