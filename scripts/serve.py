@@ -629,7 +629,7 @@ class _Stops:
     so it is no stop for this one. The rest of the clause is still read ("wait until I delete the old parts" stops)."""
     @staticmethod
     def search(text, kind=None):
-        text = str(text or "")
+        text = _JUSTIFY_NEG.sub(" ", _IDIOM.sub(" ", str(text or "")))         # "I do not mind", "no problem", "it is not good" say nothing of the action
         for clause in _CLAUSE.split(text):
             if kind:
                 clause = _NEG_OTHER.sub(lambda m: m.group(0) if _ACTION_ANY[kind].search(m.group(0)) else " ", clause)
@@ -858,7 +858,6 @@ _YES_TOKEN = (
     r"(?:yes|yeah|yep|yup|sure|ok|okay|alright|all\s+right|fine|go\s+ahead|do\s+it|proceed|confirm(?:ed)?|approv(?:e|ed)|please|thanks|thank\s+you"
     r"|כן|אוקיי|אוקי|בסדר|טוב|סבבה|יאללה|קדימה|תמשיך|המשך|בבקשה|תודה|מאשר|מאשרת|מאושר|בהחלט|לגמרי|תעשה\s+את\s+זה|לך\s+על\s+זה)"
 )
-_BARE_YES = re.compile(r"^[\s,.!]*?" + _YES_TOKEN + r"(?:[\s,.!]+" + _YES_TOKEN + r")*[\s,.!]*$", re.I)
 _URL_RE = re.compile(r"https?://\S+", re.I)
 _NOT_APPLIED_TAIL = re.compile(r"(?:^|\n\n)\((?:Not applied|לא הוחל):.*$", re.S)
 _REPLACE_ASKED_MANUAL = re.compile(
@@ -948,126 +947,144 @@ def _asked_replace(kind, prev_agent):
     return False
 
 
-# F-E: the stance of a message is its LAST word on this action. Everything that takes a yes back or aims it elsewhere is one rule, applied to the
-# whole message: a withdrawal, a joke, a doubt, a negation that reaches the action, a condition, a hand-over to the student, a question, a contrast
-# that ends on nothing. Words that only reassure ("no problem", "I don't mind") or judge the old work ("it is not good") are not a negation of the
-# action, and "by hand" that tells what the student already did is not a hand-over.
+# F-E, the whole rule, in three bands (ACCEPTANCE.md: an affirmative with extra text is a real grant; a take-back is never one).
+#   GRANT   a clear affirmative to this action (or a bare one right after the agent asked), with any trailing text (a reason, thanks, a remark about the
+#           board), unless a marker class below is attached to the action.
+#   REFUSE  (no button) the spec's own classes: a no / stop / wait / cancel, a delay, the student doing it, a negation of the action itself.
+#   CONFIRM (one click, restating what will happen) an exception or condition marker on the action, or anything the rule cannot place (a doubt, a joke).
+# Deterministic: closed word lists, no model.
 _IDIOM = re.compile(
-    r"\b(?:no\s+(?:problem|worries|worry|issue|big\s+deal|rush)|not\s+an?\s+(?:problem|issue)|(?:don[’']?t|do\s+not|doesn[’']?t|does\s+not)\s+mind"
-    r"|(?:don[’']?t|do\s+not)\s+(?:worry|care)|nothing\s+(?:to\s+worry|wrong))\b"
+    r"\b(?:no\s+(?:problem|worries|worry|issue|big\s+deal|rush|objection)|not\s+an?\s+(?:problem|issue)|(?:don[’']?t|do\s+not|doesn[’']?t|does\s+not)\s+mind"
+    r"|(?:don[’']?t|do\s+not)\s+(?:worry|care)|nothing\s+(?:to\s+worry|wrong)|after\s+all|at\s+all|first\s+of\s+all|makes?\s+no\s+sense|no\s+longer)\b"
     r"|(?<!\w)(?:אין\s+בעיה|בלי\s+בעיה|לא\s+אכפת|לא\s+מפריע)(?!\w)", re.I)
 _JUSTIFY_NEG = re.compile(
-    r"\b(?:not|isn[’']?t|wasn[’']?t|no)\s+(?:good|great|ok|okay|right|working|useful|usable|nice|enough|what\s+i\s+needed)\b"
-    r"|(?<!\w)(?:לא|אינו|אינה)\s+(?:טוב|טובה|מתאים|מתאימה|מוצלח|מוצלחת|עובד|עובדת|נכון|נכונה|שמיש|שמישה)(?!\w)", re.I)
-_CONTRAST = re.compile(r"\b(?:but|however|though|although|yet)\b|(?<!\w)(?:אבל|אך|למרות)(?!\w)", re.I)
-_WITHDRAW = re.compile(
-    r"\b(?:never\s*mind|nvm|scrap|forget(?:\s+it|\s+that)?|kidding|jk|psych|oops|mistake|rethink\w*|reconsider\w*|second\s+thoughts?"
-    r"|chang(?:ed|ing)\s+my\s+mind|change\s+of\s+mind|hm+|wait|hold\s+(?:on|off|up|it)|hang\s+on|stop|cancel\w*|abort\w*|undo|disregard\w*|ignor(?:e|ing)"
-    r"|skip\w*|drop\s+it|bad\s+idea|unnecessary|keep\w*|kept|leav(?:e|ing)|preserv\w*|retain\w*|actually|instead|rather|except|excluding|besides"
-    r"|take\s+(?:it|that)\s+back|withdraw\w*|pause|paused|pausing|lol\s+no|just\s+joking|joking|joke|nah|naw)\b"
-    r"|(?:^|\s)/s(?=$|[\s.!,])"
-    r"|(?<!\w)(?:וש|ו|ש)?(?:סתם|צוחק|צוחקת|טעות|התחרטתי|מתחרט|מתחרטת|בעצם|תשאיר|תשאירי|להשאיר|השאר|השאירי|נשאיר|אשאיר|תשמור|תשמרי|לשמור"
-    r"|תוותר|תוותרי|וותר|לוותר|שכח|שכחי|תשכח|לשכוח|במקום|עדיף|חוץ|מלבד|הפסק|תפסיק|להפסיק|חכה|חכי|תחכה|לחכות|תמתין|המתן|עצור|תעצור|בטל|תבטל|ביטול"
-    r"|עזוב|תעזוב|דלג|תדלג|רד\s+מזה|רדי\s+מזה|רגע|עוד\s+לא|הרהור|אולי\s+לא)(?!\w)", re.I)
-_NEG_ALL = re.compile(_NEGATED.pattern + "|" + _REPLACE_NEG.pattern + "|" + _HARD_STOP.pattern, re.I)
-_COND_ALL = re.compile(
-    r"\b(?:if|unless|only|first|when|whenever|while|once|until|provided|assuming|pending|might|may|could|would|should|shall|maybe|perhaps|probably"
-    r"|possibly|suppose|guess|wonder(?:ing)?|unsure|uncertain|later|soon|tomorrow|next\s+time|eventually|not\s+sure|i\s+think|do\s+you\s+think|or"
-    r"|as\s+long\s+as|so\s+long\s+as|in\s+case|after|afterwards?|before|then|depending|depends)\b"
-    r"|(?<!\w)(?:וש|ו|ש)?(?:כדאי|אפשר|אז|כאשר|בהמשך|בינתיים|עדיין|כרגע|שנייה|שניה|מאוחר\s+יותר|אחר[\s\-–]+כך|אח[\"״]כ|עוד\s+מעט|מחר|בתנאי|תלוי"
-    r"|כנראה|לדעתי|מתלבט|מתלבטת|אם|אלא|אולי|לא\s+בטוח|נראה\s+לי|חושב\w*|או|במידה|במקרה|עד\s+ש|אחרי|לפני|לאחר|כל\s+עוד|למקרה)(?!\w)|(?<!\w)ו?כש"
-    r"|(?<!\w)רק(?=\s+(?:את|אם|כש)(?!\w)|\s+[לבמה]\S)", re.I)
-# a yes that is irony, and a yes that calls the action the last thing the student wants
-_SARCASM = re.compile(
-    r"\b(?:what\s+could\s+(?:possibly\s+)?go\s+wrong|yeah\s+right|as\s+if|said\s+no\s+one|so\s+well|brilliant|genius|great\s+idea|wonderful\s+idea"
-    r"|oh\s+(?:yes|sure|great)|big\s+surprise|totally\s+fine|what\s+a\s+(?:great|brilliant)|that\s+(?:will|would)\s+(?:definitely|surely)\s+work"
-    r"|last\s+thing|least\s+(?:i\s+want|wanted)|anything\s+but|opposite)\b"
-    r"|(?<!\w)(?:כאילו|בטח\s+בטח|מבריק\w*|גאוני\w*|גאון|רעיון\s+(?:מבריק|גאוני|נהדר)|מה\s+כבר\s+יכול|הדבר\s+האחרון|האחרון\s+שאני|ההפך|הפוך)(?!\w)", re.I)
+    r"\b(?:not|isn[’']?t|wasn[’']?t|no)\s+(?:good|great|ok|okay|right|working|useful|usable|nice|enough|what\s+i\s+needed|needed|necessary|important|worth\s+\w+)\b"
+    r"|(?<!\w)(?:לא|אינו|אינה)\s+(?:טוב|טובה|מתאים|מתאימה|מוצלח|מוצלחת|עובד|עובדת|נכון|נכונה|שמיש|שמישה|צריך|שווה)(?!\w)", re.I)
 _SELF_STRONG = re.compile(r"\b(?:myself|on\s+my\s+own|by\s+hand|manually)\b|(?<!\w)(?:בעצמי|ביד|ידנית|לבד)(?!\w)", re.I)
 _PAST_BY_ME = re.compile(r"\bi(?:[’']ve|\s+have|\s+had|\s+already)?\s+(?!want|need|prefer|plan|decid|intend|hop|wish|lik)(?:\w{2,}ed|moved|made|did|drew|placed|put|wrote|ran|took|built|set|got)\b"
                          r"|(?<!\w)(?!התחרט)\S{2,}תי(?!\w)", re.I)
-_WORKV = (r"(?:re-?plac\w*|re-?do\w*|re-?draw\w*|re-?rout\w*|re-?lay\w*|replac\w*|plac\w*|draw\w*|rout\w*|wip\w*|overwrit\w*|start\s+over|fix\w*|handl\w*|adjust\w*|"
+_WORKV = (r"(?:take\s+on|take\s+over|re-?plac\w*|re-?do\w*|re-?draw\w*|re-?rout\w*|re-?lay\w*|replac\w*|plac\w*|draw\w*|rout\w*|wip\w*|overwrit\w*|start\s+over|fix\w*|handl\w*|adjust\w*|"
           r"finish\w*|mov\w*|tweak\w*|edit\w*|arrang\w*|sort\w*|clean\w*|rebuild\w*|build\w*|delet\w*|remov\w*|chang\w*|do\s+it|do\s+that|take\s+care|deal\s+with|work\s+on)")
-_SELF_FUT = re.compile(
-    r"\b(?:i[’']?ll|i\s+will|let\s+me|leave\s+it\s+to\s+me|i[’']?ll\s+take\s+(?:it|care|over))\b"
-    r"|\b(?:(?:i[’']?m|i\s+am)(?:\s+(?:just|really|also|simply))?\s+(?:going\s+to|gonna)|i(?:\s+(?:just|really|also|simply))?\s+(?:want|need|plan|prefer|intend|have)\s+to|i[’']?d(?:\s+(?:just|really|also|simply))?\s+like\s+to"
-    r"|i\s+would\s+like\s+to|i\s+gonna)\s+(?:\w+\s+){0,3}?" + _WORKV + r"\b"
-    r"|\bi\s+(?:re-?place|re-?draw|re-?do|re-?route|overwrit\w*|start\s+over)\b"
-    r"|\bby\s+me\b|\bme\s+to\b|\bon\s+my\s+side\b|\bon\s+my\s+end\b|\bi\s+(?:can|could)\s+(?:do|handle|take)\b"
-    r"|(?<!\w)(?:תן|תני|תנו)\s+לי(?!\w)|(?<!\w)(?:אקח|ניקח)\s+על\s+ע?צמ\S+|(?<!\w)(?:אני\s+)?(?:א(?:חליף|דרוס|מחק|שרטט|צייר|מקם|נתב|עשה|תחיל|נסה|סדר|זיז|תקן|טפל|שנה)|רוצה\s+ל\S+|מעדיף\s+ל\S+|מעדיפה\s+ל\S+|מתכוון\s+ל\S+|מתכוונת\s+ל\S+)(?!\w)", re.I)
+_NOT_LOOK = r"(?:(?!look|check|see|review|watch|verify|inspect|test|tell|show|send|know|read)\w+\s+){0,3}?"
+_SELF_DO = re.compile(
+    r"\b(?:i[’']?ll|i\s+will|let\s+me|leave\s+it\s+to\s+me|(?:i[’']?m|i\s+am)(?:\s+(?:just|really|also|simply))?\s+(?:going\s+to|gonna)"
+    r"|i(?:\s+(?:just|really|also|simply))?\s+(?:want|need|plan|prefer|intend|have|can|could)\s+to|i[’']?d(?:\s+(?:just|really|also|simply))?\s+(?:like\s+to|rather)"
+    r"|i\s+would\s+(?:like\s+to|rather)|i\s+gonna)\s+" + _NOT_LOOK + _WORKV + r"\b"
+    r"|\bi\s+(?:re-?place|re-?draw|re-?do|re-?route|overwrit\w*|start\s+over)\b|\b(?:\w+ed|done|made|drawn|run)\s+by\s+me\b|\bleave\b[^.;,]{0,30}\bto\s+me\b|\bon\s+my\s+(?:side|end)\b|\b(?:is|are)\s+mine\b"
+    r"|(?<!\w)(?:תן|תני|תנו)\s+לי(?!\w)|(?<!\w)(?:אקח|ניקח)\s+על\s+ע?צמ\S+"
+    r"|(?<!\w)(?:אני\s+)?(?:א(?:חליף|דרוס|מחק|שרטט|צייר|מקם|נתב|זיז|סדר|תקן|טפל|שנה|עשה|בצע|תחיל|נסה)|רוצה\s+ל(?:החליף|דרוס|מחוק|שרטט|צייר|מקם|נתב)|מעדיף\s+ל\S+|מעדיפה\s+ל\S+)(?!\w)", re.I)
+# a negation that governs the action itself ("don't replace", "no replacement", "nothing should be replaced", "אל תחליף")
+_ACT_W = r"(?:replac\w*|re-?do\w*|overwrit\w*|wip\w*|re-?draw\w*|re-?rout\w*|start\s+over|rebuild\w*|placement|layout)"
+_NEG_ACT = re.compile(
+    r"\b(?:never|don[’']?t|do\s+not|shouldn[’']?t|should\s+not|must\s+not|mustn[’']?t|not|no|none|nothing|nobody|neither|nor)\s+(?:(?:to|be|of|it|even|really|please|you|just|the|any|my|should|will|is|are)\s+){0,4}" + _ACT_W + r"\b"
+    r"|\b(?:replac\w*|re-?do\w*|wip\w*|overwrit\w*)\s+(?:none|nothing|no)\b|\b" + _ACT_W + r"\b[^.;,]{0,25}\b(?:is|are|should)\s+not\b|\blast\s+thing|\banything\s+but\b"
+    r"|(?<!\w)(?:אל|אסור|אין\s+צורך|לא)\s+(?:\S+\s+){0,2}?(?:ל?החליף|תחליף\w*|למקם|תמקם|לנתב|תנתב|לשרטט|תשרטט|לדרוס|תדרוס|למחוק|תמחק)(?!\w)", re.I)
+_NEG_VERB_RAW = re.compile(r"\b(?:replac\w*|re-?do\w*|re-?draw\w*|overwrit\w*|wip\w*)\b[^.;,]{0,25}\b(?:is|are|should)\s+not\b", re.I)
+_WITHDRAW = re.compile(
+    r"\b(?:kidding|joking|jk|never\s*mind|nvm|scrap\s+that|scratch\s+that|changed\s+course|forget\s+(?:it|that)|chang(?:ed|ing)\s+my\s+mind|take\s+(?:it|that)\s+back|oops|my\s+mistake|second\s+thoughts?"
+    r"|rethink\w*|reconsider\w*|not\s+(?:yet|now)|maybe\s+later|some\s+other\s+time|next\s+time|abort\w*|undo|disregard)\b|(?:^|\s)/s(?=$|[\s.!,])"
+    r"|(?<!\w)(?:צוחק|צוחקת|בצחוק|טעות|התחרטתי|לא\s+עכשיו|אולי\s+אחר\s+כך|בפעם\s+הבאה|עוד\s+לא|לשכוח|תשכח|עזוב|רגע|חכה|חכי)(?!\w)", re.I)
+# what the rule cannot place: a doubt, a joke, a reservation that ends on nothing, a hedged question
+_DOUBT = re.compile(
+    r"\b(?:hm+|not\s+(?:really|convinced|sure|certain)|i\s+(?:guess|suppose|suspect|wonder|think\s+so)|if\s+you\s+say\s+so|whatever|reluctant\w*|wonder\w*|whether"
+    r"|maybe|perhaps|might|probably|possibly|unsure|you\s+wish|who\s+cares|what\s+could\s+(?:possibly\s+)?go\s+wrong|yeah\s+right|as\s+if|said\s+no\s+one|moon\s+is"
+    r"|about\s+as\s+far|and\s+i[’']?m\s+the\s+(?:king|queen|emperor|pope)|should\s+i|shall\s+i|do\s+you\s+think|or\s+should|or\s+will\s+you|sarcas\w*)\b"
+    r"|\b(?:though|although|but|however)\s*[.!?…]*\s*$"
+    r"|(?<!\w)(?:נו\s+באמת|לא\s+באמת|בדיחה|כאילו|בטח\s+בטח|ואני\s+הקיסר|אולי|כנראה|לא\s+בטוח|נראה\s+לי|בספק|אני\s+מניח)(?!\w)", re.I)
+# the closed set of function words that carry an exception or a condition
+_MARK_EN = (r"(?:except\w*|minus|apart\s+from|aside\s+from|all\s+but|other\s+than|without|unless|if|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|after|before"
+            r"|until|till|once|when|whenever|in\s+case|as\s+soon\s+as|only|stay|stays|staying|remain|remains|untouched|unchanged|intact|as\s+placed|where\s+(?:it|they)\s+(?:is|are)|keep|keeps|keeping|kept|leave|leaving|spare|skip|besides|exclud\w*|save\s+for|but\s+not)")
+_MARK_HE = r"(?:אבל\s+לא|חוץ|מלבד|בלי|ללא|אלא|אם|בתנאי|אחרי|לפני|רק|למעט|תשאיר\w*|להשאיר|תשמור|שמור|עד\s+ש|כש\S*)"
+_MARKER = re.compile(r"(?<![\w'’-])" + _MARK_EN + r"(?![\w'’-])|(?<!\w)ו?" + _MARK_HE + r"(?!\w)", re.I)
+_EXCEPTION_W = re.compile(r"(?<![\w'’-])(?:except\w*|minus|apart\s+from|aside\s+from|all\s+but|other\s+than|only|keep|keeps|keeping|kept|leave|spare|skip|besides|exclud\w*|save\s+for)(?![\w'’-])"
+                          r"|(?<!\w)ו?(?:חוץ|מלבד|למעט|רק|תשאיר\w*|להשאיר|תשמור|שמור)(?!\w)", re.I)
+_CONTRAST_OPEN = re.compile(r"^(?:but|yet|though|אבל|אך)\b", re.I)
+_KEEPS = re.compile(r"\b(?:without|stay|stays|remain|remains|untouched|unchanged|intact)\b|(?<!\w)(?:בלי|ללא|אבל\s+לא)(?!\w)", re.I)
+_CLAUSES = re.compile(r"\s*(?:\.\.\.|[,;.!?—–\n]|\s-\s)\s*")
+_LEAD = re.compile(r"^(?:(?:and|but|just|also|though|yet)\s+|(?:ו|אבל|וגם)\s*)+", re.I)
+_CONDITION_W = re.compile(r"(?<![\w'’-])(?:if|unless|as\s+long\s+as|so\s+long\s+as|provided|providing|assuming|until|till|once|when|whenever|in\s+case|as\s+soon\s+as)(?![\w'’-])"
+                          r"|(?<!\w)ו?(?:אם|אלא|בתנאי|אחרי\s+ש|לפני\s+ש|עד\s+ש|כש\S*)(?!\w)", re.I)
+_TO_AGENT = re.compile(r"(?:tell|show|let|send|ping|notify|remind|message|give|ask|תגיד|תראה|תודיע|שלח)\b", re.I)       # "tell me when it is done" is no condition on the yes
+_OTHER_JOB = re.compile(r"^(?:(?:and|then|also|please)\s+)*(?:add|remove|delete|rename|swap|create|generate|export|order|update|connect|change|set|use)\b", re.I)
+_BARE_NO = re.compile(r"^(?:no|nope|nah|לא)(?:\s+\S+)?$", re.I)
+_YES_ANY = re.compile(r"(?<!\w)(?:yes|yeah|yep|yup|sure|ok|okay|alright|all\s+right|go\s+ahead|do\s+it|proceed|confirm(?:ed)?|approv(?:e|ed)|absolutely|definitely|affirmative"
+                      r"|כן|אוקיי|אוקי|בסדר|סבבה|יאללה|קדימה|תמשיך|המשך|מאשר|מאשרת|מאושר|בהחלט|לגמרי)(?!\w)", re.I)
+_COMMAND = re.compile(r"^(?:(?:and|then|also|please)\s+)*(?:add|remove|delete|rename|swap|create|generate|export|order|update|connect|change|set|use|show|let|check|open|go(?!\s+(?:ahead|for))|switch|list|explain|tell|send|move"
+                      r"|ת(?:וסיף|עבור|ראה|פתח|בדוק|סביר|גיד|שלח|וסיפי)\w*)\b", re.I)
+_HEDGE_Q = re.compile(r"\b(?:or\s+should|should\s+i|shall\s+i|do\s+you\s+think|is\s+it\s+ok\s+if)\b", re.I)
+_EXCLUDE = re.compile(r"\b[A-Z]{1,3}\d{1,3}\b")
 
 
-def _stance_cancelled(text):
-    """True when the message takes its yes back or aims it away from this action (see the block above). One rule for the whole message."""
-    t = _JUSTIFY_NEG.sub(" ", _IDIOM.sub(" ", str(text or "")))
-    ms = list(_CONTRAST.finditer(t))
-    if ms and not re.search(r"\w", t[ms[-1].end():]):          # "…, though": a reservation that says nothing is still a reservation
-        return True
-    if _WITHDRAW.search(t) or _NEG_ALL.search(t) or _COND_ALL.search(t) or _STOP_ANY.search(t) or _SELF_FUT.search(t) or _SARCASM.search(t):
-        return True
-    return bool(_SELF_STRONG.search(t)) and not _PAST_BY_ME.search(t)
+def _is_action(kind, clause):
+    return bool(CONSENT[kind][1].search(clause) or _REPLACE_ASKED_VERB.search(clause) or _REPLACE_SPECIFIC[kind].search(clause))
 
 
-# F-E, the whole rule: a replace is GRANTED only to a plain affirmative and nothing more (a whitelist, not a blocklist). Every word of the message
-# must be a yes, a politeness, an intensifier, or the restatement of this very action and its target. One word outside that list (an exclusion, a
-# condition, a time, another part, a joke, a reservation) and it is no grant: the student gets a one-click confirm that says exactly what will happen.
-_AFFIRM_EN = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "alright", "absolutely", "definitely", "certainly", "affirmative", "please", "thanks",
-              "thank", "you", "go", "ahead", "do", "it", "for", "me", "proceed", "confirm", "confirmed", "approved", "i", "i'm", "i’m", "just", "now", "and",
-              "this", "that", "them", "the", "a", "all", "my", "whole", "entire", "everything", "on", "in", "of", "its", "their", "again", "fromscratch",
-              "old", "one", "ones", "existing", "current", "altium"}
-_ACT_EN = {"replace", "replacing", "redo", "overwrite", "wipe", "start", "over", "rebuild"}
-_TARGET_EN = {"place": {"placement", "layout", "parts", "components", "copper", "board", "place", "redo"},
-              "route": {"routing", "tracks", "traces", "copper", "board", "route", "reroute", "rerouting"},
-              "draw": {"schematic", "sheet", "drawing", "draw", "redraw", "sheets"}}
-_AFFIRM_HE = {"כן", "אוקיי", "אוקי", "בסדר", "סבבה", "בבקשה", "תודה", "קדימה", "בהחלט", "מאשר", "מאשרת", "יאללה", "לגמרי", "תעשה", "את", "זה", "תמשיך", "לך", "על",
-              "עכשיו", "שוב", "בשבילי", "הכל", "כל", "תחליף", "תחליפי", "להחליף", "מחדש", "תמחק", "תדרוס", "אותו", "אותם", "ו", "החלף", "החליפי",
-              "דרוס", "דרסי", "הישן", "הקיים", "אלטיום", "תדרסי"}
-_TARGET_HE = {"place": {"מיקום", "רכיבים", "לוח", "נחושת", "תמקם", "למקם", "השמה"}, "route": {"מסלולים", "ניתוב", "לוח", "נחושת", "תנתב", "לנתב"},
-              "draw": {"גיליון", "סכמה", "ציור", "שרטוט", "תשרטט", "תצייר", "שרטט", "צייר"}}
-_STOP_FIRST = re.compile(r"^[\s,.!…-]*(?:no|nope|nah|not|never|stop|wait|cancel|hold|don[’']?t|do\s+not|עצור|חכה|חכי|רגע|בטל|ביטול|לא|אל|עוד\s+לא)(?![\w])", re.I)
-_TOKEN = re.compile(r"[^\W\d_]+(?:[’'][^\W\d_]+)?|\d+", re.U)
-_EXCLUDE = re.compile(r"\b(?:minus|but|except|apart|besides|excluding|exclude|without|keep|leave|only|other\s+than|all\s+but)\b|(?<!\w)(?:חוץ|מלבד|בלי|רק|תשאיר|אבל|למעט)(?!\w)"
-                      r"|\b[A-Z]{1,3}\d{1,3}\b", re.I)
+def _marker_on_action(kind, t):
+    """True when a marker word sits in a clause that names the action, or opens the clause right after one ("replace it, except the crystal")."""
+    cl = [c for c in _CLAUSES.split(t) if c.strip()]
+    acts = [_is_action(kind, c) for c in cl]
+    for i, c in enumerate(cl):
+        if acts[i] and _MARKER.search(c):
+            return True
+        if _CONDITION_W.search(c) and not _TO_AGENT.match(_LEAD.sub("", c.strip())):       # a condition conditions the yes wherever it stands
+            return True
+        if i and acts[i - 1]:
+            lead = _LEAD.sub("", c.strip())
+            if _MARKER.match(lead) or (_CONTRAST_OPEN.match(c.strip()) and _MARKER.search(c)):       # "…, except X" / "…, but J2 and J3 stay"
+                return True
+    return False
 
 
-def _plain_grant(kind, text, a=None):
-    """True when `text` is a plain affirmative and nothing more (see above) and names this action or is a bare yes (the caller decides which)."""
-    t = re.sub(r"\ball\s+right\b", "alright", str(text or "").lower().replace("’", "'"))
-    t = re.sub(r"\bgo\s+for\s+it\b", "go ahead", t)
-    t = re.sub(r"\bfrom\s+scratch\b", "fromscratch", t)
-    t = re.sub(r"\bre-(?=\w)", "re", t)
-    t = re.sub(r"\bi\s+want\s+you\s+to\b|\b(?:can|could|would)\s+you\b|\bi['’]d\s+like\s+you\s+to\b|אני\s+רוצה\s+ש(?=ת)", " ", t)     # "I want you to replace it": a request to the agent, not a hand-over
-    toks = _TOKEN.findall(t)
-    own = set(_TOKEN.findall(str((a or {}).get("sheet") or "").lower()))
-    if not toks or "?" in t:
-        return False
-    en = _AFFIRM_EN | _ACT_EN | _TARGET_EN.get(kind, set())
-    he = _AFFIRM_HE | _TARGET_HE.get(kind, set())
-    for w in toks:
-        if w in en or w in he or w in own or (kind == "draw" and w.isdigit() and len(w) <= 3):         # a sheet is named by its id
-            continue
-        if len(w) > 2 and w[0] in "והלבש" and w[1:] in he and (w[0] != "ל" or w[1:] in _TARGET_HE.get(kind, set())):       # one Hebrew prefix letter: "המיקום", "ולוח", "שתחליף"
-            continue
-        return False
-    return True
-
-
-def _bare_yes_only(text):
-    return bool(_YES.search(text)) and bool(_BARE_YES.match(str(text or "").strip()))
+def _replace_band(kind, a, text, prev_agent=""):
+    """'grant', 'confirm' or 'refuse' for the student's last message about replacing (see the block above)."""
+    raw = str(text or "").replace("’", "'")
+    t = _JUSTIFY_NEG.sub(" ", _IDIOM.sub(" ", raw))
+    if not t.strip() or _STOP_FIRST.match(t):
+        return "refuse"
+    if _NEG_ACT.search(raw) or _NEG_VERB_RAW.search(raw):             # "redraw is not needed", "לא צריך לשרטט": a negation of the action, whatever else is said
+        return "refuse"
+    t = re.sub(r"(?<!\w)(?:אבל|אך)\s+לא\s+(?=את(?!\w)|ה\w)", "אבל חוץ ", t)       # "…, but not the connectors" is an exception, not a "no"
+    if (_STOP_ANY.search(t, kind) or _WITHDRAW.search(t) or _NEG_ACT.search(t) or _self_verdict(kind, t)
+            or (_SELF_DO.search(t) and not _PAST_BY_ME.search(t)) or (_SELF_STRONG.search(t) and not _PAST_BY_ME.search(t))):
+        return "refuse"
+    cl = [c.strip() for c in _CLAUSES.split(t) if c.strip()]
+    if any(_BARE_NO.match(c) for c in cl):                                  # "yes, replace it - no."
+        return "refuse"
+    own = CONSENT[kind][1].search(t)
+    other_job = any(_OTHER_JOB.match(c) for c in cl)
+    if not own and (other_job or any(w.search(t) for k, w in _OTHER_WORK.items() if k != kind)):          # a yes to another job
+        return "refuse"
+    spec_here = _REPLACE_SPECIFIC[kind].search(t)
+    if own and not spec_here and any(r.search(t) for k, r in _REPLACE_SPECIFIC.items() if k != kind):         # "redo sheet 01" is no yes to the placement
+        return "refuse"
+    asked = _asked_replace(kind, prev_agent)
+    yes = bool(_YES_ANY.search(t))
+    if not own and not (yes and asked):
+        return "confirm" if yes or _REPLACE_ASKED_VERB.search(t) else "refuse"
+    if not own and any(_COMMAND.match(c) for c in cl):          # "yes, show me the preview": a yes to something else
+        return "refuse"
+    if not own and _EXCEPTION_W.search(t):                      # a bare yes with an exception ("yes, keep J1") has no action clause to hold it
+        return "confirm"
+    if not yes:               # an instruction with no yes in it is clear only when it is short and says nothing else (no hedge, reversal, condition or question)
+        if (len(t.split()) > REPLACE_MAX_WORDS or _REPLACE_NEG.search(t) or _REPLACE_REVERSAL.search(t) or _REPLACE_HEDGE_COND.search(t)
+                or _REPLACE_INDIRECT_Q.search(t) or _is_question(t)):
+            return "confirm"
+    if (_marker_on_action(kind, t) or _DOUBT.search(t) or ("?" in t and _HEDGE_Q.search(t)) or other_job
+            or any(w.search(t) for k, w in _OTHER_WORK.items() if k != kind)):
+        return "confirm"
+    return "grant"
 
 
 def _replace_consent(kind, a, last_user, prev_agent=""):
-    """'' when the student's last message is a plain affirmative and nothing more (`_plain_grant`): either it names this replace ("yes, replace the
-    placement", "כן, תחליף") or it is a bare yes right after the agent asked about replacing. Any other message never grants a replace, however it
-    is worded: the agent (and the chat, see `replace_confirm`) asks one yes/no question instead."""
-    wipes, replace_re = CONSENT[kind][3], CONSENT[kind][1]
-    text = str(last_user or "")
-    if _plain_grant(kind, text, a) and (replace_re.search(text) or (_bare_yes_only(text) and _asked_replace(kind, prev_agent))):
+    """'' when the student's last message grants a replace of `kind` (`_replace_band` says grant), else the text that tells the agent to ask one
+    yes/no question instead (the chat shows it as a one-click confirm when the band is confirm, see `replace_confirm`)."""
+    wipes = CONSENT[kind][3]
+    if _replace_band(kind, a, last_user, prev_agent) == "grant":
         return ""
     sheet = str(a.get("sheet") or "").strip()
     what = f"the drawing on sheet {sheet}" if kind == "draw" and sheet else f"the {wipes}"
     be = "is" if wipes == "sheet" else "are"
-    return (f"The {wipes} {be} only wiped on a plain yes from the student and nothing more (any other message does not grant replace). Ask a yes/no "
+    return (f"The {wipes} {be} only wiped on a clear yes from the student that takes nothing back and puts no exception or condition on it. Ask a yes/no "
             f"question: \"Replace {what}? This wipes what is there (a backup is kept). Answer yes/no.\" Run this again only after their "
             "short answer (such as \"yes, replace\").")
 
@@ -1083,22 +1100,19 @@ def _parts_count(project):
         return 0
 
 
-def replace_confirm(kind, a, last_user, meta, project=None):
-    """Everything that is not a plain yes and not an explicit no gets ONE question that says exactly what will happen, with a one-click Yes and No
-    (`meta["confirm"]`, the turn record's `ask`). Only a no / stop / wait / cancel that comes first, a question, or a message with neither a yes nor
-    this action gets none. A negation inside the message does not stop it ("not worth keeping"). When the message names parts to keep or leave out,
-    the question says plainly that the action replaces everything, those parts included. Returns True when a confirm was set."""
+def replace_confirm(kind, a, last_user, meta, project=None, prev_agent=""):
+    """A message in the confirm band (an exception or condition on the action, or something the rule cannot place) gets ONE question that says exactly
+    what will happen, with a one-click Yes and No (`meta["confirm"]`, the turn record's `ask`). A grant needs none; a no / stop / wait, a delay,
+    a hand-over or a negation of the action gets none (refuse). When the message names parts to keep or leave out, the question says plainly that the
+    action replaces everything, those parts included. Returns True when a confirm was set."""
     text = str(last_user or "")
-    if meta is None or not _truthy(a.get("replace")) or kind not in _CONFIRM_HE or _STOP_FIRST.match(text):
+    if meta is None or not _truthy(a.get("replace")) or kind not in _CONFIRM_HE:
         return False
-    if not (_YES.search(text) or CONSENT[kind][1].search(text) or _REPLACE_ASKED_VERB.search(text)):
+    if _replace_band(kind, a, text, prev_agent) != "confirm":
         return False
-    if re.search(r"\?\s*$", text) and not _YES.search(text):
-        return False                                                 # a plain question gets an answer, not a Yes button
     n = _parts_count(project) if project else 0
-    excl = bool(_EXCLUDE.search(text))
-    he = bool(_HE_LETTER.search(text))
-    if he:
+    excl = bool(_EXCEPTION_W.search(text) or _KEEPS.search(text) or _EXCLUDE.search(text))      # names something to keep or leave out
+    if _HE_LETTER.search(text):
         what = _CONFIRM_HE[kind] + (f", כל {n} הרכיבים" if kind == "place" and n else "")
         q = f"להחליף {what}? זה מוחק את מה שיש (נשמר גיבוי)." + (" זה מחליף הכל, גם מה שביקשת להשאיר." if excl else "")
         meta["confirm"] = {"question": q, "yes": "כן, תחליף", "no": "לא, השאר"}
@@ -1113,6 +1127,9 @@ def replace_confirm(kind, a, last_user, meta, project=None):
     q = f"Replace {what}? This wipes what is there (a backup is kept)." + (" It replaces everything, including what you asked to keep." if excl else "")
     meta["confirm"] = {"question": q, "yes": "Yes, replace it", "no": "No, keep it"}
     return True
+
+
+_STOP_FIRST = re.compile(r"^[\s,.!…-]*(?:no|nope|nah|not|never|stop|wait|cancel|hold|don[’']?t|do\s+not|עצור|חכה|חכי|רגע|בטל|ביטול|לא|אל|עוד\s+לא)(?![\w])", re.I)
 
 
 _ME = re.compile(r"myself|\bi[’']?ll\b|\bi will\b|בעצמי|(?<!\w)א(?:מחק|סיר|שנה|מחוק)\w*", re.I)
@@ -2366,7 +2383,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 why = _draw_consent(a, consent_words(chat, last_user), earlier_student_messages(chat, "draw", last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
-                    replace_confirm("draw", a, last_user, meta, project)
+                    replace_confirm("draw", a, last_user, meta, project, previous_agent_text(chat, last_user))
                     continue
                 try:
                     res = _drawn(bridge, project, a.get("sheet") or None, _truthy(a.get("replace")))
@@ -2383,7 +2400,7 @@ def _apply_actions(project, actions, sess=None, last_user="", meta=None, turn_st
                 why = _consent(step, a, consent_words(chat, last_user), earlier_student_messages(chat, step, last_user), previous_agent_text(chat, last_user))
                 if why:
                     refused.append(f"{kind}: not run. {why}")
-                    replace_confirm(step, a, last_user, meta, project)       # an ambiguous yes gets a one-click confirm, not a silent refusal
+                    replace_confirm(step, a, last_user, meta, project, previous_agent_text(chat, last_user))       # an ambiguous yes gets a one-click confirm, not a silent refusal
                     continue
                 try:
                     if step == "place":

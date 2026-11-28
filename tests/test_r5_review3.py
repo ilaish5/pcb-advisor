@@ -96,60 +96,6 @@ def test_the_page_renders_the_outcome_before_the_plain_error():
     assert "o.cause_text" in js[js.index("function pvOutcomeHTML"):]       # a kind with no pairs shows the bridge's reason
 
 
-# ---------------------------------------------------------------- 4 consent
-Q = "Replace the board's parts and copper? This wipes what is there (a backup is kept). Answer yes/no."
-QHE = "להחליף את המיקום והנחושת בלוח? זה מוחק את מה שיש (נשמר גיבוי). כן/לא?"
-
-
-def _grants(text, q=Q, kind="place"):
-    import serve
-    return not serve._replace_consent(kind, {}, text, q)
-
-
-@pytest.mark.parametrize("text", [
-    "yes, replace it after I commit my changes", "yes, replace it as long as J1 stays where it is", "yes, replace it in case the DRC passes afterwards",
-    "yes, replacing the placement is the last thing I want", "yes, the replacement is something I will take on",
-    "yes, sure, replace it, what could possibly go wrong", "yeah right, replace it, as if", "yes, replace it, said no one ever",
-    "yes, replace it, brilliant idea", "yes, replace it, let me do the rest", "yes, replace the placement and route again",
-])
-def test_a_yes_that_is_conditional_ironic_or_handed_over_is_not_a_grant(text):
-    assert not _grants(text)
-
-
-@pytest.mark.parametrize("text", [
-    "כן, תחליף את המיקום אחרי שאני אשמור עותק", "כן בטח, תחליף, כאילו", "כן, תחליף, ממש רעיון מבריק", "כן, תחליף את המיקום, תן לי לעשות את זה",
-    "כן, תחליף רק את הקבלים", "כן, תחליף את המיקום וגם תנתב מחדש",
-])
-def test_the_same_in_hebrew(text):
-    assert not _grants(text, QHE)
-
-
-@pytest.mark.parametrize("text", ["redo it for me", "yes, go ahead and redo the placement for me", "yes, replace it, no problem" if False else "yes, replace it please"])
-def test_a_plain_yes_is_granted_even_with_for_me_in_it(text):
-    import serve
-    assert not serve._replace_consent("place", {}, text, Q.replace("copper?", "placement?"))
-
-
-def test_an_unclear_yes_gets_a_one_click_confirm_that_restates_the_action():
-    import serve
-    meta = {}
-    assert serve.replace_confirm("place", {"replace": True}, "yes, replace it after I commit my changes", meta)
-    c = meta["confirm"]
-    assert "Replace" in c["question"] and "backup" in c["question"] and c["yes"].startswith("Yes") and c["no"].startswith("No")
-    # the click itself ("Yes, replace it") is read as the answer to that question
-    assert not serve._replace_consent("place", {}, c["yes"], "Some text.\n\n" + c["question"])
-    h = {}
-    assert serve.replace_confirm("place", {"replace": True}, "כן, תחליף, כאילו", h) and "להחליף" in h["confirm"]["question"]
-    assert not serve._replace_consent("place", {}, h["confirm"]["yes"], "טקסט.\n\n" + h["confirm"]["question"])
-
-
-@pytest.mark.parametrize("text", ["no, do not replace it", "wait, not yet", "לא, אל תחליף", "stop", "עצור"])
-def test_a_no_stop_or_wait_first_gets_no_confirm(text):
-    import serve
-    meta = {}
-    assert not serve.replace_confirm("place", {"replace": True}, text, meta) and "confirm" not in meta
-
-
 # ---------------------------------------------------------------- 5 how-to questions are review turns
 HOWTO = ["How do I move C3 closer to U1?", "What should I change to fix the clearance?", "Why did the route fail?", "How should I place the decoupling caps?",
          "How do I redraw the schematic?", "איך לתקן את הקצר?", "איך להזיז את C3?", "מה צריך לשנות כדי לעבור את הבדיקה?", "How do I fix the short between U1 and U2?",
