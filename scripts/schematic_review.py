@@ -196,9 +196,11 @@ def review(project, parts=None, datasheets=None):
         req = decap_requirements.requirement(nm, mpn, text or "")
         if not req:
             why = ("no cited requirement for this part (not in the family table) and its datasheet text is not available" if not text else
-                   "no cited requirement for this part (not in the family table) and its datasheet text has no power-supply row for this pin")
+                   "no cited requirement for this part (not in the family table) and the power-supply section of its datasheet text states no capacitor value for this pin")
             not_checked.append(f"{ref} {nm} on {net}: {why}")
             continue
+        if req.get("partial"):      # one value is stated: it is enforced below, and the rest of the pin's slots are not read
+            not_checked.append(f"{ref} {nm} on {net}: the datasheet text states one capacitor value for this pin; its other slots (if any) are not read")
         taken = used.setdefault(net, set())
         free0 = [c for c in pool[net] if c not in taken]
         unreadable = [c for c in free0 if _farads(by_ref[c].get("value")) is None]
